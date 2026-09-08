@@ -41,6 +41,7 @@ from agno.db.utils import (
     json_serializer,
     merge_runs_table_with_legacy_blob,
     metrics_starting_date_from_days,
+    owner_key,
     table_schema_mismatch_error,
     validate_pagination,
 )
@@ -1696,12 +1697,12 @@ class AsyncSqliteDb(AsyncBaseDb):
                     workflow_sessions.append(session)
 
             sessions_by_id_and_user: Dict[Tuple[str, Optional[str]], Session] = {
-                (s.session_id, s.user_id): s for s in sessions
+                (s.session_id, owner_key(s.user_id)): s for s in sessions
             }
 
             def _attach_runs(session_dict: Dict[str, Any]) -> Dict[str, Any]:
                 original_session = sessions_by_id_and_user.get(
-                    (session_dict.get("session_id"), session_dict.get("user_id"))  # type: ignore[arg-type]
+                    (session_dict.get("session_id"), owner_key(session_dict.get("user_id")))  # type: ignore[arg-type]
                 )
                 session_dict["runs"] = [
                     run if isinstance(run, dict) else run.to_dict()
@@ -1747,7 +1748,6 @@ class AsyncSqliteDb(AsyncBaseDb):
                                 summary=stmt.excluded.summary,
                                 updated_at=stmt.excluded.updated_at,
                             ),
-                            # Same owner check as upsert_session: never hand a stored session to another user.
                             where=(table.c.user_id == stmt.excluded.user_id) | (table.c.user_id.is_(None)),
                         )
                         await sess.execute(stmt, agent_data)
@@ -1759,10 +1759,10 @@ class AsyncSqliteDb(AsyncBaseDb):
 
                         for row in result:
                             submitted = sessions_by_id_and_user.get(
-                                (row._mapping["session_id"], row._mapping["user_id"])
+                                (row._mapping["session_id"], owner_key(row._mapping["user_id"]))
                             )
                             if submitted is None:
-                                # The conflict update was refused: the row belongs to another user.
+                                # The conflict update was refused: the row belongs to another user
                                 continue
                             session_dict = _attach_runs(deserialize_session_json_fields(dict(row._mapping)))
                             if deserialize:
@@ -1808,7 +1808,6 @@ class AsyncSqliteDb(AsyncBaseDb):
                                 summary=stmt.excluded.summary,
                                 updated_at=stmt.excluded.updated_at,
                             ),
-                            # Same owner check as upsert_session: never hand a stored session to another user.
                             where=(table.c.user_id == stmt.excluded.user_id) | (table.c.user_id.is_(None)),
                         )
                         await sess.execute(stmt, team_data)
@@ -1820,10 +1819,10 @@ class AsyncSqliteDb(AsyncBaseDb):
 
                         for row in result:
                             submitted = sessions_by_id_and_user.get(
-                                (row._mapping["session_id"], row._mapping["user_id"])
+                                (row._mapping["session_id"], owner_key(row._mapping["user_id"]))
                             )
                             if submitted is None:
-                                # The conflict update was refused: the row belongs to another user.
+                                # The conflict update was refused: the row belongs to another user
                                 continue
                             session_dict = _attach_runs(deserialize_session_json_fields(dict(row._mapping)))
                             if deserialize:
@@ -1869,7 +1868,6 @@ class AsyncSqliteDb(AsyncBaseDb):
                                 summary=stmt.excluded.summary,
                                 updated_at=stmt.excluded.updated_at,
                             ),
-                            # Same owner check as upsert_session: never hand a stored session to another user.
                             where=(table.c.user_id == stmt.excluded.user_id) | (table.c.user_id.is_(None)),
                         )
                         await sess.execute(stmt, workflow_data)
@@ -1881,10 +1879,10 @@ class AsyncSqliteDb(AsyncBaseDb):
 
                         for row in result:
                             submitted = sessions_by_id_and_user.get(
-                                (row._mapping["session_id"], row._mapping["user_id"])
+                                (row._mapping["session_id"], owner_key(row._mapping["user_id"]))
                             )
                             if submitted is None:
-                                # The conflict update was refused: the row belongs to another user.
+                                # The conflict update was refused: the row belongs to another user
                                 continue
                             session_dict = _attach_runs(deserialize_session_json_fields(dict(row._mapping)))
                             if deserialize:
