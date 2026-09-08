@@ -32,7 +32,7 @@ def middleware(endpoint, **overrides):
         mcp=False,
         **overrides,
     )
-    os = SimpleNamespace(agents=[agent], teams=[], workflows=[])
+    os = SimpleNamespace(agents=[agent], teams=[], workflows=[], public=surface)
     return PublicMiddleware(endpoint, surface=surface, agent_os=os)
 
 

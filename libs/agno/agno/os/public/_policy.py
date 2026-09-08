@@ -5,7 +5,7 @@ from typing import Any
 
 from starlette.routing import Match
 
-RUN_ROUTE = re.compile(r"^/(agents|teams|workflows)/([^/]+)/runs(?:/([^/]+)(/cancel)?)?$")
+RUN_ROUTE = re.compile(r"^/(agents|teams|workflows)/([^/]+)/runs(?:/([^/]+)(/(?:cancel|continue))?)?$")
 
 
 class PublicRoutePolicy:
@@ -48,9 +48,9 @@ class PublicRoutePolicy:
         match = RUN_ROUTE.fullmatch(path)
         if method != "POST" or match is None:
             return False
-        kind, component_id, run_id, cancellation = match.groups()
+        kind, component_id, run_id, operation = match.groups()
         return (
             kind in ("agents", "teams")
             and component_id in self.selected[kind]
-            and (run_id is None or cancellation is not None)
+            and (run_id is None or operation is not None)
         )

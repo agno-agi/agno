@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from contextvars import ContextVar
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 from agno.os.public._limits import PublicLimiter, RateLimit
 
@@ -43,6 +43,10 @@ class PublicSurface:
     verified JWT callers use the normal REST API with endpoint permissions. MCP
     remains restricted to its explicit tools and public limits. Scheduler and
     service-account credentials retain their existing public request contracts.
+    Selected paused runs can be continued over REST and exposed MCP components
+    retain their scoped lifecycle tools. Anonymous session/run handles are bearer
+    capabilities; authenticated sessions require the same principal. Run limits
+    apply to both transports, and public workflows always require authentication.
     """
 
     agents: List[Any] = field(default_factory=list)
@@ -58,6 +62,9 @@ class PublicSurface:
     max_output_bytes: int = 1024 * 1024
     max_active_runs: int = 8
     _limiter: Optional[PublicLimiter] = field(default=None, init=False, repr=False)
+    _bindings: Any = field(default=None, init=False, repr=False)
+    _mcp_components: Dict[Any, Any] = field(default_factory=dict, init=False, repr=False)
+    _mcp_run_tools: Set[str] = field(default_factory=set, init=False, repr=False)
 
     @property
     def limiter(self) -> PublicLimiter:
@@ -104,15 +111,18 @@ class PublicSurface:
             from agno.os.mcp import _enabled_builtin_tags, _split_tool_entries
 
             _, exposures = _split_tool_entries(config, agent_os)
-            enabled_tags = _enabled_builtin_tags(config, has_exposures=bool(exposures))
-            if enabled_tags & {"core", "lifecycle"}:
-                raise ValueError(
-                    "Public MCP cannot expose continue_run or cancel_run. Exposing agents, teams or workflows "
-                    "as MCP tools enables them automatically; set lifecycle_tools=False or "
-                    'exclude_tags={"lifecycle"} in MCPConfig to disable them.'
-                )
+            self._mcp_components = {(kind, component.id): component for kind, component, _ in exposures}
+            self._mcp_run_tools = {
+                marker.name if marker and marker.name else component.id for _, component, marker in exposures
+            }
+            if _enabled_builtin_tags(config, has_exposures=bool(exposures)) & {"core", "lifecycle"}:
+                self._mcp_run_tools.update({"continue_run", "cancel_run"})
         if self._limiter is None:
             self._limiter = PublicLimiter(agent_os.db.db_engine, namespace, self.limits)
+        if self._bindings is None:
+            from agno.os.public._execution import _RunBindings
+
+            self._bindings = _RunBindings(agent_os.db.db_engine, namespace)
 
 
 __all__ = ["PublicSurface", "RateLimit", "FileUploadLimits", "get_public_client_id"]

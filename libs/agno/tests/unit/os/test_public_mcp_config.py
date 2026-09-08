@@ -50,19 +50,20 @@ async def test_public_custom_tools_need_no_lifecycle_override(public_os):
     assert public_os.mcp_config.lifecycle_tools is True
 
 
+@pytest.mark.asyncio
 @pytest.mark.parametrize("kind", ["agents", "teams", "workflows"])
 @pytest.mark.parametrize("named", [False, True])
-def test_public_exposed_components_explain_lifecycle_opt_out(public_os, kind, named):
+async def test_public_exposed_components_include_scoped_lifecycle_tools(public_os, kind, named):
     component = getattr(public_os, kind)[0]
     tool = component.as_tool(name="docs") if named else component
     public_os.mcp = MCPConfig(tools=[tool], default_tools=False, stateless=True)
-
-    with pytest.raises(ValueError) as error:
-        public_os.get_app()
-    message = str(error.value)
-    assert "continue_run or cancel_run" in message
-    assert "lifecycle_tools=False" in message
-    assert 'exclude_tags={"lifecycle"}' in message
+    public_os.get_app()
+    async with Client(build_mcp_server(public_os)) as client:
+        assert {tool.name for tool in await client.list_tools()} == {
+            "docs" if named else component.id,
+            "continue_run",
+            "cancel_run",
+        }
 
 
 @pytest.mark.asyncio

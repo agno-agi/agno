@@ -147,3 +147,33 @@ neither shared environment was modified. Live database/provider modes were not
 run. The focused public-configuration and MCP suites passed all 204 tests.
 
 ---
+
+### public_approval.py — public continuation (2026-09-08)
+
+**Status:** PASS
+
+**Description:** Ran `public_approval.py --check` using the demo Python with compatible
+development dependencies on `PYTHONPATH`. Public AgentOS/MCP configuration builds
+with the default lifecycle setting. The shared environments were not modified.
+
+**Result:** Configuration passed without provider calls. The native public HTTP/MCP
+regression set passed 302 tests, including 42 new PostgreSQL continuation cases:
+Agent/Team approval and rejection, cross-instance and cross-transport continuation,
+nested member approvals, workflow authentication, wrong-user/component/session
+rejection, protected administrator approvals, active cancellation bindings,
+concurrent continuation admission and timeout/capacity cleanup. The PostgreSQL
+container and test databases were disposable. The cookbook's live-provider `demo`
+mode was not run. Formatting, lint and mypy passed.
+
+---
+
+
+## 2026-09-09 continuation rebase
+
+Rebased onto main `4253dedc9`; retained the shared JWT/public route policy.
+175 public continuation, authorization, surface and request-bound regressions
+passed against disposable local PostgreSQL databases. The continuation file then
+passed 46 cases, including four new native JWT/submount/query/form regressions.
+The two runs overlap; they are not 221 distinct tests. Full format and validation
+scripts passed. Delivery between separate OS processes is a separate follow-up;
+the existing cross-instance tests only establish shared run ownership.
