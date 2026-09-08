@@ -861,7 +861,10 @@ def merge_registration_counts(
                 "users_created_count": count,
                 "token_metrics": {},
                 "model_metrics": [],
-                "created_at": now,
+                # The row is derived per request, so it has no creation event of its own.
+                # Anchored to the day it describes rather than to "now", which would churn
+                # on every poll and make an unchanged day look like a new record.
+                "created_at": day_epoch,
                 "updated_at": now,
             }
         )

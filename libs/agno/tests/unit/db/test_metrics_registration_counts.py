@@ -59,6 +59,13 @@ class TestMergeRegistrationCounts:
         assert merged[0]["agent_runs_count"] == 0
         assert merged[0]["id"] == "2026-01-05_daily"
 
+    def test_synthesised_created_at_is_stable_across_calls(self):
+        # Derived per request, so created_at must not be "now": a client polling the
+        # endpoint would otherwise see an unchanged day as a new record every time.
+        first = merge_registration_counts([], {_day_epoch(2026, 1, 5): 4})[0]
+        second = merge_registration_counts([], {_day_epoch(2026, 1, 5): 4})[0]
+        assert first["created_at"] == second["created_at"] == _day_epoch(2026, 1, 5)
+
     def test_synthesised_and_stored_rows_come_back_in_date_order(self):
         merged = merge_registration_counts(
             [_metric_row(date(2026, 1, 3))],

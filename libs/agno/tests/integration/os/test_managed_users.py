@@ -137,6 +137,7 @@ from agno.agent import Agent  # noqa: E402
 from agno.db.in_memory import InMemoryDb  # noqa: E402
 from agno.os import AgentOS  # noqa: E402
 from agno.os.authz.role_store import ManagedRoleStore  # noqa: E402
+from agno.os.authz.scope_provider import ScopeAuthorizationProvider  # noqa: E402
 from agno.os.config import AuthorizationConfig, UserDirectoryConfig  # noqa: E402
 
 
@@ -310,6 +311,31 @@ def test_registrations_are_not_exposed_to_a_user_scoped_read():
     assert users.registrations_by_day() != {}
     metrics = client.get("/metrics", headers=_auth("bob")).json()["metrics"]
     assert all(row["users_created_count"] == 0 for row in metrics)
+
+
+def test_registrations_reported_with_a_composite_authorization_provider():
+    # A composite/custom provider names no role_store, so AgentOS auto-mounts less for it.
+    # /metrics is a core router and the directory is seeded onto app.state either way, so
+    # registration counts must still be reported here.
+    roles = ManagedRoleStore(db_url=_db_url())
+    users = ManagedUserStore(db_url=_db_url())
+    users.upsert("someone")
+
+    app = AgentOS(
+        id=OS_ID,
+        agents=[Agent(id="research-agent", name="Research Agent", db=InMemoryDb())],
+        authorization=True,
+        authorization_config=AuthorizationConfig(
+            verification_keys=[SECRET],
+            algorithm="HS256",
+            authorization_provider=[ScopeAuthorizationProvider(), roles.provider],
+        ),
+        user_directory=UserDirectoryConfig(user_store=users),
+    ).get_app()
+
+    response = TestClient(app).get("/metrics", headers=_auth("operator", scopes=["metrics:read"]))
+    assert response.status_code == 200, response.text
+    assert [row["users_created_count"] for row in response.json()["metrics"]] == [1]
 
 
 def test_disabled_user_is_denied_even_with_valid_token():
