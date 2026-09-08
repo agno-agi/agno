@@ -25,6 +25,7 @@ from agno.utils.bounded import BoundedWorkers
 from agno.utils.log import log_warning
 
 IDENTITY_WORKERS = BoundedWorkers(8, "public-identity")
+MAX_PENDING_WEBSOCKETS = 32
 
 
 class Rejected(Exception):
@@ -45,6 +46,7 @@ class PublicMiddleware:
         self.app, self.surface, self.agent_os = app, surface, agent_os
         self.policy = policy or PublicRoutePolicy(surface, agent_os)
         self.active_runs = self.active_mcp = 0
+        self.pending_websockets = 0
         self.selected = self.policy.selected
         self.registered = {
             kind: {component.id for component in getattr(agent_os, kind) or []} for kind in self.selected
@@ -160,6 +162,40 @@ class PublicMiddleware:
         except Exception as exc:
             raise Rejected(400, "invalid_request_body") from exc
 
+    async def _websocket(self, scope: Any, receive: Any, send: Any) -> None:
+        if self.pending_websockets >= MAX_PENDING_WEBSOCKETS:
+            await send({"type": "websocket.close", "code": 1008})
+            return
+        self.pending_websockets += 1
+        pending = True
+
+        def release():
+            nonlocal pending
+            if pending:
+                pending = False
+                self.pending_websockets -= 1
+
+        try:
+            try:
+                # Preserve the Request contract of application-owned identity callbacks
+                # while resolving the identity of the HTTP upgrade request.
+                request = Request({**scope, "type": "http", "method": "GET"})
+                identity = await asyncio.wait_for(self._identity(request), timeout=3)
+                decision = await self.surface.limiter.aconsume("socket", client_id=identity)
+            except Exception:
+                log_warning("Public WebSocket admission unavailable")
+                await send({"type": "websocket.close", "code": 1008})
+                return
+            if not decision.allowed:
+                await send({"type": "websocket.close", "code": 1008})
+                return
+            # Only the native authenticated handler receives this callback. Release
+            # pending capacity after verification, or on any disconnect/failure below.
+            scope["_agno_public_ws_authenticated"] = release
+            await self.app(scope, receive, send)
+        finally:
+            release()
+
     async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
         if scope["type"] == "lifespan":
             await self.app(scope, receive, send)
@@ -173,7 +209,7 @@ class PublicMiddleware:
             ):
                 # The native workflow socket authenticates its first message and
                 # enforces scopes before any execution or subscription.
-                await self.app(scope, receive, send)
+                await self._websocket(scope, receive, send)
                 return
             await send({"type": "websocket.close", "code": 1008})
             return

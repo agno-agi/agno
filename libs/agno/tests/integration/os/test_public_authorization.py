@@ -1,6 +1,7 @@
 """One runtime serving anonymous clients and the JWT-authenticated Control Plane."""
 
 import time
+from contextlib import ExitStack
 from types import SimpleNamespace
 
 import jwt
@@ -53,10 +54,12 @@ class AdmissionRecorder:
 
     def __init__(self):
         self.calls = []
+        self.client_ids = []
         self.allowed = True
 
     async def aconsume(self, bucket, *, client_id):
         self.calls.append(bucket)
+        self.client_ids.append(client_id)
         return Admission(self.allowed, retry_after=60)
 
     async def _aprepare(self):
@@ -289,6 +292,91 @@ def test_mounted_runtime_keeps_route_permissions_and_public_selection(runtime):
         assert socket.receive_json()["event"] == "connected"
         socket.send_json({"action": "ping"})
         assert socket.receive_json()["event"] == "auth_required"
+
+
+@pytest.mark.parametrize("unavailable", [False, True])
+def test_public_socket_admission_rejects_before_accept(runtime, unavailable):
+    runtime.surface.client_id = lambda request: request.headers["x-real-ip"]
+    runtime.limiter.allowed = False
+    if unavailable:
+
+        async def fail(*args, **kwargs):
+            raise RuntimeError("quota store unavailable")
+
+        runtime.limiter.aconsume = fail
+    with pytest.raises(WebSocketDisconnect) as closed:
+        with TestClient(runtime.os.get_app()).websocket_connect("/workflows/ws", headers={"x-real-ip": "8.8.8.8"}):
+            pytest.fail("Rejected upgrade must not be accepted")
+    assert closed.value.code == 1008
+    if not unavailable:
+        assert runtime.limiter.calls == ["socket"]
+        assert runtime.limiter.client_ids == ["8.8.8.8"]
+
+
+def test_public_socket_pending_capacity_releases_on_authentication_and_disconnect(runtime, monkeypatch):
+    monkeypatch.setattr("agno.os.public._middleware.MAX_PENDING_WEBSOCKETS", 2)
+    client = TestClient(runtime.os.get_app())
+    with ExitStack() as stack:
+        first = stack.enter_context(client.websocket_connect("/workflows/ws"))
+        second = stack.enter_context(client.websocket_connect("/workflows/ws"))
+        assert first.receive_json()["event"] == second.receive_json()["event"] == "connected"
+        with pytest.raises(WebSocketDisconnect) as closed:
+            with client.websocket_connect("/workflows/ws"):
+                pytest.fail("Pending capacity must be enforced")
+        assert closed.value.code == 1008
+        assert runtime.limiter.calls == ["socket", "socket"]
+        first.send_json({"action": "authenticate", "token": token()})
+        assert first.receive_json()["event"] == "authenticated"
+        assert first.receive_json()["event"] == "authenticated"
+        first.send_json({"action": "ping"})
+        assert first.receive_json()["event"] == "pong"
+        with client.websocket_connect("/workflows/ws") as third:
+            assert third.receive_json()["event"] == "connected"
+        with client.websocket_connect("/workflows/ws") as fourth:
+            assert fourth.receive_json()["event"] == "connected"
+        assert runtime.limiter.calls == ["socket"] * 4
+
+
+@pytest.mark.parametrize("keep_alive", [False, True])
+def test_public_socket_authentication_deadline_cannot_be_extended(runtime, monkeypatch, keep_alive):
+    monkeypatch.setattr("agno.os.router.PUBLIC_WS_AUTH_TIMEOUT", 0.2)
+    client = TestClient(runtime.os.get_app())
+    with client.websocket_connect("/workflows/ws") as socket:
+        assert socket.receive_json()["event"] == "connected"
+        started = time.monotonic()
+        with pytest.raises(WebSocketDisconnect) as closed:
+            if keep_alive:
+                while time.monotonic() - started < 2:
+                    socket.send_json({"action": "ping"})
+                    assert socket.receive_json()["event"] == "auth_required"
+                    time.sleep(0.03)
+                pytest.fail("Messages must not extend the authentication deadline")
+            else:
+                socket.receive_json()
+        assert closed.value.code == 1008
+
+
+def test_public_socket_closes_after_five_failed_authentication_attempts(runtime):
+    with TestClient(runtime.os.get_app()).websocket_connect("/workflows/ws") as socket:
+        assert socket.receive_json()["event"] == "connected"
+        for _ in range(5):
+            socket.send_json({"action": "authenticate", "token": "invalid"})
+            assert socket.receive_json()["event"] == "auth_error"
+        with pytest.raises(WebSocketDisconnect) as closed:
+            socket.receive_json()
+        assert closed.value.code == 1008
+
+
+def test_public_socket_authentication_deadline_ends_after_verification(runtime, monkeypatch):
+    monkeypatch.setattr("agno.os.router.PUBLIC_WS_AUTH_TIMEOUT", 0.2)
+    with TestClient(runtime.os.get_app()).websocket_connect("/workflows/ws") as socket:
+        assert socket.receive_json()["event"] == "connected"
+        socket.send_json({"action": "authenticate", "token": token()})
+        assert socket.receive_json()["event"] == "authenticated"
+        assert socket.receive_json()["event"] == "authenticated"
+        time.sleep(0.3)
+        socket.send_json({"action": "ping"})
+        assert socket.receive_json()["event"] == "pong"
 
 
 def test_cors_covers_preflights_and_authorization_errors(runtime):

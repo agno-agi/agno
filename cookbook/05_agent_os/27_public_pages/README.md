@@ -15,13 +15,23 @@ Anonymous clients retain the selected chat routes, compact roster and public
 limits. `/info` reports the authentication mode so the Control Plane can connect.
 JWT callers get the normal REST API only after signature and endpoint permission
 checks; their responses are private and non-cacheable. Invalid credentials are
-rejected, including on anonymous routes. Do not use `excluded_route_paths` for
-public chat: exclusions skip credential verification altogether.
+rejected, including on anonymous routes. Public chat does not need
+`excluded_route_paths`: in mixed mode those exclusions do not bypass credential
+verification on selected public routes. Excluding a management route skips JWT
+verification, so the public layer returns 404 even with an admin JWT.
 
 Workflow WebSockets authenticate through their existing message-based protocol.
+Public upgrades use the `socket` quota (30/client/minute, 120/global/minute,
+500/client/day and 5,000/global/day). Each worker admits at most 32 connections
+awaiting authentication. Clients must authenticate within 10 seconds; five failed
+authentication attempts close the connection. Authentication releases pending
+capacity, and ordinary authenticated connections have no authentication deadline.
 MCP always keeps its explicit tool catalog and public admission limits, even for
 admin JWTs. Use `mcp_auth` if MCP itself requires OAuth authentication. Internal
 scheduler and service-account requests retain their existing public contracts.
+With a public surface, service-account tokens can use selected public routes and
+permitted protected workflows, but cannot reach management REST routes; use a JWT
+for management access.
 Without `authorization=True`, the public surface continues to close management
 routes and WebSockets.
 

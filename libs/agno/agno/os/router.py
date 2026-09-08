@@ -1,3 +1,4 @@
+import asyncio
 import json
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
@@ -273,6 +274,10 @@ def get_info_router(os: "AgentOS") -> APIRouter:
     return router
 
 
+PUBLIC_WS_AUTH_TIMEOUT = 10.0
+PUBLIC_WS_MAX_AUTH_ATTEMPTS = 5
+
+
 def get_websocket_router(
     os: "AgentOS",
     settings: AgnoAPISettings = AgnoAPISettings(),
@@ -321,6 +326,10 @@ def get_websocket_router(
 
         await websocket_manager.connect(websocket, requires_auth=requires_auth)
 
+        public_authenticated = websocket.scope.get("_agno_public_ws_authenticated")
+        auth_deadline = asyncio.get_running_loop().time() + PUBLIC_WS_AUTH_TIMEOUT
+        auth_attempts = 0
+
         # Store user context from the authenticated identity (JWT or service account)
         websocket_user_context: Dict[str, Any] = {}
 
@@ -333,12 +342,32 @@ def get_websocket_router(
 
         try:
             while True:
-                data = await websocket.receive_text()
+                if public_authenticated is not None and requires_auth:
+                    if websocket_manager.is_authenticated(websocket):
+                        public_authenticated()
+                        public_authenticated = None
+                        data = await websocket.receive_text()
+                    else:
+                        if auth_attempts >= PUBLIC_WS_MAX_AUTH_ATTEMPTS:
+                            await websocket.close(code=1008)
+                            return
+                        # A fixed deadline prevents ping/auth messages from extending
+                        # the lifetime of an unauthenticated public connection.
+                        remaining = auth_deadline - asyncio.get_running_loop().time()
+                        try:
+                            data = await asyncio.wait_for(websocket.receive_text(), timeout=remaining)
+                        except asyncio.TimeoutError:
+                            await websocket.close(code=1008)
+                            return
+                else:
+                    data = await websocket.receive_text()
                 message = json.loads(data)
                 action = message.get("action")
 
                 # Handle authentication first
                 if action == "authenticate":
+                    if public_authenticated is not None:
+                        auth_attempts += 1
                     token = message.get("token")
                     if not token:
                         await websocket.send_text(json.dumps({"event": "auth_error", "error": "Token is required"}))
