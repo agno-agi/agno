@@ -1,4 +1,5 @@
 import asyncio
+import re
 from dataclasses import dataclass, field
 from textwrap import dedent
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Type, Union
@@ -48,6 +49,18 @@ DEFAULT_COMPRESSION_PROMPT = dedent("""\
     Be concise while retaining all critical facts.
     """)
 
+# ResultStore envelopes are intentionally plain text because they need to be
+# understood by every model provider.  Keep the recognition here local to the
+# compression manager instead of importing the offload implementation: the
+# manager is initialized for every Agent/Team and importing the storage stack
+# would make an optional feature part of the compression hot path.
+_RESULT_ENVELOPE_PREFIX = "<result "
+_RESULT_ENVELOPE_CLOSE = "</result>"
+_STORED_RESULT_NOTICE = "Full result stored; read with read_result("
+_REFUSED_RESULT_NOTICE = "Full result was NOT stored."
+_RESULT_ID_ATTRIBUTE = re.compile(r"\bid\s*=\s*(['\"])res_[^'\"]+\1")
+_REFUSED_ATTRIBUTE = re.compile(r"\bstored\s*=\s*(['\"])false\1")
+
 
 @dataclass
 class CompressionManager:
@@ -65,6 +78,47 @@ class CompressionManager:
 
     def _is_tool_result_message(self, msg: Message) -> bool:
         return msg.role == "tool"
+
+    @staticmethod
+    def _is_result_envelope(content: Any) -> bool:
+        """Return whether *content* is an opaque ResultStore envelope.
+
+        Offloaded results are represented as a short, protocol-like string
+        rather than a typed message field.  The result-id / ``stored=\"false\"``
+        attributes identify the two envelope variants; the follow-up notice
+        is accepted as a backwards-compatible fallback.
+        """
+        if not isinstance(content, str):
+            return False
+
+        text = content.strip()
+        if not text.startswith(_RESULT_ENVELOPE_PREFIX):
+            return False
+
+        opening_tag_end = text.find(">")
+        closing_tag = text.find(_RESULT_ENVELOPE_CLOSE)
+        if opening_tag_end < 0 or closing_tag < opening_tag_end:
+            return False
+
+        opening_tag = text[: opening_tag_end + 1]
+        has_envelope_attribute = bool(
+            _RESULT_ID_ATTRIBUTE.search(opening_tag) or _REFUSED_ATTRIBUTE.search(opening_tag)
+        )
+        if not has_envelope_attribute:
+            # Keep the notice fallback for forwards-compatible envelopes that
+            # retain the protocol text but change their opening attributes.
+            notice = text[closing_tag + len(_RESULT_ENVELOPE_CLOSE) :]
+            return _STORED_RESULT_NOTICE in notice or _REFUSED_RESULT_NOTICE in notice
+
+        return True
+
+    def _is_compressible_tool_result(self, msg: Message) -> bool:
+        """Return whether a tool message is eligible for model compression."""
+        return (
+            self._is_tool_result_message(msg)
+            and msg.compressed_content is None
+            and not self._is_result_envelope(msg.content)
+        )
 
     def should_compress(
         self,
@@ -93,9 +147,7 @@ class CompressionManager:
 
         # Count-based threshold check
         if self.compress_tool_results_limit is not None:
-            uncompressed_tools_count = len(
-                [m for m in messages if self._is_tool_result_message(m) and m.compressed_content is None]
-            )
+            uncompressed_tools_count = len([m for m in messages if self._is_compressible_tool_result(m)])
             if uncompressed_tools_count >= self.compress_tool_results_limit:
                 log_info(f"Tool count limit hit: {uncompressed_tools_count} >= {self.compress_tool_results_limit}")
                 return True
@@ -107,7 +159,7 @@ class CompressionManager:
         tool_result: Message,
         run_metrics: Optional["RunMetrics"] = None,
     ) -> Optional[str]:
-        if not tool_result:
+        if not tool_result or self._is_result_envelope(tool_result.content):
             return None
 
         tool_content = f"Tool: {tool_result.tool_name or 'unknown'}\n{tool_result.content}"
@@ -148,7 +200,7 @@ class CompressionManager:
         if not self.compress_tool_results:
             return
 
-        uncompressed_tools = [msg for msg in messages if msg.role == "tool" and msg.compressed_content is None]
+        uncompressed_tools = [msg for msg in messages if self._is_compressible_tool_result(msg)]
 
         if not uncompressed_tools:
             return
@@ -197,9 +249,7 @@ class CompressionManager:
 
         # Count-based threshold check
         if self.compress_tool_results_limit is not None:
-            uncompressed_tools_count = len(
-                [m for m in messages if self._is_tool_result_message(m) and m.compressed_content is None]
-            )
+            uncompressed_tools_count = len([m for m in messages if self._is_compressible_tool_result(m)])
             if uncompressed_tools_count >= self.compress_tool_results_limit:
                 log_info(f"Tool count limit hit: {uncompressed_tools_count} >= {self.compress_tool_results_limit}")
                 return True
@@ -212,7 +262,7 @@ class CompressionManager:
         run_metrics: Optional["RunMetrics"] = None,
     ) -> Optional[str]:
         """Async compress a single tool result"""
-        if not tool_result:
+        if not tool_result or self._is_result_envelope(tool_result.content):
             return None
 
         tool_content = f"Tool: {tool_result.tool_name or 'unknown'}\n{tool_result.content}"
@@ -253,7 +303,7 @@ class CompressionManager:
         if not self.compress_tool_results:
             return
 
-        uncompressed_tools = [msg for msg in messages if msg.role == "tool" and msg.compressed_content is None]
+        uncompressed_tools = [msg for msg in messages if self._is_compressible_tool_result(msg)]
 
         if not uncompressed_tools:
             return
