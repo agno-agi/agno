@@ -93,7 +93,7 @@ agent_os = AgentOS(
     # and granted the default role (the is_default one above) so they land usable, not inert.
     # To pin the default in code instead of flagging a role, pass default_role="viewer" here
     # (it overrides is_default).
-    user_directory=UserDirectoryConfig(store=users, auto_provision=True),
+    user_directory=UserDirectoryConfig(user_store=users, auto_provision=True),
 )
 app = agent_os.get_app()
 # We manage the directory through the store directly here (upsert / set_disabled), which is

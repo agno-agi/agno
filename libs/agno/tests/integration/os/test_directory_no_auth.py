@@ -43,7 +43,7 @@ def test_snippet_builds_directory_and_isolation_without_auth(tmp_path):
     assert os_.user_directory.auto_provision is True  # bare True defaults auto_provision on
 
     client = TestClient(os_.get_app())
-    assert os_.user_directory.store.get("chegizkhan") is None
+    assert os_.user_directory.user_store.get("chegizkhan") is None
 
     with patch.object(Agent, "arun", new_callable=AsyncMock) as m:
         m.return_value = _MockRunOutput()
@@ -52,7 +52,7 @@ def test_snippet_builds_directory_and_isolation_without_auth(tmp_path):
             data={"message": "hi", "stream": "false", "user_id": "chegizkhan"},
         )
     assert r.status_code == 200, r.text
-    assert os_.user_directory.store.get("chegizkhan") is not None  # roster populated from the run
+    assert os_.user_directory.user_store.get("chegizkhan") is not None  # roster populated from the run
 
 
 def test_no_auth_directory_does_not_enforce_disabled(tmp_path):
@@ -68,7 +68,7 @@ def test_no_auth_directory_does_not_enforce_disabled(tmp_path):
     store.upsert("chegizkhan", name="Chegiz")
     store.set_disabled("chegizkhan", True)
 
-    os_ = _os(tmp_path, user_directory=UserDirectoryConfig(store=store, auto_provision=True))
+    os_ = _os(tmp_path, user_directory=UserDirectoryConfig(user_store=store, auto_provision=True))
     client = TestClient(os_.get_app())
 
     with patch.object(Agent, "arun", new_callable=AsyncMock) as m:
@@ -129,7 +129,7 @@ def test_no_auth_provisioning_is_run_only(tmp_path):
 
     # a GET with a user_id must NOT provision
     client.get("/agents/research-agent", params={"user_id": "ghost"})
-    assert os_.user_directory.store.get("ghost") is None
+    assert os_.user_directory.user_store.get("ghost") is None
 
     # a run DOES provision
     with patch.object(Agent, "arun", new_callable=AsyncMock) as m:
@@ -139,7 +139,7 @@ def test_no_auth_provisioning_is_run_only(tmp_path):
             data={"message": "hi", "stream": "false", "user_id": "realrunner"},
         )
     assert r.status_code == 200, r.text
-    assert os_.user_directory.store.get("realrunner") is not None
+    assert os_.user_directory.user_store.get("realrunner") is not None
 
 
 def test_user_isolation_without_auth_sets_scoping_but_does_not_provision(tmp_path):
@@ -236,7 +236,7 @@ def test_users_admin_api_requires_auth_even_on_a_no_auth_instance(tmp_path):
     from agno.os.authz.user_store import ManagedUserStore
 
     store = ManagedUserStore(db=SqliteDb(db_file=str(tmp_path / "u.db")))
-    os_ = _os(tmp_path, user_directory=UserDirectoryConfig(store=store, auto_provision=True))
+    os_ = _os(tmp_path, user_directory=UserDirectoryConfig(user_store=store, auto_provision=True))
     app = os_.get_app()
     app.include_router(get_users_router(store))
     client = TestClient(app)
@@ -254,7 +254,7 @@ def test_no_auth_run_refuses_a_reserved_principal(tmp_path):
     from agno.os.authz.user_store import ManagedUserStore
 
     store = ManagedUserStore(db=SqliteDb(db_file=str(tmp_path / "u.db")))
-    os_ = _os(tmp_path, user_isolation=True, user_directory=UserDirectoryConfig(store=store, auto_provision=True))
+    os_ = _os(tmp_path, user_isolation=True, user_directory=UserDirectoryConfig(user_store=store, auto_provision=True))
     client = TestClient(os_.get_app())
 
     with patch.object(Agent, "arun", new_callable=AsyncMock) as m:

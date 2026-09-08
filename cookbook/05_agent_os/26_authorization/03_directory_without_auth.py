@@ -64,7 +64,7 @@ app = agent_os.get_app()
 
 # user_directory=True built the store for us; grab the handle to read the roster and to
 # demonstrate the (advisory) disabled flag below.
-users = agent_os.user_directory.store
+users = agent_os.user_directory.user_store
 
 
 if __name__ == "__main__":

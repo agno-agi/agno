@@ -2828,7 +2828,7 @@ def _identity_bridge_kwargs(os: "AgentOS") -> Dict[str, Any]:
     return {
         "admin_scope": admin_scope or AgentOSScope.ADMIN.value,
         "user_isolation": user_isolation,
-        "user_store": directory.store if directory is not None else None,
+        "user_store": directory.user_store if directory is not None else None,
         "user_auto_provision": bool(directory.auto_provision) if directory is not None else False,
         "user_email_claim": directory.email_claim if directory is not None else "email",
         "user_name_claim": directory.name_claim if directory is not None else "name",

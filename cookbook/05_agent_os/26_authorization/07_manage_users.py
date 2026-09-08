@@ -111,7 +111,7 @@ agent_os = AgentOS(
         audit=audit,  # record every access decision
     ),
     # The user directory: who exists + the disabled off-switch. A peer of authorization.
-    user_directory=UserDirectoryConfig(store=users),
+    user_directory=UserDirectoryConfig(user_store=users),
 )
 app = agent_os.get_app()
 # Mount ONLY the user directory API - no get_roles_router, so there is no /authz roles surface for

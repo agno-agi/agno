@@ -38,7 +38,7 @@ def _os(db, roles, users, **kw):
         authorization_config=AuthorizationConfig(
             verification_keys=[SECRET], algorithm="HS256", role_store=roles, **kw.pop("config", {})
         ),
-        user_directory=UserDirectoryConfig(store=users),
+        user_directory=UserDirectoryConfig(user_store=users),
         **kw,
     )
 

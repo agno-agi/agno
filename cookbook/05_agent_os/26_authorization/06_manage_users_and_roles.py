@@ -214,7 +214,7 @@ agent_os = AgentOS(
         audit=audit,  # record every access decision too
     ),
     # The user directory is a peer of authorization (who the users are + the off-switch).
-    user_directory=UserDirectoryConfig(store=users),
+    user_directory=UserDirectoryConfig(user_store=users),
 )
 app = agent_os.get_app()
 app.include_router(get_roles_router(roles))

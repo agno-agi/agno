@@ -177,7 +177,7 @@ def create_dev_token(
             db=db,
             authorization=True,
             authorization_config=AuthorizationConfig(verification_keys=[secret]),
-            user_directory=UserDirectoryConfig(store=True, auto_provision=True),
+            user_directory=UserDirectoryConfig(user_store=True, auto_provision=True),
         )
         alice = create_dev_token("alice", secret=secret, email="alice@example.com", name="Alice")
         client.get("/agents/x", headers={"Authorization": f"Bearer {alice}"})

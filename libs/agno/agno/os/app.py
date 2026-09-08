@@ -1534,7 +1534,7 @@ class AgentOS:
         # be set without authorization=True), so no extra flag gates this.
         authz_config = self.authorization_config
         role_store = getattr(authz_config, "role_store", None) if authz_config is not None else None
-        directory_store = self.user_directory.store if self.user_directory is not None else None
+        directory_store = self.user_directory.user_store if self.user_directory is not None else None
         if role_store is not None:
             from agno.os.authz.role_router import get_roles_router
 
@@ -2061,7 +2061,7 @@ class AgentOS:
     ) -> Optional[UserDirectoryConfig]:
         """Normalise the ``user_directory`` shorthand into a ``UserDirectoryConfig``.
 
-        ``True`` (or ``UserDirectoryConfig(store=True)``) means "build the ManagedUserStore from
+        ``True`` (or ``UserDirectoryConfig(user_store=True)``) means "build the ManagedUserStore from
         the OS db", so a caller gets a working directory with zero store wiring. ``False`` /
         ``None`` means no directory. An explicit config with a real store is returned unchanged
         (its store is adopted onto the OS db later, in ``_seed_user_directory``).
@@ -2072,17 +2072,17 @@ class AgentOS:
             # The bare ``True`` shorthand is the "just give me a working directory" path, so it
             # defaults auto_provision on: a run's user_id registers the person with zero extra
             # config. Pass an explicit UserDirectoryConfig to opt out (auto_provision=False).
-            user_directory = UserDirectoryConfig(store=True, auto_provision=True)
-        if getattr(user_directory, "store", None) is True:
+            user_directory = UserDirectoryConfig(user_store=True, auto_provision=True)
+        if getattr(user_directory, "user_store", None) is True:
             if self.db is None:
                 raise ValueError(
-                    "AgentOS(user_directory=True) (or UserDirectoryConfig(store=True)) needs AgentOS(db=...): "
+                    "AgentOS(user_directory=True) (or UserDirectoryConfig(user_store=True)) needs AgentOS(db=...): "
                     "the user directory backs the disabled-user kill switch and must persist. Pass a SQL db, "
-                    "or build the store yourself (UserDirectoryConfig(store=ManagedUserStore(db=...)))."
+                    "or build the store yourself (UserDirectoryConfig(user_store=ManagedUserStore(db=...)))."
                 )
             from agno.os.authz.user_store import ManagedUserStore
 
-            user_directory = user_directory.model_copy(update={"store": ManagedUserStore(db=self.db)})
+            user_directory = user_directory.model_copy(update={"user_store": ManagedUserStore(db=self.db)})
         return user_directory
 
     def _seed_user_directory(self, fastapi_app: FastAPI) -> None:
@@ -2096,7 +2096,7 @@ class AgentOS:
         deny disabled users and (when auto_provision is on) create a row from token claims.
         """
         directory = self.user_directory
-        user_store = directory.store if directory is not None else None
+        user_store = directory.user_store if directory is not None else None
         if user_store is not None:
             # Adopt the OS db so a directory created without one persists instead of living
             # in a process-local dict. That matters more than convenience here: the directory

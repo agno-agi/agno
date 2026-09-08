@@ -147,7 +147,7 @@ def _os(role_store, user_store, *, auto_provision=False, **cfg):
             role_store=role_store,  # auto-mounts /authz (roles) and /users (directory)
             **cfg,
         ),
-        user_directory=UserDirectoryConfig(store=user_store, auto_provision=auto_provision),
+        user_directory=UserDirectoryConfig(user_store=user_store, auto_provision=auto_provision),
     )
 
 
@@ -322,15 +322,15 @@ def test_user_directory_true_builds_the_store_from_the_os_db(tmp_path):
         authorization_config=AuthorizationConfig(verification_keys=[SECRET], algorithm="HS256"),
         user_directory=True,
     )
-    assert isinstance(os_.user_directory.store, ManagedUserStore)
+    assert isinstance(os_.user_directory.user_store, ManagedUserStore)
     # end to end: the app builds and the directory persists a user
     os_.get_app()
-    os_.user_directory.store.upsert("alice", email="alice@co")
-    assert os_.user_directory.store.get("alice")["email"] == "alice@co"
+    os_.user_directory.user_store.upsert("alice", email="alice@co")
+    assert os_.user_directory.user_store.get("alice")["email"] == "alice@co"
 
 
 def test_user_directory_config_store_true_builds_from_db_and_keeps_options(tmp_path):
-    """UserDirectoryConfig(store=True) builds the store from the OS db while keeping the other
+    """UserDirectoryConfig(user_store=True) builds the store from the OS db while keeping the other
     options (auto_provision, default_role, ...) you set."""
     from agno.db.sqlite import SqliteDb
 
@@ -341,9 +341,9 @@ def test_user_directory_config_store_true_builds_from_db_and_keeps_options(tmp_p
         db=db,
         authorization=True,
         authorization_config=AuthorizationConfig(verification_keys=[SECRET], algorithm="HS256"),
-        user_directory=UserDirectoryConfig(store=True, auto_provision=True),
+        user_directory=UserDirectoryConfig(user_store=True, auto_provision=True),
     )
-    assert isinstance(os_.user_directory.store, ManagedUserStore)
+    assert isinstance(os_.user_directory.user_store, ManagedUserStore)
     assert os_.user_directory.auto_provision is True
 
 
@@ -433,7 +433,7 @@ def test_agentos_adopts_its_db_so_the_kill_switch_persists(tmp_path):
         db=os_db,
         authorization=True,
         authorization_config=AuthorizationConfig(verification_keys=["k" * 40], algorithm="HS256", role_store=roles),
-        user_directory=UserDirectoryConfig(store=users),
+        user_directory=UserDirectoryConfig(user_store=users),
     ).get_app()
 
     # adopted, and the revocation made before adoption came across
@@ -484,7 +484,7 @@ def test_user_store_without_a_persistable_db_fails_fast():
                 algorithm="HS256",
                 role_store=roles,
             ),
-            user_directory=UserDirectoryConfig(store=ManagedUserStore()),  # bare: nothing to persist into
+            user_directory=UserDirectoryConfig(user_store=ManagedUserStore()),  # bare: nothing to persist into
         ).get_app()
 
 
@@ -544,7 +544,7 @@ def test_user_directory_without_auth_is_allowed_as_a_roster():
         id=OS_ID,
         agents=[Agent(id="research-agent", name="R", db=InMemoryDb())],
         # neither authentication nor authorization: a plain roster
-        user_directory=UserDirectoryConfig(store=ManagedUserStore(db_url=_db_url())),
+        user_directory=UserDirectoryConfig(user_store=ManagedUserStore(db_url=_db_url())),
     )
     app = agent_os.get_app()  # no raise
     assert getattr(app.state, "user_store", None) is not None
@@ -602,7 +602,7 @@ def test_workflow_continue_over_ws_enforces_the_approval_gate(monkeypatch):
             audience=OS_ID,
             authorization_provider=roles.provider,
         ),
-        user_directory=UserDirectoryConfig(store=users),
+        user_directory=UserDirectoryConfig(user_store=users),
     )
     app = agent_os.get_app()
 
