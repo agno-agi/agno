@@ -50,6 +50,7 @@ dev = [
   "timeout-decorator",
   "types-pyyaml",
   "types-aiofiles",
+  "types-regex",
   "fastapi",
   "python-multipart>=0.0.18",
   "uvicorn",
@@ -190,7 +191,7 @@ firestore = ["google-cloud-firestore"]
 gcs = ["google-cloud-storage"]
 mysql = ["pymysql", "asyncmy"]
 postgres = ["sqlalchemy", "psycopg[binary]"]
-pages = ["agno[postgres]", "agno[pgvector]", "dnspython>=2.6.1", "beautifulsoup4"]
+pages = ["agno[postgres]", "agno[pgvector]", "dnspython>=2.6.1", "beautifulsoup4", "regex>=2024.5.15"]
 redis = ["redis>=4.5.4", "redisvl>=0.12.1"]  # >=4.5.4: safe cancellation of blocking commands (XREAD in event stream tail)
 s3 = ["boto3", "aioboto3"]
 sql = ["sqlalchemy"]
@@ -416,6 +417,7 @@ embedders = [
 
 # All libraries for testing
 tests = [
+  "agno[pages]",
     "agno[a2a]",
     "agno[slack]",
     "agno[dev]",
@@ -437,6 +439,7 @@ tests = [
 
 # Models integration test dependencies
 integration-tests = [
+  "agno[pages]",
     "exa_py>=2.0.0",
     "ddgs",
     "yfinance",
