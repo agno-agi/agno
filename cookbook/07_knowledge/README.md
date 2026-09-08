@@ -10,9 +10,9 @@ Knowledge is Agno's RAG framework. It handles the full pipeline: reading documen
 |-----------|-------------|---------|
 | **Readers** | Extract text from files | PDF, DOCX, CSV, JSON, Web, YouTube, ArXiv |
 | **Chunking** | Split text into searchable pieces | Fixed, Recursive, Semantic, Code, Markdown, Agentic |
-| **Embedders** | Convert text to vectors | OpenAI, Cohere, Bedrock, Ollama, 14+ more |
+| **Embedders** | Convert text to vectors | OpenAI, Cohere, Bedrock, Ollama, Siliconflow, 14+ more |
 | **Vector DBs** | Store and search vectors | Qdrant, LanceDB, ChromaDB, Pinecone, 14+ more |
-| **Rerankers** | Re-score results for quality | Cohere, SentenceTransformer, Bedrock, Infinity |
+| **Rerankers** | Re-score results for quality | Cohere, SentenceTransformer, Bedrock, Infinity, Siliconflow |
 
 ## Quick Start
 
