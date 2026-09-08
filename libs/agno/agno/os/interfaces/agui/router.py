@@ -1,4 +1,3 @@
-import copy
 import uuid
 from typing import AsyncIterator, Optional, Union
 
@@ -30,6 +29,7 @@ from agno.os.interfaces.agui.input import (
     validate_state,
 )
 from agno.os.interfaces.agui.resume import resume_paused_run
+from agno.os.interfaces.agui.state import client_state
 from agno.os.interfaces.agui.stream import async_stream_agno_response_as_agui_events
 from agno.os.middleware.user_scope import assert_session_writable, caller_is_admin, resolve_run_user_id
 from agno.run.base import RunContext
@@ -66,7 +66,7 @@ async def run_entity(
         session_state = validate_state(run_input.state, run_input.thread_id)
 
         if session_state is not None:
-            yield StateSnapshotEvent(type=EventType.STATE_SNAPSHOT, snapshot=copy.deepcopy(session_state))
+            yield StateSnapshotEvent(type=EventType.STATE_SNAPSHOT, snapshot=client_state(session_state))
 
         ui_deps = extract_context(run_input.context)
 

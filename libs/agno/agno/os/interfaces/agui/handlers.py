@@ -1,4 +1,3 @@
-import copy
 import json
 import uuid
 from typing import Any, Callable, Dict, List, Optional
@@ -29,7 +28,7 @@ from ag_ui.core import (
 )
 
 from agno.models.response import ToolExecution
-from agno.os.interfaces.agui.state import StreamState
+from agno.os.interfaces.agui.state import StateDeltaUnavailable, StreamState, client_state
 from agno.os.interfaces.agui.utils import to_json_str
 from agno.reasoning.step import ReasoningStep
 from agno.run.agent import RunContentEvent, RunEvent
@@ -38,6 +37,7 @@ from agno.run.base import BaseRunOutputEvent
 from agno.run.team import RunContentEvent as TeamRunContentEvent
 from agno.run.team import RunPausedEvent as TeamRunPausedEvent
 from agno.run.team import TeamRunEvent
+from agno.utils.log import log_warning
 from agno.utils.message import get_text_from_message
 
 EventHandler = Callable[[BaseRunOutputEvent, StreamState], List[BaseEvent]]
@@ -95,7 +95,27 @@ def _format_reasoning_step(step: Optional[ReasoningStep], step_number: int = 0) 
 def _emit_state_delta(state: StreamState) -> List[BaseEvent]:
     if state.run_state is None:
         return []
-    ops = state.compute_state_delta(state.run_state)
+    try:
+        ops = state.compute_state_delta(state.run_state)
+    except StateDeltaUnavailable as e:
+        if e.reason == StateDeltaUnavailable.STATE_NOT_SENDABLE:
+            # A snapshot would carry the very state the encoder has just
+            # refused, and the encoder runs after this handler, on the way to
+            # the socket: the event would take the rest of the response with
+            # it, terminal event included. So nothing goes out, and the
+            # baseline stays where the client is, which is what lets a later
+            # change the encoder can render be described against what it holds.
+            if state.should_warn_delta_fallback(e.reason):
+                log_warning(f"{e} The client keeps the state it was last sent. {state.run_label()}")
+            return []
+        # State did change, so staying quiet would hide the mutation from the
+        # client for the rest of the run. A full snapshot carries everything
+        # the patch would have.
+        if state.should_warn_delta_fallback(e.reason):
+            log_warning(f"{e} Sending a full STATE_SNAPSHOT instead. {state.run_label()}")
+        snapshot = client_state(state.run_state)
+        state.set_state_snapshot(state.run_state)
+        return [StateSnapshotEvent(type=EventType.STATE_SNAPSHOT, snapshot=snapshot)]
     if ops is None:
         return []
     state.set_state_snapshot(state.run_state)
@@ -436,7 +456,7 @@ def on_run_completed(chunk: BaseRunOutputEvent, state: StreamState) -> List[Base
     if state.run_state is not None:
         authoritative_state = getattr(chunk, "session_state", None)
         final_state = authoritative_state if authoritative_state is not None else state.run_state
-        events.append(StateSnapshotEvent(type=EventType.STATE_SNAPSHOT, snapshot=copy.deepcopy(final_state)))
+        events.append(StateSnapshotEvent(type=EventType.STATE_SNAPSHOT, snapshot=client_state(final_state)))
 
     events.append(RunFinishedEvent(type=EventType.RUN_FINISHED, thread_id=state.thread_id, run_id=state.run_id))
     return events
