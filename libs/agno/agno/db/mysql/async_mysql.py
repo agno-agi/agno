@@ -13,11 +13,13 @@ from agno.db.mysql.schemas import get_table_schema_definition
 from agno.db.mysql.utils import (
     abulk_upsert_metrics,
     acreate_schema,
+    afetch_session_owners,
     ais_table_available,
     ais_valid_table,
     apply_sorting,
     calculate_date_metrics,
     fetch_all_sessions_data,
+    filter_sessions_by_owner,
     get_dates_to_calculate_metrics_for,
 )
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
@@ -1378,6 +1380,15 @@ class AsyncMySQLDb(AsyncBaseDb):
 
             # Process each session type in bulk
             async with self.async_session_factory() as sess, sess.begin():
+                # An owned session is only writable by its owner. MySQL's
+                # ON DUPLICATE KEY UPDATE has no WHERE clause, so the stored
+                # owners are read (and locked) up front and mismatched
+                # sessions are dropped before any write.
+                existing_owners = await afetch_session_owners(sess, table, list(sessions_by_id.keys()))
+                agent_sessions = filter_sessions_by_owner(existing_owners, agent_sessions)
+                team_sessions = filter_sessions_by_owner(existing_owners, team_sessions)
+                workflow_sessions = filter_sessions_by_owner(existing_owners, workflow_sessions)
+
                 # Bulk upsert agent sessions
                 if agent_sessions:
                     agent_data = []

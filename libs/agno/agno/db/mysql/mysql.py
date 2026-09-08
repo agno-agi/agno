@@ -16,6 +16,8 @@ from agno.db.mysql.utils import (
     calculate_date_metrics,
     create_schema,
     fetch_all_sessions_data,
+    fetch_session_owners,
+    filter_sessions_by_owner,
     get_dates_to_calculate_metrics_for,
     is_table_available,
     is_valid_table,
@@ -1363,6 +1365,15 @@ class MySQLDb(BaseDb):
 
             # Process each session type in bulk
             with self.Session() as sess, sess.begin():
+                # An owned session is only writable by its owner. MySQL's
+                # ON DUPLICATE KEY UPDATE has no WHERE clause, so the stored
+                # owners are read (and locked) up front and mismatched
+                # sessions are dropped before any write.
+                existing_owners = fetch_session_owners(sess, table, list(sessions_by_id.keys()))
+                agent_sessions = filter_sessions_by_owner(existing_owners, agent_sessions)
+                team_sessions = filter_sessions_by_owner(existing_owners, team_sessions)
+                workflow_sessions = filter_sessions_by_owner(existing_owners, workflow_sessions)
+
                 # Bulk upsert agent sessions
                 if agent_sessions:
                     agent_data = []
