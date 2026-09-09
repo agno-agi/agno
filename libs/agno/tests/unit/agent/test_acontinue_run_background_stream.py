@@ -6,6 +6,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from agno.run import RunStatus
+
 
 def make_mock_event_stream() -> MagicMock:
     """Mock BaseEventStream: async methods, add_event assigns index 0."""
@@ -309,3 +311,53 @@ class TestRunIdOnlyContinuePersistsStatus:
         assert seen_dispatch_kwargs.get("run_response") is None, (
             "the loaded run is for persistence only - the dispatch must still receive run_response=None"
         )
+
+
+class TestStalePausedCallerOverTerminal:
+    """Issue #9447 on the agent background continue: a caller-held paused
+    object must not take over a COMPLETED or CANCELLED stored run."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("stored_status", [RunStatus.completed, RunStatus.cancelled])
+    async def test_stale_paused_object_over_terminal_is_refused(self, stored_status):
+        from agno.agent._run import _acontinue_run_background_stream
+        from agno.exceptions import RunNotContinuableError
+
+        agent = MagicMock()
+        agent.db = None
+        run_context = MagicMock()
+
+        stored = MagicMock()
+        stored.status = stored_status
+        stored.run_id = "r-1"
+        agent_session = MagicMock()
+        agent_session.get_run.return_value = stored
+
+        stale = MagicMock()
+        stale.status = RunStatus.paused
+        stale.run_id = "r-1"
+        stale.session_id = "s-1"
+
+        with (
+            patch(
+                "agno.agent._storage.aread_or_create_session",
+                new_callable=AsyncMock,
+                return_value=agent_session,
+            ),
+            patch("agno.agent._storage.update_metadata"),
+            patch("agno.agent._session.asave_session", new_callable=AsyncMock),
+            patch("agno.agent._run._acontinue_run_stream") as mock_stream,
+        ):
+            with pytest.raises(RunNotContinuableError):
+                async for _ in _acontinue_run_background_stream(
+                    agent,
+                    run_context=run_context,
+                    session_id="s-1",
+                    run_id="r-1",
+                    run_response=stale,
+                ):
+                    pass
+
+        agent_session.upsert_run.assert_not_called()
+        mock_stream.assert_not_called()
+        assert stored.status == stored_status
