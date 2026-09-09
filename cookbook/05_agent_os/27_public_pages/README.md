@@ -554,3 +554,25 @@ uses the same `ai` database as the other cookbooks:
 `sync` publishes the example corpus once; `run` executes one command and prints
 the typed result, then a missing path so the execution-derived error status is
 visible. No tool is exposed automatically.
+
+
+## Browser origins and previews
+
+`browser_origins.py` configures exact browser origins plus
+`cors_allowed_origin_regex`, matched against the whole Origin value. An explicit
+`cors_allowed_origins=[]` allows none; `None` selects settings defaults. Existing
+base-app CORS origins and patterns are preserved unless
+`cors_merge_base_app_origins=False` selects only the AgentOS settings.
+
+CORS wraps authentication, public admission and native MCP routing, so allowed
+browsers receive consistent headers on 401/403/413/429 responses. With
+`PublicSurface(enforce_browser_origins=True)`, the same origin policy also rejects
+run/cancel requests and workflow WebSocket upgrades from unlisted or ambiguous
+origins. Missing Origin remains valid for non-browser clients and does not bypass
+authentication or quotas. Origin enforcement is opt-in for existing applications.
+
+For public MCP with this option enabled, explicitly allowed browser origins and
+patterns are accepted by the MCP transport's origin guard as well. Its existing
+MCP host/origin settings remain in force. Normal MCP defaults are unchanged.
+Deployment IP/proxy trust, selected origins and preview patterns remain application
+configuration. No edits to `app.user_middleware` or identity callbacks are required.

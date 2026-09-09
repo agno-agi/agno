@@ -556,3 +556,12 @@ input limit. After: `completed` in 243 s, 1,666 discovered, 23 updated, 0 failed
 The quoted-attribute fix updated the four pages that kept `<Tab title="… > …">`
 and `ResponseField type="Record<…>"` tags; the only remaining component tags are
 the contributing guide's inline-code mentions.
+
+## 2026-09-09 browser origin policy
+
+- PASS: `browser_origins.py --check` constructs the documented configuration without database or provider calls.
+- PASS: 285 composed origin, MCP alias, public authorization and utility tests.
+- PASS: 154 additional JWT middleware/configuration tests.
+- PASS: full format and validation scripts.
+- Checks cover canonical/preview origins, duplicate and rejected origins, preflights, browser run admission, JWT error headers, workflow WebSockets, and 401/403/413/429 responses. Explicit `[]` now allows no browser origins; `None` retains configured defaults. Non-browser requests remain supported.
+- No production deployment or browser widget test was performed.

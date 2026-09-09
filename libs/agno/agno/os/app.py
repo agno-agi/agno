@@ -301,6 +301,8 @@ class AgentOS:
         user_isolation: bool = False,
         user_directory: Optional[Union[bool, "UserDirectory"]] = None,
         cors_allowed_origins: Optional[List[str]] = None,
+        cors_allowed_origin_regex: Optional[str] = None,
+        cors_merge_base_app_origins: bool = True,
         media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None,
         config: Optional[Union[str, AgentOSConfig]] = None,
         settings: Optional[AgnoAPISettings] = None,
@@ -382,7 +384,9 @@ class AgentOS:
                 ``agno.os.authz``) for control. Audit is not configured here: it lives on
                 ``Authorization(audit=...)``, since a change trail without a verified identity has
                 no actor to record.
-            cors_allowed_origins: List of allowed CORS origins (will be merged with default Agno domains)
+            cors_allowed_origins: Exact browser origins. None uses settings defaults; [] allows none.
+            cors_allowed_origin_regex: Optional full-match pattern for additional browser origins.
+            cors_merge_base_app_origins: Include existing base-app CORS origins/patterns (default True).
             media_storage: Backend the media routes read stored media from. Defaults to the first
                 one configured on an agent, team or workflow.
             tracing: If True, enables OpenTelemetry tracing for all agents and teams in the OS
@@ -546,8 +550,13 @@ class AgentOS:
         # open only on a no-auth OS, where every route is open. See _admin_api_routers, which
         # passes auth_enabled so the gate knows which mode it is in.
 
-        # CORS configuration - merge user-provided origins with defaults from settings
+        # Explicit origins replace settings defaults; base-app origins are merged separately.
         self.cors_allowed_origins = resolve_origins(cors_allowed_origins, self.settings.cors_origin_list)
+        self.cors_allowed_origin_regex = cors_allowed_origin_regex
+        self.cors_merge_base_app_origins = cors_merge_base_app_origins
+        from agno.os.middleware.cors import OriginPolicy
+
+        self._cors_origin_policy = OriginPolicy(self.cors_allowed_origins, cors_allowed_origin_regex)
         self.media_storage = media_storage
 
         # If True, run agent/team hooks as FastAPI background tasks
@@ -1663,7 +1672,15 @@ class AgentOS:
                 )
 
         # Update CORS middleware
-        update_cors_middleware(fastapi_app, self.cors_allowed_origins)  # type: ignore
+        origin_policy = update_cors_middleware(
+            fastapi_app,
+            self.cors_allowed_origins,
+            origin_regex=self.cors_allowed_origin_regex,
+            merge_existing=self.cors_merge_base_app_origins,
+        )
+        fastapi_app.state.cors_origin_policy = origin_policy
+        self._cors_origin_policy = origin_policy
+        self.cors_allowed_origins = list(origin_policy.origins)
 
         # Set agent_os_id and cors_allowed_origins on app state
         # This allows middleware (like JWT) to access these values
@@ -1732,7 +1749,11 @@ class AgentOS:
 
             fastapi_app.router.lifespan_context = public_lifespan
             fastapi_app.add_middleware(
-                PublicMiddleware, surface=self.public, agent_os=self, policy=fastapi_app.state.public_route_policy
+                PublicMiddleware,
+                surface=self.public,
+                agent_os=self,
+                policy=fastapi_app.state.public_route_policy,
+                origin_policy=origin_policy,
             )
 
         auth_configured = self._auth_configured()
@@ -1781,14 +1802,13 @@ class AgentOS:
             validate_mcp_routes(fastapi_app, routing_config, self._mcp_app)
             fastapi_app.add_middleware(MCPRoutingMiddleware, config=routing_config)
 
-        if self.public is not None:
-            from starlette.middleware.cors import CORSMiddleware
+        from starlette.middleware.cors import CORSMiddleware
 
-            # Keep preflights and admission/auth failures under the configured CORS policy.
-            cors = [middleware for middleware in fastapi_app.user_middleware if middleware.cls is CORSMiddleware]
-            fastapi_app.user_middleware[:] = cors + [
-                middleware for middleware in fastapi_app.user_middleware if middleware.cls is not CORSMiddleware
-            ]
+        # Preflights and auth/admission failures use the same configured CORS policy.
+        cors = [middleware for middleware in fastapi_app.user_middleware if middleware.cls is CORSMiddleware]
+        fastapi_app.user_middleware[:] = cors + [
+            middleware for middleware in fastapi_app.user_middleware if middleware.cls is not CORSMiddleware
+        ]
 
         if self.base_app is not None:
             self._base_app_prepared = True
@@ -1913,6 +1933,7 @@ class AgentOS:
         if self.user_isolation:
             middleware_kwargs["user_isolation"] = True
         middleware_kwargs["security_key"] = security_key
+        middleware_kwargs["cors_origin_policy"] = getattr(fastapi_app.state, "cors_origin_policy", None)
         algorithm = middleware_kwargs["algorithm"]
         verification_keys = middleware_kwargs["verification_keys"]
         jwks_file = middleware_kwargs["jwks_file"]
