@@ -42,6 +42,7 @@ DEFAULT_LIMITS = {
     "run": RateLimit(10, 50, 80, 3000),
     "cancel": RateLimit(10, 30, 50, 1000),
     "mcp": RateLimit(600, 1200, 5000, 20000),
+    "socket": RateLimit(30, 120, 500, 5000),
     "feedback": RateLimit(3, 30, 10, 500),
 }
 
