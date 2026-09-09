@@ -53,6 +53,10 @@ This example connects to the published Peer Cash MCP server to discover fiat pay
 
 This example shows how to choose which MCP protocol era `MCPTools` negotiates. The default `"legacy"` keeps the session-based era, where the connection is long-lived and `is_alive()` pings it. `"auto"` negotiates the newest era both sides support; the 2026-07-28 era is sessionless, so requests are self-contained and there is no connection to keep alive. Keep `"legacy"` for a server that gates access on initialize, holds per-session state, or elicits input mid-tool.
 
+13. Magic Hour Agent (`magic_hour.py`)
+
+This example connects to Magic Hour's hosted MCP server to create images and videos. It shows bearer authentication, long-running render handling, reuse of project IDs after timeouts, and exact output URL retrieval.
+
 ## Getting Started
 
 ### Prerequisites
@@ -72,6 +76,12 @@ Export your API keys:
 export OPENAI_API_KEY="your_openai_api_key"
 ```
 
+For the Magic Hour example, create a key in the [developer dashboard](https://magichour.ai/developer) and export it:
+
+```bash
+export MAGIC_HOUR_API_KEY="your_magic_hour_api_key"
+```
+
 > For the GitHub example, create a Github PAT following [these steps](https://github.com/modelcontextprotocol/servers/tree/main/src/github#setup).
 
 ### Run the Examples
@@ -83,6 +93,7 @@ python bgpt.py
 python structured_content.py
 python emem.py
 python peer_cash.py
+python magic_hour.py
 ```
 
 ## How It Works
