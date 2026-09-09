@@ -16,8 +16,8 @@ with audio input.
 
 ## Models
 
-Uses Gemini for native audio input. Replace the `Gemini(...)` line with an
-audio-capable model from another provider if needed.
+Uses Gemini for native audio input. Swap the `model="google:gemini-3.5-flash"`
+string for an audio-capable model from another provider if needed.
 
 ## Run
 

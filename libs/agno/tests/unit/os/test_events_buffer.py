@@ -155,3 +155,48 @@ class TestMultipleRuns:
         assert len(events_b) == 2
         assert events_b[0][0] == 6
         assert events_b[0][1].content == "b6"
+
+
+class TestPendingReap:
+    """Accept-side PENDING registrations for runs that execute on another
+    replica never advance locally; without a reap they accumulated forever
+    (the in-memory-stream-with-multi-replica config is warned against, but
+    a warning must not mean a leak)."""
+
+    def test_stale_pending_registration_is_reaped(self):
+        buf = EventsBuffer(max_events_per_run=10, cleanup_interval=60)
+        buf.register_run("r-pending")
+        buf.run_metadata["r-pending"]["last_updated"] -= 3600  # registered an hour ago
+
+        buf.cleanup_runs()
+
+        assert "r-pending" not in buf.run_metadata, "a stale PENDING registration must be reaped"
+
+    def test_fresh_pending_registration_is_kept(self):
+        buf = EventsBuffer(max_events_per_run=10, cleanup_interval=60)
+        buf.register_run("r-pending")
+
+        buf.cleanup_runs()
+
+        assert "r-pending" in buf.run_metadata, "a fresh PENDING registration must survive"
+
+
+class TestBackendRetentionParity:
+    def test_redis_defaults_mirror_the_wired_in_memory_buffer(self):
+        """The Redis stream's docstring claims its retention mirrors the
+        in-memory buffer; the old defaults (1000 events / 3600s) silently cut
+        a /resume client's replay depth 10x when switching backends."""
+        import inspect as _inspect
+
+        pytest = __import__("pytest")
+        pytest.importorskip("fakeredis", reason="fakeredis not installed")
+        from agno.os.event_streams.redis import RedisEventStream
+        from agno.os.managers import event_buffer
+
+        sig = _inspect.signature(RedisEventStream.__init__)
+        assert sig.parameters["maxlen"].default == event_buffer.max_events_per_run, (
+            "Redis maxlen default must mirror the wired in-memory buffer"
+        )
+        assert sig.parameters["ttl_seconds"].default == event_buffer.cleanup_interval, (
+            "Redis ttl default must mirror the wired in-memory cleanup interval"
+        )

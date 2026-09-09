@@ -1,14 +1,2 @@
-agno
+agno[google,os,yfinance]
 chromadb
-fastapi[standard]
-google-genai
-mcp
-nest_asyncio
-openinference-instrumentation-agno
-opentelemetry-api
-opentelemetry-sdk
-pgvector
-pillow
-psycopg[binary]
-sqlalchemy
-yfinance

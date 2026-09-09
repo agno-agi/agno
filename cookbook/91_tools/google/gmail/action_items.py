@@ -53,7 +53,7 @@ class ThreadActionItems(BaseModel):
 agent = Agent(
     name="Action Item Extractor",
     model=OpenAIResponses(id="gpt-5.5"),
-    tools=[GmailTools()],
+    tools=[GmailTools(max_results=10)],
     instructions=[
         "Search for the requested thread, then use get_thread to read all messages.",
         "Extract action items from the FULL conversation -- check every message.",

@@ -24,5 +24,6 @@ python cookbook/data_labeling/_06_image_classification/basic.py
 python cookbook/data_labeling/_06_image_classification/multilabel.py
 ```
 
-Requires `GOOGLE_API_KEY`. The samples use stable Wikimedia URLs - swap
-your own image URLs or local paths in the `Image(...)` call.
+Requires `GOOGLE_API_KEY`. The samples use stable public image URLs
+(Google sample assets and the agno public S3 bucket) - swap in your own
+image URLs or local paths in the `Image(...)` call.

@@ -17,6 +17,20 @@ def slack_error_code(exc: BaseException) -> Optional[str]:
     return None
 
 
+async def resolve_session_id(entity: Any, entity_id: str, channel_id: str, thread_ts: str) -> str:
+    # Sessions created before channel-scoped keys used "{entity_id}:{thread_ts}".
+    # Probe for existing legacy session so an upgrade doesn't orphan history.
+    legacy_id = f"{entity_id}:{thread_ts}"
+    try:
+        session = await entity.aget_session(session_id=legacy_id)
+        if session is not None:
+            return legacy_id
+    except Exception:
+        pass
+    # New format includes channel_id to prevent cross-channel collisions
+    return f"{entity_id}:{channel_id}:{thread_ts}"
+
+
 def task_id(agent_name: Optional[str], base_id: str) -> str:
     # Prefix card IDs per agent so concurrent tool calls from different
     # team members don't collide in the Slack stream
@@ -69,7 +83,10 @@ def extract_event_context(event: dict) -> Dict[str, Any]:
     return {
         "message_text": event.get("text", ""),
         "channel_id": event.get("channel", ""),
-        "user": event.get("user", ""),
+        # Human sender ID (U.../W...) — empty for webhook/legacy bot messages
+        "user": event.get("user") or "",
+        # Bot sender ID (B...) — present on all bot-authored messages
+        "bot_id": event.get("bot_id") or "",
         # Prefer existing thread; fall back to message ts for new conversations
         "thread_id": event.get("thread_ts") or event.get("ts", ""),
         # User-scoped token for assistant.search.context workspace search
@@ -119,6 +136,16 @@ async def resolve_slack_user(async_client: Any, slack_user_id: str) -> Tuple[str
     except Exception as e:
         log_warning(f"Failed to resolve Slack user {slack_user_id}: {str(e)}")
         return (slack_user_id, None)
+
+
+async def resolve_slack_bot(async_client: Any, bot_id: str) -> Tuple[str, Optional[str]]:
+    try:
+        resp = await async_client.bots_info(bot=bot_id)
+        bot = resp.get("bot", {}) if resp else {}
+        return (bot_id, bot.get("name") or None)
+    except Exception as e:
+        log_warning(f"Failed to resolve Slack bot {bot_id}: {str(e)}")
+        return (bot_id, None)
 
 
 class BotNameResolver:
@@ -263,8 +290,29 @@ async def open_chat_stream(
     )
 
 
+def slack_delivery_kwargs(unfurl_links: bool, unfurl_media: bool, mrkdwn: bool) -> Dict[str, Any]:
+    # mrkdwn=False means plaintext delivery: parse="none" stops Slack from
+    # linkifying bare URLs and link_names=False stops bare @name expansion. Note
+    # this does NOT neutralize control sequences already encoded as `<!channel>`
+    # / `<@U123>` — only parse="full" escapes those. Card bodies inert those
+    # characters directly (see builders.inert_code_span_text); the plain message
+    # path relies on the model not emitting pre-encoded sequences.
+    kwargs: Dict[str, Any] = {"unfurl_links": unfurl_links, "unfurl_media": unfurl_media, "mrkdwn": mrkdwn}
+    if not mrkdwn:
+        kwargs["parse"] = "none"
+        kwargs["link_names"] = False
+    return kwargs
+
+
 async def send_slack_message_async(
-    async_client: Any, channel: str, thread_ts: str, message: str, italics: bool = False
+    async_client: Any,
+    channel: str,
+    thread_ts: str,
+    message: str,
+    italics: bool = False,
+    unfurl_links: bool = True,
+    unfurl_media: bool = True,
+    mrkdwn: bool = True,
 ) -> None:
     if not message or not message.strip():
         return
@@ -274,13 +322,17 @@ async def send_slack_message_async(
             return "\n".join([f"_{line}_" for line in text.split("\n")])
         return text
 
+    delivery = slack_delivery_kwargs(unfurl_links, unfurl_media, mrkdwn)
+
     # Under Slack's 40K char limit with margin for batch prefix overhead
     max_len = 39900
     if len(message) <= max_len:
-        await async_client.chat_postMessage(channel=channel, text=_format(message), thread_ts=thread_ts)
+        await async_client.chat_postMessage(channel=channel, text=_format(message), thread_ts=thread_ts, **delivery)
         return
 
     message_batches = [message[i : i + max_len] for i in range(0, len(message), max_len)]
     for i, batch in enumerate(message_batches, 1):
         batch_message = f"[{i}/{len(message_batches)}] {batch}"
-        await async_client.chat_postMessage(channel=channel, text=_format(batch_message), thread_ts=thread_ts)
+        await async_client.chat_postMessage(
+            channel=channel, text=_format(batch_message), thread_ts=thread_ts, **delivery
+        )

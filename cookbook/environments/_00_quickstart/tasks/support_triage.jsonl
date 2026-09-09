@@ -1,0 +1,5 @@
+{"input": "I was charged twice for my July invoice — $49 each time. Please refund one of the charges.", "expected": "billing", "id": "double-charge"}
+{"input": "The export button on the reports page does nothing when I click it. The browser console shows a TypeError.", "expected": "bug", "id": "broken-export"}
+{"input": "It would be great if the dashboard had a dark mode — half my team works nights and the white background is rough.", "expected": "feature_request", "id": "dark-mode"}
+{"input": "I have not been able to log in since this morning, and the password reset email never arrives.", "expected": "account_access", "id": "locked-out"}
+{"input": "The app crashed while I was in the middle of paying, and now I see two pending charges on my card.", "expected": "billing", "id": "crash-then-charge"}

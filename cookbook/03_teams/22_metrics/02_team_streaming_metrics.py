@@ -17,7 +17,7 @@ from rich.pretty import pprint
 # ---------------------------------------------------------------------------
 assistant = Agent(
     name="Assistant",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     role="Helpful assistant that answers questions.",
 )
 
@@ -26,7 +26,7 @@ assistant = Agent(
 # ---------------------------------------------------------------------------
 team = Team(
     name="Streaming Team",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     members=[assistant],
     markdown=True,
 )

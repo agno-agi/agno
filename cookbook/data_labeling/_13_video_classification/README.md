@@ -26,3 +26,7 @@ python cookbook/data_labeling/_13_video_classification/with_confidence.py
 ```
 
 Requires `GOOGLE_API_KEY`. Uses Gemini for native video input.
+
+Note on the sample asset: `sample_seaview.mp4` is misnamed - the clip is
+a short lab scene (a scientist examining a sample through a microscope),
+not a sea view. Expect labels like `indoor` or `people`.

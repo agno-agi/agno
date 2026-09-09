@@ -1,49 +1,16 @@
 import base64
-import sys
-import types
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from agno.os.interfaces.telegram import Telegram
+from agno.os.interfaces.telegram.formatting import markdown_to_telegram_html
+from agno.os.interfaces.telegram.security import _is_dev_mode as is_development_mode
+from agno.os.interfaces.telegram.security import get_webhook_secret_token, validate_webhook_secret_token
 
-def _install_fake_telebot():
-    telebot = types.ModuleType("telebot")
-    telebot_async = types.ModuleType("telebot.async_telebot")
-    telebot_apihelper = types.ModuleType("telebot.apihelper")
-
-    class AsyncTeleBot:
-        def __init__(self, token=None):
-            self.token = token
-
-    class TeleBot:
-        def __init__(self, token=None):
-            self.token = token
-
-    class ApiTelegramException(Exception):
-        pass
-
-    telebot.TeleBot = TeleBot
-    telebot_async.AsyncTeleBot = AsyncTeleBot
-    telebot_apihelper.ApiTelegramException = ApiTelegramException
-    sys.modules.setdefault("telebot", telebot)
-    sys.modules.setdefault("telebot.async_telebot", telebot_async)
-    sys.modules.setdefault("telebot.apihelper", telebot_apihelper)
-
-
-_install_fake_telebot()
-
-from agno.os.interfaces.telegram import Telegram  # noqa: E402
-from agno.os.interfaces.telegram.formatting import markdown_to_telegram_html  # noqa: E402
-from agno.os.interfaces.telegram.security import (  # noqa: E402
-    _is_dev_mode as is_development_mode,
-)
-from agno.os.interfaces.telegram.security import (  # noqa: E402
-    get_webhook_secret_token,
-    validate_webhook_secret_token,
-)
-
+ROUTER_MODULE = "agno.os.interfaces.telegram.router"
 SECURITY_MODULE = "agno.os.interfaces.telegram.security"
 
 
@@ -175,22 +142,23 @@ class TestTelegramClass:
         monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
         agent = MagicMock()
         tg = Telegram(agent=agent)
-        router = tg.get_router()
+        with patch(f"{ROUTER_MODULE}.AsyncTeleBot", return_value=AsyncMock()):
+            router = tg.get_router()
         assert router is not None
         routes = [r.path for r in router.routes]
         assert "/telegram/status" in routes
         assert "/telegram/webhook" in routes
 
 
-ROUTER_MODULE = "agno.os.interfaces.telegram.router"
-
-
-def _make_app(monkeypatch, agent=None, team=None, workflow=None):
+def _make_app(monkeypatch, agent=None, team=None, workflow=None, mock_bot=None):
     monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
     monkeypatch.setenv("APP_ENV", "development")
     tg = Telegram(agent=agent, team=team, workflow=workflow)
     app = FastAPI()
-    app.include_router(tg.get_router())
+    if mock_bot is None:
+        mock_bot = AsyncMock()
+    with patch(f"{ROUTER_MODULE}.AsyncTeleBot", return_value=mock_bot):
+        app.include_router(tg.get_router())
     return app
 
 
@@ -264,7 +232,8 @@ class TestWebhookEndpoint:
         agent = MagicMock()
         tg = Telegram(agent=agent)
         app = FastAPI()
-        app.include_router(tg.get_router())
+        with patch(f"{ROUTER_MODULE}.AsyncTeleBot", return_value=AsyncMock()):
+            app.include_router(tg.get_router())
 
         with patch(f"{ROUTER_MODULE}.validate_webhook_secret_token", return_value=False):
             client = TestClient(app)
@@ -280,7 +249,8 @@ class TestWebhookEndpoint:
         agent = MagicMock()
         tg = Telegram(agent=agent)
         app = FastAPI()
-        app.include_router(tg.get_router())
+        with patch(f"{ROUTER_MODULE}.AsyncTeleBot", return_value=AsyncMock()):
+            app.include_router(tg.get_router())
         client = TestClient(app)
 
         resp = client.post(
@@ -296,7 +266,8 @@ class TestWebhookEndpoint:
         agent = MagicMock()
         tg = Telegram(agent=agent)
         app = FastAPI()
-        app.include_router(tg.get_router())
+        with patch(f"{ROUTER_MODULE}.AsyncTeleBot", return_value=AsyncMock()):
+            app.include_router(tg.get_router())
 
         with patch(f"{ROUTER_MODULE}.validate_webhook_secret_token", return_value=False):
             client = TestClient(app)

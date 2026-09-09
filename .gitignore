@@ -66,6 +66,9 @@ gmail_token.json
 calendar_token.json
 gdrive_token.json
 
+# xAI SuperGrok OAuth token (file-fallback store)
+xai_token.json
+
 .composio.lock
 
 # Coverage
@@ -102,3 +105,9 @@ CLAUDE_PRIVATE.md
 pyrightconfig.json
 .python-version
 CLAUDE_PRIVATE.md
+
+# generated synthetic-data outputs from data_labeling cookbooks (never committed)
+cookbook/data_labeling/*/data/generated/
+
+# cookbook rollout exports and baselines are run artifacts, never source
+data/generated/

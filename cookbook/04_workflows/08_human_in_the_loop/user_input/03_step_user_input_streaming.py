@@ -28,7 +28,7 @@ from agno.run.workflow import (
     WorkflowStartedEvent,
 )
 from agno.workflow.step import Step
-from agno.workflow.types import StepInput, StepOutput, UserInputField
+from agno.workflow.types import HumanReview, StepInput, StepOutput, UserInputField
 from agno.workflow.workflow import Workflow
 
 
@@ -72,31 +72,33 @@ workflow = Workflow(
         Step(
             name="generate_content",
             agent=content_agent,
-            requires_user_input=True,
-            user_input_message="Please provide your content preferences:",
-            user_input_schema=[
-                UserInputField(
-                    name="tone",
-                    field_type="str",
-                    description="Tone of the content",
-                    required=True,
-                    # Validation: only these values are allowed
-                    allowed_values=["formal", "casual", "technical"],
-                ),
-                UserInputField(
-                    name="length",
-                    field_type="str",
-                    description="Content length",
-                    required=True,
-                    allowed_values=["short", "medium", "long"],
-                ),
-                UserInputField(
-                    name="include_examples",
-                    field_type="bool",
-                    description="Include practical examples?",
-                    required=False,
-                ),
-            ],
+            human_review=HumanReview(
+                requires_user_input=True,
+                user_input_message="Please provide your content preferences:",
+                user_input_schema=[
+                    UserInputField(
+                        name="tone",
+                        field_type="str",
+                        description="Tone of the content",
+                        required=True,
+                        # Validation: only these values are allowed
+                        allowed_values=["formal", "casual", "technical"],
+                    ),
+                    UserInputField(
+                        name="length",
+                        field_type="str",
+                        description="Content length",
+                        required=True,
+                        allowed_values=["short", "medium", "long"],
+                    ),
+                    UserInputField(
+                        name="include_examples",
+                        field_type="bool",
+                        description="Include practical examples?",
+                        required=False,
+                    ),
+                ],
+            ),
         ),
         Step(name="format_output", executor=format_output),
     ],

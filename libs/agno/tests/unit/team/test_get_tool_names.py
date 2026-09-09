@@ -10,6 +10,7 @@ Regression test for: https://github.com/agno-agi/agno/issues/7039
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+from agno.registry import Registry
 from agno.run.base import RunContext
 from agno.run.team import TeamRunOutput
 from agno.session import TeamSession
@@ -244,6 +245,127 @@ def test_toolkit_level_and_per_function_instructions_both_reach_team():
     _resolve(team)
 
     assert team._tool_instructions == ["toolkit-func-rule", "toolkit-level-rule"]
+
+
+def test_rehydrated_toolkit_instructions_reach_team_once():
+    def first_tool() -> str:
+        return "first"
+
+    def second_tool() -> str:
+        return "second"
+
+    toolkit = Toolkit(
+        name="my_toolkit",
+        tools=[first_tool, second_tool],
+        instructions="toolkit-level-rule",
+        add_instructions=True,
+    )
+    toolkit.functions["first_tool"].instructions = "first-function-rule"
+    toolkit.functions["second_tool"].instructions = "second-function-rule"
+    registry = Registry(tools=[toolkit])
+    stored_tools = []
+    for function in toolkit.get_functions().values():
+        function_dict = function.to_dict()
+        function_dict["toolkit"] = toolkit.name
+        stored_tools.append(function_dict)
+
+    team = Team(name="t", members=[], tools=registry.rehydrate_functions(stored_tools)).deep_copy()
+    assert team.tools is not None
+    assert all(isinstance(tool, Function) and tool.source_toolkit is toolkit for tool in team.tools)
+    _resolve(team)
+
+    assert team._tool_instructions == ["first-function-rule", "second-function-rule", "toolkit-level-rule"]
+
+
+def test_duplicate_last_member_still_emits_toolkit_guidance_team():
+    """Guidance is emitted at the toolkit's last list position; a duplicate
+    there is skipped as a tool but still owes the toolkit its guidance."""
+
+    def first_tool() -> str:
+        return "first"
+
+    def second_tool() -> str:
+        return "second"
+
+    toolkit = Toolkit(
+        name="my_toolkit",
+        tools=[first_tool, second_tool],
+        instructions="toolkit-level-rule",
+        add_instructions=True,
+    )
+    registry = Registry(tools=[toolkit])
+    stored = []
+    for function in toolkit.get_functions().values():
+        function_dict = function.to_dict()
+        function_dict["toolkit"] = toolkit.name
+        stored.append(function_dict)
+    stored.append(dict(stored[-1]))
+
+    team = Team(name="t", members=[], tools=registry.rehydrate_functions(stored))
+    _resolve(team)
+
+    assert team._tool_instructions == ["toolkit-level-rule"]
+
+
+def test_rehydrated_subset_does_not_get_the_whole_toolkits_guidance_team():
+    """A team that persisted one member of a toolkit must not be handed guidance
+    naming the members it was not given."""
+
+    def first_tool() -> str:
+        return "first"
+
+    def second_tool() -> str:
+        return "second"
+
+    toolkit = Toolkit(
+        name="my_toolkit",
+        tools=[first_tool, second_tool],
+        instructions="toolkit-level-rule",
+        add_instructions=True,
+    )
+    toolkit.functions["first_tool"].instructions = "first-function-rule"
+    registry = Registry(tools=[toolkit])
+    stored = toolkit.get_functions()["first_tool"].to_dict()
+    stored["toolkit"] = toolkit.name
+
+    team = Team(name="t", members=[], tools=registry.rehydrate_functions([stored]))
+    _resolve(team)
+
+    assert team._tool_instructions == ["first-function-rule"]
+
+
+def test_live_toolkit_beside_rehydrated_members_emits_guidance_once_team():
+    """Both representations of one toolkit in a team's tools list must read the
+    same as the live Toolkit alone, including after deep_copy."""
+
+    def first_tool() -> str:
+        return "first"
+
+    def second_tool() -> str:
+        return "second"
+
+    toolkit = Toolkit(
+        name="my_toolkit",
+        tools=[first_tool, second_tool],
+        instructions="toolkit-level-rule",
+        add_instructions=True,
+    )
+    toolkit.functions["first_tool"].instructions = "first-function-rule"
+    toolkit.functions["second_tool"].instructions = "second-function-rule"
+    registry = Registry(tools=[toolkit])
+    stored = toolkit.get_functions()["first_tool"].to_dict()
+    stored["toolkit"] = toolkit.name
+    mixed = registry.rehydrate_functions([stored]) + [toolkit]
+
+    expected = ["first-function-rule", "second-function-rule", "toolkit-level-rule"]
+
+    team = Team(name="t", members=[], tools=mixed)
+    _resolve(team)
+    assert team._tool_instructions == expected
+
+    copied = Team(name="t", members=[], tools=mixed).deep_copy()
+    _resolve(copied)
+    assert copied._tool_instructions == expected
 
 
 def test_toolkit_per_function_add_instructions_false_is_respected_team():

@@ -61,7 +61,6 @@ agent = Agent(
     model=OpenAIChat(id="gpt-5.2"),
     tools=[YFinanceTools()],
     instructions="You are a stock price agent. You check and return the current price of a stock.",
-    debug_mode=True,
     output_schema=StockPrice,
 )
 

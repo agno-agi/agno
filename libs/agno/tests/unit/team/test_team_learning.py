@@ -16,6 +16,7 @@ from agno.agent.agent import Agent
 from agno.learn.config import LearnedKnowledgeConfig, LearningMode, UserMemoryConfig, UserProfileConfig
 from agno.learn.machine import LearningMachine
 from agno.run import RunContext
+from agno.run.team import TeamRunOutput
 from agno.session import TeamSession
 from agno.team._init import _set_learning_machine
 from agno.team._messages import aget_system_message, get_system_message
@@ -160,6 +161,11 @@ class TestGetSystemMessageLearningContext:
             user_id="user-456",
             session_id="sess-123",
             team_id="my-team",
+            message=None,
+            run_context=run_context,
+            metadata=None,
+            dependencies=None,
+            session_state=None,
         )
 
     def test_learning_context_not_added_when_build_context_returns_none(self, mock_db, mock_model, member_agent):
@@ -186,6 +192,11 @@ class TestGetSystemMessageLearningContext:
             user_id=None,
             session_id="sess-123",
             team_id="test-team",
+            message=None,
+            run_context=None,
+            metadata=None,
+            dependencies=None,
+            session_state=None,
         )
 
     def test_learning_context_forwards_empty_user_id(self, mock_db, mock_model, member_agent):
@@ -206,6 +217,11 @@ class TestGetSystemMessageLearningContext:
             user_id="",
             session_id="sess-123",
             team_id="test-team",
+            message=None,
+            run_context=run_context,
+            metadata=None,
+            dependencies=None,
+            session_state=None,
         )
 
     def test_custom_system_message_bypasses_learning_context(self, mock_db, mock_model, member_agent):
@@ -302,6 +318,11 @@ class TestAgetSystemMessageLearningContext:
             user_id="async-user",
             session_id="async-sess",
             team_id="async-team",
+            message=None,
+            run_context=run_context,
+            metadata=None,
+            dependencies=None,
+            session_state=None,
         )
 
     @pytest.mark.asyncio
@@ -345,6 +366,11 @@ class TestAgetSystemMessageLearningContext:
             user_id=None,
             session_id="async-sess",
             team_id="test-team",
+            message=None,
+            run_context=None,
+            metadata=None,
+            dependencies=None,
+            session_state=None,
         )
 
 
@@ -701,3 +727,63 @@ class TestLearningContextFalseyValues:
             assert "None" not in msg.content
         assert "\n\n\n" not in msg.content
         team._learning.abuild_context.assert_awaited_once()
+
+
+class TestSystemMessageOverrideCompatibility:
+    """Team.get_system_message is a public extension point.
+
+    The framework calls the BOUND method, so a subclass written against the
+    pre-2.8.4 signature is what actually runs - passing a new kwarg
+    unconditionally would fail every run of such a team.
+    """
+
+    def test_legacy_subclass_override_still_runs(self, mock_db, mock_model, member_agent):
+        from agno.team._messages import _get_run_messages
+        from agno.team.team import Team
+
+        class BannerTeam(Team):
+            def get_system_message(
+                self,
+                session,
+                run_context=None,
+                audio=None,
+                images=None,
+                videos=None,
+                files=None,
+                tools=None,
+                add_session_state_to_context=None,
+            ):
+                message = super().get_system_message(
+                    session=session,
+                    run_context=run_context,
+                    audio=audio,
+                    images=images,
+                    videos=videos,
+                    files=files,
+                    tools=tools,
+                    add_session_state_to_context=add_session_state_to_context,
+                )
+                if message is not None:
+                    message.content = "[BANNER]\n" + str(message.content)
+                return message
+
+        team = BannerTeam(db=mock_db, id="t", name="T", members=[member_agent])
+        team.model = mock_model
+        run_messages = _get_run_messages(
+            team,
+            run_response=TeamRunOutput(run_id="r", session_id="s"),
+            run_context=RunContext(run_id="r", session_id="s"),
+            input_message="hello",
+            session=TeamSession(session_id="s"),
+        )
+        assert run_messages.system_message is not None
+        assert str(run_messages.system_message.content).startswith("[BANNER]")
+
+    def test_current_signature_still_receives_the_input(self, mock_db, mock_model, member_agent):
+        from agno.team._messages import _input_kwarg
+        from agno.team.team import Team
+
+        team = Team(db=mock_db, id="t2", name="T2", members=[member_agent])
+        assert _input_kwarg(team.get_system_message, "hello") == {"input": "hello"}
+        assert _input_kwarg(lambda session: None, "hello") == {}
+        assert _input_kwarg(lambda **kw: None, "hello") == {"input": "hello"}

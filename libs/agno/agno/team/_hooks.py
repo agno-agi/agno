@@ -37,6 +37,7 @@ from agno.utils.events import (
 from agno.utils.hooks import (
     copy_args_for_background,
     filter_hook_args,
+    get_hook_name,
     is_guardrail_hook,
     should_run_hook_in_background,
 )
@@ -281,7 +282,7 @@ def _execute_pre_hooks(
                 except (InputCheckError, OutputCheckError):
                     raise
                 except Exception:
-                    log_exception(f"Background guardrail '{hook.__name__}' execution failed")
+                    log_exception(f"Background guardrail '{get_hook_name(hook)}' execution failed")
             else:
                 pending_bg_hooks.append(hook)
         bg_args = copy_args_for_background(all_args)
@@ -302,7 +303,7 @@ def _execute_pre_hooks(
             yield handle_event(  # type: ignore
                 run_response=run_response,
                 event=create_team_pre_hook_started_event(
-                    from_run_response=run_response, run_input=run_input, pre_hook_name=hook.__name__
+                    from_run_response=run_response, run_input=run_input, pre_hook_name=get_hook_name(hook)
                 ),
                 events_to_skip=team.events_to_skip,
                 store_events=team.store_events,
@@ -316,7 +317,7 @@ def _execute_pre_hooks(
                 yield handle_event(  # type: ignore
                     run_response=run_response,
                     event=create_team_pre_hook_completed_event(
-                        from_run_response=run_response, run_input=run_input, pre_hook_name=hook.__name__
+                        from_run_response=run_response, run_input=run_input, pre_hook_name=get_hook_name(hook)
                     ),
                     events_to_skip=team.events_to_skip,
                     store_events=team.store_events,
@@ -381,7 +382,7 @@ async def _aexecute_pre_hooks(
                 except (InputCheckError, OutputCheckError):
                     raise
                 except Exception:
-                    log_exception(f"Background guardrail '{hook.__name__}' execution failed")
+                    log_exception(f"Background guardrail '{get_hook_name(hook)}' execution failed")
             else:
                 pending_bg_hooks.append(hook)
         bg_args = copy_args_for_background(all_args)
@@ -402,7 +403,7 @@ async def _aexecute_pre_hooks(
             yield handle_event(  # type: ignore
                 run_response=run_response,
                 event=create_team_pre_hook_started_event(
-                    from_run_response=run_response, run_input=run_input, pre_hook_name=hook.__name__
+                    from_run_response=run_response, run_input=run_input, pre_hook_name=get_hook_name(hook)
                 ),
                 events_to_skip=team.events_to_skip,
                 store_events=team.store_events,
@@ -419,7 +420,7 @@ async def _aexecute_pre_hooks(
                 yield handle_event(  # type: ignore
                     run_response=run_response,
                     event=create_team_pre_hook_completed_event(
-                        from_run_response=run_response, run_input=run_input, pre_hook_name=hook.__name__
+                        from_run_response=run_response, run_input=run_input, pre_hook_name=get_hook_name(hook)
                     ),
                     events_to_skip=team.events_to_skip,
                     store_events=team.store_events,
@@ -480,7 +481,7 @@ def _execute_post_hooks(
                 except (InputCheckError, OutputCheckError):
                     raise
                 except Exception:
-                    log_exception(f"Background guardrail '{hook.__name__}' execution failed")
+                    log_exception(f"Background guardrail '{get_hook_name(hook)}' execution failed")
             else:
                 pending_bg_hooks.append(hook)
         bg_args = copy_args_for_background(all_args)
@@ -502,7 +503,7 @@ def _execute_post_hooks(
                 run_response=run_output,
                 event=create_team_post_hook_started_event(  # type: ignore
                     from_run_response=run_output,
-                    post_hook_name=hook.__name__,
+                    post_hook_name=get_hook_name(hook),
                 ),
                 events_to_skip=team.events_to_skip,
                 store_events=team.store_events,
@@ -517,7 +518,7 @@ def _execute_post_hooks(
                     run_response=run_output,
                     event=create_team_post_hook_completed_event(  # type: ignore
                         from_run_response=run_output,
-                        post_hook_name=hook.__name__,
+                        post_hook_name=get_hook_name(hook),
                     ),
                     events_to_skip=team.events_to_skip,
                     store_events=team.store_events,
@@ -578,7 +579,7 @@ async def _aexecute_post_hooks(
                 except (InputCheckError, OutputCheckError):
                     raise
                 except Exception:
-                    log_exception(f"Background guardrail '{hook.__name__}' execution failed")
+                    log_exception(f"Background guardrail '{get_hook_name(hook)}' execution failed")
             else:
                 pending_bg_hooks.append(hook)
         bg_args = copy_args_for_background(all_args)
@@ -600,7 +601,7 @@ async def _aexecute_post_hooks(
                 run_response=run_output,
                 event=create_team_post_hook_started_event(  # type: ignore
                     from_run_response=run_output,
-                    post_hook_name=hook.__name__,
+                    post_hook_name=get_hook_name(hook),
                 ),
                 events_to_skip=team.events_to_skip,
                 store_events=team.store_events,
@@ -618,7 +619,7 @@ async def _aexecute_post_hooks(
                     run_response=run_output,
                     event=create_team_post_hook_completed_event(  # type: ignore
                         from_run_response=run_output,
-                        post_hook_name=hook.__name__,
+                        post_hook_name=get_hook_name(hook),
                     ),
                     events_to_skip=team.events_to_skip,
                     store_events=team.store_events,

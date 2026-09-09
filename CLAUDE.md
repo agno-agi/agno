@@ -1,6 +1,6 @@
-# CLAUDE.md — Agno
+# Agno - Agent Instructions
 
-Instructions for Claude Code when working on this codebase.
+Instructions for AI coding agents (Claude Code, Codex, Cursor, etc.) working on this codebase.
 
 ---
 
@@ -234,13 +234,14 @@ gh api repos/agno-agi/agno/pulls/<PR_NUMBER> -X PATCH -f body="$(cat /path/to/bo
 ## Don't
 
 - Don't implement features without checking for a design doc first
+- Don't reference `specs/` paths, spec section numbers, or ADR numbers in code comments, docstrings, or user-facing strings — specs are private; every comment must state its constraint standalone
 - Don't use f-strings for print lines where there are no variables
 - Don't use emojis in examples and print lines
 - Don't skip async variants of public methods
 - Don't push code without running `./scripts/format.sh` and `./scripts/validate.sh`
 - Don't submit a PR without a detailed PR description. Always follow the PR template provided in `.github/pull_request_template.md`.
 - Don't use `OpenAIChat` in cookbooks or examples — use `OpenAIResponses` instead
-- Don't use `gpt-4o` or `gpt-4o-mini` in cookbooks or examples — use `gpt-5.5` instead
+- Don't use `gpt-4o` or `gpt-4o-mini` in cookbooks or examples — use `gpt-5.6-luna` instead
 
 ---
 
@@ -253,5 +254,5 @@ When running in GitHub Actions (CI), always end your response with a plain-text 
 Agno-specific checks to always verify:
 - Both sync and async variants exist for all new public methods
 - No agent creation inside loops (agents should be reused)
-- CLAUDE.md coding patterns are followed
+- Coding patterns in this file are followed
 - No f-strings for print lines where there are no variables

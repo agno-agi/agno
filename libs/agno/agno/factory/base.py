@@ -3,12 +3,13 @@
 import inspect
 import json
 from dataclasses import replace
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, Generic, Optional, Type, TypeVar, Union
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, Generic, Optional, Type, TypeVar, Union
 
 from pydantic import BaseModel
 
 if TYPE_CHECKING:
     from agno.db.base import AsyncBaseDb, BaseDb
+    from agno.tools.component import ComponentTool
 
 from agno.factory.utils import (
     FactoryError,
@@ -59,6 +60,28 @@ class BaseFactory(Generic[T]):
         self.name = name
         self.description = description
         self.input_schema = input_schema
+
+    def as_tool(
+        self,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        title: Optional[str] = None,
+        annotations: Optional[Dict[str, Any]] = None,
+    ) -> "ComponentTool":
+        """Publish this factory as a tool with its own model-facing name,
+        description, title, and behaviour annotations, for surfaces that turn components into tools -- today the AgentOS
+        MCP server: ``MCPConfig(tools=[factory.as_tool(name=..., description=...)])``.
+        Every override is optional; the factory ``id`` remains the run/scope handle,
+        and the component is built per request as on every other surface.
+
+        ``title`` is the human-facing display name; ``annotations`` are MCP behaviour
+        hints (``readOnlyHint``, ``destructiveHint``, ``idempotentHint``,
+        ``openWorldHint``) merged over the publishing surface's defaults -- see
+        :mod:`agno.tools.annotations`.
+        """
+        from agno.tools.component import ComponentTool
+
+        return ComponentTool(component=self, name=name, description=description, title=title, annotations=annotations)
 
     def validate_input(self, raw_input: Any) -> Any:
         """Validate and parse raw factory_input against input_schema.

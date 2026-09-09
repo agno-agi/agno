@@ -1,73 +1,62 @@
-"""Minimal example for AgentOS."""
+"""
+Hello AgentOS
+=============
+
+Serve one persistent agent as a FastAPI application. After the server starts,
+open http://localhost:7777/config to inspect the API surface, then connect the
+server to the AgentOS control plane at https://os.agno.com.
+
+Prerequisites: OPENAI_API_KEY and internet access to https://docs.agno.com/mcp
+Run: .venvs/demo/bin/python cookbook/05_agent_os/basic.py
+Try: Open http://localhost:7777/config, then ask "How do I create an AgentOS?"
+"""
 
 from agno.agent import Agent
-from agno.db.postgres import PostgresDb
-from agno.models.openai import OpenAIChat
+from agno.db.sqlite import SqliteDb
+from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS
-from agno.team import Team
-from agno.workflow.step import Step
-from agno.workflow.workflow import Workflow
+from agno.tools.mcp import MCPTools
 
 # ---------------------------------------------------------------------------
-# Create Example
+# Create Database
 # ---------------------------------------------------------------------------
 
-# Setup the database
-db = PostgresDb(id="basic-db", db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
+db = SqliteDb(
+    id="hello-agent-os-db",
+    db_file="tmp/agent_os.db",
+)
 
-# Setup basic agents, teams and workflows
-basic_agent = Agent(
-    name="Basic Agent",
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
+agno_assist = Agent(
+    id="agno-assist",
+    name="Agno Assist",
+    model=OpenAIResponses(id="gpt-5.5"),
     db=db,
-    enable_session_summaries=True,
-    update_memory_on_run=True,
+    tools=[MCPTools(url="https://docs.agno.com/mcp")],
+    instructions="Answer questions about Agno using the documentation tools.",
+    add_datetime_to_context=True,
     add_history_to_context=True,
     num_history_runs=3,
-    add_datetime_to_context=True,
     markdown=True,
 )
-basic_team = Team(
-    id="basic-team",
-    name="Basic Team",
-    model=OpenAIChat(id="gpt-4o"),
-    db=db,
-    members=[basic_agent],
-    update_memory_on_run=True,
-)
-basic_workflow = Workflow(
-    id="basic-workflow",
-    name="Basic Workflow",
-    description="Just a simple workflow",
-    db=db,
-    steps=[
-        Step(
-            name="step1",
-            description="Just a simple step",
-            agent=basic_agent,
-        )
-    ],
-    add_workflow_history_to_steps=True,
-)
 
-# Setup our AgentOS app
+# ---------------------------------------------------------------------------
+# Create AgentOS
+# ---------------------------------------------------------------------------
+
 agent_os = AgentOS(
-    description="Example app for basic agent, team and workflow",
-    agents=[basic_agent],
-    teams=[basic_team],
-    workflows=[basic_workflow],
+    id="hello-agent-os",
+    description="A minimal AgentOS with one persistent agent.",
+    agents=[agno_assist],
 )
 app = agent_os.get_app()
 
-
 # ---------------------------------------------------------------------------
-# Run Example
+# Run AgentOS
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    """Run your AgentOS.
-
-    You can see the configuration and available apps at:
-    http://localhost:7777/config
-
-    """
     agent_os.serve(app="basic:app", reload=True)

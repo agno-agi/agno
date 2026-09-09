@@ -1,6 +1,7 @@
 """Learnings API router -- CRUD over the agno_learnings table."""
 
 import logging
+import re
 from typing import Optional, Union, cast
 from uuid import uuid4
 
@@ -8,7 +9,13 @@ from fastapi import Depends, HTTPException, Path, Query, Request
 from fastapi.routing import APIRouter
 
 from agno.db.base import AsyncBaseDb, BaseDb
-from agno.learn.utils import IDENTITY_KEYED_LEARNING_TYPES, build_learning_id
+from agno.exceptions import AgnoError
+from agno.learn.utils import (
+    DEFAULT_LEARNING_NAMESPACE,
+    IDENTITY_KEYED_LEARNING_TYPES,
+    build_learning_id,
+    same_user,
+)
 from agno.os.auth import get_authentication_dependency
 from agno.os.middleware.user_scope import get_scoped_user_id
 from agno.os.routers.learnings.schema import LearningCreate, LearningResponse, LearningUpdate, LearningUserStats
@@ -23,10 +30,25 @@ from agno.os.schema import (
     ValidationErrorResponse,
 )
 from agno.os.settings import AgnoAPISettings
-from agno.os.utils import get_db
+from agno.os.utils import AgnoHTTPException, get_db
 from agno.remote.base import RemoteDb
 
 logger = logging.getLogger(__name__)
+
+# The entity_memory key under namespace="user" is "entity_user_<16 hex>_<type>_<id>", where the
+# hex segment is a digest of the owning user. Any other namespace is interpolated verbatim into
+# "entity_<namespace>_<type>_<id>". A namespace opening on that digest reproduces some user's
+# key: the bare digest matches it directly, and a digest carrying further segments matches it
+# once the type and id segments shift right, which any underscore in the entity type or the
+# entity slug allows. entity_memory creates reject the whole family.
+_RESERVED_ENTITY_NAMESPACE = re.compile(r"user_[0-9a-f]{16}(_.*)?")
+
+
+def _duplicate_identity_detail(learning_type: str, learning_id: str) -> str:
+    return (
+        f"A '{learning_type}' learning already exists for this identity "
+        f"(id '{learning_id}'). Use PATCH /learnings/{learning_id} to update it."
+    )
 
 
 def get_learnings_router(
@@ -141,6 +163,8 @@ def _attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBas
                 )
         except NotImplementedError:
             raise HTTPException(status_code=501, detail="Learnings not supported by the configured database")
+        except AgnoError as e:
+            raise AgnoHTTPException(e)
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to list learnings: {e}")
 
@@ -168,7 +192,11 @@ def _attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBas
             "reads/writes — provide those fields (else 422), and if a record already exists the "
             "request is rejected with 409 (use PATCH to update it). Other types get a generated id. "
             "For a scoped (non-admin) caller, the body's `user_id` must be omitted/null or match the "
-            "caller (mismatch → 403); admins and unscoped callers may set any `user_id`."
+            "caller (mismatch → 403); admins and unscoped callers may set any `user_id`. "
+            "An `entity_memory` record whose body omits `namespace` is stored under the `global` "
+            "default; the endpoint cannot see how a given store is configured, so a caller writing "
+            'for a store running with `namespace="user"` or a custom namespace must pass '
+            "`namespace` explicitly or the record will not be visible to it."
         ),
     )
     async def create_learning(
@@ -186,6 +214,20 @@ def _attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBas
         if isinstance(db, RemoteDb):
             raise HTTPException(status_code=501, detail="Learnings endpoints not supported on remote DBs")
 
+        if (
+            body.learning_type == "entity_memory"
+            and body.namespace is not None
+            and _RESERVED_ENTITY_NAMESPACE.fullmatch(body.namespace)
+        ):
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"namespace '{body.namespace}' is reserved: it has the key shape entity_memory "
+                    'uses for namespace="user" records, so a record stored under it would occupy '
+                    "another user's key. Choose a different namespace."
+                ),
+            )
+
         # The learning stores key their records by a deterministic id derived from the identity
         # fields, not a random uuid. A POST must use that same id, otherwise the record is
         # invisible to the agent (which reads/writes the deterministic id) and a duplicate row
@@ -200,15 +242,29 @@ def _attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBas
             namespace=body.namespace,
         )
         if body.learning_type in IDENTITY_KEYED_LEARNING_TYPES and deterministic_id is None:
-            raise HTTPException(
-                status_code=422,
-                detail=(
+            if body.learning_type == "entity_memory" and body.namespace == "user":
+                # user_id is an identity field of this key, not just an owner column, so a
+                # caller who supplied entity_id + entity_type still lands here without it.
+                detail = (
+                    'entity_memory under namespace="user" is keyed by the owning user as well as the '
+                    "entity; provide user_id together with entity_id + entity_type so the record "
+                    "reconciles with the agent's store."
+                )
+            else:
+                detail = (
                     f"learning_type '{body.learning_type}' is keyed by its identity fields; provide the "
                     "required field(s) (user_id, session_id, or entity_id + entity_type) so the record "
                     "reconciles with the agent's store."
-                ),
-            )
+                )
+            raise HTTPException(status_code=422, detail=detail)
         learning_id = deterministic_id or str(uuid4())
+
+        # The entity store filters reads by the namespace column, and the derived id
+        # already defaulted a falsy namespace -- store the same default, or the row's
+        # key would say "global" while its column says NULL or "" and no read ever finds it.
+        namespace = body.namespace
+        if body.learning_type == "entity_memory" and not namespace:
+            namespace = DEFAULT_LEARNING_NAMESPACE
 
         try:
             if isinstance(db, AsyncBaseDb):
@@ -217,10 +273,7 @@ def _attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBas
                 if deterministic_id is not None and await db.get_learning_by_id(learning_id) is not None:
                     raise HTTPException(
                         status_code=409,
-                        detail=(
-                            f"A '{body.learning_type}' learning already exists for this identity "
-                            f"(id '{learning_id}'). Use PATCH /learnings/{learning_id} to update it."
-                        ),
+                        detail=_duplicate_identity_detail(body.learning_type, learning_id),
                     )
                 await db.upsert_learning(
                     id=learning_id,
@@ -230,7 +283,7 @@ def _attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBas
                     agent_id=body.agent_id,
                     team_id=body.team_id,
                     session_id=body.session_id,
-                    namespace=body.namespace,
+                    namespace=namespace,
                     entity_id=body.entity_id,
                     entity_type=body.entity_type,
                     metadata=body.metadata,
@@ -241,10 +294,7 @@ def _attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBas
                 if deterministic_id is not None and sync_db.get_learning_by_id(learning_id) is not None:
                     raise HTTPException(
                         status_code=409,
-                        detail=(
-                            f"A '{body.learning_type}' learning already exists for this identity "
-                            f"(id '{learning_id}'). Use PATCH /learnings/{learning_id} to update it."
-                        ),
+                        detail=_duplicate_identity_detail(body.learning_type, learning_id),
                     )
                 sync_db.upsert_learning(
                     id=learning_id,
@@ -254,7 +304,7 @@ def _attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBas
                     agent_id=body.agent_id,
                     team_id=body.team_id,
                     session_id=body.session_id,
-                    namespace=body.namespace,
+                    namespace=namespace,
                     entity_id=body.entity_id,
                     entity_type=body.entity_type,
                     metadata=body.metadata,
@@ -264,6 +314,8 @@ def _attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBas
             raise HTTPException(status_code=501, detail="Learnings not supported by the configured database")
         except HTTPException:
             raise  # e.g. the 409 conflict above
+        except AgnoError as e:
+            raise AgnoHTTPException(e)
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to create learning: {e}")
 
@@ -333,6 +385,8 @@ def _attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBas
                 )
         except NotImplementedError:
             raise HTTPException(status_code=501, detail="Learnings not supported by the configured database")
+        except AgnoError as e:
+            raise AgnoHTTPException(e)
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to get learning users: {e}")
 
@@ -387,6 +441,8 @@ def _attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBas
                 cast(BaseDb, db).delete_user_learnings(user_id, learning_type=learning_type)
         except NotImplementedError:
             raise HTTPException(status_code=501, detail="Learnings not supported by the configured database")
+        except AgnoError as e:
+            raise AgnoHTTPException(e)
         except Exception as e:
             # Don't report a destructive bulk delete as a success (204) when it failed.
             raise HTTPException(status_code=500, detail=f"Failed to delete user learnings: {e}")
@@ -459,6 +515,8 @@ def _attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBas
                 matched = cast(BaseDb, db).update_learning(learning_id, content=new_content, metadata=new_metadata)
         except NotImplementedError:
             raise HTTPException(status_code=501, detail="Learnings not supported by the configured database")
+        except AgnoError as e:
+            raise AgnoHTTPException(e)
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to update learning: {e}")
 
@@ -513,6 +571,8 @@ async def _fetch_learning(db: Union[BaseDb, AsyncBaseDb, RemoteDb], learning_id:
             record = cast(BaseDb, db).get_learning_by_id(learning_id)
     except NotImplementedError:
         raise HTTPException(status_code=501, detail="Learnings not supported by the configured database")
+    except AgnoError as e:
+        raise AgnoHTTPException(e)
     except Exception as e:
         # A DB error is not "not found" -- surface it rather than emit a misleading 404.
         raise HTTPException(status_code=500, detail=f"Failed to fetch learning: {e}")
@@ -533,6 +593,10 @@ def _enforce_user_scope(request: Request, record: dict, *, mutating: bool = Fals
       to any authenticated caller, but mutating them (``mutating=True``, i.e. PATCH/DELETE) is
       admin-only -- a regular user must not overwrite or delete shared rows it doesn't own.
     - A record owned by a different user returns 404 (not 403) to avoid leaking which IDs exist.
+
+    Ownership compares as strings (``same_user``): only the SQL adapters type the ``user_id``
+    column and coerce on write, so a store that keeps whatever the writer passed holds the
+    owner in the writer's type, while the request carries it as the JWT subject string.
     """
     scoped_user_id = get_scoped_user_id(request)
     if scoped_user_id is None:
@@ -544,5 +608,5 @@ def _enforce_user_scope(request: Request, record: dict, *, mutating: bool = Fals
                 status_code=403, detail="Only admins can modify learnings that have no owner (user_id is null)"
             )
         return
-    if record_user_id != scoped_user_id:
+    if not same_user(record_user_id, scoped_user_id):
         raise HTTPException(status_code=404, detail="Learning not found")

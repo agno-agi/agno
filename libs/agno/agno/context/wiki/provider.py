@@ -39,7 +39,16 @@ if TYPE_CHECKING:
 
 
 class WikiContextProvider(ContextProvider):
-    """Read + write access to a directory of markdown files via two tools."""
+    """Read + write access to a directory of markdown files via two tools.
+
+    ``write_tools`` swaps the write sub-agent's workspace toolset
+    (default: a read + write ``Workspace`` over the backend path); the
+    ``web`` backend's tools are still appended when wired. The default
+    ``write_instructions`` name the default workspace tools, so a custom
+    ``write_tools`` usually needs a matching ``write_instructions``
+    override. ``mode=ContextMode.tools`` is a read-only surface and
+    deliberately ignores ``write_tools``.
+    """
 
     def __init__(
         self,
@@ -49,13 +58,25 @@ class WikiContextProvider(ContextProvider):
         name: str | None = None,
         read_instructions: str | None = None,
         write_instructions: str | None = None,
+        write_tools: list | None = None,
         mode: ContextMode = ContextMode.default,
         model: Model | None = None,
+        query_timeout: float | None = None,
         read: bool = True,
         write: bool = True,
         web: ContextBackend | None = None,
+        stream_sub_agent_events: bool = True,
     ) -> None:
-        super().__init__(id=id, name=name, mode=mode, model=model, read=read, write=write)
+        super().__init__(
+            id=id,
+            name=name,
+            mode=mode,
+            model=model,
+            query_timeout=query_timeout,
+            read=read,
+            write=write,
+            stream_sub_agent_events=stream_sub_agent_events,
+        )
         self.backend: WikiBackend = backend
         # Optional web backend for ingestion. When set, the write
         # sub-agent gets the backend's tools (typically web_search +
@@ -65,6 +86,7 @@ class WikiContextProvider(ContextProvider):
         # the wiki on purpose: a "what does the wiki say" query
         # should answer from the wiki, not silently consult the web.
         self.web: ContextBackend | None = web
+        self.write_tools = write_tools
         self.read_instructions_text = (
             read_instructions if read_instructions is not None else DEFAULT_WIKI_READ_INSTRUCTIONS
         )
@@ -200,6 +222,17 @@ class WikiContextProvider(ContextProvider):
         return self._ensure_read_agent()
 
     def _update_tool(self):
+        """Override base _update_tool for wiki's sync → run → commit lifecycle.
+
+        Base class _update_tool just runs the sub-agent and returns. Wiki needs:
+        1. Sync before writing (pull latest from remote)
+        2. Hold git_lock during write (prevent race with scheduled syncs)
+        3. Commit after writing (auto-generate commit message, push)
+        4. Append commit note to the result
+
+        Uses the same streaming gating as base: stream_sub_agent_events=True
+        streams via _arun_sub_agent_stream, False runs via _arun_sub_agent.
+        """
         from agno.context.provider import serialize_answer
 
         provider = self
@@ -209,16 +242,16 @@ class WikiContextProvider(ContextProvider):
             try:
                 await provider.asetup()
 
-                answer: Answer | None = None
                 async with provider._git_lock:
                     await provider.backend.sync()
 
                     agent = provider._ensure_write_agent()
-                    async for chunk in provider._stream_from_agent(agent, instruction, run_context):
-                        if isinstance(chunk, Answer):
-                            answer = chunk
-                        else:
+                    if provider.stream_sub_agent_events:
+                        async for chunk in provider._arun_sub_agent_stream(agent, instruction, run_context):
                             yield chunk
+                        answer = None
+                    else:
+                        answer = await provider._arun_sub_agent(agent, instruction, run_context)
 
                     commit = await provider.backend.commit_after_write(model=provider.model)
 
@@ -228,13 +261,16 @@ class WikiContextProvider(ContextProvider):
                         f"({commit.files_changed} file(s)): {commit.message}"
                     )
                     note = f"\n\nCommitted {commit.sha[:8]} ({commit.files_changed} file(s)): {commit.message}"
-                    if answer is not None:
+                    if provider.stream_sub_agent_events:
+                        yield note
+                    elif answer is not None:
                         answer = Answer(results=answer.results, text=(answer.text or "") + note)
 
-                if answer is not None:
-                    yield json.dumps(serialize_answer(answer))
-                else:
-                    yield json.dumps({})
+                if not provider.stream_sub_agent_events:
+                    if answer is not None:
+                        yield json.dumps(serialize_answer(answer))
+                    else:
+                        yield json.dumps({})
 
             except Exception as exc:
                 yield json.dumps({"error": f"{type(exc).__name__}: {exc}"})
@@ -255,7 +291,9 @@ class WikiContextProvider(ContextProvider):
 
     def _ensure_write_agent(self) -> Agent:
         if self._write_agent is None:
-            tools: list = [self._build_write_tools()]
+            # Copy the injected list so appending web tools below can't
+            # mutate the caller's list.
+            tools: list = list(self.write_tools) if self.write_tools is not None else [self._build_write_tools()]
             if self.web is not None:
                 # Append the web backend's tools so the same sub-agent
                 # can fetch a URL or run a web search before writing.

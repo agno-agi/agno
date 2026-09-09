@@ -28,7 +28,10 @@ from agno.tools.yfinance import YFinanceTools
 # ---------------------------------------------------------------------------
 # Storage Configuration
 # ---------------------------------------------------------------------------
-agent_db = SqliteDb(db_file="tmp/agents.db")
+agent_db = SqliteDb(
+    id="quickstart-state-db",
+    db_file="tmp/quickstart/state.db",
+)
 
 
 # ---------------------------------------------------------------------------
@@ -111,12 +114,12 @@ You are a Finance Agent that manages a stock watchlist.
 # ---------------------------------------------------------------------------
 agent_with_state_management = Agent(
     name="Agent with State Management",
-    model=Gemini(id="gemini-3.5-flash"),
+    model=Gemini(id="gemini-3.6-flash"),
     instructions=instructions,
     tools=[
         add_to_watchlist,
         remove_from_watchlist,
-        YFinanceTools(all=True),
+        YFinanceTools(),
     ],
     session_state={"watchlist": []},
     add_session_state_to_context=True,
@@ -131,15 +134,20 @@ agent_with_state_management = Agent(
 # Run the Agent
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
+    # Reuse this ID to restore the same watchlist after restarting the script.
+    session_id = "watchlist-session"
+
     # Add some stocks
     agent_with_state_management.print_response(
         "Add NVDA, AAPL, and GOOGL to my watchlist",
+        session_id=session_id,
         stream=True,
     )
 
     # Check the watchlist
     agent_with_state_management.print_response(
         "How are my watched stocks doing today?",
+        session_id=session_id,
         stream=True,
     )
 
@@ -147,7 +155,8 @@ if __name__ == "__main__":
     print("\n" + "=" * 60)
     print("Session State:")
     print(
-        f"  Watchlist: {agent_with_state_management.get_session_state().get('watchlist', [])}"
+        "  Watchlist: "
+        f"{agent_with_state_management.get_session_state(session_id=session_id).get('watchlist', [])}"
     )
     print("=" * 60)
 

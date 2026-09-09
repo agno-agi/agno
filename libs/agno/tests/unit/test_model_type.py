@@ -14,9 +14,9 @@ from unittest.mock import MagicMock
 
 from agno.metrics import (
     MessageMetrics,
-    Metrics,
     ModelMetrics,
     ModelType,
+    RunMetrics,
     SessionMetrics,
     accumulate_eval_metrics,
     accumulate_model_metrics,
@@ -35,7 +35,6 @@ class TestModelTypeEnum:
         assert ModelType.MEMORY_MODEL.value == "memory_model"
         assert ModelType.REASONING_MODEL.value == "reasoning_model"
         assert ModelType.SESSION_SUMMARY_MODEL.value == "session_summary_model"
-        assert ModelType.CULTURE_MODEL.value == "culture_model"
         assert ModelType.LEARNING_MODEL.value == "learning_model"
         assert ModelType.COMPRESSION_MODEL.value == "compression_model"
 
@@ -108,7 +107,7 @@ def _make_model(model_id="gpt-4o-mini", provider="OpenAI", model_type=ModelType.
 class TestAccumulateModelMetrics:
     def test_enum_model_type_creates_correct_dict_key(self):
         """Using ModelType enum should store under the string value key."""
-        run_metrics = Metrics()
+        run_metrics = RunMetrics()
         model_response = _make_model_response()
         model = _make_model()
 
@@ -118,7 +117,7 @@ class TestAccumulateModelMetrics:
         assert len(run_metrics.details["model"]) == 1
 
     def test_output_model_type_key(self):
-        run_metrics = Metrics()
+        run_metrics = RunMetrics()
         model_response = _make_model_response()
         model = _make_model()
 
@@ -127,7 +126,7 @@ class TestAccumulateModelMetrics:
         assert "output_model" in run_metrics.details
 
     def test_memory_model_type_key(self):
-        run_metrics = Metrics()
+        run_metrics = RunMetrics()
         model_response = _make_model_response()
         model = _make_model()
 
@@ -137,7 +136,7 @@ class TestAccumulateModelMetrics:
 
     def test_string_model_type_still_works(self):
         """Backward compatibility: raw strings should still work."""
-        run_metrics = Metrics()
+        run_metrics = RunMetrics()
         model_response = _make_model_response()
         model = _make_model()
 
@@ -146,7 +145,7 @@ class TestAccumulateModelMetrics:
         assert "model" in run_metrics.details
 
     def test_tokens_accumulate_correctly(self):
-        run_metrics = Metrics()
+        run_metrics = RunMetrics()
         model = _make_model()
 
         accumulate_model_metrics(_make_model_response(10, 5, 15), model, ModelType.MODEL, run_metrics)
@@ -157,7 +156,7 @@ class TestAccumulateModelMetrics:
         assert run_metrics.total_tokens == 45
 
     def test_same_provider_and_id_but_different_api_variants_do_not_merge(self):
-        run_metrics = Metrics()
+        run_metrics = RunMetrics()
         chat_model = _make_model()
         chat_model.get_provider.return_value = "OpenAI Chat"
         responses_model = _make_model()
@@ -171,7 +170,7 @@ class TestAccumulateModelMetrics:
 
     def test_multiple_model_types_in_same_run(self):
         """Simulates an agent run using model + output_model."""
-        run_metrics = Metrics()
+        run_metrics = RunMetrics()
         main_model = _make_model("gpt-4o", "OpenAI")
         output_model = _make_model("gpt-4o-mini", "OpenAI")
 
@@ -187,14 +186,14 @@ class TestAccumulateModelMetrics:
 
     def test_accumulate_does_not_set_run_ttft(self):
         """Run TTFT is set by providers via set_time_to_first_token(), not by accumulate_model_metrics."""
-        run_metrics = Metrics()
+        run_metrics = RunMetrics()
         model = _make_model()
 
         accumulate_model_metrics(_make_model_response(ttft=0.5), model, ModelType.MODEL, run_metrics)
         assert run_metrics.time_to_first_token is None
 
     def test_none_response_usage_is_no_op(self):
-        run_metrics = Metrics()
+        run_metrics = RunMetrics()
         model = _make_model()
         response = MagicMock()
         response.response_usage = None
@@ -212,7 +211,7 @@ class TestAccumulateModelMetrics:
 class TestAccumulateEvalMetrics:
     def test_eval_prefixes_string_keys_correctly(self):
         """accumulate_eval_metrics should create 'eval_model' from 'model' key."""
-        eval_metrics = Metrics(
+        eval_metrics = RunMetrics(
             input_tokens=10,
             output_tokens=5,
             total_tokens=15,
@@ -223,7 +222,7 @@ class TestAccumulateEvalMetrics:
             },
         )
 
-        run_metrics = Metrics(details={})
+        run_metrics = RunMetrics(details={})
 
         accumulate_eval_metrics(eval_metrics, run_metrics, prefix="eval")
 
@@ -232,14 +231,14 @@ class TestAccumulateEvalMetrics:
 
 
 # ---------------------------------------------------------------------------
-# Metrics.to_dict / from_dict round-trip with enum keys
+# RunMetrics.to_dict / from_dict round-trip with enum keys
 # ---------------------------------------------------------------------------
 
 
 class TestMetricsSerialization:
     def test_to_dict_preserves_string_keys(self):
         """details dict keys should be strings in the serialized output."""
-        metrics = Metrics(
+        metrics = RunMetrics(
             input_tokens=100,
             output_tokens=50,
             total_tokens=150,
@@ -253,7 +252,7 @@ class TestMetricsSerialization:
         assert "model" in d["details"]
 
     def test_from_dict_round_trip(self):
-        metrics = Metrics(
+        metrics = RunMetrics(
             input_tokens=100,
             output_tokens=50,
             total_tokens=150,
@@ -269,7 +268,7 @@ class TestMetricsSerialization:
             },
         )
         d = metrics.to_dict()
-        restored = Metrics.from_dict(d)
+        restored = RunMetrics.from_dict(d)
         assert "model" in restored.details
         assert "output_model" in restored.details
         assert restored.details["model"][0].id == "gpt-4o"
@@ -300,7 +299,7 @@ class TestMetricsProviderVariants:
         assert responses_model.get_provider() == "OpenRouter Responses"
 
     def test_session_metrics_from_dict_with_string_keys(self):
-        """SessionMetrics.from_dict should handle details from run Metrics (dict format)."""
+        """SessionMetrics.from_dict should handle details from run RunMetrics (dict format)."""
         data = {
             "input_tokens": 100,
             "total_tokens": 150,
@@ -355,16 +354,3 @@ class TestAgentInitModelType:
             reasoning_model=OpenAIChat(id="gpt-4o-mini"),
         )
         assert agent.reasoning_model.model_type == ModelType.REASONING_MODEL
-
-
-# ---------------------------------------------------------------------------
-# Re-export shim
-# ---------------------------------------------------------------------------
-
-
-class TestReExportShim:
-    def test_model_type_importable_from_models_metrics(self):
-        from agno.models.metrics import ModelType as MT
-
-        assert MT is ModelType
-        assert MT.MODEL.value == "model"

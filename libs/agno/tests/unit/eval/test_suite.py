@@ -2,12 +2,13 @@
 
 import asyncio
 import json
+import sys
 from types import SimpleNamespace
 
 import pytest
 
 from agno.eval import suite
-from agno.eval.suite import Case, JudgeMode, SuiteResult, acli, arun_cases, cli, run_cases
+from agno.eval.suite import Case, CaseResult, JudgeMode, SuiteResult, acli, arun_cases, cli, run_cases
 from agno.models.response import ToolExecution
 from agno.run.agent import RunErrorEvent, RunOutput, ToolCallCompletedEvent, ToolCallStartedEvent
 from agno.run.base import RunStatus
@@ -775,8 +776,8 @@ def test_suite_disables_eval_spinners(monkeypatch):
 
 
 def test_suite_disables_eval_telemetry(monkeypatch):
-    # The evals await their telemetry POST before returning; on a blackholed
-    # network that burns case-timeout budget after the verdict is computed.
+    # Preserve the suite's existing behavior: internally-created evals do not
+    # emit hidden telemetry when the suite exposes no telemetry option.
     judge_instances, reliability_instances = _install_fake_evals(monkeypatch)
 
     run_cases([_make_case(expected_tool_calls=("search_web",))])
@@ -879,6 +880,9 @@ def test_to_dict_matches_contract(monkeypatch):
         "skipped",
         "passed",
         "error",
+        "score_value",
+        "score_passed",
+        "score_reason",
     ]
     assert case_payload["name"] == "capital_of_france"
     assert case_payload["agent_id"] == "geo-agent"
@@ -896,6 +900,9 @@ def test_to_dict_matches_contract(monkeypatch):
     assert case_payload["skipped"] is False
     assert case_payload["passed"] is True
     assert case_payload["error"] is None
+    assert case_payload["score_value"] is None  # no scorer configured
+    assert case_payload["score_passed"] is None
+    assert case_payload["score_reason"] is None
     json.dumps(payload)
 
 
@@ -1286,6 +1293,257 @@ def test_acli_help_returns_0(monkeypatch, capsys):
     assert "--tag" in capsys.readouterr().out
 
 
+class StubMCPTool:
+    """Connectable stub for the mcp_tools runner affordance: records the
+    connect/close/cleanup order and the loop each landed on. `initialized`
+    mirrors the real MCPTools flag acli uses to decide ownership."""
+
+    def __init__(
+        self,
+        connect_error=None,
+        hang=False,
+        pre_initialized=False,
+        leaves_uninitialized=False,
+        close_hang=False,
+        close_swallows_cancel=False,
+    ):
+        self.events = []
+        self.loops = []
+        self.started = asyncio.Event()
+        self.close_started = asyncio.Event()
+        self.initialized = pre_initialized
+        self._connect_error = connect_error
+        self._hang = hang
+        self._leaves_uninitialized = leaves_uninitialized
+        self._close_hang = close_hang
+        self._close_swallows_cancel = close_swallows_cancel
+
+    async def connect(self):
+        self.loops.append(asyncio.get_running_loop())
+        self.started.set()
+        if self._connect_error is not None:
+            raise self._connect_error
+        if self._hang:
+            await asyncio.Event().wait()
+        if not self._leaves_uninitialized:
+            self.initialized = True
+        self.events.append("connect")
+
+    async def close(self):
+        self.loops.append(asyncio.get_running_loop())
+        self.close_started.set()
+        if self._close_hang:
+            await asyncio.Event().wait()
+        if self._close_swallows_cancel:
+            # The real MCPTools.close() ends in `except BaseException: pass`,
+            # so a cancel delivered mid-teardown vanishes inside it.
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                pass
+        self.events.append("close")
+
+    async def _safe_cleanup(self):
+        self.events.append("safe_cleanup")
+
+
+def test_acli_connects_and_closes_mcp_tools_in_its_own_loop(monkeypatch):
+    _install_fake_evals(monkeypatch)
+    tool = StubMCPTool()
+    agent = StubAgent()
+
+    async def main():
+        return await acli([_make_case(agent=agent)], argv=[], mcp_tools=[tool])
+
+    exit_code = asyncio.run(main())
+
+    assert exit_code == 0
+    assert tool.events == ["connect", "close"]
+    # Both calls must land on the loop the cases run in - a session connected
+    # on another loop is unusable from this one.
+    assert tool.loops[0] is agent.loops[0]
+    assert tool.loops[1] is agent.loops[0]
+
+
+def test_acli_mcp_tool_connect_failure_is_fail_soft(monkeypatch, capsys):
+    _install_fake_evals(monkeypatch)
+    failing = StubMCPTool(connect_error=RuntimeError("server unreachable"))
+    working = StubMCPTool()
+
+    exit_code = asyncio.run(acli([_make_case()], argv=[], mcp_tools=[failing, working]))
+
+    # The cases still run and decide the exit code; the tool that never
+    # connected is not closed, but its partial transport state is cleaned so
+    # a later reconnect is not poisoned.
+    assert exit_code == 0
+    assert failing.events == ["safe_cleanup"]
+    assert working.events == ["connect", "close"]
+    assert "server unreachable" in capsys.readouterr().out
+
+
+def test_acli_cancelled_error_from_connect_is_fail_soft(monkeypatch, capsys):
+    # An unreachable server surfaces as CancelledError out of the mcp client's
+    # cancel scopes -- not an Exception. It must be contained like any other
+    # connect failure, not crash the whole eval run.
+    _install_fake_evals(monkeypatch)
+    failing = StubMCPTool(connect_error=asyncio.CancelledError())
+    working = StubMCPTool()
+
+    exit_code = asyncio.run(acli([_make_case()], argv=[], mcp_tools=[failing, working]))
+
+    assert exit_code == 0
+    assert failing.events == ["safe_cleanup"]
+    assert working.events == ["connect", "close"]
+    assert "CancelledError" in capsys.readouterr().out
+
+
+def test_acli_skips_tools_connected_elsewhere(monkeypatch):
+    # A toolkit something else already connected (a server lifespan, the
+    # caller itself) is not acli's to manage: no connect, and above all no
+    # close tearing down a session acli never opened.
+    _install_fake_evals(monkeypatch)
+    shared = StubMCPTool(pre_initialized=True)
+
+    exit_code = asyncio.run(acli([_make_case()], argv=[], mcp_tools=[shared]))
+
+    assert exit_code == 0
+    assert shared.events == []
+
+
+def test_acli_uninitialized_connect_is_not_treated_as_connected(monkeypatch, capsys):
+    # The real connect() can fail-soft and return with initialized=False and a
+    # dead session still attached (initialize() failures). acli must not count
+    # it as connected -- close() would no-op -- and must drop the partial state.
+    _install_fake_evals(monkeypatch)
+    broken = StubMCPTool(leaves_uninitialized=True)
+    working = StubMCPTool()
+
+    exit_code = asyncio.run(acli([_make_case()], argv=[], mcp_tools=[broken, working]))
+
+    assert exit_code == 0
+    assert broken.events == ["connect", "safe_cleanup"]
+    assert working.events == ["connect", "close"]
+    assert "usable session" in capsys.readouterr().out
+
+
+@pytest.mark.skipif(sys.version_info < (3, 11), reason="Task.cancelling() needed to tell a real cancel apart")
+def test_acli_cancel_during_close_still_propagates(monkeypatch):
+    # A host cancel landing while acli releases its tools must not be reported
+    # as a normal exit -- and the remaining tools are still released first.
+    _install_fake_evals(monkeypatch)
+    slow = StubMCPTool(close_hang=True)
+    after = StubMCPTool()
+
+    async def main():
+        task = asyncio.ensure_future(acli([_make_case()], argv=[], mcp_tools=[slow, after]))
+        await slow.close_started.wait()
+        task.cancel()
+        await task
+
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(main())
+
+    assert after.events == ["connect", "close"]
+
+
+@pytest.mark.skipif(sys.version_info < (3, 11), reason="Task.cancelling() needed to tell a real cancel apart")
+def test_acli_cancel_swallowed_by_close_still_propagates(monkeypatch):
+    # The real MCPTools.close() swallows a delivered cancel entirely, so the
+    # teardown loop never sees a CancelledError -- acli must notice via the
+    # task's cancelling counter, finish releasing, and still exit cancelled.
+    _install_fake_evals(monkeypatch)
+    swallowing = StubMCPTool(close_swallows_cancel=True)
+    after = StubMCPTool()
+
+    async def main():
+        task = asyncio.ensure_future(acli([_make_case()], argv=[], mcp_tools=[swallowing, after]))
+        await swallowing.close_started.wait()
+        task.cancel()
+        await task
+
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(main())
+
+    assert swallowing.events == ["connect", "close"]  # its close ran to completion
+    assert after.events == ["connect", "close"]  # the rest were still released
+
+
+def test_real_mcp_close_swallows_a_delivered_cancel():
+    # Pins the contract the teardown loop compensates for: close() eats even a
+    # CancelledError raised from its teardown internals and returns normally.
+    pytest.importorskip("mcp")
+    from agno.tools.mcp import MCPTools as RealMCPTools
+
+    tool = RealMCPTools(url="https://docs.example.com/mcp")
+    tool._initialized = True
+
+    class CancellingContext:
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            raise asyncio.CancelledError()
+
+    tool._session_context = CancellingContext()
+
+    asyncio.run(tool.close())  # must not raise
+
+    assert tool.initialized is False
+
+
+@pytest.mark.skipif(sys.version_info < (3, 11), reason="Task.cancelling() needed to tell a real cancel apart")
+def test_acli_genuine_cancellation_still_propagates(monkeypatch):
+    # A host cancelling the acli task mid-connect must not be swallowed by the
+    # connect fail-soft; already-connected tools are still released.
+    _install_fake_evals(monkeypatch)
+    connected = StubMCPTool()
+    hanging = StubMCPTool(hang=True)
+
+    async def main():
+        task = asyncio.ensure_future(acli([_make_case()], argv=[], mcp_tools=[connected, hanging]))
+        await hanging.started.wait()
+        task.cancel()
+        await task
+
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(main())
+
+    assert connected.events == ["connect", "close"]
+
+
+def test_acli_closes_mcp_tools_when_the_run_raises(monkeypatch):
+    _install_fake_evals(monkeypatch)
+    tool = StubMCPTool()
+
+    async def boom(*args, **kwargs):
+        raise RuntimeError("runner exploded")
+
+    monkeypatch.setattr(suite, "arun_cases", boom)
+
+    with pytest.raises(RuntimeError, match="runner exploded"):
+        asyncio.run(acli([_make_case()], argv=[], mcp_tools=[tool]))
+
+    assert tool.events == ["connect", "close"]
+
+
+def test_acli_list_does_not_connect_mcp_tools(monkeypatch, capsys):
+    _install_fake_evals(monkeypatch)
+    tool = StubMCPTool()
+
+    exit_code = asyncio.run(acli([_make_case(name="listed_case")], argv=["--list"], mcp_tools=[tool]))
+
+    assert exit_code == 0
+    assert "listed_case" in capsys.readouterr().out
+    assert tool.events == []
+
+
+def test_cli_forwards_mcp_tools(monkeypatch, capsys):
+    _install_fake_evals(monkeypatch)
+    tool = StubMCPTool()
+
+    exit_code = cli([_make_case()], argv=[], mcp_tools=[tool])
+
+    assert exit_code == 0
+    assert tool.events == ["connect", "close"]
+
+
 def test_cli_default_timeout_parameter(monkeypatch, capsys):
     _install_fake_evals(monkeypatch)
 
@@ -1293,3 +1551,266 @@ def test_cli_default_timeout_parameter(monkeypatch, capsys):
 
     assert exit_code == 1
     assert "timeout: exceeded 1s" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
+# The scorer seam (2.8.0)
+# ---------------------------------------------------------------------------
+
+
+class StubScorer:
+    """agno.scorer protocol stub: records (run, expected) calls, returns a fixed Score."""
+
+    def __init__(self, score=None, error=None, delay=0.0):
+        from agno.scorer import Score
+
+        self._score = score if score is not None else Score(value=1.0, passed=True, reason="stub ok")
+        self._error = error
+        self._delay = delay
+        self.calls = []
+
+    async def ascore(self, run, expected=None):
+        self.calls.append((run, expected))
+        if self._delay:
+            await asyncio.sleep(self._delay)
+        if self._error is not None:
+            raise self._error
+        return self._score
+
+
+def test_case_accepts_scorer_only(monkeypatch):
+    # A Case with scorer= and neither criteria nor expected_tool_calls constructs and
+    # runs; the scorer receives (result.response, case.expected).
+    judge_instances, reliability_instances = _install_fake_evals(monkeypatch)
+    output = _output(content="42")
+    scorer = StubScorer()
+    case = Case(name="scored", agent=StubAgent(output=output), input="q", scorer=scorer, expected=42)
+
+    suite_result = run_cases([case])
+    result = suite_result.results[0]
+
+    assert result.score is not None
+    assert result.score.passed is True
+    assert result.passed is True
+    assert result.judge_passed is None
+    assert result.reliability_passed is None
+    assert judge_instances == []
+    assert reliability_instances == []
+    assert scorer.calls == [(output, 42)]
+    case_payload = suite_result.to_dict()["cases"][0]
+    assert case_payload["score_value"] == 1.0
+    assert case_payload["score_passed"] is True
+    assert case_payload["score_reason"] == "stub ok"
+
+
+def test_case_still_rejects_no_checks():
+    with pytest.raises(ValueError, match="has no checks"):
+        Case(name="none", agent=StubAgent(), input="q")
+
+
+def test_failing_score_fails_the_case(monkeypatch):
+    from agno.scorer import Score
+
+    _install_fake_evals(monkeypatch)
+    scorer = StubScorer(score=Score(value=0.2, passed=False, reason="wrong"))
+
+    result = run_cases([Case(name="s", agent=StubAgent(), input="q", scorer=scorer)]).results[0]
+
+    assert result.score is not None
+    assert result.score.passed is False
+    assert result.passed is False
+
+
+def test_case_scorer_error_becomes_case_error(monkeypatch):
+    _install_fake_evals(monkeypatch)
+    scorer = StubScorer(error=ValueError("scorer broke"))
+
+    result = run_cases([Case(name="s", agent=StubAgent(), input="q", scorer=scorer)]).results[0]
+
+    assert result.error is not None
+    assert result.error.startswith("scorer: ValueError")
+    assert result.score is None
+    assert result.passed is False
+
+
+def test_case_scorer_inside_timeout_and_gradeable_only(monkeypatch):
+    _install_fake_evals(monkeypatch)
+
+    # Inside the case timeout, exactly as the judge: a slow scorer times the case out.
+    slow = StubScorer(delay=5.0)
+    timed = run_cases([Case(name="slow", agent=StubAgent(), input="q", scorer=slow, timeout_seconds=1)]).results[0]
+    assert timed.timed_out is True
+    assert timed.error == "timeout: exceeded 1s"
+    assert timed.score is None
+
+    # Gradeable runs only: on a paused run the scorer is skipped, not failed.
+    skipped_scorer = StubScorer()
+    paused_output = _output(content="hitl boilerplate", status=RunStatus.paused)
+    paused = run_cases(
+        [Case(name="paused", agent=StubAgent(output=paused_output), input="q", scorer=skipped_scorer)]
+    ).results[0]
+    assert skipped_scorer.calls == []
+    assert paused.score is None
+    assert "scorer:" not in (paused.error or "")
+
+
+def test_suite_to_dict_is_additive(monkeypatch):
+    # With no scorer configured the payload is byte-identical except for the three new
+    # null keys at the end of the case payload. This is the frozen CI contract.
+    _install_fake_evals(monkeypatch)
+
+    payload = run_cases([_make_case()]).to_dict()
+
+    case_payload = payload["cases"][0]
+    keys = list(case_payload.keys())
+    assert keys[-3:] == ["score_value", "score_passed", "score_reason"]
+    assert keys[:-3] == [
+        "name",
+        "agent_id",
+        "team_id",
+        "tags",
+        "session_id",
+        "duration_seconds",
+        "judge_passed",
+        "judge_reason",
+        "judge_score",
+        "reliability_passed",
+        "output",
+        "tools_called",
+        "timed_out",
+        "skipped",
+        "passed",
+        "error",
+    ]
+    assert case_payload["score_value"] is None
+    assert case_payload["score_passed"] is None
+    assert case_payload["score_reason"] is None
+    json.dumps(payload)
+
+
+def test_setup_teardown_ordering_unchanged(monkeypatch):
+    # The scorer seam must not move the lifecycle: setup runs OUTSIDE the timeout,
+    # teardown runs in the finally (even on error), and teardown is skipped when
+    # setup raised.
+    _install_fake_evals(monkeypatch)
+    events = []
+
+    async def slow_setup():
+        await asyncio.sleep(1.5)
+        events.append("setup")
+        return "ctx"
+
+    def teardown(context, result):
+        events.append(("teardown", context, result.timed_out))
+
+    case = Case(
+        name="ordering",
+        agent=StubAgent(),
+        input="q",
+        criteria="c",
+        timeout_seconds=1,
+        setup=slow_setup,
+        teardown=teardown,
+    )
+    result = run_cases([case]).results[0]
+    # Setup slept past the case timeout and the case still did not time out.
+    assert result.timed_out is False
+    assert result.passed is True
+    assert events == ["setup", ("teardown", "ctx", False)]
+
+    # Teardown still runs when the agent errors.
+    events.clear()
+    erroring = Case(
+        name="err",
+        agent=StubAgent(error=RuntimeError("boom")),
+        input="q",
+        criteria="c",
+        setup=lambda: "ctx2",
+        teardown=lambda context, result: events.append(("teardown", context)),
+    )
+    assert run_cases([erroring]).results[0].passed is False
+    assert events == [("teardown", "ctx2")]
+
+    # Teardown is skipped when setup raised.
+    events.clear()
+
+    def bad_setup():
+        raise KeyError("missing fixture")
+
+    skipped = Case(
+        name="skip",
+        agent=StubAgent(),
+        input="q",
+        criteria="c",
+        setup=bad_setup,
+        teardown=lambda context, result: events.append("teardown"),
+    )
+    assert run_cases([skipped]).results[0].passed is False
+    assert events == []
+
+
+def test_case_positional_construction_unchanged():
+    # The 2.7.4 positional signature must keep binding the same fields: the new
+    # scorer/expected sit after teardown, so a caller passing setup/teardown
+    # positionally does not silently hand its hooks to the scorer seam.
+    def setup_fn():
+        return "ctx"
+
+    def teardown_fn(context, result):
+        return None
+
+    agent = StubAgent()
+    case = Case(
+        "positional",  # name
+        "q",  # input
+        agent,
+        None,  # team
+        ("tag",),
+        30,  # timeout_seconds
+        "criteria",
+        None,  # judge_model
+        JudgeMode.BINARY,
+        7,  # judge_threshold
+        ("search",),  # expected_tool_calls
+        True,  # allow_additional_tool_calls
+        setup_fn,
+        teardown_fn,
+    )
+    assert case.setup is setup_fn
+    assert case.teardown is teardown_fn
+    assert case.scorer is None and case.expected is None
+
+
+def test_case_result_positional_construction_unchanged():
+    # Same guarantee for CaseResult: score is appended after response.
+    output = _output(content="42")
+    result = CaseResult(
+        "positional",  # name
+        (),  # tags
+        "agent-1",
+        None,  # team_id
+        "session-1",
+        1.5,  # duration_seconds
+        True,  # judge_passed
+        "reason",
+        9,  # judge_score
+        None,  # reliability_passed
+        "42",  # output
+        ("search",),  # tools_called
+        False,  # timed_out
+        False,  # skipped
+        None,  # error
+        output,  # response
+    )
+    assert result.output == "42"
+    assert result.response is output
+    assert result.score is None
+
+
+def test_case_and_case_result_type_hints_resolve():
+    # Score/Scorer are imported at module scope (from agno.scorer.base): runtime
+    # introspection over the public dataclasses must not NameError on forward refs.
+    import typing
+
+    assert typing.get_type_hints(Case)["scorer"] is not None
+    assert typing.get_type_hints(CaseResult)["score"] is not None

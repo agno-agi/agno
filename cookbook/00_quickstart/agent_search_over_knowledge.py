@@ -14,6 +14,8 @@ Example prompts to try:
 - "What is the AgentOS?"
 """
 
+from pathlib import Path
+
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.knowledge.embedder.google import GeminiEmbedder
@@ -25,14 +27,17 @@ from agno.vectordb.search import SearchType
 # ---------------------------------------------------------------------------
 # Setup
 # ---------------------------------------------------------------------------
-agent_db = SqliteDb(db_file="tmp/agents.db")
+agent_db = SqliteDb(
+    id="quickstart-knowledge-db",
+    db_file="tmp/quickstart/knowledge.db",
+)
 
 knowledge = Knowledge(
     name="Agno Documentation",
     vector_db=ChromaDb(
-        name="agno_docs",
-        collection="agno_docs",
-        path="tmp/chromadb",
+        name="quickstart_agno_overview",
+        collection="quickstart_agno_overview",
+        path="tmp/quickstart/knowledge",
         persistent_client=True,
         # Enable hybrid search - combines vector similarity with keyword matching using RRF
         search_type=SearchType.hybrid,
@@ -61,19 +66,18 @@ You are an expert on the Agno framework and building AI agents.
    - Extract key concepts from the query to search effectively
 
 2. Synthesize
-   - Combine information from multiple search results
-   - Prioritize official documentation over general knowledge
+   - Answer only from the retrieved passages
+   - Do not add facts, claims, or code that are absent from the source
 
 3. Present
    - Lead with a direct answer
-   - Include code examples when helpful
+   - Include a code example only when it appears in the retrieved source
    - Keep it practical and actionable
 
 ## Rules
 
 - Always search knowledge before answering Agno questions
 - If the answer isn't in the knowledge base, say so
-- Include code snippets for implementation questions
 - Be concise — developers want answers, not essays\
 """
 
@@ -82,14 +86,11 @@ You are an expert on the Agno framework and building AI agents.
 # ---------------------------------------------------------------------------
 agent_with_knowledge = Agent(
     name="Agent with Knowledge",
-    model=Gemini(id="gemini-3.5-flash"),
+    model=Gemini(id="gemini-3.6-flash"),
     instructions=instructions,
     knowledge=knowledge,
     search_knowledge=True,
-    db=agent_db,
     add_datetime_to_context=True,
-    add_history_to_context=True,
-    num_history_runs=5,
     markdown=True,
 )
 
@@ -97,9 +98,12 @@ agent_with_knowledge = Agent(
 # Run Agent
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    # Load the introduction from the Agno documentation into the knowledge base
-    # We're only loading 1 file to keep this example simple.
-    knowledge.insert(name="Agno Introduction", url="https://docs.agno.com/")
+    # Load one local document so the quickstart is deterministic and offline
+    # apart from the model and embedding calls.
+    knowledge.insert(
+        name="Agno Overview",
+        path=str(Path(__file__).parent / "data" / "agno_overview.md"),
+    )
 
     agent_with_knowledge.print_response(
         "What is Agno?",

@@ -187,6 +187,21 @@ def create_run_continued_event(from_run_response: RunOutput) -> RunContinuedEven
     )
 
 
+def error_type_of(exc: BaseException) -> str:
+    """The stable identity of an exception for an error event's error_type field.
+
+    Agno's typed exceptions carry a snake_case slug in `.type` (e.g.
+    "model_provider_error"), which the guardrail handlers already emit; every other
+    exception is identified by its Python class name. The field therefore mixes both
+    vocabularies deliberately: it promises stability per failure class -- what
+    same-error detection (e.g. the rollout error-storm stop) needs -- not a taxonomy.
+    """
+    slug = getattr(exc, "type", None)
+    if isinstance(slug, str) and slug:
+        return slug
+    return type(exc).__name__
+
+
 def create_team_run_error_event(
     from_run_response: TeamRunOutput,
     error: str,

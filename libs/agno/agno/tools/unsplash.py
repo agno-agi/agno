@@ -33,7 +33,7 @@ class UnsplashTools(Toolkit):
         from agno.tools.unsplash import UnsplashTools
 
         agent = Agent(
-            model=OpenAIChat(id="gpt-4o"),
+            model=OpenAIChat(id="gpt-5.5"),
             tools=[UnsplashTools()],
         )
         agent.print_response("Find me 3 photos of mountains at sunset")

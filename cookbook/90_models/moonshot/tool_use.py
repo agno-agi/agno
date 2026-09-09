@@ -14,7 +14,7 @@ from agno.tools.websearch import WebSearchTools
 # ---------------------------------------------------------------------------
 
 agent = Agent(
-    model=MoonShot(id="kimi-k2-thinking"),
+    model=MoonShot(id="kimi-k3"),
     markdown=True,
     tools=[WebSearchTools()],
 )

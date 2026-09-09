@@ -8,10 +8,10 @@ list of boxes, each with a label and normalized coordinates.
 
 from typing import List
 
-from agno.agent import Agent, RunOutput  # noqa
+from agno.agent import Agent, RunOutput
 from agno.media import Image
 from pydantic import BaseModel, Field
-from rich.pretty import pprint  # noqa
+from rich.pretty import pprint
 
 
 # ---------------------------------------------------------------------------

@@ -232,7 +232,7 @@ class TestListEvents:
 
         result = calendar_tools.list_events(limit=2)
         result_data = json.loads(result)
-        assert result_data == mock_events
+        assert result_data["events"] == mock_events
 
     def test_list_events_no_events(self, calendar_tools, mock_calendar_service):
         mock_calendar_service.events().list().execute.return_value = {"items": []}
@@ -244,14 +244,14 @@ class TestListEvents:
         mock_events = [{"id": "1", "summary": "Test Event"}]
         mock_calendar_service.events().list().execute.return_value = {"items": mock_events}
         result = calendar_tools.list_events(start_date="2025-07-19T10:00:00")
-        assert json.loads(result) == mock_events
+        assert json.loads(result)["events"] == mock_events
         assert mock_calendar_service.events().list.call_args.kwargs["timeMin"] == "2025-07-19T10:00:00.000000Z"
 
     def test_list_events_with_timezone_aware_start_date(self, calendar_tools, mock_calendar_service):
         mock_events = [{"id": "1", "summary": "Test Event"}]
         mock_calendar_service.events().list().execute.return_value = {"items": mock_events}
         result = calendar_tools.list_events(start_date="2026-07-01T10:00:00+02:00")
-        assert json.loads(result) == mock_events
+        assert json.loads(result)["events"] == mock_events
         assert mock_calendar_service.events().list.call_args.kwargs["timeMin"] == "2026-07-01T08:00:00.000000Z"
 
     def test_list_events_invalid_date_format(self, calendar_tools):
@@ -627,7 +627,7 @@ class TestSearchEvents:
         mock_calendar_service.events().list().execute.return_value = {"items": mock_events}
 
         result = calendar_tools.search_events(query="standup")
-        assert json.loads(result) == mock_events
+        assert json.loads(result)["events"] == mock_events
 
     def test_search_no_results(self, calendar_tools, mock_calendar_service):
         mock_calendar_service.events().list().execute.return_value = {"items": []}
@@ -644,7 +644,7 @@ class TestSearchEvents:
             start_date="2025-07-01T00:00:00",
             end_date="2025-07-31T23:59:59",
         )
-        assert json.loads(result) == mock_events
+        assert json.loads(result)["events"] == mock_events
 
 
 class TestMoveEvent:

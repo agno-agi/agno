@@ -1,12 +1,8 @@
 # 14_advanced
 
-Advanced examples covering caching, compression, concurrency, events, retries, debugging, culture, and serialization.
+Advanced examples covering caching, compression, concurrency, events, retries, debugging, and serialization.
 
 ## Files
-- `01_create_cultural_knowledge.py` - Create cultural knowledge for agents.
-- `02_use_cultural_knowledge_in_agent.py` - Use cultural knowledge in an agent.
-- `03_automatic_cultural_management.py` - Automatic cultural context management.
-- `04_manually_add_culture.py` - Manually add culture to an agent.
 - `advanced_compression.py` - Advanced context compression strategies.
 - `agent_run_cancel_persistence.py` - Cancel a running agent and verify partial content is persisted.
 - `agent_serialization.py` - Serialize and deserialize agents.

@@ -211,7 +211,6 @@ consulting_team = Team(
         "Coordinate your expertise to deliver actionable business advice.",
         "Give the user advice based on their request.",
     ],
-    debug_mode=True,
 )
 
 

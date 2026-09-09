@@ -24,7 +24,7 @@ from agno.models.openai import OpenAIResponses
 fs = FilesystemContextProvider(
     id="cookbooks",
     root=Path(__file__).resolve().parent,
-    model=OpenAIResponses(id="gpt-5.4-mini"),
+    model=OpenAIResponses(id="gpt-5.6-luna"),
 )
 
 # ---------------------------------------------------------------------------

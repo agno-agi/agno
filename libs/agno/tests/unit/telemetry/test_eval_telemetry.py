@@ -18,12 +18,13 @@ def test_accuracy_evals_telemetry():
     # Mock the API call that gets made when telemetry is enabled
     with patch("agno.api.evals.create_eval_run_telemetry") as mock_create:
         agent.model = MagicMock()
-        accuracy_eval.run(print_summary=False, print_results=False)
+        result = accuracy_eval.run(print_summary=False, print_results=False)
 
         # Verify API was called with correct parameters
         mock_create.assert_called_once()
         call_args = mock_create.call_args[1]["eval_run"]
-        assert call_args.run_id == accuracy_eval.eval_id
+        # run_id is the per-execution id carried on the result.
+        assert call_args.run_id == result.run_id
         assert call_args.eval_type.value == "accuracy"
 
 
@@ -40,12 +41,13 @@ def test_performance_evals_telemetry():
 
     # Mock the API call that gets made when telemetry is enabled
     with patch("agno.api.evals.create_eval_run_telemetry") as mock_create:
-        performance_eval.run()
+        result = performance_eval.run()
 
         # Verify API was called with correct parameters
         mock_create.assert_called_once()
         call_args = mock_create.call_args[1]["eval_run"]
-        assert call_args.run_id == performance_eval.eval_id
+        # run_id is the per-execution id carried on the result.
+        assert call_args.run_id == result.run_id
         assert call_args.eval_type.value == "performance"
 
 
@@ -68,12 +70,13 @@ def test_reliability_evals_telemetry():
 
     # Mock the API call that gets made when telemetry is enabled
     with patch("agno.api.evals.create_eval_run_telemetry") as mock_create:
-        reliability_eval.run(print_results=False)
+        result = reliability_eval.run(print_results=False)
 
         # Verify API was called with correct parameters
         mock_create.assert_called_once()
         call_args = mock_create.call_args[1]["eval_run"]
-        assert call_args.run_id == reliability_eval.eval_id
+        # run_id is the per-execution id carried on the result.
+        assert call_args.run_id == result.run_id
         assert call_args.eval_type.value == "reliability"
 
 

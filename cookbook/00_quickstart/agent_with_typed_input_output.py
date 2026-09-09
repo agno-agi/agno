@@ -2,10 +2,10 @@
 Agent with Typed Input and Output - Full Type Safety
 =====================================================
 This example shows how to define both input and output schemas for your agent.
-You get end-to-end type safety: validate what goes in, guarantee what comes out.
+You get typed boundaries: validate what goes in and parse successful outputs.
 
 Perfect for building robust pipelines where you need contracts on both ends.
-The agent validates inputs and guarantees output structure.
+The agent validates inputs and checks output structure against your schema.
 
 Key concepts:
 - input_schema: A Pydantic model defining what the agent accepts
@@ -20,15 +20,9 @@ Example inputs to try:
 from typing import List, Literal, Optional
 
 from agno.agent import Agent
-from agno.db.sqlite import SqliteDb
 from agno.models.google import Gemini
 from agno.tools.yfinance import YFinanceTools
 from pydantic import BaseModel, Field
-
-# ---------------------------------------------------------------------------
-# Storage Configuration
-# ---------------------------------------------------------------------------
-agent_db = SqliteDb(db_file="tmp/agents.db")
 
 
 # ---------------------------------------------------------------------------
@@ -37,7 +31,13 @@ agent_db = SqliteDb(db_file="tmp/agents.db")
 class AnalysisRequest(BaseModel):
     """Structured input for requesting a stock analysis."""
 
-    ticker: str = Field(..., description="Stock ticker symbol (e.g., NVDA, AAPL)")
+    ticker: str = Field(
+        ...,
+        min_length=1,
+        max_length=10,
+        pattern=r"^[A-Za-z][A-Za-z0-9.-]*$",
+        description="Stock ticker symbol (e.g., NVDA, AAPL)",
+    )
     analysis_type: Literal["quick", "deep"] = Field(
         default="quick",
         description="quick = summary only, deep = full analysis with drivers/risks",
@@ -53,9 +53,17 @@ class AnalysisRequest(BaseModel):
 class StockAnalysis(BaseModel):
     """Structured output for stock analysis."""
 
-    ticker: str = Field(..., description="Stock ticker symbol")
+    ticker: str = Field(
+        ...,
+        min_length=1,
+        max_length=10,
+        pattern=r"^[A-Za-z][A-Za-z0-9.-]*$",
+        description="Stock ticker symbol",
+    )
     company_name: str = Field(..., description="Full company name")
-    current_price: float = Field(..., description="Current stock price in USD")
+    current_price: Optional[float] = Field(
+        None, ge=0, description="Current stock price in USD, if available"
+    )
     summary: str = Field(..., description="One-line summary of the stock")
     key_drivers: Optional[List[str]] = Field(
         None, description="Key growth drivers (if deep analysis)"
@@ -63,8 +71,8 @@ class StockAnalysis(BaseModel):
     key_risks: Optional[List[str]] = Field(
         None, description="Key risks (if include_risks=True)"
     )
-    recommendation: str = Field(
-        ..., description="One of: Strong Buy, Buy, Hold, Sell, Strong Sell"
+    recommendation: Literal["Strong Buy", "Buy", "Hold", "Sell", "Strong Sell"] = Field(
+        ..., description="Research outlook based on the available data"
     )
 
 
@@ -92,6 +100,7 @@ You receive structured requests with:
 
 - Source: Yahoo Finance
 - Match output to input parameters — don't include drivers for "quick" analysis
+- Missing market data? Use null. Never estimate or invent a value.
 - Recommendation must be one of: Strong Buy, Buy, Hold, Sell, Strong Sell\
 """
 
@@ -100,15 +109,17 @@ You receive structured requests with:
 # ---------------------------------------------------------------------------
 agent_with_typed_input_output = Agent(
     name="Agent with Typed Input Output",
-    model=Gemini(id="gemini-3.5-flash"),
+    model=Gemini(id="gemini-3.6-flash"),
     instructions=instructions,
-    tools=[YFinanceTools(all=True)],
+    tools=[
+        YFinanceTools(
+            enable_company_info=True,
+            enable_stock_fundamentals=True,
+        )
+    ],
     input_schema=AnalysisRequest,
     output_schema=StockAnalysis,
-    db=agent_db,
     add_datetime_to_context=True,
-    add_history_to_context=True,
-    num_history_runs=5,
     markdown=True,
 )
 
@@ -131,7 +142,12 @@ if __name__ == "__main__":
     print(f"\n{'=' * 60}")
     print(f"Stock Analysis: {analysis_1.company_name} ({analysis_1.ticker})")
     print(f"{'=' * 60}")
-    print(f"Price: ${analysis_1.current_price:.2f}")
+    price_1 = (
+        f"${analysis_1.current_price:.2f}"
+        if analysis_1.current_price is not None
+        else "N/A"
+    )
+    print(f"Price: {price_1}")
     print(f"Summary: {analysis_1.summary}")
     if analysis_1.key_drivers:
         print("\nKey Drivers:")
@@ -158,7 +174,12 @@ if __name__ == "__main__":
     print(f"\n{'=' * 60}")
     print(f"Stock Analysis: {analysis_2.company_name} ({analysis_2.ticker})")
     print(f"{'=' * 60}")
-    print(f"Price: ${analysis_2.current_price:.2f}")
+    price_2 = (
+        f"${analysis_2.current_price:.2f}"
+        if analysis_2.current_price is not None
+        else "N/A"
+    )
+    print(f"Price: {price_2}")
     print(f"Summary: {analysis_2.summary}")
     if analysis_2.key_drivers:
         print("\nKey Drivers:")
@@ -195,5 +216,6 @@ Typed input + output is perfect for:
    screening_result = screener_agent.run(input=criteria).content
    analysis_result = analysis_agent.run(input=screening_result).content
 
-Type safety on both ends = fewer bugs, better tooling, clearer contracts.
+Typed boundaries mean fewer parsing bugs, better tooling, and clearer contracts.
+They do not replace factual validation of model-generated content.
 """

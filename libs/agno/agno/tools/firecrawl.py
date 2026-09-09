@@ -95,16 +95,16 @@ class FirecrawlTools(Toolkit):
 
         Args:
             url (str): The URL to crawl.
-            limit (int): The maximum number of pages to crawl
+            limit (int, optional): The maximum number of pages to crawl. Defaults to the limit set on the toolkit.
 
         Returns:
             The results of the crawling.
         """
         params: Dict[str, Any] = {}
-        if self.limit is not None:
-            params["limit"] = self.limit
-        elif limit is not None:
+        if limit is not None:
             params["limit"] = limit
+        elif self.limit is not None:
+            params["limit"] = self.limit
         if self.formats:
             params["scrape_options"] = ScrapeOptions(formats=self.formats)  # type: ignore
 
@@ -128,17 +128,18 @@ class FirecrawlTools(Toolkit):
 
         Args:
             query (str): The query to search for.
-            limit (int): The maximum number of results to return.
+            limit (int, optional): The maximum number of results to return. Defaults to the limit set on the toolkit.
         """
         params: Dict[str, Any] = {}
         if self.limit is not None:
             params["limit"] = self.limit
-        elif limit is not None:
-            params["limit"] = limit
         if self.formats:
             params["scrape_options"] = ScrapeOptions(formats=self.formats)  # type: ignore
         if self.search_params:
             params.update(self.search_params)
+        # Applied after search_params so an explicit call argument always wins.
+        if limit is not None:
+            params["limit"] = limit
 
         search_result = self.app.search(query, **params)
 

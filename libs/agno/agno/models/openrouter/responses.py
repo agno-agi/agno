@@ -7,6 +7,7 @@ from pydantic import BaseModel
 from agno.exceptions import ModelAuthenticationError
 from agno.models.message import Message
 from agno.models.openai.open_responses import OpenResponses
+from agno.run.agent import RunOutput
 
 
 @dataclass
@@ -123,6 +124,7 @@ class OpenRouterResponses(OpenResponses):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        run_response: Optional[RunOutput] = None,
     ) -> Dict[str, Any]:
         """
         Returns keyword arguments for API requests, including fallback models configuration.
@@ -136,6 +138,7 @@ class OpenRouterResponses(OpenResponses):
             response_format=response_format,
             tools=tools,
             tool_choice=tool_choice,
+            run_response=run_response,
         )
 
         # Add fallback models to extra_body if specified

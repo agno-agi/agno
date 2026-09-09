@@ -6,7 +6,7 @@ Demonstrates the Scavio toolkit: a unified Search API over Google, YouTube, Amaz
 Walmart, Reddit, TikTok, and Instagram.
 
 Setup:
-    pip install agno scavio
+    pip install -U "agno[scavio]"  # requires scavio>=0.4.0 (Google Search uses the v2 API)
     export SCAVIO_API_KEY=***  # get a key at https://dashboard.scavio.dev
 """
 

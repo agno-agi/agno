@@ -28,3 +28,7 @@ python cookbook/data_labeling/_14_video_extraction/action_timestamps.py
 ```
 
 Requires `GOOGLE_API_KEY`.
+
+Note on the sample asset: `sample_seaview.mp4` is misnamed - the clip is
+a short lab scene (a scientist examining a sample through a microscope),
+not a sea view. The extracted events and scenes describe the lab scene.

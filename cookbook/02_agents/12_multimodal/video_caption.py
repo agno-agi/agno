@@ -22,7 +22,7 @@ openai_tools = OpenAITools()
 video_caption_agent = Agent(
     name="Video Caption Generator Agent",
     model=OpenAIResponses(
-        id="gpt-4o",
+        id="gpt-5.6-luna",
     ),
     tools=[video_tools, openai_tools],
     description="You are an AI agent that can generate and embed captions for videos.",

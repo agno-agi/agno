@@ -86,10 +86,4 @@ if __name__ == "__main__":
         requirements=run_response.requirements,
     )
 
-    # You can also pass the updated tools when continuing the run:
-    # run_response = agent.continue_run(
-    #     run_id=run_response.run_id,
-    #     updated_tools=run_response.tools,
-    # )
-
     pprint.pprint_run_response(run_response)

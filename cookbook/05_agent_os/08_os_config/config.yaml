@@ -1,0 +1,25 @@
+available_models:
+  - gpt-5.5
+
+manifest:
+  yaml-operations-agent:
+    description: Answers operational questions and summarizes next steps.
+    labels:
+      - operations
+      - production
+    quick_prompts:
+      - Summarize the current operational priorities.
+      - Turn these notes into an action plan.
+      - What should I investigate first?
+
+session:
+  dbs:
+    - db_id: yaml-os-config-db
+      domain_config:
+        display_name: Operations conversations
+
+memory:
+  dbs:
+    - db_id: yaml-os-config-db
+      domain_config:
+        display_name: Operations preferences

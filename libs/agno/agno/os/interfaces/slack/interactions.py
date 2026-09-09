@@ -159,7 +159,7 @@ def extract_row_action_context(payload: Dict[str, Any]) -> Optional[RowActionCon
     )
 
 
-def extract_submit_context(payload: Dict[str, Any], entity_id: str) -> Optional[SubmitContext]:
+def extract_submit_context(payload: Dict[str, Any]) -> Optional[SubmitContext]:
     actions = payload.get("actions") or []
     if not actions:
         return None
@@ -183,7 +183,6 @@ def extract_submit_context(payload: Dict[str, Any], entity_id: str) -> Optional[
         channel=channel,
         msg_ts=msg_ts,
         thread_ts=thread_ts,
-        session_id=f"{entity_id}:{thread_ts}",
         awaiting_ts=awaiting_ts,
         user_id=(payload.get("user") or {}).get("id", ""),
         team_id=(payload.get("team") or {}).get("id"),
