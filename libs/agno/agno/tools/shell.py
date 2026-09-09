@@ -61,7 +61,13 @@ class ShellTools(Toolkit):
             log_debug(f"Result: {result}")
             log_debug(f"Return code: {result.returncode}")
             if result.returncode != 0:
-                return f"Error: {result.stderr}"
+                # stdout is kept, not discarded. Checkers report their findings
+                # there and signal "there were findings" through a non-zero exit
+                # -- ruff, mypy, pytest and every test runner behave this way --
+                # so returning stderr alone hands the model an empty "Error: "
+                # for the one case it most needs to read.
+                failed = "\n".join(f"{result.stdout}{result.stderr}".split("\n")[-tail:])
+                return f"Error (exit {result.returncode}): {failed}"
             return "\n".join(result.stdout.split("\n")[-tail:])
         except Exception as e:
             log_warning(f"Failed to run shell command: {str(e)}")
