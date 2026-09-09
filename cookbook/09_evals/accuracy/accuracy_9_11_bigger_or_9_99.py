@@ -19,7 +19,7 @@ evaluation = AccuracyEval(
     name="Comparison Evaluation",
     model=OpenAIChat(id="o4-mini"),
     agent=Agent(
-        model=OpenAIChat(id="gpt-4o"),
+        model=OpenAIChat(id="gpt-5.6-luna"),
         tools=[CalculatorTools()],
         instructions="You must use the calculator tools for comparisons.",
     ),

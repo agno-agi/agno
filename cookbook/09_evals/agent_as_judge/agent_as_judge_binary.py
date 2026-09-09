@@ -19,7 +19,7 @@ db = SqliteDb(db_file="tmp/agent_as_judge_binary.db")
 # Create Agent
 # ---------------------------------------------------------------------------
 agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     instructions="You are a customer service agent. Respond professionally.",
     db=db,
 )

@@ -37,7 +37,7 @@ class MediaRequest(BaseModel):
 # ---------------------------------------------------------------------------
 image_generator = Agent(
     name="Image Generator",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[OpenAITools(image_model="gpt-image-1")],
     instructions="""You are an expert image generation specialist.
     When users request image creation, you should ACTUALLY GENERATE the image using your available image generation tools.
@@ -50,7 +50,7 @@ image_generator = Agent(
 
 image_describer = Agent(
     name="Image Describer",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     instructions="""You are an expert image analyst and describer.
     When you receive an image (either as input or from a previous step), analyze and describe it in vivid detail, including:
     - Visual elements and composition
@@ -64,7 +64,7 @@ image_describer = Agent(
 
 video_generator = Agent(
     name="Video Generator",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[GeminiTools(vertexai=True)],
     instructions="""You are an expert video production specialist.
     Create detailed video generation prompts and storyboards based on user requests.
@@ -75,7 +75,7 @@ video_generator = Agent(
 
 video_describer = Agent(
     name="Video Describer",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     instructions="""You are an expert video analyst and critic.
     Analyze and describe videos comprehensively, including:
     - Scene composition and cinematography

@@ -105,19 +105,19 @@ def test_get_config_workflows(client: httpx.Client):
         assert workflow_id in workflow_ids, f"Missing workflow: {workflow_id}"
 
 
-def test_get_models(client: httpx.Client):
-    """Test GET /models returns unique models from all agents."""
-    response = client.get("/models")
+def test_get_config_available_models(client: httpx.Client):
+    """Test GET /config returns unique models from all agents in available_models."""
+    response = client.get("/config")
     assert response.status_code == 200
     data = response.json()
-    assert isinstance(data, list)
+    assert "available_models" in data
+    models = data["available_models"]
+    assert isinstance(models, list)
 
-    model_ids = [model["id"] for model in data]
-
-    # Only the models of local agents
+    model_ids = [model["id"] for model in models]
     assert "gpt-4o-mini" in model_ids
 
-    for model in data:
+    for model in models:
         assert "id" in model
         assert "provider" in model
         assert model["provider"] == "OpenAI"

@@ -23,7 +23,7 @@ db = SqliteDb(db_file="tmp/agents.db")
 # Create the Agent
 # ---------------------------------------------------------------------------
 agent = Agent(
-    model=OpenAIResponses(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.6-luna"),
     instructions="You are a knowledgeable assistant. Answer questions thoroughly.",
     session_id="test-session",
     followups=True,

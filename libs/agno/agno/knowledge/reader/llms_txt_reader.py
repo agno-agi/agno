@@ -91,7 +91,7 @@ class LLMsTxtReader(Reader):
             for tag in soup.find_all(["script", "style", "nav", "header", "footer", "aside"]):
                 tag.decompose()
 
-            main = soup.find("main") or soup.find("article") or soup.find(attrs={"role": "main"})
+            main = soup.find("main") or soup.find("article") or soup.find(True, attrs={"role": "main"})
             if main:
                 return main.get_text(separator="\n", strip=True)
 

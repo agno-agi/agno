@@ -1,5 +1,5 @@
 """
-Show how to connect to MCP servers that use either SSE or Streamable HTTP transport using our MCPTools and MultiMCPTools classes.
+Show how to connect to MCP servers that use the Streamable HTTP transport using our MCPTools class.
 
 Check the README.md file for instructions on how to run these examples.
 """
@@ -7,8 +7,8 @@ Check the README.md file for instructions on how to run these examples.
 import asyncio
 
 from agno.agent import Agent
-from agno.models.openai import OpenAIChat
-from agno.tools.mcp import MCPTools, MultiMCPTools
+from agno.models.openai import OpenAIResponses
+from agno.tools.mcp import MCPTools
 
 # ---------------------------------------------------------------------------
 # Create Agent
@@ -27,7 +27,7 @@ async def run_agent(message: str) -> None:
     )
     await mcp_tools.connect()
     agent = Agent(
-        model=OpenAIChat(id="gpt-4o"),
+        model=OpenAIResponses(id="gpt-5.5"),
         tools=[mcp_tools],
         markdown=True,
     )
@@ -35,21 +35,27 @@ async def run_agent(message: str) -> None:
     await mcp_tools.close()
 
 
-# Using MultiMCPTools, we can connect to multiple MCP servers at once, even if they use different transports.
+# We can connect to multiple MCP servers at once, even if they use different transports.
 # In this example we connect to both our example server (Streamable HTTP transport), and a different server (stdio transport).
-async def run_agent_with_multimcp(message: str) -> None:
-    mcp_tools = MultiMCPTools(
-        commands=["npx -y @openbnb/mcp-server-airbnb --ignore-robots-txt"],
-        urls=[server_url],
-        urls_transports=["streamable-http"],
+async def run_agent_with_multiple_servers(message: str) -> None:
+    airbnb_tools = MCPTools(
+        command="npx -y @openbnb/mcp-server-airbnb --ignore-robots-txt"
+    )
+    http_tools = MCPTools(
+        transport="streamable-http",
+        url=server_url,
         refresh_connection=True,  # (Optional) Refresh the MCP connection and tools on each run
     )
+    await airbnb_tools.connect()
+    await http_tools.connect()
     agent = Agent(
-        model=OpenAIChat(id="gpt-4o"),
-        tools=[mcp_tools],
+        model=OpenAIResponses(id="gpt-5.5"),
+        tools=[airbnb_tools, http_tools],
         markdown=True,
     )
     await agent.aprint_response(input=message, stream=True, markdown=True)
+    await airbnb_tools.close()
+    await http_tools.close()
 
 
 # ---------------------------------------------------------------------------
@@ -60,7 +66,7 @@ if __name__ == "__main__":
     asyncio.run(run_agent("Do I have any birthdays this week?"))
     asyncio.run(run_agent("What else is on my calendar this week?"))
     asyncio.run(
-        run_agent_with_multimcp(
+        run_agent_with_multiple_servers(
             "Can you check when is my mom's birthday, and if there are any AirBnb listings in SF for two people for that day?",
         )
     )

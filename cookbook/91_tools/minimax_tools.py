@@ -26,7 +26,7 @@ from agno.tools.minimax import MiniMaxTools
 
 minimax_agent = Agent(
     name="MiniMax Video Generator Agent",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[
         MiniMaxTools(
             # Use region="cn_zh" for the mainland China endpoint.

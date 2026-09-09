@@ -12,12 +12,20 @@ if TYPE_CHECKING:
 
 from agno.agent import RunOutput
 from agno.db.schemas.evals import EvalType
-from agno.eval.utils import async_log_eval, log_eval_run, spinner_live, store_result_in_file
+from agno.eval.utils import (
+    async_log_eval,
+    async_log_eval_telemetry,
+    log_eval_run,
+    log_eval_telemetry,
+    spinner_live,
+    store_result_in_file,
+)
 from agno.utils.log import logger
 
 
 @dataclass
 class ReliabilityResult:
+    run_id: str
     eval_status: str
     failed_tool_calls: List[str]
     passed_tool_calls: List[str]
@@ -74,8 +82,6 @@ class ReliabilityEval:
 
     # Evaluation name
     name: Optional[str] = None
-    # Evaluation UUID
-    eval_id: str = field(default_factory=lambda: str(uuid4()))
 
     # Agent response
     agent_response: Optional[RunOutput] = None
@@ -89,7 +95,7 @@ class ReliabilityEval:
     # Single check: {"multiply": {"a": 10, "b": 5}}
     # Multiple checks: {"add": [{"a": 2, "b": 2}, {"a": 3, "b": 3}]}
     expected_tool_call_arguments: Optional[Dict[str, Union[Dict[str, Any], List[Dict[str, Any]]]]] = None
-    # Result of the evaluation
+    # Result of the last run. Each run method returns its own result object
     result: Optional[ReliabilityResult] = None
 
     # Print detailed results
@@ -98,6 +104,7 @@ class ReliabilityEval:
     # console (e.g. the suite runner) disable it.
     show_spinner: bool = True
     # If set, results will be saved in the given file path
+    # Supports the {name} and {run_id} placeholders
     file_path_to_save_results: Optional[str] = None
     # Enable debug logs
     debug_mode: bool = getenv("AGNO_DEBUG", "false").lower() == "true"
@@ -109,7 +116,7 @@ class ReliabilityEval:
     # This helps us improve our Evals and provide better support
     telemetry: bool = True
 
-    def _evaluate(self) -> ReliabilityResult:
+    def _evaluate(self, run_id: str) -> ReliabilityResult:
         """Core evaluation logic: tool evidence comes from executions, not requests.
 
         New in 2.8.0: an expectation is satisfied only by a clean execution -- an entry
@@ -243,6 +250,7 @@ class ReliabilityEval:
         eval_passed = len(failed_tool_calls) == 0 and len(missing_tool_calls) == 0 and len(failed_argument_checks) == 0
 
         return ReliabilityResult(
+            run_id=run_id,
             eval_status="PASSED" if eval_passed else "FAILED",
             failed_tool_calls=failed_tool_calls,
             passed_tool_calls=passed_tool_calls,
@@ -277,7 +285,7 @@ class ReliabilityEval:
         from rich.console import Console
         from rich.status import Status
 
-        # Generate unique run_id for this execution (don't modify self.eval_id due to concurrency)
+        # Generate unique run_id for this execution
         run_id = str(uuid4())
 
         # Add a spinner while running the evaluations
@@ -286,20 +294,21 @@ class ReliabilityEval:
             status = Status("Running evaluation...", spinner="dots", speed=1.0, refresh_per_second=10)
             live_log.update(status)
 
-            self.result = self._evaluate()
+            result = self._evaluate(run_id)
+            self.result = result
 
         # Save result to file if requested
-        if self.file_path_to_save_results is not None and self.result is not None:
+        if self.file_path_to_save_results is not None:
             store_result_in_file(
                 file_path=self.file_path_to_save_results,
                 name=self.name,
-                eval_id=self.eval_id,
-                result=self.result,
+                run_id=run_id,
+                result=result,
             )
 
         # Print results if requested
         if self.print_results or print_results:
-            self.result.print_eval(console)
+            result.print_eval(console)
 
         # Log results to the Agno platform if requested
         if self.db:
@@ -322,8 +331,8 @@ class ReliabilityEval:
 
             log_eval_run(
                 db=self.db,
-                run_id=self.eval_id,  # type: ignore
-                run_data=asdict(self.result),
+                run_id=run_id,
+                run_data=asdict(result),
                 eval_type=EvalType.RELIABILITY,
                 name=self.name if self.name is not None else None,
                 agent_id=agent_id,
@@ -334,18 +343,10 @@ class ReliabilityEval:
             )
 
         if self.telemetry:
-            from agno.api.evals import EvalRunCreate, create_eval_run_telemetry
-
-            create_eval_run_telemetry(
-                eval_run=EvalRunCreate(
-                    run_id=self.eval_id,
-                    eval_type=EvalType.RELIABILITY,
-                    data=self._get_telemetry_data(),
-                ),
-            )
+            log_eval_telemetry(run_id=run_id, eval_type=EvalType.RELIABILITY, get_data=self._get_telemetry_data)
 
         logger.debug(f"*********** Evaluation End: {run_id} ***********")
-        return self.result
+        return result
 
     async def arun(self, *, print_results: bool = False) -> Optional[ReliabilityResult]:
         if self.agent_response is None and self.team_response is None:
@@ -359,7 +360,7 @@ class ReliabilityEval:
         from rich.console import Console
         from rich.status import Status
 
-        # Generate unique run_id for this execution (don't modify self.eval_id due to concurrency)
+        # Generate unique run_id for this execution
         run_id = str(uuid4())
 
         # Add a spinner while running the evaluations
@@ -368,20 +369,21 @@ class ReliabilityEval:
             status = Status("Running evaluation...", spinner="dots", speed=1.0, refresh_per_second=10)
             live_log.update(status)
 
-            self.result = self._evaluate()
+            result = self._evaluate(run_id)
+            self.result = result
 
         # Save result to file if requested
-        if self.file_path_to_save_results is not None and self.result is not None:
+        if self.file_path_to_save_results is not None:
             store_result_in_file(
                 file_path=self.file_path_to_save_results,
                 name=self.name,
-                eval_id=self.eval_id,
-                result=self.result,
+                run_id=run_id,
+                result=result,
             )
 
         # Print results if requested
         if self.print_results or print_results:
-            self.result.print_eval(console)
+            result.print_eval(console)
 
         # Log results to the Agno platform if requested
         if self.db:
@@ -404,8 +406,8 @@ class ReliabilityEval:
 
             await async_log_eval(
                 db=self.db,
-                run_id=self.eval_id,  # type: ignore
-                run_data=asdict(self.result),
+                run_id=run_id,
+                run_data=asdict(result),
                 eval_type=EvalType.RELIABILITY,
                 name=self.name if self.name is not None else None,
                 agent_id=agent_id,
@@ -416,15 +418,9 @@ class ReliabilityEval:
             )
 
         if self.telemetry:
-            from agno.api.evals import EvalRunCreate, async_create_eval_run_telemetry
-
-            await async_create_eval_run_telemetry(
-                eval_run=EvalRunCreate(
-                    run_id=self.eval_id,
-                    eval_type=EvalType.RELIABILITY,
-                    data=self._get_telemetry_data(),
-                ),
+            await async_log_eval_telemetry(
+                run_id=run_id, eval_type=EvalType.RELIABILITY, get_data=self._get_telemetry_data
             )
 
         logger.debug(f"*********** Evaluation End: {run_id} ***********")
-        return self.result
+        return result

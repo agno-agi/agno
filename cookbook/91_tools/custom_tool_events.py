@@ -38,7 +38,7 @@ async def get_customer_profile():
 
 # Setup an Agent with our custom tool.
 agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[get_customer_profile],
     instructions="Your task is to retrieve customer profiles for the user.",
 )

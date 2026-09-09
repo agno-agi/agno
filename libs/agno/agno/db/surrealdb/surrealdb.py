@@ -1,3 +1,4 @@
+import time
 from datetime import date, datetime, timedelta, timezone
 from textwrap import dedent
 from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Sequence, Tuple, Union
@@ -10,38 +11,51 @@ from agno.db.postgres.utils import (
     get_dates_to_calculate_metrics_for,
 )
 from agno.db.schemas import UserMemory
-from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.surrealdb import utils
 from agno.db.surrealdb.metrics import (
     bulk_upsert_metrics,
     calculate_date_metrics,
+    desurrealize_metric,
     fetch_all_sessions_data,
     get_all_sessions_for_metrics_calculation,
     get_metrics_calculation_starting_date,
 )
 from agno.db.surrealdb.models import (
     TableType,
-    deserialize_cultural_knowledge,
     deserialize_eval_run_record,
     deserialize_knowledge_row,
     deserialize_user_memories,
     deserialize_user_memory,
     desurrealize_eval_run_record,
+    desurrealize_run_row,
     desurrealize_session,
     desurrealize_user_memory,
     get_schema,
     get_session_type,
-    serialize_cultural_knowledge,
     serialize_eval_run_record,
     serialize_knowledge_row,
+    serialize_run_row,
     serialize_session,
     serialize_user_memory,
 )
 from agno.db.surrealdb.queries import COUNT_QUERY, WhereClause, order_limit_start
 from agno.db.surrealdb.utils import build_client
-from agno.db.utils import deserialize_session, deserialize_sessions
+from agno.db.utils import (
+    HISTORY_SKIP_STATUSES,
+    build_single_run_row,
+    deserialize_run,
+    deserialize_session,
+    deserialize_sessions,
+    drop_legacy_metrics,
+    filter_context_runs,
+    merge_runs_table_with_legacy_blob,
+)
+from agno.run.agent import RunOutput
+from agno.run.base import RunStatus
+from agno.run.team import TeamRunOutput
+from agno.run.workflow import WorkflowRunOutput
 from agno.session import Session
 from agno.utils.log import log_debug, log_error, log_info
 from agno.utils.string import generate_id
@@ -61,11 +75,11 @@ class SurrealDb(BaseDb):
         db_ns: str,
         db_db: str,
         session_table: Optional[str] = None,
+        runs_table: Optional[str] = None,
         memory_table: Optional[str] = None,
         metrics_table: Optional[str] = None,
         eval_table: Optional[str] = None,
         knowledge_table: Optional[str] = None,
-        culture_table: Optional[str] = None,
         traces_table: Optional[str] = None,
         spans_table: Optional[str] = None,
         id: Optional[str] = None,
@@ -84,7 +98,6 @@ class SurrealDb(BaseDb):
             metrics_table: The name of the metrics table.
             eval_table: The name of the eval table.
             knowledge_table: The name of the knowledge table.
-            culture_table: The name of the culture table.
             traces_table: The name of the traces table.
             spans_table: The name of the spans table.
             id: The ID of the database.
@@ -97,11 +110,11 @@ class SurrealDb(BaseDb):
         super().__init__(
             id=id,
             session_table=session_table,
+            runs_table=runs_table,
             memory_table=memory_table,
             metrics_table=metrics_table,
             eval_table=eval_table,
             knowledge_table=knowledge_table,
-            culture_table=culture_table,
             traces_table=traces_table,
             spans_table=spans_table,
         )
@@ -125,10 +138,10 @@ class SurrealDb(BaseDb):
     def table_names(self) -> dict[TableType, str]:
         return {
             "agents": self._agents_table_name,
-            "culture": self.culture_table_name,
             "evals": self.eval_table_name,
             "knowledge": self.knowledge_table_name,
             "memories": self.memory_table_name,
+            "runs": self.runs_table_name,
             "sessions": self.session_table_name,
             "spans": self.span_table_name,
             "teams": self._teams_table_name,
@@ -151,10 +164,6 @@ class SurrealDb(BaseDb):
             raise Exception("Failed to retrieve database information")
         return table_name in response.get("tables", [])
 
-    def _table_exists(self, table_name: str) -> bool:
-        """Deprecated: Use table_exists() instead."""
-        return self.table_exists(table_name)
-
     def _create_table(self, table_type: TableType, table_name: str):
         query = get_schema(table_type, table_name)
         self.client.query(query)
@@ -162,12 +171,12 @@ class SurrealDb(BaseDb):
     def _get_table(self, table_type: TableType, create_table_if_not_found: bool = True):
         if table_type == "sessions":
             table_name = self.session_table_name
+        elif table_type == "runs":
+            table_name = self.runs_table_name
         elif table_type == "memories":
             table_name = self.memory_table_name
         elif table_type == "knowledge":
             table_name = self.knowledge_table_name
-        elif table_type == "culture":
-            table_name = self.culture_table_name
         elif table_type == "users":
             table_name = self._users_table_name
         elif table_type == "agents":
@@ -190,18 +199,34 @@ class SurrealDb(BaseDb):
         else:
             raise NotImplementedError(f"Unknown table type: {table_type}")
 
-        if create_table_if_not_found and not self._table_exists(table_name):
+        if create_table_if_not_found and not self.table_exists(table_name):
             self._create_table(table_type, table_name)
 
         return table_name
 
-    def get_latest_schema_version(self):
-        """Get the latest version of the database schema."""
-        pass
+    def get_latest_schema_version(self, table_name: str = "") -> Optional[str]:
+        """Get the schema version stamped for the given table.
 
-    def upsert_schema_version(self, version: str) -> None:
-        """Upsert the schema version into the database."""
-        pass
+        Defaults to "2.0.0" when nothing is stamped so the MigrationManager
+        runs migrations instead of skipping the table.
+        """
+        result = self.client.query(
+            "SELECT version FROM ONLY $record",
+            {"record": RecordID(self.versions_table_name, table_name)},
+        )
+        if isinstance(result, dict) and result.get("version"):
+            return str(result["version"])
+        return "2.0.0"
+
+    def upsert_schema_version(self, table_name: str = "", version: str = "") -> None:
+        """Record the schema version stamp for the given table."""
+        self.client.query(
+            "UPSERT ONLY $record CONTENT $content",
+            {
+                "record": RecordID(self.versions_table_name, table_name),
+                "content": {"table_name": table_name, "version": version, "updated_at": int(time.time())},
+            },
+        )
 
     def _query(
         self,
@@ -232,6 +257,260 @@ class SurrealDb(BaseDb):
         total_count = int(total_count)
         return total_count
 
+    # --- Runs ---
+
+    def _get_session_runs_data(self, session_id: str, limit: Optional[int] = None) -> List[Dict[str, Any]]:
+        """Return raw run_data dicts for a session, ordered by run_index then created_at.
+
+        When ``limit`` is set, push the "most recent N context-relevant runs" filter
+        down to the DB: drop member sub-runs (``parent_run_id`` set), drop terminal-skip
+        statuses, order newest-first and take ``limit`` rows, then reverse back to
+        chronological order. SurrealDB uses ``IS NONE`` for null checks (not ``IS NULL``),
+        and the ``status IS NONE OR`` guard keeps runs with no status from being dropped
+        by ``NOT IN $skip``.
+        """
+        try:
+            runs_table = self._get_table("runs", create_table_if_not_found=False)
+        except Exception:
+            return []
+        if limit is not None:
+            rows_raw = self._query(
+                f"SELECT *, run_index ?? 0 AS _ri, created_at ?? 0 AS _ca FROM {runs_table} "
+                "WHERE session_id = $sid "
+                "AND parent_run_id IS NONE AND (status IS NONE OR status NOT IN $skip) "
+                "ORDER BY _ri DESC, _ca DESC LIMIT $lim",
+                {"sid": session_id, "skip": HISTORY_SKIP_STATUSES, "lim": limit},
+                dict,
+            )
+            rows = [desurrealize_run_row(r) for r in rows_raw]
+            run_data = [r["run_data"] for r in rows if "run_data" in r]
+            run_data.reverse()
+            return run_data
+        rows_raw = self._query(
+            f"SELECT *, run_index ?? 0 AS _ri, created_at ?? 0 AS _ca FROM {runs_table} "
+            "WHERE session_id = $sid ORDER BY _ri ASC, _ca ASC",
+            {"sid": session_id},
+            dict,
+        )
+        rows = [desurrealize_run_row(r) for r in rows_raw]
+        return [r["run_data"] for r in rows if "run_data" in r]
+
+    def _get_sessions_runs_data(self, session_ids: List[str]) -> Dict[str, List[Dict[str, Any]]]:
+        if not session_ids:
+            return {}
+        grouped: Dict[str, List[Dict[str, Any]]] = {}
+        for sid in session_ids:
+            grouped[sid] = self._get_session_runs_data(sid)
+        return grouped
+
+    def upsert_run(
+        self,
+        run: Union[RunOutput, TeamRunOutput, WorkflowRunOutput, Dict[str, Any]],
+        session_id: str,
+        user_id: Optional[str] = None,
+        run_index: Optional[int] = None,
+    ) -> None:
+        """Upsert a single run row into the runs table (O(1) operation).
+
+        Optimized for updating existing runs (e.g., status changes in HITL or
+        background mode) without re-upserting all runs in the session.
+
+        For new runs, ``run_index`` should be provided or will be read from
+        ``run_data``. For updates to existing runs, ``run_index`` is preserved
+        from the original insert.
+
+        Args:
+            run: The run object or dictionary to upsert.
+            session_id: The session ID this run belongs to.
+            user_id: Optional user ID to associate with the run.
+            run_index: Optional run index for new runs.
+
+        Raises:
+            ValueError: If the run has no run_id.
+            Exception: If an error occurs during upsert.
+        """
+        try:
+            runs_table = self._get_table("runs", create_table_if_not_found=True)
+            if runs_table is None:
+                return
+
+            row = build_single_run_row(
+                run=run,
+                session_id=session_id,
+                user_id=user_id,
+                run_index=run_index,
+            )
+
+            # Preserve the original run_index if the record already exists
+            existing = self._query_one(
+                "SELECT * FROM ONLY $record",
+                {"record": RecordID(runs_table, row["run_id"])},
+                dict,
+            )
+            if existing is not None and "run_index" in existing:
+                row["run_index"] = existing["run_index"]
+
+            content = serialize_run_row(row, runs_table)
+            self._query_one(
+                "UPSERT ONLY $record CONTENT $content",
+                {"record": RecordID(runs_table, row["run_id"]), "content": content},
+                dict,
+            )
+        except Exception as e:
+            log_error(f"Exception upserting run into runs table: {str(e)}")
+            raise e
+
+    def _delete_session_runs(self, session_id: str) -> int:
+        try:
+            runs_table = self._get_table("runs", create_table_if_not_found=False)
+        except Exception:
+            return 0
+        result = self.client.query(
+            f"DELETE FROM {runs_table} WHERE session_id = $sid RETURN BEFORE",
+            {"sid": session_id},
+        )
+        if isinstance(result, list):
+            return len(result)
+        return 0
+
+    def cleanup_legacy_runs_field(self, force: bool = False) -> bool:
+        """Unset the legacy ``runs`` field from session records."""
+        try:
+            sessions_table = self._get_table("sessions", create_table_if_not_found=False)
+        except Exception:
+            return False
+
+        sessions_raw = self._query(f"SELECT * FROM {sessions_table}", {}, dict)
+        if not sessions_raw:
+            return False
+
+        if not force:
+            pending = sum(1 for s in sessions_raw if s.get("runs"))
+            if pending > 0:
+                raise RuntimeError(
+                    f"Refusing to unset {sessions_table}.runs: {pending} session(s) still have "
+                    "non-null `runs` content. Run MigrationManager(db).up() first, or pass force=True."
+                )
+
+        self.client.query(f"UPDATE {sessions_table} UNSET runs", {})
+        log_info(f"Unset runs on session records in {sessions_table}")
+        return True
+
+    def get_run(
+        self, run_id: str, deserialize: Optional[bool] = True
+    ) -> Optional[Union[RunOutput, TeamRunOutput, WorkflowRunOutput, Dict[str, Any]]]:
+        try:
+            runs_table = self._get_table("runs", create_table_if_not_found=False)
+        except Exception:
+            return None
+        raw = self._query_one(
+            "SELECT * FROM ONLY $record",
+            {"record": RecordID(runs_table, run_id)},
+            dict,
+        )
+        if raw is None:
+            return None
+        row = desurrealize_run_row(raw)
+        if not deserialize:
+            return row
+        return deserialize_run(row.get("run_type"), row["run_data"])
+
+    def get_runs(
+        self,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+        status: Optional[RunStatus] = None,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+        deserialize: Optional[bool] = True,
+    ) -> Union[List[Union[RunOutput, TeamRunOutput, WorkflowRunOutput]], Tuple[List[Dict[str, Any]], int]]:
+        try:
+            runs_table = self._get_table("runs", create_table_if_not_found=False)
+        except Exception:
+            return [] if deserialize else ([], 0)
+
+        where = WhereClause()
+        if session_id is not None:
+            where = where.and_("session_id", session_id)
+        if user_id is not None:
+            where = where.and_("user_id", user_id)
+        if agent_id is not None:
+            where = where.and_("agent_id", agent_id)
+        if team_id is not None:
+            where = where.and_("team_id", team_id)
+        if workflow_id is not None:
+            where = where.and_("workflow_id", workflow_id)
+        if status is not None:
+            status_value = status.value if isinstance(status, RunStatus) else status
+            where = where.and_("status", status_value)
+
+        where_clause, where_vars = where.build()
+        total_count = self._count(runs_table, where_clause, where_vars)
+
+        order_clause = order_limit_start(sort_by or "run_index", sort_order or "asc", limit, page)
+        query = dedent(f"""
+            SELECT *
+            FROM {runs_table}
+            {where_clause}
+            {order_clause}
+        """)
+        rows_raw = self._query(query, where_vars, dict)
+        rows = [desurrealize_run_row(r) for r in rows_raw]
+
+        if not deserialize:
+            return list(rows), total_count
+        return [deserialize_run(r.get("run_type"), r["run_data"]) for r in rows]
+
+    def _scrub_run_ids_from_legacy_blob(self, run_ids: List[str]) -> None:
+        """Remove ``run_ids`` from every session record's legacy ``runs`` array.
+
+        Partial-migration hygiene: SurrealDB v3 keeps the pre-migration ``runs``
+        array on the session record as backup. Deleting from the runs table
+        alone leaves that array intact, and the read path's
+        ``merge_runs_table_with_legacy_blob`` resurrects the ghost.
+        """
+        if not run_ids:
+            return
+        try:
+            sessions_table = self._get_table("sessions", create_table_if_not_found=False)
+            self.client.query(
+                f"UPDATE {sessions_table} SET runs = array::filter(runs, |$r| $r.run_id NOT IN $rids) "
+                f"WHERE runs IS NOT NONE AND array::any(runs, |$r| $r.run_id IN $rids)",
+                {"rids": list(run_ids)},
+            )
+        except Exception:
+            # Best-effort; the primary delete already succeeded.
+            pass
+
+    def delete_run(self, run_id: str) -> bool:
+        try:
+            runs_table = self._get_table("runs", create_table_if_not_found=False)
+        except Exception:
+            return False
+        res = self.client.delete(RecordID(runs_table, run_id))
+        self._scrub_run_ids_from_legacy_blob([run_id])
+        return bool(res)
+
+    def delete_runs(self, run_ids: List[str]) -> None:
+        if not run_ids:
+            return
+        try:
+            runs_table = self._get_table("runs", create_table_if_not_found=False)
+        except Exception:
+            return
+        records = [RecordID(runs_table, rid) for rid in run_ids]
+        params: Dict[str, Any] = {"records": records}
+        self.client.query(
+            f"DELETE FROM {runs_table} WHERE id IN $records",
+            params,
+        )
+        self._scrub_run_ids_from_legacy_blob(run_ids)
+
     # --- Sessions ---
     def clear_sessions(self) -> None:
         """Delete all session rows from the database.
@@ -251,9 +530,16 @@ class SurrealDb(BaseDb):
                 f"DELETE FROM {table} WHERE id = $record AND user_id = $user_id RETURN BEFORE",
                 {"record": RecordID(table, session_id), "user_id": user_id},
             )
-            return isinstance(res, list) and len(res) > 0
-        res = self.client.delete(RecordID(table, session_id))
-        return bool(res)
+            deleted = isinstance(res, list) and len(res) > 0
+        else:
+            res = self.client.delete(RecordID(table, session_id))
+            deleted = bool(res)
+        if deleted:
+            try:
+                self._delete_session_runs(session_id)
+            except Exception as e:
+                log_error(f"Failed to cascade-delete runs for session {session_id}: {str(e)}")
+        return deleted
 
     def delete_sessions(self, session_ids: list[str], user_id: Optional[str] = None) -> None:
         table = self._get_table(table_type="sessions")
@@ -267,6 +553,12 @@ class SurrealDb(BaseDb):
             query += " AND user_id = $user_id"
             params["user_id"] = user_id
         self.client.query(query, params)
+        # Cascade-delete runs for each session
+        for sid in session_ids:
+            try:
+                self._delete_session_runs(sid)
+            except Exception as e:
+                log_error(f"Failed to cascade-delete runs for session {sid}: {str(e)}")
 
     def get_session(
         self,
@@ -274,6 +566,7 @@ class SurrealDb(BaseDb):
         session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        runs_limit: Optional[int] = None,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
         r"""
         Read a session from the database.
@@ -310,6 +603,24 @@ class SurrealDb(BaseDb):
             return None
 
         desurrealized = desurrealize_session(raw)
+
+        # Attach runs from the runs table, merged with any legacy `runs` blob.
+        try:
+            legacy_runs = desurrealized.get("runs")
+            if runs_limit is not None and not legacy_runs:
+                # Fully migrated: push "most recent N" down to the DB (indexed).
+                desurrealized["runs"] = self._get_session_runs_data(session_id, limit=runs_limit)
+            else:
+                # Full load + merge. Also the un-migrated fallback: the legacy blob
+                # holds the whole history in one column, so "last N" can't be pushed
+                # to SQL — load all, merge, then filter+slice to match the migrated path.
+                runs_data = self._get_session_runs_data(session_id)
+                merged = merge_runs_table_with_legacy_blob(runs_data, legacy_runs)
+                if runs_limit is not None:
+                    merged = filter_context_runs(merged)[-runs_limit:]
+                desurrealized["runs"] = merged
+        except Exception as e:
+            log_error(f"Failed to load runs for session {session_id}: {str(e)}")
 
         if not deserialize:
             return desurrealized
@@ -433,6 +744,19 @@ class SurrealDb(BaseDb):
         sessions_raw = self._query(query, where_vars, dict)
         converted_sessions_raw = [desurrealize_session(session) for session in sessions_raw]
 
+        # Attach runs from the runs table, merged with legacy blob
+        if converted_sessions_raw:
+            try:
+                runs_by_session = self._get_sessions_runs_data(
+                    [s["session_id"] for s in converted_sessions_raw if s.get("session_id")]
+                )
+                for s in converted_sessions_raw:
+                    sid = s.get("session_id")
+                    if sid:
+                        s["runs"] = merge_runs_table_with_legacy_blob(runs_by_session.get(sid, []), s.get("runs"))
+            except Exception as e:
+                log_error(f"Failed to attach runs to sessions: {str(e)}")
+
         if not deserialize:
             return list(converted_sessions_raw), total_count
 
@@ -481,9 +805,17 @@ class SurrealDb(BaseDb):
         else:
             session_raw = self._query_one("UPDATE ONLY $record SET session_name = $name", vars, dict)
 
-        if session_raw is None or not deserialize:
-            return session_raw
+        if session_raw is None:
+            return None
         desurrealized = desurrealize_session(session_raw)
+        # Attach runs from the runs table, merged with legacy blob
+        try:
+            runs_data = self._get_session_runs_data(session_id)
+            desurrealized["runs"] = merge_runs_table_with_legacy_blob(runs_data, desurrealized.get("runs"))
+        except Exception as e:
+            log_error(f"Failed to load runs for renamed session {session_id}: {str(e)}")
+        if not deserialize:
+            return desurrealized
         return deserialize_session(session_type, desurrealized)
 
     def upsert_session(
@@ -508,26 +840,43 @@ class SurrealDb(BaseDb):
         table = self._get_table("sessions")
 
         existing = self.client.query(
-            f"SELECT user_id FROM {table} WHERE id = $record",
+            f"SELECT user_id, runs FROM {table} WHERE id = $record",
             {"record": RecordID(table, session.session_id)},
         )
+        legacy_runs: Any = None
         if isinstance(existing, list) and len(existing) > 0:
-            existing_uid = existing[0].get("user_id") if isinstance(existing[0], dict) else None
+            existing_row = existing[0] if isinstance(existing[0], dict) else {}
+            existing_uid = existing_row.get("user_id")
             if existing_uid is not None and existing_uid != session.user_id:
                 return None
+            # Carry legacy `runs` blob forward: UPSERT CONTENT replaces the whole
+            # record, and serialize_session(include_runs=False) omits `runs`, so
+            # bare upsert would silently erase pre-v3 history that only lives in
+            # the legacy blob (upgrade-without-migration data loss).
+            legacy_runs = existing_row.get("runs")
+
+        content = serialize_session(session, self.table_names, include_runs=False)
+        if legacy_runs is not None:
+            content["runs"] = legacy_runs
 
         session_raw = self._query_one(
             "UPSERT ONLY $record CONTENT $content",
             {
                 "record": RecordID(table, session.session_id),
-                "content": serialize_session(session, self.table_names),
+                "content": content,
             },
             dict,
         )
-        if session_raw is None or not deserialize:
-            return session_raw
+        if session_raw is None:
+            return None
 
+        # Runs are persisted separately via upsert_run by the caller (agent loop).
         desurrealized = desurrealize_session(session_raw)
+        # Attach in-memory runs so the caller sees them on the returned session
+        desurrealized["runs"] = [r.to_dict() if hasattr(r, "to_dict") else r for r in (session.runs or [])]
+
+        if not deserialize:
+            return desurrealized
         return deserialize_session(session_type, desurrealized)
 
     def upsert_sessions(
@@ -552,12 +901,27 @@ class SurrealDb(BaseDb):
         table = self._get_table("sessions")
         sessions_raw: List[Dict[str, Any]] = []
         for session in sessions:
-            # UPSERT does only work for one record at a time
+            # UPSERT does only work for one record at a time. Read the existing
+            # `runs` blob first so we can carry it forward -- otherwise UPSERT
+            # CONTENT would wipe any pre-v3 history on the row (see the
+            # single-record upsert_session above for the full rationale).
+            existing = self.client.query(
+                f"SELECT runs FROM {table} WHERE id = $record",
+                {"record": RecordID(table, session.session_id)},
+            )
+            legacy_runs: Any = None
+            if isinstance(existing, list) and len(existing) > 0 and isinstance(existing[0], dict):
+                legacy_runs = existing[0].get("runs")
+
+            content = serialize_session(session, self.table_names, include_runs=False)
+            if legacy_runs is not None:
+                content["runs"] = legacy_runs
+
             session_raw = self._query_one(
                 "UPSERT ONLY $record CONTENT $content",
                 {
                     "record": RecordID(table, session.session_id),
-                    "content": serialize_session(session, self.table_names),
+                    "content": content,
                 },
                 dict,
             )
@@ -581,152 +945,6 @@ class SurrealDb(BaseDb):
         """
         table = self._get_table("memories")
         _ = self.client.delete(table)
-
-    # -- Cultural Knowledge methods --
-    def clear_cultural_knowledge(self) -> None:
-        """Delete all cultural knowledge from the database.
-
-        Raises:
-            Exception: If an error occurs during deletion.
-        """
-        table = self._get_table("culture")
-        _ = self.client.delete(table)
-
-    def delete_cultural_knowledge(self, id: str) -> None:
-        """Delete cultural knowledge by ID.
-
-        Args:
-            id (str): The ID of the cultural knowledge to delete.
-
-        Raises:
-            Exception: If an error occurs during deletion.
-        """
-        table = self._get_table("culture")
-        rec_id = RecordID(table, id)
-        self.client.delete(rec_id)
-
-    def get_cultural_knowledge(
-        self, id: str, deserialize: Optional[bool] = True
-    ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
-        """Get cultural knowledge by ID.
-
-        Args:
-            id (str): The ID of the cultural knowledge to retrieve.
-            deserialize (Optional[bool]): Whether to deserialize to CulturalKnowledge object. Defaults to True.
-
-        Returns:
-            Optional[Union[CulturalKnowledge, Dict[str, Any]]]: The cultural knowledge if found, None otherwise.
-
-        Raises:
-            Exception: If an error occurs during retrieval.
-        """
-        table = self._get_table("culture")
-        rec_id = RecordID(table, id)
-        result = self.client.select(rec_id)
-
-        if result is None:
-            return None
-
-        if not deserialize:
-            return result  # type: ignore
-
-        return deserialize_cultural_knowledge(result)  # type: ignore
-
-    def get_all_cultural_knowledge(
-        self,
-        agent_id: Optional[str] = None,
-        team_id: Optional[str] = None,
-        name: Optional[str] = None,
-        limit: Optional[int] = None,
-        page: Optional[int] = None,
-        sort_by: Optional[str] = None,
-        sort_order: Optional[str] = None,
-        deserialize: Optional[bool] = True,
-    ) -> Union[List[CulturalKnowledge], Tuple[List[Dict[str, Any]], int]]:
-        """Get all cultural knowledge with filtering and pagination.
-
-        Args:
-            agent_id (Optional[str]): Filter by agent ID.
-            team_id (Optional[str]): Filter by team ID.
-            name (Optional[str]): Filter by name (case-insensitive partial match).
-            limit (Optional[int]): Maximum number of results to return.
-            page (Optional[int]): Page number for pagination.
-            sort_by (Optional[str]): Field to sort by.
-            sort_order (Optional[str]): Sort order ('asc' or 'desc').
-            deserialize (Optional[bool]): Whether to deserialize to CulturalKnowledge objects. Defaults to True.
-
-        Returns:
-            Union[List[CulturalKnowledge], Tuple[List[Dict[str, Any]], int]]:
-                - When deserialize=True: List of CulturalKnowledge objects
-                - When deserialize=False: Tuple with list of dictionaries and total count
-
-        Raises:
-            Exception: If an error occurs during retrieval.
-        """
-        table = self._get_table("culture")
-
-        # Build where clauses
-        where_clauses: List[WhereClause] = []
-        if agent_id is not None:
-            agent_rec_id = RecordID(self._get_table("agents"), agent_id)
-            where_clauses.append(("agent", "=", agent_rec_id))  # type: ignore
-        if team_id is not None:
-            team_rec_id = RecordID(self._get_table("teams"), team_id)
-            where_clauses.append(("team", "=", team_rec_id))  # type: ignore
-        if name is not None:
-            where_clauses.append(("string::lowercase(name)", "CONTAINS", name.lower()))  # type: ignore
-
-        # Build query for total count
-        count_query = COUNT_QUERY.format(
-            table=table,
-            where=""
-            if not where_clauses
-            else f"WHERE {' AND '.join(f'{w[0]} {w[1]} ${chr(97 + i)}' for i, w in enumerate(where_clauses))}",  # type: ignore
-        )
-        params = {chr(97 + i): w[2] for i, w in enumerate(where_clauses)}  # type: ignore
-        total_count = self._query_one(count_query, params, int) or 0
-
-        # Build main query
-        order_limit = order_limit_start(sort_by, sort_order, limit, page)
-        query = f"SELECT * FROM {table}"
-        if where_clauses:
-            query += f" WHERE {' AND '.join(f'{w[0]} {w[1]} ${chr(97 + i)}' for i, w in enumerate(where_clauses))}"  # type: ignore
-        query += order_limit
-
-        results = self._query(query, params, list) or []
-
-        if not deserialize:
-            return results, total_count  # type: ignore
-
-        return [deserialize_cultural_knowledge(r) for r in results]  # type: ignore
-
-    def upsert_cultural_knowledge(
-        self, cultural_knowledge: CulturalKnowledge, deserialize: Optional[bool] = True
-    ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
-        """Upsert cultural knowledge in SurrealDB.
-
-        Args:
-            cultural_knowledge (CulturalKnowledge): The cultural knowledge to upsert.
-            deserialize (Optional[bool]): Whether to deserialize the result. Defaults to True.
-
-        Returns:
-            Optional[Union[CulturalKnowledge, Dict[str, Any]]]: The upserted cultural knowledge.
-
-        Raises:
-            Exception: If an error occurs during upsert.
-        """
-        table = self._get_table("culture", create_table_if_not_found=True)
-        serialized = serialize_cultural_knowledge(cultural_knowledge, table)
-
-        result = self.client.upsert(serialized["id"], serialized)
-
-        if result is None:
-            return None
-
-        if not deserialize:
-            return result  # type: ignore
-
-        return deserialize_cultural_knowledge(result)  # type: ignore
 
     def delete_user_memory(self, memory_id: str, user_id: Optional[str] = None) -> None:
         """Delete a user memory from the database.
@@ -1066,12 +1284,15 @@ class SurrealDb(BaseDb):
         self,
         starting_date: Optional[date] = None,
         ending_date: Optional[date] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], Optional[int]]:
         """Get all metrics matching the given date range.
 
         Args:
             starting_date (Optional[date]): The starting date to filter metrics by.
             ending_date (Optional[date]): The ending date to filter metrics by.
+            user_id (Optional[str]): If set, only return this user's bucket. Defaults to None (all
+                buckets, including the unowned one).
 
         Returns:
             Tuple[List[dict], Optional[int]]: A tuple containing the metrics and the timestamp of the latest update.
@@ -1093,6 +1314,9 @@ class SurrealDb(BaseDb):
             ending_datetime = datetime.combine(ending_date, datetime.min.time()).replace(tzinfo=timezone.utc)
             where = where.and_("date", ending_datetime, "<=")
 
+        if user_id is not None:
+            where = where.and_("user_id", user_id)
+
         where_clause, where_vars = where.build()
 
         # Query
@@ -1104,6 +1328,10 @@ class SurrealDb(BaseDb):
         """)
 
         results = self._query(query, where_vars, dict)
+        # Records written before ownership existed hold a whole day, and only an
+        # unscoped read sees them: an owner filter excludes them already
+        if user_id is None:
+            results = drop_legacy_metrics(results)
 
         # Get the latest updated_at from all results
         latest_update = None
@@ -1111,28 +1339,7 @@ class SurrealDb(BaseDb):
             # Find the maximum updated_at timestamp
             latest_update = max(int(r["updated_at"].timestamp()) for r in results)
 
-            # Transform results to match expected format
-            transformed_results = []
-            for r in results:
-                transformed = dict(r)
-
-                # Convert RecordID to string
-                if hasattr(transformed.get("id"), "id"):
-                    transformed["id"] = transformed["id"].id
-                elif isinstance(transformed.get("id"), RecordID):
-                    transformed["id"] = str(transformed["id"].id)
-
-                # Convert datetime objects to Unix timestamps
-                if isinstance(transformed.get("created_at"), datetime):
-                    transformed["created_at"] = int(transformed["created_at"].timestamp())
-                if isinstance(transformed.get("updated_at"), datetime):
-                    transformed["updated_at"] = int(transformed["updated_at"].timestamp())
-                if isinstance(transformed.get("date"), datetime):
-                    transformed["date"] = int(transformed["date"].timestamp())
-
-                transformed_results.append(transformed)
-
-            return transformed_results, latest_update
+            return [desurrealize_metric(r) for r in results], latest_update
 
         return [], latest_update
 
@@ -1168,6 +1375,18 @@ class SurrealDb(BaseDb):
                 self.client, self._get_table("sessions"), start_timestamp, end_timestamp
             )
 
+            # Attach runs from the runs table, merged with legacy blob
+            if sessions:
+                try:
+                    sids = [s["session_id"] for s in sessions if s.get("session_id")]
+                    runs_by_session = self._get_sessions_runs_data(sids)
+                    for s in sessions:
+                        sid = s.get("session_id")
+                        if sid:
+                            s["runs"] = merge_runs_table_with_legacy_blob(runs_by_session.get(sid, []), s.get("runs"))
+                except Exception as e:
+                    log_error(f"Failed to attach runs to sessions for metrics: {str(e)}")
+
             all_sessions_data = fetch_all_sessions_data(
                 sessions=sessions,  # Added parameter name for clarity
                 dates_to_process=dates_to_process,
@@ -1187,12 +1406,12 @@ class SurrealDb(BaseDb):
                 if not any(len(sessions) > 0 for sessions in sessions_for_date.values()):
                     continue
 
-                metrics_record = calculate_date_metrics(date_to_process, sessions_for_date)
-                metrics_records.append(metrics_record)
+                # One record per user_id, plus the empty-string bucket for unowned sessions
+                metrics_records.extend(calculate_date_metrics(date_to_process, sessions_for_date))
 
             results = []  # Initialize before the if block
             if metrics_records:
-                results = bulk_upsert_metrics(self.client, table, metrics_records)
+                results = [desurrealize_metric(r) for r in bulk_upsert_metrics(self.client, table, metrics_records)]
 
             log_debug("Updated metrics calculations")
             return results
@@ -1211,27 +1430,47 @@ class SurrealDb(BaseDb):
         table = self._get_table("knowledge")
         _ = self.client.delete(table)
 
-    def delete_knowledge_content(self, id: str):
+    # Unowned knowledge rows have no user_id field at all, so owner scoping tests ``user_id IS NONE``.
+
+    def delete_knowledge_content(self, id: str, user_id: Optional[str] = None):
         """Delete a knowledge row from the database.
 
         Args:
             id (str): The ID of the knowledge row to delete.
+            user_id (Optional[str]): If set, only delete the row if owned by this user. Unowned rows
+                are shared content.
         """
         table = self._get_table("knowledge")
-        self.client.delete(RecordID(table, id))
+        if user_id is None:
+            self.client.delete(RecordID(table, id))
+            return
+        res = self.client.query(
+            f"DELETE FROM {table} WHERE id = $record AND user_id = $user_id RETURN BEFORE",
+            {"record": RecordID(table, id), "user_id": user_id},
+        )
+        if not (isinstance(res, list) and len(res) > 0):
+            log_debug(f"Skipping delete of knowledge content {id}: not owned by {user_id}")
 
-    def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
+    def get_knowledge_content(self, id: str, user_id: Optional[str] = None) -> Optional[KnowledgeRow]:
         """Get a knowledge row from the database.
 
         Args:
             id (str): The ID of the knowledge row to get.
+            user_id (Optional[str]): If set, only return the row if owned by this user or unowned.
 
         Returns:
             Optional[KnowledgeRow]: The knowledge row, or None if it doesn't exist.
         """
         table = self._get_table("knowledge")
         record_id = RecordID(table, id)
-        raw = self._query_one("SELECT * FROM ONLY $record_id", {"record_id": record_id}, dict)
+        if user_id is None:
+            raw = self._query_one("SELECT * FROM ONLY $record_id", {"record_id": record_id}, dict)
+            return deserialize_knowledge_row(raw) if raw else None
+        raw = self._query_one(
+            "SELECT * FROM ONLY $record_id WHERE user_id = $user_id OR user_id IS NONE",
+            {"record_id": record_id, "user_id": user_id},
+            dict,
+        )
         return deserialize_knowledge_row(raw) if raw else None
 
     def get_knowledge_contents(
@@ -1241,6 +1480,7 @@ class SurrealDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         linked_to: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[KnowledgeRow], int]:
         """Get all knowledge contents from the database.
 
@@ -1250,6 +1490,7 @@ class SurrealDb(BaseDb):
             sort_by (Optional[str]): The column to sort by.
             sort_order (Optional[str]): The order to sort by.
             linked_to (Optional[str]): Filter by linked_to value (knowledge instance name).
+            user_id (Optional[str]): If set, only return rows owned by this user or unowned.
 
         Returns:
             Tuple[List[KnowledgeRow], int]: The knowledge contents and total count.
@@ -1265,6 +1506,15 @@ class SurrealDb(BaseDb):
             where.and_("linked_to", linked_to)
 
         where_clause, where_vars = where.build()
+
+        # WhereClause only chains AND, so the owner scope is appended raw
+        if user_id is not None:
+            scope_predicate = "(user_id = $user_id OR user_id IS NONE)"
+            if where_clause:
+                where_clause = f"{where_clause} AND {scope_predicate}"
+            else:
+                where_clause = f"WHERE {scope_predicate}"
+            where_vars["user_id"] = user_id
 
         # Total count
         total_count = self._count(table, where_clause, where_vars)
@@ -1291,6 +1541,13 @@ class SurrealDb(BaseDb):
         """
         knowledge_table_name = self._get_table("knowledge")
         record = RecordID(knowledge_table_name, knowledge_row.id)
+
+        # A scoped write must not overwrite a record it does not own
+        if knowledge_row.user_id is not None:
+            stored = self._query_one("SELECT * FROM ONLY $record", {"record": record}, dict)
+            if stored is not None and stored.get("user_id") != knowledge_row.user_id:
+                raise ValueError(f"Knowledge content {knowledge_row.id} not found")
+
         query = "UPSERT ONLY $record CONTENT $content"
         result = self._query_one(
             query, {"record": record, "content": serialize_knowledge_row(knowledge_row, knowledge_table_name)}, dict
@@ -1327,24 +1584,31 @@ class SurrealDb(BaseDb):
         )
         return deserialize_eval_run_record(result) if result else None
 
-    def delete_eval_runs(self, eval_run_ids: List[str]) -> None:
+    def delete_eval_runs(self, eval_run_ids: List[str], user_id: Optional[str] = None) -> None:
         """Delete multiple eval runs from the database.
 
         Args:
             eval_run_ids (List[str]): List of eval run IDs to delete.
+            user_id (Optional[str]): If set, only delete runs owned by this user.
         """
         table = self._get_table("evals")
         records = [RecordID(table, id) for id in eval_run_ids]
-        _ = self.client.query(f"DELETE FROM {table} WHERE id IN $records", {"records": records})  # type: ignore[dict-item]
+        query = f"DELETE FROM {table} WHERE id IN $records"
+        bindings: Dict[str, Any] = {"records": records}
+        if user_id is not None:
+            query += " AND user_id = $user_id"
+            bindings["user_id"] = user_id
+        _ = self.client.query(query, bindings)  # type: ignore[dict-item]
 
     def get_eval_run(
-        self, eval_run_id: str, deserialize: Optional[bool] = True
+        self, eval_run_id: str, deserialize: Optional[bool] = True, user_id: Optional[str] = None
     ) -> Optional[Union[EvalRunRecord, Dict[str, Any]]]:
         """Get an eval run from the database.
 
         Args:
             eval_run_id (str): The ID of the eval run to get.
             deserialize (Optional[bool]): Whether to serialize the eval run. Defaults to True.
+            user_id (Optional[str]): If set, only return the run if owned by this user.
 
         Returns:
             Optional[Union[EvalRunRecord, Dict[str, Any]]]:
@@ -1357,6 +1621,8 @@ class SurrealDb(BaseDb):
         table = self._get_table("evals")
         record = RecordID(table, eval_run_id)
         result = self._query_one("SELECT * FROM ONLY $record", {"record": record}, dict)
+        if result is not None and user_id is not None and result.get("user_id") != user_id:
+            return None
         if not result or not deserialize:
             return desurrealize_eval_run_record(result) if result is not None else None
         return deserialize_eval_run_record(result)
@@ -1374,6 +1640,7 @@ class SurrealDb(BaseDb):
         filter_type: Optional[EvalFilterType] = None,
         eval_type: Optional[List[EvalType]] = None,
         deserialize: Optional[bool] = True,
+        user_id: Optional[str] = None,
     ) -> Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
         """Get all eval runs from the database.
 
@@ -1386,6 +1653,7 @@ class SurrealDb(BaseDb):
             team_id (Optional[str]): The ID of the team to filter by.
             workflow_id (Optional[str]): The ID of the workflow to filter by.
             model_id (Optional[str]): The ID of the model to filter by.
+            user_id (Optional[str]): If set, only return runs owned by this user.
             eval_type (Optional[List[EvalType]]): The type of eval to filter by.
             filter_type (Optional[EvalFilterType]): The type of filter to apply.
             deserialize (Optional[bool]): Whether to serialize the eval runs. Defaults to True.
@@ -1401,17 +1669,25 @@ class SurrealDb(BaseDb):
         table = self._get_table("evals")
 
         where = WhereClause()
-        if filter_type is not None:
-            if filter_type == EvalFilterType.AGENT:
-                where.and_("agent", RecordID(self._get_table("agents"), agent_id))
-            elif filter_type == EvalFilterType.TEAM:
-                where.and_("team", RecordID(self._get_table("teams"), team_id))
-            elif filter_type == EvalFilterType.WORKFLOW:
-                where.and_("workflow", RecordID(self._get_table("workflows"), workflow_id))
+        if user_id is not None:
+            where.and_("user_id", user_id)
+        if agent_id is not None:
+            where.and_("agent", RecordID(self._get_table("agents"), agent_id))
+        if team_id is not None:
+            where.and_("team", RecordID(self._get_table("teams"), team_id))
+        if workflow_id is not None:
+            where.and_("workflow", RecordID(self._get_table("workflows"), workflow_id))
         if model_id is not None:
             where.and_("model_id", model_id)
-        if eval_type is not None:
-            where.and_("eval_type", eval_type)
+        if eval_type is not None and len(eval_type) > 0:
+            where.and_("eval_type", [et.value for et in eval_type], "IN")
+        if filter_type is not None:
+            if filter_type == EvalFilterType.AGENT:
+                where.and_("agent", None, "!=")
+            elif filter_type == EvalFilterType.TEAM:
+                where.and_("team", None, "!=")
+            elif filter_type == EvalFilterType.WORKFLOW:
+                where.and_("workflow", None, "!=")
         where_clause, where_vars = where.build()
 
         # Order
@@ -1430,11 +1706,11 @@ class SurrealDb(BaseDb):
         result = self._query(query, where_vars, dict)
 
         if not deserialize:
-            return list(result), total_count
+            return [desurrealize_eval_run_record(x) for x in result], total_count
         return [deserialize_eval_run_record(x) for x in result]
 
     def rename_eval_run(
-        self, eval_run_id: str, name: str, deserialize: Optional[bool] = True
+        self, eval_run_id: str, name: str, deserialize: Optional[bool] = True, user_id: Optional[str] = None
     ) -> Optional[Union[EvalRunRecord, Dict[str, Any]]]:
         """Update the name of an eval run in the database.
 
@@ -1442,6 +1718,7 @@ class SurrealDb(BaseDb):
             eval_run_id (str): The ID of the eval run to update.
             name (str): The new name of the eval run.
             deserialize (Optional[bool]): Whether to serialize the eval run. Defaults to True.
+            user_id (Optional[str]): If set, only rename the run if owned by this user.
 
         Returns:
             Optional[Union[EvalRunRecord, Dict[str, Any]]]:
@@ -1452,7 +1729,15 @@ class SurrealDb(BaseDb):
             Exception: If there is an error updating the eval run.
         """
         table = self._get_table("evals")
-        vars = {"record": RecordID(table, eval_run_id), "name": name}
+        record = RecordID(table, eval_run_id)
+
+        # Only rename if owned by this user.
+        if user_id is not None:
+            existing = self._query_one("SELECT * FROM ONLY $record", {"record": record}, dict)
+            if not existing or existing.get("user_id") != user_id:
+                return None
+
+        vars = {"record": record, "name": name}
 
         # Query
         query = dedent("""
@@ -1461,9 +1746,22 @@ class SurrealDb(BaseDb):
         """)
         raw = self._query_one(query, vars, dict)
 
-        if not raw or not deserialize:
-            return raw
+        if not raw:
+            return None
+        if not deserialize:
+            return desurrealize_eval_run_record(raw)
         return deserialize_eval_run_record(raw)
+
+    def update_eval_run_user_id(self, eval_run_id: str, user_id: str) -> None:
+        """Set the owner (user_id) on an existing eval run.
+
+        Args:
+            eval_run_id (str): The ID of the eval run to update.
+            user_id (str): The owner to set.
+        """
+        table = self._get_table("evals")
+        record = RecordID(table, eval_run_id)
+        _ = self.client.query("UPDATE ONLY $record SET user_id = $user_id", {"record": record, "user_id": user_id})
 
     # --- Traces ---
     def upsert_trace(self, trace: "Trace") -> None:

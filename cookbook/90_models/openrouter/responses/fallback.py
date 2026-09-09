@@ -21,7 +21,7 @@ agent = Agent(
         # Fallback models if primary fails
         models=[
             "openai/gpt-oss-20b",
-            "openai/gpt-4o",
+            "openai/gpt-5.6-luna",
         ],
     ),
     markdown=True,

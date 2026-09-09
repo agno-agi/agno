@@ -14,6 +14,17 @@ from agno.learn.config import EntityMemoryConfig, LearningMode
 from agno.learn.stores.entity_memory import EntityMemoryStore
 
 
+def _owner_matches(row_user_id: Any, filter_user_id: Any) -> bool:
+    """Whether a row's owner column matches a user filter.
+
+    user_id is a string column, and the backends compare a non-string filter
+    against its stored string form.
+    """
+    if filter_user_id is None:
+        return True
+    return row_user_id is not None and str(row_user_id) == str(filter_user_id)
+
+
 class RecordingLearningDb:
     """In-memory fake of the learnings table, keyed by learning_id."""
 
@@ -26,12 +37,15 @@ class RecordingLearningDb:
         entity_id = kwargs.get("entity_id")
         entity_type = kwargs.get("entity_type")
         namespace = kwargs.get("namespace")
+        user_id = kwargs.get("user_id")
         for row in self.rows.values():
             if (
                 row.get("learning_type") == learning_type
                 and row.get("entity_id") == entity_id
                 and row.get("entity_type") == entity_type
                 and row.get("namespace") == namespace
+                # None means unfiltered, like the real adapters' conditional WHERE.
+                and _owner_matches(row.get("user_id"), user_id)
             ):
                 return row
         return None
@@ -39,6 +53,10 @@ class RecordingLearningDb:
     def upsert_learning(self, id: str, **kwargs: Any) -> None:
         existing = self.rows.get(id, {})
         row = {**existing, **kwargs, "learning_id": id}
+        # user_id is a string column in every backend that stores learnings, so
+        # a non-string user id reads back as its str().
+        if row.get("user_id") is not None:
+            row["user_id"] = str(row["user_id"])
         self._clock += 1
         row["updated_at"] = self._clock
         self.rows[id] = row
@@ -48,6 +66,7 @@ class RecordingLearningDb:
         entity_id = kwargs.get("entity_id")
         entity_type = kwargs.get("entity_type")
         namespace = kwargs.get("namespace")
+        user_id = kwargs.get("user_id")
         limit = kwargs.get("limit")
         rows = [
             row
@@ -56,6 +75,7 @@ class RecordingLearningDb:
             and (entity_id is None or row.get("entity_id") == entity_id)
             and (entity_type is None or row.get("entity_type") == entity_type)
             and (namespace is None or row.get("namespace") == namespace)
+            and _owner_matches(row.get("user_id"), user_id)
         ]
         rows.sort(key=lambda r: r.get("updated_at", 0), reverse=True)
         if limit is not None:
@@ -65,6 +85,9 @@ class RecordingLearningDb:
     def delete_learning(self, id: str) -> bool:
         return self.rows.pop(id, None) is not None
 
+    def get_learning_by_id(self, id: str) -> Optional[Dict[str, Any]]:
+        return self.rows.get(id)
+
     def search_learnings(self, query: str, **kwargs: Any) -> List[Dict[str, Any]]:
         import json
 
@@ -73,7 +96,6 @@ class RecordingLearningDb:
         kwargs.pop("session_id", None)
         kwargs.pop("agent_id", None)
         kwargs.pop("team_id", None)
-        kwargs.pop("user_id", None)
         candidates = self.get_learnings(**kwargs)
         variants = {query.lower(), query.lower().replace(" ", "_"), query.lower().replace("_", " ")}
         rows = [row for row in candidates if any(v in json.dumps(row.get("content", {})).lower() for v in variants)]

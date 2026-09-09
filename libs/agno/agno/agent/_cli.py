@@ -259,10 +259,8 @@ def cli_app(
         for tool in agent.tools:
             if isawaitable(tool):
                 raise NotImplementedError("Use `acli_app` to use async tools.")
-            # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
-            if hasattr(type(tool), "__mro__") and any(
-                c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__
-            ):
+            # Alternate method of using isinstance(tool, MCPTools) to avoid imports
+            if hasattr(type(tool), "__mro__") and any(c.__name__ == "MCPTools" for c in type(tool).__mro__):
                 raise NotImplementedError("Use `acli_app` to use MCP tools.")
 
     if input:

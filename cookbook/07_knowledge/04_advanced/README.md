@@ -8,6 +8,7 @@ Advanced knowledge patterns for power users and custom integrations.
 2. Run PgVector (for prefix search): `./cookbook/scripts/run_pgvector.sh`
 3. Set `OPENAI_API_KEY` environment variable
 4. For Graph RAG: `pip install lightrag-agno`
+5. For per-user isolation: see [07_per_user_isolation/](./07_per_user_isolation/)
 
 ## Examples
 
@@ -19,6 +20,7 @@ Advanced knowledge patterns for power users and custom integrations.
 | [04_knowledge_tools.py](./04_knowledge_tools.py) | KnowledgeTools: think, search, analyze |
 | [05_knowledge_protocol.py](./05_knowledge_protocol.py) | Custom KnowledgeProtocol implementation |
 | [06_prefix_search.py](./06_prefix_search.py) | PgVector prefix matching for search-as-you-type |
+| [07_per_user_isolation/](./07_per_user_isolation/) | Per-user RAG isolation across 17 vector backends |
 
 ## Running
 

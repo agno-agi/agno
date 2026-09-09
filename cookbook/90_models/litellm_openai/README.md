@@ -24,7 +24,7 @@ uv pip install -U openai 'litellm[proxy]' ddgs duckdb yfinance agno
 ### 4. Start the proxy server
 
 ```shell
-litellm --model gpt-4o --host 127.0.0.1 --port 4000
+litellm --model gpt-5.6-luna --host 127.0.0.1 --port 4000
 ```
 or, if you want to use some other model like from Anthropic
 ```shell
@@ -33,10 +33,8 @@ litellm --model claude-3-sonnet-20240229 --host 127.0.0.1 --port 4000
 
 ### 5. Run basic Agent
 
-- Streaming on
-
 ```shell
-python cookbook/92_models/litellm_proxy/basic_stream.py
+python cookbook/90_models/litellm_openai/basic.py
 ```
 
 ### 6. Run Agent with Tools
@@ -44,5 +42,5 @@ python cookbook/92_models/litellm_proxy/basic_stream.py
 - DuckDuckGo Search
 
 ```shell
-python cookbook/92_models/litellm_proxy/tool_use.py
+python cookbook/90_models/litellm_openai/tool_use.py
 ```

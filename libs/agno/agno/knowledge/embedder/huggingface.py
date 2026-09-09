@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from os import getenv
 from typing import Any, Dict, List, Optional, Tuple
 
-from agno.knowledge.embedder.base import Embedder
+from agno.knowledge.embedder.base import Embedder, raise_embedding_error
 from agno.utils.log import log_error, log_warning
 
 try:
@@ -55,8 +55,8 @@ class HuggingfaceCustomEmbedder(Embedder):
         return self.client.feature_extraction(text=text, model=self.id)
 
     def get_embedding(self, text: str) -> List[float]:
-        response = self._response(text=text)
         try:
+            response = self._response(text=text)
             # If already a list, return directly
             if isinstance(response, list):
                 return response
@@ -66,15 +66,17 @@ class HuggingfaceCustomEmbedder(Embedder):
             else:
                 return list(response)
         except Exception as e:
-            log_warning(f"Failed to process embeddings: {str(e)}")
-            return []
+            raise_embedding_error(e, model_id=self.id, provider="HuggingFace")
 
     def get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict]]:
         return self.get_embedding(text=text), None
 
     async def async_get_embedding(self, text: str) -> List[float]:
         """Async version of get_embedding using AsyncInferenceClient."""
-        response = await self.aclient.feature_extraction(text=text, model=self.id)
+        try:
+            response = await self.aclient.feature_extraction(text=text, model=self.id)
+        except Exception as e:
+            raise_embedding_error(e, model_id=self.id, provider="HuggingFace")
         try:
             # If already a list, return directly
             if isinstance(response, list):
@@ -85,8 +87,7 @@ class HuggingfaceCustomEmbedder(Embedder):
             else:
                 return list(response)
         except Exception as e:
-            log_warning(f"Failed to process embeddings: {str(e)}")
-            return []
+            raise_embedding_error(e, model_id=self.id, provider="HuggingFace")
 
     async def async_get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict]]:
         """Async version of get_embedding_and_usage."""
