@@ -8,7 +8,7 @@ This section demonstrates how Agno agents persist and use user memories across r
 - `memory_manager/`: Direct `MemoryManager` API examples using PostgreSQL.
 - `optimize_memories/`: Memory optimization strategy examples.
 
-> SurrealDB memory manager examples are now located in `cookbook/92_integrations/surrealdb/`.
+> SurrealDB memory manager examples are now located in `cookbook/integrations/surrealdb/`.
 
 ## Setup
 

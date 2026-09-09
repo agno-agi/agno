@@ -46,75 +46,54 @@ def get_json_type_for_py_type(arg: str) -> str:
 def inline_pydantic_schema(schema: Dict[str, Any]) -> Dict[str, Any]:
     """
     Recursively inline Pydantic model schemas by replacing $ref with actual schema.
+
+    Handles self-referential models: a $ref whose definition is already being
+    inlined on the current path becomes a plain object stub carrying the model
+    name in its description, so recursive schemas (for example a workflow step
+    whose nested steps are steps) stay finite and JSON-serializable instead of
+    turning into a Python-level cycle.
     """
     if not isinstance(schema, dict):
         return schema
 
-    def resolve_ref(ref: str, defs: Dict[str, Any]) -> Dict[str, Any]:
-        """Resolve a $ref to its actual schema."""
-        if not ref.startswith("#/$defs/"):
-            return {"type": "object"}  # Fallback for external refs
+    definitions = schema.pop("$defs", {})
 
-        def_name = ref.split("/")[-1]
-        if def_name in defs:
-            return defs[def_name]
-        return {"type": "object"}  # Fallback if definition not found
-
-    def process_schema(s: Dict[str, Any], defs: Dict[str, Any]) -> Dict[str, Any]:
-        """Process a schema dictionary, resolving all references."""
+    def process_schema(s: Dict[str, Any], active_refs: frozenset) -> Any:
+        if isinstance(s, list):
+            return [process_schema(item, active_refs) for item in s]
         if not isinstance(s, dict):
             return s
 
-        # Handle $ref
         if "$ref" in s:
-            return resolve_ref(s["$ref"], defs)
+            ref = s["$ref"]
+            if not ref.startswith("#/$defs/"):
+                return {"type": "object"}
+            def_name = ref.split("/")[-1]
+            if def_name in active_refs:
+                return {
+                    "type": "object",
+                    "description": f"A nested {def_name} object of this same shape.",
+                }
+            definition = definitions.get(def_name)
+            if definition is None:
+                return {"type": "object"}
+            return process_schema(definition, active_refs | {def_name})
 
-        # Create a new dict to avoid modifying the input
-        result = s.copy()
-
-        # Handle arrays
-        if "items" in result:
-            result["items"] = process_schema(result["items"], defs)
-
-        # Handle object properties
+        result = dict(s)
+        for key in ("items", "additionalProperties", "propertyNames"):
+            if key in result:
+                result[key] = process_schema(result[key], active_refs)
         if "properties" in result:
-            for prop_name, prop_schema in result["properties"].items():
-                result["properties"][prop_name] = process_schema(prop_schema, defs)
-
-        # Handle anyOf (for Union types)
-        if "anyOf" in result:
-            result["anyOf"] = [process_schema(sub_schema, defs) for sub_schema in result["anyOf"]]
-
-        # Handle allOf (for inheritance)
-        if "allOf" in result:
-            result["allOf"] = [process_schema(sub_schema, defs) for sub_schema in result["allOf"]]
-
-        # Handle additionalProperties
-        if "additionalProperties" in result:
-            result["additionalProperties"] = process_schema(result["additionalProperties"], defs)
-
-        # Handle propertyNames
-        if "propertyNames" in result:
-            result["propertyNames"] = process_schema(result["propertyNames"], defs)
-
+            result["properties"] = {
+                name: process_schema(prop, active_refs) for name, prop in result["properties"].items()
+            }
+        for key in ("anyOf", "allOf", "oneOf"):
+            if key in result:
+                result[key] = [process_schema(sub, active_refs) for sub in result[key]]
+        result.pop("$defs", None)
         return result
 
-    # Store definitions for later use
-    definitions = schema.pop("$defs", {})
-
-    # First, resolve any nested references in definitions
-    resolved_definitions = {}
-    for def_name, def_schema in definitions.items():
-        resolved_definitions[def_name] = process_schema(def_schema, definitions)
-
-    # Process the main schema with resolved definitions
-    result = process_schema(schema, resolved_definitions)
-
-    # Remove any remaining definitions
-    if "$defs" in result:
-        del result["$defs"]
-
-    return result
+    return process_schema(schema, frozenset())
 
 
 def get_json_schema_for_arg(type_hint: Any) -> Optional[Dict[str, Any]]:
@@ -145,7 +124,7 @@ def get_json_schema_for_arg(type_hint: Any) -> Optional[Dict[str, Any]]:
             json_schema_for_items = get_json_schema_for_arg(type_args[0]) if type_args else {"type": "string"}
             return {"type": "array", "items": json_schema_for_items}
         elif type_origin is dict:
-            # Handle both key and value types for dictionaries
+            # Dict[K, V] with type args — use typed additionalProperties
             key_schema = get_json_schema_for_arg(type_args[0]) if type_args else {"type": "string"}
             value_schema = get_json_schema_for_arg(type_args[1]) if len(type_args) > 1 else {"type": "string"}
             return {"type": "object", "propertyNames": key_schema, "additionalProperties": value_schema}
@@ -181,12 +160,15 @@ def get_json_schema_for_arg(type_hint: Any) -> Optional[Dict[str, Any]]:
             if (
                 field_schema
                 and "anyOf" in field_schema
-                and any(schema["type"] == "null" for schema in field_schema["anyOf"])
+                and any(schema.get("type") == "null" for schema in field_schema["anyOf"])
             ):
-                field_schema["type"] = next(
-                    schema["type"] for schema in field_schema["anyOf"] if schema["type"] != "null"
+                non_null_type = next(
+                    (schema["type"] for schema in field_schema["anyOf"] if schema.get("type") not in (None, "null")),
+                    None,
                 )
-                field_schema.pop("anyOf")
+                if non_null_type is not None:
+                    field_schema["type"] = non_null_type
+                    field_schema.pop("anyOf")
             else:
                 required.append(field_name)
 
@@ -198,6 +180,10 @@ def get_json_schema_for_arg(type_hint: Any) -> Optional[Dict[str, Any]]:
         if required:
             arg_json_schema["required"] = required
         return arg_json_schema
+
+    # Bare dict means "arbitrary key-value pairs" — allow any properties
+    if type_hint is dict:
+        return {"type": "object", "additionalProperties": True}
 
     json_schema: Dict[str, Any] = {"type": get_json_type_for_py_type(type_hint.__name__)}
     if json_schema["type"] == "object":

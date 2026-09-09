@@ -16,7 +16,7 @@ from agno.tools.fal import FalTools
 
 fal_agent = Agent(
     name="Fal Video Generator Agent",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[
         FalTools(
             model="fal-ai/hunyuan-video",

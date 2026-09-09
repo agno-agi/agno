@@ -628,6 +628,34 @@ def test_search_news_returns_json(mock_ddgs):
     assert len(parsed) == 1
 
 
+def test_web_search_preserves_unicode_characters(mock_ddgs):
+    """Test that web_search preserves non-ASCII characters in JSON output."""
+    mock_instance, _ = mock_ddgs
+    mock_instance.text.return_value = [
+        {"title": "中文标题", "href": "https://example.com", "body": "中文内容"},
+    ]
+
+    tools = WebSearchTools()
+    result = tools.web_search("中文")
+
+    assert "中文标题" in result
+    assert "\\u4e2d" not in result
+
+
+def test_search_news_preserves_unicode_characters(mock_ddgs):
+    """Test that search_news preserves non-ASCII characters in JSON output."""
+    mock_instance, _ = mock_ddgs
+    mock_instance.news.return_value = [
+        {"title": "中文新闻", "url": "https://news.com", "body": "中文内容"},
+    ]
+
+    tools = WebSearchTools()
+    result = tools.search_news("中文")
+
+    assert "中文新闻" in result
+    assert "\\u4e2d" not in result
+
+
 def test_web_search_empty_results(mock_ddgs):
     """Test web_search with empty results."""
     mock_instance, _ = mock_ddgs

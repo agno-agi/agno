@@ -14,13 +14,13 @@ class SentenceTransformerReranker(Reranker):
     model: str = "BAAI/bge-reranker-v2-m3"
     model_kwargs: Optional[Dict[str, Any]] = None
     top_n: Optional[int] = None
-    _cross_encoder: Optional[CrossEncoder] = None
+    cross_encoder: Optional[CrossEncoder] = None
 
     @property
     def client(self) -> CrossEncoder:
-        if self._cross_encoder is None:
-            self._cross_encoder = CrossEncoder(model_name_or_path=self.model, model_kwargs=self.model_kwargs)
-        return self._cross_encoder
+        if self.cross_encoder is None:
+            self.cross_encoder = CrossEncoder(model_name_or_path=self.model, model_kwargs=self.model_kwargs)
+        return self.cross_encoder
 
     def _rerank(self, query: str, documents: List[Document]) -> List[Document]:
         if not documents:

@@ -1,8 +1,10 @@
 import logging
+import sys
 from functools import lru_cache
 from os import getenv
 from typing import Any, Literal, Optional
 
+from rich import get_console
 from rich.logging import RichHandler
 from rich.text import Text
 
@@ -70,6 +72,10 @@ def build_logger(logger_name: str, source_type: Optional[str] = None) -> Any:
     if _logger.handlers or _logger.level != logging.NOTSET:
         return _logger
 
+    configured = logging.Logger.manager.loggerDict.get(logger_name)
+    if isinstance(configured, logging.Logger) and (configured.handlers or configured.level != logging.NOTSET):
+        return configured
+
     # Set the custom logger class as the default for this logger
     logging.setLoggerClass(AgnoLogger)
 
@@ -81,21 +87,23 @@ def build_logger(logger_name: str, source_type: Optional[str] = None) -> Any:
 
     # https://rich.readthedocs.io/en/latest/reference/logging.html#rich.logging.RichHandler
     # https://rich.readthedocs.io/en/latest/logging.html#handle-exceptions
-    rich_handler = ColoredRichHandler(
-        show_time=False,
-        rich_tracebacks=False,
-        show_path=True if getenv("AGNO_API_RUNTIME") == "dev" else False,
-        tracebacks_show_locals=False,
-        source_type=source_type or "agent",
-    )
-    rich_handler.setFormatter(
-        logging.Formatter(
-            fmt="%(message)s",
-            datefmt="[%X]",
+    handler: logging.Handler
+    console = get_console()
+    if console.is_terminal or console.is_jupyter:
+        handler = ColoredRichHandler(
+            console=console,
+            show_time=False,
+            rich_tracebacks=False,
+            show_path=getenv("AGNO_API_RUNTIME") == "dev",
+            tracebacks_show_locals=False,
+            source_type=source_type or "agent",
         )
-    )
-
-    _logger.addHandler(rich_handler)
+        handler.setFormatter(logging.Formatter("%(message)s"))
+    else:
+        # Container/file collectors supply timestamps and wrapping themselves.
+        handler = logging.StreamHandler(sys.stdout)
+        handler.setFormatter(logging.Formatter("%(levelname)-7s %(message)s"))
+    _logger.addHandler(handler)
     _logger.setLevel(logging.INFO)
     _logger.propagate = False
     return _logger
@@ -117,12 +125,16 @@ debug_level: Literal[1, 2] = 1
 log_tracebacks: bool = getenv("AGNO_LOG_TRACEBACKS", "false").lower() in ("true", "1", "yes")
 
 
+# These setters run on every agent/team/workflow run. Logger.setLevel clears
+# the level cache of EVERY logger in the process (cost grows with the host
+# app's logger count), so skip it when the level is already correct.
 def set_log_level_to_debug(source_type: Optional[str] = None, level: Literal[1, 2] = 1):
     if source_type is None:
         use_agent_logger()
 
     _logger = logging.getLogger(LOGGER_NAME if source_type is None else f"{LOGGER_NAME}-{source_type}")
-    _logger.setLevel(logging.DEBUG)
+    if _logger.level != logging.DEBUG:
+        _logger.setLevel(logging.DEBUG)
 
     global debug_on
     debug_on = True
@@ -133,7 +145,8 @@ def set_log_level_to_debug(source_type: Optional[str] = None, level: Literal[1, 
 
 def set_log_level_to_info(source_type: Optional[str] = None):
     _logger = logging.getLogger(LOGGER_NAME if source_type is None else f"{LOGGER_NAME}-{source_type}")
-    _logger.setLevel(logging.INFO)
+    if _logger.level != logging.INFO:
+        _logger.setLevel(logging.INFO)
 
     global debug_on
     debug_on = False
@@ -141,7 +154,8 @@ def set_log_level_to_info(source_type: Optional[str] = None):
 
 def set_log_level_to_warning(source_type: Optional[str] = None):
     _logger = logging.getLogger(LOGGER_NAME if source_type is None else f"{LOGGER_NAME}-{source_type}")
-    _logger.setLevel(logging.WARNING)
+    if _logger.level != logging.WARNING:
+        _logger.setLevel(logging.WARNING)
 
     global debug_on
     debug_on = False
@@ -149,13 +163,16 @@ def set_log_level_to_warning(source_type: Optional[str] = None):
 
 def set_log_level_to_error(source_type: Optional[str] = None):
     _logger = logging.getLogger(LOGGER_NAME if source_type is None else f"{LOGGER_NAME}-{source_type}")
-    _logger.setLevel(logging.ERROR)
+    if _logger.level != logging.ERROR:
+        _logger.setLevel(logging.ERROR)
 
     global debug_on
     debug_on = False
 
 
 def center_header(message: str, symbol: str = "*") -> str:
+    if not get_console().is_terminal:
+        return message
     try:
         import shutil
 

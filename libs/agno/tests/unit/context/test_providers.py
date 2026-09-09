@@ -7,12 +7,14 @@ The full end-to-end behaviour is covered by the cookbooks.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 
 import pytest
 from sqlalchemy import create_engine
 
+from agno import __version__ as AGNO_VERSION
 from agno.context.calendar import GoogleCalendarContextProvider
 from agno.context.database import DatabaseContextProvider
 from agno.context.fs import FilesystemContextProvider
@@ -129,6 +131,64 @@ def test_workspace_context_excludes_agent_scratch_and_plural_venvs(tmp_path: Pat
     assert result["files"][0]["file"] == "src/app.py"
 
 
+def test_workspace_context_refuses_excluded_paths_by_name(tmp_path: Path):
+    (tmp_path / ".env").write_text("OPENAI_API_KEY=sk-live-secret\n")
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "app.py").write_text("# app")
+
+    p = WorkspaceContextProvider(root=tmp_path, mode=ContextMode.tools)
+    workspace = p.get_tools()[0]
+    out = workspace.read_file(".env")
+    assert out == "Error: path is excluded from this workspace: .env"
+    assert "sk-live-secret" not in out
+    assert ".env" not in [e["path"] for e in json.loads(workspace.list_files())["files"]]
+    assert "# app" in workspace.read_file("src/app.py")
+
+
+def test_workspace_context_allow_paths_passes_through(tmp_path: Path):
+    (tmp_path / ".env").write_text("OPENAI_API_KEY=sk-live-secret\n")
+    (tmp_path / ".env.example").write_text("OPENAI_API_KEY=\n")
+
+    p = WorkspaceContextProvider(root=tmp_path, mode=ContextMode.tools, allow_paths=[".env.example"])
+    workspace = p.get_tools()[0]
+    assert "OPENAI_API_KEY=" in workspace.read_file(".env.example")
+    assert workspace.read_file(".env") == "Error: path is excluded from this workspace: .env"
+
+
+def test_workspace_context_instructions_describe_excludes_as_access_boundary(tmp_path: Path):
+    tools_mode = WorkspaceContextProvider(root=tmp_path, mode=ContextMode.tools)
+    default_mode = WorkspaceContextProvider(root=tmp_path)
+    assert "cannot be read by name" in tools_mode.instructions()
+    assert "cannot be read by name" in default_mode.instructions()
+    assert "cannot be read by name" in default_mode._build_agent().instructions
+
+
+def test_workspace_context_instructions_follow_exclusion_config(tmp_path: Path):
+    none = WorkspaceContextProvider(root=tmp_path, mode=ContextMode.tools, exclude_patterns=[])
+    assert "No paths are excluded." in none.instructions()
+    assert "cannot be read by name" not in none.instructions()
+    assert "No paths are excluded." in none._build_agent().instructions
+    assert "cannot be read by name" not in none._build_agent().instructions
+    custom = WorkspaceContextProvider(root=tmp_path, exclude_patterns=["secrets.*"])
+    assert "configured exclude patterns" in custom.instructions()
+    assert "cannot be read by name" in custom.instructions()
+    assert "configured exclude patterns" in custom._build_agent().instructions
+
+
+def test_workspace_context_rejects_exclude_pattern_with_separator(tmp_path: Path):
+    with pytest.raises(ValueError, match="path separator"):
+        WorkspaceContextProvider(root=tmp_path, exclude_patterns=["dist/"])
+
+
+def test_workspace_context_validates_allow_paths_at_construction(tmp_path: Path):
+    with pytest.raises(TypeError, match="allow_paths"):
+        WorkspaceContextProvider(root=tmp_path, allow_paths=".env.example")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="allow_paths"):
+        WorkspaceContextProvider(root=tmp_path, allow_paths=["../outside"])
+    with pytest.raises(ValueError, match="names the workspace root"):
+        WorkspaceContextProvider(root=tmp_path, allow_paths=["."])
+
+
 # ---------------------------------------------------------------------------
 # Web / ExaBackend
 # ---------------------------------------------------------------------------
@@ -239,7 +299,10 @@ def test_parallel_mcp_backend_builds_mcp_tools_with_bearer_header():
     mcp_tools = tools[0]
     params = mcp_tools.server_params
     assert params.url == "https://search.parallel.ai/mcp"
-    assert params.headers == {"Authorization": "Bearer secret"}
+    assert params.headers == {
+        "User-Agent": f"agno/{AGNO_VERSION}",
+        "Authorization": "Bearer secret",
+    }
     assert mcp_tools.include_tools == ["web_search", "web_fetch"]
     assert mcp_tools.timeout_seconds == 60
 
@@ -248,7 +311,9 @@ def test_parallel_mcp_backend_keyless_has_no_auth_header(monkeypatch):
     monkeypatch.delenv("PARALLEL_API_KEY", raising=False)
     b = ParallelMCPBackend()
     tools = b.get_tools()
-    assert tools[0].server_params.headers is None
+    headers = tools[0].server_params.headers
+    assert headers == {"User-Agent": f"agno/{AGNO_VERSION}"}
+    assert "Authorization" not in headers
 
 
 def test_parallel_mcp_backend_custom_timeout_propagates():
@@ -385,6 +450,41 @@ def test_db_read_false_drops_query_tool():
     assert [t.name for t in p.get_tools()] == ["update_crm"]
 
 
+def test_db_write_tools_replace_default_toolset():
+    from agno.tools import tool
+    from agno.tools.sql import SQLTools
+
+    @tool(name="create_crm_record")
+    def _create_crm_record(payload: str) -> str:
+        return "ok"
+
+    engine = create_engine("sqlite:///:memory:")
+    p = DatabaseContextProvider(
+        id="crm",
+        sql_engine=engine,
+        readonly_engine=engine,
+        write_tools=[_create_crm_record],
+    )
+    agent = p._ensure_write_agent()
+    assert agent.tools is not None
+    assert len(agent.tools) == 1
+    assert agent.tools[0] is _create_crm_record
+    assert not any(isinstance(t, SQLTools) for t in agent.tools)
+
+
+def test_db_default_write_agent_keeps_sqltools():
+    from agno.tools.sql import SQLTools
+
+    engine = create_engine("sqlite:///:memory:")
+    p = DatabaseContextProvider(
+        id="crm",
+        sql_engine=engine,
+        readonly_engine=engine,
+    )
+    agent = p._ensure_write_agent()
+    assert any(isinstance(t, SQLTools) for t in agent.tools or [])
+
+
 # ---------------------------------------------------------------------------
 # Slack
 # ---------------------------------------------------------------------------
@@ -434,6 +534,30 @@ def test_slack_status_reports_configured():
     assert "token configured" in status.detail
 
 
+def test_slack_write_tools_replace_default_toolset():
+    from agno.tools import tool
+    from agno.tools.slack import SlackTools
+
+    @tool(name="post_release_note")
+    def _post_release_note(text: str) -> str:
+        return "ok"
+
+    p = SlackContextProvider(token="xoxb-x", write_tools=[_post_release_note])
+    agent = p._ensure_write_agent()
+    assert agent.tools is not None
+    assert len(agent.tools) == 1
+    assert agent.tools[0] is _post_release_note
+    assert not any(isinstance(t, SlackTools) for t in agent.tools)
+
+
+def test_slack_default_write_agent_keeps_slack_tools():
+    from agno.tools.slack import SlackTools
+
+    p = SlackContextProvider(token="xoxb-x")
+    agent = p._ensure_write_agent()
+    assert any(isinstance(t, SlackTools) for t in agent.tools or [])
+
+
 def test_slack_read_surfaces_are_split_by_mode():
     p = SlackContextProvider(token="xoxb-x")
     bot_tools = p._ensure_bot_read_tools()
@@ -444,6 +568,26 @@ def test_slack_read_surfaces_are_split_by_mode():
     assert "search_workspace" in assisted_tools.functions
     assert "get_channel_history" in assisted_tools.functions
     assert "get_thread" in assisted_tools.functions
+
+
+def test_slack_bot_token_without_user_token_excludes_search_messages():
+    """Without a user token, search_messages should not be registered."""
+    p = SlackContextProvider(token="xoxb-x")
+    bot_tools = p._ensure_bot_read_tools()
+    assisted_tools = p._ensure_assisted_read_tools()
+
+    assert "search_messages" not in bot_tools.functions
+    assert "search_messages" not in assisted_tools.functions
+
+
+def test_slack_user_token_enables_search_messages():
+    """With a user token, search_messages should be registered."""
+    p = SlackContextProvider(token="xoxb-x", user_token="xoxp-user")
+    bot_tools = p._ensure_bot_read_tools()
+    assisted_tools = p._ensure_assisted_read_tools()
+
+    assert "search_messages" in bot_tools.functions
+    assert "search_messages" in assisted_tools.functions
 
 
 def test_slack_read_instructions_override_both_read_agents(monkeypatch):
@@ -707,6 +851,33 @@ def test_gmail_write_enabled_adds_update_tool(monkeypatch):
     assert [t.name for t in tools] == ["query_gmail", "update_gmail"]
 
 
+def test_gmail_write_tools_replace_default_toolkit(monkeypatch):
+    from agno.tools import tool
+    from agno.tools.google.gmail import GmailTools
+
+    monkeypatch.delenv("GOOGLE_SERVICE_ACCOUNT_FILE", raising=False)
+
+    @tool(name="create_draft_only")
+    def _create_draft_only(subject: str) -> str:
+        return "ok"
+
+    p = GmailContextProvider(write=True, write_tools=[_create_draft_only])
+    agent = p._ensure_write_agent()
+    assert agent.tools is not None
+    assert len(agent.tools) == 1
+    assert agent.tools[0] is _create_draft_only
+    assert not any(isinstance(t, GmailTools) for t in agent.tools)
+
+
+def test_gmail_default_write_agent_keeps_gmail_toolkit(monkeypatch):
+    from agno.tools.google.gmail import GmailTools
+
+    monkeypatch.delenv("GOOGLE_SERVICE_ACCOUNT_FILE", raising=False)
+    p = GmailContextProvider(write=True)
+    agent = p._ensure_write_agent()
+    assert any(isinstance(t, GmailTools) for t in agent.tools or [])
+
+
 # ---------------------------------------------------------------------------
 # Calendar
 # ---------------------------------------------------------------------------
@@ -936,3 +1107,68 @@ async def test_mcp_aclose_noop_when_never_connected():
     p = MCPContextProvider("srv", transport="streamable-http", url="https://example.com/mcp")
     # Must not raise even though asetup was never called.
     await p.aclose()
+
+
+@pytest.mark.asyncio
+async def test_mcp_ensure_session_resets_on_cancelled_connect():
+    """A query_timeout deadline cancels _connect mid-handshake (CancelledError).
+    _ensure_session must clear the partial toolkit so the next query reconnects
+    fresh, instead of caching a half-connected MCPTools that wedges the provider."""
+    p = MCPContextProvider("srv", transport="streamable-http", url="https://example.com/mcp")
+
+    class _PartialTools:
+        initialized = False
+
+        async def _connect(self):
+            raise asyncio.CancelledError()
+
+    p._tools = _PartialTools()  # type: ignore[assignment]
+    p._tool_descriptions = [("stale", "d", "a")]
+
+    with pytest.raises(asyncio.CancelledError):
+        await p._ensure_session()
+
+    assert p._tools is None
+    assert p._tool_descriptions == []
+
+
+# ---------------------------------------------------------------------------
+# query_timeout plumbing — every concrete provider forwards the knob to the
+# base class, where the query-tool deadline reads it.
+# ---------------------------------------------------------------------------
+
+
+def test_query_timeout_reaches_base_from_every_provider(tmp_path: Path, monkeypatch):
+    monkeypatch.delenv("GOOGLE_SERVICE_ACCOUNT_FILE", raising=False)
+    engine = create_engine("sqlite:///:memory:")
+    providers = [
+        FilesystemContextProvider(root=tmp_path, query_timeout=2.5),
+        WorkspaceContextProvider(root=tmp_path, query_timeout=2.5),
+        WebContextProvider(backend=ExaBackend(api_key="x"), query_timeout=2.5),
+        DatabaseContextProvider(sql_engine=engine, readonly_engine=engine, query_timeout=2.5),
+        SlackContextProvider(token="xoxb-x", query_timeout=2.5),
+        GmailContextProvider(query_timeout=2.5),
+        GoogleCalendarContextProvider(query_timeout=2.5),
+        GoogleDriveContextProvider(query_timeout=2.5),
+        MCPContextProvider("srv", transport="streamable-http", url="https://example.com/mcp", query_timeout=2.5),
+    ]
+    for p in providers:
+        assert p.query_timeout == 2.5, type(p).__name__
+
+
+def test_query_timeout_defaults_to_none_per_provider(tmp_path: Path, monkeypatch):
+    monkeypatch.delenv("GOOGLE_SERVICE_ACCOUNT_FILE", raising=False)
+    engine = create_engine("sqlite:///:memory:")
+    providers = [
+        FilesystemContextProvider(root=tmp_path),
+        WorkspaceContextProvider(root=tmp_path),
+        WebContextProvider(backend=ExaBackend(api_key="x")),
+        DatabaseContextProvider(sql_engine=engine, readonly_engine=engine),
+        SlackContextProvider(token="xoxb-x"),
+        GmailContextProvider(),
+        GoogleCalendarContextProvider(),
+        GoogleDriveContextProvider(),
+        MCPContextProvider("srv", transport="streamable-http", url="https://example.com/mcp"),
+    ]
+    for p in providers:
+        assert p.query_timeout is None, type(p).__name__

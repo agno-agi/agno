@@ -1,25 +1,27 @@
 """
 Notion MCP Agent - Manages your documents
 
-This example shows how to use the Agno MCP tools to interact with your Notion workspace.
+This example uses the official Notion MCP server (`@notionhq/notion-mcp-server`)
+over stdio with an integration token.
 
-1. Start by setting up a new internal integration in Notion: https://www.notion.so/profile/integrations
-2. Export your new Notion key: `export NOTION_API_KEY=ntn_****`
-3. Connect your relevant Notion pages to the integration. To do this, you'll need to visit that page, and click on the 3 dots, and select "Connect to integration".
+Setup:
+1. Create an internal integration in Notion: https://www.notion.so/profile/integrations
+2. Export the integration token: `export NOTION_TOKEN=ntn_****`
+3. Connect the pages you want the agent to access: open each page, click the "..." menu,
+   and select "Connect to integration".
 
 Dependencies: uv pip install agno mcp openai
 
 Usage:
-  python cookbook/90_tools/mcp/notion_mcp_agent.py
+  python cookbook/91_tools/mcp/notion_mcp_agent.py
 """
 
 import asyncio
-import json
 import os
 from textwrap import dedent
 
 from agno.agent import Agent
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.tools.mcp import MCPTools
 from mcp import StdioServerParameters
 
@@ -29,25 +31,20 @@ from mcp import StdioServerParameters
 
 
 async def run_agent():
-    token = os.getenv("NOTION_API_KEY")
+    token = os.getenv("NOTION_TOKEN")
     if not token:
-        raise ValueError(
-            "Missing Notion API key: provide --NOTION_API_KEY or set NOTION_API_KEY environment variable"
-        )
+        raise ValueError("Missing Notion integration token: set NOTION_TOKEN=ntn_****")
 
-    command = "npx"
-    args = ["-y", "@notionhq/notion-mcp-server"]
-    env = {
-        "OPENAPI_MCP_HEADERS": json.dumps(
-            {"Authorization": f"Bearer {token}", "Notion-Version": "2022-06-28"}
-        )
-    }
-    server_params = StdioServerParameters(command=command, args=args, env=env)
+    server_params = StdioServerParameters(
+        command="npx",
+        args=["-y", "@notionhq/notion-mcp-server"],
+        env={"NOTION_TOKEN": token},
+    )
 
     async with MCPTools(server_params=server_params) as mcp_tools:
         agent = Agent(
             name="NotionDocsAgent",
-            model=OpenAIChat(id="gpt-4o"),
+            model=OpenAIResponses(id="gpt-5.4"),
             tools=[mcp_tools],
             description="Agent to query and modify Notion docs via MCP",
             instructions=dedent("""\

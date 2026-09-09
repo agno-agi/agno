@@ -1,6 +1,6 @@
 """Supabase MCP Agent - Showcase Supabase MCP Capabilities
 
-This example demonstrates how to use the Supabase MCP server to create create projects, database schemas, edge functions, and more.
+This example demonstrates how to use the Supabase MCP server to create projects, database schemas, edge functions, and more.
 
 Setup:
 1. Install Python dependencies:

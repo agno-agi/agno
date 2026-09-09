@@ -42,6 +42,10 @@ def get_function_call(
             )
             return function_call
 
+        # Handle empty array as no arguments (models may pass [] for no-param tools)
+        if isinstance(_arguments, list) and len(_arguments) == 0:
+            return function_call
+
         if not isinstance(_arguments, dict):
             log_error(f"Function arguments are not a valid JSON object: {arguments}")
             function_call.error = "Function arguments are not a valid JSON object.\n\n Please fix and retry."
@@ -59,7 +63,7 @@ def get_function_call(
                     elif _v == "false":
                         clean_arguments[k] = False
                     else:
-                        clean_arguments[k] = v.strip()
+                        clean_arguments[k] = v
                 else:
                     clean_arguments[k] = v
 
@@ -128,7 +132,7 @@ def cache_result(enable_cache: bool = True, cache_dir: Optional[str] = None, cac
             # Check for cached result
             if os.path.exists(cache_file):
                 try:
-                    with open(cache_file, "r") as f:
+                    with open(cache_file, "r", encoding="utf-8") as f:
                         cache_data = json.load(f)
 
                     timestamp = cache_data.get("timestamp", 0)
@@ -153,7 +157,7 @@ def cache_result(enable_cache: bool = True, cache_dir: Optional[str] = None, cac
             result = func(*args, **kwargs)
 
             try:
-                with open(cache_file, "w") as f:
+                with open(cache_file, "w", encoding="utf-8") as f:
                     json.dump({"timestamp": time.time(), "result": result}, f)
             except Exception as e:
                 log_error(f"Error writing cache: {str(e)}")

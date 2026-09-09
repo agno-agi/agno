@@ -17,13 +17,13 @@ from agno.run.agent import RunEvent
 @pytest.fixture(scope="module")
 def groq_model():
     """Fixture that provides a Groq model and reuses it across all tests in the module."""
-    return Groq(id="llama-3.3-70b-versatile")
+    return Groq(id="openai/gpt-oss-120b")
 
 
 @pytest.fixture(scope="module")
 def groq_reasoning_model():
-    """Fixture that provides a Groq DeepSeek reasoning model."""
-    return Groq(id="qwen/qwen3-32b", request_params={"include_reasoning": True})
+    """Fixture that provides a Groq reasoning model (gpt-oss emits reasoning on Groq)."""
+    return Groq(id="openai/gpt-oss-20b", request_params={"include_reasoning": True})
 
 
 def _get_reasoning_streaming_agent(main_model, reasoning_model, **kwargs):

@@ -23,6 +23,7 @@ class OpenWeatherTools(Toolkit):
         enable_air_pollution (bool): Enable air pollution function. Default is True.
         enable_geocoding (bool): Enable geocoding function. Default is True.
         all (bool): Enable all functions. Default is False.
+        timeout (int): Per-request HTTP timeout in seconds. Default is 30.
     """
 
     def __init__(
@@ -34,6 +35,7 @@ class OpenWeatherTools(Toolkit):
         enable_air_pollution: bool = True,
         enable_geocoding: bool = True,
         all: bool = False,
+        timeout: int = 30,
         **kwargs,
     ):
         self.api_key = api_key or getenv("OPENWEATHER_API_KEY")
@@ -56,7 +58,7 @@ class OpenWeatherTools(Toolkit):
         if enable_geocoding or all:
             tools.append(self.geocode_location)
 
-        super().__init__(name="openweather_tools", tools=tools, **kwargs)
+        super().__init__(name="openweather_tools", tools=tools, timeout=timeout, **kwargs)
 
     def _make_request(self, url: str, params: Dict) -> Dict:
         """Make a request to the OpenWeatherMap API.
@@ -70,7 +72,7 @@ class OpenWeatherTools(Toolkit):
         """
         try:
             params["appid"] = self.api_key
-            response = requests.get(url, params=params)
+            response = requests.get(url, params=params, timeout=self.timeout)
             response.raise_for_status()
             return response.json()
         except requests.exceptions.RequestException as e:

@@ -1,13 +1,10 @@
 # 14_advanced
 
-Advanced examples covering caching, compression, concurrency, events, retries, debugging, culture, and serialization.
+Advanced examples covering caching, compression, concurrency, events, retries, debugging, and serialization.
 
 ## Files
-- `01_create_cultural_knowledge.py` - Create cultural knowledge for agents.
-- `02_use_cultural_knowledge_in_agent.py` - Use cultural knowledge in an agent.
-- `03_automatic_cultural_management.py` - Automatic cultural context management.
-- `04_manually_add_culture.py` - Manually add culture to an agent.
 - `advanced_compression.py` - Advanced context compression strategies.
+- `agent_run_cancel_persistence.py` - Cancel a running agent and verify partial content is persisted.
 - `agent_serialization.py` - Serialize and deserialize agents.
 - `background_execution.py` - Run agents in the background.
 - `background_execution_structured.py` - Background execution with structured output.
@@ -31,3 +28,17 @@ Advanced examples covering caching, compression, concurrency, events, retries, d
 
 ## Run
 - `.venvs/demo/bin/python cookbook/02_agents/14_advanced/<file>.py`
+
+
+### Domain-aware follow-ups
+
+`followup_instructions.py` uses `FollowupConfig` with an agent that answers only
+Python documentation questions. The same configuration works on `Team`.
+`FollowupConfig.model` takes precedence over `followup_model`, then the main model.
+Only the question, answer and follow-up instructions are sent to this call; the
+main system prompt and retrieved evidence are not copied automatically.
+
+`num_followups` is a maximum. The default prompt respects refusals and permits
+fewer suggestions or `[]`; malformed generation still produces `None`. Streaming
+completion events and persisted run output preserve the list, including `[]`.
+Consumers should hide suggestion controls for an empty list.

@@ -199,19 +199,6 @@ def test_get_file_relative_path(tmp_path):
     assert docs[0].meta_data["type"] == "file_content"
 
 
-def test_get_file_absolute_path(tmp_path):
-    """Test getting file with absolute path."""
-    test_file = tmp_path / "test.txt"
-    test_content = "Absolute path test"
-    test_file.write_text(test_content)
-
-    fs_knowledge = FileSystemKnowledge(base_dir=str(tmp_path))
-    docs = fs_knowledge._get_file(str(test_file))
-
-    assert len(docs) == 1
-    assert docs[0].content == test_content
-
-
 def test_get_file_nested_path(tmp_path):
     """Test getting file in nested directory."""
     subdir = tmp_path / "subdir"
@@ -244,6 +231,69 @@ def test_get_file_is_directory(tmp_path):
     docs = fs_knowledge._get_file("subdir")
 
     assert len(docs) == 0
+
+
+# Path-traversal regression tests
+
+
+def test_get_file_rejects_relative_traversal(tmp_path):
+    """Relative paths that escape base_dir must return empty list."""
+    base = tmp_path / "kb"
+    base.mkdir()
+    (base / "inside.txt").write_text("inside content")
+    (tmp_path / "secret.txt").write_text("outside secret")
+
+    fs_knowledge = FileSystemKnowledge(base_dir=str(base))
+    docs = fs_knowledge._get_file("../secret.txt")
+
+    assert docs == []
+
+
+def test_get_file_rejects_absolute_path_outside_base(tmp_path):
+    """Absolute paths outside base_dir must return empty list."""
+    base = tmp_path / "kb"
+    base.mkdir()
+    (base / "inside.txt").write_text("inside content")
+    secret = tmp_path / "secret.txt"
+    secret.write_text("outside secret")
+
+    fs_knowledge = FileSystemKnowledge(base_dir=str(base))
+    docs = fs_knowledge._get_file(str(secret))
+
+    assert docs == []
+
+
+def test_get_file_rejects_symlink_escape(tmp_path):
+    """A symlink inside base_dir pointing outside must not leak content."""
+    base = tmp_path / "kb"
+    base.mkdir()
+    secret = tmp_path / "secret.txt"
+    secret.write_text("outside secret")
+
+    link = base / "link.txt"
+    try:
+        link.symlink_to(secret)
+    except OSError:
+        pytest.skip("Symlinks not supported on this system")
+
+    fs_knowledge = FileSystemKnowledge(base_dir=str(base))
+    docs = fs_knowledge._get_file("link.txt")
+
+    assert docs == []
+
+
+def test_get_file_tool_rejects_traversal(tmp_path):
+    """The exposed `get_file` tool must also block traversal attempts."""
+    base = tmp_path / "kb"
+    base.mkdir()
+    (base / "inside.txt").write_text("inside content")
+    (tmp_path / "secret.txt").write_text("outside secret")
+
+    fs_knowledge = FileSystemKnowledge(base_dir=str(base))
+    get_file_tool = next(t for t in fs_knowledge.get_tools() if t.name == "get_file")
+    result = get_file_tool.entrypoint("../secret.txt")
+
+    assert "outside secret" not in result
 
 
 def test_get_file_metadata(tmp_path):

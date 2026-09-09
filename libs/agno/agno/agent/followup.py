@@ -8,16 +8,13 @@ from agno.models.base import Model
 
 @dataclass
 class FollowupConfig:
-    """Configuration for follow-up suggestion generation.
+    """Options shared by Agent and Team follow-up generation.
 
-    Houses all parameters that control how follow-up suggestions are produced,
-    keeping the Agent and Team class signatures lean.
-
-    Attributes:
-        model: Optional model to use for generating follow-ups.
-               Falls back to the agent/team model when not set.
-        instructions: Optional custom instructions appended to the default
-                      system prompt to influence tone, style, or domain focus.
+    ``model`` overrides ``followup_model``, then falls back to the component model.
+    ``instructions`` adds domain or style constraints to the default system prompt.
+    The main instructions and retrieved context are not copied into this call.
+    ``num_followups`` on the component is a maximum; fewer or no suggestions may
+    be returned when the answer does not support a useful continuation.
     """
 
     model: Optional[Model] = None

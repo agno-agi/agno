@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -25,6 +26,7 @@ class DuckDbTools(Toolkit):
         self.config: Optional[dict] = config
         self._connection: Optional[duckdb.DuckDBPyConnection] = connection
         self.init_commands: Optional[List] = init_commands
+        self._reserved_keywords: Optional[frozenset] = None
 
         tools: List[Any] = [
             self.show_tables,
@@ -46,10 +48,10 @@ class DuckDbTools(Toolkit):
 
     @property
     def connection(self) -> duckdb.DuckDBPyConnection:
-        """
-        Returns the duckdb connection
+        """Returns the duckdb connection.
 
-        :return duckdb.DuckDBPyConnection: duckdb connection
+        Returns:
+            duckdb.DuckDBPyConnection: duckdb connection
         """
         if self._connection is None:
             connection_kwargs: Dict[str, Any] = {}
@@ -73,8 +75,11 @@ class DuckDbTools(Toolkit):
     def show_tables(self, show_tables: bool) -> str:
         """Function to show tables in the database
 
-        :param show_tables: Show tables in the database
-        :return: List of tables in the database
+        Args:
+            show_tables (bool): Show tables in the database
+
+        Returns:
+            str: List of tables in the database
         """
         if show_tables:
             stmt = "SHOW TABLES;"
@@ -86,8 +91,11 @@ class DuckDbTools(Toolkit):
     def describe_table(self, table: str) -> str:
         """Function to describe a table
 
-        :param table: Table to describe
-        :return: Description of the table
+        Args:
+            table (str): Table to describe
+
+        Returns:
+            str: Description of the table
         """
         stmt = f"DESCRIBE {table};"
         table_description = self.run_query(stmt)
@@ -98,8 +106,11 @@ class DuckDbTools(Toolkit):
     def inspect_query(self, query: str) -> str:
         """Function to inspect a query and return the query plan. Always inspect your query before running them.
 
-        :param query: Query to inspect
-        :return: Query plan
+        Args:
+            query (str): Query to inspect
+
+        Returns:
+            str: Query plan
         """
         stmt = f"explain {query};"
         explain_plan = self.run_query(stmt)
@@ -110,8 +121,11 @@ class DuckDbTools(Toolkit):
     def run_query(self, query: str) -> str:
         """Function that runs a query and returns the result.
 
-        :param query: SQL query to run
-        :return: Result of the query
+        Args:
+            query (str): SQL query to run
+
+        Returns:
+            str: Result of the query
         """
 
         # -*- Format the SQL Query
@@ -154,8 +168,11 @@ class DuckDbTools(Toolkit):
         The function launches a query that computes a number of aggregates over all columns,
         including min, max, avg, std and approx_unique.
 
-        :param table: Table to summarize
-        :return: Summary of the table
+        Args:
+            table (str): Table to summarize
+
+        Returns:
+            str: Summary of the table
         """
         table_summary = self.run_query(f"SUMMARIZE {table};")
 
@@ -165,25 +182,51 @@ class DuckDbTools(Toolkit):
     def get_table_name_from_path(self, path: str) -> str:
         """Get the table name from a path
 
-        :param path: Path to get the table name from
-        :return: Table name
+        Args:
+            path (str): Path to get the table name from
+
+        Returns:
+            str: Table name
         """
-        # Get the file name from the path
-        path_obj = Path(path)
         # Get the file name without extension from the path
-        table = path_obj.stem
-        # If the table isn't a valid SQL identifier, we'll need to use something else
-        table = table.replace("-", "_").replace(".", "_").replace(" ", "_").replace("/", "_")
+        table = Path(path).stem
+        # Replace characters that aren't valid in an unquoted SQL identifier
+        table = re.sub(r"\W+", "_", table).strip("_")
+        # An identifier can't be empty or start with a digit ("tbl" avoids the reserved word "table")
+        if not table:
+            table = "tbl"
+        if table[0].isdigit():
+            table = f"_{table}"
+        # The agent reuses this name verbatim in later free-form SQL, so a reserved keyword would
+        # break the next query even though the create succeeds. Suffix it to keep it unquoted-safe.
+        if table.lower() in self._reserved_keywords_set():
+            table = f"{table}_"
 
         return table
+
+    def _reserved_keywords_set(self) -> frozenset:
+        """Fetch and cache DuckDB's reserved keywords so derived table names stay valid identifiers."""
+        if self._reserved_keywords is None:
+            rows = self.connection.sql(
+                "SELECT keyword_name FROM duckdb_keywords() WHERE keyword_category = 'reserved'"
+            ).fetchall()
+            self._reserved_keywords = frozenset(str(row[0]).lower() for row in rows)
+        return self._reserved_keywords
+
+    def _escape_sql_string(self, value: str) -> str:
+        """Escape single quotes so a value is safe inside a SQL string literal."""
+        return value.replace("'", "''")
 
     def create_table_from_path(self, path: str, table: Optional[str] = None, replace: bool = False) -> str:
         """Creates a table from a path
 
-        :param path: Path to load
-        :param table: Optional table name to use
-        :param replace: Whether to replace the table if it already exists
-        :return: Table name created
+        Args:
+            path (str): Path to load
+            table (Optional[str]): Optional table name to use
+            replace (bool): Whether to replace the table if it already exists
+
+        Returns:
+            str: Table name created
         """
 
         if table is None:
@@ -195,10 +238,13 @@ class DuckDbTools(Toolkit):
             create_statement = "CREATE OR REPLACE TABLE"
 
         # Check if the file is a CSV
+        safe_path = self._escape_sql_string(path)
         if path.lower().endswith(".csv"):
-            create_statement += f" {table} AS SELECT * FROM read_csv('{path}', ignore_errors=false, auto_detect=true);"
+            create_statement += (
+                f" {table} AS SELECT * FROM read_csv('{safe_path}', ignore_errors=false, auto_detect=true);"
+            )
         else:
-            create_statement += f" {table} AS SELECT * FROM '{path}';"
+            create_statement += f" {table} AS SELECT * FROM '{safe_path}';"
 
         self.run_query(create_statement)
         log_debug(f"Created table {table} from {path}")
@@ -210,10 +256,13 @@ class DuckDbTools(Toolkit):
             Eg: If path is /tmp, the table will be saved as /tmp/table.parquet
         Otherwise it will be saved in the current directory
 
-        :param table: Table to export
-        :param format: Format to export in (default: parquet)
-        :param path: Path to export to
-        :return: None
+        Args:
+            table (str): Table to export
+            format (Optional[str]): Format to export in (default: parquet)
+            path (Optional[str]): Path to export to
+
+        Returns:
+            str: Result of the export query
         """
         if format is None:
             format = "PARQUET"
@@ -223,7 +272,9 @@ class DuckDbTools(Toolkit):
             path = f"{table}.{format}"
         else:
             path = f"{path}/{table}.{format}"
-        export_statement = f"COPY (SELECT * FROM {table}) TO '{path}' (FORMAT {format.upper()});"
+        export_statement = (
+            f"COPY (SELECT * FROM {table}) TO '{self._escape_sql_string(path)}' (FORMAT {format.upper()});"
+        )
         result = self.run_query(export_statement)
         log_debug(f"Exported {table} to {path}/{table}")
         return result
@@ -231,21 +282,19 @@ class DuckDbTools(Toolkit):
     def load_local_path_to_table(self, path: str, table: Optional[str] = None) -> Tuple[str, str]:
         """Load a local file into duckdb
 
-        :param path: Path to load
-        :param table: Optional table name to use
-        :return: Table name, SQL statement used to load the file
+        Args:
+            path (str): Path to load
+            table (Optional[str]): Optional table name to use
+
+        Returns:
+            Tuple[str, str]: Table name, SQL statement used to load the file
         """
         log_debug(f"Loading {path} into duckdb")
 
         if table is None:
-            # Get the file name from the path
-            path_obj = Path(path)
-            # Get the file name without extension from the path
-            table = path_obj.stem
-            # If the table isn't a valid SQL identifier, we'll need to use something else
-            table = table.replace("-", "_").replace(".", "_").replace(" ", "_").replace("/", "_")
+            table = self.get_table_name_from_path(path)
 
-        create_statement = f"CREATE OR REPLACE TABLE {table} AS SELECT * FROM '{path}';"
+        create_statement = f"CREATE OR REPLACE TABLE {table} AS SELECT * FROM '{self._escape_sql_string(path)}';"
         self.run_query(create_statement)
 
         log_debug(f"Loaded {path} into duckdb as {table}")
@@ -256,22 +305,22 @@ class DuckDbTools(Toolkit):
     ) -> Tuple[str, str]:
         """Load a local CSV file into duckdb
 
-        :param path: Path to load
-        :param table: Optional table name to use
-        :param delimiter: Optional delimiter to use
-        :return: Table name, SQL statement used to load the file
+        Args:
+            path (str): Path to load
+            table (Optional[str]): Optional table name to use
+            delimiter (Optional[str]): Optional delimiter to use
+
+        Returns:
+            Tuple[str, str]: Table name, SQL statement used to load the file
         """
         log_debug(f"Loading {path} into duckdb")
 
         if table is None:
-            # Get the file name from the path
-            path_obj = Path(path)
-            # Get the file name without extension from the path
-            table = path_obj.stem
-            # If the table isn't a valid SQL identifier, we'll need to use something else
-            table = table.replace("-", "_").replace(".", "_").replace(" ", "_").replace("/", "_")
+            table = self.get_table_name_from_path(path)
 
-        select_statement = f"SELECT * FROM read_csv('{path}', ignore_errors=false, auto_detect=true"
+        select_statement = (
+            f"SELECT * FROM read_csv('{self._escape_sql_string(path)}', ignore_errors=false, auto_detect=true"
+        )
         if delimiter is not None:
             select_statement += f", delim='{delimiter}')"
         else:
@@ -286,21 +335,19 @@ class DuckDbTools(Toolkit):
     def load_s3_path_to_table(self, path: str, table: Optional[str] = None) -> Tuple[str, str]:
         """Load a file from S3 into duckdb
 
-        :param path: S3 path to load
-        :param table: Optional table name to use
-        :return: Table name, SQL statement used to load the file
+        Args:
+            path (str): S3 path to load
+            table (Optional[str]): Optional table name to use
+
+        Returns:
+            Tuple[str, str]: Table name, SQL statement used to load the file
         """
         log_debug(f"Loading {path} into duckdb")
 
         if table is None:
-            # Get the file name from the path
-            path_obj = Path(path)
-            # Get the file name without extension from the path
-            table = path_obj.stem
-            # If the table isn't a valid SQL identifier, we'll need to use something else
-            table = table.replace("-", "_").replace(".", "_").replace(" ", "_").replace("/", "_")
+            table = self.get_table_name_from_path(path)
 
-        create_statement = f"CREATE OR REPLACE TABLE {table} AS SELECT * FROM '{path}';"
+        create_statement = f"CREATE OR REPLACE TABLE {table} AS SELECT * FROM '{self._escape_sql_string(path)}';"
         self.run_query(create_statement)
 
         log_debug(f"Loaded {path} into duckdb as {table}")
@@ -311,21 +358,22 @@ class DuckDbTools(Toolkit):
     ) -> Tuple[str, str]:
         """Load a CSV file from S3 into duckdb
 
-        :param path: S3 path to load
-        :param table: Optional table name to use
-        :return: Table name, SQL statement used to load the file
+        Args:
+            path (str): S3 path to load
+            table (Optional[str]): Optional table name to use
+            delimiter (Optional[str]): Optional delimiter to use
+
+        Returns:
+            Tuple[str, str]: Table name, SQL statement used to load the file
         """
         log_debug(f"Loading {path} into duckdb")
 
         if table is None:
-            # Get the file name from the path
-            path_obj = Path(path)
-            # Get the file name without extension from the path
-            table = path_obj.stem
-            # If the table isn't a valid SQL identifier, we'll need to use something else
-            table = table.replace("-", "_").replace(".", "_").replace(" ", "_").replace("/", "_")
+            table = self.get_table_name_from_path(path)
 
-        select_statement = f"SELECT * FROM read_csv('{path}', ignore_errors=false, auto_detect=true"
+        select_statement = (
+            f"SELECT * FROM read_csv('{self._escape_sql_string(path)}', ignore_errors=false, auto_detect=true"
+        )
         if delimiter is not None:
             select_statement += f", delim='{delimiter}')"
         else:
@@ -340,10 +388,13 @@ class DuckDbTools(Toolkit):
     def create_fts_index(self, table: str, unique_key: str, input_values: list[str]) -> str:
         """Create a full text search index on a table
 
-        :param table: Table to create the index on
-        :param unique_key: Unique key to use
-        :param input_values: Values to index
-        :return: None
+        Args:
+            table (str): Table to create the index on
+            unique_key (str): Unique key to use
+            input_values (list[str]): Values to index
+
+        Returns:
+            str: Result of the create index query
         """
         log_debug(f"Creating FTS index on {table} for {input_values}")
         self.run_query("INSTALL fts;")
@@ -351,23 +402,43 @@ class DuckDbTools(Toolkit):
         self.run_query("LOAD fts;")
         log_debug("Loaded FTS extension")
 
-        create_fts_index_statement = f"PRAGMA create_fts_index('{table}', '{unique_key}', '{input_values}');"
+        # Each indexed column is a separate PRAGMA argument, not one list literal
+        input_value_literals = ", ".join(f"'{self._escape_sql_string(value)}'" for value in input_values)
+        create_fts_index_statement = (
+            f"PRAGMA create_fts_index("
+            f"'{self._escape_sql_string(table)}', '{self._escape_sql_string(unique_key)}', {input_value_literals});"
+        )
         log_debug(f"Running {create_fts_index_statement}")
         result = self.run_query(create_fts_index_statement)
         log_debug(f"Created FTS index on {table} for {input_values}")
 
         return result
 
+    def _fts_schema_name(self, table: str) -> str:
+        """Get the FTS macro schema DuckDB creates for a table, quoted as an identifier.
+
+        DuckDB names it fts_<schema>_<table>, so a schema-qualified table lands in
+        fts_<schema>_<table> rather than fts_main_<table>.
+        """
+        parts = table.split(".")
+        schema = parts[0] if len(parts) > 1 else "main"
+        name = f"fts_{schema}_{parts[-1]}"
+        return '"' + name.replace('"', '""') + '"'
+
     def full_text_search(self, table: str, unique_key: str, search_text: str) -> str:
         """Full text Search in a table column for a specific text/keyword
 
-        :param table: Table to search
-        :param unique_key: Unique key to use
-        :param search_text: Text to search
-        :return: None
+        Args:
+            table (str): Table to search
+            unique_key (str): Unique key to use
+            search_text (str): Text to search
+
+        Returns:
+            str: Search results
         """
         log_debug(f"Running full_text_search for {search_text} in {table}")
-        search_text_statement = f"""SELECT fts_main_corpus.match_bm25({unique_key}, '{search_text}') AS score,*
+        fts_schema = self._fts_schema_name(table)
+        search_text_statement = f"""SELECT {fts_schema}.match_bm25({unique_key}, '{self._escape_sql_string(search_text)}') AS score,*
                                         FROM {table}
                                         WHERE score IS NOT NULL
                                         ORDER BY score;"""

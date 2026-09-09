@@ -1,53 +1,62 @@
-"""MCP Parallel Agent - Search for Parallel
+"""Parallel MCP Agent - Web Search via Parallel MCP
 
-This example shows how to create an agent that uses Parallel to search for information using the Parallel MCP server.
+This example demonstrates how to create an Agno agent that performs web searches using Parallel's MCP server.
 
-Run: `uv pip install anthropic mcp agno` to install the dependencies
+Setup:
+1. Install Python dependencies:
+   ```bash
+   uv pip install agno mcp anthropic
+   ```
 
-Prerequisites:
-- Set the environment variable "PARALLEL_API_KEY" with your Parallel API key.
-- You can get the API key from the Parallel website: https://parallel.ai/
+2. Set ANTHROPIC_API_KEY environment variable (required for Claude model).
 
-Usage:
-  python cookbook/90_tools/mcp/parallel.py
+3. Optionally set PARALLEL_API_KEY — keyless access is rate-limited, setting a key raises the ceiling.
 
-Example:
-  python cookbook/90_tools/mcp/parallel.py "What is the weather in Tokyo?"
+Parallel MCP Docs: https://docs.parallel.ai/integrations/mcp/search-mcp
 """
 
 import asyncio
+from datetime import timedelta
 from os import getenv
 
 from agno.agent import Agent
 from agno.models.anthropic import Claude
 from agno.tools.mcp import MCPTools
 from agno.tools.mcp.params import StreamableHTTPClientParams
-from agno.utils.pprint import apprint_run_response
 
 # ---------------------------------------------------------------------------
 # Create Agent
 # ---------------------------------------------------------------------------
 
 
-server_params = StreamableHTTPClientParams(
-    url="https://search-mcp.parallel.ai/mcp",
-    headers={
-        "authorization": f"Bearer {getenv('PARALLEL_API_KEY')}",
-    },
-)
-
-
 async def run_agent(message: str) -> None:
+    """
+    Sets up the Parallel MCP server and runs the agent with the given message.
+    """
+    # Build headers — only add auth if key is present
+    headers: dict[str, str] = {}
+    api_key = getenv("PARALLEL_API_KEY")
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    server_params = StreamableHTTPClientParams(
+        url="https://search.parallel.ai/mcp",
+        headers=headers,
+        timeout=timedelta(seconds=300),
+    )
+
     async with MCPTools(
-        transport="streamable-http", server_params=server_params
+        transport="streamable-http",
+        server_params=server_params,
+        include_tools=["web_search", "web_fetch"],
+        timeout_seconds=300,
     ) as parallel_mcp_server:
         agent = Agent(
             model=Claude(id="claude-sonnet-4-20250514"),
             tools=[parallel_mcp_server],
             markdown=True,
         )
-        response_stream = await agent.arun(message)
-        await apprint_run_response(response_stream)
+        await agent.aprint_response(message, stream=True)
 
 
 # ---------------------------------------------------------------------------

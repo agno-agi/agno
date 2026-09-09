@@ -1,49 +1,94 @@
 #!/bin/bash
 
 ############################################################################
-# Agno Development Setup
-# - Create a virtual environment and install libraries in editable mode.
-# - Please install uv before running this script.
-# - Please deactivate the existing virtual environment before running.
-# Usage: ./scripts/dev_setup.sh
+#
+#    Agno Development Setup
+#
+#    Creates .venv with agnoctl and agno installed in editable mode,
+#    with everything the core dev loop needs: unit + integration tests,
+#    ./scripts/format.sh and ./scripts/validate.sh.
+#    Provider-SDK test dependencies live in ./scripts/test_setup.sh.
+#
+#    Usage: ./scripts/dev_setup.sh
+#
 ############################################################################
+
+set -e
 
 CURR_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(dirname "${CURR_DIR}")"
 AGNO_DIR="${REPO_ROOT}/libs/agno"
-AGNO_INFRA_DIR="${REPO_ROOT}/libs/agno_infra"
-source "${CURR_DIR}/_utils.sh"
-
+AGNOCTL_DIR="${REPO_ROOT}/libs/agnoctl"
 VENV_DIR="${REPO_ROOT}/.venv"
-PYTHON_VERSION=$(python3 --version)
 
-print_heading "Development setup..."
+# Colors
+ORANGE='\033[38;5;208m'
+DIM='\033[2m'
+BOLD='\033[1m'
+NC='\033[0m'
 
-print_heading "Removing virtual env"
-print_info "rm -rf ${VENV_DIR}"
-rm -rf ${VENV_DIR}
+echo ""
+echo -e "${ORANGE}"
+cat << 'BANNER'
+     █████╗  ██████╗ ███╗   ██╗ ██████╗
+    ██╔══██╗██╔════╝ ████╗  ██║██╔═══██╗
+    ███████║██║  ███╗██╔██╗ ██║██║   ██║
+    ██╔══██║██║   ██║██║╚██╗██║██║   ██║
+    ██║  ██║╚██████╔╝██║ ╚████║╚██████╔╝
+    ╚═╝  ╚═╝ ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝
+BANNER
+echo -e "${NC}"
+echo -e "    ${DIM}Development Setup${NC}"
+echo ""
 
-print_heading "Creating virtual env"
-print_info "VIRTUAL_ENV=${VENV_DIR} uv venv --python 3.12"
-VIRTUAL_ENV=${VENV_DIR} uv venv --python 3.12
+# Preflight
+if [[ -n "$VIRTUAL_ENV" ]]; then
+    echo "    Deactivate your current venv first."
+    exit 1
+fi
 
-print_heading "Installing agno"
-print_info "VIRTUAL_ENV=${VENV_DIR} uv pip install -r ${AGNO_DIR}/requirements.txt"
-VIRTUAL_ENV=${VENV_DIR} uv pip install -r ${AGNO_DIR}/requirements.txt
+if ! command -v uv &> /dev/null; then
+    echo "    uv not found. Install: https://docs.astral.sh/uv/"
+    exit 1
+fi
 
-print_heading "Installing agno in editable mode with dev dependencies"
-VIRTUAL_ENV=${VENV_DIR} uv pip install -U -e ${AGNO_DIR}[dev]
-#TODO: Improve the dev setup to handle conflicts which results in missing dependencies
+# Setup
+echo -e "    ${DIM}Removing old environment...${NC}"
+echo -e "    ${DIM}> rm -rf ${VENV_DIR}${NC}"
+rm -rf "${VENV_DIR}"
 
-print_heading "Installing agno-infra"
-print_info "VIRTUAL_ENV=${VENV_DIR} uv pip install -r ${AGNO_INFRA_DIR}/requirements.txt"
-VIRTUAL_ENV=${VENV_DIR} uv pip install -r ${AGNO_INFRA_DIR}/requirements.txt
+echo ""
+echo -e "    ${DIM}Creating Python 3.12 venv...${NC}"
+echo -e "    ${DIM}> uv venv ${VENV_DIR} --python 3.12${NC}"
+uv venv "${VENV_DIR}" --python 3.12 --quiet
 
-print_heading "Installing agno-infra in editable mode with dev dependencies"
-VIRTUAL_ENV=${VENV_DIR} uv pip install -e ${AGNO_INFRA_DIR}[dev]
+# One resolve for both editables: the local agnoctl satisfies agno's
+# agnoctl dependency, so nothing is pulled from PyPI for it.
+echo ""
+echo -e "    ${DIM}Installing agnoctl[dev] and agno[dev] in editable mode...${NC}"
+echo -e "    ${DIM}> uv pip install -e libs/agnoctl[dev] -e libs/agno[dev]${NC}"
+VIRTUAL_ENV="${VENV_DIR}" uv pip install -e "${AGNOCTL_DIR}[dev]" -e "${AGNO_DIR}[dev]" --quiet
 
-print_heading "uv pip list"
-VIRTUAL_ENV=${VENV_DIR} uv pip list
+# Copy activation command to clipboard
+ACTIVATE_CMD="source .venv/bin/activate"
+if command -v pbcopy &> /dev/null; then
+    echo -n "${ACTIVATE_CMD}" | pbcopy
+    CLIPBOARD_MSG="(Copied to clipboard. Just paste and hit enter.)"
+elif command -v xclip &> /dev/null; then
+    echo -n "${ACTIVATE_CMD}" | xclip -selection clipboard
+    CLIPBOARD_MSG="(Copied to clipboard. Just paste and hit enter.)"
+else
+    CLIPBOARD_MSG=""
+fi
 
-print_heading "Development setup complete"
-print_heading "Activate venv using: source .venv/bin/activate"
+echo ""
+echo -e "    ${BOLD}Done.${NC}"
+echo ""
+echo -e "    ${DIM}Activate:${NC}  ${ACTIVATE_CMD}"
+echo -e "    ${DIM}Test:${NC}      pytest libs/agno/tests/unit"
+echo -e "    ${DIM}Validate:${NC}  ./scripts/format.sh && ./scripts/validate.sh"
+echo ""
+if [[ -n "$CLIPBOARD_MSG" ]]; then
+    echo -e "    ${DIM}${CLIPBOARD_MSG}${NC}"
+    echo ""
+fi

@@ -130,6 +130,28 @@ def test_output_schema():
     assert response.content.plot is not None
 
 
+def test_output_schema_native():
+    class MovieScript(BaseModel):
+        title: str = Field(..., description="Movie title")
+        genre: str = Field(..., description="Movie genre")
+        plot: str = Field(..., description="Brief plot summary")
+
+    agent = Agent(
+        model=LiteLLM(id="gpt-4o", supports_native_structured_outputs=True),
+        telemetry=False,
+        output_schema=MovieScript,
+        structured_outputs=True,
+    )
+
+    response = agent.run("Create a movie about time travel")
+
+    # Verify native structured output (response_format forwarded to the provider)
+    assert isinstance(response.content, MovieScript)
+    assert response.content.title is not None
+    assert response.content.genre is not None
+    assert response.content.plot is not None
+
+
 def test_history():
     agent = Agent(
         model=LiteLLM(id="gpt-4o"),

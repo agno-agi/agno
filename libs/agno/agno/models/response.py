@@ -4,9 +4,8 @@ from time import time
 from typing import Any, Dict, List, Optional
 
 from agno.media import Audio, File, Image, Video
-from agno.metrics import ToolCallMetrics
+from agno.metrics import MessageMetrics, ToolCallMetrics
 from agno.models.message import Citations
-from agno.models.metrics import MessageMetrics
 from agno.tools.function import UserFeedbackQuestion, UserInputField
 
 
@@ -143,7 +142,7 @@ class ModelResponse:
 
     response_usage: Optional[MessageMetrics] = None
 
-    created_at: int = int(time())
+    created_at: int = field(default_factory=lambda: int(time()))
 
     extra: Optional[Dict[str, Any]] = None
 
@@ -224,7 +223,7 @@ class ModelResponse:
 
         # Reconstruct response usage (Metrics)
         if data.get("response_usage") and isinstance(data["response_usage"], dict):
-            from agno.models.metrics import MessageMetrics as _MessageMetrics
+            from agno.metrics import MessageMetrics as _MessageMetrics
 
             data["response_usage"] = _MessageMetrics.from_dict(data["response_usage"])
 

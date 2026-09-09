@@ -93,7 +93,10 @@ def test_make_request_success(brightdata_tools, mock_requests):
 
     assert result == "Success response"
     mock_requests.post.assert_called_once_with(
-        brightdata_tools.endpoint, headers=brightdata_tools.headers, data=json.dumps(payload)
+        brightdata_tools.endpoint,
+        headers=brightdata_tools.headers,
+        data=json.dumps(payload),
+        timeout=brightdata_tools.timeout,
     )
 
 

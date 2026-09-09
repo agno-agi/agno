@@ -7,9 +7,9 @@ from pydantic import BaseModel
 from agno.media import Audio, File, Image, Video
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.models.response import ToolExecution
 from agno.remote.base import BaseRemote, RemoteDb, RemoteKnowledge
 from agno.run.agent import RunOutput, RunOutputEvent
+from agno.run.requirement import RunRequirement
 from agno.utils.agent import validate_input
 from agno.utils.log import log_warning
 from agno.utils.remote import serialize_input
@@ -297,6 +297,7 @@ class RemoteAgent(BaseRemote):
                 images=images,
                 videos=videos,
                 files=files,
+                metadata=metadata,
                 headers=headers,
             )
 
@@ -361,6 +362,7 @@ class RemoteAgent(BaseRemote):
         videos: Optional[Sequence[Video]],
         files: Optional[Sequence[File]],
         headers: Optional[Dict[str, str]],
+        metadata: Optional[Dict[str, Any]] = None,
     ) -> Union[RunOutput, AsyncIterator[RunOutputEvent]]:
         """Execute via A2A protocol.
 
@@ -374,6 +376,7 @@ class RemoteAgent(BaseRemote):
             videos: Videos to include
             files: Files to include
             headers: HTTP headers to include in the request (optional)
+            metadata: Additional metadata to include in the message envelope (optional)
 
         Returns:
             RunOutput for non-streaming, AsyncIterator[RunOutputEvent] for streaming
@@ -392,6 +395,7 @@ class RemoteAgent(BaseRemote):
                 audio=list(audio) if audio else None,
                 videos=list(videos) if videos else None,
                 files=list(files) if files else None,
+                metadata=metadata,
                 headers=headers,
             )
             return map_stream_events_to_run_events(event_stream, agent_id=self.agent_id)
@@ -405,6 +409,7 @@ class RemoteAgent(BaseRemote):
                 images=images,
                 videos=videos,
                 files=files,
+                metadata=metadata,
                 headers=headers,
             )
 
@@ -418,6 +423,7 @@ class RemoteAgent(BaseRemote):
         videos: Optional[Sequence[Video]],
         files: Optional[Sequence[File]],
         headers: Optional[Dict[str, str]],
+        metadata: Optional[Dict[str, Any]] = None,
     ) -> RunOutput:
         """Send a non-streaming A2A message and convert response to RunOutput."""
         if not self.a2a_client:
@@ -432,6 +438,7 @@ class RemoteAgent(BaseRemote):
             audio=list(audio) if audio else None,
             videos=list(videos) if videos else None,
             files=list(files) if files else None,
+            metadata=metadata,
             headers=headers,
         )
         return map_task_result_to_run_output(task_result, agent_id=self.agent_id, user_id=user_id)
@@ -440,7 +447,7 @@ class RemoteAgent(BaseRemote):
     async def acontinue_run(
         self,
         run_id: str,
-        updated_tools: Optional[List[ToolExecution]] = None,
+        requirements: Optional[List[RunRequirement]] = None,
         stream: Literal[False] = False,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
@@ -452,7 +459,7 @@ class RemoteAgent(BaseRemote):
     def acontinue_run(
         self,
         run_id: str,
-        updated_tools: Optional[List[ToolExecution]] = None,
+        requirements: Optional[List[RunRequirement]] = None,
         stream: Literal[True] = True,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
@@ -463,7 +470,7 @@ class RemoteAgent(BaseRemote):
     def acontinue_run(  # type: ignore
         self,
         run_id: str,  # type: ignore
-        updated_tools: Optional[List[ToolExecution]] = None,
+        requirements: Optional[List[RunRequirement]] = None,
         stream: Optional[bool] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
@@ -476,7 +483,9 @@ class RemoteAgent(BaseRemote):
         headers = self._get_auth_headers(auth_token)
 
         if self.agentos_client:
-            tools_list = updated_tools or []
+            tools_list = (
+                [r.tool_execution for r in requirements if r.tool_execution is not None] if requirements else []
+            )
             if stream:
                 # Handle streaming response
                 return self.agentos_client.continue_agent_run_stream(  # type: ignore

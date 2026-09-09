@@ -1,34 +1,11 @@
 """Tests for Telegram 429 rate-limit handling during streaming edits."""
 
-import sys
 import time
-import types
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-
-def _install_fake_telebot():
-    telebot = types.ModuleType("telebot")
-    telebot_async = types.ModuleType("telebot.async_telebot")
-
-    class AsyncTeleBot:
-        def __init__(self, token=None):
-            self.token = token
-
-    class TeleBot:
-        def __init__(self, token=None):
-            self.token = token
-
-    telebot.TeleBot = TeleBot
-    telebot_async.AsyncTeleBot = AsyncTeleBot
-    sys.modules.setdefault("telebot", telebot)
-    sys.modules.setdefault("telebot.async_telebot", telebot_async)
-
-
-_install_fake_telebot()
-
-from agno.os.interfaces.telegram.state import StreamState  # noqa: E402
+from agno.os.interfaces.telegram.state import StreamState
 
 
 def _make_state() -> StreamState:

@@ -23,6 +23,9 @@ Requires:
     SLACK_BOT_TOKEN    (or SLACK_TOKEN fallback; scopes: channels:read,
                         channels:history, users:read)
     pip install parallel-web
+
+Optional:
+    SLACK_USER_TOKEN   (xoxp-) enables search_messages API
 """
 
 from __future__ import annotations
@@ -35,7 +38,7 @@ from agno.context.web import ParallelBackend, WebContextProvider
 from agno.models.openai import OpenAIResponses
 
 # Sub-agents do the tool work — cheaper model. Outer agent synthesizes.
-provider_model = OpenAIResponses(id="gpt-5.4-mini")
+provider_model = OpenAIResponses(id="gpt-5.6-luna")
 
 backend = ParallelBackend()  # reads PARALLEL_API_KEY from env
 web = WebContextProvider(backend=backend, model=provider_model)

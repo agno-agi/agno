@@ -11,7 +11,7 @@ from agno.tools.yfinance import YFinanceTools
 
 def test_tool_use():
     agent = Agent(
-        model=Claude(id="claude-sonnet-4-20250514"),
+        model=Claude(id="claude-sonnet-4-5-20250929"),
         tools=[YFinanceTools(cache_results=True)],
         markdown=True,
         telemetry=False,
@@ -28,7 +28,7 @@ def test_tool_use():
 
 def test_tool_use_stream():
     agent = Agent(
-        model=Claude(id="claude-sonnet-4-20250514"),
+        model=Claude(id="claude-sonnet-4-5-20250929"),
         tools=[YFinanceTools(cache_results=True)],
         markdown=True,
         telemetry=False,
@@ -55,7 +55,7 @@ def test_tool_use_stream():
 @pytest.mark.asyncio
 async def test_async_tool_use():
     agent = Agent(
-        model=Claude(id="claude-sonnet-4-20250514"),
+        model=Claude(id="claude-sonnet-4-5-20250929"),
         tools=[YFinanceTools(cache_results=True)],
         markdown=True,
         telemetry=False,
@@ -73,7 +73,7 @@ async def test_async_tool_use():
 @pytest.mark.asyncio
 async def test_async_tool_use_stream():
     agent = Agent(
-        model=Claude(id="claude-sonnet-4-20250514"),
+        model=Claude(id="claude-sonnet-4-5-20250929"),
         tools=[YFinanceTools(cache_results=True)],
         markdown=True,
         telemetry=False,
@@ -99,7 +99,7 @@ async def test_async_tool_use_stream():
 
 def test_tool_use_tool_call_limit():
     agent = Agent(
-        model=Claude(id="claude-sonnet-4-20250514"),
+        model=Claude(id="claude-sonnet-4-5-20250929"),
         tools=[
             YFinanceTools(
                 enable_stock_price=True,
@@ -125,7 +125,7 @@ def test_tool_use_tool_call_limit():
 
 def test_tool_use_with_content():
     agent = Agent(
-        model=Claude(id="claude-sonnet-4-20250514"),
+        model=Claude(id="claude-sonnet-4-5-20250929"),
         tools=[YFinanceTools(cache_results=True)],
         markdown=True,
         telemetry=False,
@@ -143,7 +143,7 @@ def test_tool_use_with_content():
 
 def test_parallel_tool_calls():
     agent = Agent(
-        model=Claude(id="claude-sonnet-4-20250514"),
+        model=Claude(id="claude-sonnet-4-5-20250929"),
         tools=[YFinanceTools(cache_results=True)],
         markdown=True,
         telemetry=False,
@@ -164,7 +164,7 @@ def test_parallel_tool_calls():
 
 def test_multiple_tool_calls():
     agent = Agent(
-        model=Claude(id="claude-sonnet-4-20250514"),
+        model=Claude(id="claude-sonnet-4-5-20250929"),
         tools=[YFinanceTools(cache_results=True), WebSearchTools(cache_results=True)],
         markdown=True,
         telemetry=False,
@@ -191,7 +191,7 @@ def test_tool_call_custom_tool_no_parameters():
         return "It is currently 70 degrees and cloudy in Tokyo"
 
     agent = Agent(
-        model=Claude(id="claude-sonnet-4-20250514"),
+        model=Claude(id="claude-sonnet-4-5-20250929"),
         tools=[get_the_weather_in_tokyo],
         markdown=True,
         telemetry=False,
@@ -220,7 +220,7 @@ def test_tool_call_custom_tool_optional_parameters():
             return f"It is currently 70 degrees and cloudy in {city}"
 
     agent = Agent(
-        model=Claude(id="claude-sonnet-4-20250514"),
+        model=Claude(id="claude-sonnet-4-5-20250929"),
         tools=[get_the_weather],
         markdown=True,
         telemetry=False,
@@ -247,7 +247,7 @@ def test_tool_call_pydantic_parameters():
         return f"Researching {request.topic}"
 
     agent = Agent(
-        model=Claude(id="claude-sonnet-4-20250514"),
+        model=Claude(id="claude-sonnet-4-5-20250929"),
         tools=[research_topic],
         markdown=True,
         telemetry=False,
@@ -264,7 +264,7 @@ def test_tool_call_pydantic_parameters():
 
 def test_tool_call_list_parameters():
     agent = Agent(
-        model=Claude(id="claude-sonnet-4-20250514"),
+        model=Claude(id="claude-sonnet-4-5-20250929"),
         tools=[ExaTools()],
         instructions="Use a single tool call if possible",
         markdown=True,

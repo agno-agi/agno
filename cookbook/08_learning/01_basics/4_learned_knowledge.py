@@ -40,7 +40,7 @@ knowledge = Knowledge(
 
 # AGENTIC mode: Agent gets save/search tools and decides when to use them.
 agent = Agent(
-    model=OpenAIResponses(id="gpt-5.2"),
+    model=OpenAIResponses(id="gpt-5.5"),
     db=db,
     instructions="Be concise. Search for relevant learnings before answering questions.",
     learning=LearningMachine(

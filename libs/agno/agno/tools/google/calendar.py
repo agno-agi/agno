@@ -2,20 +2,16 @@ import datetime
 import json
 import textwrap
 import uuid
-from os import getenv
-from pathlib import Path
 from typing import Any, Dict, List, Optional, Union, cast
 
-from agno.tools import Toolkit
 from agno.tools.google.auth import google_authenticate
-from agno.utils.log import log_debug, log_error, log_info
+from agno.tools.google.base import GoogleToolkit
+from agno.utils.log import log_debug, log_error
 
 try:
-    from google.auth.transport.requests import Request
     from google.oauth2.credentials import Credentials
     from google.oauth2.service_account import Credentials as ServiceAccountCredentials
-    from google_auth_oauthlib.flow import InstalledAppFlow
-    from googleapiclient.discovery import Resource, build
+    from googleapiclient.discovery import Resource
     from googleapiclient.errors import HttpError
 except ImportError:
     raise ImportError(
@@ -42,8 +38,11 @@ CALENDAR_INSTRUCTIONS = textwrap.dedent("""\
 authenticate = google_authenticate("calendar")
 
 
-class GoogleCalendarTools(Toolkit):
-    DEFAULT_SCOPES = [
+class GoogleCalendarTools(GoogleToolkit):
+    api_name = "calendar"
+    api_version = "v3"
+    google_service_name = "calendar"
+    default_scopes = [
         "https://www.googleapis.com/auth/calendar.readonly",
         "https://www.googleapis.com/auth/calendar",
     ]
@@ -59,6 +58,8 @@ class GoogleCalendarTools(Toolkit):
         oauth_port: int = 8080,
         login_hint: Optional[str] = None,
         calendar_id: str = "primary",
+        max_results: int = 20,
+        expand_recurring: bool = True,
         allow_update: Optional[bool] = None,
         list_events: bool = True,
         get_event: bool = True,
@@ -90,9 +91,14 @@ class GoogleCalendarTools(Toolkit):
             oauth_port: Port for OAuth local redirect server (default: 8080).
             login_hint: Email to pre-select in the OAuth consent screen.
             calendar_id: Calendar to operate on. Defaults to "primary".
+            max_results: Maximum results per API request (default: 20).
+            expand_recurring: If True (default), recurring events are expanded into instances.
+                If False, returns master events with RRULE for bulk operations.
             instructions: Custom instructions for the toolkit. If None, uses default.
             add_instructions: Whether to inject instructions into the agent system prompt.
         """
+        self.max_results = max_results
+        self.expand_recurring = expand_recurring
         if allow_update:
             create_event = True
             update_event = True
@@ -103,16 +109,7 @@ class GoogleCalendarTools(Toolkit):
         else:
             self.instructions = instructions
 
-        self.creds = creds
-        self.service: Optional[Resource] = None
         self.calendar_id = calendar_id
-        self.credentials_path = credentials_path
-        self.token_path = token_path
-        self.service_account_path = service_account_path
-        self.delegated_user = delegated_user
-        self.scopes = scopes or self.DEFAULT_SCOPES
-        self.oauth_port = oauth_port
-        self.login_hint = login_hint
         # Cached email for respond_to_event
         self._user_email: Optional[str] = None
         tools: List[Any] = []
@@ -152,6 +149,14 @@ class GoogleCalendarTools(Toolkit):
             tools=tools,
             instructions=self.instructions,
             add_instructions=add_instructions,
+            scopes=scopes,
+            creds=creds,
+            token_path=token_path,
+            credentials_path=credentials_path,
+            service_account_path=service_account_path,
+            delegated_user=delegated_user,
+            oauth_port=oauth_port,
+            login_hint=login_hint,
             **kwargs,
         )
 
@@ -185,95 +190,37 @@ class GoogleCalendarTools(Toolkit):
             if read_scope not in self.scopes and write_scope not in self.scopes:
                 raise ValueError(f"The scope {read_scope} is required for read operations")
 
-    def _build_service(self):
-        return build("calendar", "v3", credentials=self.creds)
-
-    def _auth(self) -> None:
-        """Authenticate with Google Calendar API using service account (priority) or OAuth flow."""
-        if self.creds and self.creds.valid:
-            return
-
-        # Service account authentication takes priority over OAuth
-        service_account_path = self.service_account_path or getenv("GOOGLE_SERVICE_ACCOUNT_FILE")
-        if service_account_path:
-            delegated_user = self.delegated_user or getenv("GOOGLE_DELEGATED_USER")
-            sa_creds = ServiceAccountCredentials.from_service_account_file(
-                service_account_path,
-                scopes=self.scopes,
-            )
-            # Calendar service accounts can optionally impersonate a user
-            if delegated_user:
-                sa_creds = sa_creds.with_subject(delegated_user)
-            # Eagerly fetch token so creds.valid=True and @authenticate won't re-enter _auth
-            sa_creds.refresh(Request())
-            self.creds = sa_creds
-            return
-
-        # OAuth flow
-        token_file = Path(self.token_path or "token.json")
-        creds_file = Path(self.credentials_path or "credentials.json")
-
-        if token_file.exists():
-            try:
-                self.creds = Credentials.from_authorized_user_file(str(token_file), self.scopes)
-            except ValueError:
-                # Token file missing refresh_token — fall through to re-auth
-                self.creds = None
-
-        if self.creds and self.creds.expired and self.creds.refresh_token:  # type: ignore[union-attr]
-            try:
-                self.creds.refresh(Request())
-            except Exception:
-                # Refresh token revoked or expired — fall through to re-auth
-                self.creds = None
-
-        if not self.creds or not self.creds.valid:
-            client_config = {
-                "installed": {
-                    "client_id": getenv("GOOGLE_CLIENT_ID"),
-                    "client_secret": getenv("GOOGLE_CLIENT_SECRET"),
-                    "project_id": getenv("GOOGLE_PROJECT_ID"),
-                    "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-                    "token_uri": "https://oauth2.googleapis.com/token",
-                    "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-                    "redirect_uris": [getenv("GOOGLE_REDIRECT_URI", "http://localhost")],
-                }
-            }
-            if creds_file.exists():
-                flow = InstalledAppFlow.from_client_secrets_file(str(creds_file), self.scopes)
-            else:
-                flow = InstalledAppFlow.from_client_config(client_config, self.scopes)
-            # prompt=consent forces Google to return a refresh_token every time
-            oauth_kwargs: Dict[str, Any] = {"prompt": "consent"}
-            if self.login_hint:
-                oauth_kwargs["login_hint"] = self.login_hint
-            oauth_kwargs["port"] = self.oauth_port
-            self.creds = flow.run_local_server(**oauth_kwargs)
-
-        # Save the credentials for future use
-        if self.creds and self.creds.valid:
-            token_file.write_text(self.creds.to_json())  # type: ignore[union-attr]
-            log_debug("Successfully authenticated with Google Calendar API.")
-            log_info(f"Token file path: {token_file}")
-
     @authenticate
-    def list_events(self, limit: int = 10, start_date: Optional[str] = None) -> str:
+    def list_events(
+        self,
+        limit: int = 10,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        page_token: Optional[str] = None,
+    ) -> str:
         """
         List upcoming events from the user's Google Calendar.
 
         Args:
             limit (int): Number of events to return (default: 10)
             start_date (Optional[str]): Start date in ISO format (YYYY-MM-DDTHH:MM:SS). Defaults to now.
+            end_date (Optional[str]): End date in ISO format. Only events starting before this are returned.
+            page_token (Optional[str]): Token from a previous response to fetch the next page.
 
         Returns:
-            str: JSON string containing the Google Calendar events or error message
+            str: JSON string containing events and nextPageToken if more results exist.
         """
         if start_date is None:
             start_date = datetime.datetime.now(datetime.timezone.utc).isoformat()
             log_debug(f"No start date provided, using current datetime: {start_date}")
         elif isinstance(start_date, str):
             try:
-                start_date = datetime.datetime.fromisoformat(start_date).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+                start_dt = datetime.datetime.fromisoformat(start_date)
+                if start_dt.tzinfo is None:
+                    start_dt = start_dt.replace(tzinfo=datetime.timezone.utc)
+                else:
+                    start_dt = start_dt.astimezone(datetime.timezone.utc)
+                start_date = start_dt.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
             except ValueError:
                 return json.dumps(
                     {"error": f"Invalid date format: {start_date}. Use ISO format (YYYY-MM-DDTHH:MM:SS)."}
@@ -281,21 +228,35 @@ class GoogleCalendarTools(Toolkit):
 
         try:
             service = cast(Resource, self.service)
-            events_result = (
-                service.events()
-                .list(
-                    calendarId=self.calendar_id,
-                    timeMin=start_date,
-                    maxResults=limit,
-                    singleEvents=True,
-                    orderBy="startTime",
-                )
-                .execute()
-            )
+            effective_limit = min(limit, self.max_results)
+            params: Dict[str, Any] = {
+                "calendarId": self.calendar_id,
+                "timeMin": start_date,
+                "maxResults": effective_limit,
+                "singleEvents": self.expand_recurring,
+            }
+            if self.expand_recurring:
+                params["orderBy"] = "startTime"
+            if end_date:
+                try:
+                    dt = datetime.datetime.fromisoformat(end_date)
+                    if dt.tzinfo is None:
+                        dt = dt.replace(tzinfo=datetime.timezone.utc)
+                    params["timeMax"] = dt.isoformat()
+                except ValueError:
+                    return json.dumps({"error": f"Invalid end_date format: {end_date}. Use ISO format."})
+            if page_token:
+                params["pageToken"] = page_token
+
+            events_result = service.events().list(**params).execute()
             events = events_result.get("items", [])
-            if not events:
-                return json.dumps({"message": "No upcoming events found."})
-            return json.dumps(events)
+
+            result: Dict[str, Any] = {"events": events}
+            if events_result.get("nextPageToken"):
+                result["nextPageToken"] = events_result["nextPageToken"]
+            if not events and not page_token:
+                result["message"] = "No upcoming events found."
+            return json.dumps(result)
         except HttpError as error:
             log_error(f"An error occurred: {error}")
             return json.dumps({"error": f"An error occurred: {error}"})
@@ -303,8 +264,8 @@ class GoogleCalendarTools(Toolkit):
     @authenticate
     def create_event(
         self,
-        start_date: str,
-        end_date: str,
+        start_date: str = "",
+        end_date: str = "",
         title: Optional[str] = None,
         description: Optional[str] = None,
         location: Optional[str] = None,
@@ -334,8 +295,16 @@ class GoogleCalendarTools(Toolkit):
             attendees_list = [{"email": attendee} for attendee in attendees] if attendees else []
 
             try:
-                start_time = datetime.datetime.fromisoformat(start_date).strftime("%Y-%m-%dT%H:%M:%S")
-                end_time = datetime.datetime.fromisoformat(end_date).strftime("%Y-%m-%dT%H:%M:%S")
+                start_dt = datetime.datetime.fromisoformat(start_date)
+                end_dt = datetime.datetime.fromisoformat(end_date)
+                if start_dt.tzinfo is None:
+                    start_time = start_dt.strftime("%Y-%m-%dT%H:%M:%S")
+                else:
+                    start_time = start_dt.isoformat()
+                if end_dt.tzinfo is None:
+                    end_time = end_dt.strftime("%Y-%m-%dT%H:%M:%S")
+                else:
+                    end_time = end_dt.isoformat()
             except ValueError:
                 return json.dumps({"error": "Invalid datetime format. Use ISO format (YYYY-MM-DDTHH:MM:SS)."})
 
@@ -378,7 +347,7 @@ class GoogleCalendarTools(Toolkit):
     @authenticate
     def update_event(
         self,
-        event_id: str,
+        event_id: str = "",
         title: Optional[str] = None,
         description: Optional[str] = None,
         location: Optional[str] = None,
@@ -420,7 +389,11 @@ class GoogleCalendarTools(Toolkit):
 
             if start_date:
                 try:
-                    start_time = datetime.datetime.fromisoformat(start_date).strftime("%Y-%m-%dT%H:%M:%S")
+                    start_dt = datetime.datetime.fromisoformat(start_date)
+                    if start_dt.tzinfo is None:
+                        start_time = start_dt.strftime("%Y-%m-%dT%H:%M:%S")
+                    else:
+                        start_time = start_dt.isoformat()
                     event["start"]["dateTime"] = start_time
                     if timezone:
                         event["start"]["timeZone"] = timezone
@@ -429,7 +402,11 @@ class GoogleCalendarTools(Toolkit):
 
             if end_date:
                 try:
-                    end_time = datetime.datetime.fromisoformat(end_date).strftime("%Y-%m-%dT%H:%M:%S")
+                    end_dt = datetime.datetime.fromisoformat(end_date)
+                    if end_dt.tzinfo is None:
+                        end_time = end_dt.strftime("%Y-%m-%dT%H:%M:%S")
+                    else:
+                        end_time = end_dt.isoformat()
                     event["end"]["dateTime"] = end_time
                     if timezone:
                         event["end"]["timeZone"] = timezone
@@ -451,7 +428,7 @@ class GoogleCalendarTools(Toolkit):
             return json.dumps({"error": f"An error occurred: {error}"})
 
     @authenticate
-    def delete_event(self, event_id: str, notify_attendees: Optional[bool] = True) -> str:
+    def delete_event(self, event_id: str = "", notify_attendees: Optional[bool] = True) -> str:
         """
         Delete an event from the Google Calendar.
 
@@ -551,8 +528,8 @@ class GoogleCalendarTools(Toolkit):
     @authenticate
     def find_available_slots(
         self,
-        start_date: str,
-        end_date: str,
+        start_date: str = "",
+        end_date: str = "",
         duration_minutes: int = 30,
     ) -> str:
         """
@@ -659,7 +636,6 @@ class GoogleCalendarTools(Toolkit):
             log_error(f"An error occurred while finding available slots: {str(e)}")
             return json.dumps({"error": f"An error occurred: {str(e)}"})
 
-    @authenticate
     def _get_working_hours(self) -> str:
         """Get working hours based on user's calendar settings and locale.
 
@@ -706,15 +682,21 @@ class GoogleCalendarTools(Toolkit):
             return json.dumps({"error": f"An error occurred: {error}"})
 
     @authenticate
-    def list_calendars(self) -> str:
+    def list_calendars(self, page_token: Optional[str] = None) -> str:
         """
         List all available Google Calendars for the authenticated user.
 
+        Args:
+            page_token (Optional[str]): Token from a previous response to fetch the next page.
+
         Returns:
-            str: JSON string containing available calendars with their IDs, names, and access roles
+            str: JSON string containing calendars and nextPageToken if more results exist.
         """
         try:
-            calendar_list = self.service.calendarList().list().execute()  # type: ignore
+            params: Dict[str, Any] = {"maxResults": min(self.max_results, 250)}
+            if page_token:
+                params["pageToken"] = page_token
+            calendar_list = self.service.calendarList().list(**params).execute()  # type: ignore
             calendars = calendar_list.get("items", [])
 
             all_calendars = []
@@ -730,19 +712,20 @@ class GoogleCalendarTools(Toolkit):
                 all_calendars.append(calendar_info)
 
             log_debug(f"Found {len(all_calendars)} calendars for user")
-            return json.dumps(
-                {
-                    "calendars": all_calendars,
-                    "current_default": self.calendar_id,
-                }
-            )
+            result: Dict[str, Any] = {
+                "calendars": all_calendars,
+                "current_default": self.calendar_id,
+            }
+            if calendar_list.get("nextPageToken"):
+                result["nextPageToken"] = calendar_list["nextPageToken"]
+            return json.dumps(result)
 
         except HttpError as error:
             log_error(f"An error occurred while listing calendars: {error}")
             return json.dumps({"error": f"An error occurred: {error}"})
 
     @authenticate
-    def get_event(self, event_id: str) -> str:
+    def get_event(self, event_id: str = "") -> str:
         """
         Get full details of a single Google Calendar event by its ID.
 
@@ -761,7 +744,7 @@ class GoogleCalendarTools(Toolkit):
             return json.dumps({"error": f"An error occurred: {error}"})
 
     @authenticate
-    def quick_add_event(self, text: str) -> str:
+    def quick_add_event(self, text: str = "") -> str:
         """
         Create a Google Calendar event from a natural language description.
         Examples: "Meeting with John tomorrow 3pm", "Lunch at noon on Friday"
@@ -784,8 +767,8 @@ class GoogleCalendarTools(Toolkit):
     @authenticate
     def check_availability(
         self,
-        start_date: str,
-        end_date: str,
+        start_date: str = "",
+        end_date: str = "",
         attendee_emails: Optional[List[str]] = None,
         timezone: Optional[str] = None,
     ) -> str:
@@ -857,10 +840,11 @@ class GoogleCalendarTools(Toolkit):
     @authenticate
     def search_events(
         self,
-        query: str,
+        query: str = "",
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
         max_results: int = 10,
+        page_token: Optional[str] = None,
     ) -> str:
         """
         Search Google Calendar events by text across summary, description, location, and attendees.
@@ -871,20 +855,23 @@ class GoogleCalendarTools(Toolkit):
             start_date (Optional[str]): Start of search window in ISO format
             end_date (Optional[str]): End of search window in ISO format
             max_results (int): Maximum number of events to return (default: 10)
+            page_token (Optional[str]): Token from a previous response to fetch the next page.
 
         Returns:
-            str: JSON string containing matching events or error message
+            str: JSON string containing events and nextPageToken if more results exist.
         """
         try:
             service = cast(Resource, self.service)
+            effective_max = min(max_results, self.max_results, 100)
 
             params: Dict[str, Any] = {
                 "calendarId": self.calendar_id,
                 "q": query,
-                "maxResults": min(max_results, 100),
-                "singleEvents": True,
-                "orderBy": "startTime",
+                "maxResults": effective_max,
+                "singleEvents": self.expand_recurring,
             }
+            if self.expand_recurring:
+                params["orderBy"] = "startTime"
 
             if start_date:
                 try:
@@ -904,14 +891,20 @@ class GoogleCalendarTools(Toolkit):
                 except ValueError:
                     params["timeMax"] = end_date
 
+            if page_token:
+                params["pageToken"] = page_token
+
             events_result = service.events().list(**params).execute()
             events = events_result.get("items", [])
 
-            if not events:
-                return json.dumps({"message": f"No events found matching '{query}'."})
+            result: Dict[str, Any] = {"events": events}
+            if events_result.get("nextPageToken"):
+                result["nextPageToken"] = events_result["nextPageToken"]
+            if not events and not page_token:
+                result["message"] = f"No events found matching '{query}'."
 
             log_debug(f"Found {len(events)} events matching '{query}'")
-            return json.dumps(events)
+            return json.dumps(result)
         except HttpError as error:
             log_error(f"An error occurred while searching events: {error}")
             return json.dumps({"error": f"An error occurred: {error}"})
@@ -919,8 +912,8 @@ class GoogleCalendarTools(Toolkit):
     @authenticate
     def move_event(
         self,
-        event_id: str,
-        destination_calendar_id: str,
+        event_id: str = "",
+        destination_calendar_id: str = "",
         notify_attendees: Optional[bool] = False,
     ) -> str:
         """
@@ -954,7 +947,7 @@ class GoogleCalendarTools(Toolkit):
             return json.dumps({"error": f"An error occurred: {error}"})
 
     @authenticate
-    def get_event_attendees(self, event_id: str) -> str:
+    def get_event_attendees(self, event_id: str = "") -> str:
         """
         Get the attendee list and their RSVP statuses for a Google Calendar event.
 
@@ -995,7 +988,7 @@ class GoogleCalendarTools(Toolkit):
             return json.dumps({"error": f"An error occurred: {error}"})
 
     @authenticate
-    def respond_to_event(self, event_id: str, response: str) -> str:
+    def respond_to_event(self, event_id: str = "", response: str = "") -> str:
         """
         Set the authenticated user's attendance response for a Google Calendar event.
 

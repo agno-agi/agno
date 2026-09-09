@@ -12,8 +12,11 @@ Tests cover:
 - Parallel step guard for executor HITL
 """
 
+import json
 from unittest.mock import MagicMock
 
+from agno.models.response import ToolExecution
+from agno.run.requirement import RunRequirement
 from agno.run.workflow import (
     StepExecutorPausedEvent,
     WorkflowRunEvent,
@@ -193,6 +196,32 @@ class TestStepRequirementExecutorFields:
         assert d["executor_type"] == "agent"
         assert "_executor_run_response" not in d
 
+    def test_to_dict_serializes_run_requirement_objects(self):
+        """to_dict() converts nested RunRequirement objects for JSON storage."""
+        run_req = RunRequirement(
+            id="r1",
+            tool_execution=ToolExecution(
+                tool_call_id="call-1",
+                tool_name="commit_review",
+                tool_args={"row_id": "row-1"},
+                requires_confirmation=True,
+            ),
+        )
+        req = StepRequirement(
+            step_id="s1",
+            step_name="test",
+            step_index=0,
+            step_type=StepType.STEP,
+            requires_executor_input=True,
+            executor_requirements=[run_req],
+        )
+
+        d = req.to_dict()
+
+        json.dumps(d)
+        assert d["executor_requirements"][0]["id"] == "r1"
+        assert d["executor_requirements"][0]["tool_execution"]["tool_name"] == "commit_review"
+
     def test_to_dict_without_executor_fields(self):
         """to_dict() does not include executor fields when requires_executor_input is False."""
         req = StepRequirement(
@@ -282,6 +311,9 @@ class TestCreateExecutorStepRequirement:
         mock_response = MagicMock()
         mock_response.run_id = "run-789"
         mock_req = MagicMock()
+        # An unresolved requirement (otherwise it would be filtered out — only
+        # unresolved tool confirmations are propagated up to the workflow level)
+        mock_req.is_resolved.return_value = False
         mock_req.to_dict.return_value = {"id": "r1", "confirmation": True}
         mock_response.requirements = [mock_req]
 
@@ -297,6 +329,35 @@ class TestCreateExecutorStepRequirement:
         assert req.executor_name == "TestAgent"
         assert req.executor_run_id == "run-789"
         assert req.executor_type == "agent"
+
+    def test_filters_out_resolved_requirements(self):
+        """Already-resolved requirements (from prior pauses) should NOT appear
+        in the new StepRequirement's executor_requirements. The agent's
+        requirements list accumulates across pauses; without this filter the
+        client would see duplicated/stale tool confirmations."""
+        mock_agent = MagicMock()
+        mock_agent.agent_id = "agent-1"
+        mock_agent.name = "Agent"
+
+        step = Step(name="test", agent=mock_agent)
+        step.step_id = "s1"
+
+        resolved_req = MagicMock()
+        resolved_req.is_resolved.return_value = True
+        resolved_req.to_dict.return_value = {"id": "old", "confirmation": True}
+
+        active_req = MagicMock()
+        active_req.is_resolved.return_value = False
+        active_req.to_dict.return_value = {"id": "new", "confirmation": None}
+
+        mock_response = MagicMock()
+        mock_response.run_id = "r1"
+        mock_response.requirements = [resolved_req, active_req]
+
+        req = step._create_executor_step_requirement(step_index=0, executor_response=mock_response)
+
+        # Only the unresolved requirement should be serialized
+        assert req.executor_requirements == [{"id": "new", "confirmation": None}]
 
     def test_creates_requirement_for_team(self):
         """Creates correct StepRequirement for team executor."""

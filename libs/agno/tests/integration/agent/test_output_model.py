@@ -6,7 +6,7 @@ from agno.run.agent import IntermediateRunContentEvent, RunContentEvent
 
 def test_claude_with_openai_output_model():
     park_agent = Agent(
-        model=Claude(id="claude-sonnet-4-20250514"),  # Main model to generate the content
+        model=Claude(id="claude-sonnet-4-5-20250929"),  # Main model to generate the content
         description="You are an expert on national parks and provide concise guides.",
         output_model=OpenAIChat(id="gpt-4o"),  # Model to parse the output
         telemetry=False,
@@ -29,7 +29,7 @@ def test_openai_with_claude_output_model():
     park_agent = Agent(
         model=OpenAIChat(id="gpt-4o"),  # Main model to generate the content
         description="You are an expert on national parks and provide concise guides.",
-        output_model=Claude(id="claude-sonnet-4-20250514"),  # Model to parse the output
+        output_model=Claude(id="claude-sonnet-4-5-20250929"),  # Model to parse the output
         telemetry=False,
     )
 
@@ -50,7 +50,7 @@ async def test_openai_with_claude_output_model_async():
     park_agent = Agent(
         model=OpenAIChat(id="gpt-4o"),  # Main model to generate the content
         description="You are an expert on national parks and provide concise guides.",
-        output_model=Claude(id="claude-sonnet-4-20250514"),  # Model to parse the output
+        output_model=Claude(id="claude-sonnet-4-5-20250929"),  # Model to parse the output
         telemetry=False,
     )
 
@@ -69,7 +69,7 @@ async def test_openai_with_claude_output_model_async():
 
 def test_claude_with_openai_output_model_stream(shared_db):
     agent = Agent(
-        model=Claude(id="claude-sonnet-4-20250514"),  # Main model to generate the content
+        model=Claude(id="claude-sonnet-4-5-20250929"),  # Main model to generate the content
         db=shared_db,
         description="You are an expert on national parks and provide concise guides.",
         output_model=OpenAIChat(id="gpt-4o"),  # Model to parse the output
@@ -119,7 +119,7 @@ async def test_openai_with_claude_output_model_stream_async(shared_db):
         model=OpenAIChat(id="gpt-4o"),  # Main model to generate the content
         db=shared_db,
         description="You are an expert on national parks and provide concise guides.",
-        output_model=Claude(id="claude-sonnet-4-20250514"),  # Model to parse the output
+        output_model=Claude(id="claude-sonnet-4-5-20250929"),  # Model to parse the output
         stream_events=True,
         telemetry=False,
     )

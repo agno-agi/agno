@@ -20,8 +20,15 @@ class RedditTools(Toolkit):
         user_agent: Optional[str] = None,
         username: Optional[str] = None,
         password: Optional[str] = None,
+        allowed_subreddits: Optional[List[str]] = None,
         **kwargs,
     ):
+        if isinstance(allowed_subreddits, str):
+            raise TypeError("allowed_subreddits must be a list of subreddit names, not a string")
+        self.allowed_subreddits = (
+            [subreddit.lower() for subreddit in allowed_subreddits] if allowed_subreddits else None
+        )
+
         if reddit_instance is not None:
             log_info("Using provided Reddit instance")
             self.reddit = reddit_instance
@@ -91,6 +98,17 @@ class RedditTools(Toolkit):
         except Exception:
             logger.exception("Authentication error")
             return False
+
+    def _validate_allowed_subreddit(self, subreddit: str) -> Optional[str]:
+        if self.allowed_subreddits is None:
+            return None
+
+        if subreddit.lower() in self.allowed_subreddits:
+            return None
+
+        error_msg = f"Error: r/{subreddit} is not in the allowed_subreddits scope"
+        log_error(error_msg)
+        return error_msg
 
     def get_user_info(self, username: str) -> str:
         """Get information about a Reddit user."""
@@ -251,6 +269,10 @@ class RedditTools(Toolkit):
             return "User authentication required for posting. Please provide username and password."
 
         try:
+            scope_error = self._validate_allowed_subreddit(subreddit)
+            if scope_error:
+                return scope_error
+
             log_info(f"Creating post in r/{subreddit}")
 
             subreddit_obj = self.reddit.subreddit(subreddit)
@@ -340,6 +362,10 @@ class RedditTools(Toolkit):
                 log_error(error_msg)
                 return error_msg
 
+            scope_error = self._validate_allowed_subreddit(submission.subreddit.display_name)
+            if scope_error:
+                return scope_error
+
             # Create the reply
             log_debug(f"Attempting to post reply with content length: {len(content)}")
             reply = submission.reply(body=content)
@@ -413,6 +439,10 @@ class RedditTools(Toolkit):
                 error_msg = f"Error: Comment ID belongs to r/{comment.subreddit.display_name}, not r/{subreddit}"
                 log_error(error_msg)
                 return error_msg
+
+            scope_error = self._validate_allowed_subreddit(comment.subreddit.display_name)
+            if scope_error:
+                return scope_error
 
             # Create the reply
             log_debug(f"Attempting to post reply with content length: {len(content)}")

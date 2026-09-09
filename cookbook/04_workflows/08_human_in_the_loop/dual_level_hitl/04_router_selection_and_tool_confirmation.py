@@ -20,6 +20,7 @@ from agno.run.workflow import (
     WorkflowCompletedEvent,
 )
 from agno.tools import tool
+from agno.workflow import HumanReview
 from agno.workflow.router import Router
 from agno.workflow.step import Step
 from agno.workflow.workflow import Workflow
@@ -65,7 +66,7 @@ def post_to_slack(channel: str, message: str) -> str:
 
 email_agent = Agent(
     name="EmailAgent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[send_email],
     instructions="Send email notifications. Always use send_email.",
     db=db,
@@ -74,7 +75,7 @@ email_agent = Agent(
 
 sms_agent = Agent(
     name="SMSAgent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[send_sms],
     instructions="Send SMS notifications. Always use send_sms.",
     db=db,
@@ -83,7 +84,7 @@ sms_agent = Agent(
 
 slack_agent = Agent(
     name="SlackAgent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[post_to_slack],
     instructions="Post to Slack. Always use post_to_slack.",
     db=db,
@@ -103,8 +104,10 @@ workflow = Workflow(
                 Step(name="slack", agent=slack_agent),
             ],
             # Router-level HITL: user picks which notification channel
-            requires_user_input=True,
-            user_input_message="Which notification channel should we use?",
+            human_review=HumanReview(
+                requires_user_input=True,
+                user_input_message="Which notification channel should we use?",
+            ),
         ),
     ],
     telemetry=False,

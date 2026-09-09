@@ -7,6 +7,7 @@ from agno.os.interfaces.slack.helpers import (
     download_event_files_async,
     extract_event_context,
     member_name,
+    resolve_session_id,
     resolve_slack_user,
     send_slack_message_async,
     should_respond,
@@ -119,13 +120,59 @@ class TestSendSlackMessageAsync:
     async def test_normal_send(self):
         client = AsyncMock()
         await send_slack_message_async(client, "C1", "ts1", "hello world")
-        client.chat_postMessage.assert_called_once_with(channel="C1", text="hello world", thread_ts="ts1")
+        client.chat_postMessage.assert_called_once_with(
+            channel="C1", text="hello world", thread_ts="ts1", unfurl_links=True, unfurl_media=True, mrkdwn=True
+        )
+
+    @pytest.mark.asyncio
+    async def test_default_send_has_no_plaintext_kwargs(self):
+        # Control: defaults keep Slack's markdown delivery, so parse/link_names stay unset
+        client = AsyncMock()
+        await send_slack_message_async(client, "C1", "ts1", "hello world")
+        kwargs = client.chat_postMessage.call_args.kwargs
+        assert "parse" not in kwargs
+        assert "link_names" not in kwargs
+
+    @pytest.mark.asyncio
+    async def test_explicit_false_flags_forwarded(self):
+        client = AsyncMock()
+        await send_slack_message_async(
+            client, "C1", "ts1", "hello", unfurl_links=False, unfurl_media=False, mrkdwn=False
+        )
+        kwargs = client.chat_postMessage.call_args.kwargs
+        assert kwargs["unfurl_links"] is False
+        assert kwargs["unfurl_media"] is False
+        assert kwargs["mrkdwn"] is False
+
+    @pytest.mark.asyncio
+    async def test_mrkdwn_false_derives_plaintext_kwargs(self):
+        # mrkdwn=False implies parse="none" and link_names=False so bare URLs and
+        # pre-encoded mentions are not auto-linked
+        client = AsyncMock()
+        await send_slack_message_async(client, "C1", "ts1", "hello <!channel>", mrkdwn=False)
+        kwargs = client.chat_postMessage.call_args.kwargs
+        assert kwargs["parse"] == "none"
+        assert kwargs["link_names"] is False
 
     @pytest.mark.asyncio
     async def test_long_message_batching(self):
         client = AsyncMock()
         await send_slack_message_async(client, "C1", "ts1", "x" * 50000)
         assert client.chat_postMessage.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_batch_path_forwards_flags(self):
+        client = AsyncMock()
+        await send_slack_message_async(
+            client, "C1", "ts1", "x" * 50000, unfurl_links=False, unfurl_media=False, mrkdwn=False
+        )
+        assert client.chat_postMessage.call_count == 2
+        for call in client.chat_postMessage.call_args_list:
+            assert call.kwargs["unfurl_links"] is False
+            assert call.kwargs["unfurl_media"] is False
+            assert call.kwargs["mrkdwn"] is False
+            assert call.kwargs["parse"] == "none"
+            assert call.kwargs["link_names"] is False
 
 
 class TestUploadResponseMediaAsync:
@@ -385,3 +432,51 @@ class TestStripBotMention:
     def test_mention_only_with_bot_name(self):
         result = strip_bot_mention("<@U0APCSS3MDH>", "U0APCSS3MDH", "Scout")
         assert result == "Scout"
+
+
+# -- resolve_session_id --
+
+
+@pytest.mark.asyncio
+async def test_resolve_session_id_returns_legacy_key_when_session_exists():
+    entity = Mock()
+    entity.aget_session = AsyncMock(return_value={"session_id": "agent-1:111.222"})
+
+    key = await resolve_session_id(entity, "agent-1", "C123", "111.222")
+    assert key == "agent-1:111.222"
+    entity.aget_session.assert_awaited_once_with(session_id="agent-1:111.222")
+
+
+@pytest.mark.asyncio
+async def test_resolve_session_id_returns_new_key_when_no_legacy_session():
+    entity = Mock()
+    entity.aget_session = AsyncMock(return_value=None)
+
+    key = await resolve_session_id(entity, "agent-1", "C123", "111.222")
+    assert key == "agent-1:C123:111.222"
+
+
+@pytest.mark.asyncio
+async def test_resolve_session_id_returns_new_key_when_aget_session_raises():
+    entity = Mock()
+    entity.aget_session = AsyncMock(side_effect=Exception("DB error"))
+
+    key = await resolve_session_id(entity, "agent-1", "C123", "111.222")
+    assert key == "agent-1:C123:111.222"
+
+
+@pytest.mark.asyncio
+async def test_resolve_session_id_returns_new_key_for_remote_entities():
+    entity = Mock(spec=[])
+
+    key = await resolve_session_id(entity, "agent-1", "C123", "111.222")
+    assert key == "agent-1:C123:111.222"
+
+
+@pytest.mark.asyncio
+async def test_resolve_session_id_returns_new_key_when_no_db_access():
+    entity = Mock(spec=[])
+    entity.db = None
+
+    key = await resolve_session_id(entity, "agent-1", "C123", "111.222")
+    assert key == "agent-1:C123:111.222"

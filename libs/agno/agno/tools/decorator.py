@@ -1,6 +1,7 @@
 from functools import update_wrapper, wraps
 from typing import Any, Callable, Dict, List, Optional, TypeVar, Union, overload
 
+from agno.exceptions import RunCancelledException
 from agno.tools.function import Function, get_entrypoint_docstring
 from agno.utils.log import log_error
 
@@ -61,6 +62,8 @@ def tool(
     *,
     name: Optional[str] = None,
     description: Optional[str] = None,
+    title: Optional[str] = None,
+    annotations: Optional[Dict[str, Any]] = None,
     strict: Optional[bool] = None,
     instructions: Optional[str] = None,
     add_instructions: bool = True,
@@ -90,6 +93,9 @@ def tool(*args, **kwargs) -> Union[Function, Callable[[F], Function]]:
     Args:
         name: Optional[str] - Override for the function name
         description: Optional[str] - Override for the function description
+        title: Optional[str] - Human-facing display name for clients that render tools to people
+        annotations: Optional[Dict[str, Any]] - MCP behaviour hints (readOnlyHint,
+            destructiveHint, idempotentHint, openWorldHint) published alongside the tool
         strict: Optional[bool] - Flag for strict parameter checking
         instructions: Optional[str] - Instructions for using the tool
         add_instructions: bool - If True, add instructions to the system message
@@ -128,6 +134,8 @@ def tool(*args, **kwargs) -> Union[Function, Callable[[F], Function]]:
         {
             "name",
             "description",
+            "title",
+            "annotations",
             "strict",
             "instructions",
             "add_instructions",
@@ -174,6 +182,8 @@ def tool(*args, **kwargs) -> Union[Function, Callable[[F], Function]]:
         def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
             try:
                 return func(*args, **kwargs)
+            except RunCancelledException:
+                raise
             except Exception as e:
                 log_error(
                     f"Error in tool {func.__name__!r}: {e!r}",
@@ -184,6 +194,8 @@ def tool(*args, **kwargs) -> Union[Function, Callable[[F], Function]]:
         async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
             try:
                 return await func(*args, **kwargs)
+            except RunCancelledException:
+                raise
             except Exception as e:
                 log_error(
                     f"Error in async tool {func.__name__!r}: {e!r}",
@@ -194,6 +206,8 @@ def tool(*args, **kwargs) -> Union[Function, Callable[[F], Function]]:
         async def async_gen_wrapper(*args: Any, **kwargs: Any) -> Any:
             try:
                 return func(*args, **kwargs)
+            except RunCancelledException:
+                raise
             except Exception as e:
                 log_error(
                     f"Error in async generator tool {func.__name__!r}: {e!r}",

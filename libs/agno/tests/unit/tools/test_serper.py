@@ -131,6 +131,7 @@ def test_search_success(api_tools, mock_search_response):
             "https://google.serper.dev/search",
             headers={"X-API-KEY": "test_key", "Content-Type": "application/json"},
             data=json.dumps({"q": "pytest testing", "num": 5, "tbs": "qdr:d", "gl": "us", "hl": "en"}),
+            timeout=30,
         )
 
 
@@ -152,6 +153,7 @@ def test_search_with_custom_num_results(api_tools, mock_search_response):
             "https://google.serper.dev/search",
             headers={"X-API-KEY": "test_key", "Content-Type": "application/json"},
             data=json.dumps(expected_payload),
+            timeout=30,
         )
 
 
@@ -200,6 +202,7 @@ def test_search_news_success(api_tools, mock_news_response):
             "https://google.serper.dev/news",
             headers={"X-API-KEY": "test_key", "Content-Type": "application/json"},
             data=json.dumps(expected_payload),
+            timeout=30,
         )
 
 
@@ -260,6 +263,7 @@ def test_search_scholar_success(api_tools, mock_scholar_response):
             "https://google.serper.dev/scholar",
             headers={"X-API-KEY": "test_key", "Content-Type": "application/json"},
             data=json.dumps(expected_payload),
+            timeout=30,
         )
 
 
@@ -308,6 +312,7 @@ def test_scrape_webpage_success(api_tools, mock_scrape_response):
             "https://scrape.serper.dev",
             headers={"X-API-KEY": "test_key", "Content-Type": "application/json"},
             data=json.dumps(expected_payload),
+            timeout=30,
         )
 
 

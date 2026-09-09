@@ -29,7 +29,7 @@ db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 # The agent doesn't see or call any memory tools - it's invisible.
 # Memories stores unstructured observations that don't fit profile fields.
 agent = Agent(
-    model=OpenAIResponses(id="gpt-5.2"),
+    model=OpenAIResponses(id="gpt-5.5"),
     db=db,
     learning=LearningMachine(
         user_memory=UserMemoryConfig(

@@ -12,6 +12,7 @@ This directory contains runnable examples for Agno evaluation patterns.
 - `reliability/single_tool_calls/` - Reliability examples for single expected tool calls.
 - `reliability/multiple_tool_calls/` - Reliability examples for multi-tool workflows.
 - `reliability/team/` - Reliability examples for team tool-call flows.
+- `suite/` - Suite runner examples: many cases, tag selection, JSON report, CI exit codes.
 
 ## Root Files
 

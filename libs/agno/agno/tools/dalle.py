@@ -1,5 +1,5 @@
 from os import getenv
-from typing import Any, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional
 from uuid import uuid4
 
 from agno.media import Image
@@ -21,7 +21,7 @@ class DalleTools(Toolkit):
         n: int = 1,
         size: Optional[Literal["256x256", "512x512", "1024x1024", "1792x1024", "1024x1792"]] = "1024x1024",
         quality: Literal["standard", "hd"] = "standard",
-        style: Literal["vivid", "natural"] = "vivid",
+        style: Optional[Literal["vivid", "natural"]] = None,
         api_key: Optional[str] = None,
         enable_create_image: bool = True,
         all: bool = False,
@@ -77,14 +77,18 @@ class DalleTools(Toolkit):
         try:
             client = OpenAI(api_key=self.api_key)
             log_debug(f"Generating image using prompt: {prompt}")
-            response: ImagesResponse = client.images.generate(
-                prompt=prompt,
-                model=self.model,
-                n=self.n,
-                quality=self.quality,
-                size=self.size,
-                style=self.style,
-            )
+            request_params: Dict[str, Any] = {
+                "prompt": prompt,
+                "model": self.model,
+                "n": self.n,
+                "quality": self.quality,
+                "size": self.size,
+            }
+            # OpenAI removed the dall-e-3 'style' parameter from the images API
+            # (400 "Unknown parameter"); only forward it when explicitly set.
+            if self.style is not None:
+                request_params["style"] = self.style
+            response: ImagesResponse = client.images.generate(**request_params)
             log_debug("Image generated successfully")
 
             generated_images = []

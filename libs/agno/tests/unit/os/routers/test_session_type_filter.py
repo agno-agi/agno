@@ -33,6 +33,11 @@ def _get_data(response):
     return body, {}
 
 
+def _seed_session(db: InMemoryDb, session: dict) -> None:
+    """Insert a raw session dict directly into InMemoryDb's session store."""
+    db._sessions[session["session_id"]] = session
+
+
 @pytest.fixture
 def db_with_sessions():
     """Create an InMemoryDb with one session of each type."""
@@ -357,7 +362,8 @@ class TestBackwardsCompatibility:
         uid = uuid.uuid4().hex[:8]
 
         # Simulate old SDK sessions: no session_type field, only agent_id/team_id
-        db._sessions.append(
+        _seed_session(
+            db,
             {
                 "session_id": f"old-agent-{uid}",
                 "agent_id": "legacy-agent",
@@ -365,9 +371,10 @@ class TestBackwardsCompatibility:
                 "session_data": {"session_name": "Old Agent Session"},
                 "created_at": int(time.time()),
                 "updated_at": int(time.time()),
-            }
+            },
         )
-        db._sessions.append(
+        _seed_session(
+            db,
             {
                 "session_id": f"old-team-{uid}",
                 "team_id": "legacy-team",
@@ -375,7 +382,7 @@ class TestBackwardsCompatibility:
                 "session_data": {"session_name": "Old Team Session"},
                 "created_at": int(time.time()) + 1,
                 "updated_at": int(time.time()) + 1,
-            }
+            },
         )
 
         client = _build_client(db)
@@ -447,7 +454,8 @@ class TestGetSessionRunById:
         uid = uuid.uuid4().hex[:8]
 
         # Insert a raw session with mixed run types directly
-        db._sessions.append(
+        _seed_session(
+            db,
             {
                 "session_id": f"mixed-{uid}",
                 "agent_id": "a1",
@@ -461,7 +469,7 @@ class TestGetSessionRunById:
                     {"run_id": "run-team", "team_id": "t1", "created_at": now},
                     {"run_id": "run-workflow", "workflow_id": "w1", "created_at": now},
                 ],
-            }
+            },
         )
 
         client = _build_client(db)
@@ -543,7 +551,8 @@ class TestTeamSessionRunsParsing:
         uid = uuid.uuid4().hex[:8]
 
         # Insert raw session with mixed agent and team runs
-        db._sessions.append(
+        _seed_session(
+            db,
             {
                 "session_id": f"team-mixed-{uid}",
                 "team_id": "test-team",
@@ -556,7 +565,7 @@ class TestTeamSessionRunsParsing:
                     {"run_id": "agent-run-1", "agent_id": "member-agent", "created_at": now},
                     {"run_id": "team-run-1", "team_id": "test-team", "created_at": now},
                 ],
-            }
+            },
         )
 
         client = _build_client(db)
@@ -582,7 +591,8 @@ class TestWorkflowSessionRunsParsing:
         now = int(time.time())
         uid = uuid.uuid4().hex[:8]
 
-        db._sessions.append(
+        _seed_session(
+            db,
             {
                 "session_id": f"wf-mixed-{uid}",
                 "workflow_id": "test-workflow",
@@ -596,7 +606,7 @@ class TestWorkflowSessionRunsParsing:
                     {"run_id": "team-run-1", "team_id": "sub-team", "created_at": now},
                     {"run_id": "agent-run-1", "agent_id": "sub-agent", "created_at": now},
                 ],
-            }
+            },
         )
 
         client = _build_client(db)
@@ -1017,7 +1027,8 @@ class TestSessionRunsAutoDetectType:
         now = int(time.time())
         uid = uuid.uuid4().hex[:8]
 
-        db._sessions.append(
+        _seed_session(
+            db,
             {
                 "session_id": f"auto-team-{uid}",
                 "team_id": "t1",
@@ -1029,7 +1040,7 @@ class TestSessionRunsAutoDetectType:
                 "runs": [
                     {"run_id": "tr-1", "team_id": "t1", "created_at": now},
                 ],
-            }
+            },
         )
 
         client = _build_client(db)
@@ -1045,7 +1056,8 @@ class TestSessionRunsAutoDetectType:
         now = int(time.time())
         uid = uuid.uuid4().hex[:8]
 
-        db._sessions.append(
+        _seed_session(
+            db,
             {
                 "session_id": f"auto-wf-{uid}",
                 "workflow_id": "w1",
@@ -1057,7 +1069,7 @@ class TestSessionRunsAutoDetectType:
                 "runs": [
                     {"run_id": "wr-1", "workflow_id": "w1", "created_at": now},
                 ],
-            }
+            },
         )
 
         client = _build_client(db)

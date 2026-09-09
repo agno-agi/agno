@@ -16,7 +16,7 @@ from rich.pretty import pprint
 # ---------------------------------------------------------------------------
 
 agent = Agent(
-    model=Groq(id="llama-3.3-70b-versatile"),
+    model=Groq(id="openai/gpt-oss-120b"),
     tools=[YFinanceTools()],
     markdown=True,
 )

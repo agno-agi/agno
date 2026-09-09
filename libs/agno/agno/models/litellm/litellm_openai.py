@@ -19,7 +19,7 @@ class LiteLLMOpenAI(OpenAILike):
     """
 
     id: str = "gpt-4o"
-    name: str = "LiteLLM"
+    name: str = "LiteLLMOpenAI"
     provider: str = "LiteLLM"
 
     api_key: Optional[str] = field(default_factory=lambda: getenv("LITELLM_API_KEY"))

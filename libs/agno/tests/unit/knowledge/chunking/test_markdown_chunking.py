@@ -1,5 +1,7 @@
 """Tests for MarkdownChunking with split_on_headings parameter."""
 
+import hashlib
+
 import pytest
 
 pytest.importorskip("unstructured")
@@ -568,3 +570,24 @@ def test_split_on_headings_overlap_between_sub_chunks():
         # The end of previous chunk should appear at start of current chunk
         prev_ending = chunks[i - 1].content[-20:]
         assert chunks[i].content.startswith(prev_ending), f"Chunk {i + 1} should start with overlap from chunk {i}"
+
+
+def test_overlap_hash_id_matches_final_content():
+    """With overlap and no id/name, the hash-based id must match the final content."""
+    content = (
+        "First section is fairly long.\n\n"
+        "Second section is fairly long.\n\n"
+        "Third section is fairly long.\n\n"
+        "Fourth section is fairly long."
+    )
+    # No id and no name -> chunk ids fall back to a hash of the content
+    doc = Document(content=content)
+    chunks = MarkdownChunking(chunk_size=40, overlap=8).chunk(doc)
+
+    assert len(chunks) >= 2
+    for chunk in chunks:
+        assert chunk.id is not None and chunk.id.startswith("chunk_")
+        content_hash = hashlib.md5(chunk.content.encode("utf-8")).hexdigest()[:12]
+        expected_id = f"chunk_{content_hash}_{chunk.meta_data['chunk']}"
+        assert chunk.id == expected_id
+        assert chunk.meta_data["chunk_size"] == len(chunk.content)

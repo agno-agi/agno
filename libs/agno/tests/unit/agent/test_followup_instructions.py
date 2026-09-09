@@ -13,16 +13,11 @@ from agno.agent.agent import Agent
 from agno.agent.followup import FollowupConfig
 from agno.team.team import Team
 
-
 # ---------------------------------------------------------------------------
 # _build_followup_messages unit tests (no API calls)
 # ---------------------------------------------------------------------------
 
-BASE_SYSTEM_PROMPT = (
-    "Based on the user's message and the assistant's response below, generate follow-up suggestions. "
-    "Each suggestion should be a short action-oriented prompt (5-10 words). "
-    "Cover different angles: dig deeper, practical next step, or alternative perspective."
-)
+BASE_SYSTEM_PROMPT = _build_followup_messages("Some response", 3)[0].content
 
 
 def test_build_followup_messages_no_custom_instructions():

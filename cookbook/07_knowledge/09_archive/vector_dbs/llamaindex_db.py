@@ -65,7 +65,6 @@ def create_agent(knowledge: Knowledge) -> Agent:
         model=OpenAIChat("gpt-5.2"),
         knowledge=knowledge,
         search_knowledge=True,
-        debug_mode=True,
     )
 
 

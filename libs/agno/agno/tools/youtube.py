@@ -23,6 +23,7 @@ class YouTubeTools(Toolkit):
         all: bool = False,
         languages: Optional[List[str]] = None,
         proxies: Optional[Dict[str, Any]] = None,
+        timeout: int = 30,
         **kwargs,
     ):
         self.languages: Optional[List[str]] = languages
@@ -36,7 +37,7 @@ class YouTubeTools(Toolkit):
         if all or enable_get_video_timestamps:
             tools.append(self.get_video_timestamps)
 
-        super().__init__(name="youtube_tools", tools=tools, **kwargs)
+        super().__init__(name="youtube_tools", tools=tools, timeout=timeout, **kwargs)
 
     def get_youtube_video_id(self, url: str) -> Optional[str]:
         """Function to get the video ID from a YouTube URL.
@@ -88,7 +89,7 @@ class YouTubeTools(Toolkit):
             query_string = urlencode(params)
             url = url + "?" + query_string
 
-            with urlopen(url) as response:
+            with urlopen(url, timeout=self.timeout) as response:
                 response_text = response.read()
                 video_data = json.loads(response_text.decode())
                 clean_data = {

@@ -20,8 +20,8 @@ from rich.pretty import pprint
 db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 
 agent = Agent(
-    model=OpenAIChat(id="gpt-4o-mini"),
-    memory_manager=MemoryManager(model=OpenAIChat(id="gpt-4o-mini"), db=db),
+    model=OpenAIChat(id="gpt-5.6-luna"),
+    memory_manager=MemoryManager(model=OpenAIChat(id="gpt-5.6-luna"), db=db),
     update_memory_on_run=True,
     db=db,
 )

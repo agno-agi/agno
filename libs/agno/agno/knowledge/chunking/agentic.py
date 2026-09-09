@@ -3,7 +3,6 @@ from typing import List, Optional, Union
 from agno.knowledge.chunking.strategy import ChunkingStrategy
 from agno.knowledge.document.base import Document
 from agno.models.base import Model
-from agno.models.defaults import DEFAULT_OPENAI_MODEL_ID
 from agno.models.message import Message
 from agno.models.utils import get_model
 from agno.utils.log import log_debug
@@ -39,7 +38,7 @@ class AgenticChunking(ChunkingStrategy):
                 from agno.models.openai import OpenAIChat
             except Exception:
                 raise ValueError("`openai` isn't installed. Please install it with `pip install openai`")
-            model = OpenAIChat(DEFAULT_OPENAI_MODEL_ID)
+            model = OpenAIChat("gpt-5.4-mini")
 
         if max_chunk_size is None:
             max_chunk_size = MAX_CHUNK_SIZE

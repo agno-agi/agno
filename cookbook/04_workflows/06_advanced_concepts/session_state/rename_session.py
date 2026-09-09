@@ -18,14 +18,14 @@ from agno.workflow.workflow import Workflow
 # ---------------------------------------------------------------------------
 researcher = Agent(
     name="Research Agent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[WebSearchTools()],
     instructions="Research the given topic and provide key facts and insights.",
 )
 
 writer = Agent(
     name="Writing Agent",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     instructions="Write a comprehensive article based on the research provided. Make it engaging and well-structured.",
 )
 
@@ -58,7 +58,6 @@ if __name__ == "__main__":
         description="Automated article creation from research to writing",
         steps=[article_creation_sequence],
         db=SqliteDb(db_file="tmp/workflows.db"),
-        debug_mode=True,
     )
 
     article_workflow.print_response(

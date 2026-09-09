@@ -33,14 +33,14 @@ db = PostgresDb(db_url=db_url)
 research_agent = Agent(
     id="research-agent",
     name="Research Agent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     role="Research topics and extract key insights",
 )
 
 writer_agent = Agent(
     id="writer-agent",
     name="Writer Agent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     role="Write content based on research",
 )
 

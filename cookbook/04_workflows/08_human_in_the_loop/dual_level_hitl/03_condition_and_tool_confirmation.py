@@ -23,7 +23,7 @@ from agno.run.workflow import (
 from agno.tools import tool
 from agno.workflow.condition import Condition
 from agno.workflow.step import Step
-from agno.workflow.types import OnReject, StepInput
+from agno.workflow.types import HumanReview, OnReject, StepInput
 from agno.workflow.workflow import Workflow
 from rich.console import Console
 from rich.prompt import Prompt
@@ -54,7 +54,7 @@ def deploy_to_staging(service: str) -> str:
 
 prod_agent = Agent(
     name="ProdDeployer",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[deploy_to_production],
     instructions="You deploy services to production. Always use deploy_to_production.",
     db=db,
@@ -63,7 +63,7 @@ prod_agent = Agent(
 
 staging_agent = Agent(
     name="StagingDeployer",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[deploy_to_staging],
     instructions="You deploy services to staging. Always use deploy_to_staging.",
     db=db,
@@ -88,9 +88,11 @@ workflow = Workflow(
             # Else-branch: deploy to staging
             else_steps=[Step(name="deploy_staging", agent=staging_agent)],
             # Condition-level HITL: user decides if they want the if-branch
-            requires_confirmation=True,
-            confirmation_message="Production deployment is ready. Deploy to production?",
-            on_reject=OnReject.else_branch,  # On reject -> else branch (staging)
+            human_review=HumanReview(
+                requires_confirmation=True,
+                confirmation_message="Production deployment is ready. Deploy to production?",
+                on_reject=OnReject.else_branch,  # On reject -> else branch (staging)
+            ),
         ),
     ],
     telemetry=False,
