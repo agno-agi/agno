@@ -177,3 +177,19 @@ passed 46 cases, including four new native JWT/submount/query/form regressions.
 The two runs overlap; they are not 221 distinct tests. Full format and validation
 scripts passed. Delivery between separate OS processes is a separate follow-up;
 the existing cross-instance tests only establish shared run ownership.
+
+
+## 2026-09-09 PostgreSQL cancellation
+
+- Nine PostgreSQL integration tests passed against disposable local databases:
+  sync/async early intent, fresh manager/namespace isolation, expiry, membership,
+  checkpoint caching, write/check/cleanup faults, Team cascade, concurrent
+  registration/cancel and two spawned Uvicorn servers.
+- The two-server test cancels after three content chunks through the other server,
+  rejects the wrong session, observes RunCancelled and verifies persisted CANCELLED
+  plus tracking cleanup. Native trailing RunCompleted is retained for UI finalization.
+- 60 PostgreSQL/queue/existing-cancellation tests passed before strengthening the
+  stream timing test; the nine PostgreSQL tests were then rerun (overlapping counts).
+- Six configuration and worker-capacity unit tests passed.
+- Full format and validation scripts passed. The cookbook is validated statically;
+  provider-backed manual use and production widget rollout remain release checks.
