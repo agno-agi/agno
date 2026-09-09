@@ -387,10 +387,10 @@ def test_allows_all_when_no_origins_configured(middleware):
     assert middleware._is_origin_allowed("https://example.com", None) is True
 
 
-def test_allows_all_when_empty_origins_list(middleware):
-    """Test that all origins are allowed when cors_allowed_origins is empty."""
-    assert middleware._is_origin_allowed("http://localhost:3000", []) is True
-    assert middleware._is_origin_allowed("https://example.com", []) is True
+def test_denies_all_when_empty_origins_list(middleware):
+    """An explicit empty list disables browser origins; None preserves the default."""
+    assert middleware._is_origin_allowed("http://localhost:3000", []) is False
+    assert middleware._is_origin_allowed("https://example.com", []) is False
 
 
 def test_allows_configured_origin(middleware):

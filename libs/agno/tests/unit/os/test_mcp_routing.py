@@ -32,12 +32,13 @@ class Limiter:
 
 
 @asynccontextmanager
-async def client(*, host="mcp.example.com", mounted=False, **options):
-    surface = PublicSurface(mcp=True)
+async def client(*, host="mcp.example.com", mounted=False, origin_regex=None, enforce_origins=False, **options):
+    surface = PublicSurface(mcp=True, enforce_browser_origins=enforce_origins)
     limiter = Limiter()
     surface._limiter = limiter
     server = AgentOS(
         id="mcp-routing",
+        cors_allowed_origin_regex=origin_regex,
         agents=[Agent(id="docs", telemetry=False)],
         db=PostgresDb(db_url="postgresql+psycopg://unused:unused@127.0.0.1:1/unused"),
         authorization=True,
@@ -213,3 +214,25 @@ def test_route_conflicts_respect_included_router_prefixes(prefix, path, conflict
             server.get_app()
     else:
         server.get_app()
+
+
+async def test_public_browser_policy_reaches_mcp_alias_and_error_headers():
+    origin = "https://docs-feature.example.com"
+    async with client(origin_regex=r"https://docs-[a-z]+\.example\.com", enforce_origins=True) as (http, limiter):
+        headers = {**HEADERS, "Origin": origin}
+        preflight = await http.options("/", headers={"Origin": origin, "Access-Control-Request-Method": "POST"})
+        assert preflight.status_code == 200
+        response = await http.post("/", headers=headers, json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
+        assert "tools" in result(response)["result"]
+        assert response.headers["access-control-allow-origin"] == origin
+        bad = await http.post(
+            "/",
+            headers={**HEADERS, "Origin": origin + ".evil.test"},
+            json={"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
+        )
+        assert bad.status_code == 400
+        assert "access-control-allow-origin" not in bad.headers
+        limiter.allowed = False
+        denied = await http.post("/", headers=headers, json={"jsonrpc": "2.0", "id": 3, "method": "tools/list"})
+        assert denied.status_code == 429
+        assert denied.headers["access-control-allow-origin"] == origin

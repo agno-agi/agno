@@ -600,3 +600,83 @@ def test_public_surface_does_not_override_mcp_auth_provider(runtime):
 
     runtime.os.mcp_auth = object()
     assert _mcp_server_is_open(runtime.os) is False
+
+
+PREVIEW = "https://docs-feature.example.com"
+PREVIEW_PATTERN = r"https://docs-[a-z0-9-]+\.example\.com"
+
+
+def browser_runtime(runtime):
+    runtime.os.cors_allowed_origins = [ORIGIN]
+    runtime.os.cors_allowed_origin_regex = PREVIEW_PATTERN
+    runtime.surface.enforce_browser_origins = True
+    return TestClient(runtime.os.get_app())
+
+
+@pytest.mark.parametrize("origin", [ORIGIN, PREVIEW])
+def test_browser_policy_preflight_and_execution(runtime, origin):
+    client = browser_runtime(runtime)
+    headers = {"Origin": origin}
+    preflight = client.options("/agents/docs/runs", headers={**headers, "Access-Control-Request-Method": "POST"})
+    assert preflight.status_code == 200
+    assert preflight.headers["access-control-allow-origin"] == origin
+    response = client.post("/agents/docs/runs", headers=headers, data={"message": "hi", "stream": "false"})
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == origin
+
+
+@pytest.mark.parametrize("origin", ["https://evil.example.com", PREVIEW + ".evil.test", "null"])
+def test_unlisted_browser_origin_cannot_start_a_run(runtime, origin):
+    client = browser_runtime(runtime)
+    response = client.post("/agents/docs/runs", headers={"Origin": origin}, data={"message": "hi"})
+    assert response.status_code == 403
+    assert "access-control-allow-origin" not in response.headers
+    assert runtime.limiter.calls == []
+    preflight = client.options("/agents/docs/runs", headers={"Origin": origin, "Access-Control-Request-Method": "POST"})
+    assert preflight.status_code == 400
+
+
+@pytest.mark.parametrize("status", [401, 403, 413, 429])
+def test_preview_cors_headers_survive_auth_and_admission_errors(runtime, status):
+    client = browser_runtime(runtime)
+    headers = {"Origin": PREVIEW}
+    if status == 401:
+        response = client.get("/config", headers=headers)
+    elif status == 403:
+        response = client.get("/config", headers={**headers, **auth(token(scopes=[]))})
+    else:
+        if status == 413:
+            runtime.surface.max_body_bytes = 10
+        else:
+            runtime.limiter.allowed = False
+        response = client.post("/agents/docs/runs", headers=headers, data={"message": "a long enough request"})
+    assert response.status_code == status, response.text
+    assert response.headers["access-control-allow-origin"] == PREVIEW
+
+
+def test_browser_policy_rejects_ambiguous_origins_and_allows_non_browser_clients(runtime):
+    client = browser_runtime(runtime)
+    response = client.post(
+        "/agents/docs/runs", headers=[("Origin", ORIGIN), ("Origin", PREVIEW)], data={"message": "hi"}
+    )
+    assert response.status_code == 403
+    assert client.post("/agents/docs/runs", data={"message": "hi", "stream": "false"}).status_code == 200
+
+
+def test_browser_policy_websocket_origin(runtime):
+    client = browser_runtime(runtime)
+    with pytest.raises(WebSocketDisconnect):
+        with client.websocket_connect("/workflows/ws", headers={"Origin": "https://evil.example.com"}):
+            pass
+    with client.websocket_connect("/workflows/ws", headers={"Origin": PREVIEW}) as socket:
+        assert socket.receive_json()["event"] == "connected"
+        socket.send_json({"action": "authenticate", "token": token()})
+        assert socket.receive_json()["event"] == "authenticated"
+
+
+def test_explicit_empty_cors_origins_do_not_reflect_auth_errors(runtime):
+    runtime.os.cors_allowed_origins = []
+    client = TestClient(runtime.os.get_app())
+    response = client.get("/config", headers={"Origin": ORIGIN})
+    assert response.status_code == 401
+    assert "access-control-allow-origin" not in response.headers

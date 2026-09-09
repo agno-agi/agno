@@ -161,3 +161,13 @@ run. The focused public-configuration and MCP suites passed all 204 tests.
   OAuth routes are deliberately rejected rather than publishing a wrong resource.
 - Cookbook mcp_domain.py --check passed. Full format and validation passed.
 - No DNS, hosting or production application changes were made.
+
+
+## 2026-09-09 browser origin policy
+
+- PASS: `browser_origins.py --check` constructs the documented configuration without database or provider calls.
+- PASS: 285 composed origin, MCP alias, public authorization and utility tests.
+- PASS: 154 additional JWT middleware/configuration tests.
+- PASS: full format and validation scripts.
+- Checks cover canonical/preview origins, duplicate and rejected origins, preflights, browser run admission, JWT error headers, workflow WebSockets, and 401/403/413/429 responses. Explicit `[]` now allows no browser origins; `None` retains configured defaults. Non-browser requests remain supported.
+- No production deployment or browser widget test was performed.
