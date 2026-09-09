@@ -277,3 +277,33 @@ normalizer that leaves code unchanged; run it without a database or provider key
 
 Component-specific MDX transformations, prompt rendering, citations and query
 alternatives remain application-owned.
+
+
+### Revision-pinned evidence
+
+`render_page_evidence(knowledge, search_result)` and its async counterpart
+`arender_page_evidence` group ranked hits by path and revision, then request full
+pages at those revisions. Missing, stale or unavailable pages retain their
+retrieved excerpts. Missing revisions never substitute the latest publication.
+No extra search, query-expansion model or process cache is involved.
+
+`max_chars` includes the final text's metadata, warning text and separators; it
+counts Unicode code points, not serialized JSON bytes. `timeout` bounds expansion
+I/O across pages, with at most two seconds per read. Async cancellation propagates.
+The returned `PageEvidence` exposes text, per-page coverage/warnings, omitted-page
+count and search partial/truncated state. Oversized excerpt content is clipped and
+labeled `truncated`; oversized metadata can omit a page. A trusted
+`formatter(EvidencePage) -> str` callback controls presentation within the same
+final text budget. Structured inspection metadata is not part of that budget.
+
+Run `page_evidence.py --check` without storage or provider calls. With the example
+corpus indexed, run `page_evidence.py "How do tools work?"` to print evidence, or
+add `--ask` for an agent response. The example returns `.text` from an explicit
+Agent dependency, places it in one prompt placeholder and disables automatic
+dependency context. Agno reuses resolved evidence on model retries and resolves
+it again for each new run. Query policy and citation instructions stay with the
+application. This formatter treats page content as data; it is not a sanitizer.
+
+Adoption changes the old application's body-only budget into a final-text budget,
+so metadata can reduce excerpt coverage. Run retrieval/citation evaluations before
+adopting it; neither the index nor agent configuration changes on upgrade.

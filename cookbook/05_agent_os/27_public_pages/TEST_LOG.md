@@ -147,3 +147,12 @@ neither shared environment was modified. Live database/provider modes were not
 run. The focused public-configuration and MCP suites passed all 204 tests.
 
 ---
+
+
+## 2026-09-09 revision-pinned evidence
+
+- PASS: 87 evidence, full-page-read and Agent dependency tests. Includes all four Agent sync/async and streaming modes resolving the helper once on model retry and again on the next run, without duplicate prompt insertion.
+- PASS: two disposable PostgreSQL tests retain retrieved excerpts after a publication changes; no new search/embedding call occurs during rendering.
+- PASS: `page_evidence.py --check` with demo Python (no storage/provider calls).
+- PASS: full format and validation scripts.
+- The final text budget includes metadata and warnings. This can reduce coverage compared with the application's former body-only budget; release adoption still requires application citation/retrieval evaluations. No app or production changes were made.
