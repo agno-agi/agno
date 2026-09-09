@@ -17,6 +17,7 @@ from agno.db.schemas.scheduler import SCHEDULE_OWNER_HEADER
 from agno.os.auth import INTERNAL_SCHEDULER_USER_ID
 from agno.os.middleware.user_scope import (
     apply_scope_to_kwargs,
+    assert_run_id_available,
     assert_session_writable,
     enforce_owner_on_entity,
     get_scoped_user_id,
@@ -595,3 +596,59 @@ class TestAssertSessionWritable:
         db = MagicMock(spec=RemoteDb)
         await assert_session_writable(db, "s1", "user-a")
         db.get_session.assert_not_called()
+
+
+class TestAssertRunIdAvailable:
+    """Pins the create-run collision check: a caller-supplied run_id may not exist already."""
+
+    def _db(self, run):
+        db = MagicMock()
+        db.get_run = MagicMock(return_value=run)
+        return db
+
+    @pytest.mark.asyncio
+    async def test_fresh_run_id_is_allowed(self):
+        db = self._db(None)
+        await assert_run_id_available(db, "new-run-id")
+
+    @pytest.mark.asyncio
+    async def test_existing_run_id_raises_409(self):
+        db = self._db({"run_id": "taken"})
+        with pytest.raises(HTTPException) as exc:
+            await assert_run_id_available(db, "taken")
+        assert exc.value.status_code == 409
+
+    @pytest.mark.asyncio
+    async def test_existing_run_id_never_raises_404(self):
+        # A create collision is a conflict, not a missing resource.
+        db = self._db({"run_id": "taken"})
+        with pytest.raises(HTTPException) as exc:
+            await assert_run_id_available(db, "taken")
+        assert exc.value.status_code != 404
+
+    @pytest.mark.asyncio
+    async def test_no_db_is_allowed(self):
+        await assert_run_id_available(None, "any-run-id")
+
+    @pytest.mark.asyncio
+    async def test_blank_run_id_is_allowed(self):
+        db = self._db({"run_id": "taken"})
+        await assert_run_id_available(db, "")
+        await assert_run_id_available(db, None)
+        db.get_run.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_async_db_is_awaited(self):
+        db = MagicMock(spec=AsyncBaseDb)
+        db.get_run = AsyncMock(return_value={"run_id": "taken"})
+        with pytest.raises(HTTPException) as exc:
+            await assert_run_id_available(db, "taken")
+        assert exc.value.status_code == 409
+
+    @pytest.mark.asyncio
+    async def test_remote_db_is_skipped(self):
+        from agno.remote.base import RemoteDb
+
+        # RemoteDb exposes no get_run; reaching it would raise AttributeError.
+        db = MagicMock(spec=RemoteDb)
+        await assert_run_id_available(db, "any-run-id")
