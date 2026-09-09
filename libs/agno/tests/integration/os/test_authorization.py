@@ -13,6 +13,7 @@ from datetime import UTC, datetime, timedelta
 
 import jwt
 import pytest
+from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 
 from agno.agent.agent import Agent
@@ -745,6 +746,68 @@ def test_session_state_claims_extraction(test_agent):
     )
 
     assert response.status_code == 200
+
+
+def test_authorization_config_forwards_jwt_claim_mapping(test_agent):
+    """Test native authorization config forwards JWT claim mapping options."""
+    base_app = FastAPI()
+
+    @base_app.get("/auth-state")
+    async def auth_state(request: Request):
+        return {
+            "user_id": request.state.user_id,
+            "session_id": request.state.session_id,
+            "scopes": request.state.scopes,
+            "dependencies": request.state.dependencies,
+            "session_state": request.state.session_state,
+        }
+
+    agent_os = AgentOS(
+        id=TEST_OS_ID,
+        agents=[test_agent],
+        base_app=base_app,
+        authorization=True,
+        authorization_config=AuthorizationConfig(
+            algorithm="HS256",
+            validate=False,
+            token_source="cookie",
+            scopes_claim="permissions",
+            user_id_claim="email",
+            session_id_claim="sid",
+            dependencies_claims=["org_id"],
+            session_state_claims=["theme"],
+        ),
+    )
+    app = agent_os.get_app()
+
+    assert app.state.jwt_validator.validate is False
+    assert app.state.jwt_validator.scopes_claim == "permissions"
+    assert app.state.jwt_validator.user_id_claim == "email"
+    assert app.state.jwt_validator.session_id_claim == "sid"
+
+    client = TestClient(app)
+    token = create_jwt_token(
+        scopes=[],
+        extra_claims={
+            "email": "alice@example.com",
+            "sid": "session-from-custom-claim",
+            "permissions": "agents:read",
+            "org_id": "org-123",
+            "theme": "dark",
+        },
+    )
+    client.cookies.set("access_token", token)
+
+    response = client.get("/auth-state")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "user_id": "alice@example.com",
+        "session_id": "session-from-custom-claim",
+        "scopes": ["agents:read"],
+        "dependencies": {"org_id": "org-123"},
+        "session_state": {"theme": "dark"},
+    }
 
 
 def test_config_scope(test_agent):
@@ -2321,15 +2384,13 @@ def test_agent_cancel_with_run_scope(test_agent):
     # Token with run scope
     token = create_jwt_token(scopes=["agents:test-agent:run"])
 
-    # Should pass the RBAC scope check. Non-admin callers must also supply a
-    # session_id for ownership verification (added by user-scoped DB work), so
-    # without it the route returns 400 — which still means scope check passed.
+    # Should be able to cancel (returns 200, cancel stores intent even for nonexistent runs)
     response = client.post(
         "/agents/test-agent/runs/nonexistent-run-id/cancel",
         headers={"Authorization": f"Bearer {token}"},
     )
-    # 403 would mean auth failed. Anything else means the scope check passed.
-    assert response.status_code != 403, response.text
+    # 200 means auth passed and cancel intent stored, 403 would mean auth failed
+    assert response.status_code == 200
 
 
 def test_agent_cancel_blocked_without_run_scope(test_agent, second_agent):
@@ -2374,10 +2435,8 @@ def test_agent_cancel_with_global_scope(test_agent):
         "/agents/test-agent/runs/nonexistent-run-id/cancel",
         headers={"Authorization": f"Bearer {token}"},
     )
-    # Anything other than 403 means the RBAC scope check passed. Non-admin
-    # callers also need session_id for the ownership check; missing it yields
-    # 400 here, which is still an auth pass.
-    assert response.status_code != 403, response.text
+    # 200 means auth passed and cancel intent stored
+    assert response.status_code == 200
 
 
 def test_agent_continue_with_run_scope(test_agent):
@@ -2444,13 +2503,13 @@ def test_team_cancel_with_run_scope(test_team):
     # Token with run scope
     token = create_jwt_token(scopes=["teams:test-team:run"])
 
-    # Non-admin callers also need session_id for ownership verification; the
-    # 400 that returns when it's missing still proves the scope check passed.
+    # Should be able to cancel (returns 200, cancel stores intent even for nonexistent runs)
     response = client.post(
         "/teams/test-team/runs/nonexistent-run-id/cancel",
         headers={"Authorization": f"Bearer {token}"},
     )
-    assert response.status_code != 403, response.text
+    # 200 means auth passed and cancel intent stored, 403 would mean auth failed
+    assert response.status_code == 200
 
 
 def test_team_cancel_blocked_without_run_scope(test_team, second_team):
@@ -2495,9 +2554,8 @@ def test_team_cancel_with_global_scope(test_team):
         "/teams/test-team/runs/nonexistent-run-id/cancel",
         headers={"Authorization": f"Bearer {token}"},
     )
-    # Anything other than 403 means scope check passed (see notes on the
-    # per-team variant above for the session_id requirement).
-    assert response.status_code != 403, response.text
+    # 200 means auth passed and cancel intent stored
+    assert response.status_code == 200
 
 
 def test_workflow_cancel_with_run_scope(test_workflow):
@@ -2515,13 +2573,13 @@ def test_workflow_cancel_with_run_scope(test_workflow):
     # Token with run scope
     token = create_jwt_token(scopes=["workflows:test-workflow:run"])
 
-    # Non-admin callers also need session_id for ownership verification; the
-    # 400 that returns when it's missing still proves the scope check passed.
+    # Should be able to cancel (returns 200, cancel stores intent even for nonexistent runs)
     response = client.post(
         "/workflows/test-workflow/runs/nonexistent-run-id/cancel",
         headers={"Authorization": f"Bearer {token}"},
     )
-    assert response.status_code != 403, response.text
+    # 200 means auth passed and cancel intent stored, 403 would mean auth failed
+    assert response.status_code == 200
 
 
 def test_workflow_cancel_blocked_without_run_scope(test_workflow, second_workflow):
@@ -2566,8 +2624,8 @@ def test_workflow_cancel_with_global_scope(test_workflow):
         "/workflows/test-workflow/runs/nonexistent-run-id/cancel",
         headers={"Authorization": f"Bearer {token}"},
     )
-    # Anything other than 403 means scope check passed.
-    assert response.status_code != 403, response.text
+    # 200 means auth passed and cancel intent stored
+    assert response.status_code == 200
 
 
 def test_cancel_with_wildcard_scope(test_agent, second_agent):
@@ -2585,19 +2643,19 @@ def test_cancel_with_wildcard_scope(test_agent, second_agent):
     # Token with wildcard run scope
     token = create_jwt_token(scopes=["agents:*:run"])
 
-    # Wildcard run scope is not the same as admin; non-admin callers still
-    # need session_id for ownership verification. != 403 proves auth passed.
+    # Should be able to cancel test-agent
     response = client.post(
         "/agents/test-agent/runs/nonexistent-run-id/cancel",
         headers={"Authorization": f"Bearer {token}"},
     )
-    assert response.status_code != 403, response.text
+    assert response.status_code == 200  # Auth passed
 
+    # Should also be able to cancel second-agent
     response = client.post(
         "/agents/second-agent/runs/nonexistent-run-id/cancel",
         headers={"Authorization": f"Bearer {token}"},
     )
-    assert response.status_code != 403, response.text
+    assert response.status_code == 200  # Auth passed
 
 
 def test_cancel_with_admin_scope(test_agent, test_team, test_workflow):
@@ -3061,16 +3119,9 @@ def test_jwks_parameter_takes_precedence_over_env(test_agent, rsa_key_pair, jwks
     """Test that jwks_file parameter takes precedence over JWT_JWKS_FILE env var."""
     import json
 
-    # Create a different JWKS file for the env var: same key material but a
-    # different kid, so a token minted with kid "test-key-1" only validates if
-    # the jwks_file parameter (not the env file) is the source. The env file
-    # must hold a real key: an empty key set fails JWTValidator's fail-closed
-    # construction inside AgentOS.get_app() before this test's middleware runs.
-    with open(jwks_file) as f:
-        env_jwks_data = json.load(f)
-    env_jwks_data["keys"][0]["kid"] = "env-key-2"
+    # Create a different JWKS file for env var (with different kid)
     env_jwks = tmp_path / "env_jwks.json"
-    env_jwks.write_text(json.dumps(env_jwks_data))
+    env_jwks.write_text(json.dumps({"keys": []}))  # Empty keys
 
     monkeypatch.setenv("JWT_JWKS_FILE", str(env_jwks))
 
