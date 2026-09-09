@@ -13,7 +13,7 @@ from agno.db.sqlite import SqliteDb
 DB_ID = "demo-db"
 DB_FILE = str(Path(__file__).parent / "data" / "demo.db")
 
-# Ensure the data directory exists before SqliteDb opens the file.
+# Create data directory before SqliteDb opens the file.
 Path(DB_FILE).parent.mkdir(parents=True, exist_ok=True)
 
 

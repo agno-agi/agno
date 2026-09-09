@@ -2,17 +2,11 @@
 Agno Demo — AgentOS Entrypoint
 ===============================
 
-A demo AgentOS made of wiki agents.
-
 Agents
   LocalWiki    — read + write a local markdown wiki; ingest URLs or media
   GitWiki      — same agent, but the wiki is a git repo (env-gated)
   NotionWiki   — same agent, but the wiki is a Notion database (env-gated)
   CodeSearch   — answers questions about this repository (example agent)
-
-Every agent runs on gpt-5.5 (see settings.py). The wiki agents are
-multimodal — attach an image or PDF and they digest it and file a page.
-(Swap settings.gemini_flash() in for an agent when you need audio or video.)
 """
 
 from contextlib import asynccontextmanager
@@ -49,7 +43,7 @@ async def lifespan(app):  # type: ignore[no-untyped-def]
 
 
 # LocalWiki + CodeSearch are always on.
-# GitWiki and NotionWiki are available when their backend credentials are set
+# GitWiki and NotionWiki are available when credentials are set
 _agents = [local_wiki, code_search]
 if git_wiki is not None:
     _agents.append(git_wiki)
