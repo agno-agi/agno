@@ -318,3 +318,31 @@ protocol-request quota. Cancellation has an independent quota and does not consu
 run slots. Workflow execution and continuation require verified credentials on both
 transports. Only explicitly selected REST components and explicitly published MCP
 components are reachable; publishing a Team does not publish its member routes.
+
+
+## PostgreSQL cancellation across workers
+
+`postgres_cancellation.py` selects `PostgresRunCancellationManager` over the same
+`PostgresDb` used by AgentOS and its durable queue. Install it with the existing
+`set_cancellation_manager` before constructing AgentOS; call `asetup` in lifespan
+(or `setup` before serving). Every process must use the same namespace and tables.
+This is explicit: existing in-memory and Redis defaults are unchanged. Explicit
+managers are preserved by queue coordination. One manager is selected per process,
+so separate AgentOS applications in one process share that choice.
+
+The two `public.agno_run_cancellation*` tables store intent and Team membership.
+Public cancellation first verifies component, session and run handles. Never expose
+an unrestricted raw manager method to anonymous callers. Foreground runs and durable
+jobs use the same manager; a queue ticket alone cannot cancel a foreground run.
+
+The default 0.5-second poll interval bounds cache staleness, not interruption of
+arbitrary blocking code. Registered runs are refreshed in batches at checkpoints;
+there is no per-token SQL query or background poller. Tune the interval explicitly.
+Keep the default one-day TTL longer than all possible run durations and queue waits.
+Expired records are ignored; writes sweep at most 100 expired rows per table.
+
+Cancellation/registration storage failures raise. Checkpoint and terminal-cleanup
+failures preserve healthy run finalization and log unavailable coordination. Cleanup
+removes local state; failed database cleanup leaves rows to expire. Setup and reads
+use bounded workers and database timeouts, and the supplied engine is never disposed.
+The manager does not add shared event streaming or automatically scale deployment.
