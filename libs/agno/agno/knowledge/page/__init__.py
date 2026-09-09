@@ -1,5 +1,12 @@
 """Public page types; storage and discovery are loaded only when needed."""
 
+from agno.knowledge.page.evidence import (
+    EvidencePage,
+    PageEvidence,
+    arender_page_evidence,
+    format_evidence_page,
+    render_page_evidence,
+)
 from agno.knowledge.page.filesystem import PageFileSystem
 from agno.knowledge.page.types import (
     GrepMatch,
@@ -22,6 +29,11 @@ from agno.knowledge.page.types import (
 )
 
 __all__ = [
+    "EvidencePage",
+    "PageEvidence",
+    "render_page_evidence",
+    "arender_page_evidence",
+    "format_evidence_page",
     "GrepMatch",
     "GrepResult",
     "Page",
