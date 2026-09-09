@@ -34,6 +34,10 @@ if TYPE_CHECKING:
 # flag, so no other middleware can trip it.
 _AUTH_COMPLETE_ATTR = "_agno_auth_complete"
 
+# Set only after signature verification AND endpoint permission checks. Unlike the
+# completion marker, this is never set by unverified development mode or scheduler/PAT auth.
+_VERIFIED_API_JWT = object()
+
 
 # The built-in MCP OAuth server mints request identities as ``__oauth__:<client_id>``.
 # A double-underscore sentinel (like ``__scheduler__``), not a bare ``oauth:`` prefix, so
@@ -915,15 +919,30 @@ class AuthMiddleware(BaseHTTPMiddleware):
             request.app.state.admin_scope = self.admin_scope
             request.app.state.user_isolation_enabled = self.user_isolation
 
-        path = request.url.path
+        from starlette._utils import get_route_path
+
+        path = get_route_path(request.scope)
         method = request.method
+        public_policy = getattr(request.app.state, "public_route_policy", None)
+        public_path = path
+        mixed_public = public_policy is not None and public_policy.authenticated_api
+        if mixed_public and len(request.headers.getlist("authorization")) > 1:
+            return self._create_error_response(401, "Ambiguous Authorization header")
 
         # Skip OPTIONS requests (CORS preflight)
         if method == "OPTIONS":
             return await call_next(request)
 
         # Skip excluded routes
-        if self._is_route_excluded(path):
+        if self._is_route_excluded(path) and not (
+            mixed_public
+            and public_policy is not None
+            and (
+                public_policy.allows_anonymous(method, path)
+                or path in ("/docs", "/redoc", "/openapi.json", "/docs/oauth2-redirect")
+            )
+            and not public_policy.is_mcp(path)
+        ):
             return await call_next(request)
 
         # Already authenticated by an OUTER instance of THIS middleware in a manually
@@ -947,6 +966,12 @@ class AuthMiddleware(BaseHTTPMiddleware):
         # or the OS security key -- this middleware is the single auth layer).
         token = self._extract_token(request)
         if not token:
+            if mixed_public and request.headers.getlist("authorization"):
+                return self._create_error_response(401, "Invalid authentication token", origin, cors_allowed_origins)
+            if mixed_public and public_policy is not None and public_policy.allows_anonymous(method, public_path):
+                # This does not mark the caller authenticated or grant scopes. The
+                # public middleware must still validate the selected route and body.
+                return await call_next(request)
             if not self._jwt_configured and not self.security_key:
                 # Open instance with only a service-account verifier: PATs are
                 # verified when presented, anonymous requests pass (mirrors REST).
@@ -1088,6 +1113,9 @@ class AuthMiddleware(BaseHTTPMiddleware):
             request.state.token = token
             request.state.authenticated = True
             setattr(request.state, _AUTH_COMPLETE_ATTR, True)
+
+            if mixed_public and self.authorization and self.validate:
+                request.state._agno_verified_api_jwt = _VERIFIED_API_JWT
 
         except jwt.InvalidAudienceError as e:
             log_warning(f"Invalid token audience - expected: {expected_audience}: {str(e)}")
