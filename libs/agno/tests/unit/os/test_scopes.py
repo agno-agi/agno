@@ -5,6 +5,7 @@ from agno.os.scopes import (
     check_route_scopes,
     get_accessible_resource_ids,
     get_default_scope_mappings,
+    get_required_scopes_for_route,
     get_resource_context_from_path,
     has_required_scopes,
     parse_scope,
@@ -246,6 +247,17 @@ class TestResourceContextAnchoring:
     def test_underscoped_get_of_traces_with_agents_substring_is_denied(self):
         result = check_route_scopes(["agents:read"], get_default_scope_mappings(), "GET", "/traces/agents-run-1")
         assert result.allowed is False
+
+    def test_run_feedback_write_requires_sessions_write(self):
+        # The route mapping is fail-open (an unmapped route requires no scope), so the
+        # feedback write must be mapped explicitly or a read-only caller could post it.
+        mappings = get_default_scope_mappings()
+        path = "/sessions/s1/runs/r1/feedback"
+        assert get_required_scopes_for_route(mappings, "POST", path) == ["sessions:write"]
+        assert get_required_scopes_for_route(mappings, "GET", path) == ["sessions:read"]
+        assert get_required_scopes_for_route(mappings, "DELETE", path) == ["sessions:delete"]
+        assert check_route_scopes(["sessions:read"], mappings, "POST", path).allowed is False
+        assert check_route_scopes(["sessions:write"], mappings, "POST", path).allowed is True
 
     def test_genuine_agents_listing_still_gets_filtered_access(self):
         # The legitimate escape hatch still works for a real /agents listing.
