@@ -163,6 +163,11 @@ class Message(BaseModel):
                                 id=img_data.get("id"),
                                 mime_type=img_data.get("mime_type"),
                                 format=img_data.get("format"),
+                                detail=img_data.get("detail"),
+                                original_prompt=img_data.get("original_prompt"),
+                                revised_prompt=img_data.get("revised_prompt"),
+                                alt_text=img_data.get("alt_text"),
+                                metadata=img_data.get("metadata"),
                             )
                         )
                     else:
@@ -185,10 +190,13 @@ class Message(BaseModel):
                                 aud_data["content"],
                                 id=aud_data.get("id"),
                                 mime_type=aud_data.get("mime_type"),
+                                format=aud_data.get("format"),
+                                duration=aud_data.get("duration"),
                                 transcript=aud_data.get("transcript"),
                                 expires_at=aud_data.get("expires_at"),
                                 sample_rate=aud_data.get("sample_rate", 24000),
                                 channels=aud_data.get("channels", 1),
+                                metadata=aud_data.get("metadata"),
                             )
                         )
                     else:
@@ -212,6 +220,14 @@ class Message(BaseModel):
                                 id=vid_data.get("id"),
                                 mime_type=vid_data.get("mime_type"),
                                 format=vid_data.get("format"),
+                                duration=vid_data.get("duration"),
+                                width=vid_data.get("width"),
+                                height=vid_data.get("height"),
+                                fps=vid_data.get("fps"),
+                                eta=vid_data.get("eta"),
+                                original_prompt=vid_data.get("original_prompt"),
+                                revised_prompt=vid_data.get("revised_prompt"),
+                                metadata=vid_data.get("metadata"),
                             )
                         )
                     else:
@@ -237,6 +253,10 @@ class Message(BaseModel):
                                 filename=file_data.get("filename"),
                                 name=file_data.get("name"),
                                 format=file_data.get("format"),
+                                file_type=file_data.get("file_type"),
+                                size=file_data.get("size"),
+                                external=file_data.get("external"),
+                                metadata=file_data.get("metadata"),
                             )
                         )
                     else:
@@ -256,10 +276,13 @@ class Message(BaseModel):
                         aud_data["content"],
                         id=aud_data.get("id"),
                         mime_type=aud_data.get("mime_type"),
+                        format=aud_data.get("format"),
+                        duration=aud_data.get("duration"),
                         transcript=aud_data.get("transcript"),
                         expires_at=aud_data.get("expires_at"),
                         sample_rate=aud_data.get("sample_rate", 24000),
                         channels=aud_data.get("channels", 1),
+                        metadata=aud_data.get("metadata"),
                     )
                 else:
                     data["audio_output"] = Audio(**aud_data)
