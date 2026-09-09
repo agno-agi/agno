@@ -2072,7 +2072,8 @@ async def _server_card(
                 # else here would be published as the endpoint's URL.
                 forwarded_proto = request.headers.get("x-forwarded-proto", "").split(",")[0].strip().lower()
                 scheme = forwarded_proto if forwarded_proto in ("http", "https") else scheme
-        url = f"{scheme}://{host}{_MCP_PATH}"
+        endpoint = request.scope.get("_agno_mcp_public_endpoint", _MCP_PATH)
+        url = f"{scheme}://{host}{endpoint}"
     remote: Dict[str, Any] = {"type": "streamable-http", "url": url}
     if not _mcp_server_is_open(os):
         remote["headers"] = [
@@ -2147,6 +2148,8 @@ def _add_browser_redirect_middleware(mcp_app: StarletteWithLifespan) -> None:
     in a browser, who would otherwise get a JSON-RPC 406 or a 405.
     """
 
+    from starlette._utils import get_route_path
+
     class _BrowserRedirectMiddleware:
         def __init__(self, app: Any) -> None:
             self.app = app
@@ -2155,7 +2158,7 @@ def _add_browser_redirect_middleware(mcp_app: StarletteWithLifespan) -> None:
             if (
                 scope["type"] == "http"
                 and scope.get("method") == "GET"
-                and scope.get("path", "").rstrip("/") == _MCP_PATH
+                and get_route_path(scope).rstrip("/") == _MCP_PATH
             ):
                 accept = next((v.decode("latin-1") for k, v in scope.get("headers", []) if k == b"accept"), "")
                 if not _accepts_event_stream(accept):
@@ -2767,7 +2770,7 @@ _MCP_LOCALHOST_HOSTS = ("127.0.0.1", "localhost", "[::1]")
 
 def _mcp_request_hostname(host_header: str) -> str:
     """Bare hostname from a Host header value, port stripped (keeps the ipv6 brackets)."""
-    value = host_header.strip()
+    value = host_header.strip().lower()
     if value.startswith("["):  # ipv6 literal, e.g. [::1]:7777
         end = value.find("]")
         return value[: end + 1] if end != -1 else value
@@ -2961,6 +2964,8 @@ def get_mcp_server(
     # is not gated (the 421/400 regression the built-in guard caused) unless they set
     # ``allowed_hosts`` themselves.
     allowed_hosts = mcp_config.allowed_hosts if mcp_config is not None else None
+    if mcp_config is not None and mcp_config.root_host:
+        allowed_hosts = [*(allowed_hosts or []), mcp_config.root_host]
     allowed_origins = mcp_config.allowed_origins if mcp_config is not None else None
     if allowed_hosts is None and _mcp_server_is_open(os):
         allowed_hosts = []
