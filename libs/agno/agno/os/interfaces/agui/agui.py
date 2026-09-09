@@ -23,6 +23,7 @@ class AGUI(BaseInterface):
         team: Optional[Union[Team, RemoteTeam]] = None,
         prefix: str = "",
         tags: Optional[List[str]] = None,
+        emit_messages_snapshot: bool = False,
     ):
         """
         Initialize the AGUI interface.
@@ -32,11 +33,13 @@ class AGUI(BaseInterface):
             team: The team to expose via AG-UI
             prefix: Custom prefix for the router (e.g., "/agui/v1", "/chat/public")
             tags: Custom tags for the router (e.g., ["AGUI", "Chat"], defaults to ["AGUI"])
+            emit_messages_snapshot: Emit persisted session history as one AG-UI MESSAGES_SNAPSHOT before live events
         """
         self.agent = agent
         self.team = team
         self.prefix = prefix
         self.tags = tags or ["AGUI"]
+        self.emit_messages_snapshot = emit_messages_snapshot
 
         if not (self.agent or self.team):
             raise ValueError("AGUI requires an agent or a team")
@@ -44,7 +47,12 @@ class AGUI(BaseInterface):
     def get_router(self) -> APIRouter:
         self.router = APIRouter(prefix=self.prefix, tags=self.tags)  # type: ignore
 
-        self.router = attach_routes(router=self.router, agent=self.agent, team=self.team)
+        self.router = attach_routes(
+            router=self.router,
+            agent=self.agent,
+            team=self.team,
+            emit_messages_snapshot=self.emit_messages_snapshot,
+        )
 
         return self.router
 
