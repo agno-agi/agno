@@ -987,8 +987,13 @@ def handle_tool_call_updates(
     for _t in run_response.tools or []:
         # Case 1: Handle confirmed tools and execute them
         if _t.requires_confirmation is not None and _t.requires_confirmation is True and _functions:
+            # Already-consumed confirmation: keep the stored result, do not
+            # re-execute or treat the leftover gate as a rejection.
+            if _t.result is not None:
+                _t.requires_confirmation = False
+                continue
             # Tool is confirmed and hasn't been run before
-            if _t.confirmed is not None and _t.confirmed is True and _t.result is None:
+            if _t.confirmed is not None and _t.confirmed is True:
                 # Consume the generator without yielding
                 deque(run_tool(agent, run_response, run_messages, _t, functions=_functions), maxlen=0)
             else:
@@ -1039,8 +1044,13 @@ def handle_tool_call_updates_stream(
     for _t in run_response.tools or []:
         # Case 1: Handle confirmed tools and execute them
         if _t.requires_confirmation is not None and _t.requires_confirmation is True and _functions:
+            # Already-consumed confirmation: keep the stored result, do not
+            # re-execute or treat the leftover gate as a rejection.
+            if _t.result is not None:
+                _t.requires_confirmation = False
+                continue
             # Tool is confirmed and hasn't been run before
-            if _t.confirmed is not None and _t.confirmed is True and _t.result is None:
+            if _t.confirmed is not None and _t.confirmed is True:
                 yield from run_tool(
                     agent, run_response, run_messages, _t, functions=_functions, stream_events=stream_events
                 )
@@ -1089,8 +1099,13 @@ async def ahandle_tool_call_updates(
     for _t in run_response.tools or []:
         # Case 1: Handle confirmed tools and execute them
         if _t.requires_confirmation is not None and _t.requires_confirmation is True and _functions:
+            # Already-consumed confirmation: keep the stored result, do not
+            # re-execute or treat the leftover gate as a rejection.
+            if _t.result is not None:
+                _t.requires_confirmation = False
+                continue
             # Tool is confirmed and hasn't been run before
-            if _t.confirmed is not None and _t.confirmed is True and _t.result is None:
+            if _t.confirmed is not None and _t.confirmed is True:
                 async for _ in arun_tool(agent, run_response, run_messages, _t, functions=_functions):
                     pass
             else:
@@ -1149,8 +1164,13 @@ async def ahandle_tool_call_updates_stream(
     for _t in run_response.tools or []:
         # Case 1: Handle confirmed tools and execute them
         if _t.requires_confirmation is not None and _t.requires_confirmation is True and _functions:
+            # Already-consumed confirmation: keep the stored result, do not
+            # re-execute or treat the leftover gate as a rejection.
+            if _t.result is not None:
+                _t.requires_confirmation = False
+                continue
             # Tool is confirmed and hasn't been run before
-            if _t.confirmed is not None and _t.confirmed is True and _t.result is None:
+            if _t.confirmed is not None and _t.confirmed is True:
                 async for event in arun_tool(
                     agent, run_response, run_messages, _t, functions=_functions, stream_events=stream_events
                 ):
