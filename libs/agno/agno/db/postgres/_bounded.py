@@ -38,6 +38,8 @@ class _BudgetQueue(Queue):
 
 
 class _BudgetPool(QueuePool):
+    # Keep SQLAlchemy diagnostics independent of the application debug level.
+    _sqla_logger_namespace = "sqlalchemy.pool.agno"
     _queue_class = _BudgetQueue
 
 
@@ -112,6 +114,7 @@ def bounded_engine(source: Engine, *, capacity: int) -> Engine:
         max_overflow=0,
         timeout=3,
         pre_ping=True,
+        echo=source.pool.echo,
         recycle=300,
         _dispatch=source.pool.dispatch,
         dialect=source.dialect,
