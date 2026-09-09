@@ -20,6 +20,7 @@ from agno.os.interfaces.slack.helpers import (
     resolve_slack_user,
     send_slack_message_async,
     should_respond,
+    slack_delivery_kwargs,
     strip_bot_mention,
     upload_response_media_async,
 )
@@ -86,6 +87,9 @@ class SlackEventHandler:
     task_display_mode: str
     buffer_size: int
     suggested_prompts: Optional[List[Dict[str, str]]] = None
+    unfurl_links: bool = True
+    unfurl_media: bool = True
+    markdown: bool = True
 
     def _client(self) -> AsyncWebClient:
         return AsyncWebClient(token=self.slack_tools.token, ssl=self.ssl)
@@ -214,6 +218,9 @@ class SlackEventHandler:
             channel=ctx.channel_id,
             message=message,
             thread_ts=ctx.thread_id,
+            unfurl_links=self.unfurl_links,
+            unfurl_media=self.unfurl_media,
+            mrkdwn=self.markdown,
         )
 
     async def handle_non_streaming(self, data: dict) -> None:
@@ -250,11 +257,25 @@ class SlackEventHandler:
                     rc = str(response.reasoning_content)
                     formatted = "*Reasoning:*\n> " + rc.replace("\n", "\n> ")
                     await send_slack_message_async(
-                        client, channel=ctx.channel_id, message=formatted, thread_ts=ctx.thread_id
+                        client,
+                        channel=ctx.channel_id,
+                        message=formatted,
+                        thread_ts=ctx.thread_id,
+                        unfurl_links=self.unfurl_links,
+                        unfurl_media=self.unfurl_media,
+                        mrkdwn=self.markdown,
                     )
 
                 content = str(response.content) if response.content else ""
-                await send_slack_message_async(client, channel=ctx.channel_id, message=content, thread_ts=ctx.thread_id)
+                await send_slack_message_async(
+                    client,
+                    channel=ctx.channel_id,
+                    message=content,
+                    thread_ts=ctx.thread_id,
+                    unfurl_links=self.unfurl_links,
+                    unfurl_media=self.unfurl_media,
+                    mrkdwn=self.markdown,
+                )
                 await upload_response_media_async(client, response, ctx.channel_id, ctx.thread_id)
 
         except Exception as e:
@@ -273,7 +294,15 @@ class SlackEventHandler:
 
         content = str(response.content) if response.content else ""
         if content:
-            await send_slack_message_async(client, channel=ctx.channel_id, message=content, thread_ts=ctx.thread_id)
+            await send_slack_message_async(
+                client,
+                channel=ctx.channel_id,
+                message=content,
+                thread_ts=ctx.thread_id,
+                unfurl_links=self.unfurl_links,
+                unfurl_media=self.unfurl_media,
+                mrkdwn=self.markdown,
+            )
 
         pause_labels = [PAUSE_LABELS[r.pause_type].format(tool=tool_name(r)) for r in requirements]
         awaiting_ts = None
@@ -283,14 +312,23 @@ class SlackEventHandler:
                     channel=ctx.channel_id,
                     thread_ts=ctx.thread_id,
                     text="\n".join(pause_labels),
-                    mrkdwn=True,
+                    **slack_delivery_kwargs(self.unfurl_links, self.unfurl_media, self.markdown),
                 )
                 awaiting_ts = awaiting_resp.get("ts")
             except Exception as exc:
                 log_error(f"[HITL] Non-streaming awaiting indicator failed: {exc}")
 
         try:
-            await post_pause_card(client, response, ctx.channel_id, ctx.thread_id, awaiting_ts)
+            await post_pause_card(
+                client,
+                response,
+                ctx.channel_id,
+                ctx.thread_id,
+                awaiting_ts,
+                unfurl_links=self.unfurl_links,
+                unfurl_media=self.unfurl_media,
+                mrkdwn=self.markdown,
+            )
         except Exception as exc:
             log_error(f"[HITL] Non-streaming pause card failed: {exc}")
 
@@ -429,9 +467,21 @@ class SlackEventHandler:
             channel=ctx.channel_id,
             thread_ts=ctx.thread_id,
             requirements=requirements,
+            unfurl_links=self.unfurl_links,
+            unfurl_media=self.unfurl_media,
+            mrkdwn=self.markdown,
         )
         try:
-            await post_pause_card(client, state.paused_event, ctx.channel_id, ctx.thread_id, awaiting_ts)
+            await post_pause_card(
+                client,
+                state.paused_event,
+                ctx.channel_id,
+                ctx.thread_id,
+                awaiting_ts,
+                unfurl_links=self.unfurl_links,
+                unfurl_media=self.unfurl_media,
+                mrkdwn=self.markdown,
+            )
         except Exception as exc:
             log_error(f"[HITL] Failed to post Card block (pause): {exc}")
 

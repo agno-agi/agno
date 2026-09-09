@@ -21,7 +21,7 @@ from agno.workflow.workflow import Workflow
 # ---------------------------------------------------------------------------
 input_validator = Agent(
     name="Input Validator Agent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     pre_hooks=[PromptInjectionGuardrail()],
     description="Validates and processes user input while blocking prompt injection attacks.",
     instructions=[
@@ -34,7 +34,7 @@ input_validator = Agent(
 
 content_processor = Agent(
     name="Content Processor Agent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[WebSearchTools()],
     description="Processes validated content and provides helpful information.",
     instructions=[

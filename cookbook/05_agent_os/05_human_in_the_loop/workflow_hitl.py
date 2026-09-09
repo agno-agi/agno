@@ -73,24 +73,28 @@ release_workflow = Workflow(
         Step(
             name="Inspect Release",
             executor=inspect_release,
-            requires_confirmation=True,
-            confirmation_message="Inspect this release now?",
-            on_reject=OnReject.cancel,
+            human_review=HumanReview(
+                requires_confirmation=True,
+                confirmation_message="Inspect this release now?",
+                on_reject=OnReject.cancel,
+            ),
         ),
         Step(
             name="Choose Environment",
             executor=choose_environment,
-            requires_user_input=True,
-            user_input_message="Choose the deployment environment.",
-            user_input_schema=[
-                UserInputField(
-                    name="environment",
-                    field_type="str",
-                    description="Deployment environment",
-                    required=True,
-                    allowed_values=["staging", "production"],
-                )
-            ],
+            human_review=HumanReview(
+                requires_user_input=True,
+                user_input_message="Choose the deployment environment.",
+                user_input_schema=[
+                    UserInputField(
+                        name="environment",
+                        field_type="str",
+                        description="Deployment environment",
+                        required=True,
+                        allowed_values=["staging", "production"],
+                    )
+                ],
+            ),
         ),
         Step(
             name="Draft Change Record",

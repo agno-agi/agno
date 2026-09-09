@@ -72,3 +72,20 @@ def build_session_summary_manager_resource(manager: Any) -> RegistryContentRespo
         type=RegistryResourceType.SESSION_SUMMARY_MANAGER,
         metadata=metadata.model_dump(exclude_none=True),
     )
+
+
+def build_learning_resource(machine: Any) -> RegistryContentResponse:
+    """Build a RegistryContentResponse for a learning machine.
+
+    The metadata is the summary Studio's list_learning shows: per-store mode
+    and namespace, and whether the machine binds a model, db or knowledge.
+    """
+    from agno.learn.machine import describe_learning_machine
+
+    summary = describe_learning_machine(machine)
+    name = safe_str(summary.pop("name", None)) or machine.__class__.__name__
+    return RegistryContentResponse(
+        name=name,
+        type=RegistryResourceType.LEARNING,
+        metadata={"class_path": class_path(machine), **summary},
+    )

@@ -33,6 +33,13 @@ class AuthConfig:
     # --- HTTP timeout for API calls ---
     http_timeout: Optional[float] = None
 
+    # --- Interactive OAuth fallback ---
+    # When False, _resolve_creds raises instead of opening a local browser flow
+    # (headless servers). GOOGLE_OAUTH_NONINTERACTIVE=1 flips the default.
+    interactive: bool = field(
+        default_factory=lambda: (getenv("GOOGLE_OAUTH_NONINTERACTIVE") or "false").lower() not in ("true", "1", "yes")
+    )
+
     # --- Scope aggregation (internal) ---
     _scopes: Set[str] = field(default_factory=set, repr=False)
     _creds: Any = field(default=None, repr=False)

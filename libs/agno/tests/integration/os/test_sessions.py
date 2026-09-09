@@ -99,8 +99,16 @@ def session_with_runs(shared_db, test_agent: Agent):
         updated_at=now,
     )
 
-    # Save session to database
+    # Save session to database. Under v3, upsert_session writes only the
+    # session row — runs must be persisted individually via upsert_run.
     shared_db.upsert_session(session)
+    for idx, run in enumerate([run1, run2, run3, run4]):
+        shared_db.upsert_run(
+            run=run,
+            session_id=session.session_id,
+            user_id=session.user_id,
+            run_index=idx,
+        )
 
     return session
 
@@ -366,9 +374,11 @@ def test_endpoints_with_multiple_sessions(shared_db, test_agent: Agent):
         updated_at=now,
     )
 
-    # Save sessions
+    # Save sessions and their runs (v3: runs live in a separate table)
     shared_db.upsert_session(session1)
+    shared_db.upsert_run(run=run1_session1, session_id=session1.session_id, user_id=session1.user_id, run_index=0)
     shared_db.upsert_session(session2)
+    shared_db.upsert_run(run=run1_session2, session_id=session2.session_id, user_id=session2.user_id, run_index=0)
 
     # Create test client
     agent_os = AgentOS(agents=[test_agent])

@@ -1,7 +1,6 @@
 import time
 from typing import TYPE_CHECKING, Any, AsyncIterator, Dict, List, Literal, Optional, Tuple, Union, overload
 
-from fastapi import WebSocket
 from pydantic import BaseModel
 
 from agno.media import Audio, File, Image, Video
@@ -12,7 +11,13 @@ from agno.utils.agent import validate_input
 from agno.utils.remote import serialize_input
 
 if TYPE_CHECKING:
+    from fastapi import WebSocket
+
     from agno.os.routers.workflows.schema import WorkflowResponse
+else:
+    # fastapi only ships with the "os" extra; a loose binding keeps the
+    # websocket annotations resolvable by get_type_hints() without it.
+    WebSocket = Any
 
 
 class RemoteWorkflow(BaseRemote):

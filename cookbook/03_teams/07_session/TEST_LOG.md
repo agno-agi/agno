@@ -380,14 +380,14 @@ DEBUG **** Team Run End: 04434e8e-ec8b-44e4-8266-463958fe243e ****
 
 ---
 
-### search_session_history.py
+### search_past_sessions.py
 
 **Status:** FAIL
 
 **Description:** Example execution attempt
 
 **Result:** Traceback (most recent call last):
-  File "/Users/ab/conductor/workspaces/agno/tallinn/cookbook/03_teams/07_session/search_session_history.py", line 27, in <module>
+  File "/Users/ab/conductor/workspaces/agno/tallinn/cookbook/03_teams/07_session/search_past_sessions.py", line 27, in <module>
     db=AsyncSqliteDb(db_file="tmp/data.db"),
        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
   File "/Users/ab/conductor/workspaces/agno/tallinn/libs/agno/agno/db/sqlite/async_sqlite.py", line 124, in __init__

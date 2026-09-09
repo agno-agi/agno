@@ -31,7 +31,7 @@ def mock_service():
 def drive_tools(mock_creds, mock_service):
     with patch("googleapiclient.discovery.build") as mock_build:
         mock_build.return_value = mock_service
-        tools = GoogleDriveTools(creds=mock_creds, auth_port=5050)
+        tools = GoogleDriveTools(creds=mock_creds, oauth_port=5050)
         tools._service = mock_service
         return tools
 

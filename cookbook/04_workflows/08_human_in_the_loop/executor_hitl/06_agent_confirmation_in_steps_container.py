@@ -56,7 +56,7 @@ def run_deep_scan(target: str) -> str:
 
 scan_agent = Agent(
     name="SecurityScanAgent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[run_deep_scan],
     instructions=(
         "You perform security scans. You MUST always call the run_deep_scan tool "

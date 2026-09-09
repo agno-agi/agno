@@ -195,3 +195,113 @@ def test_agent_save_load_keeps_the_tool_surface(tmp_path) -> None:
     names = {t.__name__ for t in tools}
     assert "update_user_memory" in names
     assert "remember_about" in names
+
+
+def test_name_round_trips_and_leads_repr() -> None:
+    """A registry name is identity: it survives the config round-trip and is
+    the first thing the repr shows."""
+    machine = LearningMachine(name="shared-brain", user_memory=True)
+    payload = machine.to_dict()
+    assert payload["name"] == "shared-brain"
+
+    rebuilt = LearningMachine.from_dict(payload)
+    assert rebuilt.name == "shared-brain"
+    assert rebuilt.user_memory is True
+    assert repr(rebuilt).startswith("LearningMachine(name='shared-brain', ")
+
+
+def test_unnamed_machine_writes_no_name_and_legacy_dicts_load_unnamed() -> None:
+    """Configs written before the name existed carry no name key, and an
+    unnamed machine must not start writing one: the serializer keys a
+    registry reference on ``{"name": ...}`` alone, so ``{}`` and every
+    store-carrying dict have to stay inline machines."""
+    assert "name" not in LearningMachine(user_memory=True).to_dict()
+    assert LearningMachine().to_dict() == {}
+
+    legacy = LearningMachine.from_dict({"user_profile": True, "user_memory": True})
+    assert legacy.name is None
+    assert legacy.user_memory is True
+
+    empty = LearningMachine.from_dict({})
+    assert empty.name is None
+    assert empty.to_dict() == {}
+
+    # A blank name is no name.
+    assert LearningMachine.from_dict({"name": "", "user_memory": True}).name is None
+
+
+def test_bool_learned_knowledge_inherits_machine_namespace() -> None:
+    """The machine namespace is the default for BOTH namespaced stores. A
+    bool-enabled learned_knowledge used to stay on "global" while
+    entity_memory followed the machine, so a deployer who set one namespace
+    got two."""
+    from agno.learn.config import LearnedKnowledgeConfig
+
+    machine = LearningMachine(
+        db=RecordingLearningDb(),  # type: ignore[arg-type]
+        namespace="team_west",
+        entity_memory=True,
+        learned_knowledge=True,
+        knowledge=object(),
+    )
+    assert machine.stores["entity_memory"].config.namespace == "team_west"  # type: ignore[attr-defined]
+    assert machine.stores["learned_knowledge"].config.namespace == "team_west"  # type: ignore[attr-defined]
+
+    # An explicit store namespace still wins over the machine's.
+    explicit = LearningMachine(
+        db=RecordingLearningDb(),  # type: ignore[arg-type]
+        namespace="team_west",
+        learned_knowledge=LearnedKnowledgeConfig(namespace="ops"),
+        knowledge=object(),
+    )
+    assert explicit.stores["learned_knowledge"].config.namespace == "ops"  # type: ignore[attr-defined]
+
+
+def test_positional_construction_keeps_db_first_and_only_a_real_name_serializes() -> None:
+    """name is declared after the public fields, so the positional signature
+    (db, model, knowledge, ...) is unchanged; and only a non-empty str name is
+    written by to_dict, which is also the only name the storage layer treats
+    as a registry reference."""
+    db = RecordingLearningDb()
+    machine = LearningMachine(db)  # type: ignore[arg-type]
+    assert machine.db is db
+    assert machine.name is None
+
+    assert "name" not in LearningMachine(name="").to_dict()
+    assert "name" not in LearningMachine(name=123).to_dict()  # type: ignore[arg-type]
+    assert LearningMachine(name="brain").to_dict() == {"name": "brain"}
+
+
+def test_describe_learning_machine_reads_declared_fields_only() -> None:
+    """The listing summary never builds the stores, reports a pre-built Store
+    instance's own namespace, and lists custom stores by name."""
+    from agno.learn.config import EntityMemoryConfig
+    from agno.learn.machine import describe_learning_machine
+    from agno.learn.stores.entity_memory import EntityMemoryStore
+
+    class TinyStore:
+        def recall(self, **kwargs: Any) -> None:
+            return None
+
+    machine = LearningMachine(
+        name="brain",
+        namespace="team_west",
+        user_memory=UserMemoryConfig(mode=LearningMode.AGENTIC),
+        entity_memory=EntityMemoryStore(config=EntityMemoryConfig()),
+        learned_knowledge=True,
+        knowledge=object(),
+        custom_stores={"tiny": TinyStore()},  # type: ignore[dict-item]
+    )
+    summary = describe_learning_machine(machine)
+    assert machine._stores is None
+    assert summary["name"] == "brain"
+    assert summary["namespace"] == "team_west"
+    assert summary["stores"] == {
+        "user_memory": {"mode": "agentic"},
+        "entity_memory": {"mode": "agentic", "namespace": "global"},
+        "learned_knowledge": {"mode": "agentic", "namespace": "team_west"},
+    }
+    assert summary["custom_stores"] == ["tiny"]
+    assert summary["model_id"] is None and summary["db"] is False and summary["knowledge"] is True
+    # The Store instance really does keep its own namespace at run time.
+    assert machine.stores["entity_memory"].config.namespace == "global"  # type: ignore[attr-defined]

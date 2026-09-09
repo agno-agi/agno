@@ -49,10 +49,10 @@ from agno.models.openai import OpenAIResponses
 # Create Providers
 # ---------------------------------------------------------------------------
 # All providers share the same auth (resolved from env vars).
-# Using gpt-5.4-mini for sub-agents keeps costs low while the main
+# Using gpt-5.6-luna for sub-agents keeps costs low while the main
 # agent uses gpt-5.4 for better reasoning across multiple tools.
 
-sub_model = OpenAIResponses(id="gpt-5.4-mini")
+sub_model = OpenAIResponses(id="gpt-5.6-luna")
 
 gdrive = GoogleDriveContextProvider(model=sub_model)
 gmail = GmailContextProvider(model=sub_model, read=True, write=True)

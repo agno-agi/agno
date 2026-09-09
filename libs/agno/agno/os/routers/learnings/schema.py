@@ -1,6 +1,16 @@
 from typing import Any, Dict, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+
+def _owner_as_string(value: Any) -> Any:
+    """Render a stored owner id as the string the owner column holds.
+
+    Only the SQL adapters type ``user_id`` as a string column and coerce on write; a store
+    that keeps whatever the writer passed returns the owner in the writer's type, which a
+    string field rejects.
+    """
+    return value if value is None or isinstance(value, str) else str(value)
 
 
 class LearningResponse(BaseModel):
@@ -21,6 +31,11 @@ class LearningResponse(BaseModel):
     metadata: Optional[Dict[str, Any]] = Field(None, description="Optional metadata")
     created_at: Optional[int] = Field(None, description="Creation timestamp (Unix epoch seconds)")
     updated_at: Optional[int] = Field(None, description="Last update timestamp (Unix epoch seconds)")
+
+    @field_validator("user_id", mode="before")
+    @classmethod
+    def _coerce_user_id(cls, value: Any) -> Any:
+        return _owner_as_string(value)
 
 
 class LearningCreate(BaseModel):
@@ -65,3 +80,8 @@ class LearningUserStats(BaseModel):
     last_learning_updated_at: Optional[int] = Field(
         None, description="Most recent learning update for this user (Unix epoch seconds)"
     )
+
+    @field_validator("user_id", mode="before")
+    @classmethod
+    def _coerce_user_id(cls, value: Any) -> Any:
+        return _owner_as_string(value)

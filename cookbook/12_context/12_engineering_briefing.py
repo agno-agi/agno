@@ -32,7 +32,7 @@ from agno.models.openai import OpenAIResponses
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 # Sub-agents do source-specific tool work with a smaller model.
-provider_model = OpenAIResponses(id="gpt-5.4-mini")
+provider_model = OpenAIResponses(id="gpt-5.6-luna")
 
 slack = SlackContextProvider(model=provider_model)
 codebase = WorkspaceContextProvider(id="agno", root=PROJECT_ROOT, model=provider_model)
