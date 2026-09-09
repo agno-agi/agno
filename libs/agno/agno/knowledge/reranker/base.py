@@ -12,3 +12,7 @@ class Reranker(BaseModel):
 
     def rerank(self, query: str, documents: List[Document]) -> List[Document]:
         raise NotImplementedError
+
+    async def arerank(self, query: str, documents: List[Document]) -> List[Document]:
+        """Async rerank. Defaults to the sync implementation so existing rerankers keep working."""
+        return self.rerank(query=query, documents=documents)

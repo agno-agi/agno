@@ -27,6 +27,7 @@ from agno.knowledge.remote_content.remote_content import (
     RemoteContent,
 )
 from agno.knowledge.remote_knowledge import RemoteKnowledge
+from agno.knowledge.reranker.base import Reranker
 from agno.knowledge.types import ContentType
 from agno.knowledge.utils import get_agno_metadata, merge_user_metadata, set_agno_metadata, strip_agno_metadata
 from agno.utils.http import async_fetch_with_retry
@@ -79,6 +80,17 @@ class Knowledge(RemoteKnowledge):
     page_store: Optional[Any] = None
     page_search: Optional[PageSearchConfig] = None
 
+    # Reorders results after the vector db returns them, so a strategy that needs to
+    # compare candidates against each other (diversity, recency) sees a real pool.
+    # Runs after any reranker configured on the vector db itself.
+    reranker: Optional[Reranker] = None
+    # Candidates fetched per requested result when a reranker is set. Reordering can
+    # only surface a document that was retrieved, so the pool has to exceed max_results.
+    rerank_multiplier: int = 5
+    # Ceiling on the widened fetch, so a large max_results cannot turn one search into
+    # an unbounded scan.
+    max_rerank_candidates: int = 100
+
     def __init__(
         self,
         *,
@@ -94,6 +106,9 @@ class Knowledge(RemoteKnowledge):
         page_search: Optional[PageSearchConfig] = None,
         max_embedding_retries: int = 0,
         embedding_retry_backoff: float = 1.0,
+        reranker: Optional[Reranker] = None,
+        rerank_multiplier: int = 5,
+        max_rerank_candidates: int = 100,
         contents_db: Optional[Union[BaseDb, AsyncBaseDb]] = cast(Any, _DATABASE_UNSET),
     ):
         """Configure Knowledge using keyword arguments.
@@ -117,6 +132,17 @@ class Knowledge(RemoteKnowledge):
         self.embedding_retry_backoff = embedding_retry_backoff
         self.page_store = page_store
         self.page_search = page_search
+        if isinstance(rerank_multiplier, bool) or not isinstance(rerank_multiplier, int) or rerank_multiplier < 1:
+            raise ValueError("rerank_multiplier must be an integer greater than or equal to 1")
+        if (
+            isinstance(max_rerank_candidates, bool)
+            or not isinstance(max_rerank_candidates, int)
+            or max_rerank_candidates < 1
+        ):
+            raise ValueError("max_rerank_candidates must be an integer greater than or equal to 1")
+        self.reranker = reranker
+        self.rerank_multiplier = rerank_multiplier
+        self.max_rerank_candidates = max_rerank_candidates
         self.__post_init__()
 
     @property
@@ -164,6 +190,35 @@ class Knowledge(RemoteKnowledge):
             )
             for hit in result.results
         ]
+
+    def _search_limit(self, max_results: int) -> int:
+        """Widen the vector db fetch so the reranker has candidates to choose between."""
+        if self.reranker is None:
+            return max_results
+        return min(max_results * self.rerank_multiplier, self.max_rerank_candidates)
+
+    def _rerank_documents(self, query: str, documents: List[Document], max_results: int) -> List[Document]:
+        """Apply the knowledge-level reranker, then trim to the caller's requested count."""
+        if self.reranker is None:
+            return documents[:max_results]
+        try:
+            reranked = self.reranker.rerank(query=query, documents=documents)
+        except Exception as e:
+            # A reranker failure degrades ordering, not availability: keep the vector db order.
+            log_error(f"Error reranking documents: {str(e)}")
+            return documents[:max_results]
+        return reranked[:max_results]
+
+    async def _arerank_documents(self, query: str, documents: List[Document], max_results: int) -> List[Document]:
+        """Async variant of ``_rerank_documents``."""
+        if self.reranker is None:
+            return documents[:max_results]
+        try:
+            reranked = await self.reranker.arerank(query=query, documents=documents)
+        except Exception as e:
+            log_error(f"Error reranking documents: {str(e)}")
+            return documents[:max_results]
+        return reranked[:max_results]
 
     def setup(self) -> None:
         """Prepare and validate coordinated page storage before query traffic."""
@@ -971,12 +1026,13 @@ class Knowledge(RemoteKnowledge):
 
             _max_results = max_results or self.max_results
             log_debug(f"Getting {_max_results} relevant documents for query: {query}")
-            return self.vector_db.search(
+            documents = self.vector_db.search(
                 query=query,
-                limit=_max_results,
+                limit=self._search_limit(_max_results),
                 filters=search_filters,
                 **strict_user_id_kwarg(self.vector_db.search, user_id),
             )
+            return self._rerank_documents(query, documents, _max_results)
         except ValueError:
             # The adapters raise these outside their own catch-alls on purpose.
             raise
@@ -1022,21 +1078,23 @@ class Knowledge(RemoteKnowledge):
 
             _max_results = max_results or self.max_results
             log_debug(f"Getting {_max_results} relevant documents for query: {query}")
+            search_limit = self._search_limit(_max_results)
             try:
-                return await self.vector_db.async_search(
+                documents = await self.vector_db.async_search(
                     query=query,
-                    limit=_max_results,
+                    limit=search_limit,
                     filters=search_filters,
                     **strict_user_id_kwarg(self.vector_db.async_search, user_id),
                 )
             except NotImplementedError:
                 log_info("Vector db does not support async search")
-                return self.vector_db.search(
+                documents = self.vector_db.search(
                     query=query,
-                    limit=_max_results,
+                    limit=search_limit,
                     filters=search_filters,
                     **strict_user_id_kwarg(self.vector_db.search, user_id),
                 )
+            return await self._arerank_documents(query, documents, _max_results)
         except ValueError:
             # See the matching comment in ``search``.
             raise
