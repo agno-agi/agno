@@ -147,3 +147,11 @@ neither shared environment was modified. Live database/provider modes were not
 run. The focused public-configuration and MCP suites passed all 204 tests.
 
 ---
+
+
+## 2026-09-09 source relocation operator API
+
+- PASS: five disposable PostgreSQL cases covering sync/async inspect and migration, dry run, apply, idempotent retry, citation refresh without embedding calls, wrong source/path/storage, unbound namespaces, active sync, concurrent competing relocations and rollback after an injected post-update failure.
+- PASS: `migrate_page_source.py --help` with demo Python. The cookbook's actual operator mutation was not run; database fixtures exercise that API separately.
+- PASS: full format and validation scripts.
+- No production source binding was inspected or changed. Caller must verify target corpus ownership/equivalence; the operator API performs no remote fetch and creates no anonymous route/tool.

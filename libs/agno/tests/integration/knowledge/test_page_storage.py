@@ -2111,3 +2111,152 @@ async def test_full_page_database_deadline_recovers_after_lock(corpus, async_mod
         with pytest.raises(PageError):
             await read(0.05)
     assert await read(2) == site["https://docs.example.com/agent.md"]
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+def test_source_relocation_dry_run_apply_retry_and_citation_refresh(corpus, asynchronous):
+    import asyncio
+
+    knowledge, embedder, site = corpus
+    old, new = "https://docs.example.com/llms.txt", "https://public.example.com/llms.txt"
+    knowledge.sync_pages(url=old)
+    before_page = knowledge.list_pages().pages[0]
+    before_text = knowledge.read_full_page(before_page.path)
+    calls = list(embedder.calls)
+
+    def inspect_source():
+        return asyncio.run(knowledge.ainspect_page_source()) if asynchronous else knowledge.inspect_page_source()
+
+    def migrate(**kwargs):
+        args = dict(expected_source=old, target_source=new, **kwargs)
+        return (
+            asyncio.run(knowledge.amigrate_page_source(**args))
+            if asynchronous
+            else knowledge.migrate_page_source(**args)
+        )
+
+    before = inspect_source()
+    plan = migrate()
+    assert plan.dry_run and not plan.changed and plan.before == plan.after == before
+    changed = migrate(dry_run=False)
+    assert changed.changed and changed.after.source == new
+    assert changed.after.revision == before.revision + 1
+    assert not migrate(dry_run=False).changed
+    assert inspect_source() == changed.after
+    assert knowledge.list_pages().pages[0] == before_page
+    assert knowledge.read_full_page(before_page.path) == before_text
+    assert embedder.calls == calls
+    with pytest.raises(ValueError, match="another documentation source"):
+        knowledge.sync_pages(url=old)
+    site[new] = "- [Agent](https://public.example.com/agent.md)"
+    site["https://public.example.com/agent.md"] = site["https://docs.example.com/agent.md"]
+    assert knowledge.sync_pages(url=new).updated == 1
+    assert knowledge.list_pages().pages[0].url == "https://public.example.com/agent"
+    assert knowledge.read_full_page(before_page.path) == before_text
+    assert embedder.calls == calls
+
+
+def test_source_relocation_rejects_wrong_source_path_storage_and_unbound_namespace(corpus):
+    from sqlalchemy import update
+
+    knowledge, _, _ = corpus
+    args = dict(
+        expected_source="https://docs.example.com/llms.txt", target_source="https://public.example.com/llms.txt"
+    )
+    with pytest.raises(ValueError, match="does not match"):
+        knowledge.migrate_page_source(**args)
+    knowledge.sync_pages(url=args["expected_source"])
+    before = knowledge.inspect_page_source()
+    for bad in (
+        {**args, "expected_source": "https://wrong.example.com/llms.txt"},
+        {**args, "target_source": "https://public.example.com/other.txt"},
+        {**args, "target_source": "http://public.example.com/llms.txt"},
+        {**args, "target_source": "https://user:secret@public.example.com/llms.txt"},
+        {**args, "dry_run": "false"},
+    ):
+        with pytest.raises(ValueError):
+            knowledge.migrate_page_source(**bad)
+        assert knowledge.inspect_page_source() == before
+    pages = knowledge._pages()
+    with pages.engine.begin() as conn:
+        conn.execute(
+            update(pages.binding).where(pages.binding.c.namespace == pages.namespace).values(vectors="ai.wrong_vectors")
+        )
+    with pytest.raises(ValueError, match="another knowledge catalog or vector table"):
+        knowledge.migrate_page_source(**args, dry_run=False)
+
+
+def test_source_relocation_rejects_active_sync_and_rolls_back_failed_transaction(corpus):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+
+    from sqlalchemy import event
+
+    from agno.knowledge.page import PageSourceBusy
+
+    knowledge, _, _ = corpus
+    args = dict(
+        expected_source="https://docs.example.com/llms.txt",
+        target_source="https://public.example.com/llms.txt",
+        dry_run=False,
+    )
+    knowledge.sync_pages(url=args["expected_source"])
+    before = knowledge.inspect_page_source()
+    entered, release = Event(), Event()
+
+    def hold_sync(discovered, published):
+        entered.set()
+        assert release.wait(5)
+
+    with ThreadPoolExecutor(1) as pool:
+        sync = pool.submit(knowledge.sync_pages, url=args["expected_source"], validate_discovery=hold_sync)
+        assert entered.wait(5)
+        try:
+            with pytest.raises(PageSourceBusy):
+                knowledge.migrate_page_source(**args)
+        finally:
+            release.set()
+        sync.result()
+    assert knowledge.inspect_page_source() == before
+    pages = knowledge._pages()
+
+    def fail_after_update(conn, cursor, statement, parameters, context, many):
+        if statement.startswith("UPDATE ") and pages.binding.name in statement:
+            raise RuntimeError("injected failure after update")
+
+    event.listen(pages.engine, "after_cursor_execute", fail_after_update)
+    try:
+        with pytest.raises(RuntimeError, match="injected failure"):
+            knowledge.migrate_page_source(**args)
+    finally:
+        event.remove(pages.engine, "after_cursor_execute", fail_after_update)
+    assert knowledge.inspect_page_source() == before
+    assert knowledge.migrate_page_source(**args).changed
+
+
+def test_concurrent_source_relocations_share_the_namespace_lock(corpus):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    from agno.knowledge.page import PageSourceBusy
+
+    knowledge, _, _ = corpus
+    old = "https://docs.example.com/llms.txt"
+    knowledge.sync_pages(url=old)
+    before = knowledge.inspect_page_source()
+    barrier = Barrier(2)
+
+    def migrate(target):
+        barrier.wait(timeout=5)
+        try:
+            return knowledge.migrate_page_source(expected_source=old, target_source=target, dry_run=False)
+        except (PageSourceBusy, ValueError) as exc:
+            return exc
+
+    with ThreadPoolExecutor(2) as pool:
+        futures = [pool.submit(migrate, f"https://{name}.example.com/llms.txt") for name in ("one", "two")]
+        results = [future.result() for future in futures]
+    changed = [result for result in results if not isinstance(result, Exception)]
+    assert len(changed) == 1 and changed[0].changed
+    after = knowledge.inspect_page_source()
+    assert after.revision == before.revision + 1 and after.source == changed[0].target_source

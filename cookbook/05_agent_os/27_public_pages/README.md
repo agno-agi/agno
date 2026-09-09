@@ -277,3 +277,31 @@ normalizer that leaves code unchanged; run it without a database or provider key
 
 Component-specific MDX transformations, prompt rendering, citations and query
 alternatives remain application-owned.
+
+
+### Relocating the documentation source
+
+Use `knowledge.inspect_page_source()` to inspect the namespace's filesystem,
+knowledge catalog, vector table, source URL and revision.
+`knowledge.migrate_page_source(expected_source=old, target_source=new)` is a dry
+run; pass `dry_run=False` to apply it. Async counterparts are
+`ainspect_page_source` and `amigrate_page_source`.
+
+The operator must own the target and verify it serves the same corpus. The API
+validates HTTPS URLs, an unchanged discovery path and the configured storage
+binding; it does not fetch or assess the remote corpus. The same namespace lock
+used by sync protects the transaction. Active sync/maintenance raises
+`PageSourceBusy`; unexpected sources/storage reject the operation. Repeating the
+same relocation is a no-op when the binding already names the target.
+
+Only the binding and its revision change. Run a normal sync against the target
+afterward, using the same transform and `index_version`, to refresh citation URLs
+without re-embedding unchanged content. Pages remain readable throughout. If a
+connection loses its commit acknowledgement, inspect the binding or repeat the
+same guarded request instead of assuming a rollback. This is a source relocation,
+not a way to replace a namespace with unrelated documentation.
+
+`migrate_page_source.py OLD_URL NEW_URL` prints the current binding and dry run;
+add `--apply` only after reviewing them. The example uses the database configured
+by `public_pages.py`. No HTTP route or model/MCP tool is added automatically;
+keep this an operator action.
