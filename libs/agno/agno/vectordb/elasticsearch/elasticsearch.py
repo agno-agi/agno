@@ -131,9 +131,10 @@ class Elasticsearch(VectorDb):
                 Defaults to 10x the requested limit, floored at 50 and capped at the
                 cluster's limit of 10000. Higher is more accurate and slower.
             index_settings: Settings sent when the index is created, e.g.
-                {"index": {"number_of_shards": 3}}. Nothing is sent by default: a
-                serverless project manages its own shards and rejects an index creation
-                that specifies them.
+                {"index": {"number_of_shards": 3, "number_of_replicas": 1}}. Defaults to
+                no replica, which keeps a single-node cluster green; pass a replica count
+                on a multi-node cluster to make the index redundant. A serverless project
+                rejects shard settings, and the index is then created without them.
             reranker: Optional reranker for improving search results
             id: Optional custom ID. Derived from the url and index name if not provided.
             name: Optional name for the vector database
@@ -257,15 +258,22 @@ class Elasticsearch(VectorDb):
         Create index settings.
 
         Returns:
-            Optional[Dict[str, Any]]: Index settings, or None to let the cluster decide
+            Optional[Dict[str, Any]]: Index settings sent when the index is created
 
         Note:
-            Nothing is sent unless the caller asked for it. A serverless project manages
-            its own shards and rejects an index creation carrying
-            index.number_of_shards/number_of_replicas outright, which would fail
-            construction before any read or write is attempted.
+            Defaults to no replica, which is what keeps a single-node cluster green:
+            the cluster-wide default of one replica cannot be assigned when there is
+            only one node, leaving the index yellow with an unassigned shard.
+
+            A serverless project manages its own shards and rejects this setting, so
+            ``_create_index_impl`` retries without settings when it is refused rather
+            than failing construction. Shard count is deliberately not set: it has no
+            equivalent single-node problem, and leaving it out lets the cluster size
+            the index.
         """
-        return self.index_settings
+        if self.index_settings is not None:
+            return self.index_settings
+        return {"index": {"number_of_replicas": 0}}
 
     def _create_mappings(self) -> Dict[str, Any]:
         """
@@ -451,10 +459,23 @@ class Elasticsearch(VectorDb):
     def _create_kwargs(self) -> Dict[str, Any]:
         """Extra arguments for an index creation.
 
-        ``settings`` is omitted entirely when none were configured: passing
-        ``settings=None`` still sends the key, which a serverless project rejects.
+        ``settings`` is omitted entirely when there are none: passing ``settings=None``
+        still sends the key, which a serverless project rejects.
         """
         return {"settings": self.settings} if self.settings else {}
+
+    @staticmethod
+    def _is_unsupported_settings_error(error: Exception) -> bool:
+        """Whether the cluster refused the settings themselves rather than the index.
+
+        A serverless project answers an index creation carrying shard or replica
+        settings with "not available when running in serverless mode". The index is
+        creatable, just not on those terms, so the caller retries without them.
+        """
+        message = str(error)
+        return "not available when running in serverless" in message or (
+            "unknown setting" in message and "number_of_replicas" in message
+        )
 
     def _create_index_impl(self) -> None:
         """
@@ -464,7 +485,13 @@ class Elasticsearch(VectorDb):
         """
         if not self.exists():
             log_debug(f"Creating index: {self.index_name}")
-            self.client.indices.create(index=self.index_name, mappings=self.mappings, **self._create_kwargs())
+            try:
+                self.client.indices.create(index=self.index_name, mappings=self.mappings, **self._create_kwargs())
+            except Exception as e:
+                if not self._is_unsupported_settings_error(e):
+                    raise
+                log_info(f"Cluster manages its own shards; creating index {self.index_name} without settings")
+                self.client.indices.create(index=self.index_name, mappings=self.mappings)
             log_info(f"Successfully created index: {self.index_name}")
             self._owner_field_exact = True
         else:
@@ -478,9 +505,15 @@ class Elasticsearch(VectorDb):
         """
         if not await self.async_exists():
             log_debug(f"Creating index (async): {self.index_name}")
-            await self.async_client.indices.create(
-                index=self.index_name, mappings=self.mappings, **self._create_kwargs()
-            )
+            try:
+                await self.async_client.indices.create(
+                    index=self.index_name, mappings=self.mappings, **self._create_kwargs()
+                )
+            except Exception as e:
+                if not self._is_unsupported_settings_error(e):
+                    raise
+                log_info(f"Cluster manages its own shards; creating index {self.index_name} without settings")
+                await self.async_client.indices.create(index=self.index_name, mappings=self.mappings)
             log_info(f"Successfully created index (async): {self.index_name}")
             self._owner_field_exact = True
         else:

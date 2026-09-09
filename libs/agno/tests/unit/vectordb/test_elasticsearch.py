@@ -457,13 +457,15 @@ class TestElasticsearchIndexOperations:
         assert es_db.exists() is False
 
     def test_create_index_when_missing(self, es_db, mock_es_client):
-        """create() must build the index with the configured mappings."""
+        """create() must build the index with the configured mappings and settings."""
         mock_es_client.indices.exists.return_value = False
         es_db._client = mock_es_client
 
         es_db.create()
 
-        mock_es_client.indices.create.assert_called_once_with(index=TEST_INDEX_NAME, mappings=es_db.mappings)
+        mock_es_client.indices.create.assert_called_once_with(
+            index=TEST_INDEX_NAME, mappings=es_db.mappings, settings=es_db.settings
+        )
 
     def test_create_is_a_noop_when_index_exists(self, es_db, mock_es_client):
         """create() must not recreate an existing index."""
@@ -851,19 +853,52 @@ class TestElasticsearchClusterLimits:
 class TestElasticsearchServerless:
     """A serverless project manages its own shards and segments and refuses to be told otherwise."""
 
-    def test_no_index_settings_are_sent_by_default(self, es_db):
-        """Specifying shards or replicas fails index creation on serverless outright."""
-        assert es_db.settings is None
-        assert es_db._create_kwargs() == {}
+    def test_the_default_settings_keep_a_single_node_cluster_green(self, es_db):
+        """The cluster default of one replica cannot be assigned on one node, leaving it yellow."""
+        assert es_db.settings == {"index": {"number_of_replicas": 0}}
 
-    def test_create_omits_the_settings_key_entirely(self, es_db, mock_es_client):
-        """settings=None still sends the key, which is itself rejected."""
+    def test_shard_count_is_left_to_the_cluster(self, es_db):
+        """number_of_shards has no single-node problem and serverless refuses it."""
+        assert "number_of_shards" not in es_db.settings["index"]
+
+    def test_create_retries_without_settings_when_the_cluster_refuses_them(self, es_db, mock_es_client):
+        """A serverless project rejects the replica setting; the index is still creatable without it."""
         mock_es_client.indices.exists.return_value = False
+        mock_es_client.indices.create.side_effect = [
+            Exception("Settings [index.number_of_replicas] are not available when running in serverless mode"),
+            {"acknowledged": True},
+        ]
         es_db._client = mock_es_client
 
         es_db.create()
 
-        assert "settings" not in mock_es_client.indices.create.call_args[1]
+        assert mock_es_client.indices.create.call_count == 2
+        assert "settings" not in mock_es_client.indices.create.call_args_list[1][1]
+
+    @pytest.mark.asyncio
+    async def test_async_create_retries_without_settings_too(self, es_db, mock_async_es_client):
+        """The async path must degrade the same way."""
+        mock_async_es_client.indices.exists.return_value = False
+        mock_async_es_client.indices.create.side_effect = [
+            Exception("Settings [index.number_of_replicas] are not available when running in serverless mode"),
+            {"acknowledged": True},
+        ]
+        es_db._async_client = mock_async_es_client
+
+        await es_db.async_create()
+
+        assert mock_async_es_client.indices.create.await_count == 2
+
+    def test_create_does_not_retry_a_real_failure(self, es_db, mock_es_client):
+        """Only a refusal of the settings is retried; anything else propagates."""
+        mock_es_client.indices.exists.return_value = False
+        mock_es_client.indices.create.side_effect = RuntimeError("cluster unreachable")
+        es_db._client = mock_es_client
+
+        with pytest.raises(RuntimeError, match="cluster unreachable"):
+            es_db.create()
+
+        assert mock_es_client.indices.create.call_count == 1
 
     def test_index_settings_are_sent_when_asked_for(self, mock_embedder, mock_es_client):
         """A self-managed cluster can still be told how to shard."""
