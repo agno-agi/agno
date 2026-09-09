@@ -47,7 +47,10 @@ def test_page_public_imports_preserve_types_without_loading_storage():
                     "PageSourceBusy", "PageSourceMigration", "SearchHit", "SearchResult",
                     "SearchUnavailable", "SyncFailed", "SyncReport", "encoded_size", "tool_error",
                 }
-                assert set(page.__all__) == expected | {"PageFileSystem", "DocumentationMarkdown", "normalize_mdx"}
+                assert set(page.__all__) == expected | {
+                    "PageFileSystem", "DocumentationMarkdown", "normalize_mdx",
+                    "PageCommandResult",
+                }
                 for name in expected:
                     assert getattr(page, name) is getattr(types, name)
                 assert page.SearchResult().model_dump() == {
