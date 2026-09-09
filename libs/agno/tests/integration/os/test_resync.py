@@ -179,7 +179,7 @@ class TestResyncPreservesEndpoints:
             # Verify workflows endpoint works before resync
             response = client.get("/workflows")
             assert response.status_code == 200
-            workflows_before = response.json()
+            workflows_before = response.json()["data"]
             assert len(workflows_before) == 1
 
             # Perform resync
@@ -188,7 +188,7 @@ class TestResyncPreservesEndpoints:
             # Verify workflows endpoint still works after resync
             response = client.get("/workflows")
             assert response.status_code == 200
-            workflows_after = response.json()
+            workflows_after = response.json()["data"]
             assert len(workflows_after) == 1
 
     def test_resync_preserves_all_core_endpoints(self, test_agent: Agent, test_team: Team, test_workflow: Workflow):
@@ -322,7 +322,7 @@ class TestResyncWithLifespanAdditions:
             # Verify both workflows are now available
             response = client.get("/workflows")
             assert response.status_code == 200
-            workflows = response.json()
+            workflows = response.json()["data"]
             assert len(workflows) == 2
 
             workflow_ids = [workflow["id"] for workflow in workflows]
@@ -383,7 +383,7 @@ class TestResyncWithLifespanAdditions:
             # Verify all workflows are available
             response = client.get("/workflows")
             assert response.status_code == 200
-            workflows = response.json()
+            workflows = response.json()["data"]
             assert len(workflows) == 2
 
     def test_info_endpoint_works_after_lifespan_resync(self, test_agent: Agent, second_agent: Agent):

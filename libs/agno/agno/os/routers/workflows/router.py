@@ -66,6 +66,8 @@ from agno.os.schema import (
     BadRequestResponse,
     InternalServerErrorResponse,
     NotFoundResponse,
+    PaginatedResponse,
+    PaginationInfo,
     UnauthenticatedResponse,
     ValidationErrorResponse,
     WorkflowSummaryResponse,
@@ -1453,13 +1455,14 @@ def get_workflow_router(
 
     @router.get(
         "/workflows",
-        response_model=List[WorkflowSummaryResponse],
+        response_model=PaginatedResponse[WorkflowSummaryResponse],
         response_model_exclude_none=True,
         tags=["Workflows"],
         operation_id="get_workflows",
-        summary="List All Workflows",
+        summary="List Workflows",
         description=(
-            "Retrieve a comprehensive list of all workflows configured in this OS instance.\n\n"
+            "Retrieve a paginated list of workflows available in this OS instance.\n\n"
+            "Use `limit` and `page` to control pagination. Results are filtered by access before pagination.\n\n"
             "**Return Information:**\n"
             "- Workflow metadata (ID, name, description)\n"
             "- Input schema requirements\n"
@@ -1468,23 +1471,30 @@ def get_workflow_router(
         ),
         responses={
             200: {
-                "description": "List of workflows retrieved successfully",
+                "description": "Paginated list of workflows retrieved successfully",
                 "content": {
                     "application/json": {
-                        "example": [
-                            {
-                                "id": "content-creation-workflow",
-                                "name": "Content Creation Workflow",
-                                "description": "Automated content creation from blog posts to social media",
-                                "db_id": "123",
-                            }
-                        ]
+                        "example": {
+                            "data": [
+                                {
+                                    "id": "content-creation-workflow",
+                                    "name": "Content Creation Workflow",
+                                    "description": "Automated content creation from blog posts to social media",
+                                    "db_id": "123",
+                                }
+                            ],
+                            "meta": {"page": 1, "limit": 20, "total_pages": 1, "total_count": 1},
+                        }
                     }
                 },
             }
         },
     )
-    async def get_workflows(request: Request) -> List[WorkflowSummaryResponse]:
+    async def get_workflows(
+        request: Request,
+        limit: int = Query(default=20, ge=1, le=1000, description="Number of workflows per page"),
+        page: int = Query(default=1, ge=1, description="Page number"),
+    ) -> PaginatedResponse[WorkflowSummaryResponse]:
         # Filter workflows based on user's scopes (only if authorization is enabled)
         if getattr(request.state, "authorization_enabled", False):
             from agno.os.auth import (
@@ -1506,10 +1516,7 @@ def get_workflow_router(
         else:
             accessible_workflows = os.workflows or []
 
-        workflows: List[WorkflowSummaryResponse] = []
-        if accessible_workflows:
-            for workflow in accessible_workflows:
-                workflows.append(WorkflowSummaryResponse.from_workflow(workflow=workflow, is_component=False))
+        workflow_entries = [(workflow, False) for workflow in accessible_workflows]
 
         if os.db and isinstance(os.db, BaseDb):
             from agno.workflow.workflow import get_workflows
@@ -1534,15 +1541,28 @@ def get_workflow_router(
                 # filters)
                 if getattr(request.state, "authorization_enabled", False):
                     db_workflows = filter_resources_by_access(request, db_workflows, "workflows")
-            for db_workflow in db_workflows or []:
+            workflow_entries.extend((workflow, True) for workflow in db_workflows or [])
+
+        total_count = len(workflow_entries)
+        total_pages = (total_count + limit - 1) // limit
+        start = (page - 1) * limit
+        workflows: List[WorkflowSummaryResponse] = []
+        for workflow, is_component in workflow_entries[start : start + limit]:
+            if is_component:
                 try:
-                    workflows.append(WorkflowSummaryResponse.from_workflow(workflow=db_workflow, is_component=True))
+                    workflows.append(WorkflowSummaryResponse.from_workflow(workflow=workflow, is_component=True))
                 except Exception:
-                    workflow_id = getattr(db_workflow, "id", "unknown")
+                    workflow_id = getattr(workflow, "id", "unknown")
                     logger.exception(f"Error converting workflow {workflow_id} to response")
                     continue
 
-        return workflows
+            else:
+                workflows.append(WorkflowSummaryResponse.from_workflow(workflow=workflow, is_component=False))
+
+        return PaginatedResponse(
+            data=workflows,
+            meta=PaginationInfo(page=page, limit=limit, total_pages=total_pages, total_count=total_count),
+        )
 
     @router.get(
         "/workflows/{workflow_id}",

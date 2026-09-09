@@ -1580,7 +1580,7 @@ def test_workflow_filtering_with_global_scope(test_workflow, second_workflow):
     )
 
     assert response.status_code == 200
-    workflows = response.json()
+    workflows = response.json()["data"]
     assert len(workflows) == 2
     workflow_ids = {workflow["id"] for workflow in workflows}
     assert workflow_ids == {"test-workflow", "second-workflow"}
@@ -1607,7 +1607,7 @@ def test_workflow_filtering_with_wildcard_scope(test_workflow, second_workflow):
     )
 
     assert response.status_code == 200
-    workflows = response.json()
+    workflows = response.json()["data"]
     assert len(workflows) == 2
     workflow_ids = {workflow["id"] for workflow in workflows}
     assert workflow_ids == {"test-workflow", "second-workflow"}
@@ -1634,7 +1634,7 @@ def test_workflow_filtering_with_specific_scope(test_workflow, second_workflow):
     )
 
     assert response.status_code == 200
-    workflows = response.json()
+    workflows = response.json()["data"]
     assert len(workflows) == 1
     assert workflows[0]["id"] == "test-workflow"
 
@@ -1989,7 +1989,7 @@ def test_mixed_resource_filtering(test_agent, second_agent, test_team, second_te
         headers={"Authorization": f"Bearer {token}"},
     )
     assert response.status_code == 200
-    workflows = response.json()
+    workflows = response.json()["data"]
     assert len(workflows) == 2
     workflow_ids = {workflow["id"] for workflow in workflows}
     assert workflow_ids == {"test-workflow", "second-workflow"}
@@ -2022,7 +2022,7 @@ def test_no_access_to_resource_type(test_agent, test_team, test_workflow):
         headers={"Authorization": f"Bearer {token}"},
     )
     assert response.status_code == 200
-    assert len(response.json()) == 1
+    assert len(response.json()["data"]) == 1
 
     # Should NOT see teams (no scope) - returns 403 Insufficient permissions
     response = client.get(
@@ -2062,7 +2062,7 @@ def test_admin_sees_all_resources(test_agent, second_agent, test_team, test_work
         headers={"Authorization": f"Bearer {token}"},
     )
     assert response.status_code == 200
-    assert len(response.json()) == 2
+    assert len(response.json()["data"]) == 2
 
     # Should see all teams
     response = client.get(
@@ -2070,7 +2070,7 @@ def test_admin_sees_all_resources(test_agent, second_agent, test_team, test_work
         headers={"Authorization": f"Bearer {token}"},
     )
     assert response.status_code == 200
-    assert len(response.json()) == 1
+    assert len(response.json()["data"]) == 1
 
     # Should see all workflows
     response = client.get(
@@ -2078,7 +2078,7 @@ def test_admin_sees_all_resources(test_agent, second_agent, test_team, test_work
         headers={"Authorization": f"Bearer {token}"},
     )
     assert response.status_code == 200
-    assert len(response.json()) == 1
+    assert len(response.json()["data"]) == 1
 
     # Should be able to run anything
     response = client.post(
