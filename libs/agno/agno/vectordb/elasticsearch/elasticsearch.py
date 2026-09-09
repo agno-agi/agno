@@ -34,6 +34,11 @@ USER_ID_FIELD = "user_id"
 # Neighbors each shard examines before the top k are picked.
 DEFAULT_NUM_CANDIDATES_MULTIPLIER = 10
 MIN_NUM_CANDIDATES = 50
+# The cluster's own ceiling: num_candidates above this is rejected outright.
+MAX_NUM_CANDIDATES = 10000
+
+# rrf rank_window_size defaults to 10 and must be >= the requested size.
+RRF_MIN_RANK_WINDOW_SIZE = 10
 
 
 class Elasticsearch(VectorDb):
@@ -84,6 +89,7 @@ class Elasticsearch(VectorDb):
         max_retries: int = 10,
         retry_on_timeout: bool = True,
         num_candidates: Optional[int] = None,
+        index_settings: Optional[Dict[str, Any]] = None,
         reranker: Optional[Reranker] = None,
         id: Optional[str] = None,
         name: Optional[str] = None,
@@ -122,8 +128,12 @@ class Elasticsearch(VectorDb):
             max_retries: Maximum number of retry attempts
             retry_on_timeout: Whether to retry on timeout errors
             num_candidates: Neighbours each shard considers before the top k are picked.
-                Defaults to 10x the requested limit, floored at 50. Higher is more accurate
-                and slower.
+                Defaults to 10x the requested limit, floored at 50 and capped at the
+                cluster's limit of 10000. Higher is more accurate and slower.
+            index_settings: Settings sent when the index is created, e.g.
+                {"index": {"number_of_shards": 3}}. Nothing is sent by default: a
+                serverless project manages its own shards and rejects an index creation
+                that specifies them.
             reranker: Optional reranker for improving search results
             id: Optional custom ID. Derived from the url and index name if not provided.
             name: Optional name for the vector database
@@ -158,6 +168,7 @@ class Elasticsearch(VectorDb):
         self.search_type = search_type
         self.hybrid_strategy = hybrid_strategy
         self.num_candidates = num_candidates
+        self.index_settings = index_settings
         # Whether the live index can honour a user_id scope filter; resolved lazily on first use.
         self._owner_field_exact: Optional[bool] = None
 
@@ -241,14 +252,20 @@ class Elasticsearch(VectorDb):
         }
         return mapping.get(distance, Similarity.cosine)
 
-    def _create_settings(self) -> Dict[str, Any]:
+    def _create_settings(self) -> Optional[Dict[str, Any]]:
         """
         Create index settings.
 
         Returns:
-            Dict[str, Any]: Index settings
+            Optional[Dict[str, Any]]: Index settings, or None to let the cluster decide
+
+        Note:
+            Nothing is sent unless the caller asked for it. A serverless project manages
+            its own shards and rejects an index creation carrying
+            index.number_of_shards/number_of_replicas outright, which would fail
+            construction before any read or write is attempted.
         """
-        return {"index": {"number_of_shards": 1, "number_of_replicas": 0}}
+        return self.index_settings
 
     def _create_mappings(self) -> Dict[str, Any]:
         """
@@ -431,6 +448,14 @@ class Elasticsearch(VectorDb):
         """
         await self._async_execute_with_timing("async_create", self._async_create_index_impl)
 
+    def _create_kwargs(self) -> Dict[str, Any]:
+        """Extra arguments for an index creation.
+
+        ``settings`` is omitted entirely when none were configured: passing
+        ``settings=None`` still sends the key, which a serverless project rejects.
+        """
+        return {"settings": self.settings} if self.settings else {}
+
     def _create_index_impl(self) -> None:
         """
         Implementation for synchronous index creation.
@@ -439,7 +464,7 @@ class Elasticsearch(VectorDb):
         """
         if not self.exists():
             log_debug(f"Creating index: {self.index_name}")
-            self.client.indices.create(index=self.index_name, mappings=self.mappings, settings=self.settings)
+            self.client.indices.create(index=self.index_name, mappings=self.mappings, **self._create_kwargs())
             log_info(f"Successfully created index: {self.index_name}")
             self._owner_field_exact = True
         else:
@@ -454,7 +479,7 @@ class Elasticsearch(VectorDb):
         if not await self.async_exists():
             log_debug(f"Creating index (async): {self.index_name}")
             await self.async_client.indices.create(
-                index=self.index_name, mappings=self.mappings, settings=self.settings
+                index=self.index_name, mappings=self.mappings, **self._create_kwargs()
             )
             log_info(f"Successfully created index (async): {self.index_name}")
             self._owner_field_exact = True
@@ -561,13 +586,25 @@ class Elasticsearch(VectorDb):
         Implementation for index optimization.
 
         Forces merge of all segments into a single segment for better performance.
+
+        Note:
+            A serverless project manages its own segments and answers _forcemerge with
+            api_not_available_exception. Optimising is a performance hint rather than a
+            correctness step, so that answer is logged and swallowed instead of raised.
         """
-        if self.exists():
-            log_debug(f"Optimizing index: {self.index_name}")
-            self.client.indices.forcemerge(index=self.index_name, max_num_segments=1)
-            log_info(f"Successfully optimized index: {self.index_name}")
-        else:
+        if not self.exists():
             logger.warning(f"Index {self.index_name} does not exist, cannot optimize")
+            return
+
+        log_debug(f"Optimizing index: {self.index_name}")
+        try:
+            self.client.indices.forcemerge(index=self.index_name, max_num_segments=1)
+        except elasticsearch_exceptions.ApiError as e:
+            if getattr(e, "status_code", None) == 410 or "not available when running in serverless" in str(e):
+                log_info(f"Skipping optimize for index {self.index_name}: the cluster manages its own segments")
+                return
+            raise
+        log_info(f"Successfully optimized index: {self.index_name}")
 
     def count(self) -> int:
         """
@@ -1764,11 +1801,17 @@ class Elasticsearch(VectorDb):
 
         Note:
             A num_candidates below k is rejected outright, so the floor is never applied
-            below the requested limit.
+            below the requested limit, and the ceiling cannot pull it under one either:
+            the cluster caps k at 10000 too, so a limit that would need more candidates
+            than the ceiling allows is already refused for its own size.
         """
         if self.num_candidates is not None:
-            return max(self.num_candidates, limit)
-        return max(limit * DEFAULT_NUM_CANDIDATES_MULTIPLIER, MIN_NUM_CANDIDATES, limit)
+            resolved = max(self.num_candidates, limit)
+        else:
+            resolved = max(limit * DEFAULT_NUM_CANDIDATES_MULTIPLIER, MIN_NUM_CANDIDATES, limit)
+        # The cluster rejects a value above its own ceiling, and the search path turns
+        # that rejection into an empty result set rather than an error.
+        return min(resolved, MAX_NUM_CANDIDATES)
 
     def _build_knn_clause(
         self, query_embedding: List[float], limit: int, filter_conditions: List[Dict[str, Any]]
@@ -1881,10 +1924,13 @@ class Elasticsearch(VectorDb):
                 "size": limit,
                 "retriever": {
                     "rrf": {
+                        # Defaults to 10, and the cluster rejects a size larger than it,
+                        # so a page past the first 10 hits would come back empty.
+                        "rank_window_size": max(limit, RRF_MIN_RANK_WINDOW_SIZE),
                         "retrievers": [
                             {"standard": {"query": keyword_query}},
                             {"knn": knn_clause},
-                        ]
+                        ],
                     }
                 },
             }
@@ -2031,7 +2077,10 @@ class Elasticsearch(VectorDb):
             - Range operators: gt, lt, gte, lte
         """
         if "$in" in value or "in" in value:
-            in_value = value.get("$in") or value.get("in")
+            # Read by key presence, not truthiness: `or` would send an empty $in list on
+            # to the absent "in" key, drop the condition, and run the search unfiltered -
+            # so a filter selecting nothing would return everything.
+            in_value = value["$in"] if "$in" in value else value["in"]
             if isinstance(in_value, list):
                 field = self._match_field(key, in_value[0] if in_value else None)
                 log_debug(f"Added terms filter for {key}: {in_value}")

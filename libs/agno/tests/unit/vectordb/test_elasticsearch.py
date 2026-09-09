@@ -457,15 +457,13 @@ class TestElasticsearchIndexOperations:
         assert es_db.exists() is False
 
     def test_create_index_when_missing(self, es_db, mock_es_client):
-        """create() must build the index with the configured mappings and settings."""
+        """create() must build the index with the configured mappings."""
         mock_es_client.indices.exists.return_value = False
         es_db._client = mock_es_client
 
         es_db.create()
 
-        mock_es_client.indices.create.assert_called_once_with(
-            index=TEST_INDEX_NAME, mappings=es_db.mappings, settings=es_db.settings
-        )
+        mock_es_client.indices.create.assert_called_once_with(index=TEST_INDEX_NAME, mappings=es_db.mappings)
 
     def test_create_is_a_noop_when_index_exists(self, es_db, mock_es_client):
         """create() must not recreate an existing index."""
@@ -805,6 +803,111 @@ class TestElasticsearchSearch:
         mock_search.assert_called_once_with("q", 4, {"a": 1}, "alice")
 
 
+class TestElasticsearchClusterLimits:
+    """Values the cluster refuses outright, which the search path would turn into empty results."""
+
+    @pytest.mark.parametrize("limit,expected", [(5, 50), (100, 1000), (1000, 10000), (1001, 10000), (9000, 10000)])
+    def test_num_candidates_is_capped_at_the_cluster_ceiling(self, es_db, limit, expected):
+        """Above 10000 the cluster answers "[num_candidates] cannot exceed [10000]"."""
+        assert es_db._resolve_num_candidates(limit) == expected
+
+    def test_an_explicit_num_candidates_is_capped_too(self, mock_embedder):
+        """A constructor argument reaches the same ceiling as a derived value."""
+        with patch(CLIENT_PATH), patch(ASYNC_CLIENT_PATH):
+            db = Elasticsearch(
+                index_name=TEST_INDEX_NAME, dimension=TEST_DIMENSION, embedder=mock_embedder, num_candidates=20000
+            )
+
+        assert db._resolve_num_candidates(5) == 10000
+
+    def test_the_cap_never_pulls_num_candidates_below_k(self, es_db):
+        """num_candidates < k is rejected, so the ceiling must not create that case."""
+        for limit in (1, 50, 1000, 10000):
+            assert es_db._resolve_num_candidates(limit) >= limit
+
+    def test_a_capped_vector_query_is_still_well_formed(self, es_db):
+        """The knn clause the cap produces has to satisfy k <= num_candidates <= 10000."""
+        body = es_db._build_vector_query("q", 1000, None, None)
+
+        knn = body["knn"]
+        assert knn["k"] <= knn["num_candidates"] <= 10000
+
+    def test_rrf_sets_a_rank_window_large_enough_for_the_page(self, mock_embedder):
+        """rank_window_size defaults to 10; a larger size is rejected and swallowed into []."""
+        with patch(CLIENT_PATH), patch(ASYNC_CLIENT_PATH):
+            db = Elasticsearch(
+                index_name=TEST_INDEX_NAME,
+                dimension=TEST_DIMENSION,
+                embedder=mock_embedder,
+                hybrid_strategy=HybridStrategy.rrf,
+            )
+
+        for limit in (5, 10, 20, 100):
+            window = db._build_hybrid_query("q", limit, None, None)["retriever"]["rrf"]["rank_window_size"]
+            assert window >= limit, "a page larger than the rank window comes back empty"
+            assert window >= 10, "the cluster floor for rank_window_size"
+
+
+class TestElasticsearchServerless:
+    """A serverless project manages its own shards and segments and refuses to be told otherwise."""
+
+    def test_no_index_settings_are_sent_by_default(self, es_db):
+        """Specifying shards or replicas fails index creation on serverless outright."""
+        assert es_db.settings is None
+        assert es_db._create_kwargs() == {}
+
+    def test_create_omits_the_settings_key_entirely(self, es_db, mock_es_client):
+        """settings=None still sends the key, which is itself rejected."""
+        mock_es_client.indices.exists.return_value = False
+        es_db._client = mock_es_client
+
+        es_db.create()
+
+        assert "settings" not in mock_es_client.indices.create.call_args[1]
+
+    def test_index_settings_are_sent_when_asked_for(self, mock_embedder, mock_es_client):
+        """A self-managed cluster can still be told how to shard."""
+        with patch(CLIENT_PATH), patch(ASYNC_CLIENT_PATH):
+            db = Elasticsearch(
+                index_name=TEST_INDEX_NAME,
+                dimension=TEST_DIMENSION,
+                embedder=mock_embedder,
+                index_settings={"index": {"number_of_shards": 3}},
+            )
+        mock_es_client.indices.exists.return_value = False
+        db._client = mock_es_client
+
+        db.create()
+
+        assert mock_es_client.indices.create.call_args[1]["settings"] == {"index": {"number_of_shards": 3}}
+
+    def test_optimize_is_skipped_when_the_cluster_manages_its_own_segments(self, es_db, mock_es_client):
+        """_forcemerge answers api_not_available_exception; optimize is a hint, not correctness."""
+        from elastic_transport import ApiResponseMeta
+        from elasticsearch import ApiError
+
+        mock_es_client.indices.exists.return_value = True
+        mock_es_client.indices.forcemerge.side_effect = ApiError(
+            "api_not_available_exception: not available when running in serverless mode",
+            meta=ApiResponseMeta(status=410, http_version="1.1", headers={}, duration=0.0, node=None),
+            body=None,
+        )
+        es_db._client = mock_es_client
+
+        # Must not raise: optimising is a performance hint, not a correctness step.
+        es_db.optimize()
+
+    def test_optimize_still_raises_a_real_failure(self, es_db, mock_es_client):
+        """Swallowing the serverless answer must not swallow everything else."""
+        mock_es_client.indices.exists.return_value = True
+        mock_es_client.indices.forcemerge.side_effect = RuntimeError("disk full")
+
+        es_db._client = mock_es_client
+
+        with pytest.raises(RuntimeError, match="disk full"):
+            es_db.optimize()
+
+
 class TestElasticsearchFilters:
     """Test filter translation."""
 
@@ -866,6 +969,31 @@ class TestElasticsearchFilters:
     def test_empty_list_filter_does_not_raise(self, es_db):
         """An empty list has no first element to type-check, which must not blow up."""
         assert es_db._build_single_filter_condition("team", []) == {"terms": {"meta_data.team": []}}
+
+    @pytest.mark.parametrize("spelling", ["$in", "in"])
+    def test_an_empty_in_list_still_builds_a_filter(self, es_db, spelling):
+        """An empty selection must select nothing, not silently drop the filter.
+
+        Reading the operator by truthiness sent an empty $in list on to the absent "in"
+        key, dropped the condition, and ran the search unfiltered - so a filter matching
+        nothing returned every document.
+        """
+        condition = es_db._build_single_filter_condition("team", {spelling: []})
+
+        assert condition == {"terms": {"meta_data.team": []}}
+
+    def test_both_spellings_of_in_agree(self, es_db):
+        """$in and in are the same operator and must never disagree."""
+        for values in ([], ["eng"], [1, 2]):
+            assert es_db._build_single_filter_condition("team", {"$in": values}) == (
+                es_db._build_single_filter_condition("team", {"in": values})
+            )
+
+    def test_an_empty_in_list_reaches_the_query_as_a_filter(self, es_db):
+        """The dropped-condition bug was only visible once the filter reached the query."""
+        body = es_db._build_keyword_query("q", 5, {"team": {"$in": []}}, None)
+
+        assert {"terms": {"meta_data.team": []}} in body["query"]["bool"]["filter"]
 
     def test_unsupported_operator_is_dropped(self, es_db):
         """An unknown operator must be skipped rather than emit a broken clause."""
