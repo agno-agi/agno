@@ -29,8 +29,46 @@ Paths may omit the .md extension: `cat /concepts/agents` works.\
 """
 
 
+class _CommandCorpus(Mapping[str, str]):
+    def __init__(self, files: Mapping[str, str]):
+        self.files = files
+        self.status = {"errors": [], "partial": False, "truncated": False, "continuation": None, "stop_reason": None}
+
+    def __getitem__(self, key):
+        return self.files[key]
+
+    def __iter__(self):
+        return iter(self.files)
+
+    def __len__(self):
+        return len(self.files)
+
+    def __bool__(self):
+        return bool(self.files)
+
+    def __contains__(self, key):
+        return key in self.files
+
+    def __getattr__(self, name):
+        return getattr(self.files, name)
+
+
+def _error(files, code="invalid_command"):
+    files.status["errors"].append(code)
+
+
+def _partial(files, reason):
+    files.status.update(partial=True, stop_reason=reason)
+    if reason == "output_limit":
+        files.status["truncated"] = True
+
+
 class CommandError(Exception):
     """User-facing command error; its message is returned as the tool output."""
+
+    def __init__(self, message: str, code: str = "invalid_command"):
+        super().__init__(message)
+        self.code = code
 
 
 class _PageRead(str):
@@ -82,7 +120,7 @@ def _resolve_file(path: str, files: Mapping[str, str]) -> str:
     for candidate in _file_candidates(clean, index=True):
         if candidate in files:
             return candidate
-    raise CommandError(f"{path}: no such file. Use ls/tree to explore, or rg to search.")
+    raise CommandError(f"{path}: no such file. Use ls/tree to explore, or rg to search.", "page_not_found")
 
 
 def _files_under(directory: str, files: Mapping[str, str]) -> list[str]:
@@ -176,7 +214,7 @@ def _cmd_ls(args: list[str], files: Mapping[str, str]) -> str:
             if _has_file(candidate, files) and candidate not in lines:
                 lines.append(candidate)
         if not lines:
-            raise CommandError(f"{target}: no such file or directory")
+            raise CommandError(f"{target}: no such file or directory", "page_not_found")
         header = f"{clean}:\n" if len(targets) > 1 else ""
         blocks.append(header + "\n".join(lines))
     return "\n\n".join(blocks)
@@ -191,7 +229,7 @@ def _cmd_tree(args: list[str], files: Mapping[str, str]) -> str:
         for candidate in _file_candidates(root):
             if _has_file(candidate, files):
                 return candidate
-        raise CommandError(f"{root}: no such directory")
+        raise CommandError(f"{root}: no such directory", "page_not_found")
     lines = [root]
     seen_dirs = set()
     canonical_root = _canonical(root, files)
@@ -230,7 +268,7 @@ def _cmd_find(args: list[str], files: Mapping[str, str]) -> str:
         i += 1
     candidates = _files_under(root, files)
     if not candidates:
-        raise CommandError(f"find: {root}: no such directory")
+        raise CommandError(f"find: {root}: no such directory", "page_not_found")
     if pattern is None:
         return "\n".join(candidates)
     matches = [
@@ -252,6 +290,8 @@ def _read_files(paths: list[str], files: Mapping[str, str], render: Callable[[st
         try:
             resolved = _resolve_file(p, files)
         except CommandError as exc:
+            _error(files, exc.code)
+            _partial(files, "file_error")
             parts.append(str(exc))
             continue
         rendered, first_source_line = render(resolved, files[resolved])
@@ -310,6 +350,8 @@ def _cmd_wc(args: list[str], files: Mapping[str, str]) -> str:
         try:
             resolved = _resolve_file(p, files)
         except CommandError as exc:
+            _error(files, exc.code)
+            _partial(files, "file_error")
             lines.append(str(exc))
             continue
         content = files[resolved]
@@ -433,8 +475,9 @@ def _cmd_rg(args: list[str], files: Mapping[str, str]) -> str:
     from agno.knowledge.page.filesystem import PageCorpus
 
     literal_pattern = "F" in flags or not regex.search(r"[.^$*+?{}\[\]\\|()]", positional[0])
+    page_corpus = files.files if isinstance(files, _CommandCorpus) else files
     if (
-        isinstance(files, PageCorpus)
+        isinstance(page_corpus, PageCorpus)
         and literal_pattern
         and "w" not in flags
         and not before
@@ -450,11 +493,11 @@ def _cmd_rg(args: list[str], files: Mapping[str, str]) -> str:
             prefix = None
         else:
             exact = next((candidate for candidate in _file_candidates(clean) if candidate in files), None)
-            prefix = clean + "/" if files.has_directory(clean + "/") else None
+            prefix = clean + "/" if page_corpus.has_directory(clean + "/") else None
             if prefix is None and exact is None:
-                raise CommandError(f"rg: {roots[0]}: no such file or directory")
+                raise CommandError(f"rg: {roots[0]}: no such file or directory", "page_not_found")
         if prefix is not None:
-            result = files.grep(positional[0], prefix=prefix, ignore_case="i" in flags)
+            result = page_corpus.grep(positional[0], prefix=prefix, ignore_case="i" in flags)
             matches = [(m.path, m.line_number, m.text) for m in result.matches if m.path.startswith(prefix)]
             complete, stop_reason = result.complete, result.stop_reason
             if exact is not None:
@@ -479,6 +522,7 @@ def _cmd_rg(args: list[str], files: Mapping[str, str]) -> str:
             count = len({path for path, _, _ in matches})
             summary = f"[{len(matches)} matching lines in {count} files]"
             if not complete:
+                _partial(files, stop_reason)
                 summary = (
                     f"[stopped at {stop_reason}: {len(matches)} matching lines "
                     f"in {count} files so far; narrow the path]"
@@ -554,11 +598,13 @@ def _cmd_rg(args: list[str], files: Mapping[str, str]) -> str:
     # The summary goes first so the output cap can never cut it off.
     summary = f"[{total_hits} matching lines in {matched_files} files]"
     if truncated_by_time:
+        _partial(files, "deadline")
         summary = (
             f"[stopped after {command_budget:.0f}s: {total_hits} matching lines in "
             f"{matched_files} files so far; narrow the path]"
         )
     elif truncated_by_size:
+        _partial(files, "output_limit")
         summary = (
             f"[stopped at the output cap: {total_hits} matching lines in {matched_files} files so far; "
             "narrow the path or use rg -l]"
@@ -586,28 +632,37 @@ def _execute_command(command: str, files: Mapping[str, str]) -> str:
     try:
         argv = shlex.split(command or "")
     except ValueError as exc:
+        _error(files)
         return f"parse error: {exc}\n\n{USAGE}"
     if not argv:
         return USAGE
     if any(token in ("|", ">", ">>", "&&", ";", "<") for token in argv):
+        _error(files)
         return f"pipes and command chaining are not supported; run one command per call.\n\n{USAGE}"
     handler = _COMMANDS.get(argv[0])
     if handler is None:
+        _error(files)
         return f"unsupported command: {argv[0]!r}\n\n{USAGE}"
     try:
         output = handler(argv[1:], files)
     except CommandError as exc:
+        _error(files, exc.code)
         return str(exc)
     except (ValueError, RecursionError, OverflowError, MemoryError, TimeoutError) as exc:
+        _error(files, "command_failed")
         return f"{argv[0]}: could not run this command ({exc.__class__.__name__}: {exc})\n\n{USAGE}"
     return output if output else "(no output)"
 
 
-def run_command(command: str, files: Mapping[str, str]) -> str:
-    """Apply the same output bound to successful commands and readable errors."""
+def run_command_result(command: str, files: Mapping[str, str]):
+    """Retain execution status alongside the existing command presentation."""
+    from agno.knowledge.page.types import PageCommandResult
+
+    files = _CommandCorpus(files)
     output = _execute_command(command, files)
     max_output = getattr(getattr(files, "filesystem", None), "max_output_chars", MAX_OUTPUT)
     if len(output) > max_output:
+        files.status["truncated"] = True
         # Cut on a line boundary and say where it stopped. Only a single resolved page read
         # carries enough information to give an exact source-file continuation command.
         page_read = output if isinstance(output, _PageRead) else None
@@ -618,6 +673,14 @@ def run_command(command: str, files: Mapping[str, str]) -> str:
         if page_read is not None:
             # `shown` includes the `==> path <==` header, hence `shown - 1` source lines.
             next_source_line = page_read.first_source_line + shown - 1
-            advice += f", or continue with tail -n +{next_source_line} {shlex.quote(page_read.path)}"
+            files.status["continuation"] = f"tail -n +{next_source_line} {shlex.quote(page_read.path)}"
+            advice += f", or continue with {files.status['continuation']}"
         output = f"{kept}\n... [output truncated: {shown} of {total} lines shown — {advice}]"
-    return str(output) if output else "(no output)"
+    return PageCommandResult(
+        text=str(output) if output else "(no output)", is_error=bool(files.status["errors"]), **files.status
+    )
+
+
+def run_command(command: str, files: Mapping[str, str]) -> str:
+    """Apply the same output bound to successful commands and readable errors."""
+    return run_command_result(command, files).text
