@@ -65,6 +65,7 @@ class LocalFileSystemTools(Toolkit):
         filename: Optional[str] = None,
         directory: Optional[str] = None,
         extension: Optional[str] = None,
+        encoding: str = "utf-8",
     ) -> str:
         """
         Write content to a local file.
@@ -73,6 +74,7 @@ class LocalFileSystemTools(Toolkit):
             filename (Optional[str]): Name of the file. Defaults to UUID if not provided
             directory (Optional[str]): Directory to write file to. Uses target_directory if not provided
             extension (Optional[str]): File extension. Uses default_extension if not provided
+            encoding (str): Encoding to use, default - utf-8
         Returns:
             str: Path to the created file or error message
         """
@@ -91,7 +93,10 @@ class LocalFileSystemTools(Toolkit):
             # Create directory if it doesn't exist
             file_path.parent.mkdir(parents=True, exist_ok=True)
 
-            file_path.write_text(content)
+            # Encoding is explicit: `write_text` otherwise falls back to the locale
+            # encoding, so the same agent output that saves on a UTF-8 host raises
+            # UnicodeEncodeError on a host whose locale is cp1252/cp936.
+            file_path.write_text(content, encoding=encoding)
 
             return f"Successfully wrote file to: {file_path}"
 
@@ -100,12 +105,13 @@ class LocalFileSystemTools(Toolkit):
             log_error(error_msg)
             return f"Error: {error_msg}"
 
-    def read_file(self, filename: str, directory: Optional[str] = None) -> str:
+    def read_file(self, filename: str, directory: Optional[str] = None, encoding: str = "utf-8") -> str:
         """
         Read content from a local file.
         Args:
             filename (str): Name of the file to read
             directory (Optional[str]): Directory to read file from. Uses target_directory if not provided
+            encoding (str): Encoding to use, default - utf-8
         Returns:
             str: The text content of the file
         """
@@ -119,7 +125,7 @@ class LocalFileSystemTools(Toolkit):
             if not file_path.exists():
                 return f"File not found: {file_path}"
 
-            return file_path.read_text()
+            return file_path.read_text(encoding=encoding)
 
         except Exception as e:
             error_msg = f"Failed to read file: {str(e)}"
