@@ -7327,11 +7327,43 @@ def _build_forked_team_session(source_session: TeamSession, new_user_id: Optiona
     new_session_id = str(uuid4())
     forked_runs = copy.deepcopy(source_session.runs or [])
 
-    for run in forked_runs:
-        run.run_id = str(uuid4())
+    # Collect the complete run tree first; nested and independently stored representations of one run must share one new ID.
+    pending = list(forked_runs)
+    copied_runs: List[Union[TeamRunOutput, RunOutput]] = []
+    seen: Set[int] = set()
+    run_id_map: Dict[str, str] = {}
+    while pending:
+        run = pending.pop()
+        if id(run) in seen:
+            continue
+        seen.add(id(run))
+        copied_runs.append(run)
+        if run.run_id is not None and run.run_id not in run_id_map:
+            run_id_map[run.run_id] = str(uuid4())
+        if isinstance(run, TeamRunOutput):
+            pending.extend(run.member_responses or [])
+        for requirement in run.requirements or []:
+            cached_run = requirement._member_run_response
+            if isinstance(cached_run, (TeamRunOutput, RunOutput)):
+                pending.append(cached_run)
+
+    # Rewrite references only after the full mapping is known, so traversal order and shared objects cannot break links.
+    for run in copied_runs:
+        run.run_id = run_id_map[run.run_id] if run.run_id is not None else str(uuid4())
         run.session_id = new_session_id
+        if run.parent_run_id in run_id_map:
+            run.parent_run_id = run_id_map[run.parent_run_id]
         if not getattr(run, "forked_from_session_id", None):
             run.forked_from_session_id = source_session.session_id
+        for requirement in run.requirements or []:
+            if requirement.member_run_id in run_id_map:
+                requirement.member_run_id = run_id_map[requirement.member_run_id]
+            tool_execution = requirement.tool_execution
+            if tool_execution is not None and tool_execution.child_run_id in run_id_map:
+                tool_execution.child_run_id = run_id_map[tool_execution.child_run_id]
+        for tool_execution in run.tools or []:
+            if tool_execution.child_run_id in run_id_map:
+                tool_execution.child_run_id = run_id_map[tool_execution.child_run_id]
 
     new_session_data = copy.deepcopy(source_session.session_data) or {}
     new_session_data["forked_from_session_id"] = source_session.session_id
