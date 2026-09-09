@@ -1,8 +1,9 @@
+from ag_ui.core.types import AssistantMessage, FunctionCall, ToolCall, ToolMessage, UserMessage
 from ag_ui.core.types import Tool as AGUITool
-from ag_ui.core.types import ToolMessage, UserMessage
 
 from agno.models.response import ToolExecution
 from agno.os.interfaces.agui.input import (
+    describe_tool_results,
     extract_tool_messages,
     parse_client_tools,
 )
@@ -88,6 +89,55 @@ def test_extract_tool_messages_empty_content():
     result = extract_tool_messages(messages)
     assert len(result) == 1
     assert result[0].content == ""
+
+
+# describe_tool_results tests
+
+
+def _assistant_call(call_id: str, name: str, arguments: str = "{}") -> AssistantMessage:
+    return AssistantMessage(
+        id="a-" + call_id,
+        tool_calls=[ToolCall(id=call_id, type="function", function=FunctionCall(name=name, arguments=arguments))],
+    )
+
+
+def test_describe_tool_results_names_the_tool_from_the_call():
+    messages = [
+        UserMessage(id="u1", content="show me hotels"),
+        _assistant_call("call_click", "log_a2ui_event"),
+        ToolMessage(id="t1", tool_call_id="call_click", content='User performed action "bookHotel"'),
+    ]
+    described = describe_tool_results(messages, extract_tool_messages(messages))
+    assert described == 'Result of the log_a2ui_event tool call: User performed action "bookHotel"'
+
+
+def test_describe_tool_results_without_the_call_still_carries_the_content():
+    """A client may send a result with no assistant call beside it; the content is the point."""
+    messages = [ToolMessage(id="t1", tool_call_id="call_orphan", content="done")]
+    assert describe_tool_results(messages, extract_tool_messages(messages)) == "Tool result: done"
+
+
+def test_describe_tool_results_carries_an_error_in_place_of_content():
+    messages = [
+        _assistant_call("call_1", "change_background"),
+        ToolMessage(id="t1", tool_call_id="call_1", content="", error="the browser refused"),
+    ]
+    described = describe_tool_results(messages, extract_tool_messages(messages))
+    assert described == "Result of the change_background tool call: the browser refused"
+
+
+def test_describe_tool_results_keeps_every_result_in_order():
+    messages = [
+        _assistant_call("call_1", "first_tool"),
+        _assistant_call("call_2", "second_tool"),
+        ToolMessage(id="t1", tool_call_id="call_1", content="one"),
+        ToolMessage(id="t2", tool_call_id="call_2", content="two"),
+    ]
+    described = describe_tool_results(messages, extract_tool_messages(messages))
+    assert described.splitlines() == [
+        "Result of the first_tool tool call: one",
+        "Result of the second_tool tool call: two",
+    ]
 
 
 # parse_client_tools tests
