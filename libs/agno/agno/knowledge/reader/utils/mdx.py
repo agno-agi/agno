@@ -4,6 +4,8 @@ Preserve code fences, prose placeholders and relative indentation.
 Unwrap unknown components while retaining their content.
 """
 
+from __future__ import annotations
+
 import html
 import re
 from dataclasses import dataclass, field
