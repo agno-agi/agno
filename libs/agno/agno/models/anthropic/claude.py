@@ -727,11 +727,16 @@ class Claude(Model):
             log_warning("Rate limit exceeded")
             raise ModelRateLimitError(message=e.message, model_name=self.name, model_id=self.id) from e
         if isinstance(e, APIStatusError):
-            log_error(f"Claude API error (status {e.status_code})")
             if e.status_code == 529 or "overloaded_error" in str(e):
+                # Retryable: `base.py` already logs every retry attempt at WARNING, so an ERROR
+                # line here mislabels overloads that recover. The HTTP status is not what went
+                # wrong in the in-stream case (it is the stream's status, 200), so name the
+                # error type instead.
+                log_warning(f"Claude API overloaded: {e.message}")
                 raise ModelRateLimitError(
                     message=e.message, status_code=e.status_code, model_name=self.name, model_id=self.id
                 ) from e
+            log_error(f"Claude API error (status {e.status_code})")
             raise ModelProviderError(
                 message=e.message, status_code=e.status_code, model_name=self.name, model_id=self.id
             ) from e
