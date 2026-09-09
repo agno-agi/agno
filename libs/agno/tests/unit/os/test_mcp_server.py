@@ -1355,7 +1355,9 @@ def test_card_name_is_reverse_dns_and_slugged():
 
 async def test_server_card_describes_the_server_and_its_endpoint(monkeypatch):
     monkeypatch.setattr(mcp_mod, "_mcp_server_is_open", lambda os: True)
-    app = get_mcp_server(_docs_os())
+    os = _docs_os()
+    os.description = "Search the docs — café."
+    app = get_mcp_server(os)
 
     async with _mcp_client(app) as client:
         response = await client.get("/mcp/server-card", headers={"accept": "application/mcp-server-card+json"})
@@ -1364,6 +1366,9 @@ async def test_server_card_describes_the_server_and_its_endpoint(monkeypatch):
     assert response.headers["content-type"].startswith("application/mcp-server-card+json")
     assert response.headers["access-control-allow-origin"] == "*"
     assert response.headers["cache-control"] == "public, max-age=300"
+    assert response.text.startswith('{\n  "$schema": ')
+    assert "Search the docs — café." in response.text
+    assert int(response.headers["content-length"]) == len(response.content)
     card = response.json()
     # The tool entries have their own tests; everything else is pinned exactly.
     assert {key: value for key, value in card.items() if key != "tools"} == {
@@ -1371,7 +1376,7 @@ async def test_server_card_describes_the_server_and_its_endpoint(monkeypatch):
         "name": "com.example/agno-docs",
         "title": "Agno Docs",
         "version": "1.0.0",
-        "description": "Search the docs.",
+        "description": "Search the docs — café.",
         "remotes": [{"type": "streamable-http", "url": "http://example.com/mcp"}],
     }
 
