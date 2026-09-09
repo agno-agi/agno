@@ -4,14 +4,13 @@ import time
 import weakref
 from contextlib import asynccontextmanager
 from dataclasses import asdict
-from datetime import timedelta
 from typing import TYPE_CHECKING, Any, AsyncIterator, Callable, Literal, Optional, Tuple, Union
 
 from agno.tools import Toolkit
 from agno.tools.function import Function
 from agno.tools.mcp.params import SSEClientParams, StreamableHTTPClientParams
 from agno.utils.log import log_debug, log_error, log_warning
-from agno.utils.mcp import get_default_toolkit_name, get_entrypoint_for_tool, prepare_command
+from agno.utils.mcp import MCPSession, get_default_toolkit_name, get_entrypoint_for_tool, ping_session, prepare_command
 
 if TYPE_CHECKING:
     from agno.agent import Agent
@@ -20,11 +19,220 @@ if TYPE_CHECKING:
 
 try:
     from mcp import ClientSession, StdioServerParameters
-    from mcp.client.sse import sse_client
-    from mcp.client.stdio import get_default_environment, stdio_client
-    from mcp.client.streamable_http import streamablehttp_client
-except (ImportError, ModuleNotFoundError):
-    raise ImportError("`mcp` not installed. Please install using `pip install mcp`")
+    from mcp.client.stdio import get_default_environment
+except ModuleNotFoundError:
+    raise ImportError("`mcp` not installed. Please install using `pip install 'mcp>=2.1.0,<3.0.0'`")
+
+
+_FASTMCP_INSTALL_HINT = (
+    "`fastmcp` not installed. MCPTools builds its connections with it. "
+    "Please install using `pip install 'fastmcp>=4.0.0,<5'`"
+)
+
+
+def _import_fastmcp() -> Any:
+    """Import fastmcp, raising the same shape of error the ``mcp`` guard above does.
+
+    fastmcp is imported lazily because it is only needed when the toolkit builds its own
+    connection, but a missing install must still say so: connect() swallows exceptions,
+    so an unguarded ModuleNotFoundError surfaces only as an agent running with no tools.
+    """
+    try:
+        import fastmcp
+    except ModuleNotFoundError:
+        raise ImportError(_FASTMCP_INSTALL_HINT)
+    return fastmcp
+
+
+def _retain_session_transport_class() -> Any:
+    """A transport that keeps the server session alive when the client closes.
+
+    fastmcp's StreamableHttpTransport calls the SDK's ``streamable_http_client`` without
+    ``terminate_on_close``, so the SDK default (send DELETE on close) always wins and a
+    caller asking to retain the session silently loses it.
+
+    This subclasses fastmcp's public ``ClientTransport`` base and drives the MCP SDK
+    directly, which is the layer that owns the flag. Nothing is copied from fastmcp's
+    own transport internals, so a 4.x upgrade cannot silently change what this does --
+    it depends only on ``ClientTransport``'s documented contract and the SDK signature.
+
+    Used only when the caller asks to retain the session; every other connection stays
+    on fastmcp's stock transport.
+    """
+    import contextlib
+
+    from mcp import ClientSession
+    from mcp.client.streamable_http import streamable_http_client
+
+    _import_fastmcp()
+    from fastmcp.client.transports import ClientTransport
+
+    class _RetainSessionTransport(ClientTransport):
+        def __init__(
+            self,
+            url: str,
+            *,
+            headers: Optional[dict] = None,
+            httpx_client_factory: Any = None,
+            terminate_on_close: Any = False,
+        ) -> None:
+            super().__init__()
+            self.url = url
+            self.headers = headers or {}
+            self.httpx_client_factory = httpx_client_factory
+            self._terminate_on_close = bool(terminate_on_close)
+            self._session_id: Optional[str] = None
+
+        async def _capture_session_id(self, response: Any) -> None:
+            """httpx response hook: record the server's ``mcp-session-id``.
+
+            The SDK's client no longer surfaces the id, so it is read off the response
+            headers the way fastmcp's own transport does. Without this
+            ``get_session_id()`` stays None here and the tool-call trace spans lose it.
+            """
+            sid = response.headers.get("mcp-session-id")
+            if sid:
+                self._session_id = sid
+
+        def get_session_id(self) -> Optional[str]:
+            return self._session_id
+
+        @contextlib.asynccontextmanager
+        async def connect_session(self, *, transport_options: Any = None, **session_kwargs: Any) -> Any:
+            from mcp.shared._httpx_utils import create_mcp_http_client
+
+            factory = self.httpx_client_factory or create_mcp_http_client
+            http_client = factory(headers=dict(self.headers), auth=None)
+            self._session_id = None
+            http_client.event_hooks.setdefault("response", []).append(self._capture_session_id)
+
+            session_class = getattr(transport_options, "session_class", None) or ClientSession
+            async with (
+                http_client,
+                streamable_http_client(
+                    self.url,
+                    http_client=http_client,
+                    terminate_on_close=self._terminate_on_close,
+                ) as (read_stream, write_stream),
+                session_class(read_stream, write_stream, **session_kwargs) as session,
+            ):
+                yield session
+
+    return _RetainSessionTransport
+
+
+def _http_client_factory(timeout: Any, sse_read_timeout: Any) -> Any:
+    """Build the httpx client factory that keeps operation and stream timeouts distinct.
+
+    ``timeout`` covers connect/write/pool; ``sse_read_timeout`` bounds the long-lived
+    stream read. Either knob left unset keeps the SDK default (30s ops, 300s read)
+    rather than going unbounded -- ``read=None`` means no read limit at all.
+    """
+    import httpx2
+    from mcp.shared._httpx_utils import create_mcp_http_client
+
+    # A timedelta may arrive from an older config; normalize to seconds.
+    if timeout is not None and hasattr(timeout, "total_seconds"):
+        timeout = timeout.total_seconds()
+    if sse_read_timeout is not None and hasattr(sse_read_timeout, "total_seconds"):
+        sse_read_timeout = sse_read_timeout.total_seconds()
+
+    op_timeout = float(timeout) if timeout is not None else 30.0
+    read_timeout = float(sse_read_timeout) if sse_read_timeout is not None else 300.0
+
+    def factory(*, headers: Any = None, auth: Any = None, **_: Any) -> Any:
+        return create_mcp_http_client(
+            headers=headers,
+            auth=auth,
+            timeout=httpx2.Timeout(op_timeout, read=read_timeout),
+        )
+
+    return factory
+
+
+def _is_fastmcp_client(session: Any) -> bool:
+    """True when the session is a fastmcp Client (which handshakes on its own)."""
+    try:
+        from fastmcp import Client
+    except ModuleNotFoundError:
+        return False
+    return isinstance(session, Client)
+
+
+def _build_fastmcp_client(
+    transport: str,
+    params: dict,
+    server_params: Any,
+    timeout_seconds: float,
+    protocol_mode: str,
+) -> Any:
+    """Build a ``fastmcp.Client`` for one connection.
+
+    fastmcp's transports take ``headers`` directly, so the httpx client no longer has
+    to be assembled by hand, and the client drives its own connect/initialize/close --
+    ``async with`` is the whole lifecycle. ``protocol_mode`` selects the protocol era:
+    "legacy" keeps the session-based behaviour this toolkit has always had, "auto"
+    negotiates the newest era both sides support.
+    """
+    _import_fastmcp()
+    from fastmcp import Client
+    from fastmcp.client.transports import SSETransport, StdioTransport, StreamableHttpTransport
+
+    if transport == "streamable-http":
+        # fastmcp derives the HTTP read timeout from the session timeout, which would
+        # cut long-lived streams down to it. Build the httpx client here instead so
+        # ``sse_read_timeout`` keeps bounding the stream read, as params.py documents.
+        transport_kwargs: dict = {
+            "headers": params.get("headers") or None,
+            "httpx_client_factory": _http_client_factory(params.get("timeout"), params.get("sse_read_timeout")),
+        }
+        # fastmcp's transport drops terminate_on_close, which would tear down a session
+        # the caller asked to keep. Swap in the subclass that forwards it, and only then
+        # -- the default path stays on the stock transport.
+        #
+        # Falsy, not just False: StreamableHTTPClientParams defaults the field to None,
+        # and the SDK gates the DELETE on `session_id and terminate_on_close`, so None
+        # has always meant "keep the session". Treating it as True here would silently
+        # start terminating sessions for every caller using the dataclass default.
+        terminate_on_close = params.get("terminate_on_close", True)
+        if terminate_on_close:
+            transport_cls: Any = StreamableHttpTransport
+        else:
+            transport_cls = _retain_session_transport_class()
+            transport_kwargs["terminate_on_close"] = terminate_on_close
+        fastmcp_transport: Any = transport_cls(params["url"], **transport_kwargs)
+        timeout = params.get("timeout")
+    elif transport == "sse":
+        # Same split as streamable-http: without the factory, fastmcp derives the whole
+        # httpx timeout from the session read timeout and the caller's connect/write
+        # timeout is lost. SSETransport keeps its own sse_read_timeout for the stream.
+        fastmcp_transport = SSETransport(
+            params["url"],
+            headers=params.get("headers") or None,
+            sse_read_timeout=params.get("sse_read_timeout"),
+            httpx_client_factory=_http_client_factory(params.get("timeout"), params.get("sse_read_timeout")),
+        )
+        timeout = params.get("timeout")
+    else:
+        # stdio carries no headers: the server is a subprocess, not an HTTP endpoint.
+        # keep_alive=False because close() must stop that subprocess. fastmcp defaults it
+        # on, which would leave one orphaned child per connect/close cycle -- and a
+        # non-AgentOS agent run does one cycle per run.
+        fastmcp_transport = StdioTransport(
+            command=server_params.command,
+            args=list(server_params.args or []),
+            env=dict(server_params.env) if server_params.env else None,
+            cwd=getattr(server_params, "cwd", None),
+            keep_alive=False,
+        )
+        timeout = None
+
+    # A timedelta may arrive from an older config; normalize to seconds.
+    if timeout is not None and hasattr(timeout, "total_seconds"):
+        timeout = timeout.total_seconds()
+    client_timeout = min(timeout_seconds, float(timeout)) if timeout is not None else float(timeout_seconds)
+
+    return Client(fastmcp_transport, timeout=client_timeout, mode=protocol_mode)
 
 
 class MCPTools(Toolkit):
@@ -56,6 +264,7 @@ class MCPTools(Toolkit):
         tool_name_prefix: Optional[str] = None,
         headers: Optional[dict[str, Any]] = None,
         header_provider: Optional[Callable[..., dict[str, Any]]] = None,
+        protocol_mode: Literal["legacy", "auto"] = "legacy",
         **kwargs,
     ):
         """
@@ -66,7 +275,9 @@ class MCPTools(Toolkit):
                 parameters (URL or command), so multiple MCP toolkits in one registry stay
                 distinguishable and selectable by name. Falls back to "MCPTools" when only
                 a session is provided.
-            session: An initialized MCP ClientSession connected to an MCP server
+            session: An initialized MCP ClientSession connected to an MCP server. When
+                omitted, the toolkit builds its own connection and ``self.session`` holds
+                a ``fastmcp.Client`` instead.
             server_params: Parameters for creating a new session
             command: The command to run to start the server. Should be used in conjunction with env.
             url: The URL endpoint for SSE or Streamable HTTP connection when transport is "sse" or "streamable-http".
@@ -86,6 +297,11 @@ class MCPTools(Toolkit):
                 Only relevant with HTTP transports (Streamable HTTP or SSE).
                 Invoked during connect() so secured servers receive auth on the handshake,
                 and again per agent run when run context is available.
+            protocol_mode: Which MCP protocol era to negotiate. "legacy" (the default)
+                keeps the session-based era (<= 2025-11-25), where the connection is
+                long-lived and liveness checks work. "auto" negotiates the newest era both
+                sides support; the 2026-07-28 era is sessionless, so a server that gates on
+                initialize, keeps per-session state, or elicits mid-tool needs "legacy".
         """
         # Extract these before super().__init__() to bypass early validation
         # (tools aren't available until build_tools() is called)
@@ -124,6 +340,7 @@ class MCPTools(Toolkit):
         self.show_result_tools = show_result_tools or []
         self.refresh_connection = refresh_connection
         self.tool_name_prefix = tool_name_prefix
+        self.protocol_mode = protocol_mode
 
         if session is None and server_params is None:
             if transport == "sse" and url is None:
@@ -179,7 +396,9 @@ class MCPTools(Toolkit):
             self.header_provider = header_provider
 
         self.timeout_seconds = timeout_seconds
-        self.session: Optional[ClientSession] = session
+        # Either a caller-supplied ClientSession or the fastmcp Client built for an
+        # internally-created connection; MCPSession is the surface both satisfy.
+        self.session: Optional[MCPSession] = session
         self.server_params: Optional[Union[StdioServerParameters, SSEClientParams, StreamableHTTPClientParams]] = (
             server_params
         )
@@ -210,8 +429,8 @@ class MCPTools(Toolkit):
 
         # Session management for per-agent-run sessions with dynamic headers
         # Maps run_id to (session, timestamp) for TTL-based cleanup
-        self._run_sessions: dict[str, Tuple[ClientSession, float]] = {}
-        self._run_session_contexts: dict[str, Any] = {}  # Maps run_id to session context managers
+        self._run_sessions: dict[str, Tuple[MCPSession, float]] = {}
+        self._run_session_contexts: dict[str, Any] = {}  # Maps run_id to its connection context
         self._session_ttl_seconds: float = 300.0  # 5 minutes TTL for MCP sessions
         self._session_lock: Optional[asyncio.Lock] = None  # Lazily created lock for session creation
 
@@ -342,7 +561,7 @@ class MCPTools(Toolkit):
         run_context: Optional["RunContext"] = None,
         agent: Optional["Agent"] = None,
         team: Optional["Team"] = None,
-    ) -> AsyncIterator[ClientSession]:
+    ) -> AsyncIterator[MCPSession]:
         """
         Create a dynamic-header session for one tool call and close it in the
         same task that opened it.
@@ -360,58 +579,28 @@ class MCPTools(Toolkit):
 
         dynamic_headers = self._merge_http_headers(run_context=run_context, agent=agent, team=team)
 
-        if self.transport == "sse":
-            sse_params = asdict(self.server_params) if self.server_params is not None else {}  # type: ignore
-            if "url" not in sse_params:
-                sse_params["url"] = self.url
-            existing_headers = sse_params.get("headers") or {}
-            sse_params["headers"] = {**existing_headers, **dynamic_headers}
-            context = sse_client(**sse_params)  # type: ignore
-            client_timeout = min(self.timeout_seconds, sse_params.get("timeout", self.timeout_seconds))
-        elif self.transport == "streamable-http":
-            streamable_http_params = asdict(self.server_params) if self.server_params is not None else {}  # type: ignore
-            if "url" not in streamable_http_params:
-                streamable_http_params["url"] = self.url
-            existing_headers = streamable_http_params.get("headers") or {}
-            streamable_http_params["headers"] = {**existing_headers, **dynamic_headers}
-            context = streamablehttp_client(**streamable_http_params)  # type: ignore
-            params_timeout = streamable_http_params.get("timeout", self.timeout_seconds)
-            if isinstance(params_timeout, timedelta):
-                params_timeout = int(params_timeout.total_seconds())
-            client_timeout = min(self.timeout_seconds, params_timeout)
-        else:
+        if self.transport not in ("sse", "streamable-http"):
             if self.session is None:
                 raise ValueError("Session is not initialized")
             yield self.session
             return
 
-        session_context = None
-        try:
-            session_params = await context.__aenter__()  # type: ignore
-            read, write = session_params[0:2]
-
-            session_context = ClientSession(read, write, read_timeout_seconds=timedelta(seconds=client_timeout))  # type: ignore
-            session = await session_context.__aenter__()  # type: ignore
-            await session.initialize()
-
+        client = _build_fastmcp_client(
+            self.transport,
+            self._connection_params(dynamic_headers),
+            self.server_params,
+            self.timeout_seconds,
+            self.protocol_mode,
+        )
+        async with client as session:
             yield session
-        finally:
-            if session_context is not None:
-                try:
-                    await session_context.__aexit__(None, None, None)
-                except BaseException:
-                    pass
-            try:
-                await context.__aexit__(None, None, None)
-            except BaseException:
-                pass
 
     async def get_session_for_run(
         self,
         run_context: Optional["RunContext"] = None,
         agent: Optional["Agent"] = None,
         team: Optional["Team"] = None,
-    ) -> ClientSession:
+    ) -> MCPSession:
         """
         Get or create a session for the given run context.
 
@@ -424,7 +613,8 @@ class MCPTools(Toolkit):
             team: The Team instance (if running within a team)
 
         Returns:
-            ClientSession for the run
+            The session object for the run: a fastmcp Client for an internally-created
+            connection, or the caller-supplied ClientSession.
         """
         # If no header_provider or no run_context, use the default session
         if not self.header_provider or not run_context:
@@ -465,66 +655,28 @@ class MCPTools(Toolkit):
             dynamic_headers = self._merge_http_headers(run_context=run_context, agent=agent, team=team)
 
             # Create new session with merged headers based on transport type
-            if self.transport == "sse":
-                sse_params = asdict(self.server_params) if self.server_params is not None else {}  # type: ignore
-                if "url" not in sse_params:
-                    sse_params["url"] = self.url
-
-                # Merge dynamic headers into existing headers
-                existing_headers = sse_params.get("headers") or {}
-                sse_params["headers"] = {**existing_headers, **dynamic_headers}
-
-                context = sse_client(**sse_params)  # type: ignore
-                client_timeout = min(self.timeout_seconds, sse_params.get("timeout", self.timeout_seconds))
-
-            elif self.transport == "streamable-http":
-                streamable_http_params = asdict(self.server_params) if self.server_params is not None else {}  # type: ignore
-                if "url" not in streamable_http_params:
-                    streamable_http_params["url"] = self.url
-
-                # Merge dynamic headers into existing headers
-                existing_headers = streamable_http_params.get("headers") or {}
-                streamable_http_params["headers"] = {**existing_headers, **dynamic_headers}
-
-                context = streamablehttp_client(**streamable_http_params)  # type: ignore
-                params_timeout = streamable_http_params.get("timeout", self.timeout_seconds)
-                if isinstance(params_timeout, timedelta):
-                    params_timeout = int(params_timeout.total_seconds())
-                client_timeout = min(self.timeout_seconds, params_timeout)
-            else:
+            if self.transport not in ("sse", "streamable-http"):
                 # stdio doesn't support headers, fall back to default session
                 log_warning(f"Cannot use dynamic headers with {self.transport} transport, using default session")
                 if self.session is None:
                     raise ValueError("Session is not initialized")
                 return self.session
 
-            # Enter the context and create session — clean up on partial failure
-            session_context = None
-            try:
-                session_params = await context.__aenter__()  # type: ignore
-                read, write = session_params[0:2]
+            # The client unwinds itself if the handshake fails, so a partially-entered
+            # connection needs no hand-rolled teardown here.
+            context = _build_fastmcp_client(
+                self.transport,
+                self._connection_params(dynamic_headers),
+                self.server_params,
+                self.timeout_seconds,
+                self.protocol_mode,
+            )
+            session = await context.__aenter__()
 
-                session_context = ClientSession(read, write, read_timeout_seconds=timedelta(seconds=client_timeout))  # type: ignore
-                session = await session_context.__aenter__()  # type: ignore
-
-                # Initialize the session
-                await session.initialize()
-            except Exception:
-                # Exit partially-entered context managers to avoid resource leaks
-                if session_context is not None:
-                    try:
-                        await session_context.__aexit__(None, None, None)
-                    except Exception:
-                        pass
-                try:
-                    await context.__aexit__(None, None, None)
-                except Exception:
-                    pass
-                raise
-
-            # Store the session with timestamp and context for cleanup
+            # One Client is transport and session both, so a single context is stored and
+            # cleanup exits it exactly once.
             self._run_sessions[run_id] = (session, time.time())
-            self._run_session_contexts[run_id] = (context, session_context)
+            self._run_session_contexts[run_id] = context
 
             return session
 
@@ -541,20 +693,13 @@ class MCPTools(Toolkit):
 
         try:
             # Get the context managers
-            context, session_context = self._run_session_contexts.get(run_id, (None, None))
+            session_context = self._run_session_contexts.get(run_id)
 
             # Try to clean up session context
             # Silently ignore cleanup errors - these are harmless
             if session_context is not None:
                 try:
                     await session_context.__aexit__(None, None, None)
-                except BaseException:
-                    pass  # Silently ignore (includes CancelledError)
-
-            # Try to clean up transport context
-            if context is not None:
-                try:
-                    await context.__aexit__(None, None, None)
                 except BaseException:
                     pass  # Silently ignore (includes CancelledError)
 
@@ -567,10 +712,19 @@ class MCPTools(Toolkit):
             pass  # Silently ignore all cleanup errors
 
     async def is_alive(self) -> bool:
+        """Whether the connection is still usable.
+
+        Only meaningful on the session-based era. The 2026-07-28 era removed ping and
+        holds no session to probe, so with ``protocol_mode="auto"`` against a modern
+        server this reports True without sending anything: a dead server surfaces on the
+        next real request instead.
+        """
         if self.session is None:
             return False
         try:
-            await self.session.send_ping()
+            # No-ops on the sessionless 2026 era, which has no ping and no connection
+            # to keep alive -- so a modern-era client reports alive rather than failing.
+            await ping_session(self.session)
             return True
         except Exception:
             return False
@@ -587,7 +741,7 @@ class MCPTools(Toolkit):
 
         if self._context is not None:
             try:
-                await self._context.aclose()  # type: ignore[attr-defined]
+                await self._context.aclose()
             except BaseException:
                 try:
                     await self._context.__aexit__(None, None, None)
@@ -619,6 +773,22 @@ class MCPTools(Toolkit):
             log_error(f"Failed to connect to {str(self)}: {e}")
             await self._safe_cleanup()
 
+    def _connection_params(self, extra_headers: Optional[dict] = None) -> dict:
+        """Resolve server_params into a plain dict, filling in the url and merging headers.
+
+        stdio carries no url or headers, so it returns an empty dict and the caller
+        reads the command off ``server_params`` instead.
+        """
+        if self.transport not in ("sse", "streamable-http"):
+            return {}
+
+        params = asdict(self.server_params) if self.server_params is not None else {}  # type: ignore[arg-type]
+        if "url" not in params or params["url"] is None:
+            params["url"] = self.url
+        if extra_headers:
+            params["headers"] = {**(params.get("headers") or {}), **extra_headers}
+        return params
+
     async def _connect(self) -> None:
         """Connects to the MCP server and initializes the tools"""
 
@@ -634,71 +804,21 @@ class MCPTools(Toolkit):
         # not only on subsequent tool calls.
         init_headers = self._merge_http_headers()
 
-        # Create a new studio session
-        if self.transport == "sse":
-            sse_params = asdict(self.server_params) if self.server_params is not None else {}  # type: ignore
-            if "url" not in sse_params:
-                sse_params["url"] = self.url
-            if init_headers:
-                existing_headers = sse_params.get("headers") or {}
-                sse_params["headers"] = {**existing_headers, **init_headers}
-            self._context = sse_client(**sse_params)  # type: ignore
-            client_timeout = min(self.timeout_seconds, sse_params.get("timeout", self.timeout_seconds))
+        if self.transport == "stdio" and self.server_params is None:
+            raise ValueError("server_params must be provided when using stdio transport.")
 
-        # Create a new streamable HTTP session
-        elif self.transport == "streamable-http":
-            streamable_http_params = asdict(self.server_params) if self.server_params is not None else {}  # type: ignore
-            if "url" not in streamable_http_params:
-                streamable_http_params["url"] = self.url
-            if init_headers:
-                existing_headers = streamable_http_params.get("headers") or {}
-                streamable_http_params["headers"] = {**existing_headers, **init_headers}
-            self._context = streamablehttp_client(**streamable_http_params)  # type: ignore
-            params_timeout = streamable_http_params.get("timeout", self.timeout_seconds)
-            if isinstance(params_timeout, timedelta):
-                params_timeout = int(params_timeout.total_seconds())
-            client_timeout = min(self.timeout_seconds, params_timeout)
+        params = self._connection_params(init_headers)
 
-        else:
-            if self.server_params is None:
-                raise ValueError("server_params must be provided when using stdio transport.")
-            self._context = stdio_client(self.server_params)  # type: ignore
-            client_timeout = self.timeout_seconds
-
-        try:
-            session_params = await self._context.__aenter__()  # type: ignore
-        except BaseException:
-            # Close the partially-entered transport
-            if self._context is not None:
-                try:
-                    await self._context.aclose()  # type: ignore[attr-defined]
-                except BaseException:
-                    try:
-                        await self._context.__aexit__(None, None, None)
-                    except BaseException:
-                        pass
-                self._context = None
-            raise
-        self._active_contexts.append(self._context)
-        read, write = session_params[0:2]
-
-        self._session_context = ClientSession(read, write, read_timeout_seconds=timedelta(seconds=client_timeout))  # type: ignore
-        try:
-            self.session = await self._session_context.__aenter__()  # type: ignore
-        except BaseException:
-            if self._session_context is not None:
-                try:
-                    await self._session_context.__aexit__(None, None, None)
-                except BaseException:
-                    pass
-                self._session_context = None
-            if self._context is not None:
-                try:
-                    await self._context.__aexit__(None, None, None)
-                except BaseException:
-                    pass
-                self._context = None
-            raise
+        # One fastmcp Client owns the transport, the session and the handshake, so a
+        # partially-entered connection unwinds itself instead of being unwound by hand.
+        self._session_context = _build_fastmcp_client(
+            self.transport,  # type: ignore[arg-type]
+            params,
+            self.server_params,
+            self.timeout_seconds,
+            self.protocol_mode,
+        )
+        self.session = await self._session_context.__aenter__()  # type: ignore[attr-defined]
         self._active_contexts.append(self._session_context)
 
         # Initialize with the new session
@@ -766,17 +886,20 @@ class MCPTools(Toolkit):
 
         try:
             # Get the list of tools from the MCP server
-            available_tools = await self.session.list_tools()  # type: ignore
+            listed = await self.session.list_tools()
+            # fastmcp's Client yields a plain list; a user-supplied ClientSession
+            # yields a ListToolsResult carrying .tools.
+            available_tools = listed if isinstance(listed, list) else listed.tools
 
             self._check_tools_filters(
-                available_tools=[tool.name for tool in available_tools.tools],
+                available_tools=[tool.name for tool in available_tools],
                 include_tools=self.include_tools,
                 exclude_tools=self.exclude_tools,
             )
 
             # Filter tools based on include/exclude lists
             filtered_tools = []
-            for tool in available_tools.tools:
+            for tool in available_tools:
                 if self.exclude_tools and tool.name in self.exclude_tools:
                     continue
                 if self.include_tools is None or tool.name in self.include_tools:
@@ -793,7 +916,7 @@ class MCPTools(Toolkit):
                     # Get an entrypoint for the tool
                     entrypoint = get_entrypoint_for_tool(
                         tool=tool,
-                        session=self.session,  # type: ignore
+                        session=self.session,
                         mcp_tools_instance=self,
                     )
                     # Create a Function for the tool
@@ -805,7 +928,7 @@ class MCPTools(Toolkit):
                     f = Function(
                         name=tool_name_prefix + tool_name,
                         description=tool.description,
-                        parameters=tool.inputSchema,
+                        parameters=tool.input_schema,
                         entrypoint=entrypoint,
                         # Set skip_entrypoint_processing to True to avoid processing the entrypoint
                         skip_entrypoint_processing=True,
@@ -839,8 +962,12 @@ class MCPTools(Toolkit):
             if self.session is None:
                 raise ValueError("Session is not initialized")
 
-            # Initialize the session if not already initialized
-            await self.session.initialize()
+            # fastmcp's Client performs the handshake on entry, and on the modern
+            # (sessionless) era there is no initialize step to repeat -- calling it there
+            # raises. Anything else, including a caller-supplied ClientSession, still
+            # needs the explicit call.
+            if not _is_fastmcp_client(self.session):
+                await self.session.initialize()
 
             await self.build_tools()
 

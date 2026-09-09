@@ -313,6 +313,7 @@ class AgentOS:
         scheduler_poll_interval: int = 15,
         scheduler_base_url: Optional[str] = None,
         internal_service_token: Optional[str] = None,
+        public: Optional[Any] = None,
     ):
         """Initialize AgentOS.
 
@@ -426,6 +427,8 @@ class AgentOS:
         self.telemetry = telemetry
         self.tracing = tracing
 
+        self._public_explicit_id = id
+        self.public = public
         self.mcp_config: Optional[MCPConfig] = None
         # ``mcp_server`` is the deprecated alias for ``mcp``.
         if mcp is not None and mcp_server is not None and mcp != mcp_server:
@@ -746,10 +749,18 @@ class AgentOS:
 
         # Add A2A interface if relevant
         has_a2a_interface = False
+        self._public_interface_routes: List[tuple[str, str]] = []
         for interface in self.interfaces:
             if not has_a2a_interface and interface.__class__.__name__ == "A2A":
                 has_a2a_interface = True
             interface_router = interface.get_router()
+            if getattr(interface, "authenticates_own_requests", False):
+                self._public_interface_routes.extend(
+                    (method, route.path)
+                    for route in interface_router.routes
+                    if hasattr(route, "methods") and hasattr(route, "path")
+                    for method in route.methods
+                )
             self._add_router(app, interface_router)
         if self.a2a_interface and not has_a2a_interface:
             from agno.os.interfaces.a2a import A2A
@@ -1279,6 +1290,12 @@ class AgentOS:
         setup_tracing_for_os(db=db)
 
     def get_app(self) -> FastAPI:
+        if self.public is not None:
+            from agno.os.public import PublicSurface
+
+            if not isinstance(self.public, PublicSurface):
+                raise ValueError("AgentOS.public must be a PublicSurface")
+            self.public._bind(self)
         # Pick up MCP tools added to the registry after construction, before the
         # lifespan that connects them is assembled below
         collect_mcp_tools_from_registry(self.registry, self.mcp_tools)
@@ -1553,6 +1570,28 @@ class AgentOS:
         if service_account_verifier is not None:
             fastapi_app.state.service_account_verifier = service_account_verifier
 
+        if self.public is not None:
+            from contextlib import asynccontextmanager
+
+            from agno.os.public._middleware import PublicMiddleware
+            from agno.os.public._policy import PublicRoutePolicy
+
+            fastapi_app.state.public_route_policy = PublicRoutePolicy(self.public, self)
+
+            original_lifespan = fastapi_app.router.lifespan_context
+
+            @asynccontextmanager
+            async def public_lifespan(app):
+                assert self.public is not None
+                await self.public._limiter._aprepare()
+                async with original_lifespan(app) as state:
+                    yield state
+
+            fastapi_app.router.lifespan_context = public_lifespan
+            fastapi_app.add_middleware(
+                PublicMiddleware, surface=self.public, agent_os=self, policy=fastapi_app.state.public_route_policy
+            )
+
         auth_configured = bool(self.authorization or jwt_env_configured or security_key)
         if auth_configured:
             # In JWT mode the security key is ignored (JWT takes precedence), matching
@@ -1571,6 +1610,15 @@ class AgentOS:
         from agno.os.middleware.trailing_slash import TrailingSlashMiddleware
 
         fastapi_app.add_middleware(TrailingSlashMiddleware)
+
+        if self.public is not None:
+            from starlette.middleware.cors import CORSMiddleware
+
+            # Keep preflights and admission/auth failures under the configured CORS policy.
+            cors = [middleware for middleware in fastapi_app.user_middleware if middleware.cls is CORSMiddleware]
+            fastapi_app.user_middleware[:] = cors + [
+                middleware for middleware in fastapi_app.user_middleware if middleware.cls is not CORSMiddleware
+            ]
 
         if self.base_app is not None:
             self._base_app_prepared = True
@@ -1737,8 +1785,8 @@ class AgentOS:
         # BaseInterface.authenticates_own_requests) are excluded from the central auth
         # layer alongside the public routes. Interfaces that do NOT self-authenticate
         # (e.g. A2A) stay behind AuthMiddleware, so enabling authentication protects them
-        # too. Passing excluded_route_paths replaces the middleware defaults, so the
-        # defaults are repeated here.
+        # too. Passing excluded_route_paths replaces the middleware defaults, so custom,
+        # interface, and MCP exclusions are merged with the defaults here.
         excluded_route_paths: Optional[List[str]] = None
         interface_prefixes: List[str] = []
         if self.interfaces:
@@ -1758,7 +1806,14 @@ class AgentOS:
             from agno.os.mcp_auth import mcp_auth_route_paths
 
             mcp_auth_paths = mcp_auth_route_paths(mcp_auth_provider)
-        if interface_prefixes or mcp_auth_paths:
+        # The Server Card is discovery before authentication: public by design, no secrets.
+        server_card_paths: List[str] = []
+        if self.mcp and (self.mcp_config is None or self.mcp_config.server_card):
+            from agno.os.config import MCP_SERVER_CARD_PATH
+
+            server_card_paths = [MCP_SERVER_CARD_PATH]
+        excluded_routes = (self.authorization_config.excluded_route_paths or []) if self.authorization_config else []
+        if excluded_routes or interface_prefixes or mcp_auth_paths or server_card_paths:
             excluded_route_paths = (
                 [
                     "/",
@@ -1769,8 +1824,10 @@ class AgentOS:
                     "/openapi.json",
                     "/docs/oauth2-redirect",
                 ]
+                + excluded_routes
                 + interface_prefixes
                 + mcp_auth_paths
+                + server_card_paths
             )
 
         middleware_kwargs["excluded_route_paths"] = excluded_route_paths
@@ -1995,6 +2052,7 @@ class AgentOS:
             try:
                 if hasattr(db, "_create_all_tables") and callable(db._create_all_tables):
                     db._create_all_tables()
+                    log_info(f"Database ready: {db.__class__.__name__} id={db.id}")
             except Exception as e:
                 log_warning(f"Failed to initialize {db.__class__.__name__} (id: {db.id}): {str(e)}")
 
@@ -2019,6 +2077,7 @@ class AgentOS:
             try:
                 if hasattr(db, "_create_all_tables") and callable(db._create_all_tables):
                     await db._create_all_tables()
+                    log_info(f"Database ready: {db.__class__.__name__} id={db.id}")
             except Exception as e:
                 log_warning(f"Failed to initialize async {db.__class__.__name__} (id: {db.id}): {str(e)}")
 
