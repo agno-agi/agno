@@ -40,6 +40,7 @@ class StopReason(str, Enum):
     completed = "completed"  # run finished; the only state a scorer sees
     error = "error"  # run raised or yielded an error event
     timeout = "timeout"  # exceeded timeout_seconds; whatever was captured is kept
+    truncated = "truncated"  # hit the output limit; no content to score, same category as timeout
     cancelled = "cancelled"  # run was cancelled
     paused = "paused"  # HITL pause; content is placeholder boilerplate, never scored
 
@@ -118,6 +119,39 @@ def _tool_call_limit_hit(run: Optional[AnyRunOutput]) -> bool:
     return False
 
 
+def _is_truncated(run: AnyRunOutput) -> bool:
+    """A run that reports completed but carries no content: the output limit was hit.
+
+    A model that exhausts `max_output_tokens` returns an incomplete response, and the
+    run still lands on `RunStatus.completed` with `content` left None -- under an
+    `output_schema` there is nothing parseable, and without one there is no final text.
+    No provider adapter normalizes an incomplete/length finish reason onto `RunOutput`
+    today, so content is the only cross-provider signal available; this is the
+    content-side fallback rather than a guess from token counts.
+
+    Three deliberate narrowings, each of which would otherwise turn a scoreable attempt
+    into an unscored one:
+
+    - `is None`, not "empty or blank". An empty answer is an answer and stays scored.
+    - a run that ended on `stop_after_tool_call` never emits a final assistant turn, so
+      its content is legitimately None. Those runs are exactly what `ToolCallScorer`
+      grades -- it reads `run.tools`, not `run.content` -- and calling them truncated
+      would convert a correct pass into no data at all.
+    - a run carrying non-text output (images, video, audio, generated files) answered
+      in another modality: `content` is legitimately None and a scorer reading
+      `run.images` must still be invoked. Truncation means no output of ANY modality.
+
+    Residual: an `output_schema` run truncated *mid-answer* keeps its partial text, so
+    content is a `str` and this returns False. Detection stays on the licensed
+    content-side signal rather than guessing at schema conformance.
+    """
+    if run.content is not None:
+        return False
+    if run.images or run.videos or run.audio or run.response_audio or run.files:
+        return False
+    return not any(getattr(execution, "stop_after_tool_call", False) for execution in (run.tools or []))
+
+
 def _stop_reason_for(state: _AttemptState) -> StopReason:
     """Pure derivation -- called both for the scoring gate and the final result."""
     if state.errored:
@@ -126,7 +160,9 @@ def _stop_reason_for(state: _AttemptState) -> StopReason:
         return StopReason.error
     status = state.run.status
     if status == RunStatus.completed:
-        return StopReason.completed
+        # Before the scoring gate, so a scorer reading run.content is never handed a
+        # truncated run: no answer is not a wrong answer.
+        return StopReason.truncated if _is_truncated(state.run) else StopReason.completed
     mapped = _STATUS_TO_STOP.get(status)
     return StopReason(mapped) if mapped is not None else StopReason.error
 
@@ -219,7 +255,13 @@ async def _run_attempt(
         stop_reason = StopReason.timeout
     else:
         stop_reason = _stop_reason_for(state)
-        if stop_reason != StopReason.completed and not state.errored:
+        if stop_reason == StopReason.truncated:
+            # Explain the outcome the way the timeout branch does: a run reading
+            # "completed" with nothing in it is otherwise unreadable in the report.
+            # No cause claim: the engine has no token evidence, and this string reaches
+            # `summary()["first_error"]` and the grid headline.
+            state.errors.append("truncated: the run completed with no content")
+        elif stop_reason != StopReason.completed and not state.errored:
             if state.run is None:
                 state.errors.append("no run output recorded")
             else:
