@@ -2795,6 +2795,7 @@ def _add_transport_security_middleware(
     mcp_app: StarletteWithLifespan,
     allowed_hosts: List[str],
     allowed_origins: Optional[List[str]],
+    origin_allowed: Optional[Callable[[str], bool]] = None,
 ) -> None:
     """Add built-in DNS-rebinding protection: validate the Host (and Origin when present).
 
@@ -2817,6 +2818,7 @@ def _add_transport_security_middleware(
             if (
                 origin is not None
                 and origin not in origin_set
+                and not (origin_allowed and origin_allowed(origin))
                 and not _mcp_host_allowed(_mcp_origin_hostname(origin), host_set)
             ):
                 return JSONResponse({"error": "invalid_origin", "detail": "Origin not allowed."}, status_code=400)
@@ -2970,6 +2972,12 @@ def get_mcp_server(
     if allowed_hosts is None and _mcp_server_is_open(os):
         allowed_hosts = []
     if allowed_hosts is not None:
-        _add_transport_security_middleware(mcp_app, allowed_hosts, allowed_origins)
+
+        def browser_origin_allowed(origin: str) -> bool:
+            policy = getattr(os, "_cors_origin_policy", None)
+            public = getattr(os, "public", None)
+            return bool(public and public.enforce_browser_origins and policy is not None and policy.allows(origin))
+
+        _add_transport_security_middleware(mcp_app, allowed_hosts, allowed_origins, browser_origin_allowed)
 
     return mcp_app
