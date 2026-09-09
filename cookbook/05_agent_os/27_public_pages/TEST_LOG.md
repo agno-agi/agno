@@ -147,3 +147,12 @@ neither shared environment was modified. Live database/provider modes were not
 run. The focused public-configuration and MCP suites passed all 204 tests.
 
 ---
+
+
+## 2026-09-09 native sync and function progress
+
+- PASS: 815 workflow/worker/page-contract tests; nine skips include unsupported sync-with-async executor combinations and existing skips. Covers function progress identity, attempt numbers, non-stream output isolation, event serialization, real QueueWorker execution/event delivery/run storage, bounded coalescing, early close/cancellation capacity retention and worker errors.
+- PASS: all 123 disposable PostgreSQL page-storage tests, including new sync/async progress counts, terminal partial status and observer failure isolation.
+- PASS: `page_sync_progress.py --check` with demo Python; emits native workflow/step progress and completion without storage/provider calls.
+- PASS: full format and validation scripts.
+- Control Plane visual rendering was not exercised and requires consumer support for StepProgress. Existing AG-UI PR8710 is related presentation work; no renderer or production deployment changed here.

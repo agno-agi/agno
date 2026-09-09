@@ -2111,3 +2111,47 @@ async def test_full_page_database_deadline_recovers_after_lock(corpus, async_mod
         with pytest.raises(PageError):
             await read(0.05)
     assert await read(2) == site["https://docs.example.com/agent.md"]
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+def test_native_sync_progress_stream_counts_and_terminal_partial_status(corpus, asynchronous):
+    import asyncio
+
+    from agno.knowledge.page import PageSyncProgress, SyncReport
+
+    knowledge, embedder, site = corpus
+
+    def collect():
+        if not asynchronous:
+            return list(knowledge.stream_sync_pages(url="https://docs.example.com/llms.txt"))
+
+        async def events():
+            return [event async for event in knowledge.astream_sync_pages(url="https://docs.example.com/llms.txt")]
+
+        return asyncio.run(events())
+
+    events = collect()
+    assert isinstance(events[-1], SyncReport) and events[-1].updated == 1
+    progress = [event for event in events if isinstance(event, PageSyncProgress)]
+    assert progress[0].stage == "waiting"
+    assert any(event.stage == "discovered" and event.discovered == 1 for event in progress)
+    assert any(event.processed == 1 and event.updated == 1 for event in progress)
+    site["https://docs.example.com/agent.md"] += "\nChanged content.\n"
+    embedder.fail = True
+    events = collect()
+    assert isinstance(events[-1], SyncReport)
+    assert events[-1].status == "partial" and events[-1].failed == 1
+    assert any(isinstance(event, PageSyncProgress) and event.failed == 1 for event in events)
+
+
+def test_failed_progress_observer_does_not_fail_publication(corpus):
+    knowledge, _, _ = corpus
+    seen = []
+
+    def observer(event):
+        seen.append(event)
+        raise RuntimeError("observer failed")
+
+    report = knowledge.sync_pages(url="https://docs.example.com/llms.txt", on_progress=observer)
+    assert report.updated == 1 and report.status == "completed"
+    assert len(seen) == 1

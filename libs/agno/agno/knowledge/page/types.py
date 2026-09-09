@@ -120,6 +120,19 @@ class GrepResult(PageResult):
     stop_reason: Optional[Literal["limit", "output_limit", "deadline"]] = None
 
 
+class PageSyncProgress(PageResult):
+    """Observer snapshot; terminal success/partial status is carried by SyncReport."""
+
+    stage: Literal["waiting", "discovered", "publishing", "pruning"]
+    discovered: int = 0
+    processed: int = 0
+    updated: int = 0
+    deleted: int = 0
+    failed: int = 0
+    unknown: int = 0
+    path: Optional[str] = None
+
+
 class SyncReport(PageResult):
     status: Literal["unchanged", "completed", "partial"]
     discovered: int = 0

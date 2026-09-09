@@ -55,6 +55,7 @@ from agno.knowledge.page.types import (
     PageNotFound,
     PageRead,
     PageSearchConfig,
+    PageSyncProgress,
     SearchHit,
     SearchResult,
     SearchUnavailable,
@@ -1339,14 +1340,44 @@ class PageCoordinator:
         index_version: str = "1",
         reindex: bool = False,
         validate_discovery: Optional[Callable[[int, int], None]] = None,
+        on_progress: Optional[Callable[[PageSyncProgress], None]] = None,
         budget: Optional[WorkBudget] = None,
     ) -> SyncReport:
+        if on_progress is not None and not callable(on_progress):
+            raise ValueError("on_progress must be a synchronous callable")
+
+        def progress(stage, *, path=None):
+            nonlocal on_progress
+            if on_progress is None:
+                return
+            try:
+                outcome = on_progress(
+                    PageSyncProgress(
+                        stage=stage,
+                        discovered=discovered,
+                        processed=processed,
+                        updated=updated,
+                        deleted=deleted,
+                        failed=failed,
+                        unknown=unknown,
+                        path=path,
+                    )
+                )
+                if inspect.isawaitable(outcome):
+                    if inspect.iscoroutine(outcome):
+                        outcome.close()
+                    raise ValueError("on_progress must be synchronous")
+            except Exception:
+                log_warning("Page sync progress observer failed; further updates are disabled")
+                on_progress = None
+
         if validate_discovery is not None and not callable(validate_discovery):
             raise ValueError("validate_discovery must be a synchronous callable")
         self._ready()
         budget = budget or WorkBudget(3900)
         source = PageSource(url, public_url, budget)
-        updated = deleted = failed = unknown = 0
+        updated = deleted = failed = unknown = processed = discovered = 0
+        progress("waiting")
         errors = []
         acquired = False
         with self.engine.connect() as conn:
@@ -1373,6 +1404,8 @@ class PageCoordinator:
                         raise ValueError("filesystem namespace is bound to another documentation source")
                     self._source_attempt(conn, source, "processing")
                 pages = source.discover()
+                discovered = len(pages)
+                progress("discovered")
                 if validate_discovery is not None:
                     with conn.begin():
                         self._settings(conn, budget)
@@ -1394,6 +1427,7 @@ class PageCoordinator:
                 ) as prepared_pages:
                     for page, content, prepared, fetch_error in prepared_pages:
                         budget.remaining()
+                        processed += 1
                         try:
                             if fetch_error is not None:
                                 raise fetch_error
@@ -1427,7 +1461,9 @@ class PageCoordinator:
                             with conn.begin():
                                 self._settings(conn, budget)
                                 self._attempt(conn, page, "failed")
+                        progress("publishing", path=page.path)
                 if source.complete and not errors and not failed and not unknown:
+                    progress("pruning")
                     with conn.begin():
                         paths = [
                             row.metadata["_agno"]["page"]["path"]
@@ -1450,6 +1486,7 @@ class PageCoordinator:
                                 )
                                 pending_delete = True
                             deleted += 1
+                            progress("pruning", path=path)
                         except Exception:
                             if conn.invalidated or conn.closed or pending_delete:
                                 conn.invalidate()
