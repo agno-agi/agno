@@ -32,7 +32,7 @@ Bot Connector can reach.
 |---|---|
 | `MICROSOFT_APP_ID` | Bot Framework application id; optional only in the credential-free bypass mode below |
 | `MICROSOFT_APP_PASSWORD` | Client secret for the Bot Framework application; optional under the same mode |
-| `MICROSOFT_APP_TENANT_ID` | Entra tenant guid; leave unset for multi-tenant bots |
+| `MICROSOFT_APP_TENANT_ID` | Entra tenant guid. Required for a single-tenant bot, which is what the portal creates; leave unset only if your app registration is multi-tenant |
 | `OPENAI_API_KEY` | Model calls for both `basic.py` and `proactive_alert.py` |
 
 Managed Identity (`UserAssignedMSI`) is not supported: the interface authenticates
@@ -40,32 +40,78 @@ with a client secret.
 
 ## Configure Microsoft
 
-1. In the Azure Portal create an **Azure Bot** resource.
-2. On the bot's **Configuration** page, generate a client secret for the
-   Microsoft Entra ID application and copy the App ID.
-3. Choose **Multi Tenant** unless the bot is scoped to a single tenant; the
-   tenant guid is only required for single-tenant bots.
+1. In the Azure Portal create an **Azure Bot** resource. The portal creates a
+   single-tenant app registration, so keep the **App tenant ID** it shows you --
+   the token endpoint needs it, and the multi-tenant option the older docs
+   describe is no longer offered here.
+2. Copy the **Microsoft App ID** from the bot's **Configuration** page.
+3. Create a client secret: **Configuration → Manage Password**, which opens the
+   app registration's **Certificates & secrets**, then **New client secret**.
+
+   > Copy the **Value** column, not **Secret ID**. Both are shown once, side by
+   > side, and only the Value works. A Secret ID is a 36-character guid; a Value
+   > is around 40 characters and usually contains a `~`. The Value is masked
+   > permanently as soon as you navigate away, so copy it before doing anything
+   > else. Sending the wrong one fails as
+   > `AADSTS7000215: Invalid client secret provided`, and only on the *outbound*
+   > leg -- inbound messages still arrive and are processed, which makes it look
+   > like a delivery problem rather than a credential one.
+
 4. Set the **Messaging endpoint** to
    `https://your-public-domain/msteams/messages`.
 5. Under **Channels**, add the **Microsoft Teams** channel.
 6. Start the example and expose port 7777 through an HTTPS tunnel or a
    deployment. The endpoint must be reachable when Teams delivers the first
    message.
-7. In the Teams admin center or Developer Portal, upload an app manifest that
-   references the bot's App ID and install it into a team or personal chat.
-
-For example:
 
 ```bash
 export MICROSOFT_APP_ID="..."
-export MICROSOFT_APP_PASSWORD="..."
+export MICROSOFT_APP_PASSWORD="..."       # the secret Value, not the Secret ID
+export MICROSOFT_APP_TENANT_ID="..."      # required for a single-tenant bot
 export OPENAI_API_KEY="..."
 
 .venvs/demo/bin/python cookbook/05_agent_os/26_teams/basic.py
 ```
 
+Verify the credentials before sending a message. This is the same client-credentials
+exchange the interface makes for every outbound reply:
+
+```bash
+curl -s -o /dev/null -w "%{http_code}\n" \
+  -X POST "https://login.microsoftonline.com/$MICROSOFT_APP_TENANT_ID/oauth2/v2.0/token" \
+  -d "grant_type=client_credentials" \
+  -d "client_id=$MICROSOFT_APP_ID" \
+  -d "client_secret=$MICROSOFT_APP_PASSWORD" \
+  -d "scope=https://api.botframework.com/.default"
+```
+
+`200` means replies will send. `401` means the secret or the tenant is wrong; drop
+the `-o /dev/null` to read Microsoft's error, which names the field.
+
 The server must be running and publicly reachable when the first Teams message
 is sent, because the Bot Connector times out around fifteen seconds.
+
+## Installing the Bot in Teams
+
+**For a personal chat**, no app package is needed. Once the Teams channel is
+connected, open the bot directly:
+
+```text
+https://teams.microsoft.com/l/chat/0/0?users=28:<your-app-id>
+```
+
+That is the same link the channel's **Open in Teams** action produces, and it is
+enough to exercise everything except channels and group chats.
+
+**For channels and group chats**, upload an app package: a `manifest.json`
+declaring `scopes` of `personal`, `team` and `groupChat`, plus a 192x192 colour
+icon and a 32x32 transparent outline icon, zipped with all three at the root.
+Upload it under **Apps → Manage your apps → Upload an app**.
+
+The manifest's `id` and the bot's `botId` are independent values. Set `botId` to
+the app id; give `id` a fresh guid. Reusing the app id for both is refused with
+"the app's external ID is already being used" whenever a catalogue entry already
+holds it.
 
 ## Endpoints
 
@@ -135,10 +181,12 @@ it and the channel-scoped `from.id` otherwise:
    The trailing identifier is a prefix of the run's `user_id`. The message text
    is logged separately at debug level.
 
-4. Read the full identifier out of the session database:
+4. Read the full identifier out of that example's session database. Each example
+   writes its own: `basic.py` uses `tmp/teams_basic.db`, `proactive_alert.py`
+   uses `tmp/teams_alerts.db`. Query the one the bot you messaged was running.
 
    ```bash
-   sqlite3 tmp/teams_alerts.db \
+   sqlite3 tmp/teams_basic.db \
      "SELECT user_id FROM agno_sessions
       WHERE session_id LIKE 'teams:%'
       ORDER BY updated_at DESC LIMIT 1;"
@@ -150,6 +198,10 @@ it and the channel-scoped `from.id` otherwise:
    export ALERT_USER_ID="<full-user-id-from-the-query-above>"
    .venvs/demo/bin/python cookbook/05_agent_os/26_teams/proactive_alert.py
    ```
+
+   The two examples register different agent ids against different databases, so
+   a reference stored while `basic.py` was running is not visible here. Message
+   the bot once with `proactive_alert.py` running before expecting a delivery.
 
 Proactive delivery only succeeds against a live conversation reference, and its
 two failure modes want opposite handling. `False` means no reference is stored
