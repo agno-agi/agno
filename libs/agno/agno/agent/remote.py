@@ -157,15 +157,28 @@ class RemoteAgent(BaseRemote):
             return self._agent_config.role
         return None
 
+    def _parse_tools_config(self) -> Optional[List[Dict[str, Any]]]:
+        agent_config = self._agent_config
+        if agent_config is None or agent_config.tools is None:
+            return None
+
+        tools_config = agent_config.tools.get("tools")
+        if tools_config is None:
+            return None
+        if isinstance(tools_config, str):
+            tools_config = json.loads(tools_config)
+        if isinstance(tools_config, list):
+            return tools_config
+
+        raise TypeError(f"Expected tools config to be a list or JSON string, got {type(tools_config).__name__}")
+
     @property
     def tools(self) -> Optional[List[Dict[str, Any]]]:
-        if self._agent_config is not None:
-            try:
-                return json.loads(self._agent_config.tools["tools"]) if self._agent_config.tools else None
-            except Exception as e:
-                log_warning(f"Failed to load tools for agent {self.agent_id}: {str(e)}")
-                return None
-        return None
+        try:
+            return self._parse_tools_config()
+        except Exception as e:
+            log_warning(f"Failed to load tools for agent {self.agent_id}: {str(e)}")
+            return None
 
     @property
     def db(self) -> Optional[RemoteDb]:
@@ -203,9 +216,11 @@ class RemoteAgent(BaseRemote):
         return None
 
     async def aget_tools(self, **kwargs: Any) -> List[Dict]:
-        if self._agent_config is not None and self._agent_config.tools is not None:
-            return json.loads(self._agent_config.tools["tools"])
-        return []
+        try:
+            return self._parse_tools_config() or []
+        except Exception as e:
+            log_warning(f"Failed to load tools for agent {self.agent_id}: {str(e)}")
+            return []
 
     @overload
     async def arun(
