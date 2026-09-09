@@ -353,6 +353,7 @@ class QueueWorker:
         config: QueueConfig,
         worker_id: Optional[str] = None,
         stop_timeout: int = _DEFAULT_STOP_TIMEOUT,
+        auto_provision: bool = True,
     ) -> None:
         from uuid import uuid4
 
@@ -361,6 +362,7 @@ class QueueWorker:
         self.config = config
         self.worker_id = worker_id or f"worker-{uuid4().hex[:8]}"
         self.stop_timeout = stop_timeout
+        self.auto_provision = auto_provision
         if stop_timeout >= config.lock_grace_seconds:
             # Hard validation, not a warning: violating this GUARANTEES the
             # drain-sweep race - a draining run's lease can expire mid-drain
@@ -385,6 +387,7 @@ class QueueWorker:
         if self._running:
             return
         self._running = True
+        await self._prepare_store()
         # Lease renewal runs on a DEDICATED THREAD wherever the store allows
         # it: a liveness signal must not depend on the health of the thing
         # whose liveness it certifies. The old loop-task heartbeat died
@@ -393,12 +396,6 @@ class QueueWorker:
         # lock_grace and a peer swept a healthy worker; sync I/O releases
         # the GIL, so a thread keeps beating precisely when the loop cannot.
         if isinstance(self.store, _SyncStoreAdapter):
-            # Prime the store's lazy table init from the loop's thread pool
-            # first: the sync Postgres adapter's first _get_table is not
-            # safe under two first-callers, and the heartbeat thread is
-            # about to become a second caller.
-            with contextlib.suppress(Exception):
-                await self.store.get_job(self.worker_id)
             self._start_heartbeat_thread(self.store._store.heartbeat_jobs)
         else:
             # Async persistent stores (e.g. AsyncPostgresDb) face the same
@@ -408,14 +405,6 @@ class QueueWorker:
             # event loop instead.
             thread_store = self._clone_store_for_heartbeat_thread()
             if thread_store is not None:
-                # Prime the worker's OWN store first (symmetric with the sync
-                # branch): the clone is a distinct instance with its own lazy
-                # table cache, and without an existing table its first beat
-                # could race the poll loop's first call into concurrent
-                # CREATE TABLE IF NOT EXISTS (checkfirst is not atomic).
-                # After this, both instances only reflect an existing table.
-                with contextlib.suppress(Exception):
-                    await self.store.get_job(self.worker_id)
                 self._start_heartbeat_thread(thread_store.heartbeat_jobs, owned_store=thread_store)
             else:
                 from agno.job_queue.store import InMemoryQueueStore
@@ -441,7 +430,24 @@ class QueueWorker:
         # never begin executing (and potentially block the loop) before the
         # heartbeat exists.
         self._task = asyncio.create_task(self._poll_loop())
-        log_info(f"Job queue worker started (worker={self.worker_id}, poll={self.config.poll_interval}s)")
+        log_info(f"Job queue worker started: worker={self.worker_id} poll={self.config.poll_interval:g}s")
+
+    async def _prepare_store(self) -> None:
+        """Finish optional provisioning before heartbeat and poll tasks race to resolve tables."""
+        ensure = getattr(self.store, "ensure_jobs_table", None)
+        if self.auto_provision and callable(ensure):
+            try:
+                await ensure()
+            except Exception as exc:
+                log_warning(
+                    f"Job queue storage preparation failed ({type(exc).__name__}); "
+                    "provision the jobs table and verify database permissions. Jobs may be unavailable.",
+                )
+        else:
+            # Third-party stores and externally provisioned databases keep the
+            # existing read-only startup probe. An empty store is normal.
+            with contextlib.suppress(Exception):
+                await self.store.get_job(self.worker_id)
 
     def _clone_store_for_heartbeat_thread(self) -> Optional[Any]:
         """A second instance of an async persistent store, owned by the
@@ -2255,7 +2261,6 @@ async def aprepare_accepted_or_abort(
     """
     try:
         await aprepare_queued_run(component, component_type, run_id, session_id, user_id, input)
-        return
     except Exception as e:
         cancelled = False
         with contextlib.suppress(Exception):
@@ -2287,6 +2292,8 @@ async def aprepare_accepted_or_abort(
             detail=f"Run acceptance aborted: the run row could not be prepared ({type(e).__name__}); "
             "the queued job was cancelled and will not execute. Retry the submission.",
         )
+
+    log_info(f"{component_type.capitalize()} queued: {getattr(component, 'id', component_type)} run={run_id}")
 
 
 async def aticket_poll_fallback(
@@ -2390,13 +2397,7 @@ async def queue_lifespan(app: Any, agent_os: Any):
     warn_unfenced_session_stores(agent_os)
 
     if isinstance(get_event_stream(), InMemoryEventStream):
-        log_warning(
-            "Durable queue with the in-memory event stream: streamed views of queued runs are "
-            "replica-local. In a multi-replica deployment, a stream request accepted on one "
-            "replica cannot see events produced by another replica's worker - the tail will idle "
-            "until client timeout even though the run completes durably. Set queue.redis to wire "
-            "a shared event stream."
-        )
+        log_warning("Queued-run streams are replica-local; configure queue.redis for cross-replica streaming.")
 
     def resolve_component(component_type: str, component_id: str) -> Any:
         registry = {
@@ -2427,7 +2428,11 @@ async def queue_lifespan(app: Any, agent_os: Any):
         return None
 
     worker = QueueWorker(
-        store=store, resolve_component=resolve_component, config=config, stop_timeout=resolve_stop_timeout(config)
+        store=store,
+        resolve_component=resolve_component,
+        config=config,
+        stop_timeout=resolve_stop_timeout(config),
+        auto_provision=getattr(agent_os, "auto_provision_dbs", True),
     )
     app.state.queue_worker = worker
     set_active_queue_worker(worker)

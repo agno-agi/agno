@@ -2,7 +2,7 @@ import asyncio
 import re
 from hashlib import md5
 from math import sqrt
-from typing import Any, Dict, List, Optional, Union, cast
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union, cast
 
 from agno.utils.string import generate_id
 
@@ -32,11 +32,21 @@ from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.knowledge.reranker.base import Reranker
 from agno.utils.log import log_debug, log_error, log_info, log_warning
-from agno.vectordb.base import VectorDb, aembed_before_replace, embed_before_replace, is_rate_limit_error, raise_embedding_failures, retrievable_documents
+from agno.vectordb.base import (
+    VectorDb,
+    aembed_before_replace,
+    embed_before_replace,
+    is_rate_limit_error,
+    raise_embedding_failures,
+    retrievable_documents,
+)
 from agno.vectordb.distance import Distance
 from agno.vectordb.pgvector.index import HNSW, Ivfflat
 from agno.vectordb.score import normalize_score, score_to_distance_threshold
 from agno.vectordb.search import SearchType
+
+if TYPE_CHECKING:
+    from agno.db.postgres import PostgresDb
 
 
 class PgVector(VectorDb):
@@ -67,6 +77,8 @@ class PgVector(VectorDb):
         reranker: Optional[Reranker] = None,
         create_schema: bool = True,
         similarity_threshold: Optional[float] = None,
+        *,
+        db: Optional["PostgresDb"] = None,
     ):
         """
         Initialize the PgVector instance.
@@ -78,6 +90,8 @@ class PgVector(VectorDb):
             description (Optional[str]): Description of the vector database.
             db_url (Optional[str]): Database connection URL.
             db_engine (Optional[Engine]): SQLAlchemy database engine.
+            db (Optional[PostgresDb]): Borrow a synchronous PostgreSQL database's engine.
+                Cannot be combined with db_url or db_engine; does not transfer ownership.
             embedder (Optional[Embedder]): Embedder instance for creating embeddings.
             search_type (SearchType): Type of search to perform.
             vector_index (Union[Ivfflat, HNSW]): Vector index configuration.
@@ -94,8 +108,20 @@ class PgVector(VectorDb):
         if not table_name:
             raise ValueError("Table name must be provided.")
 
+        if db is not None:
+            from agno.db.postgres import PostgresDb
+
+            if db_url is not None or db_engine is not None:
+                raise ValueError("Provide db alone, without db_url or db_engine")
+            if (
+                not isinstance(db, PostgresDb)
+                or not isinstance(db.db_engine, Engine)
+                or db.db_engine.dialect.name != "postgresql"
+            ):
+                raise ValueError("db requires a synchronous PostgresDb; use db_engine for a direct engine")
+            db_engine = db.db_engine
         if db_engine is None and db_url is None:
-            raise ValueError("Either 'db_url' or 'db_engine' must be provided.")
+            raise ValueError("Provide db, db_url, or db_engine")
 
         if id is None:
             base_seed = db_url or str(db_engine.url)  # type: ignore
@@ -162,7 +188,13 @@ class PgVector(VectorDb):
         self._owner_column_exists: Optional[bool] = None
         # Database table
         self.table: Table = self.get_table()
-        log_debug(f"Initialized PgVector with table '{self.schema}.{self.table_name}'")
+        log_debug(f"Initialized PgVector with table '{self.schema}.{self.table_name}'", log_level=2)
+
+    def _replace_page_on(self, conn, content_id: str, records: List[Dict[str, Any]]) -> None:
+        """Replace already embedded page records using the caller's transaction."""
+        conn.execute(self.table.delete().where(self.table.c.content_id == content_id))
+        for start in range(0, len(records), 100):
+            conn.execute(self.table.insert(), records[start : start + 100])
 
     def get_table_v1(self) -> Table:
         """
@@ -219,7 +251,7 @@ class PgVector(VectorDb):
         Returns:
             bool: True if the table exists, False otherwise.
         """
-        log_debug(f"Checking if table '{self.table.fullname}' exists.")
+        log_debug(f"Checking table {self.table.fullname}", log_level=2)
         try:
             return inspect(self.db_engine).has_table(self.table_name, schema=self.schema)
         except Exception as e:
@@ -232,16 +264,16 @@ class PgVector(VectorDb):
         """
         if not self.table_exists():
             with self.Session() as sess, sess.begin():
-                log_debug("Creating extension: vector")
+                log_debug("Ensuring extension vector", log_level=2)
                 sess.execute(text("CREATE EXTENSION IF NOT EXISTS vector;"))
                 if self.create_schema and self.schema is not None:
                     try:
-                        log_debug(f"Creating schema: {self.schema}")
+                        log_debug(f"Ensuring schema {self.schema}", log_level=2)
                         sess.execute(text(f"CREATE SCHEMA IF NOT EXISTS {self.schema};"))
                     except Exception as e:
                         log_warning(f"Could not create schema {self.schema}: {str(e)}")
-            log_debug(f"Creating table: {self.table_name}")
             self.table.create(self.db_engine)
+            log_debug(f"Created table {self.table.fullname}")
             self._owner_column_exists = True
 
     async def async_create(self) -> None:
@@ -522,7 +554,13 @@ class PgVector(VectorDb):
         """
         # Embed before the delete below: clearing the old chunks first would destroy
         # retrievable content if the embedder then fails.
+        for document in documents:
+            if not document.embedding:
+                document.embedding = None
         embed_before_replace(documents, self.embedder)
+        # Empty results retain generic partial ingestion: write the usable chunks
+        # without asking the embedder again. Raised failures above still precede deletion.
+        documents = retrievable_documents(documents)
         self._require_owner_column(user_id)
         try:
             if self.content_hash_exists(content_hash, user_id=user_id):
@@ -559,7 +597,7 @@ class PgVector(VectorDb):
                         batch_records_dict: Dict[str, Dict[str, Any]] = {}  # Use dict to deduplicate by ID
                         for doc in batch_docs:
                             try:
-                                record = self._get_document_record(doc, filters, content_hash, user_id)
+                                record = self._get_document_record(doc, filters, content_hash, user_id, prepared=True)
                                 # Use the generated record ID (which includes content_hash) for deduplication
                                 batch_records_dict[record["id"]] = record
                             except EmbeddingError:
@@ -626,8 +664,11 @@ class PgVector(VectorDb):
         filters: Optional[Dict[str, Any]] = None,
         content_hash: str = "",
         user_id: Optional[str] = None,
+        *,
+        prepared: bool = False,
     ) -> Dict[str, Any]:
-        doc.embed(embedder=self.embedder)
+        if not prepared or not doc.embedding:
+            doc.embed(embedder=self.embedder)
         cleaned_content = self._clean_content(doc.content)
         # Include content_hash in ID to ensure uniqueness across different content hashes
         # This allows the same URL/content to be inserted with different descriptions
@@ -654,13 +695,17 @@ class PgVector(VectorDb):
             record["user_id"] = user_id
         return record
 
-    async def _async_embed_documents(self, batch_docs: List[Document]) -> None:
+    async def _async_embed_documents(self, batch_docs: List[Document], *, prepared: bool = False) -> None:
         """
         Embed a batch of documents using either batch embedding or individual embedding.
 
         Args:
             batch_docs: List of documents to embed
         """
+        if prepared:
+            batch_docs = [doc for doc in batch_docs if not doc.embedding]
+        if not batch_docs:
+            return
         if self.embedder.enable_batch and hasattr(self.embedder, "async_get_embeddings_batch_and_usage"):
             # Use batch embedding when enabled and supported
             try:
@@ -717,7 +762,13 @@ class PgVector(VectorDb):
         """
         # Embed before the delete below: clearing the old chunks first would destroy
         # retrievable content if the embedder then fails.
+        for document in documents:
+            if not document.embedding:
+                document.embedding = None
         await aembed_before_replace(documents, self.embedder)
+        # Empty results retain generic partial ingestion: write the usable chunks
+        # without asking the embedder again. Raised failures above still precede deletion.
+        documents = retrievable_documents(documents)
         self._require_owner_column(user_id)
         try:
             if self.content_hash_exists(content_hash, user_id=user_id):
@@ -751,7 +802,7 @@ class PgVector(VectorDb):
                     log_info(f"Processing batch starting at index {i}, size: {len(batch_docs)}")
                     try:
                         # Embed all documents in the batch
-                        await self._async_embed_documents(batch_docs)
+                        await self._async_embed_documents(batch_docs, prepared=True)
                         # An unembedded chunk would be rejected by the store and take the
                         # whole batch down with it, including the chunks that did embed.
                         batch_docs = retrievable_documents(batch_docs)
