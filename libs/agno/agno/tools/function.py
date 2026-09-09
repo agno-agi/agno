@@ -7,6 +7,7 @@ from importlib.metadata import version
 from threading import RLock
 from typing import (
     Any,
+    Annotated,
     Callable,
     Dict,
     List,
@@ -17,7 +18,9 @@ from typing import (
     Tuple,
     Type,
     TypeVar,
+    Union,
     get_args,
+    get_origin,
     get_type_hints,
 )
 
@@ -336,6 +339,59 @@ def _member_is_only(arg: Any, wanted: tuple) -> bool:
     first for the same reason as _member_names_type."""
     arg = unwrap_annotation(arg)
     return (isinstance(arg, type) and issubclass(arg, wanted)) or _union_is_only(arg, wanted)
+
+
+def _replace_framework_types_for_validation(hint: Any, framework_types: tuple, depth: int = 0) -> Any:
+    """Replace framework classes in a validation-only annotation.
+
+    Pydantic should verify an already-injected Agent or Team instance without
+    recursively resolving the framework object's internal forward references.
+    Other annotation branches remain available for normal coercion.
+    """
+    from pydantic import InstanceOf
+
+    if depth > 16:
+        return hint
+
+    hint = unwrap_annotation(hint)
+    if isinstance(hint, type):
+        try:
+            if issubclass(hint, framework_types):
+                return InstanceOf[hint]  # type: ignore[misc]
+        except TypeError:
+            pass
+        return hint
+
+    args = get_args(hint)
+    origin = get_origin(hint)
+    if not args or origin is Literal:
+        return hint
+
+    if origin is Annotated:
+        validated_type = _replace_framework_types_for_validation(args[0], framework_types, depth + 1)
+        return hint if validated_type is args[0] else Annotated[(validated_type, *args[1:])]
+
+    replaced_args = tuple(
+        _replace_framework_types_for_validation(argument, framework_types, depth + 1) for argument in args
+    )
+    if replaced_args == args:
+        return hint
+
+    if is_union(hint):
+        return Union[replaced_args]
+
+    try:
+        if len(replaced_args) == 1:
+            return origin[replaced_args[0]]
+        return origin[replaced_args]
+    except (AttributeError, TypeError):
+        copy_with = getattr(hint, "copy_with", None)
+        if copy_with is not None:
+            try:
+                return copy_with(replaced_args)
+            except (AttributeError, TypeError):
+                pass
+        return hint
 
 
 _hidden_media_warned: Set[Tuple[str, str]] = set()
@@ -1734,21 +1790,59 @@ class Function(BaseModel):
         return wrapped
 
     @staticmethod
-    def _validate_callable(func: Callable) -> Callable:
-        from inspect import isasyncgenfunction, iscoroutinefunction, signature
+    def _validate_callable_with_framework_types(
+        func: Callable, sig: Any, hints: Dict[str, Any], framework_types: tuple
+    ) -> Callable:
+        """Validate a callable without expanding Agent or Team internals."""
+        from inspect import Parameter, isasyncgenfunction, iscoroutinefunction, isgeneratorfunction
 
-        pydantic_version = _get_pydantic_version()
+        safe_parameters = []
+        for parameter in sig.parameters.values():
+            hint = hints.get(parameter.name, parameter.annotation)
+            if hint is not Parameter.empty:
+                hint = _replace_framework_types_for_validation(hint, framework_types)
+            safe_parameters.append(parameter.replace(annotation=hint))
+        safe_signature = sig.replace(parameters=safe_parameters)
 
-        # Async generators need special handling: validate_call turns an `async def ... yield`
-        # into a plain function that returns an async_generator, which makes
-        # inspect.isasyncgenfunction return False. Downstream dispatch (models/base.py,
-        # FunctionCall.aexecute) uses that predicate to route the call, so we wrap the
-        # validated callable in an outer `async def ... yield` shim that preserves the
-        # async-generator identity while still coercing arguments through Pydantic.
         if isasyncgenfunction(func):
-            if getattr(func, "_wrapped_for_validation", False):
-                return func
-            validated = validate_call(func, config=dict(arbitrary_types_allowed=True))  # type: ignore
+
+            @wraps(func)
+            async def validation_proxy(*args, **kwargs):
+                async for item in func(*args, **kwargs):
+                    yield item
+
+        elif iscoroutinefunction(func):
+
+            @wraps(func)
+            async def validation_proxy(*args, **kwargs):
+                return await func(*args, **kwargs)
+
+        elif isgeneratorfunction(func):
+
+            @wraps(func)
+            def validation_proxy(*args, **kwargs):
+                yield from func(*args, **kwargs)
+
+        else:
+
+            @wraps(func)
+            def validation_proxy(*args, **kwargs):
+                return func(*args, **kwargs)
+
+        # Only the validation proxy exposes safe framework types; the user's callable
+        # and its model-facing schema keep their original annotations.
+        validation_proxy.__signature__ = safe_signature  # type: ignore[attr-defined]
+        validation_proxy.__annotations__ = {
+            parameter.name: parameter.annotation
+            for parameter in safe_signature.parameters.values()
+            if parameter.annotation is not Parameter.empty
+        }
+        if safe_signature.return_annotation is not Parameter.empty:
+            validation_proxy.__annotations__["return"] = safe_signature.return_annotation
+
+        validated = validate_call(validation_proxy, config=dict(arbitrary_types_allowed=True))  # type: ignore
+
+        if isasyncgenfunction(func):
 
             @wraps(func)
             async def async_gen_wrapper(*args, **kwargs):
@@ -1762,6 +1856,15 @@ class Function(BaseModel):
             async_gen_wrapper._wrapped_for_validation = True  # type: ignore[attr-defined]
             return async_gen_wrapper
 
+        validated._wrapped_for_validation = True  # type: ignore[attr-defined]
+        return validated
+
+    @staticmethod
+    def _validate_callable(func: Callable) -> Callable:
+        from inspect import isasyncgenfunction, iscoroutinefunction, signature
+
+        pydantic_version = _get_pydantic_version()
+
         # Don't wrap coroutines with validate_call if pydantic version is less than 2.10.0
         if iscoroutinefunction(func) and pydantic_version < Version("2.10.0"):
             log_debug(
@@ -1770,7 +1873,7 @@ class Function(BaseModel):
             return func
 
         # Don't wrap callables that are already wrapped with validate_call
-        elif getattr(func, "_wrapped_for_validation", False):
+        if getattr(func, "_wrapped_for_validation", False):
             return func
 
         # Don't wrap functions with framework-injected parameters
@@ -1781,11 +1884,11 @@ class Function(BaseModel):
         if framework_params & set(sig.parameters.keys()):
             return func
 
-        # Also skip validation when a PARAMETER's type is Agent or Team, even
-        # if the parameter name differs (e.g. my_agent: Agent) or the annotation
-        # is a union (owner: Optional[Agent]).
-        # validate_call uses get_type_hints() which fails to resolve types
-        # from Agent/Team class hierarchies (like BaseDb) in the user's module globals.
+        # Also handle validation when a PARAMETER's type contains Agent or Team,
+        # even if the parameter name differs (e.g. my_agent: Agent) or the annotation
+        # is a union (owner: Optional[Agent]). validate_call uses get_type_hints()
+        # which fails to resolve types from Agent/Team class hierarchies in the
+        # user's module globals.
         # The return annotation is not a parameter: validate_call is called
         # without validate_return, so it never introspects one.
         try:
@@ -1794,18 +1897,53 @@ class Function(BaseModel):
             from agno.team.team import Team
 
             framework_types = (Agent, Team)
+            needs_safe_validation = False
             for name, hint in hints.items():
                 if name == "return" or name not in sig.parameters:
                     continue
-                # The same structural search the schema rule uses. Reading only
-                # a bare annotation or a direct union left `Union[str,
-                # list[Agent]]` to validate_call, which then failed to resolve
-                # Agent's own forward references and took registration of the
-                # whole tool down.
                 if annotation_reaches(hint, framework_types):
+                    if not is_framework_typed(hint):
+                        needs_safe_validation = True
+            if needs_safe_validation:
+                try:
+                    return Function._validate_callable_with_framework_types(func, sig, hints, framework_types)
+                except Exception as e:
+                    # Preserve the pre-existing registration fallback for annotation
+                    # shapes that cannot be rebuilt, but make the lost validation visible.
+                    log_warning(
+                        f"Skipping validate_call for {func.__name__}: could not build a validation-safe "
+                        f"Agent/Team annotation ({e})"
+                    )
                     return func
+
+            if any(
+                name != "return" and name in sig.parameters and annotation_reaches(hint, framework_types)
+                for name, hint in hints.items()
+            ):
+                return func
         except Exception:
             pass
+
+        # Async generators need special handling: validate_call turns an `async def ... yield`
+        # into a plain function that returns an async_generator, which makes
+        # inspect.isasyncgenfunction return False. Downstream dispatch (models/base.py,
+        # FunctionCall.aexecute) uses that predicate to route the call, so we wrap the
+        # validated callable in an outer `async def ... yield` shim that preserves the
+        # async-generator identity while still coercing arguments through Pydantic.
+        if isasyncgenfunction(func):
+            validated = validate_call(func, config=dict(arbitrary_types_allowed=True))  # type: ignore
+
+            @wraps(func)
+            async def async_gen_wrapper(*args, **kwargs):
+                inner = validated(*args, **kwargs)
+                try:
+                    async for item in inner:
+                        yield item
+                finally:
+                    await inner.aclose()
+
+            async_gen_wrapper._wrapped_for_validation = True  # type: ignore[attr-defined]
+            return async_gen_wrapper
 
         # Wrap the callable with validate_call
         wrapped = validate_call(func, config=dict(arbitrary_types_allowed=True))  # type: ignore
