@@ -366,6 +366,35 @@ class TestBuildContinuationMessage:
         assert "Result 1" in msg
         assert "Result 2" in msg
 
+    def test_filters_internal_member_results(self):
+        from agno.team._run import _build_continuation_message
+
+        msg = _build_continuation_message(
+            [
+                "[send_message]: Could not route requirement - member not found",
+                "[Telegram Agent]: message_id: 166",
+            ]
+        )
+
+        assert "Telegram Agent" in msg
+        assert "message_id: 166" in msg
+        assert "Could not route requirement" not in msg
+        assert "member not found" not in msg
+
+    def test_all_internal_member_results_get_generic_message(self):
+        from agno.team._run import _build_continuation_message
+
+        msg = _build_continuation_message(
+            [
+                "[send_message]: Member with ID send_message not found in the team or any subteams",
+                "[Sender]: Task completed (no final output)",
+            ]
+        )
+
+        assert msg == "The delegated task has been completed."
+        assert "Member with ID" not in msg
+        assert "Task completed (no final output)" not in msg
+
 
 # ===========================================================================
 # 6. Chained HITL: newly propagated requirements are preserved
@@ -798,6 +827,30 @@ class TestPrepareMemberHitlContinuation:
         _prepare_member_hitl_continuation(run_response, run_messages, ["[Agent]: Done"])
 
         assert "Done" in tool.result
+
+    def test_sanitizes_internal_member_results_in_tool_message(self):
+        from agno.team._run import _prepare_member_hitl_continuation
+
+        tool = _make_tool_execution(
+            tool_name="delegate_task_to_member",
+            tool_call_id="tc-1",
+            result="requires human input",
+        )
+        run_response = self._make_run_response_with_tools([tool])
+        run_messages = self._make_run_messages(["tc-1"])
+
+        _prepare_member_hitl_continuation(
+            run_response,
+            run_messages,
+            [
+                "[send_message]: Member with ID send_message not found in the team or any subteams",
+                "[Telegram Agent]: message_id: 166",
+            ],
+        )
+
+        assert "message_id: 166" in tool.result
+        assert "Member with ID" not in tool.result
+        assert "Member with ID" not in run_messages.messages[0].content
 
     def test_resets_run_state(self):
         from agno.team._run import _prepare_member_hitl_continuation
