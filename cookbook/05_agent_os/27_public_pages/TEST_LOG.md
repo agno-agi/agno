@@ -171,3 +171,10 @@ run. The focused public-configuration and MCP suites passed all 204 tests.
   OAuth routes are deliberately rejected rather than publishing a wrong resource.
 - Cookbook mcp_domain.py --check passed. Full format and validation passed.
 - No DNS, hosting or production application changes were made.
+
+## 2026-09-09 typed page-tool outcomes
+
+- PASS: 267 composed command/filesystem/lazy-read/tool/MCP cases, including 66 archived command outputs unchanged, literal-grep completeness, typed grammar/missing-path/storage errors, no false error from page prose, Unicode JSON bounds, MCP schemas/isError, search parity and run reference tracking.
+- PASS: `page_tool_results.py --check` with demo Python, without storage/provider calls.
+- PASS: full format and validation scripts.
+- Existing chat command tools retain their character-bound text contract. Direct typed/MCP command results additionally bound the complete result JSON; MCP envelope overhead remains under the transport's own limits. No product feedback or score-interpretation policy moved upstream.
