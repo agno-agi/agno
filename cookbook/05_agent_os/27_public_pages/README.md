@@ -277,3 +277,30 @@ normalizer that leaves code unchanged; run it without a database or provider key
 
 Component-specific MDX transformations, prompt rendering, citations and query
 alternatives remain application-owned.
+
+
+## Dedicated MCP hostname
+
+`mcp_domain.py` configures `MCPConfig(root_host="mcp.example.com", server_card_url=
+"https://mcp.example.com")`. On that exact Host, `/` and `/server-card` reach the
+same MCP server as `/mcp` and `/mcp/server-card`. The configured hostname joins
+MCP's host allowlist; localhost remains available. Scheme, port and wildcards do
+not belong in `root_host`. Configure DNS and the platform's custom domain separately.
+
+A browser GET redirects to the public card path. Protocol POSTs and SSE requests
+are routed directly, before JWT authentication and public admission. Tool catalog,
+quotas and authentication are shared. Other REST routes retain their behavior.
+Host matching is case-insensitive; a port is accepted, duplicate/malformed Host
+headers are rejected, and forwarding headers never choose the dedicated host.
+
+To change the regular endpoint, set `path="/api/mcp"`. `/mcp` is then disabled
+unless explicitly retained with `path_aliases=["/mcp"]`. Aliases also serve their
+`/server-card` paths and advertise the canonical endpoint. A configured
+`server_card_url` takes precedence over derived URLs. Conflicting REST paths fail
+at startup. ASGI submount prefixes are preserved.
+
+Custom routing currently supports anonymous MCP and REST/JWT authentication.
+OAuth deployments retain the native `/mcp` route; combining OAuth with custom
+routing fails at startup until protected-resource discovery supports that mapping.
+A different site's `/mcp` compatibility reverse proxy remains deployment configuration.
+No application middleware or mutation of `app.user_middleware` is needed for routing.

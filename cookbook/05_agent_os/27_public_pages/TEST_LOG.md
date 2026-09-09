@@ -147,3 +147,17 @@ neither shared environment was modified. Live database/provider modes were not
 run. The focused public-configuration and MCP suites passed all 204 tests.
 
 ---
+
+
+## 2026-09-09 native MCP routing
+
+- 282 composed MCP server/OAuth/routing/public-JWT cases passed.
+- 24 routing cases passed after adding included-router-prefix conflict checks;
+  these overlap the composed suite. Covers root, native/legacy/custom paths,
+  actual ASGI submounts, initialize/catalog/quota parity, browser versus SSE GET,
+  JWT REST protection, canonical cards, Host ambiguity/case/ports/forwarding,
+  and startup rejection of unsupported custom OAuth routing.
+- The complete existing native OAuth flow remains supported at /mcp. Custom
+  OAuth routes are deliberately rejected rather than publishing a wrong resource.
+- Cookbook mcp_domain.py --check passed. Full format and validation passed.
+- No DNS, hosting or production application changes were made.
