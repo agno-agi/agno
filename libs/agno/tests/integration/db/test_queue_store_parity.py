@@ -585,3 +585,343 @@ class TestSyncPostgresQueuePerSession:
             with engine.begin() as conn:
                 conn.execute(sqlalchemy.text(f'DROP TABLE IF EXISTS {db.db_schema}."{db.job_table_name}"'))
             engine.dispose()
+
+
+class TestSubmissionOrderParity:
+    """FIFO by submission must hold within a session even when created_at
+    ties: it has one-second resolution, and a random uuid tiebreak let a
+    later submission with a smaller id run first and read session history
+    the earlier one had not written yet. Stores now carry a monotonic
+    enqueue sequence and order same-second siblings by it."""
+
+    @pytest.mark.asyncio
+    async def test_same_second_fifo_holds_under_uuid_inversion(self, store):
+        # r_z submitted first, r_a second, both in the same second; the id
+        # order is the inverse of the submission order
+        await store.enqueue_job(make_job("r_z", session_id="s1", created_at=1000))
+        await store.enqueue_job(make_job("r_a", session_id="s1", created_at=1000))
+        head = await store.claim_job("w1", queue_per_session=True)
+        assert head is not None and head["id"] == "r_z", "the earlier submission must run first"
+        assert await store.claim_job("w2", queue_per_session=True) is None
+        assert await store.complete_job("r_z", "w1", head["attempt"], "completed")
+        nxt = await store.claim_job("w2", queue_per_session=True)
+        assert nxt is not None and nxt["id"] == "r_a"
+
+    @pytest.mark.asyncio
+    async def test_enqueue_sequence_is_monotonic_and_survives_round_trip(self, store):
+        first = (await store.enqueue_job(make_job("r1", session_id="s1", created_at=1000)))["job"]
+        second = (await store.enqueue_job(make_job("r2", session_id="s2", created_at=1000)))["job"]
+        assert first.get("seq") is not None and second.get("seq") is not None
+        assert first["seq"] < second["seq"]
+        stored = await store.get_job("r2")
+        assert stored is not None and stored.get("seq") == second["seq"]
+
+
+@pytest.mark.skipif(not _PG_AVAILABLE, reason="Postgres not available on localhost:5532")
+class TestSyncPostgresSubmissionOrder:
+    """Sync Postgres twin of the same-second FIFO pin, plus the upgrade path:
+    a jobs table created before the sequence column existed must gain it on
+    first use instead of failing schema validation or claiming out of order."""
+
+    @staticmethod
+    def _drop(db):
+        import sqlalchemy
+
+        engine = sqlalchemy.create_engine(PG_URL)
+        with engine.begin() as conn:
+            conn.execute(sqlalchemy.text(f'DROP TABLE IF EXISTS {db.db_schema}."{db.job_table_name}"'))
+        engine.dispose()
+
+    def test_same_second_fifo_holds_under_uuid_inversion(self):
+        from agno.db.postgres import PostgresDb
+
+        db = PostgresDb(db_url=PG_URL, job_table=f"parity_syncseq_{uuid.uuid4().hex[:8]}")
+        try:
+            db.enqueue_job(make_job("r_z", session_id="s1", created_at=1000))
+            db.enqueue_job(make_job("r_a", session_id="s1", created_at=1000))
+            head = db.claim_job("w1", queue_per_session=True)
+            assert head is not None and head["id"] == "r_z"
+            assert db.claim_job("w2", queue_per_session=True) is None
+            assert db.complete_job("r_z", "w1", head["attempt"], "completed")
+            nxt = db.claim_job("w2", queue_per_session=True)
+            assert nxt is not None and nxt["id"] == "r_a"
+        finally:
+            self._drop(db)
+
+    def test_pre_sequence_jobs_table_is_upgraded_on_first_use(self):
+        import sqlalchemy
+
+        from agno.db.postgres import PostgresDb
+
+        table_name = f"parity_upgrade_{uuid.uuid4().hex[:8]}"
+        db = PostgresDb(db_url=PG_URL, job_table=table_name)
+        try:
+            db.enqueue_job(make_job("r_old", session_id="s1", created_at=999))
+            # Simulate a table created before the column existed
+            engine = sqlalchemy.create_engine(PG_URL)
+            with engine.begin() as conn:
+                conn.execute(sqlalchemy.text(f'ALTER TABLE {db.db_schema}."{table_name}" DROP COLUMN seq'))
+            engine.dispose()
+
+            reopened = PostgresDb(db_url=PG_URL, job_table=table_name)
+            reopened.enqueue_job(make_job("r_z", session_id="s1", created_at=1000))
+            reopened.enqueue_job(make_job("r_a", session_id="s1", created_at=1000))
+            old = reopened.get_job("r_old")
+            assert old is not None and old.get("seq") is not None, "pre-existing rows are backfilled"
+            claimed = [reopened.claim_job("w1", queue_per_session=True)["id"]]
+            for _ in range(2):
+                reopened.complete_job(claimed[-1], "w1", 1, "completed")
+                claimed.append(reopened.claim_job("w1", queue_per_session=True)["id"])
+            assert claimed == ["r_old", "r_z", "r_a"]
+        finally:
+            self._drop(db)
+
+    @pytest.mark.asyncio
+    async def test_pre_sequence_jobs_table_is_upgraded_on_first_use_async(self):
+        """The async adapter's twin of the upgrade path."""
+        import sqlalchemy
+
+        from agno.db.postgres import AsyncPostgresDb
+
+        table_name = f"parity_aupgrade_{uuid.uuid4().hex[:8]}"
+        db = AsyncPostgresDb(db_url=PG_URL, job_table=table_name)
+        try:
+            await db.enqueue_job(make_job("r_old", session_id="s1", created_at=999))
+            engine = sqlalchemy.create_engine(PG_URL)
+            with engine.begin() as conn:
+                conn.execute(sqlalchemy.text(f'ALTER TABLE {db.db_schema}."{table_name}" DROP COLUMN seq'))
+            engine.dispose()
+
+            reopened = AsyncPostgresDb(db_url=PG_URL, job_table=table_name)
+            await reopened.enqueue_job(make_job("r_z", session_id="s1", created_at=1000))
+            await reopened.enqueue_job(make_job("r_a", session_id="s1", created_at=1000))
+            old = await reopened.get_job("r_old")
+            assert old is not None and old.get("seq") is not None, "pre-existing rows are backfilled"
+            claimed = [(await reopened.claim_job("w1", queue_per_session=True))["id"]]
+            for _ in range(2):
+                await reopened.complete_job(claimed[-1], "w1", 1, "completed")
+                claimed.append((await reopened.claim_job("w1", queue_per_session=True))["id"])
+            assert claimed == ["r_old", "r_z", "r_a"]
+        finally:
+            self._drop(db)
+
+
+@pytest.mark.skipif(not _REDIS_AVAILABLE, reason="Redis not available on localhost:6379")
+class TestRedisSessionLineBackfill:
+    """A queue that predates the session-line index holds non-terminal jobs
+    that are in no line. Redis has no paused index (a paused job is removed
+    from both the queued and running sets and survives only in the `all`
+    index) and a paused job never heartbeats, so nothing would ever add it
+    back: a newer submission would sail straight past a HITL pause. The store
+    backfills every non-terminal job into its line before its first gated
+    claim. Postgres and in-memory read authoritative state and need none of
+    this."""
+
+    @staticmethod
+    def _db(prefix: str):
+        from redis import Redis
+
+        from agno.db.redis import RedisDb
+
+        return RedisDb(redis_client=Redis.from_url(REDIS_URL), db_prefix=prefix)
+
+    @staticmethod
+    def _line_members(db, session_id: str = "s1"):
+        raw = db.redis_client.zrange(f"{db.db_prefix}:jobs:line:{session_id}", 0, -1)
+        return {member.decode() if isinstance(member, bytes) else member for member in raw}
+
+    @staticmethod
+    def _strip_line(db, session_id: str = "s1") -> None:
+        """Reduce the store to the shape an upgrade inherits: the jobs exist
+        and are non-terminal, but no session line was ever maintained."""
+        db.redis_client.delete(f"{db.db_prefix}:jobs:line:{session_id}")
+
+    @staticmethod
+    def _cleanup(prefix: str) -> None:
+        from redis import Redis
+
+        client = Redis.from_url(REDIS_URL)
+        for key in client.scan_iter(f"{prefix}:*"):
+            client.delete(key)
+        client.close()
+
+    def test_pre_upgrade_paused_head_holds_the_line(self):
+        prefix = f"parity_bfpaused_{uuid.uuid4().hex[:6]}"
+        try:
+            db = self._db(prefix)
+            db.enqueue_job(make_job("r_head", session_id="s1", created_at=1000))
+            head = db.claim_job("w0", queue_per_session=True)
+            assert head is not None and head["id"] == "r_head"
+            assert db.complete_job("r_head", "w0", head["attempt"], "paused")
+            self._strip_line(db)
+
+            # A fresh instance is a freshly started replica: backfill pending
+            replica = self._db(prefix)
+            replica.enqueue_job(make_job("r_new", session_id="s1", created_at=1001))
+            assert replica.claim_job("w1", queue_per_session=True) is None, (
+                "a pre-upgrade paused head must hold its session's line, not be bypassed"
+            )
+            assert self._line_members(replica) == {"r_head", "r_new"}
+        finally:
+            self._cleanup(prefix)
+
+    def test_pre_upgrade_running_head_holds_the_line(self):
+        prefix = f"parity_bfrunning_{uuid.uuid4().hex[:6]}"
+        try:
+            db = self._db(prefix)
+            db.enqueue_job(make_job("r_head", session_id="s1", created_at=1000))
+            head = db.claim_job("w0", queue_per_session=True)
+            assert head is not None and head["id"] == "r_head"
+            self._strip_line(db)
+
+            replica = self._db(prefix)
+            replica.enqueue_job(make_job("r_new", session_id="s1", created_at=1001))
+            assert replica.claim_job("w1", queue_per_session=True) is None, (
+                "a pre-upgrade running head must hold its session's line"
+            )
+        finally:
+            self._cleanup(prefix)
+
+    def test_backfill_skips_terminal_jobs(self):
+        """The correction must not overshoot: backfilling terminal jobs would
+        wedge the session behind a job that can never be released."""
+        prefix = f"parity_bfterm_{uuid.uuid4().hex[:6]}"
+        try:
+            db = self._db(prefix)
+            db.enqueue_job(make_job("r_done", session_id="s1", created_at=900))
+            head = db.claim_job("w0", queue_per_session=True)
+            assert db.complete_job("r_done", "w0", head["attempt"], "completed")
+            self._strip_line(db)
+
+            replica = self._db(prefix)
+            replica.enqueue_job(make_job("r_new", session_id="s1", created_at=1001))
+            claimed = replica.claim_job("w1", queue_per_session=True)
+            assert claimed is not None and claimed["id"] == "r_new", (
+                "a completed pre-upgrade job must not hold the line"
+            )
+            assert "r_done" not in self._line_members(replica)
+        finally:
+            self._cleanup(prefix)
+
+    def test_backfill_is_idempotent_across_replicas(self):
+        prefix = f"parity_bfidem_{uuid.uuid4().hex[:6]}"
+        try:
+            db = self._db(prefix)
+            db.enqueue_job(make_job("r_head", session_id="s1", created_at=1000))
+            head = db.claim_job("w0", queue_per_session=True)
+            assert db.complete_job("r_head", "w0", head["attempt"], "paused")
+            self._strip_line(db)
+
+            first = self._db(prefix)
+            first.enqueue_job(make_job("r_new", session_id="s1", created_at=1001))
+            assert first.claim_job("w1", queue_per_session=True) is None
+            after_first = self._line_members(first)
+
+            second = self._db(prefix)
+            assert second.claim_job("w2", queue_per_session=True) is None
+            assert self._line_members(second) == after_first, "a second replica's backfill must change nothing"
+        finally:
+            self._cleanup(prefix)
+
+
+@pytest.mark.skipif(not _REDIS_AVAILABLE, reason="Redis not available on localhost:6379")
+class TestRedisSessionLineScanCost:
+    """The advisory pre-filter asks, per candidate, whether the session line
+    admits it - and each ask reloaded the whole line (range read, multi-get,
+    sort). Behind a blocked head every queued successor is a rejected
+    candidate, so the work was quadratic in that session's backlog and paid
+    again every poll tick. The view is loaded once per session per claim.
+
+    The verdict itself is NOT cacheable: "is this candidate the head" has a
+    different answer for every candidate. What is cached is the view, from
+    which each verdict is computed."""
+
+    @staticmethod
+    def _db(prefix: str):
+        from redis import Redis
+
+        from agno.db.redis import RedisDb
+
+        return RedisDb(redis_client=Redis.from_url(REDIS_URL), db_prefix=prefix)
+
+    @staticmethod
+    def _cleanup(prefix: str) -> None:
+        from redis import Redis
+
+        client = Redis.from_url(REDIS_URL)
+        for key in client.scan_iter(f"{prefix}:*"):
+            client.delete(key)
+        client.close()
+
+    @staticmethod
+    def _count_line_views(db) -> list:
+        loads: list = []
+        original = db._q_session_line_view
+
+        def counting(session_id: str):
+            loads.append(session_id)
+            return original(session_id)
+
+        db._q_session_line_view = counting
+        return loads
+
+    @staticmethod
+    def _pause_head(db, session_id: str, job_id: str, created_at: int) -> None:
+        db.enqueue_job(make_job(job_id, session_id=session_id, created_at=created_at))
+        head = db.claim_job("w0", queue_per_session=True)
+        assert head is not None and head["id"] == job_id
+        assert db.complete_job(job_id, "w0", head["attempt"], "paused")
+
+    def test_blocked_backlog_loads_the_line_once(self):
+        prefix = f"parity_scan1_{uuid.uuid4().hex[:6]}"
+        try:
+            db = self._db(prefix)
+            self._pause_head(db, "s1", "r_head", 1000)
+            for i in range(5):
+                db.enqueue_job(make_job(f"r_{i}", session_id="s1", created_at=1001 + i))
+
+            loads = self._count_line_views(db)
+            assert db.claim_job("w1", queue_per_session=True) is None
+            assert loads.count("s1") == 1, (
+                f"one line load per blocked session per claim, got {loads.count('s1')} for a backlog of 5"
+            )
+        finally:
+            self._cleanup(prefix)
+
+    def test_cache_is_scoped_per_session(self):
+        prefix = f"parity_scan2_{uuid.uuid4().hex[:6]}"
+        try:
+            db = self._db(prefix)
+            self._pause_head(db, "s1", "r1_head", 1000)
+            self._pause_head(db, "s2", "r2_head", 1001)
+            for i in range(3):
+                db.enqueue_job(make_job(f"r1_{i}", session_id="s1", created_at=1010 + i))
+                db.enqueue_job(make_job(f"r2_{i}", session_id="s2", created_at=1010 + i))
+
+            loads = self._count_line_views(db)
+            assert db.claim_job("w1", queue_per_session=True) is None
+            assert loads.count("s1") == 1 and loads.count("s2") == 1, (
+                f"each blocked session is loaded once, got {loads}"
+            )
+        finally:
+            self._cleanup(prefix)
+
+    def test_authoritative_check_inside_the_cas_is_never_cached(self):
+        """The pre-filter is advisory; the check under WATCH on the line key
+        is what makes a stale head decision uncommittable. Serving that one
+        from the scan's cache would reintroduce the snapshot-versus-CAS race
+        the gate was hardened against, so a successful claim must load the
+        view again inside the transaction."""
+        prefix = f"parity_scan3_{uuid.uuid4().hex[:6]}"
+        try:
+            db = self._db(prefix)
+            db.enqueue_job(make_job("r_only", session_id="s1", created_at=1000))
+
+            loads = self._count_line_views(db)
+            claimed = db.claim_job("w1", queue_per_session=True)
+            assert claimed is not None and claimed["id"] == "r_only"
+            assert loads.count("s1") == 2, (
+                f"expected one advisory load plus one authoritative load inside the CAS, got {loads.count('s1')}"
+            )
+        finally:
+            self._cleanup(prefix)

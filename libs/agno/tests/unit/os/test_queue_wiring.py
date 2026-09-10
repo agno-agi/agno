@@ -150,7 +150,7 @@ class TestSyncStoreAdapter:
             def enqueue_job(self, job, max_depth=0):
                 return {"accepted": True, "reason": None, "job": job}
 
-            def claim_job(self, worker_id, lock_grace_seconds=60):
+            def claim_job(self, worker_id, lock_grace_seconds=60, deployment_id=None, queue_per_session=False):
                 return {"id": "r1", "worker": worker_id}
 
             def heartbeat_jobs(self, worker_id, job_ids):
@@ -394,3 +394,118 @@ class TestQueueLifespanCleanup:
 
         assert get_active_queue_worker() is None, "the registration must be cleared on the failure path"
         assert not app.state.queue_worker._running, "the worker must be stopped on the failure path"
+
+
+def _full_contract_store(claim_job):
+    """Build a duck-typed queue store carrying the whole contract, with the
+    given claim_job. resolve_queue_store validates every method up front, so
+    a signature-focused test still needs all of them present."""
+
+    class Store:
+        def enqueue_job(self, job, max_depth=0):
+            return {"accepted": True, "reason": None, "job": job}
+
+        def heartbeat_jobs(self, worker_id, job_ids):
+            return len(job_ids)
+
+        def complete_job(self, job_id, worker_id, attempt, status, error=None):
+            return True
+
+        def retry_or_fail_job(self, job_id, worker_id, attempt, error, retry_delay_seconds):
+            return "failed"
+
+        def cancel_job(self, job_id):
+            return True
+
+        def continue_job(self, job_id, continue_payload):
+            return {"outcome": "conflict", "job": None}
+
+        def settle_paused_job(self, job_id, status, error=None):
+            return False
+
+        def sweep_exhausted_jobs(self, lock_grace_seconds=60, limit=20):
+            return []
+
+        def acquire_sweep(self, job_id, worker_id, lock_grace_seconds=60):
+            return False
+
+        def settle_swept_job(self, job_id, worker_id, status, error=None):
+            return False
+
+        def get_job(self, job_id):
+            return None
+
+        def count_queued_jobs(self):
+            return 0
+
+    Store.claim_job = claim_job
+    return Store
+
+
+class TestQueuePerSessionStoreCompat:
+    """Custom stores written against the earlier claim contract
+    (claim_job(worker_id, lock_grace_seconds, deployment_id)) must either be
+    rejected loudly at startup when the per-session gate is on, or be called
+    exactly as before when it is off. The failure this pins: the worker
+    passed the new keyword unconditionally, the legacy store raised
+    TypeError on every poll, the poll loop swallowed it, and accepted jobs
+    sat queued forever with nothing but a log line to say why."""
+
+    @staticmethod
+    def _legacy_store():
+        calls = []
+
+        def claim_job(self, worker_id, lock_grace_seconds=60, deployment_id=None):
+            calls.append({"lock_grace_seconds": lock_grace_seconds, "deployment_id": deployment_id})
+            return None
+
+        return _full_contract_store(claim_job)(), calls
+
+    def test_legacy_store_rejected_at_resolution_when_gate_on(self):
+        from agno.os.job_queue import resolve_queue_store
+
+        store, _ = self._legacy_store()
+        with pytest.raises(ValueError, match="queue_per_session"):
+            resolve_queue_store(QueueConfig(durable=True), store)
+
+    def test_legacy_store_rejected_at_worker_construction_when_gate_on(self):
+        from agno.os.job_queue import QueueWorker
+
+        store, _ = self._legacy_store()
+        with pytest.raises(ValueError, match="queue_per_session"):
+            QueueWorker(store=store, resolve_component=lambda *_: None, config=QueueConfig(durable=True))
+
+    @pytest.mark.asyncio
+    async def test_legacy_store_claimed_without_keyword_when_gate_off(self):
+        from agno.os.job_queue import QueueWorker, resolve_queue_store
+
+        store, calls = self._legacy_store()
+        config = QueueConfig(durable=True, queue_per_session=False, deployment_id="d1")
+        resolved = resolve_queue_store(config, store)
+        worker = QueueWorker(store=resolved, resolve_component=lambda *_: None, config=config)
+        worker._running = True
+        try:
+            await worker._claim_burst()
+        finally:
+            worker._running = False
+        assert calls == [{"lock_grace_seconds": config.lock_grace_seconds, "deployment_id": "d1"}], (
+            "with the gate off a legacy store must receive the pre-gate call shape, keyword-free"
+        )
+
+    def test_var_keyword_store_accepted_when_gate_on(self):
+        from agno.os.job_queue import resolve_queue_store
+
+        def claim_job(self, worker_id, lock_grace_seconds=60, **kwargs):
+            return None
+
+        store = _full_contract_store(claim_job)()
+        assert resolve_queue_store(QueueConfig(durable=True), store) is not None
+
+    def test_gate_aware_store_accepted_when_gate_on(self):
+        from agno.os.job_queue import resolve_queue_store
+
+        def claim_job(self, worker_id, lock_grace_seconds=60, deployment_id=None, queue_per_session=False):
+            return None
+
+        store = _full_contract_store(claim_job)()
+        assert resolve_queue_store(QueueConfig(durable=True), store) is not None

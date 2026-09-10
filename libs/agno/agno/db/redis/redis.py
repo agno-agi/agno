@@ -123,6 +123,12 @@ class RedisDb(BaseDb):
         else:
             raise ValueError("One of redis_client or db_url must be provided")
 
+        # One-time migration latch for the job queue's session-line index
+        # (see _q_backfill_session_lines). Per process: the pass is cheap and
+        # idempotent, and a shared marker key would silently skip the
+        # migration forever if Redis were ever flushed or migrated.
+        self._q_lines_backfilled = False
+
     # -- DB methods --
 
     def table_exists(self, table_name: str) -> bool:
@@ -2545,6 +2551,10 @@ class RedisDb(BaseDb):
         idem_key = self._q_idem_key(job.get("user_id"), idem) if idem is not None else None
 
         job_key = self._q_job_key(job["id"])
+        # Store-assigned enqueue sequence, taken once up front: a WATCH retry
+        # keeps the same number (gaps are fine, only monotonicity matters),
+        # and same-second siblings are ordered by it instead of by uuid
+        job = {**job, "seq": int(self.redis_client.incr(self._q_key("seq")))}  # type: ignore[arg-type]
 
         for _ in range(10):
             with self.redis_client.pipeline() as pipe:
@@ -2619,17 +2629,31 @@ class RedisDb(BaseDb):
         _q_try_claim remains the only authority.
 
         queue_per_session restricts claims to each session's HEAD - the
-        oldest non-terminal (queued/running/paused) job by (created_at, id) -
-        with no OTHER line member running. Eligibility is checked twice: an
+        oldest non-terminal (queued/running/paused) job by (created_at, seq),
+        seq being the store-assigned enqueue sequence - with no OTHER line
+        member running. Eligibility is checked twice: an
         advisory pre-filter in the scan (cheap, per candidate, against the
         session-line zset), then authoritatively INSIDE the claim CAS with
         the line key under WATCH - a concurrent enqueue into the session (a
         new line member, however backdated) aborts the EXEC, so a stale
-        head decision can never be committed. The explicit running check
-        covers same-second submissions, where created_at ties and the id
-        tiebreak alone could elect a new head while a sibling executes."""
+        head decision can never be committed. Same-second submissions are
+        FIFO by seq (created_at has one-second resolution); the explicit
+        running check covers legacy pairs that predate the gate."""
+        if queue_per_session and not self._q_lines_backfilled:
+            # Before the first gated decision, never after: a claim must not
+            # be arbitrated against a line that predates the index. The latch
+            # is set only on success, so a transient Redis fault retries on
+            # the next poll instead of leaving the gate half-informed.
+            self._q_backfill_session_lines()
+            self._q_lines_backfilled = True
+
         now = self._q_server_now()
         stale = now - lock_grace_seconds
+
+        # Scoped to this call and to the ADVISORY filter: never handed to
+        # _q_try_claim, whose re-check under WATCH on the line key is what
+        # makes a stale head decision uncommittable.
+        line_cache: Optional[Dict[str, List[Tuple[int, int, str, str]]]] = {} if queue_per_session else None
 
         job = self._q_scan_claim(
             self._q_key("queued"),
@@ -2639,6 +2663,7 @@ class RedisDb(BaseDb):
             expect_status="queued",
             deployment_id=deployment_id,
             queue_per_session=queue_per_session,
+            line_cache=line_cache,
         )
         if job is not None:
             return job
@@ -2651,6 +2676,7 @@ class RedisDb(BaseDb):
             stale_before=stale,
             deployment_id=deployment_id,
             queue_per_session=queue_per_session,
+            line_cache=line_cache,
         )
 
     def _q_line_key(self, session_id: str) -> str:
@@ -2659,8 +2685,9 @@ class RedisDb(BaseDb):
     def _q_line_op(self, pipe: Any, job: Dict[str, Any]) -> None:
         """Maintain the session-line zset inside the caller's MULTI: a member
         exactly while its job is non-terminal (queued/running/paused), scored
-        by created_at - the member-id lexicographic tiebreak makes zset order
-        the claim order (created_at, id). Every transition MULTI routes
+        by created_at. Membership is what matters; the claim order is
+        computed from the documents (created_at, seq). Every transition
+        MULTI routes
         through this, the same pattern that keeps status-zset membership
         crash-consistent with the document."""
         session_id = job.get("session_id")
@@ -2672,12 +2699,66 @@ class RedisDb(BaseDb):
         else:
             pipe.zrem(line_key, job["id"])
 
-    def _q_session_line_view(self, session_id: str) -> List[Tuple[int, str, str]]:
-        """(created_at, id, status) of the session line's LIVE members, in
-        claim order. Bounded by the session's own backlog, never by retained
+    def _q_backfill_session_lines(self) -> None:
+        """Add every non-terminal job to its session line, once per process,
+        before the first gated claim.
+
+        A queue written by a version without the line index has jobs in no
+        line at all, and the claim path only ever self-heals the candidate it
+        is looking at. A running sibling would be re-added by its next
+        heartbeat, but a PAUSED one never beats and there is no paused index
+        to find it from (it is removed from both the queued and running sets
+        and survives only in `all`), so a newer submission would be admitted
+        straight past a human-in-the-loop pause. Hence the enumeration is
+        over `all`, which is also why terminal jobs must be filtered out: the
+        retained tail lives there too, and adding one would wedge its session
+        behind a job that can never be released.
+
+        Idempotent - ZADD of a member already present at the same score is a
+        no-op, so replicas racing this cost nothing. The one race is a job
+        terminalizing between the read and the add, which resurrects a dead
+        member; that is inert (_q_session_line_view skips members whose
+        document is terminal or missing) and retention cleanup removes it."""
+        page_size = 256
+        offset = 0
+        restored = 0
+        while True:
+            raw_ids = list(self.redis_client.zrange(self._q_key("all"), offset, offset + page_size - 1))  # type: ignore[arg-type]
+            if not raw_ids:
+                break
+            job_ids = [_q_to_str(raw_id) for raw_id in raw_ids]
+            raw_docs = list(self.redis_client.mget([self._q_job_key(job_id) for job_id in job_ids]))  # type: ignore[arg-type]
+            pipe = self.redis_client.pipeline(transaction=False)
+            pending = 0
+            for job_id, raw in zip(job_ids, raw_docs):
+                if raw is None:
+                    continue
+                try:
+                    doc = json.loads(raw if isinstance(raw, str) else raw.decode())
+                except (ValueError, AttributeError):
+                    continue
+                if doc.get("status") not in ("queued", "running", "paused"):
+                    continue
+                session_id = doc.get("session_id")
+                if not session_id:
+                    continue
+                pipe.zadd(self._q_line_key(session_id), {job_id: doc.get("created_at") or 0})
+                pending += 1
+            if pending:
+                pipe.execute()
+                restored += pending
+            offset += page_size
+        if restored:
+            log_info(f"Job queue: indexed {restored} existing job(s) into their session lines (per-session queueing)")
+
+    def _q_session_line_view(self, session_id: str) -> List[Tuple[int, int, str, str]]:
+        """(created_at, seq, id, status) of the session line's LIVE members,
+        in claim order. Documents written before the enqueue sequence existed
+        sort first among same-second ties (seq 0): they are the older
+        submissions. Bounded by the session's own backlog, never by retained
         history. Dead entries (doc gone) and terminal stragglers (a crash
         between a doc write and its line op) are skipped, not trusted."""
-        entries: List[Tuple[int, str, str]] = []
+        entries: List[Tuple[int, int, str, str]] = []
         raw_ids = list(self.redis_client.zrange(self._q_line_key(session_id), 0, -1))  # type: ignore[arg-type]
         if not raw_ids:
             return entries
@@ -2692,28 +2773,58 @@ class RedisDb(BaseDb):
                 continue
             if doc.get("status") not in ("queued", "running", "paused"):
                 continue
-            entries.append((doc.get("created_at") or 0, member_id, doc["status"]))
+            entries.append((doc.get("created_at") or 0, doc.get("seq") or 0, member_id, doc["status"]))
         entries.sort()
         return entries
 
-    def _q_line_admits(self, candidate: Dict[str, Any]) -> bool:
+    def _q_cached_line_view(
+        self, session_id: str, line_cache: Optional[Dict[str, List[Tuple[int, int, str, str]]]]
+    ) -> List[Tuple[int, int, str, str]]:
+        """The session line view, loaded at most once per session per scan.
+
+        The VERDICT is not cacheable - "is this candidate the head" has a
+        different answer for every candidate - but the view it is computed
+        from is shared by every candidate of that session, and loading it is
+        the expensive part (range read, multi-get, sort). A peer claiming
+        mid-scan makes a cached view stale, which is no new exposure: the
+        uncached filter was equally a snapshot the moment it was read, and
+        the claim CAS is what arbitrates. Callers on the authoritative path
+        pass no cache."""
+        if line_cache is None:
+            return self._q_session_line_view(session_id)
+        entries = line_cache.get(session_id)
+        if entries is None:
+            entries = self._q_session_line_view(session_id)
+            line_cache[session_id] = entries
+        return entries
+
+    def _q_line_admits(
+        self,
+        candidate: Dict[str, Any],
+        line_cache: Optional[Dict[str, List[Tuple[int, int, str, str]]]] = None,
+    ) -> bool:
         """Advisory pre-filter: the session line admits claiming this
         candidate when it is the line's head and no OTHER member is running.
-        Jobs enqueued before the line zset existed self-heal in here on
-        their first claim attempt; older pre-upgrade siblings converge on
-        their own attempts, so per-session queueing is best-effort until the
-        pre-upgrade backlog drains (noted on the flag). The claim CAS
-        re-validates under WATCH - this filter only saves CAS round-trips."""
+        Everything already in the store was indexed by
+        _q_backfill_session_lines before the first gated claim; the self-heal
+        below covers a job enqueued after that by a replica still running a
+        version without the index. The claim CAS re-validates under WATCH -
+        this filter only saves CAS round-trips."""
         session_id = candidate.get("session_id")
         if not session_id:
             return True
-        line_key = self._q_line_key(session_id)
-        if self.redis_client.zscore(line_key, candidate["id"]) is None:
-            self.redis_client.zadd(line_key, {candidate["id"]: candidate.get("created_at") or 0})
-        entries = self._q_session_line_view(session_id)
-        if not entries or entries[0][1] != candidate["id"]:
+        entries = self._q_cached_line_view(session_id, line_cache)
+        if not any(member_id == candidate["id"] for _, _, member_id, _ in entries):
+            # Self-heal, and the membership test rides the view rather than a
+            # per-candidate ZSCORE: the candidate's document was just read as
+            # non-terminal, so it appears in the view whenever it is a member.
+            self.redis_client.zadd(self._q_line_key(session_id), {candidate["id"]: candidate.get("created_at") or 0})
+            entries = self._q_session_line_view(session_id)
+            if line_cache is not None:
+                line_cache[session_id] = entries
+        if not entries or entries[0][2] != candidate["id"]:
             return False
-        return not any(status == "running" and member_id != candidate["id"] for _, member_id, status in entries)
+        return not any(status == "running" and member_id != candidate["id"] for _, _, member_id, status in entries)
 
     def _q_scan_claim(
         self,
@@ -2725,6 +2836,7 @@ class RedisDb(BaseDb):
         stale_before: Optional[int] = None,
         deployment_id: Optional[str] = None,
         queue_per_session: bool = False,
+        line_cache: Optional[Dict[str, List[Tuple[int, int, str, str]]]] = None,
     ) -> Optional[Dict[str, Any]]:
         """Page through ready jobs oldest-first, cheaply pre-filter each page
         by deployment affinity (MGET, advisory only), and CAS-claim the first
@@ -2753,7 +2865,7 @@ class RedisDb(BaseDb):
                     continue
                 if candidate.get("deployment_id") is not None and candidate.get("deployment_id") != deployment_id:
                     continue
-                if queue_per_session and not self._q_line_admits(candidate):
+                if queue_per_session and not self._q_line_admits(candidate, line_cache):
                     continue
                 job = self._q_try_claim(
                     job_id,
@@ -2818,10 +2930,10 @@ class RedisDb(BaseDb):
                     # already arbitrated by the job-key WATCH.
                     pipe.watch(self._q_line_key(job["session_id"]))
                     entries = self._q_session_line_view(job["session_id"])
-                    admitted = bool(entries) and entries[0][1] == job_id
+                    admitted = bool(entries) and entries[0][2] == job_id
                     if admitted:
                         admitted = not any(
-                            status == "running" and member_id != job_id for _, member_id, status in entries
+                            status == "running" and member_id != job_id for _, _, member_id, status in entries
                         )
                     if not admitted:
                         pipe.unwatch()
