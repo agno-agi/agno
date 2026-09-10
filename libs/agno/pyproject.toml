@@ -226,7 +226,7 @@ csv = ["aiofiles"]
 docx = ["python-docx"]
 excel = ["openpyxl", "xlrd"]
 markdown = ["aiofiles"]
-pdf = ["pypdf"]
+pdf = ["pypdf", "fonttools"]
 pptx = ["python-pptx"]
 text = ["aiofiles"]
 # The website and llms_txt readers both import bs4 at module scope.
