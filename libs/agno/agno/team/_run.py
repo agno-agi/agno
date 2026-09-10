@@ -7161,11 +7161,11 @@ def _bind_run_context_to_team_run(team: "Team", run_context: RunContext, run_res
 
 
 def _apply_continue_modifiers_team(
+    team: "Team",
     run_response: "TeamRunOutput",
     fork: bool,
     message_index: Optional[int],
-    team: Optional["Team"] = None,
-    run_context: Optional[RunContext] = None,
+    run_context: RunContext,
 ) -> "TeamRunOutput":
     """Apply ``fork`` and/or ``message_index`` to a loaded team run_response.
 
@@ -7178,8 +7178,7 @@ def _apply_continue_modifiers_team(
         run_response = _fork_team_run(run_response, idx)
     elif message_index is not None:
         _truncate_team_run_to_checkpoint(run_response, message_index)
-    if run_context is not None and team is not None:
-        _bind_run_context_to_team_run(team, run_context, run_response)
+    _bind_run_context_to_team_run(team, run_context, run_response)
     return run_response
 
 
@@ -7709,7 +7708,7 @@ def continue_run_dispatch(
     # Apply modifiers BEFORE the requirements machinery. If we forked, the
     # rest of the dispatch operates on the new run with cloned members.
     _did_snapshot_dispatch = fork or _will_truncate_team_run(run_response, continue_index)
-    run_response = _apply_continue_modifiers_team(run_response, fork, continue_index, team, run_context)
+    run_response = _apply_continue_modifiers_team(team, run_response, fork, continue_index, run_context)
     if regenerate and original_run_id_for_lineage:
         run_response.regenerated_from = original_run_id_for_lineage
         if replace_original is not False and run_response.forked_from_run_id:
@@ -9511,11 +9510,13 @@ async def _acontinue_run(
     # with nothing to route. Without the banked results every dispatch branch is
     # skipped and the run would complete without the leader ever being called.
     routed_member_results: List[str] = []
-    # Each retry attempt forks its own sibling run, and resolving dependencies replaces
-    # callable factories with their results in place. Keep the unresolved values so a
-    # retry re-resolves against the fork it actually executes instead of reusing values
-    # scoped to the abandoned previous fork.
+    # A retry re-enters the dispatch, which resolves dependencies in place and, on a fork,
+    # rebinds run_response to the fork it made. Keep the caller's inputs so a retry starts
+    # from the parent again instead of forking the abandoned fork.
     unresolved_dependencies = dict(run_context.dependencies) if isinstance(run_context.dependencies, dict) else None
+    original_run_response = run_response
+    original_fork = fork
+    original_input = input
 
     try:
         num_attempts = team.retries + 1
@@ -9524,9 +9525,16 @@ async def _acontinue_run(
                 # Bind run_messages early — cancellation can fire before run_messages
                 # is built, and the cancellation handler reads it.
                 run_messages: Optional[RunMessages] = None
-                if attempt > 0 and unresolved_dependencies is not None and isinstance(run_context.dependencies, dict):
-                    run_context.dependencies.clear()
-                    run_context.dependencies.update(unresolved_dependencies)
+                if attempt > 0:
+                    # Only a forking retry restarts from the caller's inputs; an in-place
+                    # retry keeps the requirement resolution and routed member results.
+                    if fork:
+                        run_response = original_run_response
+                        fork = original_fork
+                        input = original_input
+                    if unresolved_dependencies is not None and isinstance(run_context.dependencies, dict):
+                        run_context.dependencies.clear()
+                        run_context.dependencies.update(unresolved_dependencies)
                 # Setup session
                 team_session = await _asetup_session(
                     team=team,
@@ -9587,7 +9595,7 @@ async def _acontinue_run(
                     fork = True
 
                 _did_snapshot_dispatch = fork or _will_truncate_team_run(run_response, continue_index)
-                run_response = _apply_continue_modifiers_team(run_response, fork, continue_index, team, run_context)
+                run_response = _apply_continue_modifiers_team(team, run_response, fork, continue_index, run_context)
                 if regenerate and original_run_id_for_lineage:
                     run_response.regenerated_from = original_run_id_for_lineage
                     if replace_original is not False and run_response.forked_from_run_id:
@@ -9603,6 +9611,8 @@ async def _acontinue_run(
                 # Append input/additional_instructions as a user message.
                 if input:
                     _maybe_append_input_message_team(run_response, input, team)
+                    # Appended once: an in-place retry keeps this run_response.
+                    input = None
                 # --- End snapshot dispatch ---
 
                 # A freshly-forked run has no PAUSED requirements contract;
@@ -10008,9 +10018,11 @@ async def _acontinue_run_stream(
     # run that skipped it.
     requirements_applied = False
     routed_member_results: List[str] = []
-    # See _acontinue_run: keep the unresolved dependency values so a retry re-resolves
-    # against the fork it actually executes.
+    # See _acontinue_run: a forking retry restarts from the caller's inputs.
     unresolved_dependencies = dict(run_context.dependencies) if isinstance(run_context.dependencies, dict) else None
+    original_run_response = run_response
+    original_fork = fork
+    original_input = input
 
     try:
         num_attempts = team.retries + 1
@@ -10019,9 +10031,16 @@ async def _acontinue_run_stream(
                 # Bind run_messages early — cancellation can fire before run_messages
                 # is built, and the cancellation handler reads it.
                 run_messages: Optional[RunMessages] = None
-                if attempt > 0 and unresolved_dependencies is not None and isinstance(run_context.dependencies, dict):
-                    run_context.dependencies.clear()
-                    run_context.dependencies.update(unresolved_dependencies)
+                if attempt > 0:
+                    # Only a forking retry restarts from the caller's inputs; an in-place
+                    # retry keeps the requirement resolution and routed member results.
+                    if fork:
+                        run_response = original_run_response
+                        fork = original_fork
+                        input = original_input
+                    if unresolved_dependencies is not None and isinstance(run_context.dependencies, dict):
+                        run_context.dependencies.clear()
+                        run_context.dependencies.update(unresolved_dependencies)
                 # Setup session
                 team_session = await _asetup_session(
                     team=team,
@@ -10082,7 +10101,7 @@ async def _acontinue_run_stream(
                     fork = True
 
                 _did_snapshot_dispatch = fork or _will_truncate_team_run(run_response, continue_index)
-                run_response = _apply_continue_modifiers_team(run_response, fork, continue_index, team, run_context)
+                run_response = _apply_continue_modifiers_team(team, run_response, fork, continue_index, run_context)
                 if regenerate and original_run_id_for_lineage:
                     run_response.regenerated_from = original_run_id_for_lineage
                     if replace_original is not False and run_response.forked_from_run_id:
@@ -10098,6 +10117,8 @@ async def _acontinue_run_stream(
                 # Append input/additional_instructions as a user message.
                 if input:
                     _maybe_append_input_message_team(run_response, input, team)
+                    # Appended once: an in-place retry keeps this run_response.
+                    input = None
                 # --- End snapshot dispatch ---
 
                 # A freshly-forked run has no PAUSED requirements contract;

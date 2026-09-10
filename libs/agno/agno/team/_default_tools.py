@@ -87,6 +87,9 @@ from agno.utils.team import (
 )
 from agno.utils.timer import Timer
 
+# Per-run identity keys a member stamps on its own session_state; never merged back into the team's.
+_MEMBER_TRANSIENT_STATE_KEYS = ("current_session_id", "current_user_id", "current_run_id")
+
 # Terminal events emitted by a member (Agent or sub-Team); forwarded even when draining after cancel.
 _MEMBER_TERMINAL_EVENT_TYPES = (
     AgentRunCancelledEvent,
@@ -96,6 +99,16 @@ _MEMBER_TERMINAL_EVENT_TYPES = (
     TeamMemberRunCompletedEvent,
     TeamMemberRunErrorEvent,
 )
+
+
+def _merge_member_session_state(run_context: RunContext, member_session_state: Dict[str, Any]) -> None:
+    """Merge a member's session_state back into the team's, minus the member's own identity."""
+    if run_context.session_state is None:
+        return
+    merge_dictionaries(
+        run_context.session_state,
+        {k: v for k, v in member_session_state.items() if k not in _MEMBER_TRANSIENT_STATE_KEYS},
+    )
 
 
 def _cascading_cancel_run(run_id: str) -> bool:
@@ -604,7 +617,7 @@ def _get_delegate_task_function(
             session.upsert_run(_member_run_for_storage(team, session, member_agent_run_response))
 
         # Update team session state
-        merge_dictionaries(run_context.session_state, member_session_state_copy)  # type: ignore
+        _merge_member_session_state(run_context, member_session_state_copy)
 
         # Update the team media
         if member_agent_run_response is not None:
@@ -681,7 +694,7 @@ def _get_delegate_task_function(
             session.upsert_run(await _amember_run_for_storage(team, session, member_agent_run_response))
 
         # Update team session state
-        merge_dictionaries(run_context.session_state, member_session_state_copy)  # type: ignore
+        _merge_member_session_state(run_context, member_session_state_copy)
 
         # Update the team media
         if member_agent_run_response is not None:

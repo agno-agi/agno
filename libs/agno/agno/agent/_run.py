@@ -3171,7 +3171,8 @@ def _bind_run_context_to_run(run_context: RunContext, run_response: RunOutput) -
     The context is built before the fork, so on a forked continuation it still holds the
     parent's run_id. Left alone, every tool, tool hook and reasoning step of the continuation
     files its work under the parent run, and session_state carries a stale current_run_id.
-    Re-pointing it is a no-op for an in-place continuation, where the id does not change.
+    On an in-place continuation only the session_state stamp does work: it restores the keys
+    a reload dropped.
     """
     run_id = run_response.run_id
     if not run_id:
@@ -3194,7 +3195,7 @@ def _apply_continue_modifiers(
     run_response: RunOutput,
     fork: bool,
     message_index: Optional[int],
-    run_context: Optional[RunContext] = None,
+    run_context: RunContext,
 ) -> RunOutput:
     """Apply ``fork`` and/or ``message_index`` to a loaded run_response.
 
@@ -3203,16 +3204,15 @@ def _apply_continue_modifiers(
     acontinue_run_dispatch after a run is loaded and before validation, so the
     rest of the dispatch operates on the modified state.
 
-    ``run_context`` is re-pointed at the resulting run. It is threaded through here rather
-    than left to each call site so that no future fork path can forget it.
+    ``run_context`` is re-pointed at the resulting run. It is required rather than optional so
+    that no fork path can reach the fork without also moving the context onto it.
     """
     if fork:
         idx = message_index if message_index is not None else len(run_response.messages or [])
         run_response = _fork_run(run_response, idx)
     elif message_index is not None:
         _truncate_run_to_checkpoint(run_response, message_index)
-    if run_context is not None:
-        _bind_run_context_to_run(run_context, run_response)
+    _bind_run_context_to_run(run_context, run_response)
     return run_response
 
 
@@ -4043,13 +4043,9 @@ def _continue_run_stream(
     try:
         for attempt in range(num_attempts):
             try:
-                # 1. Resolve dependencies
-                if run_context.dependencies is not None:
-                    resolve_run_dependencies(
-                        agent, run_context=run_context, run_input=run_response.input, session=session
-                    )
+                # Dependencies are resolved once in continue_run_dispatch, after the fork.
 
-                # Start the Run by yielding a RunContinued event
+                # 1. Start the Run by yielding a RunContinued event
                 if stream_events:
                     yield handle_event(  # type: ignore
                         create_run_continued_event(run_response),
@@ -4523,6 +4519,17 @@ def acontinue_run_dispatch(  # type: ignore
         )
 
 
+def _as_run_status(value: Union[RunStatus, str, None]) -> Union[RunStatus, str, None]:
+    """Coerce a stored status to RunStatus. A run loaded from the DB carries its
+    status as a plain string; an unrecognized value is returned unchanged."""
+    if value is None or isinstance(value, RunStatus):
+        return value
+    try:
+        return RunStatus(value)
+    except ValueError:
+        return value
+
+
 async def _acontinue_run_background_stream(
     agent: Agent,
     session_id: str,
@@ -4586,8 +4593,18 @@ async def _acontinue_run_background_stream(
     # reads PAUSED for the whole execution while the run actually runs. The
     # loaded run is used ONLY for the status persists - the continue dispatch
     # below still receives the caller's run_response untouched.
-    persist_run = run_response or cast(Optional[RunOutput], agent_session.get_run(_run_id))
-    if persist_run:
+    stored_run = cast(Optional[RunOutput], agent_session.get_run(_run_id))
+    persist_run = run_response or stored_run
+
+    # A fork/regenerate executes under a new run id. A run-id-only continue of
+    # a completed run auto-forks downstream, while a cancelled run is refused.
+    # None of those paths may stamp PENDING/RUNNING over the source run.
+    status_before_takeover = _as_run_status(getattr(stored_run, "status", None))
+    take_over_in_place = not (fork or regenerate) and status_before_takeover not in (
+        RunStatus.completed,
+        RunStatus.cancelled,
+    )
+    if persist_run and take_over_in_place:
         persist_run.status = RunStatus.pending
         storage_run = await abuild_offloaded_storage_copy(agent, persist_run, session_id) or persist_run
         agent_session.upsert_run(run=storage_run)
@@ -4595,13 +4612,16 @@ async def _acontinue_run_background_stream(
         await asave_run(agent, run=storage_run, session_id=session_id, user_id=user_id)
     await asave_session(agent, session=agent_session)
 
-    # Pre-register with the event buffer so reconnecting clients can attach and
-    # wait while the continue-run is still queued (no events buffered yet).
-    with contextlib.suppress(Exception):
-        # Fail-open: a Redis blip must not strand an accepted run
-        await get_event_stream().register_run(_run_id, RunStatus.pending)
+    # Pre-register only an in-place takeover. Forks and auto-forks are keyed by
+    # a new run id downstream; fabricating PENDING under the source key would
+    # corrupt the original run's reconnect state.
+    if take_over_in_place:
+        with contextlib.suppress(Exception):
+            # Fail-open: a Redis blip must not strand an accepted run
+            await get_event_stream().register_run(_run_id, RunStatus.pending)
 
-    log_info(f"Background continue-run stream {_run_id} persisted with PENDING status")
+    if take_over_in_place:
+        log_info(f"Background continue-run stream {_run_id} persisted with PENDING status")
 
     # 2. Create queue for forwarding SSE strings to the caller
     sse_queue: asyncio.Queue[Optional[str]] = asyncio.Queue()
@@ -4622,7 +4642,7 @@ async def _acontinue_run_background_stream(
 
             # Transition to RUNNING now that a slot is held (atomic helper).
             # persist_run covers the run-ID-only continue (loaded above).
-            if persist_run:
+            if persist_run and take_over_in_place:
                 persist_run.status = RunStatus.running
                 await apersist_run_transition(agent, "agent", session_id, persist_run, user_id=user_id)
             with contextlib.suppress(Exception):
@@ -4674,11 +4694,15 @@ async def _acontinue_run_background_stream(
             # producer). producer_terminal makes the finally's sentinel say
             # CANCELLED - without it, complete_run's non-terminal coercion
             # turned an interrupted continue into a FALSE COMPLETED.
-            producer_terminal = RunStatus.cancelled
+            producer_terminal = RunStatus.cancelled if take_over_in_place else None
             from agno.run.concurrency import is_worker_managed
 
             if is_worker_managed(_run_id or ""):
                 raise  # worker-claimed: the QueueWorker owns this terminal
+            if not take_over_in_place:
+                # A fork/regenerate owns a new run id downstream. Task
+                # shutdown must not cancel the source run or its stream key.
+                raise
             with contextlib.suppress(Exception):
                 interrupted_run = run_response
                 if interrupted_run is None:
@@ -4701,10 +4725,12 @@ async def _acontinue_run_background_stream(
             # arrive with run_response=None (router passes only run_id): load
             # the run from the session so the cancel is never silently skipped.
             log_info(f"Background continue-run stream {_run_id} cancelled while waiting for a slot")
-            producer_terminal = RunStatus.cancelled
+            producer_terminal = RunStatus.cancelled if take_over_in_place else None
             try:
-                cancelled_run = run_response
-                if cancelled_run is None:
+                cancelled_run: Optional[RunOutput] = None
+                if take_over_in_place:
+                    cancelled_run = run_response
+                if take_over_in_place and cancelled_run is None:
                     # HITL continues arrive with run_response=None: load the
                     # run so the terminal persist is never silently skipped
                     lookup_session = await aread_or_create_session(agent, session_id=session_id, user_id=user_id)
@@ -4717,22 +4743,47 @@ async def _acontinue_run_background_stream(
                     f"Failed to persist cancelled state for background continue-run stream {_run_id}", exc_info=True
                 )
             await acleanup_run(_run_id)
-        except Exception:
-            log_error(f"Background continue-run stream {_run_id} failed", exc_info=True)
-            producer_terminal = RunStatus.error
-            # Persist ERROR status (loading from session when run_response is None)
+        except Exception as e:
+            refused = isinstance(e, RunNotContinuableError)
+            if refused:
+                # A refusal is an answer, not a crash: the dispatch never took
+                # the run over, so the source row keeps its own status.
+                log_info(f"Background continue-run stream {_run_id} refused the continue: {e}")
+                producer_terminal = status_before_takeover if isinstance(status_before_takeover, RunStatus) else None
+            else:
+                log_error(f"Background continue-run stream {_run_id} failed", exc_info=True)
+                producer_terminal = RunStatus.error if take_over_in_place else None
+                # Persist ERROR only while this in-place producer owns the source
+                # row. Forks and auto-forks execute under a new id and leave it.
+                if take_over_in_place:
+                    try:
+                        errored_run = run_response
+                        if errored_run is None:
+                            # HITL continues arrive with run_response=None: load the
+                            # run so the terminal persist is never silently skipped
+                            lookup_session = await aread_or_create_session(
+                                agent, session_id=session_id, user_id=user_id
+                            )
+                            errored_run = cast(Optional[RunOutput], lookup_session.get_run(_run_id))
+                        if errored_run is not None:
+                            errored_run.status = RunStatus.error
+                            await apersist_run_transition(agent, "agent", session_id, errored_run, user_id=user_id)
+                    except Exception:
+                        log_error(
+                            f"Failed to persist error state for background continue-run stream {_run_id}",
+                            exc_info=True,
+                        )
+
+            # Tell the client. Without this the producer dies inside its detached
+            # task and the caller is left holding a 200 with an empty body.
             try:
-                errored_run = run_response
-                if errored_run is None:
-                    # HITL continues arrive with run_response=None: load the
-                    # run so the terminal persist is never silently skipped
-                    lookup_session = await aread_or_create_session(agent, session_id=session_id, user_id=user_id)
-                    errored_run = cast(Optional[RunOutput], lookup_session.get_run(_run_id))
-                if errored_run is not None:
-                    errored_run.status = RunStatus.error
-                    await apersist_run_transition(agent, "agent", session_id, errored_run, user_id=user_id)
+                error_source = run_response or RunOutput(
+                    run_id=_run_id, session_id=session_id, agent_id=agent.id, agent_name=agent.name
+                )
+                error_event = create_run_error_event(error_source, error=str(e), error_type=error_type_of(e))
+                await sse_queue.put(format_sse_event_with_index(error_event, event_index=None, run_id=_run_id))
             except Exception:
-                log_error(f"Failed to persist error state for background continue-run stream {_run_id}", exc_info=True)
+                log_warning(f"Failed to emit error event for continue-run {_run_id}")
 
         finally:
             if slot_held:
@@ -4842,11 +4893,13 @@ async def _acontinue_run(
     log_debug(f"Agent Run Continue: {run_response.run_id if run_response else run_id}", center=True)  # type: ignore
     agent_session: Optional[AgentSession] = None
 
-    # Each retry attempt forks its own sibling run, and resolving dependencies replaces
-    # callable factories with their results in place. Keep the unresolved values so a
-    # retry re-resolves against the fork it actually executes instead of reusing values
-    # scoped to the abandoned previous fork.
+    # A retry re-enters the dispatch, which resolves dependencies in place and, on a fork,
+    # rebinds run_response to the fork it made. Keep the caller's inputs so a retry starts
+    # from the parent again instead of forking the abandoned fork.
     unresolved_dependencies = dict(run_context.dependencies) if isinstance(run_context.dependencies, dict) else None
+    original_run_response = run_response
+    original_fork = fork
+    original_input = input
 
     # Resolve retry parameters
     try:
@@ -4858,6 +4911,12 @@ async def _acontinue_run(
                 run_messages: Optional[RunMessages] = None
                 if attempt > 0:
                     log_debug(f"Retrying Agent acontinue_run {run_id}. Attempt {attempt + 1} of {num_attempts}...")
+                    # Only a forking retry restarts from the caller's inputs; an in-place
+                    # retry keeps the requirement resolution the previous attempt applied.
+                    if fork:
+                        run_response = original_run_response
+                        fork = original_fork
+                        input = original_input
                     if unresolved_dependencies is not None and isinstance(run_context.dependencies, dict):
                         run_context.dependencies.clear()
                         run_context.dependencies.update(unresolved_dependencies)
@@ -5044,6 +5103,8 @@ async def _acontinue_run(
                 if input:
                     _maybe_append_input_message(run_response, input, agent)
                     input_messages = run_response.messages or []
+                    # Appended once: an in-place retry keeps this run_response.
+                    input = None
 
                 run_response = cast(RunOutput, run_response)
 
@@ -5379,11 +5440,13 @@ async def _acontinue_run_stream(
 
     agent_session: Optional[AgentSession] = None
 
-    # Each retry attempt forks its own sibling run, and resolving dependencies replaces
-    # callable factories with their results in place. Keep the unresolved values so a
-    # retry re-resolves against the fork it actually executes instead of reusing values
-    # scoped to the abandoned previous fork.
+    # A retry re-enters the dispatch, which resolves dependencies in place and, on a fork,
+    # rebinds run_response to the fork it made. Keep the caller's inputs so a retry starts
+    # from the parent again instead of forking the abandoned fork.
     unresolved_dependencies = dict(run_context.dependencies) if isinstance(run_context.dependencies, dict) else None
+    original_run_response = run_response
+    original_fork = fork
+    original_input = input
 
     # Resolve retry parameters
     try:
@@ -5393,9 +5456,16 @@ async def _acontinue_run_stream(
                 # Bind run_messages early — cancellation can fire before run_messages
                 # is built, and the cancellation handler reads it.
                 run_messages: Optional[RunMessages] = None
-                if attempt > 0 and unresolved_dependencies is not None and isinstance(run_context.dependencies, dict):
-                    run_context.dependencies.clear()
-                    run_context.dependencies.update(unresolved_dependencies)
+                if attempt > 0:
+                    # Only a forking retry restarts from the caller's inputs; an in-place
+                    # retry keeps the requirement resolution the previous attempt applied.
+                    if fork:
+                        run_response = original_run_response
+                        fork = original_fork
+                        input = original_input
+                    if unresolved_dependencies is not None and isinstance(run_context.dependencies, dict):
+                        run_context.dependencies.clear()
+                        run_context.dependencies.update(unresolved_dependencies)
                 # 1. Read existing session from db
                 agent_session = await aread_or_create_session(agent, session_id=session_id, user_id=user_id)
 
@@ -5579,6 +5649,8 @@ async def _acontinue_run_stream(
                 if input:
                     _maybe_append_input_message(run_response, input, agent)
                     input_messages = run_response.messages or []
+                    # Appended once: an in-place retry keeps this run_response.
+                    input = None
 
                 run_response = cast(RunOutput, run_response)
 

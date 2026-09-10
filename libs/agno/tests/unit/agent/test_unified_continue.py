@@ -1920,7 +1920,7 @@ class TestStreamingParity:
                 )
                 if not f and run_response.status == RunStatus.completed:
                     f = True
-                run_response = _apply_continue_modifiers(run_response, f, fc)
+                run_response = _apply_continue_modifiers(run_response, f, fc, run_context)
                 if inp:
                     from agno.agent._run import _maybe_append_input_message
 
