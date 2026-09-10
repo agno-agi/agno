@@ -13,7 +13,6 @@ from ag_ui.core import (
     ReasoningMessageEndEvent,
     ReasoningMessageStartEvent,
     ReasoningStartEvent,
-    RunErrorEvent as AGUIRunErrorEvent,
     RunFinishedEvent,
     StateDeltaEvent,
     StateSnapshotEvent,
@@ -24,6 +23,9 @@ from ag_ui.core import (
     ToolCallEndEvent,
     ToolCallResultEvent,
     ToolCallStartEvent,
+)
+from ag_ui.core import (
+    RunErrorEvent as AGUIRunErrorEvent,
 )
 
 from agno.models.response import ToolExecution
