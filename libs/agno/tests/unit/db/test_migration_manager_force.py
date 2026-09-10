@@ -72,10 +72,19 @@ def test_up_with_force_reruns_every_migration_up_to_the_target():
 
 
 def test_up_with_force_honours_an_explicit_target():
-    manager, db = _run_up("3.0.0", target_version="2.5.6", force=True)
+    manager, db = _run_up("2.5.6", target_version="2.5.6", force=True)
 
     assert manager.applied == ["v2_3_0", "v2_5_0", "v2_5_6"]
     assert db.stored_versions == [("sessions", "2.5.6")]
+
+
+def test_up_with_force_rejects_a_target_below_the_current_version():
+    # up() has no revert step, so replaying older migrations and stamping the older
+    # version would misdescribe the schema. That is down()'s job.
+    manager, db = _run_up("3.0.0", target_version="2.5.6", force=True)
+
+    assert manager.applied == []
+    assert db.stored_versions == []
 
 
 def test_up_without_force_still_applies_only_the_missing_migrations():

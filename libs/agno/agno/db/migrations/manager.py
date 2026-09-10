@@ -43,7 +43,8 @@ class MigrationManager:
             target_version: The version to migrate to, e.g. "v3.0.0". If not provided, the latest available version will be used.
             table_type: The type of table to migrate. If not provided, all table types will be considered.
             force: Re-run every migration up to the target version even when the table is already stamped
-                at or above it. Each migration checks the table shape before touching it, so a re-run is safe.
+                at it. Each migration leaves rows the store already holds untouched, so a re-run is safe.
+                A target below the current version is rejected; use ``down()`` for that.
         """
 
         # If not target version is provided, use the latest available version
@@ -93,6 +94,14 @@ class MigrationManager:
                 )
                 continue
             current_version = packaging_version.parse(raw_version)
+
+            # A forced re-run cannot move a table backwards: up() has no revert step, so stamping
+            # the older version would misdescribe the schema. That is what down() is for.
+            if force and _target_version < current_version:
+                log_warning(
+                    f"Skipping migration: the target version ({_target_version}) is below the version of table '{table_name}' ({current_version}). Use down() to revert."
+                )
+                continue
 
             # If the target version is less or equal to the current version, no migrations needed
             if _target_version <= current_version and not force:
