@@ -485,6 +485,19 @@ def upsert_run(
         # a zombie attempt's write is refused instead of clobbering the row
         if persist_worker_owned_run(agent.db, run, session_id=session_id, user_id=user_id):
             return
+        from agno.db.run_writes import persist_run_scoped
+
+        # Scoped update first, strict create when the row is not there yet:
+        # a lifecycle save can then only ever touch the row this run created
+        try:
+            handled = persist_run_scoped(agent.db, run, session_id=session_id, user_id=user_id, run_index=run_index)
+        except NotImplementedError:
+            # The adapter declares the scoped pair but has not implemented
+            # it; the legacy save below overwrites, so say so
+            log_warning(f"{type(agent.db).__name__} declares scoped run writes but does not implement them")
+            handled = False
+        if handled:
+            return
         agent.db.upsert_run(run=run, session_id=session_id, user_id=user_id, run_index=run_index)  # type: ignore[union-attr]
     except NotImplementedError:
         # Adapter has not been ported to v3 storage; runs are persisted inline
@@ -530,6 +543,20 @@ async def aupsert_run(
         # Queue-worker-owned runs save through the attempt-fenced primitive;
         # a zombie attempt's write is refused instead of clobbering the row
         if await apersist_worker_owned_run(agent.db, run, session_id=session_id, user_id=user_id):
+            return
+        from agno.db.run_writes import apersist_run_scoped
+
+        # See upsert_run
+        try:
+            handled = await apersist_run_scoped(
+                agent.db, run, session_id=session_id, user_id=user_id, run_index=run_index
+            )
+        except NotImplementedError:
+            # The adapter declares the scoped pair but has not implemented
+            # it; the legacy save below overwrites, so say so
+            log_warning(f"{type(agent.db).__name__} declares scoped run writes but does not implement them")
+            handled = False
+        if handled:
             return
         if _init.has_async_db(agent):
             await agent.db.upsert_run(run=run, session_id=session_id, user_id=user_id, run_index=run_index)  # type: ignore[union-attr,misc]
