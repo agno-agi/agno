@@ -245,6 +245,7 @@ def set_filesystem(agent: Agent) -> None:
 
     from agno.fs import FileSystem
     from agno.fs.toolkit import FileSystemTools
+    from agno.knowledge.page.filesystem import PageFileSystem
 
     existing_tools = list(agent.tools or [])
     existing_filesystem = next((tool for tool in existing_tools if isinstance(tool, FileSystemTools)), None)
@@ -254,7 +255,7 @@ def set_filesystem(agent: Agent) -> None:
             "FileSystemTools or disable the filesystem setting."
         )
 
-    if isinstance(agent.filesystem, FileSystem):
+    if isinstance(agent.filesystem, (FileSystem, PageFileSystem)):
         agent._filesystem = agent.filesystem
     elif agent.filesystem is True:
         if agent.db is None:
@@ -263,16 +264,13 @@ def set_filesystem(agent: Agent) -> None:
             raise ValueError("filesystem=True currently requires a synchronous database")
         if not agent.id:
             raise ValueError("filesystem=True requires the agent to have a stable id")
-        namespace = (
-            f"users/{{user_id}}/agents/{agent.id}"
-            if agent._filesystem_user_isolation
-            else f"agents/{agent.id}"
-        )
+        namespace = f"users/{{user_id}}/agents/{agent.id}" if agent._filesystem_user_isolation else f"agents/{agent.id}"
         agent._filesystem = FileSystem(agent.db, namespace=namespace)
     else:
-        raise TypeError("filesystem must be True, False, None, or a FileSystem instance")
+        raise TypeError("filesystem must be True, False, None, a FileSystem, or a PageFileSystem instance")
 
-    existing_tools.append(agent._filesystem.tools(add_instructions=True))
+    agent._filesystem_toolkit = agent._filesystem.tools(add_instructions=True)
+    existing_tools.append(agent._filesystem_toolkit)
     agent.tools = existing_tools
 
 
@@ -292,11 +290,10 @@ def set_filesystem_user_isolation(agent: Agent, enabled: bool) -> None:
         from agno.fs.toolkit import FileSystemTools
 
         agent.tools = [
-            tool
-            for tool in agent.tools
-            if not (isinstance(tool, FileSystemTools) and tool.fs is managed_filesystem)
+            tool for tool in agent.tools if not (isinstance(tool, FileSystemTools) and tool.fs is managed_filesystem)
         ]
     agent._filesystem = None
+    agent._filesystem_toolkit = None
     agent._filesystem_user_isolation = enabled
 
 

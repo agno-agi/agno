@@ -52,3 +52,55 @@ class FileSystemSearchResponse(BaseModel):
     directory: str
     entries: List[FileSystemSearchEntry]
     meta: PaginationInfo
+
+
+class FileSource(BaseModel):
+    id: str
+    name: str
+    kind: Literal["agent", "knowledge"]
+    agent_id: Optional[str] = None
+
+
+class FileSourceEntry(FileSystemEntry):
+    title: Optional[str] = None
+    url: Optional[str] = None
+    revision: Optional[str] = None
+
+
+class FileSourceListResponse(BaseModel):
+    source_id: str
+    directory: str
+    entries: List[FileSourceEntry]
+    usage: Optional[FileSystemUsage] = None
+    meta: PaginationInfo
+
+
+class FileSourceContentResponse(BaseModel):
+    source_id: str
+    path: str
+    content: str
+    size_bytes: Optional[int] = None
+    version: Optional[int] = None
+    updated_at: Optional[int] = None
+    line_count: Optional[int] = None
+    truncated: bool
+    title: Optional[str] = None
+    url: Optional[str] = None
+    revision: Optional[str] = None
+    next_offset: Optional[int] = None
+
+
+class FileSourceSearchEntry(FileSourceEntry):
+    type: Literal["file"] = "file"
+    snippet: str
+    line: Optional[int] = None
+    match_count: int
+
+
+class FileSourceSearchResponse(BaseModel):
+    source_id: str
+    query: str
+    directory: str
+    entries: List[FileSourceSearchEntry]
+    meta: PaginationInfo
+    partial: bool = False

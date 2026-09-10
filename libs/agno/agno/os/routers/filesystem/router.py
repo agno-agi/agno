@@ -1,5 +1,5 @@
 import asyncio
-from typing import TYPE_CHECKING, Dict
+from typing import TYPE_CHECKING, Dict, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
@@ -8,15 +8,28 @@ from agno.agent import _init as agent_init
 from agno.exceptions import ComponentRehydrationError
 from agno.fs import FileSystem, InvalidPathError
 from agno.fs._paths import normalize_directory, normalize_path, path_sort_key
+from agno.knowledge.page.types import PageError
 from agno.os.auth import get_authentication_dependency, require_resource_access
 from agno.os.middleware.user_scope import get_scoped_user_id
 from agno.os.routers.filesystem.schema import (
+    FileSource,
+    FileSourceContentResponse,
+    FileSourceListResponse,
+    FileSourceSearchEntry,
+    FileSourceSearchResponse,
     FileSystemContentResponse,
     FileSystemEntry,
     FileSystemListResponse,
     FileSystemSearchEntry,
     FileSystemSearchResponse,
     FileSystemUsage,
+)
+from agno.os.routers.filesystem.sources import (
+    _list_sources,
+    _page_entries,
+    _page_error,
+    _pagination,
+    _resolve_source,
 )
 from agno.os.schema import (
     BadRequestResponse,
@@ -72,6 +85,8 @@ def _get_agent_filesystem(os: "AgentOS", agent_id: str, request: Request) -> Fil
         raise HTTPException(status_code=503, detail="Agent filesystem is unavailable")
     if filesystem is None:
         raise HTTPException(status_code=503, detail="Agent filesystem is unavailable")
+    if not isinstance(filesystem, FileSystem):
+        raise HTTPException(status_code=501, detail="Use the Knowledge file source to browse this agent's pages")
     if not user_isolation_enabled:
         return filesystem
     effective_user_id = scoped_user_id or getattr(request.state, "user_id", None)
@@ -259,6 +274,128 @@ def get_filesystem_router(
                 total_pages=total_pages,
                 total_count=total_count,
             ),
+        )
+
+    @router.get("/filesystem/sources", response_model=list[FileSource], tags=["FileSystem"])
+    async def list_file_sources(request: Request) -> list[FileSource]:
+        """List configured sources authorized for this caller, never database namespaces."""
+        return await asyncio.to_thread(_list_sources, os, request)
+
+    @router.get("/filesystem/sources/{source_id}/files", response_model=FileSourceListResponse, tags=["FileSystem"])
+    async def list_source_files(
+        source_id: str,
+        request: Request,
+        directory: str = Query(""),
+        page: int = Query(1, ge=1),
+        limit: int = Query(50, ge=1, le=100),
+    ) -> FileSourceListResponse:
+        agent_id, knowledge = _resolve_source(os, request, source_id)
+        if agent_id is not None:
+            result = await list_agent_files(agent_id, request, directory, page, limit)
+            return FileSourceListResponse(source_id=source_id, **result.model_dump(exclude={"agent_id"}))
+        if knowledge is None:
+            raise HTTPException(status_code=404, detail="File source not found")
+        try:
+            directory = normalize_directory(directory)
+            entries = await asyncio.wait_for(_page_entries(knowledge, directory), timeout=20)
+        except PageError as error:
+            raise _page_error(error) from error
+        except (InvalidPathError, ValueError) as error:
+            raise HTTPException(status_code=400, detail="Invalid directory") from error
+        except TimeoutError as error:
+            raise HTTPException(status_code=503, detail="Knowledge listing timed out") from error
+        start = (page - 1) * limit
+        return FileSourceListResponse(
+            source_id=source_id,
+            directory=directory,
+            entries=entries[start : start + limit],
+            meta=_pagination(len(entries), page, limit),
+        )
+
+    @router.get(
+        "/filesystem/sources/{source_id}/files/content", response_model=FileSourceContentResponse, tags=["FileSystem"]
+    )
+    async def read_source_file(
+        source_id: str,
+        request: Request,
+        path: str = Query(...),
+        revision: Optional[str] = Query(None),
+    ) -> FileSourceContentResponse:
+        agent_id, knowledge = _resolve_source(os, request, source_id)
+        if agent_id is not None:
+            result = await read_agent_file(agent_id, request, path)
+            return FileSourceContentResponse(source_id=source_id, **result.model_dump(exclude={"agent_id"}))
+        if knowledge is None:
+            raise HTTPException(status_code=404, detail="File source not found")
+        try:
+            path = normalize_path(path)
+            content = await knowledge.aread_page("/" + path, revision=revision, max_chars=24_000)
+        except PageError as error:
+            raise _page_error(error) from error
+        except (InvalidPathError, ValueError) as error:
+            raise HTTPException(status_code=400, detail="Invalid page path") from error
+        return FileSourceContentResponse(
+            source_id=source_id,
+            path=content.path.lstrip("/"),
+            content=content.text,
+            size_bytes=None if content.truncated else len(content.text.encode("utf-8")),
+            title=content.title,
+            url=content.url,
+            revision=content.revision,
+            next_offset=content.next_offset,
+            truncated=content.truncated,
+            line_count=None if content.truncated else len(content.text.splitlines()),
+        )
+
+    @router.get(
+        "/filesystem/sources/{source_id}/files/search", response_model=FileSourceSearchResponse, tags=["FileSystem"]
+    )
+    async def search_source_files(
+        source_id: str,
+        request: Request,
+        query: str = Query(..., min_length=1, max_length=200),
+        directory: str = Query(""),
+        page: int = Query(1, ge=1),
+        limit: int = Query(50, ge=1, le=100),
+    ) -> FileSourceSearchResponse:
+        agent_id, knowledge = _resolve_source(os, request, source_id)
+        if agent_id is not None:
+            result = await search_agent_files(agent_id, request, query, directory, page, limit)
+            return FileSourceSearchResponse(source_id=source_id, **result.model_dump(exclude={"agent_id"}))
+        if knowledge is None:
+            raise HTTPException(status_code=404, detail="File source not found")
+        if not query.strip():
+            raise HTTPException(status_code=400, detail="Query cannot be blank")
+        try:
+            directory = normalize_directory(directory)
+            prefix = f"/{directory}/" if directory else "/"
+            matches = await knowledge.agrep_pages(query, prefix=prefix, ignore_case=True, limit=100)
+        except PageError as error:
+            raise _page_error(error) from error
+        except (InvalidPathError, ValueError) as error:
+            raise HTTPException(status_code=400, detail="Invalid page search") from error
+        entries: dict[str, FileSourceSearchEntry] = {}
+        for match in matches.matches:
+            path = match.path.lstrip("/")
+            if path in entries:
+                entries[path].match_count += 1
+            else:
+                entries[path] = FileSourceSearchEntry(
+                    path=path,
+                    snippet=match.text,
+                    line=match.line_number,
+                    match_count=1,
+                    url=match.url,
+                    revision=match.revision,
+                )
+        start = (page - 1) * limit
+        return FileSourceSearchResponse(
+            source_id=source_id,
+            query=query,
+            directory=directory,
+            entries=list(entries.values())[start : start + limit],
+            meta=_pagination(len(entries), page, limit),
+            partial=not matches.complete,
         )
 
     return router
