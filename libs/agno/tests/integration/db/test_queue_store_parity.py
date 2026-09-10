@@ -629,6 +629,20 @@ class TestSubmissionOrderParity:
         assert nxt is not None and nxt["id"] == "r_second"
 
     @pytest.mark.asyncio
+    async def test_enqueue_returns_the_callers_dict_plus_seq(self, store):
+        """The accepted result carries the caller's own dict with the assigned
+        seq merged in, on every store. Returning the database-typed row
+        instead would hand Postgres callers a different shape from the other
+        stores: every column present, including ones they never passed."""
+        job = make_job("r1", session_id="s1", created_at=1000)
+        for optional in ("error", "updated_at", "completed_at"):
+            job.pop(optional)
+        result = await store.enqueue_job(dict(job))
+        assert result["accepted"]
+        assert set(result["job"]) == set(job) | {"seq"}
+        assert {k: v for k, v in result["job"].items() if k != "seq"} == job
+
+    @pytest.mark.asyncio
     async def test_enqueue_sequence_is_monotonic_and_survives_round_trip(self, store):
         first = (await store.enqueue_job(make_job("r1", session_id="s1", created_at=1000)))["job"]
         second = (await store.enqueue_job(make_job("r2", session_id="s2", created_at=1000)))["job"]

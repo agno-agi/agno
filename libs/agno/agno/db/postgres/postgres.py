@@ -7488,7 +7488,9 @@ class PostgresDb(BaseDb):
                 # identity default and violate NOT NULL
                 values = {k: v for k, v in job.items() if k != "seq" or v is not None}
                 row = sess.execute(table.insert().values(**values).returning(*table.c)).fetchone()
-            return {"accepted": True, "reason": None, "job": dict(row._mapping) if row is not None else job}
+            # The caller's dict plus the assigned seq, not the database-typed
+            # row: every store answers with the same shape
+            return {"accepted": True, "reason": None, "job": {**job, "seq": row._mapping["seq"]} if row else job}
         except IntegrityError:
             # Without an idempotency key this is a primary-key collision - a
             # programming error, never a client dedup. Swallowing it as
