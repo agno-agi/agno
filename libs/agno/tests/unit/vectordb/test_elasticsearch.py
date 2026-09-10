@@ -923,21 +923,129 @@ class TestElasticsearchFilterEdgeCases:
 
         assert condition == {"range": {"meta_data.views": {"gte": 100, "lt": 500}}}
 
-    def test_filter_expressions_are_dropped_with_a_warning(self, es_db):
-        """The DSL arrives as a list and used to raise, which the search path swallowed into []."""
+    def test_a_dict_filter_still_works(self, es_db):
+        """The dict path is unchanged by the DSL translation."""
+        assert es_db._scoped_filter_conditions({"team": "eng"}, None) == [{"term": {"meta_data.team.keyword": "eng"}}]
+
+
+class TestElasticsearchFilterExpressions:
+    """The FilterExpr DSL must be translated, never dropped.
+
+    Knowledge injects its ``linked_to`` instance scope into this same list when
+    isolate_vector_search is on, so dropping the list drops that scope - and a filter
+    meant to narrow the search widens it across knowledge bases instead.
+    """
+
+    def test_eq(self, es_db):
         from agno.filters import EQ
 
-        assert es_db._usable_filters([EQ("team", "eng")]) is None
+        assert es_db._translate_filter_expressions([EQ("team", "eng")]) == [{"term": {"meta_data.team.keyword": "eng"}}]
 
-    def test_a_dict_filter_is_left_alone(self, es_db):
-        """Only the unsupported form is dropped."""
-        assert es_db._usable_filters({"team": "eng"}) == {"team": "eng"}
+    def test_eq_on_a_number_skips_the_keyword_subfield(self, es_db):
+        from agno.filters import EQ
 
-    def test_a_filter_expression_does_not_reach_the_query_builder(self, es_db):
-        """Passing the list through raises inside the builder and returns an empty result set."""
-        conditions = es_db._scoped_filter_conditions([{"not": "a dict"}], None)
+        assert es_db._translate_filter_expressions([EQ("year", 2025)]) == [{"term": {"meta_data.year": 2025}}]
 
-        assert conditions == []
+    def test_neq_becomes_must_not(self, es_db):
+        from agno.filters import NEQ
+
+        assert es_db._translate_filter_expressions([NEQ("team", "eng")]) == [
+            {"bool": {"must_not": [{"term": {"meta_data.team.keyword": "eng"}}]}}
+        ]
+
+    @pytest.mark.parametrize("op_name,key", [("GT", "gt"), ("GTE", "gte"), ("LT", "lt"), ("LTE", "lte")])
+    def test_range_operators(self, es_db, op_name, key):
+        import agno.filters as filters
+
+        expr = getattr(filters, op_name)("year", 2024)
+
+        assert es_db._translate_filter_expressions([expr]) == [{"range": {"meta_data.year": {key: 2024}}}]
+
+    def test_in_becomes_terms(self, es_db):
+        from agno.filters import IN
+
+        assert es_db._translate_filter_expressions([IN("team", ["eng", "ops"])]) == [
+            {"terms": {"meta_data.team.keyword": ["eng", "ops"]}}
+        ]
+
+    def test_contains_and_startswith_use_the_unanalyzed_value(self, es_db):
+        from agno.filters import CONTAINS, STARTSWITH
+
+        assert es_db._translate_filter_expressions([CONTAINS("project", "beta")]) == [
+            {"wildcard": {"meta_data.project.keyword": "*beta*"}}
+        ]
+        assert es_db._translate_filter_expressions([STARTSWITH("project", "beta")]) == [
+            {"prefix": {"meta_data.project.keyword": "beta"}}
+        ]
+
+    def test_and_becomes_a_bool_filter(self, es_db):
+        from agno.filters import AND, EQ
+
+        (clause,) = es_db._translate_filter_expressions([AND(EQ("team", "eng"), EQ("year", 2025))])
+
+        assert clause["bool"]["filter"] == [
+            {"term": {"meta_data.team.keyword": "eng"}},
+            {"term": {"meta_data.year": 2025}},
+        ]
+
+    def test_or_requires_one_match(self, es_db):
+        from agno.filters import EQ, OR
+
+        (clause,) = es_db._translate_filter_expressions([OR(EQ("team", "eng"), EQ("team", "ops"))])
+
+        assert clause["bool"]["minimum_should_match"] == 1
+        assert len(clause["bool"]["should"]) == 2
+
+    def test_not_negates(self, es_db):
+        from agno.filters import EQ, NOT
+
+        assert es_db._translate_filter_expressions([NOT(EQ("team", "eng"))]) == [
+            {"bool": {"must_not": [{"term": {"meta_data.team.keyword": "eng"}}]}}
+        ]
+
+    def test_nesting_is_translated_recursively(self, es_db):
+        from agno.filters import AND, EQ, NOT
+
+        (clause,) = es_db._translate_filter_expressions([AND(EQ("team", "eng"), NOT(EQ("year", 2023)))])
+
+        assert clause["bool"]["filter"][1] == {"bool": {"must_not": [{"term": {"meta_data.year": 2023}}]}}
+
+    def test_several_expressions_are_anded(self, es_db):
+        """Knowledge prepends its linked_to scope to the caller's list, so both must apply."""
+        from agno.filters import EQ
+
+        conditions = es_db._translate_filter_expressions([EQ("linked_to", "eng_kb"), EQ("team", "eng")])
+
+        assert conditions == [
+            {"term": {"meta_data.linked_to.keyword": "eng_kb"}},
+            {"term": {"meta_data.team.keyword": "eng"}},
+        ]
+
+    def test_the_instance_scope_survives_a_dsl_filter(self, es_db):
+        """The isolation leak: dropping the list dropped linked_to and crossed knowledge bases."""
+        from agno.filters import EQ
+
+        conditions = es_db._scoped_filter_conditions([EQ("linked_to", "eng_kb"), EQ("team", "eng")], None)
+
+        assert {"term": {"meta_data.linked_to.keyword": "eng_kb"}} in conditions
+
+    def test_an_unknown_operator_raises_rather_than_widening(self, es_db):
+        """A filter that cannot be applied must never turn into no filter at all."""
+        with pytest.raises(ValueError, match="Unsupported filter operator"):
+            es_db._translate_filter_expressions([{"op": "BOGUS", "key": "x", "value": 1}])
+
+    def test_a_node_without_an_operator_raises(self, es_db):
+        with pytest.raises(ValueError, match="no operator"):
+            es_db._translate_filter_expressions([{"key": "x", "value": 1}])
+
+    def test_excessive_nesting_raises(self, es_db):
+        """Bounded recursion, matching the DSL's own depth limit."""
+        node = {"op": "EQ", "key": "k", "value": 1}
+        for _ in range(15):
+            node = {"op": "NOT", "condition": node}
+
+        with pytest.raises(ValueError, match="nests deeper"):
+            es_db._translate_filter_expressions([node])
 
 
 class TestElasticsearchRrfLicence:
