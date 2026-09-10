@@ -29,6 +29,7 @@ Backed by your own DB via SQLAlchemy (pass ``db_url``/``engine``); falls back to
 in-memory when neither is given (fine for tests, not for production).
 """
 
+import asyncio
 import json
 import time
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
@@ -79,9 +80,10 @@ class ManagedUserStore:
         """
         self._audit = audit
         self._mem: Optional[Dict[str, dict]] = None
-        from agno.os.authz._db import resolve_authz_db
+        from agno.os.authz._db import is_async_authz_db, resolve_authz_db
 
         self._db: Any = resolve_authz_db(db, db_url)
+        self._db_is_async: bool = is_async_authz_db(self._db)
         if self._db is None:
             # In-memory directory (not persisted). Fine for tests/dev, and AgentOS
             # upgrades it in place via attach_db() when it has a usable db -- see the
@@ -103,12 +105,13 @@ class ManagedUserStore:
         for ``ManagedRoleStore``. Any rows written while the store was in-memory are
         migrated across, so adoption never silently drops a disabled user.
         """
-        from agno.os.authz._db import supports_authz
+        from agno.os.authz._db import is_async_authz_db, supports_authz
 
         if self._db is not None or db is None or not supports_authz(db):
             return
         pending = list((self._mem or {}).values())
         self._db = db
+        self._db_is_async = is_async_authz_db(db)
         self._mem = None
         # Carry rows written before adoption across verbatim -- including ``disabled``,
         # which upsert() deliberately refuses to set, so a revoked user stays revoked.
@@ -395,3 +398,211 @@ class ManagedUserStore:
                 "metadata": row.get("metadata"),
             },
         )
+
+    # =====================================================================
+    # Async variants
+    #
+    # Twins of every public method (plus the DB-touching helpers), so the directory works on
+    # an async request path. The in-memory dev/test store has no I/O, so those branches are
+    # shared with the sync path; the DB branches await through :meth:`_adb`, which drives an
+    # async backend natively and a sync one in a worker thread.
+    # =====================================================================
+    async def _adb(self, name: str, *args: Any, **kwargs: Any) -> Any:
+        fn = getattr(self._db, name)
+        if self._db_is_async:
+            return await fn(*args, **kwargs)
+        return await asyncio.to_thread(fn, *args, **kwargs)
+
+    async def _aemit(
+        self,
+        action: str,
+        target: str,
+        before: Optional[List[str]],
+        after: Optional[List[str]],
+        actor: Optional[str],
+    ) -> None:
+        if self._audit is None:
+            return
+        from agno.os.authz.audit import AuditEvent
+
+        await self._audit.arecord(
+            AuditEvent(action=action, actor=actor, target=target, before=before, after=after, timestamp=_now())
+        )
+
+    async def _awrite(self, row: dict, insert: bool = True) -> None:
+        if self._mem is not None:
+            self._mem[row["id"]] = dict(row)
+            return
+        await self._adb(
+            "upsert_authz_user",
+            row["id"],
+            {
+                "email": row["email"],
+                "name": row["name"],
+                "disabled": bool(row["disabled"]),
+                "created_at": row["created_at"],
+                "updated_at": row["updated_at"],
+                "metadata": row.get("metadata"),
+            },
+        )
+
+    async def _apersist_disabled(self, id: str, disabled: bool, tombstone: Optional[dict] = None) -> None:
+        if self._mem is not None:
+            row = self._mem.get(id)
+            if row is not None:
+                row["disabled"] = bool(disabled)
+                row["updated_at"] = _now()
+            elif tombstone is not None:
+                self._mem[id] = dict(tombstone)
+            return
+        await self._adb("set_authz_user_disabled", id, bool(disabled))
+
+    async def aget(self, id: str) -> Optional[dict]:
+        if self._mem is not None:
+            row = self._mem.get(id)
+            return dict(row) if row else None
+        return await self._adb("get_authz_user", id)
+
+    async def aupsert(
+        self,
+        id: str,
+        email: Optional[str] = None,
+        name: Optional[str] = None,
+        metadata: Optional[dict] = None,
+        actor: Optional[str] = None,
+    ) -> dict:
+        """Async twin of :meth:`upsert`."""
+        existing = await self.aget(id)
+        now = _now()
+        if existing is None:
+            row = {
+                "id": id,
+                "email": email,
+                "name": name,
+                "disabled": False,
+                "created_at": now,
+                "updated_at": now,
+                "metadata": metadata or None,
+            }
+            await self._awrite(row, insert=True)
+            await self._aemit("user.created", id, None, [self._summary(row)], actor)
+            return row
+
+        row = dict(existing)
+        if email is not None:
+            row["email"] = email
+        if name is not None:
+            row["name"] = name
+        if metadata is not None:
+            row["metadata"] = metadata
+        row["updated_at"] = now
+        await self._awrite(row, insert=False)
+        await self._aemit("user.updated", id, [self._summary(existing)], [self._summary(row)], actor)
+        return row
+
+    async def aset_disabled(self, id: str, disabled: bool, actor: Optional[str] = None) -> dict:
+        """Async twin of :meth:`set_disabled`."""
+        existing = await self.aget(id)
+        if existing is None:
+            now = _now()
+            row = {
+                "id": id,
+                "email": None,
+                "name": None,
+                "disabled": bool(disabled),
+                "created_at": now,
+                "updated_at": now,
+                "metadata": None,
+            }
+            await self._apersist_disabled(id, disabled, tombstone=row)
+            await self._aemit("user.disabled" if disabled else "user.enabled", id, None, [self._summary(row)], actor)
+            return row
+
+        if bool(existing["disabled"]) == bool(disabled):
+            return existing
+
+        row = dict(existing)
+        row["disabled"] = bool(disabled)
+        row["updated_at"] = _now()
+        await self._apersist_disabled(id, disabled)
+        await self._aemit(
+            "user.disabled" if disabled else "user.enabled", id, [self._summary(existing)], [self._summary(row)], actor
+        )
+        return row
+
+    async def aremove(self, id: str, actor: Optional[str] = None) -> bool:
+        """Async twin of :meth:`remove`."""
+        existing = await self.aget(id)
+        if existing is None:
+            return False
+        if self._mem is not None:
+            self._mem.pop(id, None)
+        else:
+            await self._adb("delete_authz_user", id)
+        await self._aemit("user.removed", id, [self._summary(existing)], None, actor)
+        return True
+
+    async def aprovision_from_claims(
+        self,
+        subject: str,
+        claims: Dict[str, Any],
+        email_claim: str = "email",
+        name_claim: str = "name",
+        actor: Optional[str] = None,
+    ) -> Tuple[dict, bool]:
+        """Async twin of :meth:`provision_from_claims`."""
+        existing = await self.aget(subject)
+        if existing is not None:
+            return existing, False
+        user = await self.aupsert(
+            subject,
+            email=claims.get(email_claim),
+            name=claims.get(name_claim),
+            actor=actor or "system:jit",
+        )
+        return user, True
+
+    async def alist(
+        self,
+        limit: int = 1000,
+        include_disabled: bool = True,
+        offset: int = 0,
+        search: Optional[str] = None,
+        sort_by: str = DEFAULT_USER_SORT_FIELD,
+        order: str = DEFAULT_USER_SORT_ORDER,
+    ) -> List[dict]:
+        """Async twin of :meth:`list`."""
+        if sort_by not in USER_SORT_FIELDS:
+            raise ValueError(f"sort_by must be one of {USER_SORT_FIELDS}, got {sort_by!r}")
+        if self._mem is not None:
+            descending = order != "asc"
+            rows = self._filtered_mem_rows(include_disabled, search)
+            present = sorted(
+                (r for r in rows if r.get(sort_by) is not None), key=lambda r: r[sort_by], reverse=descending
+            )
+            missing = [r for r in rows if r.get(sort_by) is None]
+            return [dict(r) for r in (present + missing)[offset : offset + limit]]
+        return await self._adb(
+            "list_authz_users",
+            limit=limit,
+            offset=offset,
+            include_disabled=include_disabled,
+            search=search,
+            sort_by=sort_by,
+            order=order,
+        )
+
+    async def acount(self, include_disabled: bool = True, search: Optional[str] = None) -> int:
+        """Async twin of :meth:`count`."""
+        if self._mem is not None:
+            return len(self._filtered_mem_rows(include_disabled, search))
+        return int(await self._adb("count_authz_users", include_disabled=include_disabled, search=search))
+
+    async def ais_disabled(self, id: Optional[str]) -> bool:
+        """Async twin of :meth:`is_disabled`."""
+        if not id:
+            return False
+        if self._mem is not None:
+            row = self._mem.get(id)
+            return bool(row and row["disabled"])
+        return bool(await self._adb("is_authz_user_disabled", id))

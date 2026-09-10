@@ -872,8 +872,12 @@ _MISSING_BRIDGE_DETAIL = (
 )
 
 
-def _require_tool_scopes(method: str, path: str) -> None:
+async def _require_tool_scopes(method: str, path: str) -> None:
     """Enforce the caller's scopes against the REST route this tool call is equivalent to.
+
+    Awaits the provider's async decision and audit write (mirroring the REST/WS gates) so a
+    managed-role/ReBAC gate does its DB or network I/O off the event loop and works against
+    an async database.
 
     The MCP tools are an alternate transport for the REST surface, so authorization
     reuses the REST mechanism verbatim: map the tool call onto its REST route and run
@@ -952,9 +956,9 @@ def _require_tool_scopes(method: str, path: str) -> None:
     # The provider decides — default ScopeAuthorizationProvider is byte-identical to
     # v2.7's check_route_scopes; a managed-role/custom provider enforces its own model
     # on the OAuth-authenticated caller here too.
-    from agno.os.authz.audit import record_decision
+    from agno.os.authz.audit import arecord_decision
 
-    allowed = provider.authorize_route(ctx, required_scopes)
+    allowed = await provider.aauthorize_route(ctx, required_scopes)
     # Record the decision on the SAME trail the REST gate writes to, so an access audit
     # covers the MCP transport too (the tools are an alternate front door to the same
     # surface). The sink is mirrored onto this sub-app's state; no sink -> no-op.
@@ -971,7 +975,7 @@ def _require_tool_scopes(method: str, path: str) -> None:
             bearer = raw[7:]
     except Exception:  # pragma: no cover - defensive: audit must not break the gate
         bearer = None
-    record_decision(
+    await arecord_decision(
         request,
         allowed=allowed,
         target=f"{method} {path}",
@@ -1825,7 +1829,7 @@ def _make_exposed_run_tool(
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
     ) -> ToolResult:
-        _require_tool_scopes("POST", f"/{kind}/{component_id}/runs")
+        await _require_tool_scopes("POST", f"/{kind}/{component_id}/runs")
         resolved_user_id = _resolve_user_id(user_id)
         component = await _resolve_run_component(
             os, kind, component_id, user_id=resolved_user_id, session_id=session_id
@@ -1866,7 +1870,7 @@ def _make_exposed_workflow_tool(
     ) -> ToolResult:
         from agno.workflow.remote import RemoteWorkflow
 
-        _require_tool_scopes("POST", f"/workflows/{component_id}/runs")
+        await _require_tool_scopes("POST", f"/workflows/{component_id}/runs")
         resolved_user_id = _resolve_user_id(user_id)
         workflow = await _resolve_run_component(
             os, "workflows", component_id, user_id=resolved_user_id, session_id=session_id
@@ -2329,7 +2333,7 @@ def build_mcp_server(
         annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
     )  # type: ignore
     async def config() -> Dict[str, Any]:
-        _require_tool_scopes("GET", "/config")
+        await _require_tool_scopes("GET", "/config")
         from agno.db.base import BaseDb
 
         request = _http_request_or_none()
@@ -2428,7 +2432,7 @@ def build_mcp_server(
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
     ) -> ToolResult:
-        _require_tool_scopes("POST", f"/agents/{agent_id}/runs")
+        await _require_tool_scopes("POST", f"/agents/{agent_id}/runs")
         user_id = _resolve_user_id(user_id)
         agent = await _resolve_run_component(os, "agents", agent_id, user_id=user_id, session_id=session_id)
         # Mint a fresh session per call when omitted (matches REST), never the sticky default.
@@ -2456,7 +2460,7 @@ def build_mcp_server(
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
     ) -> ToolResult:
-        _require_tool_scopes("POST", f"/teams/{team_id}/runs")
+        await _require_tool_scopes("POST", f"/teams/{team_id}/runs")
         user_id = _resolve_user_id(user_id)
         team = await _resolve_run_component(os, "teams", team_id, user_id=user_id, session_id=session_id)
         # Mint a fresh session per call when omitted (matches REST), never the sticky default.
@@ -2487,7 +2491,7 @@ def build_mcp_server(
     ) -> ToolResult:
         from agno.workflow.remote import RemoteWorkflow
 
-        _require_tool_scopes("POST", f"/workflows/{workflow_id}/runs")
+        await _require_tool_scopes("POST", f"/workflows/{workflow_id}/runs")
         user_id = _resolve_user_id(user_id)
         workflow = await _resolve_run_component(os, "workflows", workflow_id, user_id=user_id, session_id=session_id)
         # Mint a fresh session per call when omitted (matches REST), never the sticky default.
@@ -2539,7 +2543,7 @@ def build_mcp_server(
     ) -> ToolResult:
         component_type, component_id = _classify_lifecycle_target(agent_id, team_id, workflow_id)
         _require_published_component("continue_run", component_type, component_id)
-        _require_tool_scopes("POST", f"/{component_type}/{component_id}/runs/{run_id}/continue")
+        await _require_tool_scopes("POST", f"/{component_type}/{component_id}/runs/{run_id}/continue")
         user_id = _resolve_user_id(user_id)
         # published_only=False, like the REST /continue routes: the run may live
         # on a draft-only preview component that has no published version.
@@ -2608,7 +2612,7 @@ def build_mcp_server(
     ) -> str:
         component_type, component_id = _classify_lifecycle_target(agent_id, team_id, workflow_id)
         _require_published_component("cancel_run", component_type, component_id)
-        _require_tool_scopes("POST", f"/{component_type}/{component_id}/runs/{run_id}/cancel")
+        await _require_tool_scopes("POST", f"/{component_type}/{component_id}/runs/{run_id}/cancel")
         # Factory components cancel STATICALLY (mirrors the REST factory-cancel routes):
         # cancellation is a run_id-keyed global intent, so building the factory is both
         # unnecessary and harmful -- generic resolution invokes it, which 400s a
@@ -2660,7 +2664,7 @@ def build_mcp_server(
         sort_order: Literal["asc", "desc"] = "desc",
         db_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        _require_tool_scopes("GET", "/sessions")
+        await _require_tool_scopes("GET", "/sessions")
         user_id = _scoped_read_user_id(user_id)
         db = await get_db(os.dbs, db_id)
         session_type_enum = SessionType(session_type)
@@ -2719,7 +2723,7 @@ def build_mcp_server(
         user_id: Optional[str] = None,
         db_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        _require_tool_scopes("GET", f"/sessions/{session_id}/runs")
+        await _require_tool_scopes("GET", f"/sessions/{session_id}/runs")
         user_id = _scoped_read_user_id(user_id)
         db = await get_db(os.dbs, db_id)
         session_type_enum = SessionType(session_type) if session_type else None

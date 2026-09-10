@@ -26,7 +26,7 @@ agno adds two things on top of the provider:
 import json
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
-from agno.os.auth import provision_user_with_default_role
+from agno.os.auth import aprovision_user_with_default_role
 from agno.os.middleware.jwt import is_reserved_principal as _is_reserved_principal
 from agno.utils.log import log_warning
 
@@ -242,7 +242,7 @@ class MCPIdentityBridgeMiddleware:
                 if self.user_store is not None and user_id and service_account_name is None:
                     try:
                         if self.user_auto_provision:
-                            provisioned = provision_user_with_default_role(
+                            provisioned = await aprovision_user_with_default_role(
                                 self.user_store,
                                 self.role_store,
                                 self.user_default_role,
@@ -253,7 +253,7 @@ class MCPIdentityBridgeMiddleware:
                             )
                             disabled = bool(provisioned.get("disabled")) if provisioned is not None else False
                         else:
-                            disabled = self.user_store.is_disabled(user_id)
+                            disabled = await self.user_store.ais_disabled(user_id)
                     except Exception as e:  # directory unreachable: honour the configured policy
                         disabled = self.user_directory_fail_closed
                         log_warning(

@@ -69,14 +69,23 @@ def db_from_url(db_url: str) -> Any:
 def supports_authz(db: Any) -> bool:
     """Whether ``db`` implements the authorization contract.
 
-    Determined by calling the cheapest read and seeing whether it raises
-    ``NotImplementedError``, so a backend opts in by implementing the methods rather than
-    by appearing on a list here. Any OTHER exception (a connection error, say) means the
-    database is real and configured for authz but currently unreachable, which is not the
-    same as unsupported.
+    For a sync backend this is determined by calling the cheapest read and seeing whether
+    it raises ``NotImplementedError``, so a backend opts in by implementing the methods
+    rather than by appearing on a list here. Any OTHER exception (a connection error, say)
+    means the database is real and configured for authz but currently unreachable, which is
+    not the same as unsupported.
+
+    An async backend can't be probed by calling -- its ``async def`` stub returns a
+    coroutine rather than raising ``NotImplementedError`` until awaited -- so it opts in by
+    OVERRIDING the method off the ``AsyncBaseDb`` stub. That check is synchronous (no
+    coroutine is created), so this stays a plain sync predicate for both worlds.
     """
     if db is None:
         return False
+    from agno.db.base import AsyncBaseDb
+
+    if isinstance(db, AsyncBaseDb):
+        return type(db).authz_name_is_role is not AsyncBaseDb.authz_name_is_role
     try:
         db.authz_name_is_role("__agno_authz_probe__")
     except NotImplementedError:
@@ -84,6 +93,15 @@ def supports_authz(db: Any) -> bool:
     except Exception:
         return True
     return True
+
+
+def is_async_authz_db(db: Any) -> bool:
+    """Whether ``db`` is an async backend (its authz contract is awaited, not called)."""
+    if db is None:
+        return False
+    from agno.db.base import AsyncBaseDb
+
+    return isinstance(db, AsyncBaseDb)
 
 
 def require_authz_db(db: Any) -> None:

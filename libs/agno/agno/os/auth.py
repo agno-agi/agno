@@ -60,7 +60,7 @@ async def require_verified_public_workflow(request: Request, settings: AgnoAPISe
         raise HTTPException(status_code=401, detail="Invalid authentication token")
     if getattr(request.state, "authorization_enabled", False):
         action = "read" if request.method == "GET" else "run"
-        if not check_resource_access(request, workflow_id, "workflows", action):
+        if not await acheck_resource_access(request, workflow_id, "workflows", action):
             raise HTTPException(status_code=403, detail="Insufficient permissions")
     request.state._agno_public_workflow = True
 
@@ -142,6 +142,54 @@ def provision_user_with_default_role(
         if role:
             try:
                 role_store.assign(subject, role, actor="system:jit")
+            except Exception as e:
+                log_warning(f"could not grant default role {role!r} to provisioned user {subject!r}: {e}")
+        else:
+            log_warning(
+                f"auto-provisioned user {subject!r} has no default role "
+                "(set UserDirectoryConfig(default_role=...) or flag a role is_default); "
+                "they are denied until a role is assigned"
+            )
+    return user
+
+
+async def _astore_default_role(role_store: Any) -> Optional[str]:
+    """Async twin of :func:`_store_default_role`."""
+    afn = getattr(role_store, "adefault_role", None)
+    if callable(afn):
+        try:
+            return await afn()
+        except Exception:
+            return None
+    return await asyncio.to_thread(_store_default_role, role_store)
+
+
+async def aprovision_user_with_default_role(
+    user_store: Any,
+    role_store: Any,
+    default_role: Optional[str],
+    subject: str,
+    claims: Dict[str, Any],
+    *,
+    email_claim: str = "email",
+    name_claim: str = "name",
+) -> Optional[dict]:
+    """Async twin of :func:`provision_user_with_default_role`, for the async request path.
+
+    Same single-role, grant-on-first-creation behaviour; awaits the store's async methods so
+    JIT provisioning against an async database never blocks the event loop."""
+    user, created = await user_store.aprovision_from_claims(
+        subject, claims, email_claim=email_claim, name_claim=name_claim
+    )
+    if created and role_store is not None:
+        role = default_role or await _astore_default_role(role_store)
+        if role:
+            try:
+                aassign = getattr(role_store, "aassign", None)
+                if callable(aassign):
+                    await aassign(subject, role, actor="system:jit")
+                else:
+                    await asyncio.to_thread(role_store.assign, subject, role, actor="system:jit")
             except Exception as e:
                 log_warning(f"could not grant default role {role!r} to provisioned user {subject!r}: {e}")
         else:
@@ -671,6 +719,16 @@ def get_accessible_resources(request: Request, resource_type: str) -> Set[str]:
     return provider.accessible_resource_ids(ctx)
 
 
+async def aget_accessible_resources(request: Request, resource_type: str) -> Set[str]:
+    """Async twin of :func:`get_accessible_resources` (awaits the provider off the loop)."""
+    cached_ids = getattr(request.state, "accessible_resource_ids", None)
+    if cached_ids is not None:
+        return cached_ids
+    provider = _provider_for(request)
+    ctx = _authorization_context(request, resource_type=resource_type)
+    return await provider.aaccessible_resource_ids(ctx)
+
+
 def filter_resources_by_access(request: Request, resources: List, resource_type: str) -> List:
     """
     Filter a list of resources based on user's access permissions.
@@ -721,6 +779,16 @@ def filter_resources_by_access(request: Request, resources: List, resource_type:
     return provider.filter_accessible(ctx, resources)
 
 
+async def afilter_resources_by_access(request: Request, resources: List, resource_type: str) -> List:
+    """Async twin of :func:`filter_resources_by_access` (awaits the provider off the loop)."""
+    cached_ids = getattr(request.state, "accessible_resource_ids", None)
+    if cached_ids is not None and "*" not in cached_ids:
+        resources = [r for r in resources if getattr(r, "id", None) in cached_ids]
+    provider = _provider_for(request)
+    ctx = _authorization_context(request, resource_type=resource_type, action="read")
+    return await provider.afilter_accessible(ctx, resources)
+
+
 def check_resource_access(request: Request, resource_id: str, resource_type: str, action: str = "read") -> bool:
     """
     Check if user has access to a specific resource for a specific action.
@@ -765,6 +833,19 @@ def check_resource_access(request: Request, resource_id: str, resource_type: str
         action=action,
     )
     return _provider_for(request).check(ctx)
+
+
+async def acheck_resource_access(request: Request, resource_id: str, resource_type: str, action: str = "read") -> bool:
+    """Async twin of :func:`check_resource_access` (awaits the provider off the loop)."""
+    if getattr(request.state, "is_internal_service", False):
+        return True
+    ctx = _authorization_context(
+        request,
+        resource_type=resource_type,
+        resource_id=resource_id,
+        action=action,
+    )
+    return await _provider_for(request).acheck(ctx)
 
 
 def require_resource_access(resource_type: str, action: str, resource_id_param: str):
@@ -814,13 +895,11 @@ def require_resource_access(resource_type: str, action: str, resource_id_param: 
         "workflows": "workflow",
     }.get(resource_type, resource_type.rstrip("s"))
 
-    # Deliberately a plain `def`, NOT `async def`: the body awaits nothing, and the
-    # authorization providers it calls are synchronous -- a managed-role or FGA provider
-    # issues DB (or network) round trips here. FastAPI runs a sync dependency in its
-    # worker threadpool, so that I/O stays off the event loop; declaring it `async`
-    # would run the same blocking calls directly on the loop and serialise every other
-    # request behind each authorization check. Keep it sync unless you add a real await.
-    def dependency(request: Request):
+    # `async def`: the per-resource decision now awaits the provider's async path
+    # (:func:`acheck_resource_access`), which drives an async database natively and a sync
+    # one in a worker thread -- so the blocking DB/network I/O of a managed-role or FGA
+    # provider stays off the event loop either way, without the sync-in-threadpool hop.
+    async def dependency(request: Request):
         # Only check authorization if it's enabled
         if not getattr(request.state, "authorization_enabled", False):
             return
@@ -838,16 +917,16 @@ def require_resource_access(resource_type: str, action: str, resource_id_param: 
             )
             else action
         )
-        if resource_id and not check_resource_access(request, resource_id, resource_type, effective_action):
+        if resource_id and not await acheck_resource_access(request, resource_id, resource_type, effective_action):
             # Record the per-resource DENY. The route gate already logged an allow for
             # this request (with the concrete resource in the path), so a per-resource
             # ALLOW would only duplicate it -- but a per-resource DENY is otherwise
             # invisible: the trail would show the route allowed and never show what
             # actually blocked the request. For a role/ReBAC model this is the
             # security-relevant decision, so it must appear in the access audit.
-            from agno.os.authz.audit import record_decision
+            from agno.os.authz.audit import arecord_decision
 
-            record_decision(
+            await arecord_decision(
                 request,
                 allowed=False,
                 target=f"{request.method} /{resource_type}/{resource_id}",

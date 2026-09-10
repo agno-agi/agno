@@ -14,6 +14,7 @@ The port speaks only agno terms — roles, subjects, scope strings, allow/deny.
 No engine types (obj/act tuples, OpenFGA tuples) leak across it.
 """
 
+import asyncio
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional, Set, Tuple
 
@@ -128,6 +129,86 @@ class PolicyEngine(ABC):
         denied resource into list endpoints. Default: no engine-level denies."""
         return set()
 
+    # --- async variants ---
+    # Both a sync and an async form of every method, so managed roles work on an async
+    # request path without blocking the event loop. The defaults run the sync method in a
+    # worker thread, so a custom (sync) engine gets working async variants for free;
+    # agno's NativePolicyEngine overrides them with a native async DB path.
+    async def aset_role_scopes(self, role: str, entries: List[ScopeEntry]) -> None:
+        await asyncio.to_thread(self.set_role_scopes, role, entries)
+
+    async def aadd_scope(self, role: str, scope: str, effect: str = "allow") -> None:
+        await asyncio.to_thread(self.add_scope, role, scope, effect)
+
+    async def aremove_scope(self, role: str, scope: str) -> None:
+        await asyncio.to_thread(self.remove_scope, role, scope)
+
+    async def aget_role_scopes(self, role: str) -> List[ScopeEntry]:
+        return await asyncio.to_thread(self.get_role_scopes, role)
+
+    async def aremove_role(self, role: str) -> None:
+        await asyncio.to_thread(self.remove_role, role)
+
+    async def alist_roles(self) -> List[str]:
+        return await asyncio.to_thread(self.list_roles)
+
+    async def aassign(self, subject: str, role: str) -> None:
+        await asyncio.to_thread(self.assign, subject, role)
+
+    async def aunassign(self, subject: str, role: str) -> None:
+        await asyncio.to_thread(self.unassign, subject, role)
+
+    async def aroles_of(self, subject: str) -> List[str]:
+        return await asyncio.to_thread(self.roles_of, subject)
+
+    async def acheck_resource(
+        self,
+        resource_type: Optional[str],
+        resource_id: Optional[str],
+        action: Optional[str],
+        *,
+        subject: Optional[str] = None,
+        roles: Optional[List[str]] = None,
+    ) -> bool:
+        return await asyncio.to_thread(
+            self.check_resource, resource_type, resource_id, action, subject=subject, roles=roles
+        )
+
+    async def acheck_scope(
+        self, scope: str, *, subject: Optional[str] = None, roles: Optional[List[str]] = None
+    ) -> bool:
+        return await asyncio.to_thread(self.check_scope, scope, subject=subject, roles=roles)
+
+    async def aaccessible_resource_ids(
+        self,
+        resource_type: str,
+        action: Optional[str],
+        *,
+        subject: Optional[str] = None,
+        roles: Optional[List[str]] = None,
+    ) -> Set[str]:
+        return await asyncio.to_thread(
+            self.accessible_resource_ids, resource_type, action, subject=subject, roles=roles
+        )
+
+    async def adenied_resource_ids(
+        self,
+        resource_type: str,
+        action: Optional[str],
+        *,
+        subject: Optional[str] = None,
+        roles: Optional[List[str]] = None,
+    ) -> Set[str]:
+        return await asyncio.to_thread(self.denied_resource_ids, resource_type, action, subject=subject, roles=roles)
+
+    async def areplace_subject_roles(self, subject: str, role: str) -> None:
+        """Async twin of the optional ``replace_subject_roles`` fast path, when present."""
+        fn = getattr(self, "replace_subject_roles", None)
+        if callable(fn):
+            await asyncio.to_thread(fn, subject, role)
+        else:
+            raise NotImplementedError("replace_subject_roles")
+
 
 class EngineAuthorizationProvider(AuthorizationProvider):
     """An :class:`AuthorizationProvider` backed by any :class:`PolicyEngine`.
@@ -200,6 +281,56 @@ class EngineAuthorizationProvider(AuthorizationProvider):
             # A collection/global deny removes every id of this type -- the same
             # answer the per-resource gate gives (deny-overrides). Handled before the
             # wildcard-allow branch below, which would otherwise mask it.
+            return []
+        wildcard = "*" in accessible
+        return [
+            r
+            for r in resources
+            if getattr(r, "id", None) not in denied and (wildcard or getattr(r, "id", None) in accessible)
+        ]
+
+    # --- async variants (mirror the sync methods, awaiting the engine's async path) ---
+    async def acheck(self, ctx: AuthorizationContext) -> bool:
+        subject, roles = self._identity(ctx)
+        return await self._engine.acheck_resource(
+            ctx.resource_type, ctx.resource_id, ctx.action, subject=subject, roles=roles
+        )
+
+    async def aauthorize_route(self, ctx: AuthorizationContext, required_scopes: List[str]) -> bool:
+        subject, roles = self._identity(ctx)
+        if ctx.resource_type and ctx.action:
+            return await self._engine.acheck_resource(
+                ctx.resource_type, ctx.resource_id, ctx.action, subject=subject, roles=roles
+            )
+        if not required_scopes:
+            return True
+        for scope in required_scopes:
+            if ctx.resource_type and ctx.resource_id:
+                action = scope.rsplit(":", 1)[1] if ":" in scope else scope
+                ok = await self._engine.acheck_resource(
+                    ctx.resource_type, ctx.resource_id, action, subject=subject, roles=roles
+                )
+            else:
+                ok = await self._engine.acheck_scope(scope, subject=subject, roles=roles)
+            if not ok:
+                return False
+        return True
+
+    async def aaccessible_resource_ids(self, ctx: AuthorizationContext) -> Set[str]:
+        if not ctx.resource_type:
+            return set()
+        subject, roles = self._identity(ctx)
+        return await self._engine.aaccessible_resource_ids(ctx.resource_type, ctx.action, subject=subject, roles=roles)
+
+    async def afilter_accessible(self, ctx: AuthorizationContext, resources: List[Any]) -> List[Any]:
+        if not ctx.resource_type:
+            return resources
+        subject, roles = self._identity(ctx)
+        accessible = await self._engine.aaccessible_resource_ids(
+            ctx.resource_type, ctx.action, subject=subject, roles=roles
+        )
+        denied = await self._engine.adenied_resource_ids(ctx.resource_type, ctx.action, subject=subject, roles=roles)
+        if "*" in denied:
             return []
         wildcard = "*" in accessible
         return [

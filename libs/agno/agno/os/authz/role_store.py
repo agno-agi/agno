@@ -37,10 +37,11 @@ Example::
     store.unassign("bob", "member")
 """
 
+import asyncio
 import time
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 
-from agno.os.authz._db import NO_DB_MESSAGE, resolve_authz_db, supports_authz
+from agno.os.authz._db import NO_DB_MESSAGE, is_async_authz_db, resolve_authz_db, supports_authz
 from agno.os.authz.audit import DEFAULT_AUDIT_SORT_FIELD, DEFAULT_AUDIT_SORT_ORDER
 from agno.os.authz.engine import EngineAuthorizationProvider, PolicyEngine, normalize_roles_claim
 
@@ -125,6 +126,7 @@ class ManagedRoleStore:
         # the same DB. Like the engine, it requires a DB — it may arrive later via
         # attach_db(), so it stays unbound (engine None) until then.
         self._meta_db: Any = resolve_authz_db(db, db_url)
+        self._meta_db_is_async: bool = is_async_authz_db(self._meta_db)
 
         if decision_log:
             import logging
@@ -462,6 +464,7 @@ class ManagedRoleStore:
         # No-op if metadata is already bound or the db isn't SQL-capable.
         if self._meta_db is None and db is not None and supports_authz(db):
             self._meta_db = db
+            self._meta_db_is_async = is_async_authz_db(db)
 
     # ------------------------------------------------------------------ audit
     def audit_log(
@@ -508,3 +511,275 @@ class ManagedRoleStore:
     def provider(self):
         """The AuthorizationProvider to plug into AuthorizationConfig (engine-backed)."""
         return EngineAuthorizationProvider(self._engine, roles_claim=self._roles_claim)
+
+    # =====================================================================
+    # Async variants
+    #
+    # Twins of every public method, so managed roles work on an async request path and the
+    # whole surface has both forms (the CLAUDE.md "both variants" rule). Role/assignment
+    # work delegates to the engine's async methods; role metadata goes through
+    # :meth:`_ameta_call`, which awaits an async DB and threads a sync one; audit emits
+    # through the sink's async ``arecord``. The pure staging/normalisation logic is shared.
+    # =====================================================================
+    async def _ameta_call(self, name: str, *args: Any, **kwargs: Any) -> Any:
+        self._require_meta()
+        fn = getattr(self._meta_db, name)
+        if self._meta_db_is_async:
+            return await fn(*args, **kwargs)
+        return await asyncio.to_thread(fn, *args, **kwargs)
+
+    async def _aemit(
+        self,
+        action: str,
+        target: str,
+        before: Optional[List[Any]],
+        after: Optional[List[Any]],
+        actor: Optional[str],
+    ) -> None:
+        if self._audit is None:
+            return
+        from agno.os.authz.audit import AuditEvent
+
+        await self._audit.arecord(
+            AuditEvent(
+                action=action, actor=actor, target=target, before=before, after=after, timestamp=int(time.time())
+            )
+        )
+
+    # --- async role metadata ---
+    async def _ameta_get(self, slug: str) -> Optional[dict]:
+        return await self._ameta_call("get_authz_role_meta", slug)
+
+    async def _ameta_get_all(self) -> dict:
+        return {row["slug"]: row for row in await self._ameta_call("list_authz_role_meta")}
+
+    async def _ameta_write(self, row: dict) -> None:
+        values = {k: v for k, v in row.items() if k != "slug"}
+        await self._ameta_call("upsert_authz_role_meta", row["slug"], values)
+
+    async def _ameta_delete(self, slug: str) -> None:
+        await self._ameta_call("delete_authz_role_meta", slug)
+
+    async def _aclear_other_defaults(self, keep: str, now: int) -> None:
+        if self._meta_db is None:
+            return
+        for slug, row in (await self._ameta_get_all()).items():
+            if slug != keep and row.get("is_default"):
+                await self._ameta_write({**row, "slug": slug, "is_default": False, "updated_at": now})
+
+    async def _ameta_upsert(
+        self,
+        slug: str,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        is_default: Optional[bool] = None,
+    ) -> dict:
+        existing = await self._ameta_get(slug)
+        now = int(time.time())
+        if existing is None:
+            row = {
+                "slug": slug,
+                "name": name or slug,
+                "description": description,
+                "is_default": bool(is_default) if is_default is not None else False,
+                "created_at": now,
+                "updated_at": now,
+            }
+        else:
+            row = dict(existing)
+            if name is not None:
+                row["name"] = name
+            if description is not None:
+                row["description"] = description
+            if is_default is not None:
+                row["is_default"] = bool(is_default)
+            row["updated_at"] = now
+        await self._ameta_write(row)
+        if is_default is True:
+            await self._aclear_other_defaults(slug, now)
+        return row
+
+    async def _ameta_or_default(self, slug: str) -> dict:
+        meta = await self._ameta_get(slug)
+        if meta is not None:
+            return meta
+        return {"slug": slug, "name": slug, "description": None, "is_default": False, "created_at": 0, "updated_at": 0}
+
+    # --- async roles ---
+    async def aset_role_scopes(
+        self,
+        role: str,
+        scopes: List[ScopeInput],
+        actor: Optional[str] = None,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        is_default: Optional[bool] = None,
+    ) -> None:
+        """Async twin of :meth:`set_role_scopes`."""
+        before = await self.aget_role_scope_entries(role) if self._audit else None
+        await self._engine.aset_role_scopes(role, [_normalize_scope(e) for e in scopes])
+        await self._ameta_upsert(role, name=name, description=description, is_default=is_default)
+        after = await self.aget_role_scope_entries(role) if self._audit else None
+        await self._aemit("role.set_scopes", role, before, after, actor)
+
+    async def aget_role_scopes(self, role: str) -> List[str]:
+        """Async twin of :meth:`get_role_scopes`."""
+        return sorted(scope for scope, _ in await self._engine.aget_role_scopes(role))
+
+    async def aget_role_scope_entries(self, role: str) -> List[dict]:
+        """Async twin of :meth:`get_role_scope_entries`."""
+        entries = [{"scope": scope, "effect": effect} for scope, effect in await self._engine.aget_role_scopes(role)]
+        return sorted(entries, key=lambda e: (e["scope"], e["effect"]))
+
+    async def acreate_role(
+        self,
+        role: str,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        is_default: Optional[bool] = None,
+        actor: Optional[str] = None,
+    ) -> dict:
+        """Async twin of :meth:`create_role`."""
+        if await self.aget_role(role) is not None:
+            raise FileExistsError(role)
+        rec = await self._ameta_upsert(role, name=name, description=description, is_default=is_default)
+        await self._aemit("role.created", role, None, [self._meta_summary(rec)], actor)
+        return rec
+
+    async def aset_role_meta(
+        self,
+        role: str,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        is_default: Optional[bool] = None,
+        actor: Optional[str] = None,
+    ) -> dict:
+        """Async twin of :meth:`set_role_meta`."""
+        if await self.aget_role(role) is None:
+            raise KeyError(role)
+        before = await self._ameta_or_default(role)
+        rec = await self._ameta_upsert(role, name=name, description=description, is_default=is_default)
+        await self._aemit("role.updated", role, [self._meta_summary(before)], [self._meta_summary(rec)], actor)
+        return rec
+
+    async def apatch_role_scopes(
+        self,
+        role: str,
+        upsert: Optional[List[ScopeInput]] = None,
+        remove: Optional[List[ScopeInput]] = None,
+        actor: Optional[str] = None,
+    ) -> None:
+        """Async twin of :meth:`patch_role_scopes`."""
+        from agno.os.authz._scope_policy import scope_to_resource_action
+
+        before = await self.aget_role_scope_entries(role) if self._audit else None
+        staged: dict = {}
+        for entry in upsert or []:
+            scope, effect = _normalize_scope(entry)
+            key = scope_to_resource_action(scope)
+            eff = "deny" if str(effect).lower() == "deny" else "allow"
+            prev = staged.get(key)
+            if prev is not None and (prev[1] == "deny" or eff == "deny"):
+                staged[key] = (scope, "deny") if eff == "deny" else prev
+            else:
+                staged[key] = (scope, eff)
+        for scope, effect in staged.values():
+            await self._engine.aadd_scope(role, scope, effect)
+        for entry in remove or []:
+            scope, _ = _normalize_scope(entry)
+            await self._engine.aremove_scope(role, scope)
+        await self._ameta_upsert(role)
+        after = await self.aget_role_scope_entries(role) if self._audit else None
+        await self._aemit("role.set_scopes", role, before, after, actor)
+
+    async def aget_role(self, role: str) -> Optional[dict]:
+        """Async twin of :meth:`get_role`."""
+        scopes = await self.aget_role_scope_entries(role)
+        meta = await self._ameta_get(role)
+        if meta is None and not scopes and role not in await self._engine.alist_roles():
+            return None
+        return {**(await self._ameta_or_default(role)), "scopes": scopes}
+
+    async def aremove_role(self, role: str, actor: Optional[str] = None) -> None:
+        """Async twin of :meth:`remove_role`."""
+        before = await self.aget_role_scopes(role) if self._audit else None
+        await self._engine.aremove_role(role)
+        await self._ameta_delete(role)
+        await self._aemit("role.removed", role, before, None, actor)
+
+    async def alist_roles(self) -> List[str]:
+        """Async twin of :meth:`list_roles`."""
+        slugs = set(await self._engine.alist_roles())
+        if self._meta_db is not None:
+            slugs |= {row["slug"] for row in await self._ameta_call("list_authz_role_meta")}
+        return sorted(slugs)
+
+    async def alist_roles_detailed(self) -> List[dict]:
+        """Async twin of :meth:`list_roles_detailed`."""
+        meta_all = await self._ameta_get_all()
+        default = {"name": None, "description": None, "is_default": False, "created_at": 0, "updated_at": 0}
+        out: List[dict] = []
+        for slug in await self.alist_roles():
+            meta = meta_all.get(slug) or {"slug": slug, **default, "name": slug}
+            out.append({**meta, "scopes": await self.aget_role_scope_entries(slug)})
+        return out
+
+    async def adefault_role(self) -> Optional[str]:
+        """Async twin of :meth:`default_role`."""
+        if self._meta_db is None:
+            return None
+        defaults = sorted(slug for slug, row in (await self._ameta_get_all()).items() if row.get("is_default"))
+        return defaults[0] if defaults else None
+
+    # --- async assignments ---
+    async def aassign(self, subject: str, role: str, actor: Optional[str] = None) -> None:
+        """Async twin of :meth:`assign`."""
+        before = await self.aroles_of(subject)
+        if before == [role]:
+            return
+        try:
+            await self._engine.areplace_subject_roles(subject, role)
+        except NotImplementedError:
+            for existing in before:
+                await self._engine.aunassign(subject, existing)
+            await self._engine.aassign(subject, role)
+        after = await self.aroles_of(subject) if self._audit else None
+        await self._aemit("user.assigned", subject, before if self._audit else None, after, actor)
+
+    async def aunassign(self, subject: str, role: str, actor: Optional[str] = None) -> None:
+        """Async twin of :meth:`unassign`."""
+        before = await self.aroles_of(subject) if self._audit else None
+        await self._engine.aunassign(subject, role)
+        after = await self.aroles_of(subject) if self._audit else None
+        await self._aemit("user.unassigned", subject, before, after, actor)
+
+    async def aroles_of(self, subject: str) -> List[str]:
+        """Async twin of :meth:`roles_of`."""
+        return await self._engine.aroles_of(subject)
+
+    # --- async audit + gating ---
+    async def aaudit_log(
+        self,
+        limit: int = 100,
+        offset: int = 0,
+        search: Optional[str] = None,
+        sort_by: str = DEFAULT_AUDIT_SORT_FIELD,
+        order: str = DEFAULT_AUDIT_SORT_ORDER,
+    ) -> List[Dict[str, Any]]:
+        """Async twin of :meth:`audit_log`."""
+        sink = self._audit
+        if sink is not None and hasattr(sink, "aread"):
+            return await sink.aread(limit, offset=offset, search=search, sort_by=sort_by, order=order)
+        return []
+
+    async def aaudit_count(self, search: Optional[str] = None) -> int:
+        """Async twin of :meth:`audit_count`."""
+        sink = self._audit
+        if sink is not None and hasattr(sink, "acount"):
+            return int(await sink.acount(search=search))
+        return 0
+
+    async def acan_manage(self, principal_id: Optional[str], claims: Optional[Dict[str, Any]] = None) -> bool:
+        """Async twin of :meth:`can_manage`."""
+        roles = normalize_roles_claim(claims, self._roles_claim)
+        return await self._engine.acheck_scope("agent_os:admin", subject=principal_id, roles=roles)

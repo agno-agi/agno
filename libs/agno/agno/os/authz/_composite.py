@@ -118,3 +118,49 @@ class CompositeAuthorizationProvider(AuthorizationProvider):
             for resource in kept:
                 keep.add(getattr(resource, "id", None))
         return [r for r in resources if getattr(r, "id", None) in keep]
+
+    # --- async variants (each awaits the planes' async forms; same OR-of-grants semantics) ---
+    async def acheck(self, ctx: AuthorizationContext) -> bool:
+        if not ctx.resource_type or not ctx.action:
+            return True
+        for provider in self.providers:
+            try:
+                if await provider.acheck(ctx):
+                    return True
+            except Exception as e:
+                _abstained(provider, e)
+        return False
+
+    async def aauthorize_route(self, ctx: AuthorizationContext, required_scopes: List[str]) -> bool:
+        for provider in self.providers:
+            try:
+                if await provider.aauthorize_route(ctx, required_scopes):
+                    return True
+            except Exception as e:
+                _abstained(provider, e)
+        return False
+
+    async def aaccessible_resource_ids(self, ctx: AuthorizationContext) -> Set[str]:
+        ids: Set[str] = set()
+        for provider in self.providers:
+            try:
+                got = await provider.aaccessible_resource_ids(ctx)
+            except Exception as e:
+                _abstained(provider, e)
+                continue
+            if "*" in got:
+                return {"*"}
+            ids |= got
+        return ids
+
+    async def afilter_accessible(self, ctx: AuthorizationContext, resources: List[Any]) -> List[Any]:
+        keep: Set[Any] = set()
+        for provider in self.providers:
+            try:
+                kept = await provider.afilter_accessible(ctx, resources)
+            except Exception as e:
+                _abstained(provider, e)
+                continue
+            for resource in kept:
+                keep.add(getattr(resource, "id", None))
+        return [r for r in resources if getattr(r, "id", None) in keep]

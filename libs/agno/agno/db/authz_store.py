@@ -18,11 +18,14 @@ Two properties this layer must preserve, because the authorization model depends
 """
 
 import json
-from typing import Any, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 from sqlalchemy import delete, func, insert, or_, select
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncEngine
 
 
 def _upsert(conn: Any, table: Any, values: Dict[str, Any], conflict_cols: List[str], update_cols: List[str]) -> None:
@@ -394,3 +397,319 @@ def count_events(
             stmt = stmt.where(or_(*[c.like(needle) for c in columns]))
     with engine.connect() as conn:
         return int(conn.execute(stmt).scalar() or 0)
+
+
+# ==================== Async twins ====================
+#
+# The async SQLAlchemy backends (``AsyncPostgresDb``, ``AsyncSqliteDb``) expose the same
+# ``*_authz_*`` contract as the sync ones, but over an ``AsyncEngine``. The query logic and
+# every invariant (fresh reads, one-transaction role replacement, ON CONFLICT upserts, the
+# per-key serialization lock) are identical to the sync functions above -- only the driver
+# hop differs: ``async with engine.connect()/begin()`` and ``await conn.execute(...)``. The
+# awaited result is buffered, so ``.mappings()``/``.scalar()``/iteration stay synchronous.
+# Kept next to their sync counterparts so the two can't drift.
+
+
+async def _aupsert(
+    conn: Any, table: Any, values: Dict[str, Any], conflict_cols: List[str], update_cols: List[str]
+) -> None:
+    """Async twin of :func:`_upsert` -- one INSERT ... ON CONFLICT, never DELETE-then-INSERT."""
+    dialect = conn.dialect.name
+    stmt: Any
+    if dialect == "postgresql":
+        from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+        stmt = pg_insert(table).values(**values)
+    elif dialect == "sqlite":
+        from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+
+        stmt = sqlite_insert(table).values(**values)
+    else:  # pragma: no cover - neither shipped backend
+        await conn.execute(delete(table).where(*[table.c[c] == values[c] for c in conflict_cols]))
+        await conn.execute(insert(table).values(**values))
+        return
+
+    if update_cols:
+        stmt = stmt.on_conflict_do_update(
+            index_elements=conflict_cols, set_={c: values[c] for c in update_cols if c in values}
+        )
+    else:
+        stmt = stmt.on_conflict_do_nothing(index_elements=conflict_cols)
+    await conn.execute(stmt)
+
+
+async def _aserialize_on(conn: Any, key: str) -> None:
+    """Async twin of :func:`_serialize_on` -- an explicit advisory lock on Postgres (SQLite's
+    database-wide write lock already serializes)."""
+    if conn.dialect.name == "postgresql":
+        from sqlalchemy import text
+
+        await conn.execute(text("SELECT pg_advisory_xact_lock(hashtext(:key))"), {"key": key})
+
+
+# --- Policy: what a role may do ---
+
+
+async def aget_policies(engine: "AsyncEngine", table: Any, roles: List[str]) -> List[Tuple[str, str, str, str]]:
+    if not roles:
+        return []
+    async with engine.connect() as conn:
+        rows = await conn.execute(
+            select(table.c.role, table.c.resource, table.c.action, table.c.effect).where(table.c.role.in_(roles))
+        )
+        return [(r[0], r[1], r[2], r[3]) for r in rows]
+
+
+async def aget_role_policies(engine: "AsyncEngine", table: Any, role: str) -> List[Tuple[str, str, str]]:
+    async with engine.connect() as conn:
+        rows = await conn.execute(select(table.c.resource, table.c.action, table.c.effect).where(table.c.role == role))
+        return [(r[0], r[1], r[2]) for r in rows]
+
+
+async def aset_role_policies(engine: "AsyncEngine", table: Any, role: str, rows: List[Tuple[str, str, str]]) -> None:
+    async with engine.begin() as conn:
+        await _aserialize_on(conn, f"authz:role:{role}")
+        await conn.execute(delete(table).where(table.c.role == role))
+        for resource, action, effect in rows:
+            await _aupsert(
+                conn,
+                table,
+                {"role": role, "resource": resource, "action": action, "effect": effect},
+                ["role", "resource", "action"],
+                ["effect"],
+            )
+
+
+async def aupsert_policy(
+    engine: "AsyncEngine", table: Any, *, role: str, resource: str, action: str, effect: str
+) -> None:
+    async with engine.begin() as conn:
+        await _aupsert(
+            conn,
+            table,
+            {"role": role, "resource": resource, "action": action, "effect": effect},
+            ["role", "resource", "action"],
+            ["effect"],
+        )
+
+
+async def adelete_policy(
+    engine: "AsyncEngine", table: Any, *, role: str, resource: Optional[str] = None, action: Optional[str] = None
+) -> None:
+    clause = [table.c.role == role]
+    if resource is not None:
+        clause.append(table.c.resource == resource)
+    if action is not None:
+        clause.append(table.c.action == action)
+    async with engine.begin() as conn:
+        await conn.execute(delete(table).where(*clause))
+
+
+# --- Grouping: who holds which role ---
+
+
+async def aget_direct_roles(engine: "AsyncEngine", table: Any, subject: str) -> List[str]:
+    async with engine.connect() as conn:
+        rows = await conn.execute(select(table.c.role).where(table.c.subject == subject))
+        return [r[0] for r in rows]
+
+
+async def aname_is_role(engine: "AsyncEngine", policy_table: Any, grouping_table: Any, name: str) -> bool:
+    carries_policy = select(policy_table.c.role).where(policy_table.c.role == name).exists()
+    has_members = select(grouping_table.c.subject).where(grouping_table.c.role == name).exists()
+    async with engine.connect() as conn:
+        result = await conn.execute(select(or_(carries_policy, has_members)))
+        return bool(result.scalar())
+
+
+async def aassign_role(engine: "AsyncEngine", table: Any, subject: str, role: str) -> None:
+    async with engine.begin() as conn:
+        await _aupsert(conn, table, {"subject": subject, "role": role}, ["subject", "role"], [])
+
+
+async def aunassign_role(engine: "AsyncEngine", table: Any, subject: str, role: str) -> None:
+    async with engine.begin() as conn:
+        await conn.execute(delete(table).where(table.c.subject == subject, table.c.role == role))
+
+
+async def areplace_subject_roles(engine: "AsyncEngine", table: Any, subject: str, role: str) -> None:
+    async with engine.begin() as conn:
+        await _aserialize_on(conn, f"authz:subject:{subject}")
+        await conn.execute(delete(table).where(table.c.subject == subject))
+        await conn.execute(insert(table).values(subject=subject, role=role))
+
+
+async def alist_roles(engine: "AsyncEngine", policy_table: Any, grouping_table: Any) -> List[str]:
+    async with engine.connect() as conn:
+        policy_rows = await conn.execute(select(policy_table.c.role).distinct())
+        roles = {r[0] for r in policy_rows}
+        grouping_rows = await conn.execute(select(grouping_table.c.role).distinct())
+        roles |= {r[0] for r in grouping_rows}
+    return sorted(roles)
+
+
+async def adelete_role(
+    engine: "AsyncEngine", policy_table: Any, grouping_table: Any, meta_table: Any, role: str
+) -> None:
+    async with engine.begin() as conn:
+        await conn.execute(delete(policy_table).where(policy_table.c.role == role))
+        await conn.execute(delete(grouping_table).where(grouping_table.c.role == role))
+        await conn.execute(delete(meta_table).where(meta_table.c.slug == role))
+
+
+# --- Role metadata ---
+
+
+async def aget_role_meta(engine: "AsyncEngine", table: Any, slug: str) -> Optional[Dict[str, Any]]:
+    async with engine.connect() as conn:
+        result = await conn.execute(select(table).where(table.c.slug == slug))
+        row = result.mappings().first()
+    return dict(row) if row is not None else None
+
+
+async def alist_role_meta(engine: "AsyncEngine", table: Any) -> List[Dict[str, Any]]:
+    async with engine.connect() as conn:
+        result = await conn.execute(select(table))
+        return [dict(r) for r in result.mappings()]
+
+
+async def aupsert_role_meta(engine: "AsyncEngine", table: Any, slug: str, values: Dict[str, Any]) -> None:
+    async with engine.begin() as conn:
+        await _aupsert(conn, table, {"slug": slug, **values}, ["slug"], list(values))
+
+
+async def adelete_role_meta(engine: "AsyncEngine", table: Any, slug: str) -> None:
+    async with engine.begin() as conn:
+        await conn.execute(delete(table).where(table.c.slug == slug))
+
+
+# --- User directory ---
+
+
+async def aget_user(engine: "AsyncEngine", table: Any, user_id: str) -> Optional[Dict[str, Any]]:
+    async with engine.connect() as conn:
+        result = await conn.execute(select(table).where(table.c.id == user_id))
+        row = result.mappings().first()
+    return _user_row(row) if row is not None else None
+
+
+async def alist_users(
+    engine: "AsyncEngine",
+    table: Any,
+    limit: int = 1000,
+    offset: int = 0,
+    include_disabled: bool = True,
+    search: Optional[str] = None,
+    sort_by: str = "created_at",
+    order: str = "desc",
+) -> List[Dict[str, Any]]:
+    from sqlalchemy import nullslast
+
+    column = table.c[sort_by] if sort_by in table.c else table.c.created_at
+    descending = order != "asc"
+    stmt = (
+        select(table)
+        .where(*_user_filters(table, include_disabled, search))
+        .order_by(nullslast(column.desc() if descending else column.asc()))
+        .limit(limit)
+        .offset(offset)
+    )
+    async with engine.connect() as conn:
+        result = await conn.execute(stmt)
+        return [_user_row(r) for r in result.mappings()]
+
+
+async def acount_users(
+    engine: "AsyncEngine", table: Any, include_disabled: bool = True, search: Optional[str] = None
+) -> int:
+    stmt = select(func.count()).select_from(table).where(*_user_filters(table, include_disabled, search))
+    async with engine.connect() as conn:
+        result = await conn.execute(stmt)
+        return int(result.scalar() or 0)
+
+
+async def aupsert_user(engine: "AsyncEngine", table: Any, user_id: str, values: Dict[str, Any]) -> None:
+    payload = dict(values)
+    metadata = payload.pop("metadata", None)
+    if metadata is not None:
+        payload["user_metadata"] = json.dumps(metadata)
+    update_cols = [c for c in payload if c != "disabled"]
+    async with engine.begin() as conn:
+        await _aupsert(conn, table, {"id": user_id, **payload}, ["id"], update_cols)
+
+
+async def aset_user_disabled(engine: "AsyncEngine", table: Any, user_id: str, disabled: bool) -> None:
+    import time
+
+    now = int(time.time())
+    row = {
+        "id": user_id,
+        "email": None,
+        "name": None,
+        "disabled": bool(disabled),
+        "created_at": now,
+        "updated_at": now,
+        "user_metadata": None,
+    }
+    async with engine.begin() as conn:
+        await _aupsert(conn, table, row, ["id"], ["disabled", "updated_at"])
+
+
+async def adelete_user(engine: "AsyncEngine", table: Any, user_id: str) -> None:
+    async with engine.begin() as conn:
+        await conn.execute(delete(table).where(table.c.id == user_id))
+
+
+async def ais_user_disabled(engine: "AsyncEngine", table: Any, user_id: str) -> bool:
+    async with engine.connect() as conn:
+        result = await conn.execute(select(table.c.disabled).where(table.c.id == user_id))
+        row = result.first()
+    return bool(row[0]) if row is not None else False
+
+
+# --- Audit: change trail and access trail ---
+
+
+async def arecord_event(engine: "AsyncEngine", table: Any, values: Dict[str, Any]) -> None:
+    try:
+        async with engine.begin() as conn:
+            await conn.execute(insert(table).values(**values))
+    except IntegrityError:
+        pass
+
+
+async def aread_events(
+    engine: "AsyncEngine",
+    table: Any,
+    limit: int = 100,
+    offset: int = 0,
+    search: Optional[str] = None,
+    sort_by: str = "created_at",
+    order: str = "desc",
+    search_columns: Optional[List[str]] = None,
+) -> List[Dict[str, Any]]:
+    stmt = select(table)
+    if search:
+        needle = f"%{search}%"
+        columns = [table.c[name] for name in (search_columns or []) if name in table.c]
+        if columns:
+            stmt = stmt.where(or_(*[c.like(needle) for c in columns]))
+    column = table.c[sort_by] if sort_by in table.c else table.c.created_at
+    stmt = stmt.order_by(column.desc() if order.lower() == "desc" else column.asc()).limit(limit).offset(offset)
+    async with engine.connect() as conn:
+        result = await conn.execute(stmt)
+        return [dict(r) for r in result.mappings()]
+
+
+async def acount_events(
+    engine: "AsyncEngine", table: Any, search: Optional[str] = None, search_columns: Optional[List[str]] = None
+) -> int:
+    stmt = select(func.count()).select_from(table)
+    if search:
+        needle = f"%{search}%"
+        columns = [table.c[name] for name in (search_columns or []) if name in table.c]
+        if columns:
+            stmt = stmt.where(or_(*[c.like(needle) for c in columns]))
+    async with engine.connect() as conn:
+        result = await conn.execute(stmt)
+        return int(result.scalar() or 0)

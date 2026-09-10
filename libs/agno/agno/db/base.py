@@ -2310,6 +2310,15 @@ class AsyncBaseDb(ABC):
         self.approvals_table_name = approvals_table or "agno_approvals"
         self.auth_tokens_table_name = auth_tokens_table or "agno_auth_tokens"
         self.service_accounts_table_name = service_accounts_table or "agno_service_accounts"
+        # Authorization tables. Renameable like any other agno table; implemented by the
+        # async SQLAlchemy backends (AsyncPostgresDb, AsyncSqliteDb) the same way the sync
+        # backends implement them, so authz works under an async db too.
+        self.authz_policy_table_name = "agno_authz_policy"
+        self.authz_grouping_table_name = "agno_authz_grouping"
+        self.authz_roles_table_name = "agno_authz_roles"
+        self.authz_users_table_name = "agno_authz_users"
+        self.authz_audit_table_name = "agno_authz_audit"
+        self.authz_decisions_table_name = "agno_authz_decisions"
 
         # Async adapters cannot create component config/link tables yet, but
         # the FK dependency map needs their configured names.
@@ -3551,4 +3560,135 @@ class AsyncBaseDb(ABC):
 
     async def delete_service_account(self, service_account_id: str) -> bool:
         """Hard-delete a service account by ID. Returns True if deleted."""
+        raise NotImplementedError
+
+    # -------------------------------------------------------------------------
+    # Authorization (async twin of the BaseDb ``*_authz_*`` contract). Same method
+    # names as the sync contract, declared ``async``; implemented by the async
+    # SQLAlchemy backends and inherited as NotImplementedError everywhere else.
+    # -------------------------------------------------------------------------
+    async def get_authz_policies(self, roles: List[str]) -> List[Tuple[str, str, str, str]]:
+        """All (role, resource, action, effect) rows whose role is in ``roles``."""
+        raise NotImplementedError
+
+    async def get_authz_role_policies(self, role: str) -> List[Tuple[str, str, str]]:
+        """One role's (resource, action, effect) rows."""
+        raise NotImplementedError
+
+    async def set_authz_role_policies(self, role: str, rows: List[Tuple[str, str, str]]) -> None:
+        """Replace a role's policy rows in one transaction."""
+        raise NotImplementedError
+
+    async def upsert_authz_policy(self, *, role: str, resource: str, action: str, effect: str) -> None:
+        """Add a grant, or flip the effect of the existing one for this (role, resource, action)."""
+        raise NotImplementedError
+
+    async def delete_authz_policy(
+        self, *, role: str, resource: Optional[str] = None, action: Optional[str] = None
+    ) -> None:
+        """Delete a role's policy rows, optionally narrowed to one resource and action."""
+        raise NotImplementedError
+
+    async def get_authz_direct_roles(self, subject: str) -> List[str]:
+        """Roles directly assigned to ``subject``."""
+        raise NotImplementedError
+
+    async def authz_name_is_role(self, name: str) -> bool:
+        """True if ``name`` carries policy or has something assigned to it."""
+        raise NotImplementedError
+
+    async def assign_authz_role(self, subject: str, role: str) -> None:
+        """Add an assignment (idempotent)."""
+        raise NotImplementedError
+
+    async def unassign_authz_role(self, subject: str, role: str) -> None:
+        """Remove an assignment (idempotent)."""
+        raise NotImplementedError
+
+    async def replace_authz_subject_roles(self, subject: str, role: str) -> None:
+        """Atomically make ``role`` the subject's only role."""
+        raise NotImplementedError
+
+    async def list_authz_roles(self) -> List[str]:
+        """Every role name known to policy or to assignments."""
+        raise NotImplementedError
+
+    async def delete_authz_role(self, role: str) -> None:
+        """Drop a role entirely -- policy, assignments, metadata -- in one transaction."""
+        raise NotImplementedError
+
+    async def get_authz_role_meta(self, slug: str) -> Optional[Dict[str, Any]]:
+        """Role metadata row, or None."""
+        raise NotImplementedError
+
+    async def list_authz_role_meta(self) -> List[Dict[str, Any]]:
+        """All role metadata rows."""
+        raise NotImplementedError
+
+    async def upsert_authz_role_meta(self, slug: str, values: Dict[str, Any]) -> None:
+        """Create or update a role metadata row."""
+        raise NotImplementedError
+
+    async def delete_authz_role_meta(self, slug: str) -> None:
+        """Delete a role metadata row."""
+        raise NotImplementedError
+
+    async def get_authz_user(self, user_id: str) -> Optional[Dict[str, Any]]:
+        """A directory user row, or None."""
+        raise NotImplementedError
+
+    async def list_authz_users(
+        self,
+        limit: int = 1000,
+        offset: int = 0,
+        include_disabled: bool = True,
+        search: Optional[str] = None,
+        sort_by: str = "created_at",
+        order: str = "desc",
+    ) -> List[Dict[str, Any]]:
+        """A page of directory users."""
+        raise NotImplementedError
+
+    async def count_authz_users(self, include_disabled: bool = True, search: Optional[str] = None) -> int:
+        """Total number of directory users."""
+        raise NotImplementedError
+
+    async def upsert_authz_user(self, user_id: str, values: Dict[str, Any]) -> None:
+        """Write a directory row (never overwriting the ``disabled`` tombstone)."""
+        raise NotImplementedError
+
+    async def set_authz_user_disabled(self, user_id: str, disabled: bool) -> None:
+        """Atomically set (or clear) a user's ``disabled`` flag."""
+        raise NotImplementedError
+
+    async def delete_authz_user(self, user_id: str) -> None:
+        """Delete a directory user."""
+        raise NotImplementedError
+
+    async def is_authz_user_disabled(self, user_id: str) -> bool:
+        """The kill switch: True only if the user exists AND is disabled."""
+        raise NotImplementedError
+
+    async def record_authz_audit_event(self, values: Dict[str, Any]) -> None:
+        """Append one change-audit row."""
+        raise NotImplementedError
+
+    async def record_authz_decision(self, values: Dict[str, Any]) -> None:
+        """Append one decision-audit row."""
+        raise NotImplementedError
+
+    async def read_authz_audit_events(
+        self,
+        limit: int = 100,
+        offset: int = 0,
+        search: Optional[str] = None,
+        sort_by: str = "created_at",
+        order: str = "desc",
+        decisions: bool = False,
+    ) -> List[Dict[str, Any]]:
+        """A page of audit rows (change trail, or decision trail when ``decisions``)."""
+        raise NotImplementedError
+
+    async def count_authz_audit_events(self, search: Optional[str] = None, decisions: bool = False) -> int:
+        """Total number of audit rows (change or decision trail)."""
         raise NotImplementedError
