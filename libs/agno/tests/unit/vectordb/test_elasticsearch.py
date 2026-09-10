@@ -25,6 +25,12 @@ def mock_embedder():
     embedder.dimensions = TEST_DIMENSION
     embedder.enable_batch = False
     embedder.get_embedding_and_usage.return_value = ([0.1] * TEST_DIMENSION, {"tokens": 10})
+
+    # The async read path awaits this, so a plain Mock attribute would not be awaitable.
+    async def _async_get_embedding_and_usage(text: str):
+        return [0.1] * TEST_DIMENSION, {"tokens": 10}
+
+    embedder.async_get_embedding_and_usage = _async_get_embedding_and_usage
     return embedder
 
 
@@ -795,14 +801,101 @@ class TestElasticsearchSearch:
         mock_reranker.rerank.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_async_search_delegates_to_sync(self, es_db):
-        """async_search must reuse the sync path on a worker thread."""
+    async def test_async_search_uses_the_async_client(self, es_db, mock_es_client, mock_async_es_client):
+        """The round trip is awaited natively rather than run on a worker thread."""
+        mock_async_es_client.indices.exists.return_value = True
+        mock_async_es_client.search.return_value = {
+            "hits": {"hits": [{"_id": "1", "_score": 0.9, "_source": {"content": "a", "meta_data": {}}}]}
+        }
+        es_db._client = mock_es_client
+        es_db._async_client = mock_async_es_client
         es_db._owner_field_exact = True
 
-        with patch.object(es_db, "search", return_value=[]) as mock_search:
-            await es_db.async_search("q", limit=4, filters={"a": 1}, user_id="alice")
+        results = await es_db.async_search("q", limit=4, user_id="alice")
 
-        mock_search.assert_called_once_with("q", 4, {"a": 1}, "alice")
+        assert [d.content for d in results] == ["a"]
+        mock_async_es_client.search.assert_awaited_once()
+        mock_es_client.search.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_async_search_awaits_the_embedder(self, es_db, mock_es_client, mock_async_es_client):
+        """async_get_embedding_and_usage exists on the base Embedder, so it must be awaited."""
+        mock_async_es_client.indices.exists.return_value = True
+        mock_async_es_client.search.return_value = {"hits": {"hits": []}}
+        es_db._client = mock_es_client
+        es_db._async_client = mock_async_es_client
+        es_db._owner_field_exact = True
+
+        awaited = {}
+
+        async def record(text):
+            awaited["text"] = text
+            return [0.1] * TEST_DIMENSION, {}
+
+        es_db.embedder.async_get_embedding_and_usage = record
+
+        await es_db.async_search("find me", limit=4)
+
+        assert awaited["text"] == "find me"
+        es_db.embedder.get_embedding_and_usage.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_a_keyword_search_embeds_nothing(self, mock_embedder, mock_es_client, mock_async_es_client):
+        """A keyword search has no vector half, so it must not pay for an embedding."""
+        with patch(CLIENT_PATH), patch(ASYNC_CLIENT_PATH):
+            db = Elasticsearch(
+                index_name=TEST_INDEX_NAME,
+                dimension=TEST_DIMENSION,
+                embedder=mock_embedder,
+                search_type=SearchType.keyword,
+            )
+        mock_async_es_client.indices.exists.return_value = True
+        mock_async_es_client.search.return_value = {"hits": {"hits": []}}
+        db._client = mock_es_client
+        db._async_client = mock_async_es_client
+        db._owner_field_exact = True
+
+        called = {"n": 0}
+
+        async def record(text):
+            called["n"] += 1
+            return [0.1] * TEST_DIMENSION, {}
+
+        db.embedder.async_get_embedding_and_usage = record
+
+        await db.async_search("q", limit=4)
+
+        assert called["n"] == 0
+
+    @pytest.mark.asyncio
+    async def test_async_search_offloads_the_reranker(
+        self, es_db_with_reranker, mock_es_client, mock_async_es_client, mock_reranker
+    ):
+        """rerank() is sync-only, so it belongs on a worker thread rather than the loop."""
+        import threading
+
+        mock_async_es_client.indices.exists.return_value = True
+        mock_async_es_client.search.return_value = {
+            "hits": {"hits": [{"_id": "1", "_score": 0.9, "_source": {"content": "a", "meta_data": {}}}]}
+        }
+        es_db_with_reranker._client = mock_es_client
+        es_db_with_reranker._async_client = mock_async_es_client
+        es_db_with_reranker._owner_field_exact = True
+
+        seen = {}
+        mock_reranker.rerank.side_effect = (
+            lambda query, documents: seen.setdefault("thread", threading.get_ident()) and documents or documents
+        )
+
+        await es_db_with_reranker.async_search("q", limit=4)
+
+        assert seen["thread"] != threading.get_ident(), "the reranker blocked the event loop"
+
+    @pytest.mark.asyncio
+    async def test_async_search_still_validates_the_owner(self, es_db):
+        """The guard has to survive the rewrite: an empty user_id is not the shared bucket."""
+        with pytest.raises(ValueError, match="user_id must not be empty"):
+            await es_db.async_search("q", limit=4, user_id="")
 
 
 class TestElasticsearchFilterEdgeCases:

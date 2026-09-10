@@ -12,7 +12,7 @@ try:
 except ImportError:
     raise ImportError("`elasticsearch` not installed. Please install using `pip install elasticsearch`")
 
-from agno.filters import FilterExpr
+from agno.filters import MAX_FILTER_DEPTH, FilterExpr
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.knowledge.reranker.base import Reranker
@@ -53,13 +53,12 @@ class Elasticsearch(VectorDb):
     rejects a 9.x client outright ("Accept version must be either version 8 or 7"),
     so pin `elasticsearch` to the major your cluster runs.
 
-    Async strategy: writes and index operations use the native async client. Reads do
-    not. A search embeds the query and optionally reranks the results, both synchronous
-    and both usually slower than the round trip they wrap, so an async transport would
-    leave those blocking the event loop anyway; running the whole search on a worker
-    thread keeps the loop free instead. The same applies to the few synchronous helpers
-    an async write needs - the owner-mapping gate and the upsert's replace prelude -
-    which are offloaded rather than duplicated.
+    Async strategy: everything that can be awaited is. Reads and writes both use the
+    native async client, and the query embedding is awaited through the embedder's
+    async_get_embedding_and_usage. What cannot be awaited is offloaded to a worker
+    thread rather than left to block the event loop: Reranker.rerank has no async
+    variant on the base class, and neither do the two synchronous helpers an async
+    write needs - the owner-mapping gate and the upsert's replace prelude.
 
     Features:
         - Native dense_vector kNN search with pre-filtering
@@ -1699,12 +1698,116 @@ class Elasticsearch(VectorDb):
             List[Document]: List of matching documents
 
         Note:
-            Search runs through the synchronous client on a worker thread rather than the
-            async client. The search path also embeds the query and optionally reranks the
-            results, both of which are synchronous, so there is little to gain from an
-            async round trip. Offloading to a thread keeps the event loop free.
+            Embedding the query and the round trip are both awaited natively. Reranking
+            is not: ``Reranker.rerank`` has no async variant on the base class, so it is
+            offloaded to a worker thread rather than left to block the event loop.
         """
-        return await asyncio.to_thread(self.search, query, limit, filters, user_id)
+        self._validate_user_id(user_id)
+        await asyncio.to_thread(self._require_owner_field, user_id)
+
+        query_builders = {
+            SearchType.vector: self._build_vector_query,
+            SearchType.keyword: self._build_keyword_query,
+            SearchType.hybrid: self._build_hybrid_query,
+        }
+        query_builder = query_builders.get(self.search_type)
+        if query_builder is None:
+            logger.error(f"Invalid search type '{self.search_type}'")
+            return []
+
+        # .value, not str(): str(SearchType.vector) renders the enum name, and the sync
+        # path logs the bare word.
+        label = getattr(self.search_type, "value", str(self.search_type))
+        return await self._async_execute_search(label, query, limit, query_builder, filters, user_id)
+
+    async def _async_execute_search(
+        self,
+        search_type: str,
+        query: str,
+        limit: int,
+        query_builder,
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]],
+        user_id: Optional[str] = None,
+    ) -> List[Document]:
+        """Asynchronous twin of ``_execute_search_with_timing``.
+
+        Args:
+            search_type: Type of search for logging
+            query: Search query string
+            limit: Maximum number of results
+            query_builder: Function building the search body
+            filters: Optional filters to apply
+            user_id: Owner scope applied to the built query
+
+        Returns:
+            List[Document]: Search results with optional reranking applied
+
+        Note:
+            Only the reranker is offloaded; everything else is awaited. A keyword search
+            embeds nothing, so the embedding is computed only when a builder needs it.
+        """
+        start_time = time.time()
+        log_info(f"Performing {search_type} search for: '{query}' (limit: {limit})")
+
+        if not await self.async_exists():
+            logger.warning(f"Index {self.index_name} does not exist")
+            return []
+
+        try:
+            query_embedding = None
+            if self.search_type != SearchType.keyword:
+                query_embedding = await self._async_get_query_embedding(query)
+
+            search_body = query_builder(query, limit, filters, user_id, query_embedding)
+            log_debug(f"Executing {search_type} search query (async)")
+            response = await self.async_client.search(index=self.index_name, **search_body)
+
+            documents = [self._create_document_from_hit(hit) for hit in response["hits"]["hits"]]
+            log_debug(f"Retrieved {len(documents)} documents from {search_type} search")
+
+            if self.reranker and documents:
+                # rerank() is sync-only on the base Reranker, and it is usually a network
+                # call, so it goes to a worker thread instead of blocking the event loop.
+                documents = await asyncio.to_thread(self._apply_reranking, query, documents)
+
+            log_info(f"{search_type.capitalize()} search returned {len(documents)} documents for query: '{query}'")
+            return documents
+
+        except Exception as e:
+            if self._is_unlicensed_rrf_error(e):
+                log_warning(
+                    "This cluster's licence does not cover rrf; falling back to the boost "
+                    "hybrid strategy for the rest of this session. Set hybrid_strategy="
+                    "HybridStrategy.boost to silence this, or use a licensed cluster."
+                )
+                self.hybrid_strategy = HybridStrategy.boost
+                return await self._async_execute_search(search_type, query, limit, query_builder, filters, user_id)
+            logger.error(f"Error during {search_type} search: {e}")
+            return []
+        finally:
+            end_time = time.time()
+            log_debug(f"Total {search_type} search operation took {end_time - start_time:.2f} seconds")
+
+    async def _async_get_query_embedding(self, query: str) -> List[float]:
+        """Embed the query without blocking the event loop.
+
+        Args:
+            query: Search query string
+
+        Returns:
+            List[float]: The query embedding
+
+        Raises:
+            ValueError: If no embedder is configured
+        """
+        if self.embedder is None:
+            raise ValueError("No embedder configured for search")
+
+        log_debug("Generating query embedding (async)")
+        query_embedding, usage = await self.embedder.async_get_embedding_and_usage(query)
+        if usage:
+            log_debug(f"Embedding generation usage: {usage}")
+        return query_embedding
 
     def vector_search(
         self,
@@ -1917,6 +2020,7 @@ class Elasticsearch(VectorDb):
         limit: int,
         filters: Optional[Union[Dict[str, Any], List[FilterExpr]]],
         user_id: Optional[str] = None,
+        query_embedding: Optional[List[float]] = None,
     ) -> Dict[str, Any]:
         """
         Build vector search body for Elasticsearch.
@@ -1930,12 +2034,18 @@ class Elasticsearch(VectorDb):
         Returns:
             Dict[str, Any]: Keyword arguments for the search call
         """
-        query_embedding, _ = self._get_query_embedding(query)
+        if query_embedding is None:
+            query_embedding, _ = self._get_query_embedding(query)
         filter_conditions = self._scoped_filter_conditions(filters, user_id)
         return {"size": limit, "knn": self._build_knn_clause(query_embedding, limit, filter_conditions)}
 
     def _build_keyword_query(
-        self, query: str, limit: int, filters: Optional[Dict[str, Any]] = None, user_id: Optional[str] = None
+        self,
+        query: str,
+        limit: int,
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        user_id: Optional[str] = None,
+        query_embedding: Optional[List[float]] = None,
     ) -> Dict[str, Any]:
         """
         Build keyword search body for Elasticsearch.
@@ -1968,6 +2078,7 @@ class Elasticsearch(VectorDb):
         limit: int,
         filters: Optional[Union[Dict[str, Any], List[FilterExpr]]],
         user_id: Optional[str] = None,
+        query_embedding: Optional[List[float]] = None,
     ) -> Dict[str, Any]:
         """
         Build hybrid search body combining vector and keyword search.
@@ -1986,7 +2097,8 @@ class Elasticsearch(VectorDb):
             weights. With rrf the two rankings are fused instead, which needs no score
             normalisation but requires a licensed cluster.
         """
-        query_embedding, _ = self._get_query_embedding(query)
+        if query_embedding is None:
+            query_embedding, _ = self._get_query_embedding(query)
         filter_conditions = self._scoped_filter_conditions(filters, user_id)
 
         keyword_query: Dict[str, Any] = {
@@ -2368,22 +2480,79 @@ class Elasticsearch(VectorDb):
             }
         }
 
-    @staticmethod
-    def _usable_filters(filters: Optional[Any]) -> Optional[Dict[str, Any]]:
-        """Drop a filter form this backend cannot translate, loudly.
+    def _translate_filter_expressions(self, expressions: List[Any]) -> List[Dict[str, Any]]:
+        """Translate the ``FilterExpr`` DSL into Elasticsearch clauses.
 
-        ``Knowledge.search`` also accepts the ``FilterExpr`` DSL, which arrives as a
-        list. Passing it on raises inside the query builder, and the search path turns
-        that into an empty result set - so an unsupported filter would read as "nothing
-        matched" rather than "this was not applied".
+        Args:
+            expressions: The filter expressions to translate, ANDed together
+
+        Returns:
+            List[Dict[str, Any]]: Clauses to AND into the query's filter
+
+        Raises:
+            ValueError: If an expression cannot be translated
+
+        Note:
+            Dropping an untranslatable filter is not an option here. ``Knowledge`` puts
+            its ``linked_to`` instance scope into this same list when
+            isolate_vector_search is on, so discarding the list would discard that
+            scope - and a filter meant to narrow the search would widen it across
+            knowledge bases instead.
         """
-        if isinstance(filters, list):
-            log_warning(
-                "Filter expressions are not supported in Elasticsearch. No filters will be applied. "
-                'Pass a metadata dict instead, e.g. {"team": "eng"}.'
-            )
-            return None
-        return filters
+        return [self._translate_filter_node(e.to_dict() if hasattr(e, "to_dict") else e) for e in expressions]
+
+    def _translate_filter_node(self, node: Dict[str, Any], depth: int = 0) -> Dict[str, Any]:
+        """Translate one DSL node, recursing through the logical operators.
+
+        Args:
+            node: The node's ``to_dict()`` form
+            depth: Current recursion depth, bounded by the DSL's own limit
+
+        Returns:
+            Dict[str, Any]: The equivalent Elasticsearch clause
+
+        Raises:
+            ValueError: If the operator is unknown or the nesting is too deep
+        """
+        if depth > MAX_FILTER_DEPTH:
+            raise ValueError(f"Filter expression nests deeper than {MAX_FILTER_DEPTH} levels")
+
+        op = node.get("op")
+        if op is None:
+            raise ValueError(f"Filter expression node has no operator: {node}")
+
+        # Logical operators recurse; the rest name a field.
+        if op == "AND":
+            return {"bool": {"filter": [self._translate_filter_node(c, depth + 1) for c in node["conditions"]]}}
+        if op == "OR":
+            return {
+                "bool": {
+                    "should": [self._translate_filter_node(c, depth + 1) for c in node["conditions"]],
+                    "minimum_should_match": 1,
+                }
+            }
+        if op == "NOT":
+            return {"bool": {"must_not": [self._translate_filter_node(node["condition"], depth + 1)]}}
+
+        key = node["key"]
+        if op == "IN":
+            values = node["values"]
+            return {"terms": {self._match_field(key, values[0] if values else None): values}}
+
+        value = node["value"]
+        if op == "EQ":
+            return {"term": {self._match_field(key, value): value}}
+        if op == "NEQ":
+            return {"bool": {"must_not": [{"term": {self._match_field(key, value): value}}]}}
+        if op in ("GT", "GTE", "LT", "LTE"):
+            return {"range": {self._match_field(key, value): {op.lower(): value}}}
+        # Substring and prefix matching need the unanalyzed value, so both take .keyword.
+        if op == "CONTAINS":
+            return {"wildcard": {f"meta_data.{key}.keyword": f"*{value}*"}}
+        if op == "STARTSWITH":
+            return {"prefix": {f"meta_data.{key}.keyword": value}}
+
+        raise ValueError(f"Unsupported filter operator '{op}' for Elasticsearch")
 
     def _scoped_filter_conditions(
         self, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]], user_id: Optional[str]
@@ -2401,8 +2570,10 @@ class Elasticsearch(VectorDb):
         Note:
             The scope is a nested bool rather than a term, being an OR of two buckets.
         """
-        filters = self._usable_filters(filters)
-        conditions = self._build_filter_conditions(filters) if filters else []
+        if isinstance(filters, list):
+            conditions = self._translate_filter_expressions(filters)
+        else:
+            conditions = self._build_filter_conditions(filters) if filters else []
 
         scope = self._user_scope_filter(user_id)
         if scope is not None:
