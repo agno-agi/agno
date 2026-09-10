@@ -1,3 +1,4 @@
+import threading
 import time
 from copy import deepcopy
 from datetime import date, datetime, timedelta, timezone
@@ -11,6 +12,7 @@ from agno.db.in_memory.utils import (
     fetch_all_sessions_data,
     get_dates_to_calculate_metrics_for,
 )
+from agno.db.run_writes import RunCreateOutcome, RunUpdateOutcome
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
@@ -29,7 +31,15 @@ if TYPE_CHECKING:
     from agno.tracing.schemas import Span, Trace
 
 
+def _next_run_index(runs: List[Any]) -> int:
+    """One past the highest index currently stored for the session."""
+    indexes: List[int] = [r["run_index"] for r in runs if isinstance(r, dict) and isinstance(r.get("run_index"), int)]
+    return max(indexes) + 1 if indexes else 0
+
+
 class InMemoryDb(BaseDb):
+    supports_atomic_run_creation = True
+
     def __init__(self):
         """Interface for in-memory storage."""
         super().__init__()
@@ -47,6 +57,18 @@ class InMemoryDb(BaseDb):
         # dict. The cached objects are shared by every read and immutable by
         # contract; the stored dicts remain the canonical state.
         self._run_object_cache: Dict[str, Dict[str, Tuple[Dict[str, Any], Any]]] = {}
+        # run_id -> the identity that created the run. The SQL adapters get
+        # both halves from the runs table: run_id is its primary key, so a
+        # conflicting insert is refused by the database, and the row carries
+        # the owning user in its own column. Runs here live inline in their
+        # session, which has neither, so the ledger supplies both. It is the
+        # authority for "is this run_id taken" and for the owner an update is
+        # scoped against.
+        # Serializes the check-then-write in create_run against concurrent
+        # creations of the same run_id. Without it both callers read "absent"
+        # and both believe they created the run. Reentrant because the run
+        # write helpers call each other.
+        self._runs_lock = threading.RLock()
         self._memories: List[Dict[str, Any]] = []
         self._metrics: List[Dict[str, Any]] = []
         self._eval_runs: List[Dict[str, Any]] = []
@@ -84,15 +106,15 @@ class InMemoryDb(BaseDb):
             Exception: If an error occurs during deletion.
         """
         try:
-            session = self._sessions.get(session_id)
-            if session is not None and (user_id is None or session.get("user_id") == user_id):
-                del self._sessions[session_id]
-                self._run_object_cache.pop(session_id, None)
-                log_debug(f"Successfully deleted session with session_id: {session_id}")
-                return True
-            else:
-                log_debug(f"No session found to delete with session_id: {session_id}")
-                return False
+            with self._runs_lock:
+                session = self._sessions.get(session_id)
+                if session is not None and (user_id is None or session.get("user_id") == user_id):
+                    del self._sessions[session_id]
+                    self._run_object_cache.pop(session_id, None)
+                    log_debug(f"Successfully deleted session with session_id: {session_id}")
+                    return True
+            log_debug(f"No session found to delete with session_id: {session_id}")
+            return False
 
         except Exception as e:
             log_error(f"Error deleting session: {str(e)}")
@@ -109,11 +131,12 @@ class InMemoryDb(BaseDb):
             Exception: If an error occurs during deletion.
         """
         try:
-            for session_id in session_ids:
-                session = self._sessions.get(session_id)
-                if session is not None and (user_id is None or session.get("user_id") == user_id):
-                    del self._sessions[session_id]
-                    self._run_object_cache.pop(session_id, None)
+            with self._runs_lock:
+                for session_id in session_ids:
+                    session = self._sessions.get(session_id)
+                    if session is not None and (user_id is None or session.get("user_id") == user_id):
+                        del self._sessions[session_id]
+                        self._run_object_cache.pop(session_id, None)
             log_debug(f"Successfully deleted sessions with ids: {session_ids}")
 
         except Exception as e:
@@ -373,39 +396,45 @@ class InMemoryDb(BaseDb):
                 session_dict["session_type"] = SessionType.WORKFLOW.value
 
             session_id = session_dict["session_id"]
-            existing_session = self._sessions.get(session_id)
-            if existing_session is not None:
-                # Owner guard, mirroring the SQL adapters' ON CONFLICT ... WHERE
-                # clause: an owned session is only writable by its owner; an
-                # unowned session can be claimed by anyone.
-                existing_uid = existing_session.get("user_id")
-                if existing_uid is not None and existing_uid != session_dict.get("user_id"):
-                    return None
-                session_dict["updated_at"] = int(time.time())
-                # A session-row update must never drop runs written by
-                # upsert_run: carry the stored list forward. The list is
-                # already owned by the store, so it needs no copy.
-                runs_for_store = existing_session.get("runs")
-            else:
-                session_dict["created_at"] = session_dict.get("created_at", int(time.time()))
-                session_dict["updated_at"] = session_dict.get("created_at")
-                # A delete + re-insert under the same id must not serve the
-                # deleted session's cached run objects.
-                self._run_object_cache.pop(session_id, None)
-                # First insert: serialize whatever runs the incoming session
-                # carries, once (bulk import and restore callers never call
-                # upsert_run). to_dict output is freshly built, so it needs
-                # no defensive copy.
-                incoming_runs = session.runs
-                runs_for_store = (
-                    [run.to_dict() if hasattr(run, "to_dict") else deepcopy(run) for run in incoming_runs]
-                    if incoming_runs
-                    else None
-                )
+            # The whole read-modify-write runs under the run lock: it replaces
+            # the stored row (and carries its runs list forward), so a
+            # concurrent create_run / update_run must not be mid-write on it.
+            with self._runs_lock:
+                existing_session = self._sessions.get(session_id)
+                if existing_session is not None:
+                    # Owner guard, mirroring the SQL adapters' ON CONFLICT ... WHERE
+                    # clause: an owned session is only writable by its owner; an
+                    # unowned session can be claimed by anyone.
+                    existing_uid = existing_session.get("user_id")
+                    if existing_uid is not None and existing_uid != session_dict.get("user_id"):
+                        return None
+                    session_dict["updated_at"] = int(time.time())
+                    # A session-row update must never drop runs written by
+                    # upsert_run: carry the stored list forward. The list is
+                    # already owned by the store, so it needs no copy.
+                    runs_for_store = existing_session.get("runs")
+                else:
+                    session_dict["created_at"] = session_dict.get("created_at", int(time.time()))
+                    session_dict["updated_at"] = session_dict.get("created_at")
+                    # A delete + re-insert under the same id must not serve the
+                    # deleted session's cached run objects.
+                    self._run_object_cache.pop(session_id, None)
+                    # First insert: serialize whatever runs the incoming session
+                    # carries, once (bulk import and restore callers never call
+                    # upsert_run). to_dict output is freshly built, so it needs
+                    # no defensive copy.
+                    incoming_runs = session.runs
+                    runs_for_store = (
+                        [run.to_dict() if hasattr(run, "to_dict") else deepcopy(run) for run in incoming_runs]
+                        if incoming_runs
+                        else None
+                    )
 
-            stored_session = deepcopy(session_dict)
-            stored_session["runs"] = runs_for_store
-            self._sessions[session_id] = stored_session
+                stored_session = deepcopy(session_dict)
+                stored_session["runs"] = runs_for_store
+                self._sessions[session_id] = stored_session
+                if existing_session is None:
+                    self._stamp_session_runs(runs_for_store, session_id, session_dict.get("user_id"))
 
             # Match the SQL adapters' return contract (see SqliteDb.upsert_session):
             # a fresh copy of the session row with the caller's own runs attached
@@ -468,12 +497,18 @@ class InMemoryDb(BaseDb):
     # same behaviour as adapters that store runs in a dedicated table.
 
     def _iter_session_runs(self) -> List[Tuple[Dict[str, Any], Dict[str, Any]]]:
-        """Yield (session_dict, run_dict) pairs across all in-memory sessions."""
+        """(session_dict, run_dict) pairs across all in-memory sessions.
+
+        Materialized under the run lock: a concurrent write can insert a
+        session while this walks the store, and iterating the live dict then
+        raises rather than returning a stale-but-valid view.
+        """
         pairs: List[Tuple[Dict[str, Any], Dict[str, Any]]] = []
-        for session in self._sessions.values():
-            for run in session.get("runs") or []:
-                if isinstance(run, dict):
-                    pairs.append((session, run))
+        with self._runs_lock:
+            for session in list(self._sessions.values()):
+                for run in list(session.get("runs") or []):
+                    if isinstance(run, dict):
+                        pairs.append((session, run))
         return pairs
 
     def get_run(self, run_id: str, deserialize: Optional[bool] = True) -> Optional[Union[Any, Dict[str, Any]]]:
@@ -548,6 +583,181 @@ class InMemoryDb(BaseDb):
             log_error(f"Error reading runs: {str(e)}")
             raise e
 
+    def _stamp_session_runs(self, runs: Optional[List[Any]], session_id: str, user_id: Optional[str]) -> None:
+        """Stamp the owner onto runs that arrive with their session.
+
+        A session can be stored with its runs already attached, and those rows
+        need the same owner on them that ``create_run`` writes, or a later
+        scoped write cannot tell whose they are.
+        """
+        for run in runs or []:
+            if isinstance(run, dict) and run.get("run_id") is not None:
+                self._stamp_run_scope(run, session_id, user_id)
+
+    def _stamp_run_scope(self, run_dict: Dict[str, Any], session_id: str, user_id: Optional[str]) -> None:
+        """Write the resolved owner onto the stored run, as the SQL row has it.
+
+        A SQL adapter keeps session and user in columns of its own, resolved
+        by ``build_single_run_row``, and every ownership decision reads those.
+        Here the run dict IS the row, so the same facts have to live on it.
+        Keeping them anywhere else gives ownership two homes that can disagree.
+        """
+        scope = self._run_scope(run_dict, session_id, user_id)
+        run_dict["session_id"] = session_id
+        run_dict["user_id"] = scope["user_id"]
+
+    def _locate_run(
+        self, run_id: str, session_id: Optional[str] = None
+    ) -> Optional[Tuple[Dict[str, Any], List[Any], int]]:
+        """(session, its runs list, index) for ``run_id``, or None.
+
+        ``session_id`` confines the search to one session, which is what a
+        scoped write needs: the SQL update carries ``session_id`` in its WHERE
+        clause, so it can never reach a row filed under a different session
+        even when the id is stored twice.
+        """
+        sessions = self._sessions.values() if session_id is None else [self._sessions.get(session_id)]
+        for session in sessions:
+            if session is None:
+                continue
+            runs = session.get("runs") or []
+            for i, existing in enumerate(runs):
+                existing_id = (
+                    existing.get("run_id") if isinstance(existing, dict) else getattr(existing, "run_id", None)
+                )
+                if existing_id == run_id:
+                    return session, runs, i
+        return None
+
+    def _stored_run_scope(self, session: Dict[str, Any], existing: Dict[str, Any]) -> Dict[str, Optional[str]]:
+        """The owner of a stored run, read off the row that holds it."""
+        return self._run_scope(
+            existing, str(existing.get("session_id") or session.get("session_id")), existing.get("user_id")
+        )
+
+    @staticmethod
+    def _run_scope(run_dict: Dict[str, Any], session_id: str, user_id: Optional[str]) -> Dict[str, Optional[str]]:
+        """The ownership facts a SQL adapter keeps in the run row's columns."""
+        from agno.db.utils import resolve_run_scope
+
+        return resolve_run_scope(run_dict, session_id, user_id)
+
+    @staticmethod
+    def _scope_matches(stored: Dict[str, Optional[str]], incoming: Dict[str, Optional[str]]) -> bool:
+        """Whether a write may reach a row owned by ``stored``."""
+        from agno.db.utils import run_scope_allows
+
+        return run_scope_allows(stored, incoming)
+
+    def create_run(
+        self,
+        run: Any,
+        session_id: str,
+        user_id: Optional[str] = None,
+        run_index: Optional[int] = None,
+    ) -> RunCreateOutcome:
+        """Insert a run into its session, refusing to overwrite an existing
+        run_id. See ``BaseDb.create_run``."""
+        try:
+            run_dict = deepcopy(run if isinstance(run, dict) else run.to_dict())
+            run_id = run_dict.get("run_id")
+            if run_id is None:
+                raise ValueError("Run must have a run_id")
+
+            with self._runs_lock:
+                if self._locate_run(run_id) is not None:
+                    return RunCreateOutcome.CONFLICT
+
+                session = self._sessions.get(session_id)
+                if session is None:
+                    return RunCreateOutcome.SESSION_MISSING
+
+                runs = session.get("runs") or []
+                session["runs"] = runs
+                # build_single_run_row's precedence: the explicit argument
+                # first, then the run's own value. MAX+1, not len(runs): a
+                # deleted run leaves a hole, and reusing its position would
+                # give two runs one index.
+                if run_index is not None:
+                    run_dict["run_index"] = run_index
+                elif run_dict.get("run_index") is None:
+                    run_dict["run_index"] = _next_run_index(runs)
+                self._stamp_run_scope(run_dict, session_id, user_id)
+                runs.append(run_dict)
+                session["updated_at"] = int(time.time())
+                return RunCreateOutcome.CREATED
+
+        except Exception as e:
+            log_error(f"Error creating run: {str(e)}")
+            raise e
+
+    def update_run(
+        self,
+        run: Any,
+        session_id: str,
+        user_id: Optional[str] = None,
+        run_index: Optional[int] = None,
+    ) -> RunUpdateOutcome:
+        """Replace an existing run scoped to its owner. See ``BaseDb.update_run``."""
+        try:
+            run_dict = deepcopy(run if isinstance(run, dict) else run.to_dict())
+            run_id = run_dict.get("run_id")
+            if run_id is None:
+                raise ValueError("Run must have a run_id")
+
+            with self._runs_lock:
+                # Confined to the addressed session, the way the SQL update
+                # carries session_id in its WHERE clause. A row filed under a
+                # different session is out of this write's reach, so it is
+                # refused rather than found and overwritten.
+                located = self._locate_run(run_id, session_id=session_id)
+                if located is None:
+                    return (
+                        RunUpdateOutcome.SCOPE_MISMATCH
+                        if self._locate_run(run_id) is not None
+                        else RunUpdateOutcome.MISSING
+                    )
+                session, runs, i = located
+                existing: Dict[str, Any] = runs[i] if isinstance(runs[i], dict) else {}
+                stored = self._stored_run_scope(session, existing)
+                incoming = self._run_scope(run_dict, session_id, user_id)
+                if not self._scope_matches(stored, incoming):
+                    return RunUpdateOutcome.SCOPE_MISMATCH
+
+                # The SQL update writes named columns and leaves the rest of
+                # the row alone. Replacing the dict wholesale is this
+                # adapter's equivalent of writing every column, so the facts
+                # the incoming run does not carry are put back. The identity
+                # columns are never written at all, only carried forward: an
+                # update that changed which session or component a stored row
+                # belongs to would move it out of its owner's reach.
+                for field in ("agent_id", "team_id", "workflow_id", "session_id", "run_type"):
+                    if existing.get(field) is not None:
+                        run_dict[field] = existing[field]
+                    # A row stored without this fact adopts the one this write
+                    # knows, the COALESCE the SQL adapters apply to the same
+                    # columns. Never the other way round.
+                    elif run_dict.get(field) is None and field == "session_id":
+                        run_dict[field] = session_id
+                # COALESCE(stored, incoming), as the SQL adapters write it:
+                # a stored position always wins, so a save that carries a
+                # different index cannot renumber the row.
+                if existing.get("run_index") is not None:
+                    run_dict["run_index"] = existing["run_index"]
+                elif run_dict.get("run_index") is None and run_index is not None:
+                    run_dict["run_index"] = run_index
+                # Attribute a run created before its owner was resolved,
+                # never rewriting an owner the scope matched against. The SQL
+                # adapters COALESCE the run row's user column; same rule here.
+                run_dict["user_id"] = stored["user_id"] if stored["user_id"] is not None else incoming["user_id"]
+                runs[i] = run_dict
+                session["updated_at"] = int(time.time())
+                return RunUpdateOutcome.UPDATED
+
+        except Exception as e:
+            log_error(f"Error updating run: {str(e)}")
+            raise e
+
     def upsert_run(
         self,
         run: Any,
@@ -567,29 +777,33 @@ class InMemoryDb(BaseDb):
             if run_id is None:
                 raise ValueError("Run must have a run_id")
 
-            session = self._sessions.get(session_id)
-            if session is None:
-                log_debug(f"upsert_run: session {session_id} not found; skipping")
-                return
+            with self._runs_lock:
+                session = self._sessions.get(session_id)
+                if session is None:
+                    log_debug(f"upsert_run: session {session_id} not found; skipping")
+                    return
 
-            # The stored row holds "runs": None until the first run lands
-            runs = session.get("runs") or []
-            session["runs"] = runs
-            for i, existing in enumerate(runs):
-                existing_id = (
-                    existing.get("run_id") if isinstance(existing, dict) else getattr(existing, "run_id", None)
-                )
-                if existing_id == run_id:
-                    # Preserve original run_index on update (matches SQL adapters)
-                    if isinstance(existing, dict) and "run_index" in existing:
-                        run_dict["run_index"] = existing["run_index"]
-                    runs[i] = run_dict
-                    break
-            else:
-                if run_index is not None and "run_index" not in run_dict:
-                    run_dict["run_index"] = run_index
-                runs.append(run_dict)
-            session["updated_at"] = int(time.time())
+                # The stored row holds "runs": None until the first run lands
+                runs = session.get("runs") or []
+                session["runs"] = runs
+                for i, existing in enumerate(runs):
+                    existing_id = (
+                        existing.get("run_id") if isinstance(existing, dict) else getattr(existing, "run_id", None)
+                    )
+                    if existing_id == run_id:
+                        # Preserve original run_index on update (matches SQL adapters)
+                        if isinstance(existing, dict) and "run_index" in existing:
+                            run_dict["run_index"] = existing["run_index"]
+                        runs[i] = run_dict
+                        break
+                else:
+                    if run_index is not None and "run_index" not in run_dict:
+                        run_dict["run_index"] = run_index
+                    # Stamped like any other insert, so a run that reached the
+                    # store this way is scoped the same as one that was created
+                    self._stamp_run_scope(run_dict, session_id, user_id)
+                    runs.append(run_dict)
+                session["updated_at"] = int(time.time())
         except Exception as e:
             log_error(f"Error upserting run: {str(e)}")
             raise e
@@ -597,13 +811,14 @@ class InMemoryDb(BaseDb):
     def delete_run(self, run_id: str) -> bool:
         """Remove a run from its session by run_id."""
         try:
-            for session in self._sessions.values():
-                runs = session.get("runs") or []
-                new_runs = [r for r in runs if not (isinstance(r, dict) and r.get("run_id") == run_id)]
-                if len(new_runs) != len(runs):
-                    session["runs"] = new_runs
-                    session["updated_at"] = int(time.time())
-                    return True
+            with self._runs_lock:
+                for session in self._sessions.values():
+                    runs = session.get("runs") or []
+                    new_runs = [r for r in runs if not (isinstance(r, dict) and r.get("run_id") == run_id)]
+                    if len(new_runs) != len(runs):
+                        session["runs"] = new_runs
+                        session["updated_at"] = int(time.time())
+                        return True
             return False
         except Exception as e:
             log_error(f"Error deleting run {run_id}: {str(e)}")
@@ -615,12 +830,13 @@ class InMemoryDb(BaseDb):
             return
         wanted = set(run_ids)
         try:
-            for session in self._sessions.values():
-                runs = session.get("runs") or []
-                new_runs = [r for r in runs if not (isinstance(r, dict) and r.get("run_id") in wanted)]
-                if len(new_runs) != len(runs):
-                    session["runs"] = new_runs
-                    session["updated_at"] = int(time.time())
+            with self._runs_lock:
+                for session in self._sessions.values():
+                    runs = session.get("runs") or []
+                    new_runs = [r for r in runs if not (isinstance(r, dict) and r.get("run_id") in wanted)]
+                    if len(new_runs) != len(runs):
+                        session["runs"] = new_runs
+                        session["updated_at"] = int(time.time())
         except Exception as e:
             log_error(f"Error deleting runs: {str(e)}")
             raise e

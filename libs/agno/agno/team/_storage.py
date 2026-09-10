@@ -277,6 +277,19 @@ def _upsert_run(
         # registered - a zombie leg's member writes orphan, not clobber)
         if persist_worker_owned_run(team.db, run, session_id=session_id, user_id=user_id):
             return
+        from agno.db.run_writes import persist_run_scoped
+
+        # Scoped update first, strict create when the row is not there yet:
+        # a lifecycle save can then only ever touch the row this run created
+        try:
+            handled = persist_run_scoped(team.db, run, session_id=session_id, user_id=user_id, run_index=run_index)
+        except NotImplementedError:
+            # The adapter declares the scoped pair but has not implemented
+            # it; the legacy save below overwrites, so say so
+            log_warning(f"{type(team.db).__name__} declares scoped run writes but does not implement them")
+            handled = False
+        if handled:
+            return
         team.db.upsert_run(run=run, session_id=session_id, user_id=user_id, run_index=run_index)  # type: ignore[union-attr]
     except NotImplementedError:
         log_debug(f"{type(team.db).__name__} does not implement upsert_run; skipping per-run write")
@@ -302,6 +315,20 @@ async def _aupsert_run(
         # Queue-worker-owned runs save through the attempt-fenced primitive;
         # member-run saves pass through untouched (see _upsert_run)
         if await apersist_worker_owned_run(team.db, run, session_id=session_id, user_id=user_id):
+            return
+        from agno.db.run_writes import apersist_run_scoped
+
+        # See _upsert_run
+        try:
+            handled = await apersist_run_scoped(
+                team.db, run, session_id=session_id, user_id=user_id, run_index=run_index
+            )
+        except NotImplementedError:
+            # The adapter declares the scoped pair but has not implemented
+            # it; the legacy save below overwrites, so say so
+            log_warning(f"{type(team.db).__name__} declares scoped run writes but does not implement them")
+            handled = False
+        if handled:
             return
         if _has_async_db(team):
             await team.db.upsert_run(run=run, session_id=session_id, user_id=user_id, run_index=run_index)  # type: ignore[union-attr,misc]

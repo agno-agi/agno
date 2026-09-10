@@ -2135,6 +2135,20 @@ class Workflow:
             # primitive; a zombie attempt's write is refused, not applied
             if persist_worker_owned_run(self.db, run, session_id=session_id, user_id=user_id):
                 return
+            from agno.db.run_writes import persist_run_scoped
+
+            # Scoped update first, strict create when the row is not there
+            # yet, so a workflow run cannot land on a row owned by another
+            # session, user or component either
+            try:
+                handled = persist_run_scoped(self.db, run, session_id=session_id, user_id=user_id, run_index=run_index)
+            except NotImplementedError:
+                # The adapter declares the scoped pair but has not implemented
+                # it; the legacy save below overwrites, so say so
+                log_warning(f"{type(self.db).__name__} declares scoped run writes but does not implement them")
+                handled = False
+            if handled:
+                return
             self.db.upsert_run(run=run, session_id=session_id, user_id=user_id, run_index=run_index)  # type: ignore[union-attr]
         except NotImplementedError:
             log_debug(f"{type(self.db).__name__} does not implement upsert_run; skipping per-run write")
@@ -2161,6 +2175,20 @@ class Workflow:
             # Queue-worker-owned runs save through the attempt-fenced
             # primitive; a zombie attempt's write is refused, not applied
             if await apersist_worker_owned_run(self.db, run, session_id=session_id, user_id=user_id):
+                return
+            from agno.db.run_writes import apersist_run_scoped
+
+            # See save_run
+            try:
+                handled = await apersist_run_scoped(
+                    self.db, run, session_id=session_id, user_id=user_id, run_index=run_index
+                )
+            except NotImplementedError:
+                # The adapter declares the scoped pair but has not implemented
+                # it; the legacy save below overwrites, so say so
+                log_warning(f"{type(self.db).__name__} declares scoped run writes but does not implement them")
+                handled = False
+            if handled:
                 return
             if self._has_async_db():
                 await self.db.upsert_run(run=run, session_id=session_id, user_id=user_id, run_index=run_index)  # type: ignore[union-attr,misc]

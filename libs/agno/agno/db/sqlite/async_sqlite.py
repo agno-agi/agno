@@ -12,6 +12,7 @@ if TYPE_CHECKING:
 
 from agno.db.base import AsyncBaseDb, SessionType
 from agno.db.migrations.manager import MigrationManager
+from agno.db.run_writes import RunCreateOutcome, RunUpdateOutcome
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
@@ -38,9 +39,11 @@ from agno.db.utils import (
     deserialize_session_json_fields,
     deserialize_sessions,
     filter_context_runs,
+    is_foreign_key_violation,
     json_serializer,
     merge_runs_table_with_legacy_blob,
     metrics_starting_date_from_days,
+    run_scope_clause,
     serialize_session_json_fields,
     table_schema_mismatch_error,
     validate_pagination,
@@ -54,8 +57,9 @@ from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id
 
 try:
-    from sqlalchemy import Column, ForeignKey, MetaData, String, Table, func, select, text
+    from sqlalchemy import Column, CursorResult, ForeignKey, MetaData, String, Table, func, select, text, update
     from sqlalchemy.dialects import sqlite
+    from sqlalchemy.exc import IntegrityError
     from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
     from sqlalchemy.schema import Index, UniqueConstraint
 except ImportError:
@@ -63,6 +67,8 @@ except ImportError:
 
 
 class AsyncSqliteDb(AsyncBaseDb):
+    supports_atomic_run_creation = True
+
     def __init__(
         self,
         db_file: Optional[str] = None,
@@ -877,6 +883,113 @@ class AsyncSqliteDb(AsyncBaseDb):
 
         except Exception as e:
             log_error(f"Exception upserting run to runs table: {str(e)}")
+            raise e
+
+    async def create_run(
+        self,
+        run: Union[RunOutput, TeamRunOutput, WorkflowRunOutput, Dict[str, Any]],
+        session_id: str,
+        user_id: Optional[str] = None,
+        run_index: Optional[int] = None,
+    ) -> RunCreateOutcome:
+        """Async twin of ``SqliteDb.create_run``; see ``BaseDb.create_run``."""
+        try:
+            runs_table = await self._get_table(table_type="runs", create_table_if_not_found=True)
+            if runs_table is None:
+                # See the sync twin: ERROR, not UNSUPPORTED
+                log_error("Runs table could not be resolved; the run was not created")
+                return RunCreateOutcome.ERROR
+
+            row = build_single_run_row(run=run, session_id=session_id, user_id=user_id, run_index=run_index)
+
+            try:
+                async with self.async_session_factory() as sess, sess.begin():
+                    if row.get("run_index") is None:
+                        # Computed inside the insert, same as upsert_run
+                        row["run_index"] = (
+                            select(func.coalesce(func.max(runs_table.c.run_index) + 1, 0))
+                            .where(runs_table.c.session_id == session_id)
+                            .scalar_subquery()
+                        )
+                    stmt = sqlite.insert(runs_table).values(**row).on_conflict_do_nothing(index_elements=["run_id"])
+                    inserted = cast("CursorResult[Any]", await sess.execute(stmt)).rowcount
+            except IntegrityError as e:
+                # See SqliteDb.create_run: only a missing session row is an
+                # expected integrity failure here
+                if not is_foreign_key_violation(e):
+                    log_error(f"Exception creating run in runs table: {str(e)}")
+                    return RunCreateOutcome.ERROR
+                return RunCreateOutcome.SESSION_MISSING
+
+            return RunCreateOutcome.CREATED if inserted else RunCreateOutcome.CONFLICT
+
+        except Exception as e:
+            log_error(f"Exception creating run in runs table: {str(e)}")
+            raise e
+
+    async def update_run(
+        self,
+        run: Union[RunOutput, TeamRunOutput, WorkflowRunOutput, Dict[str, Any]],
+        session_id: str,
+        user_id: Optional[str] = None,
+        run_index: Optional[int] = None,
+    ) -> RunUpdateOutcome:
+        """Async twin of ``SqliteDb.update_run``; see ``BaseDb.update_run``."""
+        try:
+            runs_table = await self._get_table(table_type="runs")
+            if runs_table is None:
+                return RunUpdateOutcome.MISSING
+
+            row = build_single_run_row(run=run, session_id=session_id, user_id=user_id, run_index=run_index)
+
+            async with self.async_session_factory() as sess, sess.begin():
+                stmt = (
+                    update(runs_table)
+                    .where(runs_table.c.run_id == row["run_id"])
+                    .where(run_scope_clause(runs_table, row))
+                    .values(
+                        status=row["status"],
+                        run_data=row["run_data"],
+                        parent_run_id=row["parent_run_id"],
+                        updated_at=row["updated_at"],
+                        # Adopt a row created before its component or owner was known.
+                        # COALESCE, not assignment: a value already on the row is what
+                        # the scope matched against and must not be rewritten.
+                        agent_id=func.coalesce(runs_table.c.agent_id, row["agent_id"]),
+                        team_id=func.coalesce(runs_table.c.team_id, row["team_id"]),
+                        workflow_id=func.coalesce(runs_table.c.workflow_id, row["workflow_id"]),
+                        user_id=func.coalesce(runs_table.c.user_id, row["user_id"]),
+                        # Repair a legacy row stored with a NULL index, using
+                        # the position the caller resolved. COALESCE so a
+                        # stored index is never renumbered; omitted entirely
+                        # when the caller did not resolve one.
+                        **(
+                            {"run_index": func.coalesce(runs_table.c.run_index, row["run_index"])}
+                            if row.get("run_index") is not None
+                            else {}
+                        ),
+                    )
+                )
+                if cast("CursorResult[Any]", await sess.execute(stmt)).rowcount:
+                    return RunUpdateOutcome.UPDATED
+                # See the sync twin for why this asks twice
+                owned = (
+                    await sess.execute(
+                        select(runs_table.c.run_id)
+                        .where(runs_table.c.run_id == row["run_id"])
+                        .where(run_scope_clause(runs_table, row))
+                    )
+                ).fetchone()
+                if owned is not None:
+                    return RunUpdateOutcome.MISSING
+                exists = (
+                    await sess.execute(select(runs_table.c.run_id).where(runs_table.c.run_id == row["run_id"]))
+                ).fetchone()
+
+            return RunUpdateOutcome.SCOPE_MISMATCH if exists is not None else RunUpdateOutcome.MISSING
+
+        except Exception as e:
+            log_error(f"Exception updating run in runs table: {str(e)}")
             raise e
 
     async def get_runs(
