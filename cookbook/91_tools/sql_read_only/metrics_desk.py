@@ -1,8 +1,7 @@
 """
 Metrics Desk
 ============
-Your production database, answerable from any MCP client, without your credentials
-or your rows leaving your process. The client sends a question, this process runs
+Your production database, answerable from any MCP client, using a driver-enforced read-only SQLite connection. The client sends a question, this process runs
 the SQL over a read-only connection, and only the answer crosses the wire.
 
 Running this file serves the AgentOS on http://localhost:7777
@@ -78,7 +77,7 @@ db = SqliteDb(db_file="tmp/metrics_desk.db")
 analyst = Agent(
     id="analyst",
     name="Analyst",
-    model=OpenAIResponses(id="gpt-5.5"),
+    model=OpenAIResponses(id="gpt-5.6"),
     db=db,
     tools=[SQLTools(db_engine=warehouse)],
     instructions=[
@@ -94,8 +93,7 @@ analyst = Agent(
 # ---------------------------------------------------------------------------
 # The MCP surface
 # ---------------------------------------------------------------------------
-# One tool is exposed to the outside world. The connection string, the schema and
-# the rows stay in this process; the client only ever sees the answer.
+# SQL results are sent to the model provider; the MCP caller receives the answer.
 async def ask_metrics(question: str) -> str:
     """Ask a question about the company's live orders database."""
     run = await analyst.arun(question)
@@ -121,4 +119,4 @@ app = agent_os.get_app()
 # Run the AgentOS
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    agent_os.serve(app="metrics_desk:app", reload=True)
+    agent_os.serve(app="metrics_desk:app", host="127.0.0.1", reload=False)

@@ -1,31 +1,9 @@
+"""Second Brain learns about people, projects, and your preferences.
+Use demo.py to capture, recall, correct, and recall again across sessions.
 """
-Second Brain - Memory You Own, Behind Your Own MCP Server
-=========================================================
-A private agent that remembers what you are building: durable notes in its own
-filesystem, an entity graph over the people and projects around you, and what
-it learns about how you work. It is also an MCP server, so your AI apps
-(claude, chatgpt, claude code) can read and write the same brain.
 
-The stores split the work:
-- Notes (FileSystem) hold the content: decisions with their reasoning, running
-  documents, anything longer than a line.
-- Entities index the world: people, projects, systems - one-line current
-  values, links, and a note pointer to where the detail lives.
-- Profile and memory hold the self: who you are and how you like to work.
-
-Identity is pinned (user_id below): sessions do not thread over MCP and an
-unauthenticated /mcp call carries no user, so the personal brain names its
-owner once and calls that name nobody land on the same brain.
-
-One caveat, measured rather than assumed: /mcp's run_agent takes an optional
-user_id, and a host that fills it wins over the pin - that run's profile and
-user memory go to whatever it sent. Entities are global, so the world half of
-the brain is shared either way. Run /mcp behind auth (the JWT subject then wins
-over both) if your client volunteers a user_id.
-
-Running this file serves the AgentOS on http://localhost:7777
-MCP Server on http://localhost:7777/mcp
-"""
+from os import getenv
+from uuid import uuid4
 
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
@@ -37,21 +15,21 @@ from agno.learn import (
     UserMemoryConfig,
     UserProfileConfig,
 )
-from agno.os import AgentOS
+from agno.os import AgentOS, MCPConfig
+from agno.os.config import AuthorizationConfig
 
 # ---------------------------------------------------------------------------
 # One database for agent sessions, learning, notes, traces, metrics, etc.
-# Shared world, private self: notes live in the same shared namespace as the
-# entities they document; profile and memory stay per-user.
+# Notes and learning persist here; every store is scoped to the caller.
 # ---------------------------------------------------------------------------
 db = SqliteDb(db_file="tmp/second_brain.db")
-notes = FileSystem(db, namespace="brain")
+notes = FileSystem(db, namespace="brain/{user_id}")
 
 brain = LearningMachine(
     db=db,
     user_profile=UserProfileConfig(mode=LearningMode.AGENTIC),  # private to each person
     user_memory=UserMemoryConfig(mode=LearningMode.AGENTIC),  # private to each person
-    entity_memory=EntityMemoryConfig(namespace="global"),  # shared by the team
+    entity_memory=EntityMemoryConfig(namespace="user"),  # private entity graph per user
 )
 
 # ---------------------------------------------------------------------------
@@ -83,8 +61,7 @@ second_brain = Agent(
         "- Profile is a field with one value (update_profile overwrites); memory is an "
         "observation you keep alongside others (update_user_memory). Standing "
         "instructions are rules to obey, not observations to narrate.",
-        "- Confidences stay private: something shared in confidence about the world "
-        "goes to user memory, never to a shared entity - and say so when you file one.",
+        "- Personal observations belong in user memory. Keep project facts in entities.",
         "- What you file about other people is your judgement, and the test is whether "
         "your owner would file it: what they told you to remember, and what bears on "
         "the work. Not a colleague's health, pay, or family, mentioned in passing and "
@@ -97,8 +74,6 @@ second_brain = Agent(
         "Answer in under 3 sentences unless asked for more.",
         notes.instructions(),
     ],
-    # The personal brain pins identity: every channel, MCP included, lands here.
-    user_id="owner",
     add_history_to_context=True,
     # A brain that cannot date its notes cannot tell July's truth from March's,
     # and the instructions above ask for dated notes. Without this the agent has
@@ -106,19 +81,35 @@ second_brain = Agent(
     add_datetime_to_context=True,
 )
 
-# ---------------------------------------------------------------------------
-# Create the AgentOS - API on /, MCP on /mcp
-# ---------------------------------------------------------------------------
-agent_os = AgentOS(
-    db=db,
-    tracing=True,
-    mcp=True,
-    agents=[second_brain],
-)
-app = agent_os.get_app()
+
+async def ask_second_brain(message: str, user_id: str | None = None) -> str:
+    """Recall or update the authenticated user's notes and learning."""
+    if not user_id:
+        raise ValueError("An authenticated user is required.")
+    response = await second_brain.arun(
+        message, user_id=user_id, session_id=str(uuid4())
+    )
+    return response.get_content_as_string()
+
 
 # ---------------------------------------------------------------------------
-# Run the AgentOS
+# Create AgentOS: JWT subject is injected into the custom MCP tool
+# ---------------------------------------------------------------------------
+agent_os = AgentOS(
+    id="second-brain",
+    db=db,
+    tracing=True,
+    agents=[second_brain],
+    authorization=True,
+    authorization_config=AuthorizationConfig(user_isolation=True),
+    mcp=MCPConfig(tools=[ask_second_brain], default_tools=False),
+)
+app = agent_os.get_app() if getenv("JWT_VERIFICATION_KEY") else None
+
+# ---------------------------------------------------------------------------
+# Run AgentOS with a configured verification key
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    agent_os.serve(app="second_brain:app", reload=True)
+    if not getenv("JWT_VERIFICATION_KEY"):
+        raise RuntimeError("Export JWT_VERIFICATION_KEY before serving.")
+    agent_os.serve(app="second_brain:app", host="127.0.0.1", reload=False)

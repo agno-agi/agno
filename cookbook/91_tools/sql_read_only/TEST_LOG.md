@@ -1,3 +1,25 @@
+# Current validation: read-only SQL desk
+
+Tested 2026-09-10 against source Agno 3.0.9 at
+`37fc4121e3cf8863a2957b838fbad7c920bffe0f`.
+
+### test_read_only.py
+
+**Status:** PASS
+
+**Description:** Actual SQLite driver/authorizer checks in a temporary directory.
+
+**Result:** 1 passed. DELETE, DROP TABLE, ATTACH and CREATE TEMP TABLE rejected;
+all five fictional order rows remained. Model behavior was not rerun for this
+moved legacy example. Import and MCP app construction succeeded.
+
+---
+
+## Historical validation before the move
+
+The entries below describe the earlier implementation and environment. They are
+not validation of the refreshed collection.
+
 # Test Log - metrics_desk
 
 Tested 2026-07-25 against `gpt-5.5` (OpenAIResponses), agno 2.8.2 (source tree at 5e6185ea9).

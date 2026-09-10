@@ -1,4 +1,4 @@
-# Test Log - team_brain
+# Test Log - support_agent
 
 Tested 2026-09-10. Published dependency: Agno 3.0.8, clean per-example uv environment,
 Python 3.12.8. Source: Agno 3.0.9 at
@@ -9,7 +9,7 @@ Live model: `openai:gpt-5.6`. All runtime data used isolated temporary directori
 
 **Status:** PASS
 
-**Description:** Missing local identity is refused. Two JSON records preserve Alice/Bob attribution through storage restart, even when a decision embeds a forged author string. Librarian tools cannot write.
+**Description:** Scripted model drives actual Agno knowledge retrieval, reference recording, follow-up history, and structured handoff. Three persisted runs survive a new database instance.
 
 **Result:** 1 passed on published package and 1 passed on exact local source.
 Deterministic checks use real Agno persistence and APIs; scripted responses do not
@@ -24,12 +24,12 @@ model-assisted supersession judge; that was exercised by the live demo.
 
 **Description:** Bounded live-model smoke using exact local source.
 
-**Result:** Alice and Bob contributed two decisions; the live librarian read `decisions.jsonl` and correctly returned both decisions, reasons, and authors. Separate-process recall preserved both.
+**Result:** Three live turns produced an exports answer with a source, a member-permissions follow-up, and a needs_human response for the Germany contractual guarantee. The handoff was saved locally; nobody was contacted.
 Model prose is paraphrased here. See the collection validation report for limits.
 
 ---
 
-### team_brain.py startup
+### support_agent.py startup
 
 **Status:** PASS
 
@@ -41,17 +41,14 @@ This is a local startup check, not a hosted integration check.
 
 ---
 
-### ../test_mcp.py
+### demo.py --fixture
 
 **Status:** PASS
 
-**Description:** Full local HTTP/ASGI stack, real generated RSA keys and signed
-JWTs, MCP initialize/list/call, hidden identity schema, two verified users, rejected
-spoofed user IDs, and missing/invalid credential rejection.
+**Description:** Completely offline scripted model with real Agent execution.
 
-**Result:** The two-example suite passed 2 tests on each implementation. Team Brain
-writes use the actual FileSystem; the model-facing arun boundary is stubbed for
-transport checks. Separate live demos exercise the real agent. No hosted OAuth
-provider or external MCP client account was connected.
+**Result:** Exit 0 from clean directories against published package and source.
+Structured artifacts and provenance checks passed. This does not prove live model
+or retrieval quality.
 
 ---

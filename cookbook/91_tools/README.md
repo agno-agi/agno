@@ -37,6 +37,8 @@ agent = Agent(tools=[tools])
 
 ## Folders
 
+- [Read-only SQL desk](sql_read_only) - SQLite driver and authorizer protections with SQLTools
+
 - `finance/` - FinanceTools: one finance toolkit, swappable data providers (yfinance, financialdatasets.ai)
 - `mcp/` - MCP server examples
 - `tool_decorator/` - Custom tool patterns

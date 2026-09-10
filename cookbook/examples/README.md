@@ -1,38 +1,28 @@
 # Agno Examples
 
-The numbered cookbooks teach primitives. This folder showcases small, complete agents.
+Five small, complete agents to read, run, and adapt. Each is an independent uv
+project with its own agent, demo, dependencies, and validation notes.
 
-## The examples
+| Example | Useful job | Choose it when |
+| --- | --- | --- |
+| [Personal Agent](personal_agent) | Keep projects, tasks, and decisions in durable notes | You want a simple agent that picks up where you left off |
+| [Second Brain](second_brain) | Learn preferences and facts about people and projects | You want learning across conversations alongside explicit notes |
+| [Team Brain](team_brain) | Share attributed decisions and reasoning | Teammates need a common project record |
+| [Research Agent](research_agent) | Investigate a focused question and save a cited brief | You need source-backed findings with uncertainty |
+| [Support Agent](support_agent) | Answer from maintained docs and prepare local handoffs | Product questions need traceable answers and conversational follow-ups |
 
-- [second_brain](./second_brain) - memory you own, behind your own MCP server
-- [metrics_desk](./metrics_desk) - your production database, answerable from any MCP client
-- [team_brain](./team_brain) - one decision log the whole team writes into
+Start with Personal Agent to understand durable notes and session history. Second
+Brain builds on that idea with learning stores and an entity graph. Team Brain,
+Research Agent, and Support Agent solve distinct jobs.
 
-## Running an example
+Each directory's README has exact setup commands. Export credentials explicitly;
+`.env.example` does not load itself. `demo.py` exercises that directory's agent;
+`test_contracts.py` contains deterministic assertions. Research and Support also
+have offline scripted fixture modes, clearly separate from live model runs.
 
-Set up and activate the virtual environment:
+The examples use SQLite for local persistence. The two brain MCP servers require
+JWT verification; the other AgentOS starters are local services. Follow each
+README's identity boundaries before adapting an example for multiple users.
 
-```bash
-./scripts/demo_setup.sh
-source .venvs/demo/bin/activate
-```
-
-Export your API key.
-
-```bash
-export OPENAI_API_KEY=...
-```
-
-Then run an example from its own folder:
-
-```bash
-cd cookbook/examples/second_brain
-
-# Drive the agent from the command line
-python test.py
-
-# Or serve it: AgentOS on http://localhost:7777, MCP on http://localhost:7777/mcp
-python second_brain.py
-```
-
-Every folder is `<example>.py`, which builds the agent and serves it, and `test.py`, which runs that same agent from the command line.
+[Validation results](VALIDATION.md) distinguish published dependencies, exact local
+source, fixture tests, live-model checks, and local HTTP/MCP checks.

@@ -1,4 +1,4 @@
-# Test Log - second_brain
+# Test Log - personal_agent
 
 Tested 2026-09-10. Published dependency: Agno 3.0.8, clean per-example uv environment,
 Python 3.12.8. Source: Agno 3.0.9 at
@@ -9,7 +9,7 @@ Live model: `openai:gpt-5.6`. All runtime data used isolated temporary directori
 
 **Status:** PASS
 
-**Description:** Learning-store tools persist entity changes; explicit forget/remember correction survives reopening the database. Profile and memory persist and isolate users. Serving without a verification key exposes no app.
+**Description:** Tutorial hash and SQLite note restart/isolation.
 
 **Result:** 2 passed on published package and 2 passed on exact local source.
 Deterministic checks use real Agno persistence and APIs; scripted responses do not
@@ -24,12 +24,12 @@ model-assisted supersession judge; that was exercised by the live demo.
 
 **Description:** Bounded live-model smoke using exact local source.
 
-**Result:** Four live fresh-session turns invoked profile, user memory and entity tools. The fact-supersession judge retired the old lead fact (observed confidence 0.98). Final recall: Maya leads Harbor, Jen reviews it, and Alex prefers short action-first updates. A separate process recalled the same state.
+**Result:** Three live turns saved `projects/customer-onboarding-guide.md`, marked the Jen draft sent, retained the Friday user test, and saved the checklist maintenance rationale. A separate --recall-only process retrieved the same state.
 Model prose is paraphrased here. See the collection validation report for limits.
 
 ---
 
-### second_brain.py startup
+### personal_agent.py startup
 
 **Status:** PASS
 
@@ -38,20 +38,5 @@ Model prose is paraphrased here. See the collection validation report for limits
 **Result:** AgentOS /health returned HTTP 200 on a temporary loopback port using
 both published package and local source. All server processes were stopped.
 This is a local startup check, not a hosted integration check.
-
----
-
-### ../test_mcp.py
-
-**Status:** PASS
-
-**Description:** Full local HTTP/ASGI stack, real generated RSA keys and signed
-JWTs, MCP initialize/list/call, hidden identity schema, two verified users, rejected
-spoofed user IDs, and missing/invalid credential rejection.
-
-**Result:** The two-example suite passed 2 tests on each implementation. Team Brain
-writes use the actual FileSystem; the model-facing arun boundary is stubbed for
-transport checks. Separate live demos exercise the real agent. No hosted OAuth
-provider or external MCP client account was connected.
 
 ---
