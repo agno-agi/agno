@@ -17,6 +17,7 @@ third-party policy engine in the default path.
 
 from agno.os.authz.audit import AuditEvent, AuditSink, DbAuditSink, LoggingAuditSink
 from agno.os.authz.engine import EngineAuthorizationProvider, PolicyEngine, ScopeEntry
+from agno.os.authz.facade import Authorization
 from agno.os.authz.fga import FGAAuthorizationProvider, FGAClient
 from agno.os.authz.native_engine import NativePolicyEngine
 from agno.os.authz.provider import AuthorizationContext, AuthorizationProvider
@@ -25,6 +26,8 @@ from agno.os.authz.scope_provider import ScopeAuthorizationProvider
 from agno.os.authz.user_store import ManagedUserStore
 
 __all__ = [
+    # One-object facade: verification + roles + users + audit + admin API, wired into AgentOS.
+    "Authorization",
     "AuthorizationContext",
     "AuthorizationProvider",
     "ScopeAuthorizationProvider",

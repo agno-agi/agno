@@ -97,6 +97,7 @@ if TYPE_CHECKING:
     from fastmcp.server.auth import AuthProvider
 
     from agno.os.authz.audit import AuditSink
+    from agno.os.authz.facade import Authorization
     from agno.os.authz.provider import AuthorizationProvider
 
 
@@ -293,7 +294,7 @@ class AgentOS:
         knowledge: Optional[List[Knowledge]] = None,
         interfaces: Optional[List[BaseInterface]] = None,
         a2a_interface: bool = False,
-        authorization: bool = False,
+        authorization: Union[bool, "Authorization"] = False,
         authorization_config: Optional[AuthorizationConfig] = None,
         user_isolation: bool = False,
         user_directory: Optional[Union[bool, UserDirectoryConfig]] = None,
@@ -469,6 +470,27 @@ class AgentOS:
 
         # RBAC. Authentication (verify WHO the caller is) is separable from authorization (decide
         # what they may DO).
+        #
+        # The Authorization facade (agno.os.authz.Authorization) is one object owning token
+        # verification + managed roles + the user directory + audit + the admin API. Expand it here
+        # into the (authorization_config, audit, user_directory) the pipeline below already
+        # understands, and record its stores so get_app mounts /authz and /users automatically. It
+        # adopts this OS db so role/user definitions persist alongside agent data.
+        self._facade_role_store: Any = None
+        self._facade_user_store: Any = None
+        from agno.os.authz.facade import Authorization as _Authorization
+
+        if isinstance(authorization, _Authorization):
+            authorization._bind(self.db)
+            authorization_config = authorization.authorization_config()
+            if audit is None:
+                audit = authorization.audit_sink
+            if user_directory is None:
+                user_directory = authorization.user_directory_config()
+            self._facade_role_store = authorization.role_store
+            self._facade_user_store = authorization.user_store
+            authorization = True
+
         self.authorization = authorization
         self.authorization_config = authorization_config
         # Per-user data isolation is a top-level opt-in (each caller sees only their own
@@ -747,6 +769,7 @@ class AgentOS:
             )
             updated_routers.append(get_approval_router(os_db=self.db, settings=self.settings))
             updated_routers.append(get_service_accounts_router(os_db=self.db, settings=self.settings))
+            updated_routers.extend(self._facade_admin_routers())
         else:
             for prefix, tag in [
                 ("/components", "Components"),
@@ -1505,6 +1528,7 @@ class AgentOS:
             )
             routers.append(get_approval_router(os_db=self.db, settings=self.settings))
             routers.append(get_service_accounts_router(os_db=self.db, settings=self.settings))
+            routers.extend(self._facade_admin_routers())
         else:
             log_debug(
                 "Components, Scheduler, Approval, and Service Account routers not enabled: "
@@ -1985,6 +2009,23 @@ class AgentOS:
 
         fastapi_app.add_middleware(AuthMiddleware, **middleware_kwargs)
 
+    def _facade_admin_routers(self) -> List[Any]:
+        """The admin-API routers to mount when an Authorization facade configured the stores.
+
+        Returns ``/authz`` (roles) when the facade uses roles and ``/users`` (directory) when it
+        has a directory, so the facade path needs no manual ``include_router``. Empty for the
+        non-facade path, which keeps mounting the admin API itself. The routers carry their own
+        admin gate, so mounting them is always safe."""
+        routers: List[Any] = []
+        if self._facade_role_store is not None or self._facade_user_store is not None:
+            from agno.os.authz.role_router import get_roles_router, get_users_router
+
+            if self._facade_role_store is not None:
+                routers.append(get_roles_router(self._facade_role_store))
+            if self._facade_user_store is not None:
+                routers.append(get_users_router(self._facade_user_store, role_store=self._facade_role_store))
+        return routers
+
     def _seed_authorization_provider(self, fastapi_app: FastAPI) -> None:
         """Seed ``app.state.authorization_provider`` (and ``authz_audit``) from the
         AuthorizationConfig, so the four choke points resolve the right enforcer.
@@ -2131,7 +2172,13 @@ class AgentOS:
         # The role store + explicit default role, for granting a role on first auto-provision
         # (the provisioning choke points read these to call provision_user_with_default_role).
         authz = self.authorization_config
-        fastapi_app.state.role_store = getattr(authz, "role_store", None) if authz is not None else None
+        # The Authorization facade wires roles as a provider (not AuthorizationConfig.role_store),
+        # so take its store directly; fall back to the config's role_store for the primitive path.
+        # This is what the provisioning choke points read to grant a default role on first login,
+        # and the signal for whether managed roles / the /authz API are active.
+        fastapi_app.state.role_store = self._facade_role_store or (
+            getattr(authz, "role_store", None) if authz is not None else None
+        )
         fastapi_app.state.user_default_role = directory.default_role if directory is not None else None
         if fastapi_app.state.user_default_role and fastapi_app.state.role_store is None:
             # A default role is granted through the store; with roles passed as
