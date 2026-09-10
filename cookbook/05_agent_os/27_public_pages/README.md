@@ -1,5 +1,46 @@
 # Public documentation pages
 
+## Public chat with Control Plane access
+
+`public_control_plane.py` combines `authorization=True` with `PublicSurface` on
+one runtime URL. Configure the Control Plane's RS256 public key in
+`JWT_VERIFICATION_KEY` (or use `JWT_JWKS_FILE`) before starting it:
+
+```sh
+.venvs/demo/bin/python cookbook/05_agent_os/27_public_pages/public_control_plane.py --check
+.venvs/demo/bin/python cookbook/05_agent_os/27_public_pages/public_control_plane.py
+```
+
+Anonymous clients retain the selected chat routes, compact roster and public
+limits. Anonymous `/info` reports the authentication mode and counts only selected
+public components. Verified JWT callers receive the full runtime counts. Discovery
+keeps the same response fields so the Control Plane can connect.
+JWT callers get the normal REST API only after signature and endpoint permission
+checks; their responses are private and non-cacheable. Invalid credentials are
+rejected, including on anonymous routes. Public chat does not need
+`excluded_route_paths`: in mixed mode those exclusions do not bypass credential
+verification on selected public routes. Excluding a management route skips JWT
+verification, so the public layer returns 404 even with an admin JWT.
+
+Workflow WebSockets authenticate through their existing message-based protocol.
+Public upgrades use the `socket` quota (30/client/minute, 120/global/minute,
+500/client/day and 5,000/global/day). Each worker admits at most 32 connections
+awaiting authentication. Clients must authenticate within 10 seconds; five failed
+authentication attempts close the connection. Authentication releases pending
+capacity, and ordinary authenticated connections have no authentication deadline.
+MCP always keeps its explicit tool catalog and public admission limits, even for
+admin JWTs. Use `mcp_auth` if MCP itself requires OAuth authentication. Internal
+scheduler and service-account requests retain their existing public contracts.
+With a public surface, service-account tokens can use selected public routes and
+permitted protected workflows, but cannot reach management REST routes; use a JWT
+for management access.
+Mounted runtimes apply JWT and service-account permissions to the route within
+AgentOS, independent of the mount prefix, including without a public surface.
+Without `authorization=True`, the public surface continues to close management
+routes and WebSockets.
+
+## Page storage and retrieval
+
 `public_pages.py` uses one PostgreSQL database for the Knowledge catalog, quota-bounded FileSystem, vectors, sessions, durable jobs and shared public request counters. It demonstrates application-owned retrieval through an explicit callable dependency, explicit search/read/grep tools, native MCP and a typed protected sync workflow.
 
 The `docs_context` dependency is an async function that receives `run_input`, calls the application's `search_docs` function and returns evidence. Agno awaits it before pre-hooks and prompt construction. The application chooses the query and places the result through `{docs_context}` in its instructions. `add_dependencies_to_context` already defaults to `False`; it stays unset so dependencies are not additionally appended to the user message. Callables can also request `session` for previous-turn retrieval policy, plus `agent` and `run_context`.
@@ -89,6 +130,8 @@ configuration accepts no arbitrary SQL or deadline overrides.
 `PAGE_DEMO_SERVER_URL` sets the MCP client's destination, defaulting to `http://localhost:7777`. `PAGE_DEMO_MCP_URL` optionally sets the existing explicit MCP card URL; otherwise native request-derived discovery applies. For a proxy prefix, configure the mount or ASGI root path consistently. Add the deployed host to MCP allowed hosts and the browser origin to CORS.
 
 Only the selected Agent, native MCP and protected sync Workflow are exposed. Sessions, configuration and unselected components are closed. Workflow trigger/status require verified bearer credentials even while chat is anonymous. Scoped service accounts require the workflow run/read permissions and cannot use internal-service exemptions. `PAGE_DEMO_SYNC_TOKEN` configures the existing internal-service principal for a trusted deployment hook; keep it out of browsers and MCP clients.
+
+For custom functions such as this example's MCP tools, use `MCPConfig(tools=[...], default_tools=False, stateless=True)`. No lifecycle flag is needed. If you expose agents, teams or workflows as MCP tools, also set `lifecycle_tools=False` or `exclude_tags={"lifecycle"}`: the public surface does not allow the automatically added `continue_run` and `cancel_run` tools.
 
 Public chat defaults to 10 requests/client/minute, 50 globally/minute, 80/client/day and 3,000 globally/day. Cancel and MCP use separate shared buckets. PostgreSQL counters use the stable AgentOS ID across replicas. Default identity ignores arbitrary forwarded headers; customize `PublicSurface.client_id` only for an edge-overwritten trusted header. Request bodies, output, duration and concurrency are bounded; uploads are disabled here. CORS includes admission failures and readiness checks table preparation.
 
@@ -183,3 +226,54 @@ can retain custom wrappers for their own error wording or tracing. Creating the
 toolkit does not initialize storage, retrieve context or add prompt instructions.
 `get_corpus`/`aget_corpus` expose command-local metadata snapshots for offline
 evaluation; subsequent mapping reads are synchronous.
+
+### Complete pages and Markdown transforms
+
+Use `read_full_page` or `aread_full_page` when an application needs a whole page
+rather than a paginated tool response:
+
+```python
+body = await knowledge.aread_full_page(
+    hit.path, revision=hit.revision, max_chars=24_000, timeout=2.0
+)
+if body is None:
+    body = hit.content  # The page did not fit; keep the retrieved excerpt.
+```
+
+Both methods return `str | None`. An empty page returns `""`; `None` means the
+page exceeds `max_chars`, or the caller supplied zero to skip storage. Limits
+count Unicode code points, and a single bounded SQL read returns the text without
+JSON clipping or continuation round trips. Missing and changed pages raise
+`PageNotFound` and `PageChanged`; unavailable storage or an expired deadline raises
+`PageError`. The revision check happens before the oversize result. Invalid size
+or timeout arguments raise `ValueError`; `max_chars` accepts integers from zero
+through 2,147,483,647, the PostgreSQL substring length limit. With no revision,
+the read returns the publication visible in its read-only snapshot.
+
+The timeout covers the complete read, and worker capacity remains occupied until
+cleanup finishes after timeout or async cancellation. Both full-page variants
+share the eight-slot page-read worker pool with the existing async page APIs.
+When all slots are occupied, calls raise `PageError` immediately rather than
+waiting for a slot. Applications still choose an overall deadline and excerpt
+policy when expanding several search results.
+Call these APIs from application code with explicit budgets; tool responses need
+their own serialized output limit.
+
+`full_page.py` demonstrates both variants against the published demo corpus:
+
+```sh
+.venvs/demo/bin/python cookbook/05_agent_os/27_public_pages/full_page.py /introduction
+.venvs/demo/bin/python cookbook/05_agent_os/27_public_pages/full_page.py /introduction --sync
+```
+
+The shared `agno.utils.markdown.advance_code_fence` utility tracks delimiter type,
+opening length and opening text. Both the page chunker and application transforms
+can use it to preserve nested code examples. `full_page.py` includes an HTML-entity
+normalizer that leaves code unchanged; run it without a database or provider key:
+
+```sh
+.venvs/demo/bin/python cookbook/05_agent_os/27_public_pages/full_page.py --normalize example.md
+```
+
+Component-specific MDX transformations, prompt rendering, citations and query
+alternatives remain application-owned.
