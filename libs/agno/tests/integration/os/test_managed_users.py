@@ -117,6 +117,7 @@ def test_store_created_by_day_and_ids(tmp_path, db_url):
 
     assert store.ids() == ["u1", "u2", "u3"]
     assert store.ids(include_disabled=False) == ["u1", "u2"]
+    assert store.count_by_status() == {"total": 3, "disabled": 1}
 
 
 def test_store_emits_audit_with_actor_and_diff():
@@ -421,6 +422,16 @@ def test_auto_provision_grants_default_role_at_the_gate():
     # a second request does not re-grant / duplicate
     client.get("/agents/research-agent", headers=_auth("dave"))
     assert roles.roles_of("dave") == ["member"]
+
+
+def test_os_metrics_are_a_503_stub_without_a_directory(tmp_path):
+    """Like the other optional features, an OS with no directory answers 503 with the
+    knob to turn on, rather than a bare 404."""
+    from agno.db.sqlite import SqliteDb
+
+    app = AgentOS(id=OS_ID, db=SqliteDb(db_file=str(tmp_path / "os.db")), agents=[]).get_app()
+    r = TestClient(app).get("/metrics/os")
+    assert r.status_code == 503 and "user_directory=True" in r.json()["detail"]
 
 
 def test_user_directory_true_builds_the_store_from_the_os_db(tmp_path):

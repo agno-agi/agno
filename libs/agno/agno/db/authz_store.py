@@ -20,7 +20,7 @@ Two properties this layer must preserve, because the authorization model depends
 import json
 from typing import Any, Dict, List, Optional, Tuple
 
-from sqlalchemy import delete, func, insert, or_, select
+from sqlalchemy import case, delete, func, insert, or_, select
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 
@@ -309,6 +309,19 @@ def count_users(engine: Engine, table: Any, include_disabled: bool = True, searc
     stmt = select(func.count()).select_from(table).where(*_user_filters(table, include_disabled, search))
     with engine.connect() as conn:
         return int(conn.execute(stmt).scalar() or 0)
+
+
+def count_users_by_status(engine: Engine, table: Any) -> Dict[str, int]:
+    """``{"total": n, "disabled": n}`` from one statement, so the two cannot disagree.
+    Two separate counts can interleave with a provisioning burst and leave the derived
+    active count negative."""
+    stmt = select(
+        func.count().label("total"),
+        func.sum(case((table.c.disabled.is_(True), 1), else_=0)).label("disabled"),
+    ).select_from(table)
+    with engine.connect() as conn:
+        row = conn.execute(stmt).one()
+    return {"total": int(row.total or 0), "disabled": int(row.disabled or 0)}
 
 
 def list_user_ids(engine: Engine, table: Any, include_disabled: bool = True) -> List[str]:

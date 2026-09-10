@@ -344,6 +344,14 @@ class ManagedUserStore:
 
         return int(self._db.count_authz_users(include_disabled=include_disabled, search=search))
 
+    def count_by_status(self) -> Dict[str, int]:
+        """``{"total": n, "disabled": n}`` from one read, so the pair is consistent."""
+        if self._mem is not None:
+            rows = list(self._mem.values())
+            return {"total": len(rows), "disabled": sum(1 for r in rows if r.get("disabled"))}
+
+        return dict(self._db.count_authz_users_by_status())
+
     def ids(self, include_disabled: bool = True) -> List[str]:
         """Every user id, sorted. For bulk lookups keyed on the id (resolving roles for
         the whole directory) where :meth:`list` would fetch profile columns nobody reads."""

@@ -250,6 +250,11 @@ def test_user_ids_are_listed_without_profile_columns(db):
 
     assert db.list_authz_user_ids() == ["amy", "zed"]
     assert db.list_authz_user_ids(include_disabled=False) == ["amy"]
+    assert db.count_authz_users_by_status() == {"total": 2, "disabled": 1}
+
+
+def test_status_counts_are_zero_on_an_empty_directory(db):
+    assert db.count_authz_users_by_status() == {"total": 0, "disabled": 0}
 
 
 def test_direct_roles_are_read_in_bulk_across_chunks(db):

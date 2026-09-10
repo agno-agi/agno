@@ -1544,6 +1544,8 @@ class AgentOS:
             from agno.os.routers.metrics import get_os_metrics_router
 
             routers.append(get_os_metrics_router(directory_store, role_store=role_store, settings=self.settings))
+        else:
+            routers.append(_get_disabled_feature_router("/metrics/os", "OS Metrics", "user_directory=True"))
 
         if role_store is not None:
             from agno.os.authz.role_router import get_roles_router

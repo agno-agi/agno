@@ -60,8 +60,8 @@ def collect_user_directory_metrics(
 ) -> UserDirectoryMetrics:
     """The ``users`` section. The date range bounds only the per-day series; the counts
     always describe the whole directory as it is now."""
-    total = user_store.count()
-    active = user_store.count(include_disabled=False)
+    status = user_store.count_by_status()
+    total, disabled = status["total"], status["disabled"]
     created = [
         UsersCreatedOnDay(date=datetime.fromtimestamp(row["date"], tz=timezone.utc).date(), count=row["count"])
         for row in user_store.created_by_day(starting_at=starting_at, ending_before=ending_before)
@@ -86,8 +86,8 @@ def collect_user_directory_metrics(
 
     return UserDirectoryMetrics(
         total=total,
-        active=active,
-        disabled=total - active,
+        active=total - disabled,
+        disabled=disabled,
         without_role=without_role,
         created_per_day=created,
         by_role=by_role,

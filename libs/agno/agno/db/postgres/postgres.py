@@ -8540,6 +8540,10 @@ class PostgresDb(BaseDb):
         table = self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)
         return authz_store.count_users(self.db_engine, table, include_disabled, search)
 
+    def count_authz_users_by_status(self) -> Dict[str, int]:
+        table = self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)
+        return authz_store.count_users_by_status(self.db_engine, table)
+
     def list_authz_user_ids(self, include_disabled: bool = True) -> List[str]:
         table = self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)
         return authz_store.list_user_ids(self.db_engine, table, include_disabled)

@@ -2162,6 +2162,10 @@ class BaseDb(ABC):
         """How many directory rows match, for pagination alongside list_authz_users."""
         raise NotImplementedError
 
+    def count_authz_users_by_status(self) -> Dict[str, int]:
+        """``{"total": n, "disabled": n}`` read in one statement."""
+        raise NotImplementedError
+
     def list_authz_user_ids(self, include_disabled: bool = True) -> List[str]:
         """Every directory id, for bulk lookups keyed on the id."""
         raise NotImplementedError
