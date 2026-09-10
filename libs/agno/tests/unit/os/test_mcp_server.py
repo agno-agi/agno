@@ -1283,6 +1283,37 @@ def test_authz_mirror_survives_a_rebuilt_mcp_subapp():
         assert sub.state.authz_audit is sink
 
 
+def test_mcp_identity_bridge_carries_the_role_store_for_first_provision():
+    """The MCP path provisions a first-time user itself, since mcp_auth exempts /mcp from the
+    parent AuthMiddleware. Granting that user their default role needs the managed role store,
+    which lives on the Authorization object, not on AuthorizationConfig. If the bridge does not
+    carry it, an MCP-first user is created but lands with no role: usable over HTTP, inert over
+    MCP.
+    """
+    import tempfile
+
+    from agno.db.sqlite import SqliteDb
+    from agno.os.authz import Authorization
+    from agno.os.mcp import _identity_bridge_kwargs
+
+    with tempfile.NamedTemporaryFile(suffix=".db") as f:
+        authz = Authorization(
+            db=SqliteDb(db_file=f.name),
+            verification_keys=["x" * 40],
+            algorithm="HS256",
+            user_directory=True,
+            auto_provision=True,
+        )
+        authz.define_role("viewer", ["agents:*:read"], default=True)
+        authz.define_role("admin", ["agent_os:admin"])
+        os = AgentOS(id="mcp-provision", agents=[_agent()], mcp_server=True, authorization=authz)
+        os.get_app()
+
+        kw = _identity_bridge_kwargs(os)
+        assert kw["role_store"] is authz.role_store  # the store, so the default role can be granted
+        assert kw["user_auto_provision"] is True
+
+
 # ----------------------------- stateless transport -----------------------------
 
 
