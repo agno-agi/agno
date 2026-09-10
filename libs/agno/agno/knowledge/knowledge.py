@@ -143,6 +143,11 @@ class Knowledge(RemoteKnowledge):
         self.reranker = reranker
         self.rerank_multiplier = rerank_multiplier
         self.max_rerank_candidates = max_rerank_candidates
+        if reranker is not None and getattr(vector_db, "reranker", None) is not None:
+            log_warning(
+                "A reranker is set on both Knowledge and the vector db. Both will run, the "
+                "vector db's first, which reorders the candidates the second one then sees."
+            )
         self.__post_init__()
 
     @property
@@ -195,7 +200,9 @@ class Knowledge(RemoteKnowledge):
         """Widen the vector db fetch so the reranker has candidates to choose between."""
         if self.reranker is None:
             return max_results
-        return min(max_results * self.rerank_multiplier, self.max_rerank_candidates)
+        # The ceiling caps the widening, never the caller's own request: clamping below
+        # max_results would return fewer documents than were asked for.
+        return max(min(max_results * self.rerank_multiplier, self.max_rerank_candidates), max_results)
 
     def _rerank_documents(self, query: str, documents: List[Document], max_results: int) -> List[Document]:
         """Apply the knowledge-level reranker, then trim to the caller's requested count."""
@@ -203,6 +210,9 @@ class Knowledge(RemoteKnowledge):
             return documents[:max_results]
         try:
             reranked = self.reranker.rerank(query=query, documents=documents)
+        except ValueError:
+            # A misconfigured reranker would otherwise look like it ran and changed nothing.
+            raise
         except Exception as e:
             # A reranker failure degrades ordering, not availability: keep the vector db order.
             log_error(f"Error reranking documents: {str(e)}")
@@ -215,6 +225,9 @@ class Knowledge(RemoteKnowledge):
             return documents[:max_results]
         try:
             reranked = await self.reranker.arerank(query=query, documents=documents)
+        except ValueError:
+            # See the matching comment in ``_rerank_documents``.
+            raise
         except Exception as e:
             log_error(f"Error reranking documents: {str(e)}")
             return documents[:max_results]
@@ -1003,9 +1016,9 @@ class Knowledge(RemoteKnowledge):
         if self.page_store is not None:
             if filters:
                 raise ValueError("Page knowledge does not support filters")
-            return self._page_documents(
-                self.search_pages(query, limit=max_results if max_results is not None else self.max_results)
-            )
+            page_limit = max_results if max_results is not None else self.max_results
+            page_documents = self._page_documents(self.search_pages(query, limit=self._search_limit(page_limit)))
+            return self._rerank_documents(query, page_documents, page_limit)
         from agno.vectordb import VectorDb
         from agno.vectordb.search import SearchType
 
@@ -1056,9 +1069,9 @@ class Knowledge(RemoteKnowledge):
         if self.page_store is not None:
             if filters:
                 raise ValueError("Page knowledge does not support filters")
-            return self._page_documents(
-                await self.asearch_pages(query, limit=max_results if max_results is not None else self.max_results)
-            )
+            page_limit = max_results if max_results is not None else self.max_results
+            page_documents = self._page_documents(await self.asearch_pages(query, limit=self._search_limit(page_limit)))
+            return await self._arerank_documents(query, page_documents, page_limit)
         from agno.vectordb import VectorDb
         from agno.vectordb.search import SearchType
 

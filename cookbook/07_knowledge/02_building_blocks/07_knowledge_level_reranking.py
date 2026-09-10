@@ -51,17 +51,17 @@ agent = Agent(
 
 
 async def main():
-    await knowledge.add_content_async(
-        url="https://docs.agno.com/introduction/agents.md",
+    await knowledge.ainsert(
+        url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
     )
 
     # Retrieves 25 candidates, reranks them, returns the top 5.
-    results = await knowledge.asearch("What is an agent?", max_results=5)
+    results = await knowledge.asearch("What are some Thai curry dishes?", max_results=5)
     print("Reranked results:")
     for document in results:
         print(f"  {document.name}")
 
-    await agent.aprint_response("What is an agent?", stream=True)
+    await agent.aprint_response("What are some Thai curry dishes?", stream=True)
 
 
 if __name__ == "__main__":

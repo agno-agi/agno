@@ -1,3 +1,4 @@
+import asyncio
 from typing import List
 
 from pydantic import BaseModel, ConfigDict
@@ -14,5 +15,6 @@ class Reranker(BaseModel):
         raise NotImplementedError
 
     async def arerank(self, query: str, documents: List[Document]) -> List[Document]:
-        """Async rerank. Defaults to the sync implementation so existing rerankers keep working."""
-        return self.rerank(query=query, documents=documents)
+        """Async rerank. Runs the sync implementation off the event loop, since a
+        reranker that calls a provider would otherwise block it."""
+        return await asyncio.to_thread(self.rerank, query, documents)
