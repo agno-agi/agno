@@ -7590,6 +7590,10 @@ class SqliteDb(BaseDb):
         table = self._get_table(table_type=AUTHZ_GROUPING, create_table_if_not_found=True)
         return authz_store.get_direct_roles(self.db_engine, table, subject)
 
+    def list_authz_role_subjects(self, role: str) -> List[str]:
+        table = self._get_table(table_type=AUTHZ_GROUPING, create_table_if_not_found=True)
+        return authz_store.get_role_subjects(self.db_engine, table, role)
+
     def authz_name_is_role(self, name: str) -> bool:
         policy = self._get_table(table_type=AUTHZ_POLICY, create_table_if_not_found=True)
         grouping = self._get_table(table_type=AUTHZ_GROUPING, create_table_if_not_found=True)

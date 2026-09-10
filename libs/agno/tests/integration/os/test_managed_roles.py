@@ -17,6 +17,7 @@ pytest.importorskip("sqlalchemy")  # managed roles persist/enforce via the nativ
 from agno.agent import Agent  # noqa: E402
 from agno.db.in_memory import InMemoryDb  # noqa: E402
 from agno.os import AgentOS  # noqa: E402
+from agno.os.authz import Authorization  # noqa: E402
 from agno.os.authz.role_store import ManagedRoleStore  # noqa: E402
 from agno.os.config import AuthorizationConfig  # noqa: E402
 
@@ -204,9 +205,9 @@ def test_management_helpers():
 
 
 def test_role_store_shortcut_wires_provider_and_defaults_os_db(tmp_path):
-    """#4: AuthorizationConfig(role_store=...) wires the store's provider (no manual
-    .provider). #3: a store with no DB of its own adopts the OS DB when AgentOS wires
-    it (a DB is required — there is no in-memory mode), and roles persist there."""
+    """#4: Authorization(role_store=...) wires the store's provider (no manual .provider).
+    #3: a store with no DB of its own adopts the OS DB when AgentOS binds the object (a DB is
+    required — there is no in-memory mode), and roles persist there."""
     from agno.db.sqlite import SqliteDb
 
     store = ManagedRoleStore()  # no DB yet -> AgentOS will adopt the OS DB
@@ -216,13 +217,12 @@ def test_role_store_shortcut_wires_provider_and_defaults_os_db(tmp_path):
         id=OS_ID,
         agents=[agent],
         db=db,
-        authorization=True,
-        authorization_config=AuthorizationConfig(
+        authorization=Authorization(
             verification_keys=[SECRET],
             algorithm="HS256",
             verify_audience=True,
             audience=OS_ID,
-            role_store=store,  # <- the shortcut; AgentOS adopts the OS db + uses store.provider
+            role_store=store,  # <- bring your own store; AgentOS lends the OS db + uses store.provider
         ),
     )
     client = TestClient(agent_os.get_app())  # adopts the OS DB -> store is now bound
@@ -241,8 +241,8 @@ def test_role_store_shortcut_wires_provider_and_defaults_os_db(tmp_path):
 
 
 def test_managed_roles_enforce_on_rest_gate_via_shortcut(tmp_path):
-    """The payoff, end to end on the v2.7 REST route gate: an AgentOS wired with the
-    ``role_store=`` shortcut (no manual .provider) enforces a managed role for a caller
+    """The payoff, end to end on the v2.7 REST route gate: an AgentOS wired with
+    ``Authorization(role_store=...)`` (no manual .provider) enforces a managed role for a caller
     whose JWT carries NO scopes at all — the ``viewer`` role (agents:*:read) is resolved
     from the store, not the token. Same viewer, same token: GET /agents/{id} is 200 but
     POST /agents/{id}/runs is 403, proving action granularity flows through the same gate
@@ -257,13 +257,12 @@ def test_managed_roles_enforce_on_rest_gate_via_shortcut(tmp_path):
         id=OS_ID,
         agents=[agent],
         db=db,
-        authorization=True,
-        authorization_config=AuthorizationConfig(
+        authorization=Authorization(
             verification_keys=[SECRET],
             algorithm="HS256",
             verify_audience=True,
             audience=OS_ID,
-            role_store=store,  # the shortcut: AgentOS binds the OS db + uses store.provider
+            role_store=store,  # AgentOS binds the OS db + uses store.provider
         ),
     )
     client = TestClient(agent_os.get_app())
@@ -281,10 +280,11 @@ def test_managed_roles_enforce_on_rest_gate_via_shortcut(tmp_path):
 
 
 def test_role_store_and_provider_are_mutually_exclusive():
+    """authorization_provider= is the full override, so it takes no store to leave unenforced."""
     from agno.os.authz.scope_provider import ScopeAuthorizationProvider
 
-    with pytest.raises(ValueError, match="not both"):
-        AuthorizationConfig(role_store=ManagedRoleStore(), authorization_provider=ScopeAuthorizationProvider())
+    with pytest.raises(ValueError, match="engine="):
+        Authorization(role_store=ManagedRoleStore(), authorization_provider=ScopeAuthorizationProvider())
 
 
 def test_role_store_without_any_db_fails_loud_at_wiring():
@@ -293,20 +293,18 @@ def test_role_store_without_any_db_fails_loud_at_wiring():
     consistent across replicas."""
     store = ManagedRoleStore()  # no DB
     agent = Agent(id="research-agent", name="R", db=InMemoryDb())  # not SQL-capable
-    agent_os = AgentOS(
-        id=OS_ID,
-        agents=[agent],
-        authorization=True,
-        authorization_config=AuthorizationConfig(
-            verification_keys=[SECRET],
-            algorithm="HS256",
-            verify_audience=True,
-            audience=OS_ID,
-            role_store=store,
-        ),
-    )
     with pytest.raises(ValueError, match="needs a SQL database"):
-        agent_os.get_app()
+        AgentOS(
+            id=OS_ID,
+            agents=[agent],
+            authorization=Authorization(
+                verification_keys=[SECRET],
+                algorithm="HS256",
+                verify_audience=True,
+                audience=OS_ID,
+                role_store=store,
+            ),
+        )
 
 
 def test_deny_override_is_not_leaked_by_the_list_endpoint():

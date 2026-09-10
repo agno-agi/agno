@@ -214,7 +214,6 @@ def test_facade_prebuilt_async_store_no_setup_ok(tmp_path):
     """A facade with a pre-configured async store and NO define_role/seed works against an async db:
     only the sync setup writes are refused, not the provider wiring / request-time path."""
     from agno.db.sqlite.async_sqlite import AsyncSqliteDb
-
     from agno.os.authz.role_store import ManagedRoleStore
 
     adb = AsyncSqliteDb(db_file=str(tmp_path / "a.db"))
@@ -270,9 +269,12 @@ def test_served_facade_enforces_roles(tmp_path, borrow_db):
     client = TestClient(_served(tmp_path, borrow_db=borrow_db).get_app())
     with patch.object(Agent, "arun", new_callable=AsyncMock) as m:
         m.return_value = _MockRunOutput()
-        run = lambda sub, agent: client.post(  # noqa: E731
-            f"/agents/{agent}/runs", headers=_auth(sub), data={"message": "hi", "stream": "false"}
-        ).status_code
+
+        def run(sub, agent):
+            return client.post(
+                f"/agents/{agent}/runs", headers=_auth(sub), data={"message": "hi", "stream": "false"}
+            ).status_code
+
         assert run("carol", "secret") == 403  # runner has no secret grant
         assert run("carol", "research") == 200  # runner may run research
         assert run("root", "secret") == 200  # admin role bypass
@@ -282,33 +284,139 @@ def test_served_facade_enforces_roles(tmp_path, borrow_db):
         assert client.get("/agents/research", headers=_auth("nobody")).status_code == 200
 
 
-def test_authorization_accepts_raw_config(tmp_path):
-    """The two entry params are folded into one: a raw AuthorizationConfig can be passed as
-    authorization=, and passing it both ways raises. (authorization_config= stays for back-compat.)"""
+def test_authorization_config_is_deprecated_not_a_second_spelling(tmp_path):
+    """AuthorizationConfig has one remaining job: keep deployments written against the released
+    field set booting. authorization_config= still works with authorization=True and warns once;
+    authorization=AuthorizationConfig(...) is refused rather than becoming a new spelling of a
+    deprecated type."""
     from agno.os.config import AuthorizationConfig
 
     cfg = AuthorizationConfig(verification_keys=[SECRET], algorithm="HS256", verify_audience=True, audience=OS_ID)
-    os_ = AgentOS(id=OS_ID, db=SqliteDb(db_file=str(tmp_path / "cfg.db")), agents=_agents(), authorization=cfg)
-    assert os_.authorization is True and os_.authorization_config is cfg
-    with pytest.raises(ValueError, match="once"):
-        AgentOS(
+    messages: list = []
+
+    class _Capture(logging.Handler):
+        def emit(self, record):
+            messages.append(record.getMessage())
+
+    handler = _Capture()
+    handler.setLevel(logging.WARNING)
+    logging.getLogger("agno").addHandler(handler)
+    try:
+        os_ = AgentOS(
             id=OS_ID,
-            db=SqliteDb(db_file=str(tmp_path / "cfg2.db")),
+            db=SqliteDb(db_file=str(tmp_path / "cfg.db")),
             agents=_agents(),
-            authorization=cfg,
+            authorization=True,
             authorization_config=cfg,
         )
+    finally:
+        logging.getLogger("agno").removeHandler(handler)
+    assert os_.authorization is True and os_.authorization_config is cfg  # still honoured
+    assert any("authorization_config" in m and "deprecated" in m for m in messages)
+
+    with pytest.raises(TypeError, match="authorization_config="):
+        AgentOS(id=OS_ID, db=SqliteDb(db_file=str(tmp_path / "cfg2.db")), agents=_agents(), authorization=cfg)
+
+
+def test_directory_is_explicit_never_inferred_from_roles(tmp_path):
+    """Defining roles (or reading them off a token claim) must not stand up a roster: a roles-only
+    deployment gets no ManagedUserStore, no JIT provisioning, and no /users. The directory exists
+    only when asked for -- user_directory=True, a store of your own, or seed(users=...) naming
+    people."""
+    db = SqliteDb(db_file=str(tmp_path / "explicit.db"))
+
+    roles_only = Authorization(db=db, verification_keys=[SECRET], audience=OS_ID)
+    roles_only.define_role("viewer", ["agents:*:read"])
+    assert roles_only.role_store is not None
+    assert roles_only.user_store is None
+    assert roles_only.user_directory_config() is None
+
+    idp = Authorization(db=db, verification_keys=[SECRET], audience=OS_ID, roles_claim="role")
+    assert idp.role_store is not None and idp.user_store is None
+
+    asked = Authorization(db=db, verification_keys=[SECRET], audience=OS_ID, user_directory=True)
+    assert asked.user_store is not None
+
+    seeded = Authorization(db=db, verification_keys=[SECRET], audience=OS_ID)
+    seeded.define_role("viewer", ["agents:*:read"])
+    seeded.seed(users=[("bob", {"role": "viewer"})])
+    assert seeded.user_store is not None and seeded.user_store.get("bob") is not None
+
+    # Served: roles only mounts /authz but not /users (routes exist only once the app serves, so
+    # ask over HTTP rather than reading app.routes).
+    served = Authorization(verification_keys=[SECRET], algorithm="HS256", verify_audience=True, audience=OS_ID)
+    served.define_role("admin", ["agent_os:admin"])
+    served.seed(admin="root")  # an admin, but no users= -> still no directory
+    client = TestClient(
+        AgentOS(
+            id=OS_ID, db=SqliteDb(db_file=str(tmp_path / "ro.db")), agents=_agents(), authorization=served
+        ).get_app()
+    )
+    assert client.get("/authz/roles", headers=_auth("root")).status_code == 200
+    assert client.get("/users", headers=_auth("root")).status_code == 404
+
+
+def test_seed_admin_heals_a_lockout_but_respects_a_handover(tmp_path):
+    """seed(admin=) re-grants the bootstrap admin ONLY when nobody holds an admin role any more.
+    An operator who moved admin to someone else keeps that decision across restarts; an operator
+    who demoted the last admin (lockout: the admin API can no longer repair itself) gets the
+    bootstrap admin back on the next boot."""
+    dbfile = str(tmp_path / "heal.db")
+
+    def boot():
+        a = Authorization(db=SqliteDb(db_file=dbfile))
+        a.define_role("admin", ["agent_os:admin"])
+        a.define_role("viewer", ["agents:*:read"])
+        a.seed(admin="root")
+        return a
+
+    a1 = boot()
+    assert a1.role_store.admin_subjects() == ["root"]
+
+    # Handover: root demoted, carol promoted. A restart must not undo it.
+    a1.role_store.assign("carol", "admin")
+    a1.role_store.assign("root", "viewer")
+    a2 = boot()
+    assert a2.role_store.roles_of("root") == ["viewer"]
+    assert a2.role_store.admin_subjects() == ["carol"]
+
+    # Lockout: carol demoted too, nobody is admin. A restart heals it.
+    a2.role_store.assign("carol", "viewer")
+    assert a2.role_store.admin_subjects() == []
+    a3 = boot()
+    assert a3.role_store.roles_of("root") == ["admin"]
+    assert a3.role_store.roles_of("carol") == ["viewer"]  # only the bootstrap subject is touched
+
+
+def test_provider_override_takes_no_store(tmp_path):
+    """authorization_provider= is the full override: combining it with a role store or engine
+    would leave a store nothing enforces behind a mounted /authz, so it is refused."""
+    from agno.os.authz.provider import AuthorizationContext, AuthorizationProvider
+    from agno.os.authz.role_store import ManagedRoleStore
+
+    class AllowAll(AuthorizationProvider):
+        def check(self, ctx: AuthorizationContext) -> bool:
+            return True
+
+        def accessible_resource_ids(self, ctx: AuthorizationContext):
+            return {"*"}
+
+    db = SqliteDb(db_file=str(tmp_path / "xor.db"))
+    with pytest.raises(ValueError, match="engine="):
+        Authorization(db=db, authorization_provider=AllowAll(), role_store=ManagedRoleStore(db=db))
 
 
 def test_served_verify_only_mounts_no_admin_api(tmp_path):
     """A served verify-only facade (no roles) mounts neither /authz nor /users -- the directory stays
-    off, so an isolation / scope-based deployment gets a clean surface with no role machinery."""
+    off, so an isolation / scope-based deployment gets a clean surface with no role machinery. Asked
+    over HTTP with an admin-scoped token: 404 means not mounted (a mounted router answers 200/403)."""
     db = SqliteDb(db_file=str(tmp_path / "vo_served.db"))
     authz = Authorization(verification_keys=[SECRET], algorithm="HS256", verify_audience=True, audience=OS_ID)
-    app = AgentOS(id=OS_ID, db=db, agents=_agents(), authorization=authz).get_app()
-    paths = {getattr(r, "path", "") for r in app.routes}
-    assert not any(p.startswith("/authz") for p in paths)  # no roles -> no /authz
-    assert not any(p == "/users" or p.startswith("/users/") for p in paths)  # no directory -> no /users
+    client = TestClient(AgentOS(id=OS_ID, db=db, agents=_agents(), authorization=authz).get_app())
+    admin = _auth("op", scopes=["agent_os:admin"])
+    assert client.get("/agents", headers=admin).status_code == 200  # the OS itself serves
+    assert client.get("/authz/roles", headers=admin).status_code == 404  # no roles -> no /authz
+    assert client.get("/users", headers=admin).status_code == 404  # no directory -> no /users
 
 
 def test_served_facade_list_filtering(tmp_path):

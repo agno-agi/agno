@@ -85,6 +85,12 @@ class PolicyEngine(ABC):
     @abstractmethod
     def roles_of(self, subject: str) -> List[str]: ...
 
+    def subjects_of(self, role: str) -> List[str]:
+        """Names directly assigned ``role``. Optional: the bootstrap's admin-lockout check uses it
+        to ask whether anyone still holds an admin role, and skips that check on an engine that
+        cannot enumerate assignments."""
+        raise NotImplementedError("subjects_of")
+
     # --- decisions ---
     @abstractmethod
     def check_resource(
@@ -160,6 +166,9 @@ class PolicyEngine(ABC):
 
     async def aroles_of(self, subject: str) -> List[str]:
         return await asyncio.to_thread(self.roles_of, subject)
+
+    async def asubjects_of(self, role: str) -> List[str]:
+        return await asyncio.to_thread(self.subjects_of, role)
 
     async def acheck_resource(
         self,

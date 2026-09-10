@@ -329,8 +329,8 @@ def test_authz_api_is_served_with_the_mcp_server_enabled(tmp_path):
     from agno.agent import Agent
     from agno.db.in_memory import InMemoryDb
     from agno.os import AgentOS
+    from agno.os.authz import Authorization
     from agno.os.authz.role_store import ManagedRoleStore
-    from agno.os.config import AuthorizationConfig
 
     store = ManagedRoleStore(db_url=f"sqlite:///{tmp_path / 'roles.db'}")
     store.set_role_scopes("admin", ["agent_os:admin"])
@@ -339,9 +339,8 @@ def test_authz_api_is_served_with_the_mcp_server_enabled(tmp_path):
     agent_os = AgentOS(
         id=OS_ID,
         agents=[Agent(id="a1", name="A", db=InMemoryDb())],
-        authorization=True,
         mcp_server=True,
-        authorization_config=AuthorizationConfig(
+        authorization=Authorization(
             verification_keys=[SECRET],
             algorithm="HS256",
             verify_audience=True,

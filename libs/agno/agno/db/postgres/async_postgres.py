@@ -9,15 +9,6 @@ if TYPE_CHECKING:
 
 from agno.db import authz_store
 from agno.db.base import AsyncBaseDb, SessionType
-from agno.db.schemas.authz import (
-    AUTHZ_AUDIT,
-    AUTHZ_DECISIONS,
-    AUTHZ_GROUPING,
-    AUTHZ_POLICY,
-    AUTHZ_ROLES,
-    AUTHZ_TABLE_NAME_ATTRS,
-    AUTHZ_USERS,
-)
 from agno.db.migrations.manager import MigrationManager
 from agno.db.postgres.engine import _engine_options
 from agno.db.postgres.schemas import get_table_schema_definition
@@ -30,6 +21,15 @@ from agno.db.postgres.utils import (
     calculate_date_metrics,
     fetch_all_sessions_data,
     get_dates_to_calculate_metrics_for,
+)
+from agno.db.schemas.authz import (
+    AUTHZ_AUDIT,
+    AUTHZ_DECISIONS,
+    AUTHZ_GROUPING,
+    AUTHZ_POLICY,
+    AUTHZ_ROLES,
+    AUTHZ_TABLE_NAME_ATTRS,
+    AUTHZ_USERS,
 )
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
@@ -5749,6 +5749,10 @@ class AsyncPostgresDb(AsyncBaseDb):
     async def get_authz_direct_roles(self, subject: str) -> List[str]:
         table = await self._get_table(table_type=AUTHZ_GROUPING, create_table_if_not_found=True)
         return await authz_store.aget_direct_roles(self.db_engine, table, subject)
+
+    async def list_authz_role_subjects(self, role: str) -> List[str]:
+        table = await self._get_table(table_type=AUTHZ_GROUPING, create_table_if_not_found=True)
+        return await authz_store.aget_role_subjects(self.db_engine, table, role)
 
     async def authz_name_is_role(self, name: str) -> bool:
         policy = await self._get_table(table_type=AUTHZ_POLICY, create_table_if_not_found=True)

@@ -28,7 +28,7 @@ NO_DB_MESSAGE = (
     "ManagedRoleStore requires a SQL database — managed roles must be persisted, "
     "and an in-memory store cannot stay consistent across multiple workers/replicas. "
     "Pass db=/db_url= to the store, or hand it to AgentOS via "
-    "AuthorizationConfig(role_store=...) together with a SQL db on AgentOS so the "
+    "Authorization(role_store=...) together with a SQL db on AgentOS so the "
     "store adopts it."
 )
 

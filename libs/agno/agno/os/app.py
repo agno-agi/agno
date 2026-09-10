@@ -294,7 +294,7 @@ class AgentOS:
         knowledge: Optional[List[Knowledge]] = None,
         interfaces: Optional[List[BaseInterface]] = None,
         a2a_interface: bool = False,
-        authorization: Union[bool, "Authorization", AuthorizationConfig] = False,
+        authorization: Union[bool, "Authorization"] = False,
         authorization_config: Optional[AuthorizationConfig] = None,
         user_isolation: bool = False,
         user_directory: Optional[Union[bool, UserDirectoryConfig]] = None,
@@ -367,11 +367,11 @@ class AgentOS:
             auto_provision_dbs: Whether to automatically provision databases
             authorization: The authorization setup. Prefer ``Authorization(...)`` -- one object for
                 verification, roles, the user directory, audit, and the admin API (see
-                ``agno.os.authz.Authorization``). Also accepts ``True`` (scope RBAC from token
-                scopes) or a raw ``AuthorizationConfig``.
-            authorization_config: Deprecated -- pass the config as ``authorization=...`` instead (or
-                move to ``authorization=Authorization(...)``). An ``AuthorizationConfig`` for the
-                authorization middleware; kept for back-compat during migration.
+                ``agno.os.authz.Authorization``). ``True`` keeps today's scope RBAC from token
+                scopes, verifying with ``authorization_config`` or the JWT_* environment variables.
+            authorization_config: Deprecated. Move its fields onto ``Authorization(...)`` and pass
+                that as ``authorization=``. Still honoured with ``authorization=True`` so existing
+                deployments keep booting; logs a warning once at construction.
             user_isolation: Opt in to per-user data isolation (each caller sees only their own
                 sessions/memories). Enforced under authorization=True; advisory without auth.
             user_directory: A credential-less user directory (roster + disabled kill switch).
@@ -484,16 +484,20 @@ class AgentOS:
         self._facade_role_store: Any = None
         self._facade_user_store: Any = None
 
-        # A raw AuthorizationConfig may be passed straight to authorization=, folding the two entry
-        # params into one (the separate authorization_config= is the older, now-discouraged spelling).
+        # authorization= takes the switch or the object, never the low-level config: one spelling
+        # for the deprecated type is enough, and it is the keyword that already exists.
         if isinstance(authorization, AuthorizationConfig):
-            if authorization_config is not None:
-                raise ValueError(
-                    "Pass the AuthorizationConfig once: authorization=AuthorizationConfig(...) "
-                    "(or, preferably, authorization=Authorization(...)), not also authorization_config=."
-                )
-            authorization_config = authorization
-            authorization = True
+            raise TypeError(
+                "AgentOS(authorization=) takes True/False or an Authorization object. Pass an "
+                "AuthorizationConfig as authorization_config= (deprecated), or move its fields onto "
+                "Authorization(...) and pass that as authorization=."
+            )
+        if authorization_config is not None:
+            log_warning(
+                "AgentOS(authorization_config=...) is deprecated: move its fields onto "
+                "Authorization(...) from agno.os.authz and pass it as AgentOS(authorization=...). "
+                "The config still works with authorization=True for now."
+            )
 
         from agno.os.authz.facade import Authorization as _Authorization
 
@@ -1561,7 +1565,6 @@ class AgentOS:
             )
             routers.append(get_approval_router(os_db=self.db, settings=self.settings))
             routers.append(get_service_accounts_router(os_db=self.db, settings=self.settings))
-            routers.extend(self._facade_admin_routers())
         else:
             log_debug(
                 "Components, Scheduler, Approval, and Service Account routers not enabled: "
@@ -1582,30 +1585,12 @@ class AgentOS:
             log_debug("Registry router not enabled: requires a registry to be provided to AgentOS")
             routers.append(_get_disabled_feature_router("/registry", "Registry", "registry"))
 
-        # Managed-roles admin API (/authz). Registered HERE, with the other built-in
-        # routers, so it lands ahead of the MCP catch-all mount added just below. A
-        # router included after get_app() returns sits behind that mount and 404s --
-        # which is what the previously documented "app.include_router(get_roles_router(...))"
-        # step did on any OS with mcp_server=True. Configuring a role store is already
-        # the deliberate opt-in (and, per the check in _add_auth_middleware, it cannot
-        # be set without authorization=True), so no extra flag gates this.
-        authz_config = self.authorization_config
-        role_store = getattr(authz_config, "role_store", None) if authz_config is not None else None
-        directory_store = self.user_directory.user_store if self.user_directory is not None else None
-        if role_store is not None:
-            from agno.os.authz.role_router import get_roles_router
-
-            routers.append(get_roles_router(role_store))
-            if directory_store is not None:
-                from agno.os.authz.role_router import get_users_router
-
-                # The user DIRECTORY admin API (/users) is a peer of the /authz roles API,
-                # configured via AgentOS(user_directory=...). Auto-mounted here alongside
-                # the roles router ONLY in the role_store shortcut, mirroring it: with a
-                # composite/custom provider (or a directory on plain scope RBAC) the operator
-                # mounts both routers themselves (get_roles_router + get_users_router), so we
-                # do not auto-mount a second, role-store-less /users that would shadow theirs.
-                routers.append(get_users_router(directory_store, role_store=role_store))
+        # Managed-roles / directory admin API (/authz, /users), mounted from the Authorization
+        # object. Registered HERE, with the other built-in routers, so it lands ahead of the MCP
+        # catch-all mount added just below: a router included after get_app() returns sits behind
+        # that mount and 404s on any OS with mcp_server=True. Independent of the OS db, since the
+        # object may carry its own.
+        routers.extend(self._facade_admin_routers())
 
         for router in routers:
             self._add_router(fastapi_app, router)
@@ -1685,17 +1670,15 @@ class AgentOS:
         # author believes is governed by roles serves every route to anonymous callers.
         # Fail at construction rather than shipping a silently open instance.
         cfg = self.authorization_config
-        # A plane (role_store / custom provider) only takes effect through the auth middleware,
-        # so with authorization off it is a silently-open instance -- the author believes routes
-        # are governed by roles, but nothing consults the provider. That still raises. A user
-        # directory is different: it is a roster, valid without auth (the guard below only warns),
-        # because it is data, not an enforcement point.
-        authz_plane_configured = cfg is not None and (
-            getattr(cfg, "role_store", None) is not None or getattr(cfg, "authorization_provider", None) is not None
-        )
+        # A custom provider only takes effect through the auth middleware, so with authorization
+        # off it is a silently-open instance -- the author believes routes are governed by their
+        # provider, but nothing consults it. That still raises. A user directory is different: it
+        # is a roster, valid without auth (the guard below only warns), because it is data, not an
+        # enforcement point.
+        authz_plane_configured = cfg is not None and getattr(cfg, "authorization_provider", None) is not None
         if not self.authorization and authz_plane_configured:
             raise ValueError(
-                "AuthorizationConfig(role_store=.../authorization_provider=...) requires "
+                "AuthorizationConfig(authorization_provider=...) requires "
                 "AgentOS(authorization=True). Without enforcement the plane is never applied "
                 "(every route is served unauthenticated). Set authorization=True, or drop the "
                 "config if you intended an open instance."
@@ -2043,11 +2026,11 @@ class AgentOS:
         fastapi_app.add_middleware(AuthMiddleware, **middleware_kwargs)
 
     def _facade_admin_routers(self) -> List[Any]:
-        """The admin-API routers to mount when an Authorization facade configured the stores.
+        """The admin-API routers to mount from the Authorization object's stores.
 
-        Returns ``/authz`` (roles) when the facade uses roles and ``/users`` (directory) when it
-        has a directory, so the facade path needs no manual ``include_router``. Empty for the
-        non-facade path, which keeps mounting the admin API itself. The routers carry their own
+        Returns ``/authz`` (roles) when it uses roles and ``/users`` (directory) when it has a
+        directory, so there is never a manual ``include_router``. Empty when authorization is a
+        bare switch or provider (no stores, nothing to administer). The routers carry their own
         admin gate, so mounting them is always safe."""
         routers: List[Any] = []
         if self._facade_role_store is not None or self._facade_user_store is not None:
@@ -2063,18 +2046,10 @@ class AgentOS:
         """Seed ``app.state.authorization_provider`` (and ``authz_audit``) from the
         AuthorizationConfig, so the four choke points resolve the right enforcer.
 
-        Precedence, matching AuthorizationConfig's ``role_store`` XOR
-        ``authorization_provider`` validator:
-
-        - ``role_store`` set: adopt the OS db into the store (``attach_db``) so managed
-          roles persist alongside agent data, then use the store's provider. A managed
-          store MUST have a DB — an in-memory store can't stay consistent across the
-          replicas an AgentOS deployment runs — so if it ends up unbound (no store db
-          and no SQL-capable OS db to adopt) we fail fast rather than silently enforce
-          an empty policy.
-        - ``authorization_provider`` set: use it directly.
-        - neither: leave the state unset; the resolver defaults to
-          ScopeAuthorizationProvider (v2.7 behaviour).
+        - ``authorization_provider`` set (the Authorization object composes its own from the
+          role store and the scope plane; the primitive path passes one directly): use it.
+        - unset: leave the state unset; the resolver defaults to ScopeAuthorizationProvider
+          (v2.7 behaviour).
         """
         config = self.authorization_config
         # Decision trail: AgentOS(audit=...) is a single switch that also feeds the decision log
@@ -2088,25 +2063,10 @@ class AgentOS:
         if config is None:
             return
 
-        role_store = getattr(config, "role_store", None)
         provider = getattr(config, "authorization_provider", None)
 
         resolved_provider: Optional[AuthorizationProvider] = None
-        if role_store is not None:
-            # Adopt the OS db so a store created without one persists to it (no-op if the
-            # store already has its own db or the OS db isn't SQL-capable).
-            role_store.attach_db(self.db)
-            # Change trail: adopt the top-level audit sink if the store has none of its own.
-            role_store.attach_audit(self.audit)
-            if not role_store.is_bound:
-                raise ValueError(
-                    "AuthorizationConfig(role_store=...) needs a SQL database: managed roles must be "
-                    "persisted (an in-memory store can't stay consistent across replicas). Give the "
-                    "store a db (ManagedRoleStore(db_url=...) / db=...) or pass a SQL-capable db to "
-                    "AgentOS(db=...) for it to adopt."
-                )
-            resolved_provider = role_store.provider
-        elif provider is not None:
+        if provider is not None:
             # A list/tuple of providers means "run several authz planes at once"
             # (e.g. token scopes for operators + a managed role store for end users):
             # compose them with an OR — a request is allowed if any plane allows it.
@@ -2204,33 +2164,30 @@ class AgentOS:
         fastapi_app.state.user_directory_fail_closed = directory.fail_closed if directory is not None else False
         # The role store + explicit default role, for granting a role on first auto-provision
         # (the provisioning choke points read these to call provision_user_with_default_role).
-        authz = self.authorization_config
-        # The Authorization facade wires roles as a provider (not AuthorizationConfig.role_store),
-        # so take its store directly; fall back to the config's role_store for the primitive path.
-        # This is what the provisioning choke points read to grant a default role on first login,
-        # and the signal for whether managed roles / the /authz API are active.
-        fastapi_app.state.role_store = self._facade_role_store or (
-            getattr(authz, "role_store", None) if authz is not None else None
-        )
+        # The managed role store comes only from the Authorization object (it wires roles as a
+        # provider, and hands the store over for provisioning and the /authz API). This is what the
+        # provisioning choke points read to grant a default role on first login, and the signal for
+        # whether managed roles / the /authz API are active.
+        fastapi_app.state.role_store = self._facade_role_store
         fastapi_app.state.user_default_role = directory.default_role if directory is not None else None
         if fastapi_app.state.user_default_role and fastapi_app.state.role_store is None:
-            # A default role is granted through the store; with roles passed as
-            # authorization_provider= (e.g. a composite) the OS has only the engine, not the
-            # store, so the grant would silently never happen. Say so at boot rather than
-            # leave every new user mysteriously inert.
+            # A default role is granted through the store; with roles passed as a bare
+            # authorization_provider= the OS has only the engine, not the store, so the grant
+            # would silently never happen. Say so at boot rather than leave every new user
+            # mysteriously inert.
             log_warning(
-                "UserDirectoryConfig(default_role=...) is set but no role_store is configured. "
+                "UserDirectoryConfig(default_role=...) is set but no managed role store is configured. "
                 "Default roles are granted through the role store, so configure managed roles via "
-                "AuthorizationConfig(role_store=...) (not authorization_provider=) for it to apply."
+                "Authorization(...).define_role(...) for it to apply."
             )
-        elif fastapi_app.state.role_store is None:
+        elif fastapi_app.state.role_store is None and directory is not None:
             # A directory with no role store is valid (a pure roster), but say so once at boot: no
             # roles apply, provisioned users get none, and the /authz roles API is not mounted. This
             # is the signal a UI uses to hide role management for this deployment.
             log_info(
-                "AgentOS(user_directory=...) is configured without managed roles (no role_store). "
-                "The directory works as a roster; roles are not available and provisioned users get "
-                "none. Add AuthorizationConfig(role_store=...) to enable roles and the /authz API."
+                "The user directory is configured without managed roles. It works as a roster; roles "
+                "are not available and provisioned users get none. Define roles on Authorization(...) "
+                "to enable roles and the /authz API."
             )
 
     def get_routes(self) -> List[Any]:

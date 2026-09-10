@@ -39,8 +39,8 @@ from agno.os.authz._db import (
     resolve_authz_db,
     supports_authz,
 )
-from agno.os.authz._request_scope import amemoize, invalidate as _invalidate_request_cache
-from agno.os.authz._request_scope import memoize
+from agno.os.authz._request_scope import amemoize, memoize
+from agno.os.authz._request_scope import invalidate as _invalidate_request_cache
 from agno.os.authz._scope_policy import resource_action_to_scope, resource_matches, scope_to_resource_action
 from agno.os.authz.engine import PolicyEngine, ScopeEntry
 
@@ -342,6 +342,10 @@ class NativePolicyEngine(PolicyEngine):
     def roles_of(self, subject: str) -> List[str]:
         return sorted(self._direct_roles(subject))
 
+    def subjects_of(self, role: str) -> List[str]:
+        self._require_engine()
+        return sorted(self._db.list_authz_role_subjects(role))
+
     # --- decisions -------------------------------------------------------
     def _allowed_for_root(
         self, root: str, request_resource: str, request_action: str, *, is_subject: bool = False
@@ -632,6 +636,9 @@ class NativePolicyEngine(PolicyEngine):
 
     async def aroles_of(self, subject: str) -> List[str]:
         return sorted(await self._adirect_roles(subject))
+
+    async def asubjects_of(self, role: str) -> List[str]:
+        return sorted(await self._acall("list_authz_role_subjects", role))
 
     # --- async decisions ---
     async def _aallowed_for_root(

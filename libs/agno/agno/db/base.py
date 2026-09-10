@@ -2088,6 +2088,10 @@ class BaseDb(ABC):
         """Roles directly assigned to ``subject``."""
         raise NotImplementedError
 
+    def list_authz_role_subjects(self, role: str) -> List[str]:
+        """Names directly assigned ``role`` (subjects, plus roles when nesting)."""
+        raise NotImplementedError
+
     def authz_name_is_role(self, name: str) -> bool:
         """True if ``name`` is used as a ROLE: it carries policy, or something is assigned
         to it. Used by the collision guard, so it runs on every subject decision."""
@@ -3591,6 +3595,10 @@ class AsyncBaseDb(ABC):
 
     async def get_authz_direct_roles(self, subject: str) -> List[str]:
         """Roles directly assigned to ``subject``."""
+        raise NotImplementedError
+
+    async def list_authz_role_subjects(self, role: str) -> List[str]:
+        """Names directly assigned ``role`` (subjects, plus roles when nesting)."""
         raise NotImplementedError
 
     async def authz_name_is_role(self, name: str) -> bool:

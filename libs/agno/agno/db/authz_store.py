@@ -141,6 +141,12 @@ def get_direct_roles(engine: Engine, table: Any, subject: str) -> List[str]:
         return [r[0] for r in conn.execute(select(table.c.role).where(table.c.subject == subject))]
 
 
+def get_role_subjects(engine: Engine, table: Any, role: str) -> List[str]:
+    """Names directly assigned ``role`` (served by the index on ``role``)."""
+    with engine.connect() as conn:
+        return [r[0] for r in conn.execute(select(table.c.subject).where(table.c.role == role))]
+
+
 def name_is_role(engine: Engine, policy_table: Any, grouping_table: Any, name: str) -> bool:
     """True if ``name`` is used as a ROLE: it carries policy, or something is assigned to it.
 
@@ -511,6 +517,12 @@ async def adelete_policy(
 async def aget_direct_roles(engine: "AsyncEngine", table: Any, subject: str) -> List[str]:
     async with engine.connect() as conn:
         rows = await conn.execute(select(table.c.role).where(table.c.subject == subject))
+        return [r[0] for r in rows]
+
+
+async def aget_role_subjects(engine: "AsyncEngine", table: Any, role: str) -> List[str]:
+    async with engine.connect() as conn:
+        rows = await conn.execute(select(table.c.subject).where(table.c.role == role))
         return [r[0] for r in rows]
 
 

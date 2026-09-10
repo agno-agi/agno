@@ -55,8 +55,8 @@ authz = Authorization(
     verify_audience=True,
     audience=OS_ID,
     # auto_provision: a user we have never seen is created from their token claims on their first
-    # authenticated request and granted the default role, so they land usable, not inert. To pin
-    # the default in code instead of flagging a role, pass default_role="viewer".
+    # authenticated request and granted the default role (the one flagged default=True below), so
+    # they land usable, not inert.
     auto_provision=True,
 )
 # Roles: what each role can do. default=True flags "viewer" as the role an auto-provisioned user
