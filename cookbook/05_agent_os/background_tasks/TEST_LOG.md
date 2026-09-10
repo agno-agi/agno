@@ -89,6 +89,20 @@
 
 ---
 
+### durable_queue.py
+
+**Status:** PASS
+
+**Description:** Started the example under FastAPI TestClient using the demo
+virtual environment and a disposable PostgreSQL database. Verified `/health`,
+creation of `ai.agno_jobs` before the first enqueue, and a strict lookup with no
+ticket. Captured concise startup logs and clean worker shutdown.
+
+**Result:** Startup and queue provisioning passed. No model calls, recovery
+scenario, or live streaming exercise was performed in this smoke check.
+
+---
+
 ### queue_per_session.py
 
 **Status:** PASS (boot and ordering verified over HTTP against real Postgres, 2026-09-08; live model call not exercised: no OPENAI_API_KEY in the test environment, the agent's model was swapped for a slow offline fake in a scratch harness)
