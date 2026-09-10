@@ -46,6 +46,7 @@ WorkflowSteps = List[
         "Parallel",  # type: ignore # noqa: F821
         "Condition",  # type: ignore # noqa: F821
         "Router",  # type: ignore # noqa: F821
+        "Verify",  # type: ignore # noqa: F821
         "Workflow",  # type: ignore # noqa: F821 - Nested workflow support
     ]
 ]
@@ -234,6 +235,12 @@ class Condition:
                 return Router.from_dict(
                     step_data, registry=registry, db=db, links=links, strict=strict, branch_suffix=suffix
                 )
+            elif step_type == "Verify":
+                from agno.workflow.verify import Verify
+
+                return Verify.from_dict(
+                    step_data, registry=registry, db=db, links=links, strict=strict, branch_suffix=suffix
+                )
             else:
                 return Step.from_dict(
                     step_data, registry=registry, db=db, links=links, strict=strict, branch_suffix=suffix
@@ -297,6 +304,7 @@ class Condition:
         from agno.workflow.router import Router
         from agno.workflow.step import Step
         from agno.workflow.steps import Steps
+        from agno.workflow.verify import Verify, resolve_verify_steps
         from agno.workflow.workflow import Workflow
 
         def prepare_step_list(steps: WorkflowSteps) -> WorkflowSteps:
@@ -311,11 +319,11 @@ class Condition:
                     prepared.append(Step(name=step.name, description=step.description, team=step))
                 elif isinstance(step, Workflow):
                     prepared.append(Step(name=step.name, description=step.description, workflow=step))
-                elif isinstance(step, (Step, Steps, Loop, Parallel, Condition, Router)):
+                elif isinstance(step, (Step, Steps, Loop, Parallel, Condition, Router, Verify)):
                     prepared.append(step)
                 else:
                     raise ValueError(f"Invalid step type: {type(step).__name__}")
-            return prepared
+            return resolve_verify_steps(prepared)
 
         self.steps = prepare_step_list(self.steps)
 

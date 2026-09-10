@@ -75,7 +75,13 @@ except ImportError:
         AsyncRedis = Any
         AsyncRedisCluster = Any
 
-_TERMINAL_STATUSES = (RunStatus.completed, RunStatus.error, RunStatus.cancelled, RunStatus.paused)
+_TERMINAL_STATUSES = (
+    RunStatus.completed,
+    RunStatus.error,
+    RunStatus.cancelled,
+    RunStatus.paused,
+    RunStatus.unverified,
+)
 
 # Refresh key TTLs when at least this fraction of ttl_seconds has elapsed
 # since the last refresh (time-based, so slow producers with long gaps between
@@ -272,7 +278,15 @@ class RedisEventStream(BaseEventStream):
         keys expire per TTL, which is the intended cleanup.
         """
         interval = max(1.0, self._ttl / _TTL_REFRESH_FRACTION)
-        terminal_values = {RunStatus.completed.value, RunStatus.error.value, RunStatus.cancelled.value}
+        # UNVERIFIED joins the settled statuses here: like COMPLETED/ERROR it
+        # is final for the stream (only PAUSED stays refreshable - it awaits a
+        # continuation), so its keys should expire per TTL, not be renewed.
+        terminal_values = {
+            RunStatus.completed.value,
+            RunStatus.error.value,
+            RunStatus.cancelled.value,
+            RunStatus.unverified.value,
+        }
         while self._active_runs:
             await asyncio.sleep(interval)
             for run_id in list(self._active_runs):
@@ -314,7 +328,7 @@ class RedisEventStream(BaseEventStream):
             self._refresher_task = None
 
     async def complete_run(self, run_id: str, status: RunStatus, generation: Optional[int] = None) -> None:
-        if status not in (RunStatus.completed, RunStatus.error, RunStatus.cancelled, RunStatus.paused):
+        if status not in _TERMINAL_STATUSES:
             # Contract: this call MARKS TERMINAL (see in-memory twin)
             status = RunStatus.completed
 
@@ -369,10 +383,12 @@ class RedisEventStream(BaseEventStream):
         # and PENDING is pre-execution, where the flip is idempotent. The
         # expired-state path depends on it: register_run re-creates PENDING
         # before the reopen, and declining there would drop the counter seed.
+        # UNVERIFIED reopens like PAUSED: terminal-for-the-stream but
+        # continuable, and the continuation appends to the same stream.
         reopenable = (
-            (RunStatus.paused.value, RunStatus.error.value, RunStatus.pending.value)
+            (RunStatus.paused.value, RunStatus.error.value, RunStatus.pending.value, RunStatus.unverified.value)
             if include_error
-            else (RunStatus.paused.value, RunStatus.pending.value)
+            else (RunStatus.paused.value, RunStatus.pending.value, RunStatus.unverified.value)
         )
         status_key = self._status_key(run_id)
         stream_key = self._stream_key(run_id)

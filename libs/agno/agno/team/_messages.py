@@ -340,6 +340,12 @@ def _build_identity_sections(
             content += f"<instructions>\n{rendered}\n</instructions>\n\n"
         else:
             content += rendered + "\n\n"
+    # Tell the model completion is checked when verifiers are configured
+    if team.verifiers and (team.verification is None or team.verification.add_notice):
+        from agno.verifiers.base import verifier_names
+        from agno.verifiers.report import build_notice
+
+        content += build_notice(verifier_names(team.verifiers)) + "\n\n"
     return content
 
 

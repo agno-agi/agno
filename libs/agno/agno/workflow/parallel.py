@@ -38,6 +38,7 @@ WorkflowSteps = List[
         "Parallel",  # type: ignore # noqa: F821
         "Condition",  # type: ignore # noqa: F821
         "Router",  # type: ignore # noqa: F821
+        "Verify",  # type: ignore # noqa: F821
         "Workflow",  # type: ignore # noqa: F821 - Nested workflow support
     ]
 ]
@@ -93,6 +94,29 @@ class Parallel:
         from agno.workflow.types import validate_human_review_for_parallel
 
         validate_human_review_for_parallel(self.human_review)
+        self._reject_unresolvable_verify_steps(self.steps)
+
+    def _reject_unresolvable_verify_steps(self, steps: Any) -> None:
+        """Refuse a direct Verify branch that still expects a loop-back segment.
+
+        Parallel branches run concurrently and in isolation: a Verify placed directly in
+        a Parallel has no preceding steps list to absorb its ``on_fail`` target from, so
+        it could never re-run anything and would only fail at execution time — where the
+        branch's error handling records the failure, downstream steps continue, and the
+        run completes with zero checks executed. Raising here keeps the failure at build
+        time. A pure gate (``on_fail=None``) and a Verify wrapped in Steps (which absorbs
+        the segment) both stay valid.
+        """
+        from agno.workflow.verify import Verify
+
+        for step in steps or []:
+            if isinstance(step, Verify) and not step._resolved:
+                raise ValueError(
+                    f"Parallel {self.name!r} step {step.name!r} is a Verify with a loop-back target (on_fail); "
+                    "parallel branches run in isolation, so it has no preceding steps to absorb and can never "
+                    "re-run anything. Use on_fail=None for a pure gate, or wrap the Verify in Steps after the "
+                    "steps it loops back to"
+                )
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -140,6 +164,12 @@ class Parallel:
                 return Router.from_dict(
                     step_data, registry=registry, db=db, links=links, strict=strict, branch_suffix=suffix
                 )
+            elif step_type == "Verify":
+                from agno.workflow.verify import Verify
+
+                return Verify.from_dict(
+                    step_data, registry=registry, db=db, links=links, strict=strict, branch_suffix=suffix
+                )
             else:
                 return Step.from_dict(
                     step_data, registry=registry, db=db, links=links, strict=strict, branch_suffix=suffix
@@ -160,7 +190,12 @@ class Parallel:
         from agno.workflow.router import Router
         from agno.workflow.step import Step
         from agno.workflow.steps import Steps
+        from agno.workflow.verify import Verify
         from agno.workflow.workflow import Workflow
+
+        # Steps can be replaced after construction; re-check for a direct Verify that
+        # still expects a loop-back segment before any step runs.
+        self._reject_unresolvable_verify_steps(self.steps)
 
         prepared_steps: WorkflowSteps = []
         for step in self.steps:
@@ -172,7 +207,10 @@ class Parallel:
                 prepared_steps.append(Step(name=step.name, description=step.description, team=step))
             elif isinstance(step, Workflow):
                 prepared_steps.append(Step(name=step.name, description=step.description, workflow=step))
-            elif isinstance(step, (Step, Steps, Loop, Parallel, Condition, Router)):
+            elif isinstance(step, (Step, Steps, Loop, Parallel, Condition, Router, Verify)):
+                # Parallel branches run concurrently, so a Verify here is never given a
+                # loop-back segment; only a pure gate (on_fail=None) is valid inside a
+                # Parallel, enforced above at build time.
                 prepared_steps.append(step)
             else:
                 raise ValueError(f"Invalid step type: {type(step).__name__}")

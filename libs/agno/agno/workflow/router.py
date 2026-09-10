@@ -41,6 +41,7 @@ WorkflowSteps = List[
         "Parallel",  # type: ignore # noqa: F821
         "Condition",  # type: ignore # noqa: F821
         "Router",  # type: ignore # noqa: F821
+        "Verify",  # type: ignore # noqa: F821
         "Workflow",  # type: ignore # noqa: F821 - Nested workflow support
     ]
 ]
@@ -103,6 +104,28 @@ class Router:
         from agno.workflow.types import validate_human_review_for_router
 
         validate_human_review_for_router(self.human_review)
+        self._reject_unresolvable_verify_choices(self.choices)
+
+    def _reject_unresolvable_verify_choices(self, choices: Any) -> None:
+        """Refuse a direct-choice Verify that still expects a loop-back segment.
+
+        A Router routes to one choice in isolation: a directly-chosen Verify has no
+        preceding steps list to absorb its ``on_fail`` target from, so it could never
+        re-run anything and would only fail at execution time — where a per-step error
+        handler records the failure and the run still completes. Raising here keeps the
+        failure at build time. A pure gate (``on_fail=None``) and a Verify inside a list
+        route (wrapped in Steps, which absorbs the segment) both stay valid.
+        """
+        from agno.workflow.verify import Verify
+
+        for choice in choices or []:
+            if isinstance(choice, Verify) and not choice._resolved:
+                raise ValueError(
+                    f"Router {self.name!r} choice {choice.name!r} is a Verify with a loop-back target (on_fail); "
+                    "a direct route gives it no preceding steps to absorb, so it can never re-run anything. "
+                    "Use on_fail=None for a pure gate, or put the Verify in a list route after the steps it "
+                    "loops back to"
+                )
 
     def to_dict(self) -> Dict[str, Any]:
         result: Dict[str, Any] = {
@@ -276,6 +299,12 @@ class Router:
                 return cls.from_dict(
                     step_data, registry=registry, db=db, links=links, strict=strict, branch_suffix=suffix
                 )
+            elif step_type == "Verify":
+                from agno.workflow.verify import Verify
+
+                return Verify.from_dict(
+                    step_data, registry=registry, db=db, links=links, strict=strict, branch_suffix=suffix
+                )
             else:
                 return Step.from_dict(
                     step_data, registry=registry, db=db, links=links, strict=strict, branch_suffix=suffix
@@ -339,6 +368,7 @@ class Router:
         from agno.workflow.parallel import Parallel
         from agno.workflow.step import Step
         from agno.workflow.steps import Steps
+        from agno.workflow.verify import Verify
         from agno.workflow.workflow import Workflow
 
         if callable(step) and hasattr(step, "__name__"):
@@ -349,7 +379,7 @@ class Router:
             return Step(name=step.name, description=step.description, team=step)
         elif isinstance(step, Workflow):
             return Step(name=step.name, description=step.description, workflow=step)
-        elif isinstance(step, (Step, Steps, Loop, Parallel, Condition, Router)):
+        elif isinstance(step, (Step, Steps, Loop, Parallel, Condition, Router, Verify)):
             return step
         else:
             raise ValueError(f"Invalid step type: {type(step).__name__}")
@@ -357,6 +387,10 @@ class Router:
     def _prepare_steps(self):
         """Prepare the steps for execution - mirrors workflow logic"""
         from agno.workflow.steps import Steps
+
+        # Choices can be replaced after construction; re-check for a direct-choice
+        # Verify that still expects a loop-back segment before any step runs.
+        self._reject_unresolvable_verify_choices(self.choices)
 
         prepared_steps: WorkflowSteps = []
         for step in self.choices:
@@ -469,6 +503,7 @@ class Router:
         from agno.workflow.loop import Loop
         from agno.workflow.parallel import Parallel
         from agno.workflow.steps import Steps
+        from agno.workflow.verify import Verify
 
         if result is None:
             return []
@@ -486,8 +521,8 @@ class Router:
                 )
                 return []
 
-        # Handle step types (Step, Steps, Loop, Parallel, Condition, Router)
-        if isinstance(result, (Step, Steps, Loop, Parallel, Condition, Router)):
+        # Handle step types (Step, Steps, Loop, Parallel, Condition, Router, Verify)
+        if isinstance(result, (Step, Steps, Loop, Parallel, Condition, Router, Verify)):
             # Validate that the returned step is in the router's choices
             step_name = getattr(result, "name", None)
             if step_name and step_name not in self._step_name_map:

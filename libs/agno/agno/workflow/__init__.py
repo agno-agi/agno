@@ -10,6 +10,7 @@ from agno.workflow.router import Router
 from agno.workflow.step import Step
 from agno.workflow.steps import Steps
 from agno.workflow.types import HumanReview, OnError, OnReject, OnTimeout, StepInput, StepOutput, WorkflowExecutionInput
+from agno.workflow.verify import Verify
 from agno.workflow.workflow import Workflow, get_workflow_by_id, get_workflows
 
 __all__ = [
@@ -23,6 +24,7 @@ __all__ = [
     "Parallel",
     "Condition",
     "Router",
+    "Verify",
     "WorkflowExecutionInput",
     "StepInput",
     "StepOutput",

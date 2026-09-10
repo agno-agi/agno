@@ -568,6 +568,10 @@ class StepOutput:
 
     steps: Optional[List["StepOutput"]] = None
 
+    # The verification record a Verify step attaches: a Verification dataclass
+    # (agno.verifiers.types) carrying status, stop_reason, and per-attempt verdicts.
+    verification: Optional[Any] = None
+
     # Loop iteration review: signals the workflow to pause for per-iteration review.
     # This is a transient flag — NOT serialized. It is cleared after the workflow
     # processes it.
@@ -608,6 +612,13 @@ class StepOutput:
         if self.steps:
             result["steps"] = [step.to_dict() if hasattr(step, "to_dict") else step for step in self.steps]
 
+        # Only present when a Verify step attached its record, so other steps' dicts keep
+        # their existing shape.
+        if self.verification is not None:
+            result["verification"] = (
+                self.verification.to_dict() if hasattr(self.verification, "to_dict") else self.verification
+            )
+
         return result
 
     @classmethod
@@ -633,6 +644,14 @@ class StepOutput:
         if steps_data:
             steps = [cls.from_dict(step_data) for step_data in steps_data]
 
+        # Reconstruct the verification record explicitly: a DB round-trip must hand back
+        # the dataclass, not a dict.
+        verification = None
+        if data.get("verification"):
+            from agno.verifiers.types import Verification
+
+            verification = Verification.from_dict(data["verification"])
+
         return cls(
             step_name=data.get("step_name"),
             step_id=data.get("step_id"),
@@ -651,6 +670,7 @@ class StepOutput:
             stop=data.get("stop", False),
             is_paused=data.get("is_paused", False),
             steps=steps,
+            verification=verification,
         )
 
 
@@ -742,6 +762,7 @@ class StepType(str, Enum):
     CONDITION = "Condition"
     ROUTER = "Router"
     WORKFLOW = "Workflow"
+    VERIFY = "Verify"
 
 
 class ExecutorType(str, Enum):

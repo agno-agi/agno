@@ -278,3 +278,53 @@ class TestStatusCasingNormalization:
         await seed_session(db, "s1", ["r1"])
         assert await db.update_run_in_session("s1", "r1", {"status": "completed"}) is RunPersistOutcome.UPDATED
         assert await db.update_run_in_session("s1", "r1", {"status": "ERROR"}) is RunPersistOutcome.TERMINAL_REFUSED
+
+
+class TestUnverifiedDefacementFence:
+    """ONE narrow extra terminal rule: a stored UNVERIFIED row refuses an
+    incoming ERROR. An unverified run is settled - it holds a real answer
+    whose verification budget was spent - and a late ERROR write (shutdown
+    drain, stale error persist) would deface it. Every other transition over
+    unverified stays legal: continue-in-place re-stamps RUNNING and later
+    lands COMPLETED/CANCELLED on the same row."""
+
+    @pytest.mark.asyncio
+    async def test_error_over_unverified_refused_async(self, db):
+        await seed_session(db, "s1", ["r1"])
+        assert await db.update_run_in_session("s1", "r1", {"status": "UNVERIFIED"}) is RunPersistOutcome.UPDATED
+        refused = await db.update_run_in_session("s1", "r1", {"status": "ERROR"})
+        assert refused is RunPersistOutcome.TERMINAL_REFUSED
+        runs = await get_runs(db, "s1")
+        assert runs["r1"]["status"] == "UNVERIFIED", "settled unverified row must survive the ERROR write"
+
+    @pytest.mark.asyncio
+    async def test_non_error_transitions_over_unverified_stay_legal_async(self, db):
+        await seed_session(db, "s1", ["r1", "r2"])
+        assert await db.update_run_in_session("s1", "r1", {"status": "UNVERIFIED"}) is RunPersistOutcome.UPDATED
+        # Continue-in-place: RUNNING re-stamps the row, then lands COMPLETED.
+        assert await db.update_run_in_session("s1", "r1", {"status": "RUNNING"}) is RunPersistOutcome.UPDATED
+        assert await db.update_run_in_session("s1", "r1", {"status": "COMPLETED"}) is RunPersistOutcome.UPDATED
+        assert await db.update_run_in_session("s1", "r2", {"status": "UNVERIFIED"}) is RunPersistOutcome.UPDATED
+        assert await db.update_run_in_session("s1", "r2", {"status": "CANCELLED"}) is RunPersistOutcome.UPDATED
+
+    @pytest.mark.asyncio
+    async def test_error_over_unverified_refused_sync(self, db):
+        from agno.db.postgres import PostgresDb
+
+        await seed_session(db, "s1", ["r1"])
+        sync_db = PostgresDb(db_url=DB_URL, session_table=db.session_table_name, runs_table=db.runs_table_name)
+
+        def call(**kwargs):
+            return sync_db.update_run_in_session(**kwargs)
+
+        assert (
+            await asyncio.to_thread(call, session_id="s1", run_id="r1", fields={"status": "UNVERIFIED"})
+        ) is RunPersistOutcome.UPDATED
+        assert (
+            await asyncio.to_thread(call, session_id="s1", run_id="r1", fields={"status": "ERROR"})
+        ) is RunPersistOutcome.TERMINAL_REFUSED
+        assert (
+            await asyncio.to_thread(call, session_id="s1", run_id="r1", fields={"status": "RUNNING"})
+        ) is RunPersistOutcome.UPDATED
+        runs = await get_runs(db, "s1")
+        assert runs["r1"]["status"] == "RUNNING"
