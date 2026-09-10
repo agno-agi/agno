@@ -1551,8 +1551,11 @@ def _migrate_mongo(db: BaseDb, table_type: str, table_name: str) -> bool:
     for doc in cursor:
         rows = _build_run_rows(doc.get("runs"), doc.get("session_id"), doc.get("user_id"), run_data_as_string=False)
         for row in rows:
-            runs_collection.replace_one({"run_id": row["run_id"]}, row, upsert=True)
-            migrated_runs += 1
+            # The runs collection wins on conflict: a re-run must not put the stale blob copy
+            # over a run that was updated after the first migration.
+            result = runs_collection.update_one({"run_id": row["run_id"]}, {"$setOnInsert": row}, upsert=True)
+            if result.upserted_id is not None:
+                migrated_runs += 1
 
     log_info(f"-- Copied {migrated_runs} runs from {table_name} into the runs collection")
     log_info(
@@ -1677,8 +1680,10 @@ async def _migrate_async_mongo(db: AsyncBaseDb, table_type: str, table_name: str
     async for doc in cursor:
         rows = _build_run_rows(doc.get("runs"), doc.get("session_id"), doc.get("user_id"), run_data_as_string=False)
         for row in rows:
-            await runs_collection.replace_one({"run_id": row["run_id"]}, row, upsert=True)
-            migrated_runs += 1
+            # The runs collection wins on conflict, see _migrate_mongo.
+            result = await runs_collection.update_one({"run_id": row["run_id"]}, {"$setOnInsert": row}, upsert=True)
+            if result.upserted_id is not None:
+                migrated_runs += 1
 
     log_info(f"-- Copied {migrated_runs} runs from {table_name} into the runs collection")
     log_info(
@@ -1761,6 +1766,9 @@ def _migrate_firestore(db: BaseDb, table_type: str, table_name: str) -> bool:
         rows = _build_run_rows(legacy_runs, session_id, data.get("user_id"), run_data_as_string=False)
         for row in rows:
             run_doc_ref = runs_ref.document(row["run_id"])
+            # The runs collection wins on conflict: a re-run leaves migrated runs untouched.
+            if run_doc_ref.get().exists:
+                continue
             batch.set(run_doc_ref, row)
             pending_in_batch += 1
             migrated_runs += 1
@@ -1871,10 +1879,11 @@ def _migrate_redis(db: BaseDb, table_type: str, table_name: str) -> bool:
         pipe = db.redis_client.pipeline()  # type: ignore
         for row in rows:
             key = generate_redis_key(prefix=db.db_prefix, table_type="runs", key_id=row["run_id"])  # type: ignore
-            pipe.set(key, serialize_data(row), ex=db.expire)  # type: ignore
-            pipe.zadd(index_key, {row["run_id"]: float(row.get("run_index") or 0)})
-        pipe.execute()
-        migrated_runs += len(rows)
+            # SET NX / ZADD NX: the per-run keys win on conflict, a re-run leaves migrated runs untouched.
+            pipe.set(key, serialize_data(row), ex=db.expire, nx=True)  # type: ignore
+            pipe.zadd(index_key, {row["run_id"]: float(row.get("run_index") or 0)}, nx=True)
+        results = pipe.execute()
+        migrated_runs += sum(1 for written in results[: 2 * len(rows) : 2] if written)
 
     log_info(f"-- Copied {migrated_runs} runs into per-run Redis keys")
     log_info(
@@ -1943,7 +1952,7 @@ def _migrate_valkey(db: BaseDb, table_type: str, table_name: str) -> bool:
     if table_type != "sessions":
         return False
 
-    from glide_sync import ExpirySet, ExpiryType
+    from glide_sync import ConditionalChange, ExpirySet, ExpiryType
 
     from agno.db.valkey.utils import generate_valkey_key, serialize_data  # type: ignore
 
@@ -1962,12 +1971,22 @@ def _migrate_valkey(db: BaseDb, table_type: str, table_name: str) -> bool:
         expiry = ExpirySet(ExpiryType.SEC, db.expire) if db.expire is not None else None  # type: ignore
         for row in rows:
             key = generate_valkey_key(prefix=db.db_prefix, table_type="runs", key_id=row["run_id"])  # type: ignore
-            pipeline.set(key, serialize_data(row), expiry=expiry)
-            pipeline.zadd(index_key, {row["run_id"]: float(row.get("run_index") or 0)})
+            # SET NX / ZADD NX: the per-run keys win on conflict, a re-run leaves migrated runs untouched.
+            pipeline.set(
+                key,
+                serialize_data(row),
+                conditional_set=ConditionalChange.ONLY_IF_DOES_NOT_EXIST,
+                expiry=expiry,
+            )
+            pipeline.zadd(
+                index_key,
+                {row["run_id"]: float(row.get("run_index") or 0)},
+                existing_options=ConditionalChange.ONLY_IF_DOES_NOT_EXIST,
+            )
         if db.expire is not None:  # type: ignore
             pipeline.expire(index_key, db.expire)  # type: ignore
-        db._exec_pipeline(pipeline)  # type: ignore
-        migrated_runs += len(rows)
+        results = db._exec_pipeline(pipeline) or []  # type: ignore
+        migrated_runs += sum(1 for written in results[: 2 * len(rows) : 2] if written == "OK")
 
     log_info(f"-- Copied {migrated_runs} runs into per-run Valkey keys")
     log_info(
@@ -2443,11 +2462,14 @@ def _migrate_surrealdb(db: BaseDb, table_type: str, table_name: str) -> bool:
 
         rows = _build_run_rows(legacy, session_id, user_id, run_data_as_string=False)
         for row in rows:
-            content = serialize_run_row(row, runs_table)
+            record = RecordID(runs_table, row["run_id"])
             try:
+                # The runs table wins on conflict: a re-run leaves migrated runs untouched.
+                if db._query_one("SELECT * FROM ONLY $record", {"record": record}, dict) is not None:  # type: ignore
+                    continue
                 db._query_one(  # type: ignore
-                    "UPSERT ONLY $record CONTENT $content",
-                    {"record": RecordID(runs_table, row["run_id"]), "content": content},
+                    "CREATE ONLY $record CONTENT $content",
+                    {"record": record, "content": serialize_run_row(row, runs_table)},
                     dict,
                 )
                 migrated += 1
