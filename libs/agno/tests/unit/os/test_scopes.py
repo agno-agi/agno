@@ -36,12 +36,12 @@ class TestCheckRouteScopes:
         assert result.allowed is True
         assert result.required_scopes == []
 
-    def test_user_directory_metrics_need_the_metrics_read_scope(self):
+    def test_os_metrics_need_the_metrics_read_scope(self):
         # Directory size and registrations are OS-wide identity data; the same scope
         # that reads the run metrics reads them, and nothing less does.
-        result = check_route_scopes([], get_default_scope_mappings(), "GET", "/metrics/users")
+        result = check_route_scopes([], get_default_scope_mappings(), "GET", "/metrics/os")
         assert result.allowed is False
-        result = check_route_scopes(["metrics:read"], get_default_scope_mappings(), "GET", "/metrics/users")
+        result = check_route_scopes(["metrics:read"], get_default_scope_mappings(), "GET", "/metrics/os")
         assert result.allowed is True
 
     def test_refresh_status_needs_the_metrics_read_scope(self):

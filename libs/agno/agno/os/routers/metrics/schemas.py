@@ -64,8 +64,18 @@ class MetricsRefreshStatusResponse(BaseModel):
     error: Optional[str] = Field(None, description="Error message if the most recent refresh failed")
 
 
-class UserDirectoryCounts(BaseModel):
-    """The managed user directory as it is now."""
+class UsersCreatedOnDay(BaseModel):
+    date: date_type = Field(..., description="UTC day")
+    count: int = Field(..., description="Users created on that day", ge=0)
+
+
+class UsersByRole(BaseModel):
+    role: str = Field(..., description="Role slug")
+    count: int = Field(..., description="Users in the directory holding this role", ge=0)
+
+
+class UserDirectoryMetrics(BaseModel):
+    """The managed user directory as it is now, plus its registration history."""
 
     total: int = Field(..., description="Users in the directory, including disabled ones", ge=0)
     active: int = Field(..., description="Users not disabled", ge=0)
@@ -78,23 +88,16 @@ class UserDirectoryCounts(BaseModel):
         ),
         ge=0,
     )
-
-
-class UsersCreatedOnDay(BaseModel):
-    date: date_type = Field(..., description="UTC day")
-    count: int = Field(..., description="Users created on that day", ge=0)
-
-
-class UsersByRole(BaseModel):
-    role: str = Field(..., description="Role slug")
-    count: int = Field(..., description="Users in the directory holding this role", ge=0)
-
-
-class UserMetricsResponse(BaseModel):
-    users: UserDirectoryCounts = Field(..., description="Directory counts, always for the whole directory")
-    users_created: List[UsersCreatedOnDay] = Field(
+    created_per_day: List[UsersCreatedOnDay] = Field(
         ..., description="Users created per UTC day, oldest first; days with no registrations are omitted"
     )
-    users_by_role: Optional[List[UsersByRole]] = Field(
+    by_role: Optional[List[UsersByRole]] = Field(
         None, description="Users per role, sorted by role. Null when no role store is configured"
     )
+
+
+class OSMetricsResponse(BaseModel):
+    """Metrics about the OS itself, one section per source. The run metrics under
+    ``/metrics`` are per-database; these are OS-wide."""
+
+    users: UserDirectoryMetrics = Field(..., description="The managed user directory")

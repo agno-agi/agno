@@ -92,7 +92,7 @@ def _backdate(store: ManagedUserStore, user_id: str, created_at: int) -> None:
 
 @pytest.mark.parametrize("db_url", [None, "sqlite"])
 def test_store_created_by_day_and_ids(tmp_path, db_url):
-    """The two directory reads behind /metrics/users agree across the in-memory and
+    """The two directory reads behind the /metrics/os users section agree across the in-memory and
     SQL paths: per-day counts honour the bounds, ids are sorted and skip disabled
     users on request."""
     day = 24 * 60 * 60
@@ -239,9 +239,10 @@ def test_users_api_crud_and_role_merge():
     assert client.get("/users/bob", headers=_auth("alice")).status_code == 404
 
 
-def test_user_metrics_api_with_a_role_store():
-    """/metrics/users is auto-mounted beside /users: directory counts, the per-day
-    series (bounded by the date range), and the role breakdown from the role store."""
+def test_os_metrics_api_with_a_role_store():
+    """/metrics/os is auto-mounted beside /users. Its users section carries the
+    directory counts, the per-day series (bounded by the date range), and the role
+    breakdown from the role store."""
     roles = ManagedRoleStore(db_url=_db_url())
     roles.set_role_scopes("admin", ["agent_os:admin"])
     roles.set_role_scopes("viewer", ["agents:*:read"])
@@ -258,32 +259,37 @@ def test_user_metrics_api_with_a_role_store():
     client = TestClient(_os(roles, users).get_app())
 
     # a subject with no role is denied; the metrics need metrics:read, which admin has
-    assert client.get("/metrics/users", headers=_auth("nobody")).status_code == 403
+    assert client.get("/metrics/os", headers=_auth("nobody")).status_code == 403
 
-    body = client.get("/metrics/users", headers=_auth("alice")).json()
-    assert body["users"] == {"total": 4, "active": 3, "disabled": 1, "without_role": 1}
-    assert [row["count"] for row in body["users_created"]] == [1, 3]
-    assert body["users_by_role"] == [{"role": "admin", "count": 1}, {"role": "viewer", "count": 2}]
+    users_section = client.get("/metrics/os", headers=_auth("alice")).json()["users"]
+    assert {k: users_section[k] for k in ("total", "active", "disabled", "without_role")} == {
+        "total": 4,
+        "active": 3,
+        "disabled": 1,
+        "without_role": 1,
+    }
+    assert [row["count"] for row in users_section["created_per_day"]] == [1, 3]
+    assert users_section["by_role"] == [{"role": "admin", "count": 1}, {"role": "viewer", "count": 2}]
 
     # the date range bounds the series only; the counts stay whole-directory
     today = datetime.now(UTC).date().isoformat()
-    bounded = client.get(f"/metrics/users?starting_date={today}", headers=_auth("alice")).json()
-    assert bounded["users_created"] == [{"date": today, "count": 3}]
-    assert bounded["users"]["total"] == 4
+    bounded = client.get(f"/metrics/os?starting_date={today}", headers=_auth("alice")).json()["users"]
+    assert bounded["created_per_day"] == [{"date": today, "count": 3}]
+    assert bounded["total"] == 4
     assert (
-        client.get("/metrics/users?starting_date=2030-01-01&ending_date=2020-01-01", headers=_auth("alice")).status_code
+        client.get("/metrics/os?starting_date=2030-01-01&ending_date=2020-01-01", headers=_auth("alice")).status_code
         == 422
     )
 
     # deleting a user moves every number at once, with no refresh step in between
     client.delete("/users/carol", headers=_auth("alice"))
-    after = client.get("/metrics/users", headers=_auth("alice")).json()
-    assert after["users"]["total"] == 3
-    assert after["users_by_role"] == [{"role": "admin", "count": 1}, {"role": "viewer", "count": 1}]
+    after = client.get("/metrics/os", headers=_auth("alice")).json()["users"]
+    assert after["total"] == 3
+    assert after["by_role"] == [{"role": "admin", "count": 1}, {"role": "viewer", "count": 1}]
 
 
-def test_user_metrics_api_without_a_role_store(tmp_path):
-    """A directory on the plain scope plane still gets /metrics/users; the role fields
+def test_os_metrics_api_without_a_role_store(tmp_path):
+    """A directory on the plain scope plane still gets /metrics/os; the role fields
     are null rather than zero so a frontend can tell 'no role store' from 'no roles'."""
     from agno.db.sqlite import SqliteDb
 
@@ -302,11 +308,11 @@ def test_user_metrics_api_without_a_role_store(tmp_path):
     ).get_app()
     client = TestClient(app)
 
-    assert client.get("/metrics/users", headers=_auth("x")).status_code == 403
-    body = client.get("/metrics/users", headers=_auth("x", scopes=["metrics:read"])).json()
-    assert body["users"] == {"total": 1, "active": 1, "disabled": 0, "without_role": None}
-    assert [row["count"] for row in body["users_created"]] == [1]
-    assert body["users_by_role"] is None
+    assert client.get("/metrics/os", headers=_auth("x")).status_code == 403
+    users_section = client.get("/metrics/os", headers=_auth("x", scopes=["metrics:read"])).json()["users"]
+    assert users_section["total"] == 1 and users_section["disabled"] == 0
+    assert users_section["without_role"] is None and users_section["by_role"] is None
+    assert [row["count"] for row in users_section["created_per_day"]] == [1]
 
 
 def test_users_api_is_admin_only():

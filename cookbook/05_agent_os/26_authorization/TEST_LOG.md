@@ -197,20 +197,20 @@ so a frontend gets a clean users-only API.
 
 ---
 
-### 11_directory_metrics.py
+### 11_os_metrics.py
 
 **Status:** PASS
 
 **Test mode:** LIVE (driven via TestClient; no model calls needed)
 
 **Description:** Seeds a six-person directory (three of them backdated) and a role
-store, then reads `GET /metrics/users` through the AgentOS pipeline. Checks that the
+store, then reads `GET /metrics/os` through the AgentOS pipeline. Checks that the
 role decides access, that the date range bounds only the per-day series, and that a
 delete moves every number on the next read with no refresh step.
 
 **Result:** Exit 0. A subject with no role was refused (403); an analyst holding
-metrics:read and the admin both read the endpoint (200). Counts came back as total 6,
-active 5, disabled 1, without_role 2; the series had three days (2, 1, 3) and the role
+metrics:read and the admin both read the endpoint (200). The users section came back as
+total 6, active 5, disabled 1, without_role 2; the series had three days (2, 1, 3) and the role
 breakdown admin 1, analyst 2, viewer 1. `starting_date=today` returned only today's
 point with the total still 6. After deleting carol the total dropped to 5 and analyst
 to 1 on the very next read.

@@ -1,15 +1,17 @@
 """
-Metrics about the user directory: GET /metrics/users
+OS metrics: GET /metrics/os
 
-Once an AgentOS has a user directory it also serves a small metrics endpoint about
-that directory, computed live on every read (no cache, no refresh step):
+The run metrics under /metrics are per-database usage telemetry. OS metrics are
+about the AgentOS itself, one section per source, computed live on every read
+(no cache, no refresh step). Once an AgentOS has a user directory it serves the
+first section, "users":
 
-    users          total / active / disabled, and how many hold no role
-    users_created  users created per UTC day (a line chart)
-    users_by_role  users per role, when a role store is configured
+    total / active / disabled   the directory as it is now, plus without_role
+    created_per_day             users created per UTC day (a line chart)
+    by_role                     users per role, when a role store is configured
 
-The counts are the directory as it is now: deleting a user moves every number at
-once. Reading them needs the metrics:read scope, the same one the run metrics use.
+Deleting a user moves every number at once. Reading needs the metrics:read scope,
+the same one the run metrics use.
 
 This example seeds a directory and a role store, then reads the endpoint through
 the AgentOS pipeline with an admin token and prints the response. No model calls
@@ -17,7 +19,7 @@ and no database server are needed.
 
 Run it:
     pip install "agno[roles]"
-    python 11_directory_metrics.py
+    python 11_os_metrics.py
 """
 
 import json
@@ -31,15 +33,15 @@ from agno.os import AgentOS, create_dev_token
 from agno.os.authz import ManagedRoleStore, ManagedUserStore
 from agno.os.config import AuthorizationConfig, UserDirectoryConfig
 
-OS_ID = "directory-metrics-os"
+OS_ID = "os-metrics-os"
 SECRET = "your-secret-key-at-least-256-bits-long"
 
 os.makedirs("tmp", exist_ok=True)
-for stale in ("tmp/directory_metrics.db",):
+for stale in ("tmp/os_metrics.db",):
     if os.path.exists(stale):
         os.remove(stale)
 
-db = SqliteDb(db_file="tmp/directory_metrics.db")
+db = SqliteDb(db_file="tmp/os_metrics.db")
 roles = ManagedRoleStore(db=db)
 users = ManagedUserStore(db=db)
 
@@ -88,7 +90,7 @@ agent_os = AgentOS(
         algorithm="HS256",
         verify_audience=True,
         audience=OS_ID,
-        role_store=roles,  # auto-mounts /authz, /users and /metrics/users
+        role_store=roles,  # auto-mounts /authz, /users and /metrics/os
     ),
     user_directory=UserDirectoryConfig(user_store=users),
 )
@@ -96,6 +98,8 @@ app = agent_os.get_app()
 
 
 if __name__ == "__main__":
+    from datetime import datetime, timezone
+
     from fastapi.testclient import TestClient
 
     client = TestClient(app)
@@ -107,46 +111,32 @@ if __name__ == "__main__":
         return {"Authorization": f"Bearer {token}"}
 
     print("\n" + "=" * 78)
-    print("USER DIRECTORY METRICS - GET /metrics/users")
+    print("OS METRICS - GET /metrics/os")
     print("=" * 78)
 
     # The role decides. alice is admin (agent_os:admin covers metrics:read); erin has
     # no role, so her token is refused even though she is in the directory.
-    print(
-        "\nerin (no role):  ",
-        client.get("/metrics/users", headers=auth("erin")).status_code,
-        "(expected 403)",
-    )
-    print(
-        "bob (analyst):   ",
-        client.get("/metrics/users", headers=auth("bob")).status_code,
-        "(expected 200)",
-    )
-
-    response = client.get("/metrics/users", headers=auth("alice"))
+    erin = client.get("/metrics/os", headers=auth("erin")).status_code
+    bob = client.get("/metrics/os", headers=auth("bob")).status_code
+    response = client.get("/metrics/os", headers=auth("alice"))
+    print("\nerin (no role):  ", erin, "(expected 403)")
+    print("bob (analyst):   ", bob, "(expected 200)")
     print("alice (admin):   ", response.status_code, "(expected 200)")
     print("\n" + json.dumps(response.json(), indent=2))
 
     # The date range bounds the series only; the counts stay whole-directory.
-    from datetime import datetime, timezone
-
     today = datetime.now(timezone.utc).date().isoformat()
     bounded = client.get(
-        f"/metrics/users?starting_date={today}", headers=auth("alice")
-    ).json()
+        f"/metrics/os?starting_date={today}", headers=auth("alice")
+    ).json()["users"]
     print(
         "\nSeries from today only:",
-        bounded["users_created"],
+        bounded["created_per_day"],
         "with total still",
-        bounded["users"]["total"],
+        bounded["total"],
     )
 
     # No refresh step: deleting a user moves every number on the next read.
     client.delete("/users/carol", headers=auth("alice"))
-    after = client.get("/metrics/users", headers=auth("alice")).json()
-    print(
-        "After deleting carol:  total",
-        after["users"]["total"],
-        "by role",
-        after["users_by_role"],
-    )
+    after = client.get("/metrics/os", headers=auth("alice")).json()["users"]
+    print("After deleting carol:  total", after["total"], "by role", after["by_role"])

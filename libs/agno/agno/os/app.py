@@ -1536,14 +1536,14 @@ class AgentOS:
         role_store = getattr(authz_config, "role_store", None) if authz_config is not None else None
         directory_store = self.user_directory.user_store if self.user_directory is not None else None
 
-        # Directory metrics (/metrics/users) are read-only and derived from the directory
-        # itself, so unlike /users there is no operator-mounted variant to shadow: mount
-        # them whenever a directory exists, with or without a role store. The role
-        # breakdown is included only when the role_store shortcut is configured.
+        # OS metrics (/metrics/os) are read-only and, today, derived from the directory,
+        # so unlike /users there is no operator-mounted variant to shadow: mount them
+        # whenever a directory exists, with or without a role store. The role breakdown
+        # is included only when the role_store shortcut is configured.
         if directory_store is not None:
-            from agno.os.routers.metrics import get_user_metrics_router
+            from agno.os.routers.metrics import get_os_metrics_router
 
-            routers.append(get_user_metrics_router(directory_store, role_store=role_store, settings=self.settings))
+            routers.append(get_os_metrics_router(directory_store, role_store=role_store, settings=self.settings))
 
         if role_store is not None:
             from agno.os.authz.role_router import get_roles_router

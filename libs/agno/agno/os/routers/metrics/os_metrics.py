@@ -1,13 +1,15 @@
-"""Metrics about the managed user directory.
+"""OS-level metrics: numbers about the AgentOS itself rather than about the traffic
+one database has seen.
 
-Everything here is computed on read from the directory (and the role store when one is
-configured). There is no cache and no refresh step: the directory is bounded by the
-product's user limits and its ``created_at`` column is indexed, so a bounded group-by
-is cheaper than keeping a second table in step with it.
+The run metrics under ``/metrics`` are per-database usage telemetry, selected by
+``db_id`` and partitioned per user. OS metrics are OS-wide and come from the OS's own
+singletons. The first source is the managed user directory (and the role store when
+one is configured); further sources land here as sibling sections of the response.
 
-These numbers are OS-wide identity data, not per-database usage telemetry, which is why
-they live beside ``/metrics`` rather than inside it: the run metrics are selected by
-``db_id`` and partitioned per user, and the directory is neither.
+Everything is computed on read. The directory is bounded by the product's user limits
+and its ``created_at`` column is indexed, so a bounded group-by is cheaper than keeping
+a cache table in step with it. A source that does need one can add it without changing
+this contract.
 """
 
 import logging
@@ -19,8 +21,8 @@ from starlette.concurrency import run_in_threadpool
 
 from agno.os.auth import get_authentication_dependency
 from agno.os.routers.metrics.schemas import (
-    UserDirectoryCounts,
-    UserMetricsResponse,
+    OSMetricsResponse,
+    UserDirectoryMetrics,
     UsersByRole,
     UsersCreatedOnDay,
 )
@@ -50,14 +52,14 @@ def _day_bounds(starting_date: Optional[date], ending_date: Optional[date]) -> t
     return starting_at, ending_before
 
 
-def collect_user_metrics(
+def collect_user_directory_metrics(
     user_store: "ManagedUserStore",
     role_store: "Optional[ManagedRoleStore]" = None,
     starting_at: Optional[int] = None,
     ending_before: Optional[int] = None,
-) -> UserMetricsResponse:
-    """Read the directory metrics. The date range bounds only the per-day series; the
-    counts always describe the whole directory as it is now."""
+) -> UserDirectoryMetrics:
+    """The ``users`` section. The date range bounds only the per-day series; the counts
+    always describe the whole directory as it is now."""
     total = user_store.count()
     active = user_store.count(include_disabled=False)
     created = [
@@ -82,20 +84,37 @@ def collect_user_metrics(
                 counts[role] = counts.get(role, 0) + 1
         by_role = [UsersByRole(role=role, count=count) for role, count in sorted(counts.items())]
 
-    return UserMetricsResponse(
-        users=UserDirectoryCounts(total=total, active=active, disabled=total - active, without_role=without_role),
-        users_created=created,
-        users_by_role=by_role,
+    return UserDirectoryMetrics(
+        total=total,
+        active=active,
+        disabled=total - active,
+        without_role=without_role,
+        created_per_day=created,
+        by_role=by_role,
     )
 
 
-def get_user_metrics_router(
+def collect_os_metrics(
+    user_store: "ManagedUserStore",
+    role_store: "Optional[ManagedRoleStore]" = None,
+    starting_at: Optional[int] = None,
+    ending_before: Optional[int] = None,
+) -> OSMetricsResponse:
+    """Assemble every OS metrics section. New sources add a section here."""
+    return OSMetricsResponse(
+        users=collect_user_directory_metrics(
+            user_store, role_store, starting_at=starting_at, ending_before=ending_before
+        )
+    )
+
+
+def get_os_metrics_router(
     user_store: "ManagedUserStore",
     role_store: "Optional[ManagedRoleStore]" = None,
     settings: AgnoAPISettings = AgnoAPISettings(),
-    prefix: str = "/metrics/users",
+    prefix: str = "/metrics/os",
 ) -> APIRouter:
-    """Build the authenticated router serving metrics about the user directory."""
+    """Build the authenticated router serving OS-level metrics."""
     router = APIRouter(
         prefix=prefix,
         tags=["Metrics"],
@@ -104,30 +123,31 @@ def get_user_metrics_router(
 
     @router.get(
         "",
-        response_model=UserMetricsResponse,
-        operation_id="get_user_metrics",
-        summary="Get User Directory Metrics",
+        response_model=OSMetricsResponse,
+        operation_id="get_os_metrics",
+        summary="Get OS Metrics",
         description=(
-            "Directory size (total, active, disabled), users created per UTC day, and, when a "
-            "role store is configured, how many users hold each role and how many hold none. "
-            "The date range bounds only the per-day series."
+            "OS-wide metrics, computed on read. The users section carries the directory size "
+            "(total, active, disabled), users created per UTC day, and, when a role store is "
+            "configured, how many users hold each role and how many hold none. The date range "
+            "bounds only the per-day series."
         ),
     )
-    async def get_user_metrics(
+    async def get_os_metrics(
         starting_date: Optional[date] = Query(default=None, description="First UTC day of the series (YYYY-MM-DD)"),
         ending_date: Optional[date] = Query(default=None, description="Last UTC day of the series (YYYY-MM-DD)"),
-    ) -> UserMetricsResponse:
+    ) -> OSMetricsResponse:
         starting_at, ending_before = _day_bounds(starting_date, ending_date)
         try:
             return await run_in_threadpool(
-                collect_user_metrics,
+                collect_os_metrics,
                 user_store,
                 role_store,
                 starting_at=starting_at,
                 ending_before=ending_before,
             )
         except Exception as error:
-            logger.exception("GET /metrics/users failed")
-            raise HTTPException(status_code=500, detail=f"Error getting user metrics: {str(error)}")
+            logger.exception("GET /metrics/os failed")
+            raise HTTPException(status_code=500, detail=f"Error getting OS metrics: {str(error)}")
 
     return router
