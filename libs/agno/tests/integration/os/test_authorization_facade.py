@@ -6,6 +6,7 @@ admin API, and the trust_token_scopes composite. The facade is a convenience lay
 primitives, so these assert behavior parity with the hand-assembled setup.
 """
 
+import logging
 import time
 
 import pytest
@@ -49,13 +50,14 @@ def _agents():
 
 
 def test_verify_only_facade_builds_no_stores(tmp_path):
-    """The common case: verification with no roles. No role store, no directory, provider falls back
-    to scope RBAC. This is the one-liner an isolation / scope-based deployment writes."""
+    """The documented verify-only one-liner (no roles, no user_directory arg) builds NO stores: no
+    role store, no directory, provider falls back to scope RBAC. This is what an isolation /
+    scope-based deployment writes, and it must not silently stand up a directory + /users."""
     db = SqliteDb(db_file=str(tmp_path / "vo.db"))
-    authz = Authorization(verification_keys=[SECRET], audience=OS_ID, user_directory=False)
+    authz = Authorization(verification_keys=[SECRET], audience=OS_ID)  # the exact documented shape
     authz._bind(db)
     assert authz.role_store is None
-    assert authz.user_store is None
+    assert authz.user_store is None  # auto directory stays OFF with no roles/users
     cfg = authz.authorization_config()
     assert cfg.authorization_provider is None  # AgentOS defaults to ScopeAuthorizationProvider
     assert cfg.verification_keys == [SECRET] and cfg.audience == OS_ID
@@ -88,6 +90,130 @@ def test_seed_is_idempotent(tmp_path):
     assert authz.role_store.roles_of("root") == ["admin"]
     assert authz.role_store.roles_of("bob") == ["viewer"]
     assert authz.role_store.default_role() == "viewer"
+
+
+def test_reboot_preserves_runtime_operator_edits(tmp_path):
+    """The bootstrap must never clobber runtime edits. Define + seed, promote a user and widen a role
+    through the store (what the admin API does), then re-run the identical boot sequence (a restart).
+    Both edits survive -- the 'safe to run on every start' claim must actually hold."""
+    dbfile = str(tmp_path / "reboot.db")
+
+    def boot():
+        a = Authorization(db=SqliteDb(db_file=dbfile))
+        a.define_role("viewer", ["agents:*:read"], default=True)
+        a.define_role("runner", ["agents:*:read", "agents:*:run"])
+        a.seed(users=[("bob", {"role": "viewer"})])
+        return a
+
+    a1 = boot()
+    assert a1.role_store.roles_of("bob") == ["viewer"]
+    # operator edits at runtime, through the store (the /authz admin API path)
+    a1.role_store.assign("bob", "runner")  # promote bob
+    a1.role_store.set_role_scopes("viewer", ["agents:*:read", "agents:*:run"])  # widen viewer
+
+    a2 = boot()  # a restart re-runs define_role + seed on the same db
+    assert a2.role_store.roles_of("bob") == ["runner"]  # promotion survived
+    assert "agents:run" in a2.role_store.get_role_scopes("viewer")  # widened scope survived
+
+
+def test_seed_admin_role_configurable_and_warns_when_missing(tmp_path):
+    """seed(admin=) must not hardcode 'admin': admin_role is configurable, and seeding an admin whose
+    role does not grant agent_os:admin warns instead of silently leaving can_manage False."""
+    db = SqliteDb(db_file=str(tmp_path / "admin.db"))
+    authz = Authorization(db=db)
+    authz.define_role("superuser", ["agent_os:admin"])
+    authz.seed(admin="alice", admin_role="superuser")
+    assert authz.role_store.can_manage("alice") is True  # custom admin role confers admin
+
+    authz.seed(admin="bob")  # default admin_role "admin" was never defined
+    assert authz.role_store.can_manage("bob") is False
+
+    # The mismatch is warned at finalize (authorization_config), so order of define_role vs seed
+    # cannot cause a false positive. Capture the agno logger directly (propagate=False).
+    messages: list = []
+
+    class _Capture(logging.Handler):
+        def emit(self, record):
+            messages.append(record.getMessage())
+
+    handler = _Capture()
+    handler.setLevel(logging.WARNING)  # ignore INFO decision logs
+    logging.getLogger("agno").addHandler(handler)
+    try:
+        authz.authorization_config()  # AgentOS calls this once, after all setup
+    finally:
+        logging.getLogger("agno").removeHandler(handler)
+    assert any("agent_os:admin" in m and "bob" in m for m in messages)  # warned, not silent
+    assert not any("alice" in m for m in messages)  # alice's real admin role is not flagged
+
+
+def test_seed_admin_warning_survives_define_after_seed_order(tmp_path):
+    """The admin warning must not depend on call order: defining the admin role AFTER seeding it must
+    NOT warn (the deferred finalize sees the final state)."""
+    messages: list = []
+
+    class _Capture(logging.Handler):
+        def emit(self, record):
+            messages.append(record.getMessage())
+
+    db = SqliteDb(db_file=str(tmp_path / "order.db"))
+    authz = Authorization(db=db)
+    authz.seed(admin="alice", admin_role="boss")  # seed first
+    authz.define_role("boss", ["agent_os:admin"])  # define after
+    handler = _Capture()
+    handler.setLevel(logging.WARNING)  # ignore INFO decision logs
+    logging.getLogger("agno").addHandler(handler)
+    try:
+        authz.authorization_config()
+    finally:
+        logging.getLogger("agno").removeHandler(handler)
+    assert authz.role_store.can_manage("alice") is True
+    assert not messages  # no false-positive warning despite seed-before-define
+
+
+def test_facade_setup_rejects_async_db(tmp_path):
+    """define_role/seed write synchronously; against an async db they raise a clear facade-level error
+    instead of a confusing 'use the async variant' failure deep in the engine."""
+    from agno.db.sqlite.async_sqlite import AsyncSqliteDb
+
+    authz = Authorization(db=AsyncSqliteDb(db_file=str(tmp_path / "a.db")))
+    with pytest.raises(ValueError, match="synchronous database"):
+        authz.define_role("viewer", ["agents:*:read"])
+
+
+def test_facade_async_os_db_setup_raises_at_agentos(tmp_path):
+    """Borrowing an async OS db: the buffered define_role surfaces the same clear error when AgentOS
+    binds, not a deep engine error."""
+    from agno.db.sqlite.async_sqlite import AsyncSqliteDb
+
+    authz = Authorization()  # borrow the OS db
+    authz.define_role("viewer", ["agents:*:read"])  # buffered until bind
+    with pytest.raises(ValueError, match="synchronous database"):
+        AgentOS(id=OS_ID, db=AsyncSqliteDb(db_file=str(tmp_path / "os.db")), agents=_agents(), authorization=authz)
+
+
+def test_facade_prebuilt_async_store_no_setup_ok(tmp_path):
+    """A facade with a pre-configured async store and NO define_role/seed works against an async db:
+    only the sync setup writes are refused, not the provider wiring / request-time path."""
+    from agno.db.sqlite.async_sqlite import AsyncSqliteDb
+
+    from agno.os.authz.role_store import ManagedRoleStore
+
+    adb = AsyncSqliteDb(db_file=str(tmp_path / "a.db"))
+    authz = Authorization(role_store=ManagedRoleStore(db=adb), verification_keys=[SECRET], audience=OS_ID)
+    authz._bind(adb)
+    cfg = authz.authorization_config()  # no writes, just wires the provider
+    assert cfg.authorization_provider is not None
+
+
+def test_agentos_rejects_config_alongside_facade(tmp_path):
+    """Passing authorization_config / user_directory / audit alongside an Authorization facade is a
+    silent-preference footgun (a data split if the facade has its own db), so AgentOS rejects it."""
+    db = SqliteDb(db_file=str(tmp_path / "conflict.db"))
+    authz = Authorization(db=db, verification_keys=[SECRET], audience=OS_ID)
+    authz.define_role("admin", ["agent_os:admin"])
+    with pytest.raises(ValueError, match="already owns"):
+        AgentOS(id=OS_ID, db=db, agents=_agents(), authorization=authz, user_directory=True)
 
 
 # --------------------------------------------------------------------------- served end to end
@@ -136,6 +262,17 @@ def test_served_facade_enforces_roles(tmp_path, borrow_db):
         # ...but the unknown caller WAS JIT-provisioned with the default role, so a read is allowed
         # (an ungranted caller would be 403 here too) -- this is what proves the default grant fired.
         assert client.get("/agents/research", headers=_auth("nobody")).status_code == 200
+
+
+def test_served_verify_only_mounts_no_admin_api(tmp_path):
+    """A served verify-only facade (no roles) mounts neither /authz nor /users -- the directory stays
+    off, so an isolation / scope-based deployment gets a clean surface with no role machinery."""
+    db = SqliteDb(db_file=str(tmp_path / "vo_served.db"))
+    authz = Authorization(verification_keys=[SECRET], algorithm="HS256", verify_audience=True, audience=OS_ID)
+    app = AgentOS(id=OS_ID, db=db, agents=_agents(), authorization=authz).get_app()
+    paths = {getattr(r, "path", "") for r in app.routes}
+    assert not any(p.startswith("/authz") for p in paths)  # no roles -> no /authz
+    assert not any(p == "/users" or p.startswith("/users/") for p in paths)  # no directory -> no /users
 
 
 def test_served_facade_list_filtering(tmp_path):

@@ -8,14 +8,14 @@ the same database. :class:`Authorization` owns all of that and wires itself into
 
     from agno.os.authz import Authorization
 
-    authz = Authorization(db=db, audit=True, trust_token_scopes=True)
+    authz = Authorization(db=db, audit=True, trust_token_scopes=True,
+                          verification_keys=KEYS, audience=OS_ID)
     authz.define_role("admin", ["agent_os:admin"])
     authz.define_role("viewer", ["agents:*:read"], default=True)
     authz.define_role("runner", ["agents:*:read", "agents:*:run"])
     authz.seed(admin=ADMIN_SUBJECT, users=[("bob", {"email": "bob@co", "role": "viewer"})])
 
-    agent_os = AgentOS(id=OS_ID, db=db, agents=[...], authorization=authz,
-                       verification_keys=KEYS, audience=OS_ID)
+    agent_os = AgentOS(id=OS_ID, db=db, agents=[...], authorization=authz)
 
 Roles are opt-in. Verification lives here because it already lives under authorization today
 (``authorization=True`` + ``AuthorizationConfig(verification_keys=...)``), and plenty of setups
@@ -35,7 +35,8 @@ role and user definitions are buffered and applied once the db binds (the same w
 
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 
-from agno.os.authz._db import resolve_authz_db
+from agno.os.authz._db import is_async_authz_db, resolve_authz_db
+from agno.utils.log import log_warning
 
 if TYPE_CHECKING:
     from agno.os.authz.audit import AuditSink
@@ -52,6 +53,17 @@ _ADMIN_ROLE = "admin"
 _NEEDS_DB = (
     "Authorization needs a SQL database: pass Authorization(db=...) / db_url=..., or hand it to "
     "AgentOS(db=...) so it can adopt the OS database."
+)
+
+# define_role()/seed() write at construction time, which is synchronous; an async database can only
+# be driven from an event loop, and driving it from a throwaway loop here would bind its connection
+# pool to the wrong loop. So setup needs a sync db; async is for request-time enforcement.
+_ASYNC_SETUP_MSG = (
+    "Authorization.define_role()/seed() write roles and users at setup time and need a synchronous "
+    "database, but the bound database is async ({db_type}). Give AgentOS a sync db for setup, or "
+    "configure roles/users yourself through the async store API (ManagedRoleStore.aset_role_scopes / "
+    "ManagedUserStore.aupsert) and pass them via Authorization(role_store=..., user_store=...). A "
+    "facade with pre-built stores and no define_role()/seed() calls works against an async db."
 )
 
 # A scope entry as accepted by ManagedRoleStore.set_role_scopes.
@@ -83,7 +95,7 @@ class Authorization:
         # --- switches ---
         audit: Union[bool, "AuditSink"] = False,
         trust_token_scopes: bool = False,
-        user_directory: Union[bool, "ManagedUserStore"] = True,
+        user_directory: Union[bool, "ManagedUserStore", None] = None,
         auto_provision: bool = True,
         default_role: Optional[str] = None,
         # --- escape hatches (bring your own) ---
@@ -104,8 +116,10 @@ class Authorization:
             trust_token_scopes: run a scope plane alongside managed roles, so operators authorized
                 by their token scopes and end users authorized by the role store both work
                 (composed with OR). No effect without roles.
-            user_directory: ``True`` builds a ``ManagedUserStore`` roster from the db; pass a store
-                to use your own; ``False`` for no directory.
+            user_directory: ``None`` (default) is auto -- a directory is built only when roles are
+                used or users are seeded, so a pure verify-only ``Authorization`` builds none.
+                ``True`` always builds a ``ManagedUserStore`` roster; pass a store to use your own;
+                ``False`` for no directory.
             auto_provision / default_role: JIT-provision an unknown subject on first valid token,
                 and the role to grant them (falls back to the role flagged ``default=True``).
             authorization_provider / engine / role_store / user_store: primitives. Supply any and
@@ -134,20 +148,27 @@ class Authorization:
         self._user_store: Optional["ManagedUserStore"] = user_store
         self._audit_sink: Optional["AuditSink"] = None
 
-        # Directory on unless explicitly disabled (or a store is supplied).
-        self._directory_enabled = user_directory is not False
-        # An explicit ManagedUserStore passed as user_directory is adopted as the store.
-        if user_store is None and user_directory not in (True, False):
+        # Directory policy. None = auto: build one only when roles are used or users are seeded, so a
+        # pure verify-only Authorization(verification_keys=...) builds NO directory. True/False force
+        # it; a ManagedUserStore is adopted as the store (and turns it on).
+        self._user_directory_arg = user_directory
+        if user_store is None and user_directory not in (True, False, None):
             self._user_store = user_directory  # type: ignore[assignment]
 
-        # Roles are in play if any were defined, a store/engine was supplied.
+        # Roles are in play if any were defined, or a store/engine was supplied.
         self._roles_defined = role_store is not None or engine is not None
+        # Whether seed() has added directory users -- a signal that a directory is wanted under auto.
+        self._users_seeded = False
 
         # Buffers applied at bind time (used when no db is available yet).
         self._role_defs: List[Tuple[str, List[ScopeInput], bool, Optional[str], Optional[str]]] = []
-        self._seed_calls: List[Tuple[Optional[str], Optional[List[Tuple[str, Dict[str, Any]]]]]] = []
+        self._seed_calls: List[Tuple[Optional[str], str, Optional[List[Tuple[str, Dict[str, Any]]]]]] = []
+        # Admins seeded, checked once at finalize so a warning never depends on define_role/seed order.
+        self._seeded_admins: List[Tuple[str, str]] = []
+        self._admins_checked = False
 
         self._db: Any = resolve_authz_db(db, db_url)
+        self._db_is_async = False
         self._bound = False
         if self._db is not None:
             self._bind()
@@ -162,13 +183,16 @@ class Authorization:
         name: Optional[str] = None,
         description: Optional[str] = None,
     ) -> "Authorization":
-        """Define (or replace) a role's scopes. ``default=True`` marks it the role a JIT-provisioned
-        user gets. Applied now if a db is bound, else buffered until AgentOS lends one. Chainable."""
+        """Define a role's scopes, if it does not already exist. ``default=True`` marks it the role a
+        JIT-provisioned user gets. Applied now if a db is bound, else buffered until AgentOS lends one.
+
+        BOOTSTRAP semantics: an existing role is left untouched, so re-running this on every start
+        never overwrites scope changes an admin made at runtime through the ``/authz`` API. To change
+        a role's scopes after first boot, use the admin API (or ``ManagedRoleStore.set_role_scopes``
+        directly for a declarative, code-owns-the-role model). Chainable."""
         self._roles_defined = True
         if self._bound:
-            self._ensure_role_store().set_role_scopes(
-                slug, scopes, name=name, description=description, is_default=default
-            )
+            self._apply_role_def(slug, scopes, default, name, description)
         else:
             self._role_defs.append((slug, scopes, default, name, description))
         return self
@@ -177,15 +201,24 @@ class Authorization:
         self,
         *,
         admin: Optional[str] = None,
+        admin_role: str = _ADMIN_ROLE,
         users: Optional[List[Tuple[str, Dict[str, Any]]]] = None,
     ) -> "Authorization":
-        """Idempotent bootstrap. ``admin=<subject>`` grants the ``"admin"`` role (define it first).
-        ``users=[(subject, {"email", "name", "role"})]`` adds each to the directory and assigns its
-        role. Safe to run on every start: upserts and single-role assigns are no-ops when unchanged."""
+        """Bootstrap an admin and directory users, without ever clobbering runtime state.
+
+        ``admin=<subject>`` grants ``admin_role`` (default ``"admin"`` -- define it first) to that
+        subject if they hold no role yet. ``users=[(subject, {"email", "name", "role"})]`` adds each
+        to the directory and assigns its role, again only if the subject is new.
+
+        BOOTSTRAP semantics: anything that already exists is left as is, so seeding on every start is
+        safe -- an operator who promoted a user or edited a profile through the admin API keeps that
+        change across restarts. Manage users/assignments after first boot through the admin API."""
+        if users:
+            self._users_seeded = True
         if self._bound:
-            self._apply_seed(admin, users)
+            self._apply_seed(admin, admin_role, users)
         else:
-            self._seed_calls.append((admin, users))
+            self._seed_calls.append((admin, admin_role, users))
         return self
 
     # ------------------------------------------------------------------ binding
@@ -198,24 +231,32 @@ class Authorization:
         self._db = self._db or os_db
         if self._db is None:
             raise ValueError(_NEEDS_DB)
+        self._db_is_async = is_async_authz_db(self._db)
         self._audit_sink = self._resolve_audit()
-        if self._directory_enabled:
-            self._ensure_user_store()
         if self._roles_defined or self._role_defs:
             self._ensure_role_store()
+        if self._directory_wanted():
+            self._ensure_user_store()
         self._bound = True
         self._flush()
         return self
 
     def _flush(self) -> None:
         for slug, scopes, default, name, description in self._role_defs:
-            self._ensure_role_store().set_role_scopes(
-                slug, scopes, name=name, description=description, is_default=default
-            )
+            self._apply_role_def(slug, scopes, default, name, description)
         self._role_defs.clear()
-        for admin, users in self._seed_calls:
-            self._apply_seed(admin, users)
+        for admin, admin_role, users in self._seed_calls:
+            self._apply_seed(admin, admin_role, users)
         self._seed_calls.clear()
+
+    def _directory_wanted(self) -> bool:
+        """Whether a user directory should exist. Auto (``None``) builds one only once roles are used
+        or users are seeded, so verify-only stays store-free."""
+        if self._user_directory_arg is False:
+            return False
+        if self._user_directory_arg is True or self._user_store is not None:
+            return True
+        return self._roles_defined or self._users_seeded
 
     def _resolve_audit(self) -> Optional["AuditSink"]:
         if self._audit_arg is False or self._audit_arg is None:
@@ -248,31 +289,85 @@ class Authorization:
             self._user_store.attach_audit(self._audit_sink)
         return self._user_store
 
-    def _apply_seed(self, admin: Optional[str], users: Optional[List[Tuple[str, Dict[str, Any]]]]) -> None:
+    def _apply_role_def(
+        self,
+        slug: str,
+        scopes: List[ScopeInput],
+        default: bool,
+        name: Optional[str],
+        description: Optional[str],
+    ) -> None:
+        """Set a role's scopes, but only if it has none yet -- so a runtime scope edit through the
+        admin API is never overwritten by re-running the boot sequence.
+
+        The check is on SCOPES, not mere existence: a role that exists only because someone was
+        assigned to it (an assignment-only role, e.g. seeded before its define_role) still has no
+        scopes, so this must define them rather than skip it as 'already there'."""
+        self._require_sync_setup()
+        store = self._ensure_role_store()
+        if store.get_role_scopes(slug):  # already has scopes -> a definition/edit to preserve
+            return
+        store.set_role_scopes(slug, scopes, name=name, description=description, is_default=default)
+
+    def _apply_seed(
+        self, admin: Optional[str], admin_role: str, users: Optional[List[Tuple[str, Dict[str, Any]]]]
+    ) -> None:
+        self._require_sync_setup()
+        role_store = self._ensure_role_store()
         if admin is not None:
-            self._ensure_role_store().assign(admin, _ADMIN_ROLE)  # idempotent (one role per subject)
-            if self._user_store is not None:
-                self._user_store.upsert(admin, name="Bootstrap admin")
+            if not role_store.roles_of(admin):  # bootstrap: never override an existing assignment
+                role_store.assign(admin, admin_role)
+            if self._directory_wanted():
+                users_store = self._ensure_user_store()
+                if users_store.get(admin) is None:
+                    users_store.upsert(admin, name="Bootstrap admin")
+            # Checked once at finalize (authorization_config), so the warning never depends on whether
+            # define_role ran before or after this seed.
+            self._seeded_admins.append((admin, admin_role))
         for subject, info in users or []:
             info = dict(info)
             role = info.pop("role", None)
-            if self._user_store is not None:
-                self._user_store.upsert(subject, email=info.get("email"), name=info.get("name"))
-            if role:
-                self._ensure_role_store().assign(subject, role)
+            if self._directory_wanted():
+                users_store = self._ensure_user_store()
+                if users_store.get(subject) is None:  # bootstrap: keep an admin's profile edits
+                    users_store.upsert(subject, email=info.get("email"), name=info.get("name"))
+            if role and not role_store.roles_of(subject):  # bootstrap: keep a runtime promotion
+                role_store.assign(subject, role)
+
+    def _require_sync_setup(self) -> None:
+        """Setup writes run synchronously; refuse an async db with a clear, facade-level message rather
+        than letting a sync store call fail deep in the engine."""
+        if self._db_is_async:
+            raise ValueError(_ASYNC_SETUP_MSG.format(db_type=type(self._db).__name__))
+
+    def _check_seeded_admins(self) -> None:
+        """Warn (once) about any seeded admin whose role does not actually confer ``agent_os:admin``,
+        so a mismatch surfaces at boot instead of as a silent ``can_manage() == False`` at runtime."""
+        if self._admins_checked or self._role_store is None:
+            return
+        self._admins_checked = True
+        for subject, admin_role in dict(self._seeded_admins).items():  # de-dupe, last role wins
+            if not self._role_store.can_manage(subject):
+                log_warning(
+                    f"seed(admin={subject!r}) granted role {admin_role!r}, but that role does not confer "
+                    "'agent_os:admin', so this subject cannot manage authorization (can_manage is False). "
+                    f"Define it, e.g. define_role({admin_role!r}, ['agent_os:admin']), or pass "
+                    "seed(admin_role=<your admin role>)."
+                )
 
     # ------------------------------------------------------------------ provider
     def _provider(self) -> Optional[Union["AuthorizationProvider", List["AuthorizationProvider"]]]:
         """The provider AgentOS should enforce with, or None to fall back to scope RBAC."""
         if self._provider_override is not None:
             return self._provider_override
-        if not self._uses_roles or self._role_store is None:
+        store = self.role_store
+        if store is None:
             return None  # verify-only / scope-based: AgentOS defaults to ScopeAuthorizationProvider
         if self._trust_token_scopes:
             from agno.os.authz.scope_provider import ScopeAuthorizationProvider
 
-            return [ScopeAuthorizationProvider(), self._role_store.provider]
-        return self._role_store.provider
+            return [ScopeAuthorizationProvider(), store.provider]
+        return store.provider
 
     @property
     def _uses_roles(self) -> bool:
@@ -282,14 +377,18 @@ class Authorization:
     @property
     def role_store(self) -> Optional["ManagedRoleStore"]:
         """The role store, or None when the facade is verify-only. Mount the ``/authz`` admin API
-        only when this is set."""
-        return self._role_store if self._uses_roles else None
+        only when this is set. Built on demand once a db is bound."""
+        if not self._uses_roles:
+            return None
+        return self._ensure_role_store() if self._bound else self._role_store
 
     @property
     def user_store(self) -> Optional["ManagedUserStore"]:
-        """The directory store, or None when no directory. Mount the ``/users`` admin API only when
-        this is set."""
-        return self._user_store if self._directory_enabled else None
+        """The directory store, or None when no directory is wanted. Mount the ``/users`` admin API
+        only when this is set. Built on demand once a db is bound."""
+        if not self._directory_wanted():
+            return None
+        return self._ensure_user_store() if self._bound else self._user_store
 
     @property
     def audit_sink(self) -> Optional["AuditSink"]:
@@ -298,19 +397,22 @@ class Authorization:
 
     def authorization_config(self) -> "AuthorizationConfig":
         """The ``AuthorizationConfig`` AgentOS enforces: verification settings plus the composed
-        provider (or none, so AgentOS uses scope RBAC)."""
+        provider (or none, so AgentOS uses scope RBAC). AgentOS calls this once after all setup, so it
+        is where a seeded admin whose role does not grant admin is finally validated."""
         from agno.os.config import AuthorizationConfig
 
+        self._check_seeded_admins()
         return AuthorizationConfig(authorization_provider=self._provider(), **self._verification)
 
     def user_directory_config(self) -> Optional["UserDirectoryConfig"]:
         """The ``UserDirectoryConfig`` for AgentOS, or None when no directory is configured."""
-        if not self._directory_enabled or self._user_store is None:
+        store = self.user_store
+        if store is None:
             return None
         from agno.os.config import UserDirectoryConfig
 
         return UserDirectoryConfig(
-            user_store=self._user_store,
+            user_store=store,
             auto_provision=self._auto_provision,
             default_role=self._default_role,
         )

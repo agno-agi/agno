@@ -481,12 +481,28 @@ class AgentOS:
         from agno.os.authz.facade import Authorization as _Authorization
 
         if isinstance(authorization, _Authorization):
+            # The facade owns these, so accepting them here too would silently pick one and drop the
+            # other (a data-split footgun if the facade points at a different db). Fail loudly.
+            conflicts = [
+                name
+                for name, value in (
+                    ("authorization_config", authorization_config),
+                    ("user_directory", user_directory),
+                    ("audit", audit),
+                )
+                if value is not None
+            ]
+            if conflicts:
+                raise ValueError(
+                    "AgentOS(authorization=Authorization(...)) already owns "
+                    + ", ".join(conflicts)
+                    + f"; configure {'it' if len(conflicts) == 1 else 'them'} on the Authorization "
+                    "object, not on AgentOS."
+                )
             authorization._bind(self.db)
             authorization_config = authorization.authorization_config()
-            if audit is None:
-                audit = authorization.audit_sink
-            if user_directory is None:
-                user_directory = authorization.user_directory_config()
+            audit = authorization.audit_sink
+            user_directory = authorization.user_directory_config()
             self._facade_role_store = authorization.role_store
             self._facade_user_store = authorization.user_store
             authorization = True
