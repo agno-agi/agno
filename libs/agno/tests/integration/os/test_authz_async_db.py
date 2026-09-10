@@ -234,12 +234,15 @@ def test_disabled_user_denied_over_async_directory(tmp_path):
 
 
 def test_user_management_metrics_async_on_async_db(tmp_path):
-    """The reads behind /users/metrics have async twins that work on an async DB, and the
-    sync collector on a sync DB agrees with the async one."""
+    """The reads behind /users/metrics have async twins that work on an async DB, the
+    served endpoint works on one, and the sync collector on a sync DB agrees with the
+    async one."""
     from agno.os.authz.role_router import (
         acollect_user_management_metrics,
         collect_user_management_metrics,
+        get_users_router,
     )
+    from agno.os.config import UserDirectoryConfig
 
     adb = AsyncSqliteDb(db_file=str(tmp_path / "metrics.db"))
     roles = ManagedRoleStore(db=adb)
@@ -269,10 +272,29 @@ def test_user_management_metrics_async_on_async_db(tmp_path):
 
     asyncio.run(seed())
 
-    # The served /users/metrics handler awaits these same twins, so it is async-clean;
-    # it is not exercised end to end here because the users router's admin dependency
-    # still calls role_store.can_manage synchronously, which the native engine refuses on
-    # an async DB. That gap belongs to the admin routers as a whole, not to this endpoint.
+    # served end to end on the async DB: the admin gate awaits the role store, and the
+    # handler awaits the collector, so nothing on the path touches the DB synchronously
+    os_ = AgentOS(
+        id=OS_ID,
+        agents=[Agent(id="research", name="R", db=InMemoryDb())],
+        db=adb,
+        authorization=True,
+        authorization_config=AuthorizationConfig(
+            verification_keys=[SECRET],
+            algorithm="HS256",
+            verify_audience=True,
+            audience=OS_ID,
+            authorization_provider=roles.provider,
+        ),
+        user_directory=UserDirectoryConfig(user_store=users),
+    )
+    app = os_.get_app()
+    app.include_router(get_users_router(users, role_store=roles))
+    client = TestClient(app)
+    assert client.get("/users/metrics", headers=_auth("bob")).status_code == 403
+    body = client.get("/users/metrics", headers=_auth("alice")).json()
+    assert body["total"] == 4 and body["disabled"] == 1 and body["without_role"] == 1
+    assert body["by_role"] == [{"role": "admin", "count": 1}, {"role": "viewer", "count": 2}]
 
     # parity: the sync collector on a sync DB produces the same numbers the async one does
     sdb = SqliteDb(db_file=str(tmp_path / "metrics_sync.db"))

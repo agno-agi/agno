@@ -63,7 +63,7 @@ User directory admin API -- get_users_router (default prefix ``/users``):
 
 import time
 from datetime import date as date_type
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
@@ -319,16 +319,18 @@ def _make_require_admin(role_store: "Optional[ManagedRoleStore]" = None) -> Any:
     administer despite being denied every resource -- a privilege escalation.
     """
 
-    def require_admin(request: Request) -> str:
+    # Async, and the token plane is checked first: the managed plane is a DB read, and
+    # the role store may be bound to an async database, which its sync methods refuse.
+    async def require_admin(request: Request) -> str:
         if not getattr(request.state, "authenticated", False):
             raise HTTPException(status_code=401, detail="Not authenticated")
         principal_id = getattr(request.state, "user_id", None)
         claims = getattr(request.state, "claims", {}) or {}
         token_scopes = getattr(request.state, "scopes", []) or []
         admin_scope = getattr(request.state, "admin_scope", None) or AgentOSScope.ADMIN.value
-        token_admin = admin_scope in token_scopes and _token_scopes_enforced(request)
-        managed_admin = role_store.can_manage(principal_id, claims) if role_store is not None else False
-        if token_admin or managed_admin:
+        if admin_scope in token_scopes and _token_scopes_enforced(request):
+            return principal_id or ""
+        if role_store is not None and await role_store.acan_manage(principal_id, claims):
             return principal_id or ""
         raise HTTPException(status_code=403, detail="Admin privileges required")
 
@@ -541,8 +543,10 @@ def _day_bounds(starting_date: Optional[date_type], ending_date: Optional[date_t
         if starting_date is not None
         else None
     )
+    # The exclusive bound is one day after the start of ending_date, added in epoch
+    # seconds rather than as a date so date.max (9999-12-31) cannot overflow.
     ending_before = (
-        int((datetime.combine(ending_date, datetime.min.time(), tzinfo=timezone.utc) + timedelta(days=1)).timestamp())
+        int(datetime.combine(ending_date, datetime.min.time(), tzinfo=timezone.utc).timestamp()) + 24 * 60 * 60
         if ending_date is not None
         else None
     )

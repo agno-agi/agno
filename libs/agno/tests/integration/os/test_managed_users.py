@@ -281,6 +281,8 @@ def test_user_metrics_api_with_a_role_store():
         client.get("/users/metrics?starting_date=2030-01-01&ending_date=2020-01-01", headers=_auth("alice")).status_code
         == 422
     )
+    # the far end of the calendar is a valid bound, not a 500
+    assert client.get("/users/metrics?ending_date=9999-12-31", headers=_auth("alice")).json()["total"] == 4
 
     # deleting a user moves every number at once, with no refresh step in between
     client.delete("/users/carol", headers=_auth("alice"))
