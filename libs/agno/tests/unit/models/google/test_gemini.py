@@ -1,7 +1,7 @@
 import asyncio
 import tempfile
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -117,6 +117,23 @@ def _invoke_with_api_error(error):
     return exc_info.value
 
 
+async def _ainvoke_with_api_error(error):
+    model = Gemini(api_key="test-key")
+    mock_client = MagicMock()
+    mock_client.aio.models.generate_content = AsyncMock(side_effect=error)
+
+    with (
+        patch.object(model, "get_client", return_value=mock_client),
+        patch.object(model, "_format_messages", return_value=([], None)),
+        patch.object(model, "get_request_params", return_value={}),
+    ):
+        with pytest.raises(ModelProviderError) as exc_info:
+            await model.ainvoke(
+                messages=[Message(role="user", content="Hello")], assistant_message=Message(role="assistant")
+            )
+    return exc_info.value
+
+
 def test_gemini_api_error_message_survives_an_aiohttp_response():
     from google.genai.errors import ServerError
 
@@ -128,6 +145,23 @@ def test_gemini_api_error_message_survives_an_aiohttp_response():
         }
     }
     error = _invoke_with_api_error(ServerError(504, body, _AiohttpLikeResponse()))
+
+    assert error.message == "Deadline expired before operation could complete."
+    assert error.status_code == 504
+
+
+async def test_gemini_api_error_message_survives_an_aiohttp_response_on_ainvoke():
+    """The reported path: google-genai's async client answers through aiohttp."""
+    from google.genai.errors import ServerError
+
+    body = {
+        "error": {
+            "code": 504,
+            "message": "Deadline expired before operation could complete.",
+            "status": "DEADLINE_EXCEEDED",
+        }
+    }
+    error = await _ainvoke_with_api_error(ServerError(504, body, _AiohttpLikeResponse()))
 
     assert error.message == "Deadline expired before operation could complete."
     assert error.status_code == 504
