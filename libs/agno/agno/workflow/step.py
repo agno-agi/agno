@@ -1057,7 +1057,7 @@ class Step:
         add_session_state_to_context: Optional[bool] = None,
     ) -> StepOutput:
         """Execute the step with StepInput, returning final StepOutput (non-streaming)"""
-        log_debug(f"Executing step: {self.name}")
+        log_debug(f"Executing step: {self.name}", log_level=2)
 
         # Shallow-copy run_context so options resolved here don't leak into the next step
         run_context = copy(run_context) if run_context is not None else None
@@ -1417,16 +1417,16 @@ class Step:
         # Execute with retries and streaming
         for attempt in range(self.max_retries + 1):
             try:
-                log_debug(f"Step {self.name} streaming attempt {attempt + 1}/{self.max_retries + 1}")
+                log_debug(f"Step {self.name} streaming attempt {attempt + 1}/{self.max_retries + 1}", log_level=2)
                 final_response = None
 
                 self._rehydrate_step_input_media(step_input, self._resolve_media_storage(workflow_media_storage))
                 if self._executor_type == "function":
-                    log_debug(f"Executing function executor for step: {self.name}")
+                    log_debug(f"Executing function executor for step: {self.name}", log_level=2)
                     if _is_async_callable(self.active_executor) or _is_async_generator_function(self.active_executor):
                         raise ValueError("Cannot use async function with synchronous execution")
                     if _is_generator_function(self.active_executor):
-                        log_debug("Function returned iterable, streaming events")
+                        log_debug("Function returned iterable, streaming events", log_level=2)
                         content = ""
                         try:
                             iterator = self._call_custom_function(
@@ -1487,7 +1487,7 @@ class Step:
                             final_response = StepOutput(content=result.content)
                         else:
                             final_response = StepOutput(content=str(result))
-                        log_debug("Function returned non-iterable, created StepOutput")
+                        log_debug("Function returned non-iterable, created StepOutput", log_level=2)
                 else:
                     # For agents and teams, prepare message with context
                     message = self._prepare_message(
@@ -1652,7 +1652,7 @@ class Step:
                 # If we didn't get a final response, create one
                 if final_response is None:
                     final_response = StepOutput(content="")
-                    log_debug("Created empty StepOutput as fallback")
+                    log_debug("Created empty StepOutput as fallback", log_level=2)
 
                 # Switch back to workflow logger after execution
                 use_workflow_logger()
@@ -1722,8 +1722,8 @@ class Step:
         add_session_state_to_context: Optional[bool] = None,
     ) -> StepOutput:
         """Execute the step with StepInput, returning final StepOutput (non-streaming)"""
-        logger.info(f"Executing async step (non-streaming): {self.name}")
-        log_debug(f"Executor type: {self._executor_type}")
+        log_debug(f"Executing async step (non-streaming): {self.name}", log_level=2)
+        log_debug(f"Executor type: {self._executor_type}", log_level=2)
 
         # Shallow-copy run_context so options resolved here don't leak into the next step
         run_context = copy(run_context) if run_context is not None else None
@@ -2060,12 +2060,12 @@ class Step:
         # Execute with retries and streaming
         for attempt in range(self.max_retries + 1):
             try:
-                log_debug(f"Async step {self.name} streaming attempt {attempt + 1}/{self.max_retries + 1}")
+                log_debug(f"Async step {self.name} streaming attempt {attempt + 1}/{self.max_retries + 1}", log_level=2)
                 final_response = None
 
                 await self._arehydrate_step_input_media(step_input, self._resolve_media_storage(workflow_media_storage))
                 if self._executor_type == "function":
-                    log_debug(f"Executing async function executor for step: {self.name}")
+                    log_debug(f"Executing async function executor for step: {self.name}", log_level=2)
 
                     # Check if the function is an async generator
                     if _is_async_generator_function(self.active_executor):

@@ -1752,7 +1752,7 @@ def get_workflow_router(
         if session_id:
             logger.debug(f"Continuing session: {session_id}")
         else:
-            logger.debug("Creating new session")
+            log_debug("Creating new session", log_level=2)
             session_id = str(uuid4())
 
         # Extract auth token for remote workflows

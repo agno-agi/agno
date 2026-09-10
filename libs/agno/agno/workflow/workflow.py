@@ -1081,7 +1081,7 @@ class Workflow:
     def initialize_workflow(self):
         if self.id is None:
             self.set_id()
-            log_debug(f"Generated new workflow_id: {self.id}")
+            log_debug(f"Generated new workflow_id: {self.id}", log_level=2)
 
     def _initialize_session(
         self,
@@ -1098,7 +1098,7 @@ class Workflow:
                 # We make the session_id sticky to the agent instance if no session_id is provided
                 self.session_id = session_id
 
-        log_debug(f"Session ID: {session_id}", center=True)
+        log_debug(f"Session: {session_id}")
 
         # Use the default user_id when necessary
         if user_id is None or user_id == "":
@@ -1872,13 +1872,13 @@ class Workflow:
         # Try to load from database
         workflow_session = None
         if self.db is not None:
-            log_debug(f"Reading WorkflowSession: {session_id}")
+            log_debug(f"Reading WorkflowSession: {session_id}", log_level=2)
 
             workflow_session = cast(WorkflowSession, self._read_session(session_id=session_id, user_id=user_id))
 
         if workflow_session is None:
             # Creating new session if none found
-            log_debug(f"Creating new WorkflowSession: {session_id}")
+            log_debug(f"Creating new WorkflowSession: {session_id}", log_level=2)
             from copy import deepcopy
 
             session_data = {}
@@ -1916,13 +1916,13 @@ class Workflow:
         # Try to load from database
         workflow_session = None
         if self.db is not None:
-            log_debug(f"Reading WorkflowSession: {session_id}")
+            log_debug(f"Reading WorkflowSession: {session_id}", log_level=2)
 
             workflow_session = cast(WorkflowSession, await self._aread_session(session_id=session_id, user_id=user_id))
 
         if workflow_session is None:
             # Creating new session if none found
-            log_debug(f"Creating new WorkflowSession: {session_id}")
+            log_debug(f"Creating new WorkflowSession: {session_id}", log_level=2)
             from copy import deepcopy
 
             session_data = {}
@@ -2032,7 +2032,7 @@ class Workflow:
             if result is None:
                 log_warning(f"WorkflowSession not persisted (ownership mismatch): {session.session_id}")
             else:
-                log_debug(f"Created or updated WorkflowSession record: {session.session_id}")
+                log_debug(f"Created or updated WorkflowSession record: {session.session_id}", log_level=2)
 
     def save_session(self, session: WorkflowSession) -> None:
         """Save the WorkflowSession to storage
@@ -2062,7 +2062,7 @@ class Workflow:
             if result is None:
                 log_warning(f"WorkflowSession not persisted (ownership mismatch): {session.session_id}")
             else:
-                log_debug(f"Created or updated WorkflowSession record: {session.session_id}")
+                log_debug(f"Created or updated WorkflowSession record: {session.session_id}", log_level=2)
 
     def _persist_cancelled_run_in_background(
         self, workflow_run_response: WorkflowRunOutput, session: WorkflowSession
@@ -3164,7 +3164,7 @@ class Workflow:
                     step_name = getattr(step, "name", f"step_{i + 1}")
                     current_step_name = step_name
                     current_step = step
-                    log_debug(f"Executing step {i + 1}/{self._get_step_count()}: {step_name}")
+                    log_debug(f"Step started: {step_name} step={i + 1}/{self._get_step_count()} streaming=false")
 
                     # Create enhanced StepInput
                     step_input = self._create_step_input(
@@ -3563,7 +3563,7 @@ class Workflow:
                 for i, step in enumerate(self.steps):  # type: ignore[arg-type]
                     raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
                     step_name = getattr(step, "name", f"step_{i + 1}")
-                    log_debug(f"Streaming step {i + 1}/{self._get_step_count()}: {step_name}")
+                    log_debug(f"Step started: {step_name} step={i + 1}/{self._get_step_count()} streaming=true")
 
                     # Track current step for cancellation handler
                     current_step_name = step_name
@@ -4195,7 +4195,7 @@ class Workflow:
                     step_name = getattr(step, "name", f"step_{i + 1}")
                     current_step_name = step_name
                     current_step = step
-                    log_debug(f"Async Executing step {i + 1}/{self._get_step_count()}: {step_name}")
+                    log_debug(f"Step started: {step_name} step={i + 1}/{self._get_step_count()} streaming=false")
 
                     # Create enhanced StepInput
                     step_input = self._create_step_input(
@@ -4619,7 +4619,7 @@ class Workflow:
                     if workflow_run_response.run_id:
                         await araise_if_cancelled(workflow_run_response.run_id)
                     step_name = getattr(step, "name", f"step_{i + 1}")
-                    log_debug(f"Async streaming step {i + 1}/{self._get_step_count()}: {step_name}")
+                    log_debug(f"Step started: {step_name} step={i + 1}/{self._get_step_count()} streaming=true")
 
                     current_step_name = step_name
                     current_step = step
@@ -10984,7 +10984,7 @@ class Workflow:
             run_id=run_id,
         )
 
-        log_debug(f"Workflow Run Start: {self.name}", center=True)
+        log_debug(f"Workflow started: {self.id or self.name} run={run_id}")
 
         # Use stream override value when necessary
         if stream is None:
@@ -10995,8 +10995,8 @@ class Workflow:
         if stream is False:
             stream_events = False
 
-        log_debug(f"Stream: {stream}")
-        log_debug(f"Total steps: {self._get_step_count()}")
+        log_debug(f"Stream: {stream}", log_level=2)
+        log_debug(f"Total steps: {self._get_step_count()}", log_level=2)
 
         # Prepare steps
         self._prepare_steps()
@@ -11010,7 +11010,8 @@ class Workflow:
             files=files,  # type: ignore
         )
         log_debug(
-            f"Created pipeline input with session state keys: {list(session_state.keys()) if session_state else 'None'}"
+            f"Created pipeline input with session state keys: {list(session_state.keys()) if session_state else 'None'}",
+            log_level=2,
         )
 
         self.update_agents_and_teams_session_info()
@@ -11289,7 +11290,7 @@ class Workflow:
             metadata=resolved["metadata"],
         )
 
-        log_debug(f"Async Workflow Run Start: {self.name}", center=True)
+        log_debug(f"Workflow started: {self.id or self.name} run={run_id}")
 
         # Use stream override value when necessary
         if stream is None:
@@ -11300,7 +11301,7 @@ class Workflow:
         if stream is False:
             stream_events = False
 
-        log_debug(f"Stream: {stream}")
+        log_debug(f"Stream: {stream}", log_level=2)
 
         # Prepare steps
         self._prepare_steps()
@@ -11314,7 +11315,8 @@ class Workflow:
             files=files,
         )
         log_debug(
-            f"Created async pipeline input with session state keys: {list(session_state.keys()) if session_state else 'None'}"
+            f"Created async pipeline input with session state keys: {list(session_state.keys()) if session_state else 'None'}",
+            log_level=2,
         )
 
         self.update_agents_and_teams_session_info()
@@ -11383,19 +11385,19 @@ class Workflow:
             for i, step in enumerate(self.steps):  # type: ignore
                 if callable(step) and hasattr(step, "__name__"):
                     step_name = step.__name__
-                    log_debug(f"Step {i + 1}: Wrapping callable function '{step_name}'")
+                    log_debug(f"Step {i + 1}: Wrapping callable function '{step_name}'", log_level=2)
                     prepared_steps.append(Step(name=step_name, description="User-defined callable step", executor=step))  # type: ignore
                 elif isinstance(step, Agent):
                     step_name = step.name or f"step_{i + 1}"
-                    log_debug(f"Step {i + 1}: Agent '{step_name}'")
+                    log_debug(f"Step {i + 1}: Agent '{step_name}'", log_level=2)
                     prepared_steps.append(Step(name=step_name, description=step.description, agent=step))
                 elif isinstance(step, Team):
                     step_name = step.name or f"step_{i + 1}"
-                    log_debug(f"Step {i + 1}: Team '{step_name}' with {len(step.members)} members")
+                    log_debug(f"Step {i + 1}: Team '{step_name}' with {len(step.members)} members", log_level=2)
                     prepared_steps.append(Step(name=step_name, description=step.description, team=step))
                 elif isinstance(step, Workflow):
                     step_name = step.name or f"step_{i + 1}"
-                    log_debug(f"Step {i + 1}: Nested Workflow '{step_name}'")
+                    log_debug(f"Step {i + 1}: Nested Workflow '{step_name}'", log_level=2)
                     prepared_steps.append(Step(name=step_name, description=step.description, workflow=step))
                 elif isinstance(step, Step) and step.add_workflow_history is True and self.db is None:
                     log_warning(
@@ -11406,7 +11408,7 @@ class Workflow:
                 elif isinstance(step, (Step, Steps, Loop, Parallel, Condition, Router, Verify)):
                     step_type = type(step).__name__
                     step_name = getattr(step, "name", f"unnamed_{step_type.lower()}")
-                    log_debug(f"Step {i + 1}: {step_type} '{step_name}'")
+                    log_debug(f"Step {i + 1}: {step_type} '{step_name}'", log_level=2)
                     prepared_steps.append(step)
                 else:
                     raise ValueError(f"Invalid step type: {type(step).__name__}")
@@ -11415,7 +11417,7 @@ class Workflow:
             # evidence report; raises here — before any step runs — on a bad target.
             self.steps = resolve_verify_steps(prepared_steps, owner=self)  # type: ignore
             _adopt_nested_verify_owners(self.steps, self)
-            log_debug("Step preparation completed")
+            log_debug("Step preparation completed", log_level=2)
 
     def print_response(
         self,
@@ -11714,8 +11716,24 @@ class Workflow:
                     )
         return SessionMetrics()
 
+    def _log_run_outcome(self, run: WorkflowRunOutput) -> None:
+        """Report execution status without implying that a persistence operation succeeded."""
+        # Execution summaries follow the actual terminal status, including paused
+        # and failed runs. Never report success just because a request returned.
+        status = run.status
+        if status in (RunStatus.completed, RunStatus.error, RunStatus.cancelled, RunStatus.paused):
+            duration = run.metrics.duration if run.metrics else None
+            elapsed = f" duration={duration:.2f}s" if duration is not None else ""
+            outcome = "failed" if status == RunStatus.error else status.value.lower()
+            message = f"Workflow {outcome}: {self.id or self.name} run={run.run_id}{elapsed}"
+            log_debug(message)
+
     def _update_session_metrics(self, session: WorkflowSession, workflow_run_response: WorkflowRunOutput):
         """Calculate and update session metrics - convert run Metrics to SessionMetrics."""
+        # Pauses are reported by save_paused_session; the enclosing non-stream
+        # finalizer may aggregate the same paused run again.
+        if workflow_run_response.status != RunStatus.paused:
+            self._log_run_outcome(workflow_run_response)
         # Get existing session metrics
         session_metrics = self._get_session_metrics(session=session)
 
@@ -11755,7 +11773,7 @@ class Workflow:
 
     def update_agents_and_teams_session_info(self):
         """Update agents and teams with workflow session information"""
-        log_debug("Updating agents and teams with session information")
+        log_debug("Updating agents and teams with session information", log_level=2)
         # Initialize steps - only if steps is iterable (not callable)
         if self.steps and not callable(self.steps):
             steps_list = self.steps.steps if isinstance(self.steps, Steps) else self.steps
@@ -12082,7 +12100,7 @@ class Workflow:
         # Create a new Workflow
         try:
             new_workflow = self.__class__(**fields_for_new_workflow)
-            log_debug(f"Created new {self.__class__.__name__}")
+            log_debug(f"Created new {self.__class__.__name__}", log_level=2)
             return new_workflow
         except Exception as e:
             log_error(f"Failed to create deep copy of {self.__class__.__name__}: {str(e)}")
