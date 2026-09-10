@@ -282,6 +282,24 @@ def test_served_facade_enforces_roles(tmp_path, borrow_db):
         assert client.get("/agents/research", headers=_auth("nobody")).status_code == 200
 
 
+def test_authorization_accepts_raw_config(tmp_path):
+    """The two entry params are folded into one: a raw AuthorizationConfig can be passed as
+    authorization=, and passing it both ways raises. (authorization_config= stays for back-compat.)"""
+    from agno.os.config import AuthorizationConfig
+
+    cfg = AuthorizationConfig(verification_keys=[SECRET], algorithm="HS256", verify_audience=True, audience=OS_ID)
+    os_ = AgentOS(id=OS_ID, db=SqliteDb(db_file=str(tmp_path / "cfg.db")), agents=_agents(), authorization=cfg)
+    assert os_.authorization is True and os_.authorization_config is cfg
+    with pytest.raises(ValueError, match="once"):
+        AgentOS(
+            id=OS_ID,
+            db=SqliteDb(db_file=str(tmp_path / "cfg2.db")),
+            agents=_agents(),
+            authorization=cfg,
+            authorization_config=cfg,
+        )
+
+
 def test_served_verify_only_mounts_no_admin_api(tmp_path):
     """A served verify-only facade (no roles) mounts neither /authz nor /users -- the directory stays
     off, so an isolation / scope-based deployment gets a clean surface with no role machinery."""
@@ -327,6 +345,46 @@ def test_trust_token_scopes_runs_both_planes(tmp_path):
             data={"message": "hi", "stream": "false"},
         )
     assert r.status_code == 200
+
+
+def test_idp_roles_claim_one_liner(tmp_path):
+    """roles_claim= is the external-IdP one-liner: the caller's role comes from a token claim, so you
+    define what each role may do but never assign users. It also turns managed roles on by itself."""
+    from unittest.mock import AsyncMock, patch
+
+    authz = Authorization(
+        db=SqliteDb(db_file=str(tmp_path / "idp.db")),
+        verification_keys=[SECRET],
+        algorithm="HS256",
+        verify_audience=True,
+        audience=OS_ID,
+        roles_claim="role",
+    )
+    authz.define_role("admin", ["agent_os:admin"])
+    authz.define_role("viewer", ["agents:*:read"])
+    assert authz.role_store is not None  # roles_claim alone puts roles in play
+
+    def htok(sub, role):
+        payload = {"sub": sub, "aud": OS_ID, "role": role, "exp": int(time.time()) + 3600}
+        return {"Authorization": f"Bearer {jwt.encode(payload, SECRET, algorithm='HS256')}"}
+
+    client = TestClient(AgentOS(id=OS_ID, db=authz._db, agents=_agents(), authorization=authz).get_app())
+    with patch.object(Agent, "arun", new_callable=AsyncMock) as m:
+        m.return_value = _MockRunOutput()
+        # role comes off the token claim, no assign() anywhere
+        assert (
+            client.post(
+                "/agents/secret/runs", headers=htok("a", "admin"), data={"message": "hi", "stream": "false"}
+            ).status_code
+            == 200
+        )
+        assert client.get("/agents/research", headers=htok("b", "viewer")).status_code == 200
+        assert (
+            client.post(
+                "/agents/research/runs", headers=htok("b", "viewer"), data={"message": "hi", "stream": "false"}
+            ).status_code
+            == 403
+        )
 
 
 def test_bring_your_own_provider_overrides(tmp_path):

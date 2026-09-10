@@ -95,6 +95,7 @@ class Authorization:
         # --- switches ---
         audit: Union[bool, "AuditSink"] = False,
         trust_token_scopes: bool = False,
+        roles_claim: Optional[str] = None,
         user_directory: Union[bool, "ManagedUserStore", None] = None,
         auto_provision: bool = True,
         default_role: Optional[str] = None,
@@ -115,6 +116,10 @@ class Authorization:
             trust_token_scopes: run a scope plane alongside managed roles, so operators authorized
                 by their token scopes and end users authorized by the role store both work
                 (composed with OR). No effect without roles.
+            roles_claim: the external-IdP case -- read the caller's role(s) from this token claim
+                (e.g. WorkOS/Auth0 send a ``role`` claim) instead of from stored assignments. You
+                still ``define_role`` what each role may do; the token asserts which role the caller
+                has, so no per-user ``assign``. Turns managed roles on by itself.
             user_directory: the directory, one knob (mirrors ``AgentOS(user_directory=bool | ...)``).
                 ``None`` (default) is auto -- built only when roles are used or users are seeded, so a
                 pure verify-only ``Authorization`` builds none. ``True`` always builds one; ``False``
@@ -139,6 +144,7 @@ class Authorization:
         }
         self._audit_arg = audit
         self._trust_token_scopes = trust_token_scopes
+        self._roles_claim = roles_claim
         self._auto_provision = auto_provision
         self._default_role = default_role
         self._provider_override = authorization_provider
@@ -156,7 +162,7 @@ class Authorization:
         )
 
         # Roles are in play if any were defined, or a store/engine was supplied.
-        self._roles_defined = role_store is not None or engine is not None
+        self._roles_defined = role_store is not None or engine is not None or roles_claim is not None
         # Whether seed() has added directory users -- a signal that a directory is wanted under auto.
         self._users_seeded = False
 
@@ -271,7 +277,7 @@ class Authorization:
         if self._role_store is None:
             from agno.os.authz.role_store import ManagedRoleStore
 
-            self._role_store = ManagedRoleStore(db=self._db, engine=self._engine)
+            self._role_store = ManagedRoleStore(db=self._db, engine=self._engine, roles_claim=self._roles_claim)
         else:
             self._role_store.attach_db(self._db)
         if self._audit_sink is not None:

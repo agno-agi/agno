@@ -360,7 +360,14 @@ MCPServerConfig = MCPConfig
 
 
 class AuthorizationConfig(BaseModel):
-    """Configuration for the JWT middleware"""
+    """Low-level authorization config for the JWT middleware.
+
+    Superseded by :class:`agno.os.authz.Authorization`, which owns every field here (verification,
+    provider, role store, audit, excluded routes) plus the higher-level surface (define_role, seed,
+    the user directory, the admin API). ``Authorization`` builds one of these internally to feed the
+    pipeline, so prefer ``AgentOS(authorization=Authorization(...))`` and treat this as an internal
+    type. Do NOT add new fields here that duplicate ``Authorization`` -- add them there.
+    """
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 

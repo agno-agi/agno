@@ -294,7 +294,7 @@ class AgentOS:
         knowledge: Optional[List[Knowledge]] = None,
         interfaces: Optional[List[BaseInterface]] = None,
         a2a_interface: bool = False,
-        authorization: Union[bool, "Authorization"] = False,
+        authorization: Union[bool, "Authorization", AuthorizationConfig] = False,
         authorization_config: Optional[AuthorizationConfig] = None,
         user_isolation: bool = False,
         user_directory: Optional[Union[bool, UserDirectoryConfig]] = None,
@@ -365,8 +365,13 @@ class AgentOS:
             base_app: Optional base FastAPI app to use for the AgentOS. All routes and middleware will be added to this app.
             on_route_conflict: What to do when a route conflict is detected in case a custom base_app is provided.
             auto_provision_dbs: Whether to automatically provision databases
-            authorization: Whether to enable authorization
-            authorization_config: Configuration for the authorization middleware
+            authorization: The authorization setup. Prefer ``Authorization(...)`` -- one object for
+                verification, roles, the user directory, audit, and the admin API (see
+                ``agno.os.authz.Authorization``). Also accepts ``True`` (scope RBAC from token
+                scopes) or a raw ``AuthorizationConfig``.
+            authorization_config: Deprecated -- pass the config as ``authorization=...`` instead (or
+                move to ``authorization=Authorization(...)``). An ``AuthorizationConfig`` for the
+                authorization middleware; kept for back-compat during migration.
             user_isolation: Opt in to per-user data isolation (each caller sees only their own
                 sessions/memories). Enforced under authorization=True; advisory without auth.
             user_directory: A credential-less user directory (roster + disabled kill switch).
@@ -478,6 +483,18 @@ class AgentOS:
         # adopts this OS db so role/user definitions persist alongside agent data.
         self._facade_role_store: Any = None
         self._facade_user_store: Any = None
+
+        # A raw AuthorizationConfig may be passed straight to authorization=, folding the two entry
+        # params into one (the separate authorization_config= is the older, now-discouraged spelling).
+        if isinstance(authorization, AuthorizationConfig):
+            if authorization_config is not None:
+                raise ValueError(
+                    "Pass the AuthorizationConfig once: authorization=AuthorizationConfig(...) "
+                    "(or, preferably, authorization=Authorization(...)), not also authorization_config=."
+                )
+            authorization_config = authorization
+            authorization = True
+
         from agno.os.authz.facade import Authorization as _Authorization
 
         if isinstance(authorization, _Authorization):
