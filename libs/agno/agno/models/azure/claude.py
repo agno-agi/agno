@@ -12,7 +12,12 @@ from agno.models.anthropic import Claude as AnthropicClaude
 from agno.models.message import Message
 from agno.utils.http import get_default_async_client, get_default_sync_client
 from agno.utils.log import log_debug, log_warning
-from agno.utils.models.claude import format_tools_for_model, resolve_http_client, route_sampling_params_to_extra_body
+from agno.utils.models.claude import (
+    drop_unsupported_sampling_params,
+    format_tools_for_model,
+    resolve_http_client,
+    route_sampling_params_to_extra_body,
+)
 
 try:
     from anthropic import AnthropicFoundry, AsyncAnthropicFoundry
@@ -143,6 +148,7 @@ class Claude(AnthropicClaude):
             _request_params.update(self.request_params)
 
         route_sampling_params_to_extra_body(_request_params)
+        drop_unsupported_sampling_params(_request_params, self.id)
 
         if _request_params:
             log_debug(f"Calling {self.provider} with request parameters: {_request_params}", log_level=2)
