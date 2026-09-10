@@ -131,7 +131,10 @@ if __name__ == "__main__":
     show("Any of these years", {"year": [2024, 2025]})
     show("The same thing as an operator", {"year": {"$in": [2024, 2025]}})
     show("Numeric range - 2024 onwards", {"year": {"gte": 2024}})
-    show("Date range - second half of 2024 onwards", {"published_on": {"gte": "2024-07-01"}})
+    show(
+        "Date range - second half of 2024 onwards",
+        {"published_on": {"gte": "2024-07-01"}},
+    )
     show("Two filters, both must match", {"document_type": "cv", "year": 2025})
     show("A filter nothing matches", {"user_id": "nobody"})
 
