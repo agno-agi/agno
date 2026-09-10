@@ -1,17 +1,17 @@
 """
-OS metrics: GET /metrics/os
+User management metrics: GET /users/metrics
 
-The run metrics under /metrics are per-database usage telemetry. OS metrics are
-about the AgentOS itself, one section per source, computed live on every read
-(no cache, no refresh step). Once an AgentOS has a user directory it serves the
-first section, "users":
+The users admin API also serves the numbers a User Management page shows about the
+directory, computed live on every read (no cache, no refresh step):
 
     total / active / disabled   the directory as it is now, plus without_role
     created_per_day             users created per UTC day (a line chart)
     by_role                     users per role, when a role store is configured
 
-Deleting a user moves every number at once. Reading needs the metrics:read scope,
-the same one the run metrics use.
+It rides on the same router as /users, so it is admin-only and appears wherever
+user management appears: auto-mounted with a role store, or mounted by you with
+get_users_router(...) in a users-only setup (see 07_manage_users.py). Deleting a
+user moves every number at once.
 
 This example seeds a directory and a role store, then reads the endpoint through
 the AgentOS pipeline with an admin token and prints the response. No model calls
@@ -19,7 +19,7 @@ and no database server are needed.
 
 Run it:
     pip install "agno[roles]"
-    python 11_os_metrics.py
+    python 11_user_management_metrics.py
 """
 
 import json
@@ -33,20 +33,20 @@ from agno.os import AgentOS, create_dev_token
 from agno.os.authz import ManagedRoleStore, ManagedUserStore
 from agno.os.config import AuthorizationConfig, UserDirectoryConfig
 
-OS_ID = "os-metrics-os"
+OS_ID = "user-management-metrics-os"
 SECRET = "your-secret-key-at-least-256-bits-long"
 
 os.makedirs("tmp", exist_ok=True)
-for stale in ("tmp/os_metrics.db",):
+for stale in ("tmp/user_management_metrics.db",):
     if os.path.exists(stale):
         os.remove(stale)
 
-db = SqliteDb(db_file="tmp/os_metrics.db")
+db = SqliteDb(db_file="tmp/user_management_metrics.db")
 roles = ManagedRoleStore(db=db)
 users = ManagedUserStore(db=db)
 
 roles.set_role_scopes("admin", ["agent_os:admin"])
-roles.set_role_scopes("analyst", ["agents:*:read", "metrics:read"])
+roles.set_role_scopes("analyst", ["agents:*:read"])
 roles.set_role_scopes("viewer", ["agents:*:read"])
 
 # A small directory: an admin, two analysts, one viewer, one person with no role yet,
@@ -90,7 +90,7 @@ agent_os = AgentOS(
         algorithm="HS256",
         verify_audience=True,
         audience=OS_ID,
-        role_store=roles,  # auto-mounts /authz, /users and /metrics/os
+        role_store=roles,  # auto-mounts /authz and /users (with /users/metrics)
     ),
     user_directory=UserDirectoryConfig(user_store=users),
 )
@@ -111,24 +111,22 @@ if __name__ == "__main__":
         return {"Authorization": f"Bearer {token}"}
 
     print("\n" + "=" * 78)
-    print("OS METRICS - GET /metrics/os")
+    print("USER MANAGEMENT METRICS - GET /users/metrics")
     print("=" * 78)
 
-    # The role decides. alice is admin (agent_os:admin covers metrics:read); erin has
-    # no role, so her token is refused even though she is in the directory.
-    erin = client.get("/metrics/os", headers=auth("erin")).status_code
-    bob = client.get("/metrics/os", headers=auth("bob")).status_code
-    response = client.get("/metrics/os", headers=auth("alice"))
-    print("\nerin (no role):  ", erin, "(expected 403)")
-    print("bob (analyst):   ", bob, "(expected 200)")
+    # Admin-only, like the rest of /users: bob is an analyst, not an admin, so he is
+    # refused even though he is in the directory.
+    bob = client.get("/users/metrics", headers=auth("bob")).status_code
+    response = client.get("/users/metrics", headers=auth("alice"))
+    print("\nbob (analyst):   ", bob, "(expected 403)")
     print("alice (admin):   ", response.status_code, "(expected 200)")
     print("\n" + json.dumps(response.json(), indent=2))
 
     # The date range bounds the series only; the counts stay whole-directory.
     today = datetime.now(timezone.utc).date().isoformat()
     bounded = client.get(
-        f"/metrics/os?starting_date={today}", headers=auth("alice")
-    ).json()["users"]
+        f"/users/metrics?starting_date={today}", headers=auth("alice")
+    ).json()
     print(
         "\nSeries from today only:",
         bounded["created_per_day"],
@@ -138,5 +136,5 @@ if __name__ == "__main__":
 
     # No refresh step: deleting a user moves every number on the next read.
     client.delete("/users/carol", headers=auth("alice"))
-    after = client.get("/metrics/os", headers=auth("alice")).json()["users"]
+    after = client.get("/users/metrics", headers=auth("alice")).json()
     print("After deleting carol:  total", after["total"], "by role", after["by_role"])

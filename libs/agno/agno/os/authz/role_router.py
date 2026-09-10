@@ -58,11 +58,14 @@ User directory admin API -- get_users_router (default prefix ``/users``):
     GET    /users/{user_id}                      a user
     PATCH  /users/{user_id}                      update profile / disable (the kill-switch)
     DELETE /users/{user_id}                      remove a user (cascades role revocation)
+    GET    /users/metrics                        directory size, users created per day, users per role
 """
 
 import time
+from datetime import date as date_type
+from datetime import datetime, timedelta, timezone
 from enum import Enum
-from typing import TYPE_CHECKING, Any, List, Optional, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
@@ -227,6 +230,39 @@ class UpdateUserRequest(BaseModel):
     name: Optional[str] = Field(None, description="New display name")
     disabled: Optional[bool] = Field(
         None, description="Set the revocation kill-switch: true denies the user on every request, false re-enables"
+    )
+
+
+class UsersCreatedOnDay(BaseModel):
+    date: date_type = Field(..., description="UTC day")
+    count: int = Field(..., description="Users created on that day", ge=0)
+
+
+class UsersByRole(BaseModel):
+    role: str = Field(..., description="Role slug")
+    count: int = Field(..., description="Users in the directory holding this role", ge=0)
+
+
+class UserManagementMetrics(BaseModel):
+    """The directory as it is now plus its registration history. Computed on read;
+    there is no cache and no refresh step."""
+
+    total: int = Field(..., description="Users in the directory, including disabled ones", ge=0)
+    active: int = Field(..., description="Users not disabled", ge=0)
+    disabled: int = Field(..., description="Users switched off by the disabled kill-switch", ge=0)
+    without_role: Optional[int] = Field(
+        None,
+        description=(
+            "Users with no role assigned in the role store (they rely on the default role, if any). "
+            "Null when no role store is configured."
+        ),
+        ge=0,
+    )
+    created_per_day: List[UsersCreatedOnDay] = Field(
+        ..., description="Users created per UTC day, oldest first; days with no registrations are omitted"
+    )
+    by_role: Optional[List[UsersByRole]] = Field(
+        None, description="Users per role, sorted by role. Null when no role store is configured"
     )
 
 
@@ -496,6 +532,69 @@ def get_roles_router(
     return router
 
 
+def _day_bounds(starting_date: Optional[date_type], ending_date: Optional[date_type]) -> tuple:
+    """Inclusive start / exclusive end of the requested UTC day range, as epoch seconds."""
+    if starting_date is not None and ending_date is not None and starting_date > ending_date:
+        raise HTTPException(status_code=422, detail="starting_date must be on or before ending_date")
+    starting_at = (
+        int(datetime.combine(starting_date, datetime.min.time(), tzinfo=timezone.utc).timestamp())
+        if starting_date is not None
+        else None
+    )
+    ending_before = (
+        int((datetime.combine(ending_date, datetime.min.time(), tzinfo=timezone.utc) + timedelta(days=1)).timestamp())
+        if ending_date is not None
+        else None
+    )
+    return starting_at, ending_before
+
+
+def collect_user_management_metrics(
+    user_store: "ManagedUserStore",
+    role_store: "Optional[ManagedRoleStore]" = None,
+    starting_at: Optional[int] = None,
+    ending_before: Optional[int] = None,
+) -> UserManagementMetrics:
+    """Read the directory metrics live. The date range bounds only the per-day series;
+    the counts always describe the whole directory as it is now.
+
+    The directory is bounded by the product's user limits and its ``created_at`` column
+    is indexed, so a bounded group-by is cheaper than keeping a cache table in step.
+    """
+    status = user_store.count_by_status()
+    total, disabled = status["total"], status["disabled"]
+    created = [
+        UsersCreatedOnDay(date=datetime.fromtimestamp(row["date"], tz=timezone.utc).date(), count=row["count"])
+        for row in user_store.created_by_day(starting_at=starting_at, ending_before=ending_before)
+    ]
+
+    by_role: Optional[List[UsersByRole]] = None
+    without_role: Optional[int] = None
+    if role_store is not None:
+        # Roles come from the role store, not the grouping table directly, so a custom
+        # policy engine that keeps assignments elsewhere is counted correctly. Disabled
+        # users keep their role and stay in the breakdown, matching ``total``.
+        roles_of = role_store.roles_of_many(user_store.ids())
+        counts: Dict[str, int] = {}
+        without_role = 0
+        for roles in roles_of.values():
+            if not roles:
+                without_role += 1
+                continue
+            for role in roles:
+                counts[role] = counts.get(role, 0) + 1
+        by_role = [UsersByRole(role=role, count=count) for role, count in sorted(counts.items())]
+
+    return UserManagementMetrics(
+        total=total,
+        active=total - disabled,
+        disabled=disabled,
+        without_role=without_role,
+        created_per_day=created,
+        by_role=by_role,
+    )
+
+
 def get_users_router(
     user_store: "ManagedUserStore",
     role_store: "Optional[ManagedRoleStore]" = None,
@@ -560,6 +659,22 @@ def get_users_router(
     @router.post("", response_model=AuthzUserSchema)
     def create_user(body: CreateUserRequest, actor: str = Depends(require_admin)):
         return _user(user_store.upsert(body.id, email=body.email, name=body.name, actor=actor))
+
+    # Declared before /{user_id} so the path parameter does not swallow it.
+    @router.get("/metrics", response_model=UserManagementMetrics)
+    def get_user_metrics(
+        starting_date: Optional[date_type] = Query(
+            default=None, description="First UTC day of the series (YYYY-MM-DD)"
+        ),
+        ending_date: Optional[date_type] = Query(default=None, description="Last UTC day of the series (YYYY-MM-DD)"),
+    ):
+        """Directory size (total, active, disabled), users created per UTC day, and, when a
+        role store is configured, users per role and how many hold none. The date range
+        bounds only the per-day series."""
+        starting_at, ending_before = _day_bounds(starting_date, ending_date)
+        return collect_user_management_metrics(
+            user_store, role_store, starting_at=starting_at, ending_before=ending_before
+        )
 
     @router.get("/{user_id}", response_model=AuthzUserSchema)
     def get_user(user_id: str):

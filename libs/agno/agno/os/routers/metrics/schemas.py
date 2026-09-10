@@ -1,4 +1,3 @@
-from datetime import date as date_type
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
@@ -62,42 +61,3 @@ class MetricsRefreshStatusResponse(BaseModel):
     started_at: Optional[datetime] = Field(None, description="When the most recent refresh started")
     finished_at: Optional[datetime] = Field(None, description="When the most recent refresh finished")
     error: Optional[str] = Field(None, description="Error message if the most recent refresh failed")
-
-
-class UsersCreatedOnDay(BaseModel):
-    date: date_type = Field(..., description="UTC day")
-    count: int = Field(..., description="Users created on that day", ge=0)
-
-
-class UsersByRole(BaseModel):
-    role: str = Field(..., description="Role slug")
-    count: int = Field(..., description="Users in the directory holding this role", ge=0)
-
-
-class UserDirectoryMetrics(BaseModel):
-    """The managed user directory as it is now, plus its registration history."""
-
-    total: int = Field(..., description="Users in the directory, including disabled ones", ge=0)
-    active: int = Field(..., description="Users not disabled", ge=0)
-    disabled: int = Field(..., description="Users switched off by the disabled kill-switch", ge=0)
-    without_role: Optional[int] = Field(
-        None,
-        description=(
-            "Users with no role assigned in the role store (they rely on the default role, if any). "
-            "Null when no role store is configured."
-        ),
-        ge=0,
-    )
-    created_per_day: List[UsersCreatedOnDay] = Field(
-        ..., description="Users created per UTC day, oldest first; days with no registrations are omitted"
-    )
-    by_role: Optional[List[UsersByRole]] = Field(
-        None, description="Users per role, sorted by role. Null when no role store is configured"
-    )
-
-
-class OSMetricsResponse(BaseModel):
-    """Metrics about the OS itself, one section per source. The run metrics under
-    ``/metrics`` are per-database; these are OS-wide."""
-
-    users: UserDirectoryMetrics = Field(..., description="The managed user directory")
