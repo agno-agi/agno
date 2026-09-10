@@ -347,11 +347,30 @@ class ManagedUserStore:
 
         return int(self._db.count_authz_users(include_disabled=include_disabled, search=search))
 
+    def _mem_count_by_status(self) -> Dict[str, int]:
+        rows = list((self._mem or {}).values())
+        return {"total": len(rows), "disabled": sum(1 for r in rows if r.get("disabled"))}
+
+    def _mem_ids(self, include_disabled: bool) -> List[str]:
+        return sorted(r["id"] for r in self._filtered_mem_rows(include_disabled, None))
+
+    def _mem_created_by_day(self, starting_at: Optional[int], ending_before: Optional[int]) -> List[Dict[str, int]]:
+        seconds_per_day = 24 * 60 * 60
+        counts: Dict[int, int] = {}
+        for row in (self._mem or {}).values():
+            created_at = int(row["created_at"])
+            if starting_at is not None and created_at < starting_at:
+                continue
+            if ending_before is not None and created_at >= ending_before:
+                continue
+            day = created_at - (created_at % seconds_per_day)
+            counts[day] = counts.get(day, 0) + 1
+        return [{"date": day, "count": counts[day]} for day in sorted(counts)]
+
     def count_by_status(self) -> Dict[str, int]:
         """``{"total": n, "disabled": n}`` from one read, so the pair is consistent."""
         if self._mem is not None:
-            rows = list(self._mem.values())
-            return {"total": len(rows), "disabled": sum(1 for r in rows if r.get("disabled"))}
+            return self._mem_count_by_status()
 
         return dict(self._db.count_authz_users_by_status())
 
@@ -359,7 +378,7 @@ class ManagedUserStore:
         """Every user id, sorted. For bulk lookups keyed on the id (resolving roles for
         the whole directory) where :meth:`list` would fetch profile columns nobody reads."""
         if self._mem is not None:
-            return sorted(r["id"] for r in self._filtered_mem_rows(include_disabled, None))
+            return self._mem_ids(include_disabled)
 
         return list(self._db.list_authz_user_ids(include_disabled=include_disabled))
 
@@ -371,17 +390,7 @@ class ManagedUserStore:
         ``ending_before`` bound ``created_at`` (inclusive / exclusive, epoch seconds).
         Deleted users drop out of history, so this is the directory as it is now."""
         if self._mem is not None:
-            seconds_per_day = 24 * 60 * 60
-            counts: Dict[int, int] = {}
-            for row in self._mem.values():
-                created_at = int(row["created_at"])
-                if starting_at is not None and created_at < starting_at:
-                    continue
-                if ending_before is not None and created_at >= ending_before:
-                    continue
-                day = created_at - (created_at % seconds_per_day)
-                counts[day] = counts.get(day, 0) + 1
-            return [{"date": day, "count": counts[day]} for day in sorted(counts)]
+            return self._mem_created_by_day(starting_at, ending_before)
 
         return self._db.count_authz_users_by_day(starting_at=starting_at, ending_before=ending_before)
 
@@ -635,6 +644,26 @@ class ManagedUserStore:
         if self._mem is not None:
             return len(self._filtered_mem_rows(include_disabled, search))
         return int(await self._adb("count_authz_users", include_disabled=include_disabled, search=search))
+
+    async def acount_by_status(self) -> Dict[str, int]:
+        """Async twin of :meth:`count_by_status`."""
+        if self._mem is not None:
+            return self._mem_count_by_status()
+        return dict(await self._adb("count_authz_users_by_status"))
+
+    async def aids(self, include_disabled: bool = True) -> List[str]:
+        """Async twin of :meth:`ids`."""
+        if self._mem is not None:
+            return self._mem_ids(include_disabled)
+        return list(await self._adb("list_authz_user_ids", include_disabled=include_disabled))
+
+    async def acreated_by_day(
+        self, starting_at: Optional[int] = None, ending_before: Optional[int] = None
+    ) -> List[Dict[str, int]]:
+        """Async twin of :meth:`created_by_day`."""
+        if self._mem is not None:
+            return self._mem_created_by_day(starting_at, ending_before)
+        return await self._adb("count_authz_users_by_day", starting_at=starting_at, ending_before=ending_before)
 
     async def ais_disabled(self, id: Optional[str]) -> bool:
         """Async twin of :meth:`is_disabled`."""

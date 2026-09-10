@@ -9,15 +9,6 @@ if TYPE_CHECKING:
 
 from agno.db import authz_store
 from agno.db.base import AsyncBaseDb, SessionType
-from agno.db.schemas.authz import (
-    AUTHZ_AUDIT,
-    AUTHZ_DECISIONS,
-    AUTHZ_GROUPING,
-    AUTHZ_POLICY,
-    AUTHZ_ROLES,
-    AUTHZ_TABLE_NAME_ATTRS,
-    AUTHZ_USERS,
-)
 from agno.db.migrations.manager import MigrationManager
 from agno.db.postgres.engine import _engine_options
 from agno.db.postgres.schemas import get_table_schema_definition
@@ -30,6 +21,15 @@ from agno.db.postgres.utils import (
     calculate_date_metrics,
     fetch_all_sessions_data,
     get_dates_to_calculate_metrics_for,
+)
+from agno.db.schemas.authz import (
+    AUTHZ_AUDIT,
+    AUTHZ_DECISIONS,
+    AUTHZ_GROUPING,
+    AUTHZ_POLICY,
+    AUTHZ_ROLES,
+    AUTHZ_TABLE_NAME_ATTRS,
+    AUTHZ_USERS,
 )
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
@@ -5750,6 +5750,10 @@ class AsyncPostgresDb(AsyncBaseDb):
         table = await self._get_table(table_type=AUTHZ_GROUPING, create_table_if_not_found=True)
         return await authz_store.aget_direct_roles(self.db_engine, table, subject)
 
+    async def get_authz_direct_roles_many(self, subjects: List[str]) -> Dict[str, List[str]]:
+        table = await self._get_table(table_type=AUTHZ_GROUPING, create_table_if_not_found=True)
+        return await authz_store.aget_direct_roles_many(self.db_engine, table, subjects)
+
     async def authz_name_is_role(self, name: str) -> bool:
         policy = await self._get_table(table_type=AUTHZ_POLICY, create_table_if_not_found=True)
         grouping = await self._get_table(table_type=AUTHZ_GROUPING, create_table_if_not_found=True)
@@ -5815,6 +5819,20 @@ class AsyncPostgresDb(AsyncBaseDb):
     async def count_authz_users(self, include_disabled: bool = True, search: Optional[str] = None) -> int:
         table = await self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)
         return await authz_store.acount_users(self.db_engine, table, include_disabled, search)
+
+    async def count_authz_users_by_status(self) -> Dict[str, int]:
+        table = await self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)
+        return await authz_store.acount_users_by_status(self.db_engine, table)
+
+    async def list_authz_user_ids(self, include_disabled: bool = True) -> List[str]:
+        table = await self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)
+        return await authz_store.alist_user_ids(self.db_engine, table, include_disabled)
+
+    async def count_authz_users_by_day(
+        self, starting_at: Optional[int] = None, ending_before: Optional[int] = None
+    ) -> List[Dict[str, int]]:
+        table = await self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)
+        return await authz_store.acount_users_by_day(self.db_engine, table, starting_at, ending_before)
 
     async def upsert_authz_user(self, user_id: str, values: Dict[str, Any]) -> None:
         table = await self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)

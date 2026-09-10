@@ -126,9 +126,11 @@ def test_served_facade_enforces_roles(tmp_path, borrow_db):
     client = TestClient(_served(tmp_path, borrow_db=borrow_db).get_app())
     with patch.object(Agent, "arun", new_callable=AsyncMock) as m:
         m.return_value = _MockRunOutput()
-        run = lambda sub, agent: client.post(  # noqa: E731
-            f"/agents/{agent}/runs", headers=_auth(sub), data={"message": "hi", "stream": "false"}
-        ).status_code
+        run = lambda sub, agent: (
+            client.post(  # noqa: E731
+                f"/agents/{agent}/runs", headers=_auth(sub), data={"message": "hi", "stream": "false"}
+            ).status_code
+        )
         assert run("carol", "secret") == 403  # runner has no secret grant
         assert run("carol", "research") == 200  # runner may run research
         assert run("root", "secret") == 200  # admin role bypass

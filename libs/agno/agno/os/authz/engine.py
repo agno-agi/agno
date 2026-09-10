@@ -166,6 +166,9 @@ class PolicyEngine(ABC):
     async def aroles_of(self, subject: str) -> List[str]:
         return await asyncio.to_thread(self.roles_of, subject)
 
+    async def aroles_of_many(self, subjects: List[str]) -> Dict[str, List[str]]:
+        return await asyncio.to_thread(self.roles_of_many, subjects)
+
     async def acheck_resource(
         self,
         resource_type: Optional[str],

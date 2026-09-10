@@ -762,6 +762,10 @@ class ManagedRoleStore:
         """Async twin of :meth:`roles_of`."""
         return await self._engine.aroles_of(subject)
 
+    async def aroles_of_many(self, subjects: List[str]) -> Dict[str, List[str]]:
+        """Async twin of :meth:`roles_of_many`."""
+        return await self._engine.aroles_of_many(subjects)
+
     # --- async audit + gating ---
     async def aaudit_log(
         self,

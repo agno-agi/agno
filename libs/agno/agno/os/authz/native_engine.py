@@ -39,8 +39,8 @@ from agno.os.authz._db import (
     resolve_authz_db,
     supports_authz,
 )
-from agno.os.authz._request_scope import amemoize, invalidate as _invalidate_request_cache
-from agno.os.authz._request_scope import memoize
+from agno.os.authz._request_scope import amemoize, memoize
+from agno.os.authz._request_scope import invalidate as _invalidate_request_cache
 from agno.os.authz._scope_policy import resource_action_to_scope, resource_matches, scope_to_resource_action
 from agno.os.authz.engine import PolicyEngine, ScopeEntry
 
@@ -636,6 +636,9 @@ class NativePolicyEngine(PolicyEngine):
 
     async def aroles_of(self, subject: str) -> List[str]:
         return sorted(await self._adirect_roles(subject))
+
+    async def aroles_of_many(self, subjects: List[str]) -> Dict[str, List[str]]:
+        return await self._acall("get_authz_direct_roles_many", subjects)
 
     # --- async decisions ---
     async def _aallowed_for_root(
