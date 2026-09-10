@@ -22,6 +22,7 @@ from agno.agents.base import BaseExternalAgent
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.job_queue import QueueConfig
 from agno.knowledge.knowledge import Knowledge
+from agno.knowledge.page.filesystem import PageFileSystem
 from agno.media.storage.base import AsyncMediaStorage, MediaStorage
 from agno.os.config import (
     AgentOSConfig,
@@ -186,6 +187,10 @@ async def db_lifespan(app: FastAPI, agent_os: "AgentOS"):
     if agent_os.auto_provision_dbs:
         agent_os._initialize_sync_databases()
         await agent_os._initialize_async_databases()
+        # Prepare explicitly attached page filesystems, but never fetch or embed
+        # sources during startup. Operators may disable automatic provisioning.
+        for filesystem in agent_os._page_filesystems:
+            await filesystem.asetup()
 
     yield
 
@@ -2134,6 +2139,8 @@ class AgentOS:
         """Auto-discover the knowledge instances used by all contextual agents, teams and workflows."""
         seen_instances: set[int] = set()  # Track by object identity
         knowledge_instances: List[Union[Knowledge, RemoteKnowledge]] = []
+        self._page_filesystems: List[PageFileSystem] = []
+        seen_page_stores: set[int] = set()
 
         def _add_knowledge_if_not_duplicate(knowledge: Any) -> None:
             """Add knowledge instance if it's not already in the list (by object identity)."""
@@ -2152,6 +2159,12 @@ class AgentOS:
         for agent in self._agents:
             if agent.knowledge:
                 _add_knowledge_if_not_duplicate(agent.knowledge)
+            filesystem = getattr(agent, "filesystem", None)
+            if isinstance(filesystem, PageFileSystem):
+                _add_knowledge_if_not_duplicate(filesystem.knowledge)
+                if id(filesystem.knowledge) not in seen_page_stores:
+                    seen_page_stores.add(id(filesystem.knowledge))
+                    self._page_filesystems.append(filesystem)
 
         for team in self._teams:
             if team.knowledge:

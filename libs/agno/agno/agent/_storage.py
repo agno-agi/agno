@@ -877,10 +877,14 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
         config["filesystem"] = True
     elif agent.filesystem:
         from agno.fs import FileSystem
+        from agno.knowledge.page.filesystem import PageFileSystem
 
-        if not isinstance(agent.filesystem, FileSystem):
-            raise TypeError("filesystem must be True, False, None, or a FileSystem instance")
-        config["filesystem"] = agent.filesystem.to_dict()
+        if isinstance(agent.filesystem, PageFileSystem):
+            config["filesystem"] = agent.filesystem._configuration()
+        elif isinstance(agent.filesystem, FileSystem):
+            config["filesystem"] = agent.filesystem.to_dict()
+        else:
+            raise TypeError("filesystem must be True, False, None, a FileSystem, or a PageFileSystem instance")
 
     # --- Agentic Memory settings ---
     # Stored as a registry reference by id, like knowledge: the manager holds
@@ -981,7 +985,8 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
         tools_to_serialize = [
             tool
             for tool in agent.tools
-            if not (isinstance(tool, FileSystemTools) and tool.fs is agent._filesystem)
+            if tool is not agent._filesystem_toolkit
+            and not (isinstance(tool, FileSystemTools) and tool.fs is agent._filesystem)
         ]
     if agent.model is not None and tools_to_serialize and isinstance(tools_to_serialize, list):
         _tools = parse_tools(
@@ -1304,7 +1309,38 @@ def from_dict(
         from agno.fs import FileSystem
 
         try:
-            config["filesystem"] = FileSystem.from_dict(config["filesystem"], db=config.get("db"))
+            fs_config = config["filesystem"]
+            if fs_config.get("type") == "page":
+                from agno.knowledge.knowledge import Knowledge
+                from agno.knowledge.page.filesystem import PageFileSystem
+
+                name = fs_config.get("knowledge")
+                if not registry or not isinstance(name, str) or registry.knowledge_name_is_ambiguous(name):
+                    raise ValueError("PageFileSystem requires unambiguous named Knowledge in the registry")
+                page_knowledge = registry.get_knowledge(name)
+                if (
+                    not isinstance(page_knowledge, Knowledge)
+                    or page_knowledge.page_store is None
+                    or page_knowledge.page_store.namespace != fs_config.get("namespace")
+                ):
+                    raise ValueError("PageFileSystem Knowledge or namespace could not be resolved")
+                options = fs_config.get("options", {})
+                allowed_options = {
+                    "max_output_chars",
+                    "max_pattern_chars",
+                    "regex_match_timeout",
+                    "regex_command_seconds",
+                    "command_seconds",
+                    "max_cached_bytes",
+                    "max_cached_entries",
+                    "max_read_chars",
+                    "max_catalog_entries",
+                }
+                if not isinstance(options, dict) or options.keys() - allowed_options:
+                    raise ValueError("Invalid PageFileSystem options")
+                config["filesystem"] = PageFileSystem(knowledge=page_knowledge, **options)
+            else:
+                config["filesystem"] = FileSystem.from_dict(fs_config, db=config.get("db"))
         except (TypeError, ValueError) as e:
             if strict:
                 raise ComponentRehydrationError(f"{component_label} filesystem could not be restored: {e}") from e

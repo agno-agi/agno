@@ -160,7 +160,8 @@ def deep_copy(agent: Agent, *, update: Optional[Dict[str, Any]] = None) -> Agent
             field_value = [
                 tool
                 for tool in field_value
-                if not (isinstance(tool, FileSystemTools) and tool.fs is agent._filesystem)
+                if tool is not agent._filesystem_toolkit
+                and not (isinstance(tool, FileSystemTools) and tool.fs is agent._filesystem)
             ]
         if field_value is not None:
             try:

@@ -41,6 +41,7 @@ from agno.knowledge.protocol import KnowledgeProtocol
 
 if TYPE_CHECKING:
     from agno.fs import FileSystem
+    from agno.knowledge.page.filesystem import PageFileSystem
     from agno.learn.machine import LearningMachine
     from agno.tools.component import ComponentTool
 
@@ -139,9 +140,9 @@ class Agent:
     db: Optional[Union[BaseDb, AsyncBaseDb]] = None
 
     # --- FileSystem ---
-    # Enable a durable filesystem backed by the agent's database, or provide one explicitly.
+    # Enable durable working files, provide a FileSystem, or browse read-only PageFileSystem pages.
     # AgentOS applies its optional user-isolation policy to the managed ``True`` shorthand.
-    filesystem: Optional[Union[bool, FileSystem]] = None
+    filesystem: Optional[Union[bool, FileSystem, PageFileSystem]] = None
 
     # --- Checkpointing ---
     # When to persist run state to the database.
@@ -412,7 +413,7 @@ class Agent:
         dependencies: Optional[Dict[str, Any]] = None,
         add_dependencies_to_context: bool = False,
         db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
-        filesystem: Optional[Union[bool, FileSystem]] = None,
+        filesystem: Optional[Union[bool, FileSystem, PageFileSystem]] = None,
         checkpoint: Optional[Literal["runs", "tool-batch", "tools"]] = None,
         memory_manager: Optional[MemoryManager] = None,
         enable_agentic_memory: bool = False,
@@ -533,7 +534,8 @@ class Agent:
 
         self.db = db
         self.filesystem = filesystem
-        self._filesystem: Optional["FileSystem"] = None
+        self._filesystem: Optional[Union[FileSystem, PageFileSystem]] = None
+        self._filesystem_toolkit: Optional[Toolkit] = None
         self._filesystem_user_isolation = False
         self.checkpoint = checkpoint
 
@@ -778,7 +780,7 @@ class Agent:
         return self._learning
 
     @property
-    def filesystem_instance(self) -> Optional["FileSystem"]:
+    def filesystem_instance(self) -> Optional[Union[FileSystem, PageFileSystem]]:
         """The configured filesystem instance, if enabled."""
         if self.filesystem and self._filesystem is None:
             _init.set_filesystem(self)

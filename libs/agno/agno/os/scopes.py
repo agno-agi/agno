@@ -425,6 +425,10 @@ def get_default_scope_mappings() -> Dict[str, List[str]]:
         # Config endpoints (legacy scope: system:read)
         "GET /config": ["config:read"],
         "GET /models": ["config:read"],
+        # Mixed-source routes authenticate here and authorize each source in the
+        # router: agents:<id>:read for working files, knowledge:read for pages.
+        "GET /filesystem/sources": [],
+        "GET /filesystem/sources/*": [],
         # Agent endpoints
         "GET /agents": ["agents:read"],
         "GET /agents/*": ["agents:read"],
