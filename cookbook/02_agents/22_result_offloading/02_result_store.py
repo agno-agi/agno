@@ -61,6 +61,20 @@ if __name__ == "__main__":
         f"\nsearch returned {len(matches)} matches (capped at 20); first at line {matches[0].line_number}: {matches[0].line}"
     )
 
+    # Continue the same search without dropping later hits or enlarging each reply.
+    matched_lines = [match.line_number for match in matches]
+    search_pages = 1
+    while matches and matches[-1].more:
+        matches = store.search(
+            ref.result_id, r"station N$", start_line=matches[-1].line_number + 1
+        )
+        matched_lines.extend(match.line_number for match in matches)
+        search_pages += 1
+    assert matched_lines == list(range(4, 2001, 4))
+    print(
+        f"all {len(matched_lines)} matching lines took {search_pages} bounded search pages"
+    )
+
     # live_ids: the session's stored results, newest first, capped at 20.
     print(
         "\nlive result ids for the session:",
