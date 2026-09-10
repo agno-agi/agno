@@ -6,6 +6,7 @@ the interface can live in the OSS SDK while concrete providers — including one
 that call out to an external policy engine — are layered on top.
 """
 
+import asyncio
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Set
@@ -149,3 +150,26 @@ class AuthorizationProvider(ABC):
         if "*" in accessible:
             return resources
         return [r for r in resources if getattr(r, "id", None) in accessible]
+
+    # --- async variants ---
+    # Every provider answers both a sync and an async form of each primitive, so the
+    # enforcement choke points can await a decision without blocking the event loop. Each
+    # default runs the provider's OWN sync counterpart in a worker thread, so a provider
+    # that customises only the sync method (e.g. an FGA/ReBAC provider, or one that opens
+    # routes) has that exact behaviour on the async path too -- the async form never
+    # diverges from the sync one. A provider with a native async path (the engine-backed
+    # one) overrides these directly.
+    async def acheck(self, ctx: AuthorizationContext) -> bool:
+        return await asyncio.to_thread(self.check, ctx)
+
+    async def aaccessible_resource_ids(self, ctx: AuthorizationContext) -> Set[str]:
+        return await asyncio.to_thread(self.accessible_resource_ids, ctx)
+
+    async def aauthorize_route(self, ctx: AuthorizationContext, required_scopes: List[str]) -> bool:
+        return await asyncio.to_thread(self.authorize_route, ctx, required_scopes)
+
+    async def arequire(self, ctx: AuthorizationContext) -> None:
+        await asyncio.to_thread(self.require, ctx)
+
+    async def afilter_accessible(self, ctx: AuthorizationContext, resources: List[Any]) -> List[Any]:
+        return await asyncio.to_thread(self.filter_accessible, ctx, resources)

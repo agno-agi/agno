@@ -15,8 +15,8 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from agno.os.auth import (
     INTERNAL_SCHEDULER_USER_ID,
     INTERNAL_SERVICE_SCOPES,
+    aprovision_user_with_default_role,
     build_insufficient_permissions_detail,
-    provision_user_with_default_role,
 )
 from agno.os.scopes import (
     AgentOSScope,
@@ -907,6 +907,63 @@ class AuthMiddleware(BaseHTTPMiddleware):
             accessible_resource_ids=accessible_resource_ids,
         )
 
+    async def _aauthorize_route(
+        self,
+        request: Request,
+        scopes: List[str],
+        mappings: Dict[str, List[str]],
+        method: str,
+        path: str,
+    ) -> "RouteScopeCheck":
+        """Async twin of :meth:`_authorize_route`. Awaits the provider's async decision so the
+        route gate -- run on the event loop inside the async dispatch -- never blocks it on a
+        managed-role/ReBAC DB or network round trip, and works against an async database."""
+        from agno.os.auth import resolve_authorization_provider
+        from agno.os.authz.provider import AuthorizationContext
+
+        required_scopes = get_required_scopes_for_route(mappings, method, path)
+        if not required_scopes:
+            return RouteScopeCheck(allowed=True, required_scopes=required_scopes)
+
+        resource_type, resource_id = get_resource_context_from_path(path)
+
+        provider = resolve_authorization_provider(request)
+        ctx = AuthorizationContext(
+            principal_id=getattr(request.state, "user_id", None),
+            scopes=scopes,
+            claims=getattr(request.state, "claims", None) or {},
+            resource_type=resource_type,
+            resource_id=resource_id,
+            action=_route_action(required_scopes),
+            admin_scope=self.admin_scope,
+        )
+        allowed = await provider.aauthorize_route(ctx, required_scopes)
+
+        accessible_resource_ids: Optional[Set[str]] = None
+        first_required = required_scopes[0]
+        required_family = first_required.split(":", 1)[0] if ":" in first_required else None
+        if not allowed and method == "GET" and not resource_id and resource_type and required_family == resource_type:
+            required_action: Optional[str] = None
+            if ":" in first_required:
+                required_action = first_required.rsplit(":", 1)[1]
+            listing_ctx = AuthorizationContext(
+                principal_id=ctx.principal_id,
+                scopes=scopes,
+                claims=ctx.claims,
+                resource_type=resource_type,
+                resource_id=None,
+                action=required_action,
+                admin_scope=self.admin_scope,
+            )
+            accessible_resource_ids = await provider.aaccessible_resource_ids(listing_ctx)
+            allowed = True
+
+        return RouteScopeCheck(
+            allowed=allowed,
+            required_scopes=required_scopes,
+            accessible_resource_ids=accessible_resource_ids,
+        )
+
     def _record_decision(
         self,
         request: Request,
@@ -931,6 +988,33 @@ class AuthMiddleware(BaseHTTPMiddleware):
         from agno.os.authz.audit import record_decision
 
         record_decision(
+            request,
+            allowed=allowed,
+            target=f"{method} {path}",
+            principal=principal,
+            required_scopes=required_scopes,
+            scopes=scopes,
+            claims=getattr(request.state, "claims", None),
+            token=self._extract_token(request),
+            reason=reason,
+        )
+
+    async def _arecord_decision(
+        self,
+        request: Request,
+        *,
+        allowed: bool,
+        method: str,
+        path: str,
+        principal: Optional[str],
+        required_scopes: List[str],
+        scopes: List[str],
+        reason: Optional[str] = None,
+    ) -> None:
+        """Async twin of :meth:`_record_decision` (awaits the sink off the loop)."""
+        from agno.os.authz.audit import arecord_decision
+
+        await arecord_decision(
             request,
             allowed=allowed,
             target=f"{method} {path}",
@@ -998,6 +1082,59 @@ class AuthMiddleware(BaseHTTPMiddleware):
         # gate (including allow-by-default routes with no required scopes) so the trail
         # is complete. No-op when no decision sink is set, so the default path is untouched.
         self._record_decision(
+            request,
+            allowed=result.allowed,
+            method=method,
+            path=path,
+            principal=getattr(request.state, "user_id", None),
+            required_scopes=result.required_scopes,
+            scopes=scopes,
+            reason=None if result.required_scopes else "no_scopes_required",
+        )
+
+        if not result.allowed:
+            log_warning(
+                f"Insufficient scopes for {method} {path}. Required: {result.required_scopes}, User has: {scopes}"
+            )
+            return self._create_error_response(
+                403,
+                "Insufficient permissions",
+                origin,
+                cors_allowed_origins,
+                required_scopes=result.required_scopes,
+            )
+
+        if result.required_scopes:
+            log_debug(f"Scope check passed for {method} {path}. User scopes: {scopes}")
+        else:
+            log_debug(f"No scopes required for {method} {path}")
+        return None
+
+    async def _acheck_scopes(
+        self,
+        request: Request,
+        method: str,
+        path: str,
+        scopes: List[str],
+        origin: Optional[str],
+        cors_allowed_origins: Optional[List[str]],
+        scope_mappings: Optional[Dict[str, List[str]]] = None,
+    ) -> Optional[JSONResponse]:
+        """Async twin of :meth:`_check_scopes`: same gate, awaiting the provider and the
+        decision sink so the always-on route gate does its DB/network I/O off the event loop
+        (and works against an async database)."""
+        mappings = scope_mappings if scope_mappings is not None else self.scope_mappings
+        result = await self._aauthorize_route(request, scopes, mappings, method, path)
+
+        request.state.required_scopes = result.required_scopes
+        if result.accessible_resource_ids is not None:
+            request.state.accessible_resource_ids = result.accessible_resource_ids
+            if result.accessible_resource_ids:
+                log_debug(f"Caller has specific resource scopes. Accessible IDs: {result.accessible_resource_ids}")
+            else:
+                log_debug("Caller has no matching resource scopes. Will return empty list.")
+
+        await self._arecord_decision(
             request,
             allowed=result.allowed,
             method=method,
@@ -1278,8 +1415,9 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 try:
                     if getattr(request.app.state, "user_auto_provision", False):
                         # Provisioning already reads the row; read `disabled` off it rather
-                        # than issuing a second query for the same row every request.
-                        provisioned = provision_user_with_default_role(
+                        # than issuing a second query for the same row every request. Awaited
+                        # so provisioning against an async directory stays off the event loop.
+                        provisioned = await aprovision_user_with_default_role(
                             user_store,
                             getattr(request.app.state, "role_store", None),
                             getattr(request.app.state, "user_default_role", None),
@@ -1290,7 +1428,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
                         )
                         disabled = bool(provisioned.get("disabled")) if provisioned is not None else False
                     else:
-                        disabled = user_store.is_disabled(user_id)
+                        disabled = await user_store.ais_disabled(user_id)
                 except Exception as e:  # directory unreachable: honour the configured policy
                     fail_closed = bool(getattr(request.app.state, "user_directory_fail_closed", False))
                     log_warning(
@@ -1304,7 +1442,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
                     disabled = False
                 if disabled:
                     log_warning(f"Disabled user denied: {user_id} for {method} {path}")
-                    self._record_decision(
+                    await self._arecord_decision(
                         request,
                         allowed=False,
                         method=method,
@@ -1340,7 +1478,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
             # RBAC scope checking (only if enabled)
             if self.authorization:
-                error_response = self._check_scopes(request, method, path, scopes, origin, cors_allowed_origins)
+                error_response = await self._acheck_scopes(request, method, path, scopes, origin, cors_allowed_origins)
                 if error_response is not None:
                     return error_response
 
@@ -1393,7 +1531,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
             request.state.admin_scope = self.admin_scope
             request.state.user_isolation_enabled = self.user_isolation
             if self.authorization:
-                error_response = self._check_scopes(request, method, path, [], origin, cors_allowed_origins)
+                error_response = await self._acheck_scopes(request, method, path, [], origin, cors_allowed_origins)
                 if error_response is not None:
                     return error_response
 

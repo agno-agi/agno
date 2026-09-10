@@ -23,7 +23,8 @@ it runs offline against a simulated issuer.
 
 | File | Lesson |
 |---|---|
-| `01_managed_roles.py` | Start here. Roles defined in scope terms, persisted to your DB, changed at runtime with no re-login |
+| `00_quickstart_authorization.py` | Start here. The whole setup in one `Authorization` object: verification, roles, users, audit, and the admin API, borrowing the OS db |
+| `01_managed_roles.py` | The same model built from the primitives (`ManagedRoleStore` + `AuthorizationConfig`), for when you want full control |
 | `02_managed_users.py` | The credential-less user directory and the disabled-user kill switch that outlives a valid token |
 | `03_directory_without_auth.py` | `AgentOS(db=db, user_isolation=True, user_directory=True)` with NO auth: a roster + per-user isolation that key off the run's user_id (advisory without auth) |
 | `04_managed_roles_sessions.py` | Roles protecting real data: who may delete a chat session |
@@ -38,16 +39,18 @@ it runs offline against a simulated issuer.
 
 ## Start Here
 
-`01_managed_roles.py` needs no database server and no model key. It creates three
-roles and two people, makes real requests, and prints ALLOWED or BLOCKED for
-each:
+`00_quickstart_authorization.py` needs no database server and no model key. It builds
+the whole thing from one `Authorization` object, makes real requests, and prints
+ALLOWED or BLOCKED for each:
 
 ```bash
-.venvs/demo/bin/python cookbook/05_agent_os/26_authorization/01_managed_roles.py
+.venvs/demo/bin/python cookbook/05_agent_os/26_authorization/00_quickstart_authorization.py
 ```
 
-Then read `02_managed_users.py` for the directory tier, and
-`08_custom_authorization_provider.py` once you want your own decision logic.
+`01_managed_roles.py` builds the same model from the underlying primitives, for when
+you want to hold each piece yourself. Then read `02_managed_users.py` for the
+directory tier, and `08_custom_authorization_provider.py` once you want your own
+decision logic.
 
 `06_manage_users_and_roles.py` is the only file that blocks: it serves an AgentOS on
 port 7777 so you can drive the admin API (or `console.html`) against it.

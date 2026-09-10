@@ -1515,13 +1515,13 @@ def get_workflow_router(
         # Filter workflows based on user's scopes (only if authorization is enabled)
         if getattr(request.state, "authorization_enabled", False):
             from agno.os.auth import (
+                afilter_resources_by_access,
+                aget_accessible_resources,
                 build_insufficient_permissions_detail,
-                filter_resources_by_access,
-                get_accessible_resources,
             )
 
             # Check if user has any workflow scopes at all
-            accessible_ids = get_accessible_resources(request, "workflows")
+            accessible_ids = await aget_accessible_resources(request, "workflows")
             if not accessible_ids:
                 required_scopes = getattr(request.state, "required_scopes", None)
                 raise HTTPException(
@@ -1529,7 +1529,7 @@ def get_workflow_router(
                     detail=build_insufficient_permissions_detail(required_scopes),
                 )
 
-            accessible_workflows = filter_resources_by_access(request, os.workflows or [], "workflows")
+            accessible_workflows = await afilter_resources_by_access(request, os.workflows or [], "workflows")
         else:
             accessible_workflows = os.workflows or []
 
@@ -1560,7 +1560,7 @@ def get_workflow_router(
                 # still saw its config here (the agents endpoint already
                 # filters)
                 if getattr(request.state, "authorization_enabled", False):
-                    db_workflows = filter_resources_by_access(request, db_workflows, "workflows")
+                    db_workflows = await afilter_resources_by_access(request, db_workflows, "workflows")
             for db_workflow in db_workflows or []:
                 try:
                     workflows.append(WorkflowSummaryResponse.from_workflow(workflow=db_workflow, is_component=True))

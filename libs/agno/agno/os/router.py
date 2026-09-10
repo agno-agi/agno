@@ -13,9 +13,9 @@ from agno import __version__ as agno_version
 from agno.agent.factory import AgentFactory
 from agno.exceptions import RemoteServerUnavailableError
 from agno.os.auth import (
+    aprovision_user_with_default_role,
     get_authentication_dependency,
     get_effective_auth_mode,
-    provision_user_with_default_role,
     validate_websocket_token,
     verify_websocket_service_account,
 )
@@ -320,9 +320,12 @@ def get_websocket_router(
 
         ws_authorization_provider = resolve_authorization_provider(websocket.app)
 
-        def ws_authorize_workflow(workflow_id: Optional[str]) -> bool:
+        async def ws_authorize_workflow(workflow_id: Optional[str]) -> bool:
             """Route-gate a workflow WS action through the provider, mirroring the REST
-            POST /workflows/{id}/runs gate (same required scopes, same resource ctx)."""
+            POST /workflows/{id}/runs gate (same required scopes, same resource ctx).
+
+            Awaits the provider's async path so the decision -- and its audit write -- stay off
+            the event loop and work against an async database, like the REST gate."""
             ctx = AuthorizationContext(
                 principal_id=websocket_user_context.get("user_id"),
                 scopes=list(websocket_user_context.get("scopes", []) or []),
@@ -332,13 +335,13 @@ def get_websocket_router(
                 action="run",
                 admin_scope=ws_admin_scope,
             )
-            allowed = ws_authorization_provider.authorize_route(ctx, ws_workflow_run_scopes)
+            allowed = await ws_authorization_provider.aauthorize_route(ctx, ws_workflow_run_scopes)
             # Same access trail the REST gate writes to: the equivalent
             # POST /workflows/{id}/runs decision is recorded, so the streaming
             # transport must not be a blind spot in the audit.
-            from agno.os.authz.audit import record_decision
+            from agno.os.authz.audit import arecord_decision
 
-            record_decision(
+            await arecord_decision(
                 websocket.app,
                 allowed=allowed,
                 target=f"WS /workflows/{workflow_id or '_'}/runs",
@@ -390,17 +393,18 @@ def get_websocket_router(
             is_sa = isinstance(uid, str) and uid.startswith(SERVICE_ACCOUNT_PRINCIPAL_PREFIX)
             return is_sa or ws_token_scopes_authoritative
 
-        def ws_user_disabled_now() -> bool:
+        async def ws_user_disabled_now() -> bool:
             # Re-check the directory kill-switch for THIS action. The connect-time check is
             # not enough: the socket is long-lived and multi-request, so a user disabled
             # (revoked) AFTER they authenticated must still be denied on their next
             # privileged action. On a directory error, honour user_directory_fail_closed.
+            # Awaited so the check works against an async directory too.
             store = getattr(getattr(websocket.app, "state", None), "user_store", None)
             uid = websocket_user_context.get("user_id")
             if store is None or not uid:
                 return False
             try:
-                return bool(store.is_disabled(uid))
+                return bool(await store.ais_disabled(uid))
             except Exception as e:
                 fail_closed = bool(getattr(websocket.app.state, "user_directory_fail_closed", False))
                 logger.warning(
@@ -534,7 +538,7 @@ def get_websocket_router(
                             if user_store is not None and ws_user_id:
                                 try:
                                     if getattr(websocket.app.state, "user_auto_provision", False):
-                                        provisioned = provision_user_with_default_role(
+                                        provisioned = await aprovision_user_with_default_role(
                                             user_store,
                                             getattr(websocket.app.state, "role_store", None),
                                             getattr(websocket.app.state, "user_default_role", None),
@@ -547,7 +551,7 @@ def get_websocket_router(
                                             bool(provisioned.get("disabled")) if provisioned is not None else False
                                         )
                                     else:
-                                        ws_disabled = user_store.is_disabled(ws_user_id)
+                                        ws_disabled = await user_store.ais_disabled(ws_user_id)
                                 except Exception as e:  # directory unreachable: honour configured policy
                                     fail_closed = bool(
                                         getattr(websocket.app.state, "user_directory_fail_closed", False)
@@ -638,10 +642,10 @@ def get_websocket_router(
                     # side-effects.
                     workflow_id = message.get("workflow_id")
                     if scope_enforcement_active():
-                        if ws_user_disabled_now():
+                        if await ws_user_disabled_now():
                             await websocket.send_text(json.dumps({"event": "error", "error": "User is disabled"}))
                             continue
-                        if not ws_authorize_workflow(workflow_id):
+                        if not await ws_authorize_workflow(workflow_id):
                             await websocket.send_text(
                                 json.dumps({"event": "error", "error": "Insufficient permissions to run this workflow"})
                             )
@@ -695,7 +699,7 @@ def get_websocket_router(
                     # that's when the downstream session/component check
                     # actually uses it.
                     workflow_id_for_reconnect = message.get("workflow_id")
-                    if scope_enforcement_active() and ws_user_disabled_now():
+                    if scope_enforcement_active() and await ws_user_disabled_now():
                         await websocket.send_text(json.dumps({"event": "error", "error": "User is disabled"}))
                         continue
                     if scope_enforcement_active() and not is_admin:
@@ -710,7 +714,7 @@ def get_websocket_router(
                             )
                             continue
 
-                        if not ws_authorize_workflow(workflow_id_for_reconnect):
+                        if not await ws_authorize_workflow(workflow_id_for_reconnect):
                             await websocket.send_text(
                                 json.dumps(
                                     {
@@ -734,10 +738,10 @@ def get_websocket_router(
                     # Enforce workflow-level RBAC, mirroring start-workflow.
                     workflow_id = message.get("workflow_id")
                     if scope_enforcement_active():
-                        if ws_user_disabled_now():
+                        if await ws_user_disabled_now():
                             await websocket.send_text(json.dumps({"event": "error", "error": "User is disabled"}))
                             continue
-                        if not ws_authorize_workflow(workflow_id):
+                        if not await ws_authorize_workflow(workflow_id):
                             await websocket.send_text(
                                 json.dumps(
                                     {"event": "error", "error": "Insufficient permissions to continue this workflow"}

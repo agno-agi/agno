@@ -8,6 +8,25 @@ authorization engine: managed roles persist to throwaway SQLite under `tmp/`, th
 FGA example runs on an in-memory store, and the IdP example mints its own
 throwaway keys.
 
+### 00_quickstart_authorization.py
+
+**Status:** PASS
+
+**Test mode:** LIVE (driven via TestClient; no model calls needed)
+
+**Description:** The one-object `Authorization` facade: verification + roles + user
+directory + audit + the admin API in a single object that borrows the OS db. Defines
+three roles, seeds an admin and two users, and makes real requests.
+
+**Result:** alice (admin) ran vault, carol (runner) ran research, bob (viewer) read
+research -- all ALLOWED; bob running research BLOCKED (viewer is read-only). dave, an
+unknown subject, was JIT-provisioned with the default `viewer` role and could read
+(ALLOWED). An operator token carrying `agent_os:admin` scope but no role ran vault
+(ALLOWED, via `trust_token_scopes`). `/authz/roles` and `/users` were auto-mounted:
+alice (admin) listed both; bob was refused (403). No `include_router` in the file.
+
+---
+
 ### 01_managed_roles.py
 
 **Status:** PASS

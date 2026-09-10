@@ -7,7 +7,17 @@ if TYPE_CHECKING:
     from agno.run.status_persist import RunPersistOutcome
     from agno.tracing.schemas import Span, Trace
 
+from agno.db import authz_store
 from agno.db.base import AsyncBaseDb, SessionType
+from agno.db.schemas.authz import (
+    AUTHZ_AUDIT,
+    AUTHZ_DECISIONS,
+    AUTHZ_GROUPING,
+    AUTHZ_POLICY,
+    AUTHZ_ROLES,
+    AUTHZ_TABLE_NAME_ATTRS,
+    AUTHZ_USERS,
+)
 from agno.db.migrations.manager import MigrationManager
 from agno.db.postgres.engine import _engine_options
 from agno.db.postgres.schemas import get_table_schema_definition
@@ -552,6 +562,13 @@ class AsyncPostgresDb(AsyncBaseDb):
                 create_table_if_not_found=create_table_if_not_found,
             )
             return self.service_accounts_table
+
+        if table_type in AUTHZ_TABLE_NAME_ATTRS:
+            return await self._get_or_create_table(
+                table_name=getattr(self, AUTHZ_TABLE_NAME_ATTRS[table_type]),
+                table_type=table_type,
+                create_table_if_not_found=create_table_if_not_found,
+            )
 
         raise ValueError(f"Unknown table type: {table_type}")
 
@@ -5698,3 +5715,149 @@ class AsyncPostgresDb(AsyncBaseDb):
         except Exception as e:
             log_debug(f"Error deleting service account: {e}")
             return False
+
+    # --- Authorization ---
+    # Async twins of the sync Postgres authz delegations: each resolves its table via the
+    # normal schema-aware _get_table path (created on first use, honouring configured
+    # schema/table-name overrides) and delegates to the shared agno.db.authz_store async
+    # functions over this backend's AsyncEngine.
+
+    async def get_authz_policies(self, roles: List[str]) -> List[Tuple[str, str, str, str]]:
+        table = await self._get_table(table_type=AUTHZ_POLICY, create_table_if_not_found=True)
+        return await authz_store.aget_policies(self.db_engine, table, roles)
+
+    async def get_authz_role_policies(self, role: str) -> List[Tuple[str, str, str]]:
+        table = await self._get_table(table_type=AUTHZ_POLICY, create_table_if_not_found=True)
+        return await authz_store.aget_role_policies(self.db_engine, table, role)
+
+    async def set_authz_role_policies(self, role: str, rows: List[Tuple[str, str, str]]) -> None:
+        table = await self._get_table(table_type=AUTHZ_POLICY, create_table_if_not_found=True)
+        await authz_store.aset_role_policies(self.db_engine, table, role, rows)
+
+    async def upsert_authz_policy(self, *, role: str, resource: str, action: str, effect: str) -> None:
+        table = await self._get_table(table_type=AUTHZ_POLICY, create_table_if_not_found=True)
+        await authz_store.aupsert_policy(
+            self.db_engine, table, role=role, resource=resource, action=action, effect=effect
+        )
+
+    async def delete_authz_policy(
+        self, *, role: str, resource: Optional[str] = None, action: Optional[str] = None
+    ) -> None:
+        table = await self._get_table(table_type=AUTHZ_POLICY, create_table_if_not_found=True)
+        await authz_store.adelete_policy(self.db_engine, table, role=role, resource=resource, action=action)
+
+    async def get_authz_direct_roles(self, subject: str) -> List[str]:
+        table = await self._get_table(table_type=AUTHZ_GROUPING, create_table_if_not_found=True)
+        return await authz_store.aget_direct_roles(self.db_engine, table, subject)
+
+    async def authz_name_is_role(self, name: str) -> bool:
+        policy = await self._get_table(table_type=AUTHZ_POLICY, create_table_if_not_found=True)
+        grouping = await self._get_table(table_type=AUTHZ_GROUPING, create_table_if_not_found=True)
+        return await authz_store.aname_is_role(self.db_engine, policy, grouping, name)
+
+    async def assign_authz_role(self, subject: str, role: str) -> None:
+        table = await self._get_table(table_type=AUTHZ_GROUPING, create_table_if_not_found=True)
+        await authz_store.aassign_role(self.db_engine, table, subject, role)
+
+    async def unassign_authz_role(self, subject: str, role: str) -> None:
+        table = await self._get_table(table_type=AUTHZ_GROUPING, create_table_if_not_found=True)
+        await authz_store.aunassign_role(self.db_engine, table, subject, role)
+
+    async def replace_authz_subject_roles(self, subject: str, role: str) -> None:
+        table = await self._get_table(table_type=AUTHZ_GROUPING, create_table_if_not_found=True)
+        await authz_store.areplace_subject_roles(self.db_engine, table, subject, role)
+
+    async def list_authz_roles(self) -> List[str]:
+        policy = await self._get_table(table_type=AUTHZ_POLICY, create_table_if_not_found=True)
+        grouping = await self._get_table(table_type=AUTHZ_GROUPING, create_table_if_not_found=True)
+        return await authz_store.alist_roles(self.db_engine, policy, grouping)
+
+    async def delete_authz_role(self, role: str) -> None:
+        policy = await self._get_table(table_type=AUTHZ_POLICY, create_table_if_not_found=True)
+        grouping = await self._get_table(table_type=AUTHZ_GROUPING, create_table_if_not_found=True)
+        meta = await self._get_table(table_type=AUTHZ_ROLES, create_table_if_not_found=True)
+        await authz_store.adelete_role(self.db_engine, policy, grouping, meta, role)
+
+    async def get_authz_role_meta(self, slug: str) -> Optional[Dict[str, Any]]:
+        table = await self._get_table(table_type=AUTHZ_ROLES, create_table_if_not_found=True)
+        return await authz_store.aget_role_meta(self.db_engine, table, slug)
+
+    async def list_authz_role_meta(self) -> List[Dict[str, Any]]:
+        table = await self._get_table(table_type=AUTHZ_ROLES, create_table_if_not_found=True)
+        return await authz_store.alist_role_meta(self.db_engine, table)
+
+    async def upsert_authz_role_meta(self, slug: str, values: Dict[str, Any]) -> None:
+        table = await self._get_table(table_type=AUTHZ_ROLES, create_table_if_not_found=True)
+        await authz_store.aupsert_role_meta(self.db_engine, table, slug, values)
+
+    async def delete_authz_role_meta(self, slug: str) -> None:
+        table = await self._get_table(table_type=AUTHZ_ROLES, create_table_if_not_found=True)
+        await authz_store.adelete_role_meta(self.db_engine, table, slug)
+
+    async def get_authz_user(self, user_id: str) -> Optional[Dict[str, Any]]:
+        table = await self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)
+        return await authz_store.aget_user(self.db_engine, table, user_id)
+
+    async def list_authz_users(
+        self,
+        limit: int = 1000,
+        offset: int = 0,
+        include_disabled: bool = True,
+        search: Optional[str] = None,
+        sort_by: str = "created_at",
+        order: str = "desc",
+    ) -> List[Dict[str, Any]]:
+        table = await self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)
+        return await authz_store.alist_users(
+            self.db_engine, table, limit, offset, include_disabled, search, sort_by, order
+        )
+
+    async def count_authz_users(self, include_disabled: bool = True, search: Optional[str] = None) -> int:
+        table = await self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)
+        return await authz_store.acount_users(self.db_engine, table, include_disabled, search)
+
+    async def upsert_authz_user(self, user_id: str, values: Dict[str, Any]) -> None:
+        table = await self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)
+        await authz_store.aupsert_user(self.db_engine, table, user_id, values)
+
+    async def set_authz_user_disabled(self, user_id: str, disabled: bool) -> None:
+        table = await self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)
+        await authz_store.aset_user_disabled(self.db_engine, table, user_id, disabled)
+
+    async def delete_authz_user(self, user_id: str) -> None:
+        table = await self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)
+        await authz_store.adelete_user(self.db_engine, table, user_id)
+
+    async def is_authz_user_disabled(self, user_id: str) -> bool:
+        table = await self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)
+        return await authz_store.ais_user_disabled(self.db_engine, table, user_id)
+
+    async def record_authz_audit_event(self, values: Dict[str, Any]) -> None:
+        table = await self._get_table(table_type=AUTHZ_AUDIT, create_table_if_not_found=True)
+        await authz_store.arecord_event(self.db_engine, table, values)
+
+    async def record_authz_decision(self, values: Dict[str, Any]) -> None:
+        table = await self._get_table(table_type=AUTHZ_DECISIONS, create_table_if_not_found=True)
+        await authz_store.arecord_event(self.db_engine, table, values)
+
+    async def read_authz_audit_events(
+        self,
+        limit: int = 100,
+        offset: int = 0,
+        search: Optional[str] = None,
+        sort_by: str = "created_at",
+        order: str = "desc",
+        decisions: bool = False,
+    ) -> List[Dict[str, Any]]:
+        table_type = AUTHZ_DECISIONS if decisions else AUTHZ_AUDIT
+        columns = ["actor", "action", "target"]
+        table = await self._get_table(table_type=table_type, create_table_if_not_found=True)
+        return await authz_store.aread_events(
+            self.db_engine, table, limit, offset, search, sort_by, order, search_columns=columns
+        )
+
+    async def count_authz_audit_events(self, search: Optional[str] = None, decisions: bool = False) -> int:
+        table_type = AUTHZ_DECISIONS if decisions else AUTHZ_AUDIT
+        columns = ["actor", "action", "target"]
+        table = await self._get_table(table_type=table_type, create_table_if_not_found=True)
+        return await authz_store.acount_events(self.db_engine, table, search, search_columns=columns)

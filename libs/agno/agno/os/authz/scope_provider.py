@@ -61,3 +61,14 @@ class ScopeAuthorizationProvider(AuthorizationProvider):
             resource_id=ctx.resource_id,
             admin_scope=ctx.admin_scope,
         )
+
+    # Scope decisions are pure in-memory work against the token's own scopes -- no I/O -- so
+    # the async variants call the sync bodies directly rather than paying a worker-thread hop.
+    async def acheck(self, ctx: AuthorizationContext) -> bool:
+        return self.check(ctx)
+
+    async def aaccessible_resource_ids(self, ctx: AuthorizationContext) -> Set[str]:
+        return self.accessible_resource_ids(ctx)
+
+    async def aauthorize_route(self, ctx: AuthorizationContext, required_scopes: List[str]) -> bool:
+        return self.authorize_route(ctx, required_scopes)

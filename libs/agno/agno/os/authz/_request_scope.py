@@ -23,7 +23,7 @@ need to cooperate. Context is copied into threadpool workers, so it survives the
 
 from contextlib import contextmanager
 from contextvars import ContextVar
-from typing import Any, Callable, Dict, Iterator, Optional, TypeVar
+from typing import Any, Awaitable, Callable, Dict, Iterator, Optional, TypeVar
 
 _CACHE: ContextVar[Optional[Dict[Any, Any]]] = ContextVar("agno_authz_request_cache", default=None)
 
@@ -58,6 +58,22 @@ def memoize(key: Any, compute: Callable[[], T]) -> T:
         return compute()
     if key not in cache:
         cache[key] = compute()
+    return cache[key]
+
+
+async def amemoize(key: Any, compute: Callable[[], Awaitable[T]]) -> T:
+    """Async twin of :func:`memoize`: return ``await compute()``, reusing this request's
+    answer for ``key`` if there is one.
+
+    The cache stores resolved VALUES (never the coroutine), so a sync and an async
+    resolver that key the same question share one memo -- an async decision path and a
+    sync one on the same request see each other's cached closures/policy rows.
+    """
+    cache = _CACHE.get()
+    if cache is None:
+        return await compute()
+    if key not in cache:
+        cache[key] = await compute()
     return cache[key]
 
 

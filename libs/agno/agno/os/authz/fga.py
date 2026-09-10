@@ -33,6 +33,7 @@ route gating), since FGA has no notion of non-resource routes like ``/config``::
     ])
 """
 
+import asyncio
 from typing import List, Optional, Set
 
 from agno.os.authz._request_scope import memoize
@@ -169,6 +170,19 @@ class FGAAuthorizationProvider(AuthorizationProvider):
         if ctx.resource_type:
             return self.check(ctx)
         return False
+
+    # Async variants thread the provider's OWN sync methods (the OpenFGA SDK client is
+    # sync), so the async path keeps FGA's exact semantics -- including this method's
+    # abstain-on-non-resource behaviour -- rather than the generic ABC default, and never
+    # blocks the event loop on the external check.
+    async def acheck(self, ctx: AuthorizationContext) -> bool:
+        return await asyncio.to_thread(self.check, ctx)
+
+    async def aaccessible_resource_ids(self, ctx: AuthorizationContext) -> Set[str]:
+        return await asyncio.to_thread(self.accessible_resource_ids, ctx)
+
+    async def aauthorize_route(self, ctx: AuthorizationContext, required_scopes: List[str]) -> bool:
+        return await asyncio.to_thread(self.authorize_route, ctx, required_scopes)
 
 
 class OpenFGAClient:

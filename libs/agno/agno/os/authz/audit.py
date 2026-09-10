@@ -24,6 +24,7 @@ The same :class:`DbAuditSink` instance can serve both: ``record()`` routes chang
 events to ``authz_audit`` and decision events to ``authz_decisions``.
 """
 
+import asyncio
 import json
 import logging
 import time
@@ -87,6 +88,11 @@ class AuditSink(ABC):
         """Persist/emit one event. Must not raise into the caller's path."""
         ...
 
+    async def arecord(self, event: AuditEvent) -> None:
+        """Async twin of :meth:`record` (default: run the sync sink in a worker thread, so a
+        custom sink works on the async path without blocking the loop). Must not raise."""
+        await asyncio.to_thread(self.record, event)
+
 
 class LoggingAuditSink(AuditSink):
     """Emit each event as one JSON line to a logger (default ``agno.authz.audit``)."""
@@ -97,6 +103,10 @@ class LoggingAuditSink(AuditSink):
 
     def record(self, event: AuditEvent) -> None:
         self._logger.log(self._level, json.dumps(event.to_dict()))
+
+    async def arecord(self, event: AuditEvent) -> None:
+        # Logging is cheap and non-blocking enough; no worker-thread hop needed.
+        self.record(event)
 
 
 def _is_decision(action: str) -> bool:
@@ -182,6 +192,47 @@ def record_decision(
         log_debug(f"decision audit failed: {e}")
 
 
+async def arecord_decision(
+    app_or_request: Any,
+    *,
+    allowed: bool,
+    target: str,
+    principal: Optional[str],
+    required_scopes: Optional[List[str]] = None,
+    scopes: Optional[List[str]] = None,
+    claims: Optional[Dict[str, Any]] = None,
+    token: Optional[str] = None,
+    reason: Optional[str] = None,
+) -> None:
+    """Async twin of :func:`record_decision`, for the async enforcement choke points.
+
+    Awaits the sink's :meth:`AuditSink.arecord`, so a sink over an async database writes the
+    decision row without blocking the event loop. Never raises into the request path; no-op
+    when no sink is configured."""
+    sink = resolve_audit_sink(app_or_request)
+    if sink is None:
+        return
+    try:
+        metadata: Dict[str, Any] = {
+            "required": list(required_scopes or []),
+            "token": token_reference(token, claims),
+            "scopes": list(scopes or []),
+        }
+        if reason:
+            metadata["reason"] = reason
+        await sink.arecord(
+            AuditEvent(
+                action="access.allowed" if allowed else "access.denied",
+                actor=principal,
+                target=target,
+                timestamp=int(time.time()),
+                metadata=metadata,
+            )
+        )
+    except Exception as e:  # pragma: no cover - audit must never break requests
+        log_debug(f"decision audit failed: {e}")
+
+
 def _sanitize_text(value: Any) -> Any:
     """Strip C0 control characters (except tab/newline) from an audit text field.
 
@@ -227,7 +278,7 @@ class DbAuditSink(AuditSink):
         create_table: bool = True,
         db: Optional[Any] = None,
     ):
-        from agno.os.authz._db import require_authz_db, resolve_authz_db
+        from agno.os.authz._db import is_async_authz_db, require_authz_db, resolve_authz_db
 
         if db is None and db_url is None and engine is None:
             raise ValueError("DbAuditSink needs one of: db (an agno Db), or db_url")
@@ -239,6 +290,15 @@ class DbAuditSink(AuditSink):
             )
         self._db: Any = resolve_authz_db(db, db_url)
         require_authz_db(self._db)
+        self._db_is_async: bool = is_async_authz_db(self._db)
+
+    async def _adb(self, name: str, *args: Any, **kwargs: Any) -> Any:
+        """Call an audit DB method from the async path -- await an async backend, thread a
+        sync one -- mirroring the engine's dispatch so the sink never blocks the loop."""
+        fn = getattr(self._db, name)
+        if self._db_is_async:
+            return await fn(*args, **kwargs)
+        return await asyncio.to_thread(fn, *args, **kwargs)
 
     def record(self, event: AuditEvent) -> None:
         # The AuditSink contract is that record() must NOT raise into the caller's
@@ -363,3 +423,115 @@ class DbAuditSink(AuditSink):
     def count_decisions(self, search: Optional[str] = None) -> int:
         """Total number of decision events (for pagination), honouring ``search``."""
         return self._count(True, search)
+
+    # --- async variants (mirror the sync methods; await the DB, never raise into caller) ---
+    async def arecord(self, event: AuditEvent) -> None:
+        try:
+            if _is_decision(event.action):
+                await self._arecord_decision(event)
+            else:
+                await self._arecord_change(event)
+        except Exception:
+            logging.getLogger("agno.authz.audit").exception(
+                "failed to write audit event action=%r actor=%r target=%r",
+                event.action,
+                event.actor,
+                event.target,
+            )
+
+    async def _arecord_change(self, event: AuditEvent) -> None:
+        await self._adb(
+            "record_authz_audit_event",
+            {
+                "event_id": uuid4().hex,
+                "created_at": event.timestamp,
+                "actor": _sanitize_text(event.actor),
+                "action": _sanitize_text(event.action),
+                "target": _sanitize_text(event.target),
+                "before": json.dumps(event.before) if event.before is not None else None,
+                "after": json.dumps(event.after) if event.after is not None else None,
+            },
+        )
+
+    async def _arecord_decision(self, event: AuditEvent) -> None:
+        meta = event.metadata or {}
+        await self._adb(
+            "record_authz_decision",
+            {
+                "event_id": uuid4().hex,
+                "created_at": event.timestamp,
+                "actor": _sanitize_text(event.actor),
+                "action": _sanitize_text(event.action),
+                "target": _sanitize_text(event.target),
+                "token_ref": _sanitize_text(meta.get("token")),
+                "required": json.dumps(meta.get("required")) if meta.get("required") is not None else None,
+                "scopes": json.dumps(meta.get("scopes")) if meta.get("scopes") is not None else None,
+            },
+        )
+
+    async def _aselect_page(
+        self, decisions: bool, limit: int, offset: int, search: Optional[str], sort_by: str, order: str
+    ) -> List[Any]:
+        if sort_by not in AUDIT_SORT_FIELDS:
+            raise ValueError(f"sort_by must be one of {AUDIT_SORT_FIELDS}, got {sort_by!r}")
+        return await self._adb(
+            "read_authz_audit_events",
+            limit=limit,
+            offset=offset,
+            search=search,
+            sort_by=sort_by,
+            order=order,
+            decisions=decisions,
+        )
+
+    async def _acount(self, decisions: bool, search: Optional[str]) -> int:
+        return int(await self._adb("count_authz_audit_events", search=search, decisions=decisions))
+
+    async def aread(
+        self,
+        limit: int = 100,
+        offset: int = 0,
+        search: Optional[str] = None,
+        sort_by: str = DEFAULT_AUDIT_SORT_FIELD,
+        order: str = DEFAULT_AUDIT_SORT_ORDER,
+    ) -> List[dict]:
+        return [
+            {
+                "created_at": r["created_at"],
+                "actor": r["actor"],
+                "action": r["action"],
+                "target": r["target"],
+                "before": json.loads(r["before"]) if r["before"] else None,
+                "after": json.loads(r["after"]) if r["after"] else None,
+            }
+            for r in await self._aselect_page(False, limit, offset, search, sort_by, order)
+        ]
+
+    async def aread_decisions(
+        self,
+        limit: int = 100,
+        offset: int = 0,
+        search: Optional[str] = None,
+        sort_by: str = DEFAULT_AUDIT_SORT_FIELD,
+        order: str = DEFAULT_AUDIT_SORT_ORDER,
+    ) -> List[dict]:
+        return [
+            {
+                "created_at": r["created_at"],
+                "actor": r["actor"],
+                "action": r["action"],
+                "target": r["target"],
+                "metadata": {
+                    "required": json.loads(r["required"]) if r["required"] else None,
+                    "token": r["token_ref"],
+                    "scopes": json.loads(r["scopes"]) if r["scopes"] else None,
+                },
+            }
+            for r in await self._aselect_page(True, limit, offset, search, sort_by, order)
+        ]
+
+    async def acount(self, search: Optional[str] = None) -> int:
+        return await self._acount(False, search)
+
+    async def acount_decisions(self, search: Optional[str] = None) -> int:
+        return await self._acount(True, search)
