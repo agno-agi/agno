@@ -25,7 +25,7 @@ verify-only case is a one-liner:
     Authorization(verification_keys=KEYS, audience=OS_ID)   # no roles, no ceremony
 
 Everything the facade builds is still reachable as a primitive: pass your own ``role_store=`` /
-``user_store=`` / ``authorization_provider=`` / ``engine=`` and the facade uses them instead of
+``user_directory=<store>`` / ``authorization_provider=`` / ``engine=`` and the facade uses them instead of
 building its own. Simplicity by default, full control when you need it.
 
 The database is borrowed from AgentOS when you don't pass one, so you never write ``db=`` twice --
@@ -62,7 +62,7 @@ _ASYNC_SETUP_MSG = (
     "Authorization.define_role()/seed() write roles and users at setup time and need a synchronous "
     "database, but the bound database is async ({db_type}). Give AgentOS a sync db for setup, or "
     "configure roles/users yourself through the async store API (ManagedRoleStore.aset_role_scopes / "
-    "ManagedUserStore.aupsert) and pass them via Authorization(role_store=..., user_store=...). A "
+    "ManagedUserStore.aupsert) and pass them via Authorization(role_store=..., user_directory=<store>). A "
     "facade with pre-built stores and no define_role()/seed() calls works against an async db."
 )
 
@@ -102,7 +102,6 @@ class Authorization:
         authorization_provider: Optional[Union["AuthorizationProvider", List["AuthorizationProvider"]]] = None,
         engine: Optional["PolicyEngine"] = None,
         role_store: Optional["ManagedRoleStore"] = None,
-        user_store: Optional["ManagedUserStore"] = None,
     ):
         """
         Args:
@@ -116,14 +115,15 @@ class Authorization:
             trust_token_scopes: run a scope plane alongside managed roles, so operators authorized
                 by their token scopes and end users authorized by the role store both work
                 (composed with OR). No effect without roles.
-            user_directory: ``None`` (default) is auto -- a directory is built only when roles are
-                used or users are seeded, so a pure verify-only ``Authorization`` builds none.
-                ``True`` always builds a ``ManagedUserStore`` roster; pass a store to use your own;
-                ``False`` for no directory.
+            user_directory: the directory, one knob (mirrors ``AgentOS(user_directory=bool | ...)``).
+                ``None`` (default) is auto -- built only when roles are used or users are seeded, so a
+                pure verify-only ``Authorization`` builds none. ``True`` always builds one; ``False``
+                never; a ``ManagedUserStore`` uses yours.
             auto_provision / default_role: JIT-provision an unknown subject on first valid token,
                 and the role to grant them (falls back to the role flagged ``default=True``).
-            authorization_provider / engine / role_store / user_store: primitives. Supply any and
-                the facade uses it instead of building its own.
+            authorization_provider / engine / role_store: primitives. Supply any and the facade uses
+                it instead of building its own (bring your own directory store via
+                ``user_directory=<ManagedUserStore>``).
         """
         # Verification settings, splatted into the AuthorizationConfig at build time. Typed Any so
         # the per-key kwarg splat type-checks against AuthorizationConfig's specific field types.
@@ -145,15 +145,15 @@ class Authorization:
         self._engine = engine
 
         self._role_store: Optional["ManagedRoleStore"] = role_store
-        self._user_store: Optional["ManagedUserStore"] = user_store
         self._audit_sink: Optional["AuditSink"] = None
 
-        # Directory policy. None = auto: build one only when roles are used or users are seeded, so a
-        # pure verify-only Authorization(verification_keys=...) builds NO directory. True/False force
-        # it; a ManagedUserStore is adopted as the store (and turns it on).
+        # Directory is one knob, user_directory: True/False/None(auto), or a ManagedUserStore to bring
+        # your own. None = auto: built only when roles are used or users are seeded, so a pure
+        # verify-only Authorization(verification_keys=...) builds NO directory.
         self._user_directory_arg = user_directory
-        if user_store is None and user_directory not in (True, False, None):
-            self._user_store = user_directory  # type: ignore[assignment]
+        self._user_store: Optional["ManagedUserStore"] = (
+            user_directory if user_directory is not None and not isinstance(user_directory, bool) else None
+        )
 
         # Roles are in play if any were defined, or a store/engine was supplied.
         self._roles_defined = role_store is not None or engine is not None

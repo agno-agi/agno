@@ -63,6 +63,24 @@ def test_verify_only_facade_builds_no_stores(tmp_path):
     assert cfg.verification_keys == [SECRET] and cfg.audience == OS_ID
 
 
+def test_user_directory_is_one_knob(tmp_path):
+    """The directory has a single knob: user_directory=<store> brings your own (no separate
+    user_store= param), mirroring AgentOS(user_directory=bool | ...)."""
+    import inspect
+
+    from agno.os.authz.user_store import ManagedUserStore
+
+    params = inspect.signature(Authorization.__init__).parameters
+    assert "user_directory" in params
+    assert "user_store" not in params  # collapsed to one way
+
+    db = SqliteDb(db_file=str(tmp_path / "onedir.db"))
+    store = ManagedUserStore(db=db)
+    authz = Authorization(db=db, user_directory=store)
+    authz.define_role("viewer", ["agents:*:read"])
+    assert authz.user_store is store  # your store is used, on by virtue of being passed
+
+
 def test_borrowed_db_applies_buffered_definitions(tmp_path):
     """No db passed to Authorization: role/user definitions buffer, then apply when the OS db binds
     (the 'never pass db twice' path)."""
