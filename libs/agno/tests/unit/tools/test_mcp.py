@@ -2067,9 +2067,9 @@ async def test_failed_tool_call_returns_is_error_rather_than_raising():
 @pytest.mark.asyncio
 async def test_client_session_call_tool_is_not_given_raise_on_error():
     """A caller-supplied ClientSession has no such kwarg and would reject it."""
-    from agno.utils.mcp import get_entrypoint_for_tool
-
     from mcp.types import CallToolResult, TextContent
+
+    from agno.utils.mcp import get_entrypoint_for_tool
 
     ok = CallToolResult(content=[TextContent(type="text", text="fine")], isError=False)
     session = AsyncMock()
