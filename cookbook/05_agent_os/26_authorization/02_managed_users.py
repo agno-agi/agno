@@ -38,29 +38,40 @@ from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS, create_dev_token
-from agno.os.authz import ManagedRoleStore, ManagedUserStore
-from agno.os.config import AuthorizationConfig, UserDirectoryConfig
+from agno.os.authz import Authorization
 
 JWT_SECRET = os.getenv("JWT_VERIFICATION_KEY", "your-secret-key-at-least-256-bits-long")
 OS_ID = "managed-users-os"
 
 os.makedirs("tmp", exist_ok=True)
 
-# Roles: what each role can do (same as 01_managed_roles.py).
-roles = ManagedRoleStore(db_url="sqlite:///tmp/managed_users_roles.db")
-# Flag "viewer" as the DEFAULT role: a user who is auto-provisioned on first login (see
-# auto_provision below) is granted it automatically, so they land usable instead of with no
-# permissions. Single-role model, so exactly one role is the default - flagging another one
-# moves the flag.
-roles.set_role_scopes("viewer", ["agents:*:read"], is_default=True)
-roles.set_role_scopes("admin", ["agent_os:admin"])
+# Authorization is one object for both the roles (what users may do) and the user directory
+# (who they are + the disabled off-switch). It verifies the token too, and persists roles and
+# users together.
+authz = Authorization(
+    db_url="sqlite:///tmp/managed_users.db",
+    verification_keys=[JWT_SECRET],
+    algorithm="HS256",
+    verify_audience=True,
+    audience=OS_ID,
+    # auto_provision: a user we have never seen is created from their token claims on their first
+    # authenticated request and granted the default role, so they land usable, not inert. To pin
+    # the default in code instead of flagging a role, pass default_role="viewer".
+    auto_provision=True,
+)
+# Roles: what each role can do. default=True flags "viewer" as the role an auto-provisioned user
+# gets - single-role model, so exactly one role is the default (flagging another moves the flag).
+authz.define_role("viewer", ["agents:*:read"], default=True)
+authz.define_role("admin", ["agent_os:admin"])
 
-# Users: the directory. Just people, no passwords. We give each one a role too.
-users = ManagedUserStore(db_url="sqlite:///tmp/managed_users.db")
-users.upsert("alice", email="alice@co", name="Alice")
-roles.assign("alice", "admin")
-users.upsert("bob", email="bob@co", name="Bob")
-roles.assign("bob", "viewer")
+# Seed the directory: people (id + optional email/name, no passwords) with a role each. Adding
+# users turns the directory on. Seeding is create-if-absent, so it is safe to re-run on every boot.
+authz.seed(
+    users=[
+        ("alice", {"email": "alice@co", "name": "Alice", "role": "admin"}),
+        ("bob", {"email": "bob@co", "name": "Bob", "role": "viewer"}),
+    ]
+)
 
 db = SqliteDb(db_file="tmp/managed_users_agentos.db")
 research_agent = Agent(
@@ -70,36 +81,20 @@ research_agent = Agent(
     db=db,
 )
 
-# Authorization (what users may do) and the user directory (who they are + the disabled
-# off-switch) are configured as PEERS: authorization_config for the former,
-# user_directory for the latter.
+# Wire it in with the single Authorization object: it carries verification, the roles, and the
+# directory (with the kill-switch + auto-provision), so there is no separate authorization config
+# or user_directory to build.
 agent_os = AgentOS(
     id=OS_ID,
     description="Managed-users AgentOS",
     agents=[research_agent],
-    authorization=True,
-    authorization_config=AuthorizationConfig(
-        verification_keys=[JWT_SECRET],
-        algorithm="HS256",
-        verify_audience=True,
-        audience=OS_ID,
-        # Pass the STORE (not roles.provider): enforcement is identical (AgentOS builds the
-        # provider from it), and the OS also keeps the store, which is what lets it grant the
-        # default role on auto-provision and auto-mount the /users + /authz admin API.
-        role_store=roles,
-    ),
-    # The directory + the disabled kill-switch. auto_provision=True means a user we have
-    # never seen is created from their token claims on their first authenticated request,
-    # and granted the default role (the is_default one above) so they land usable, not inert.
-    # To pin the default in code instead of flagging a role, pass default_role="viewer" here
-    # (it overrides is_default).
-    user_directory=UserDirectoryConfig(user_store=users, auto_provision=True),
+    authorization=authz,
 )
 app = agent_os.get_app()
-# We manage the directory through the store directly here (upsert / set_disabled), which is
-# all the enforcement needs for this transcript. Because we passed role_store=, AgentOS also
-# auto-mounts the admin HTTP API (/users, /authz/roles) -- see 06_manage_users_and_roles.py for
-# a frontend that drives it.
+# We inspect and manage the directory through authz.user_store (list / set_disabled / get) and
+# roles through authz.role_store, which is all this transcript needs. Because roles are configured,
+# AgentOS also auto-mounts the admin HTTP API (/users, /authz/roles) -- see
+# 06_manage_users_and_roles.py for a frontend that drives it.
 
 
 if __name__ == "__main__":
@@ -131,8 +126,8 @@ if __name__ == "__main__":
 
     # Everyone in the directory, with the role each one was assigned.
     print("\n  the directory:")
-    for u in users.list():
-        role = (roles.roles_of(u["id"]) or [None])[0]
+    for u in authz.user_store.list():
+        role = (authz.role_store.roles_of(u["id"]) or [None])[0]
         print(
             f"    - {u['id']:8s} {str(u['email'] or ''):12s} role={role}  disabled={u['disabled']}"
         )
@@ -145,7 +140,7 @@ if __name__ == "__main__":
     )
 
     print("\n  >> now an admin DISABLES bob (e.g. he left the company)...\n")
-    users.set_disabled("bob", True, actor="alice")
+    authz.user_store.set_disabled("bob", True, actor="alice")
     show(
         "bob asks to LOOK at the agent",
         client.get("/agents/research-agent", headers=auth("bob")),
@@ -153,7 +148,7 @@ if __name__ == "__main__":
     )
 
     print("\n  >> ...bob is back, re-enable him...\n")
-    users.set_disabled("bob", False, actor="alice")
+    authz.user_store.set_disabled("bob", False, actor="alice")
     show(
         "bob asks to LOOK at the agent",
         client.get("/agents/research-agent", headers=auth("bob")),
@@ -163,15 +158,17 @@ if __name__ == "__main__":
     print(
         "\n  >> a brand-new user (dave) we've NEVER seen makes his first request...\n"
     )
-    print(f"    dave in the directory beforehand?  {users.get('dave') is not None}")
+    print(
+        f"    dave in the directory beforehand?  {authz.user_store.get('dave') is not None}"
+    )
     show(
         "dave (unknown) asks to LOOK at the agent",
         client.get("/agents/research-agent", headers=auth("dave")),
         "auto-provisioned + granted the default role, so he's allowed on the same request",
     )
-    dave_role = (roles.roles_of("dave") or [None])[0]
+    dave_role = (authz.role_store.roles_of("dave") or [None])[0]
     print(
-        f"    dave in the directory now?         {users.get('dave') is not None}  role={dave_role}"
+        f"    dave in the directory now?         {authz.user_store.get('dave') is not None}  role={dave_role}"
     )
 
     print("=" * 80)

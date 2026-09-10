@@ -235,7 +235,11 @@ class Authorization:
         if self._bound:
             return self
         self._db = self._db or os_db
-        if self._db is None:
+        # A database is only needed for things that PERSIST -- managed roles, the user directory, or a
+        # DbAuditSink built from audit=True. Verify-only / scope-based / custom-provider setups store
+        # nothing, so they need no db.
+        needs_db = self._roles_defined or bool(self._role_defs) or self._directory_wanted() or self._audit_arg is True
+        if needs_db and self._db is None:
             raise ValueError(_NEEDS_DB)
         self._db_is_async = is_async_authz_db(self._db)
         self._audit_sink = self._resolve_audit()

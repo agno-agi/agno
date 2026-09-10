@@ -1,6 +1,8 @@
 # Test Log: 26_authorization
 
-Last updated: 2026-08-17 (re-run after rebasing onto feat/extending-user-isolation)
+Last updated: 2026-09-10 (migrated 01-10 from AuthorizationConfig/ManagedRoleStore to the
+`Authorization` facade; all re-run clean -- self-testing ones exit 0 with no traceback, 06/07
+reach Uvicorn startup. 08/10 and 09 run db-free; 06/07 serve.)
 
 All examples were run with `.venvs/demo/bin/python` against the branch's library.
 None of the local examples need a database server, a model key, or an external

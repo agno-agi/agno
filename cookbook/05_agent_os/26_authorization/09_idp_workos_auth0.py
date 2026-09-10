@@ -14,7 +14,7 @@ This file shows the realistic, production-shaped version of that:
    verify it against the service's PUBLIC keys, which it publishes as a "JWKS"
    (e.g. at https://<tenant>.auth0.com/.well-known/jwks.json). Download it and
    point agno at the file:
-       AuthorizationConfig(jwks_file="auth0_jwks.json", ...)
+       Authorization(jwks_file="auth0_jwks.json", ...)
    (Here we generate a throwaway key and publish it to a local file so the example
    runs offline; the behaviour is identical.)
 2. The token says who issued it (`iss`) and who it's for (`aud`). We pin both, so
@@ -43,8 +43,8 @@ from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS
+from agno.os.authz import Authorization
 from agno.os.authz.provider import AuthorizationContext, AuthorizationProvider
-from agno.os.config import AuthorizationConfig
 from agno.os.scopes import get_accessible_resource_ids, has_required_scopes
 from agno.utils.cryptography import generate_rsa_keys
 from jwt.algorithms import RSAAlgorithm
@@ -165,8 +165,11 @@ agent_os = AgentOS(
     id=OS_ID,
     description="Enforce-only AgentOS behind a login service",
     agents=[research_agent],
-    authorization=True,
-    authorization_config=AuthorizationConfig(
+    # One Authorization object. Enforce-only here: a custom provider reads roles off the token, so
+    # there is nothing to persist and no db is needed. (If you would rather define role -> scopes in
+    # a db-backed store, drop the custom provider and use Authorization(roles_claim="roles") +
+    # define_role(...) -- the built-in version of exactly this.)
+    authorization=Authorization(
         # Verify tokens against the login service's published public keys
         # (in production, its JWKS downloaded from .well-known/jwks.json).
         jwks_file=JWKS_PATH,

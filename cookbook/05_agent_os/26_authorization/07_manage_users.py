@@ -38,10 +38,7 @@ from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS, create_dev_token
-from agno.os.authz import ManagedUserStore
-from agno.os.authz.audit import DbAuditSink
-from agno.os.authz.role_router import get_users_router
-from agno.os.config import AuthorizationConfig, UserDirectoryConfig
+from agno.os.authz import Authorization
 
 OS_ID = os.getenv("OS_ID", "manage-users-os")  # the token audience (your os_id)
 ADMIN_SUBJECT = os.getenv("ADMIN_SUBJECT", "admin@example.com")
@@ -73,15 +70,29 @@ CORS_ORIGINS = [
 
 os.makedirs("tmp", exist_ok=True)
 
-# One database, one store: the user directory. No role store - this is the users-only setup.
+# One database, one object, users-only. No define_role, so there is no role store and no /authz:
+# the default scope plane (the caller's token scopes) governs, and Authorization mounts just /users.
 db = SqliteDb(db_file="tmp/manage_users.db")
-audit = DbAuditSink(db=db)
-users = ManagedUserStore(db=db, audit=audit)
+authz = Authorization(
+    db=db,
+    verification_keys=KEYS,
+    jwks_file=JWKS_FILE,
+    algorithm=ALGORITHM,
+    verify_audience=True,
+    audience=OS_ID,
+    issuer=ISSUER,
+    audit=True,  # record every access decision
+)
 
-# Seed a couple of people so a freshly-connected frontend isn't empty.
-users.upsert(ADMIN_SUBJECT, name="Bootstrap admin")
-users.upsert("bob", email="bob@co", name="Bob")
-users.upsert("carol", email="carol@co", name="Carol")
+# Seed a couple of people so a freshly-connected frontend isn't empty. No roles here -- admin of
+# /users is the agent_os:admin scope on the caller's token.
+authz.seed(
+    users=[
+        (ADMIN_SUBJECT, {"name": "Bootstrap admin"}),
+        ("bob", {"email": "bob@co", "name": "Bob"}),
+        ("carol", {"email": "carol@co", "name": "Carol"}),
+    ]
+)
 
 research_agent = Agent(
     id="research-agent",
@@ -90,33 +101,17 @@ research_agent = Agent(
     db=db,
 )
 
-# authorization=True on the DEFAULT scope plane: no role store and no provider, so the built-in
-# ScopeAuthorizationProvider (token scopes) governs. The directory tracks who people are and backs
-# the disabled kill-switch; roles, if any, live in your control plane. Admin of /users is the
-# agent_os:admin scope on the caller's token.
 agent_os = AgentOS(
     id=OS_ID,
     description="User management AgentOS (no roles)",
     db=db,
     agents=[research_agent],
     cors_allowed_origins=CORS_ORIGINS,
-    authorization=True,
-    authorization_config=AuthorizationConfig(
-        verification_keys=KEYS,
-        jwks_file=JWKS_FILE,
-        algorithm=ALGORITHM,
-        verify_audience=True,
-        audience=OS_ID,
-        issuer=ISSUER,
-        audit=audit,  # record every access decision
-    ),
-    # The user directory: who exists + the disabled off-switch. A peer of authorization.
-    user_directory=UserDirectoryConfig(user_store=users),
+    authorization=authz,  # mounts /users only; no roles means no /authz surface
 )
 app = agent_os.get_app()
-# Mount ONLY the user directory API - no get_roles_router, so there is no /authz roles surface for
-# a frontend to render. This is the difference from 06_manage_users_and_roles.py.
-app.include_router(get_users_router(users))
+# Only /users is mounted (no roles were defined), so there is no /authz roles surface for a frontend
+# to render. That is the difference from 06_manage_users_and_roles.py.
 
 
 if __name__ == "__main__":

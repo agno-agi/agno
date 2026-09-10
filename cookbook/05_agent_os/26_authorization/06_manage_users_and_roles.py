@@ -9,8 +9,8 @@ can create roles, add users, assign roles, and disable people - live. It works
 both with a control plane / login service (operators authorized by their token
 scopes) and on its own (end users managed in the OS-local store) - both at once.
 
-What it serves (all admin-only). Authorization (/authz) and the user directory (/users)
-are peers -- get_roles_router and get_users_router:
+What it serves (all admin-only). The Authorization facade mounts both the roles admin API
+(/authz) and the user directory (/users) for you -- no include_router:
     GET    /authz/roles                 list roles
     POST   /authz/roles                 create a role (PUT/PATCH .../{slug}/scopes for permissions)
     GET    /authz/scopes                the permission catalog (for a UI grid)
@@ -30,9 +30,8 @@ Run it:
 Then point your frontend at http://localhost:7777 (CORS is open to the usual dev
 ports). The server keeps running until you Ctrl-C.
 
-Two authz planes run in parallel here, by default - we pass a LIST of providers
-(``authorization_provider=[ScopeAuthorizationProvider(), roles.provider]``) and a
-request is allowed if either grants:
+Two authz planes run in parallel here, by default -- ``Authorization(trust_token_scopes=True)``
+runs a scope plane next to the role store, and a request is allowed if either grants:
   - control plane / operators: a token that already carries scopes (e.g. an
     agno-cloud / frontend token) is authorized straight from those scopes.
   - managed store / end users: everyone else is authorized against the OS-local
@@ -65,11 +64,7 @@ from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS
-from agno.os.authz import ManagedRoleStore, ManagedUserStore
-from agno.os.authz.audit import DbAuditSink
-from agno.os.authz.role_router import get_roles_router, get_users_router
-from agno.os.authz.scope_provider import ScopeAuthorizationProvider
-from agno.os.config import AuthorizationConfig, UserDirectoryConfig
+from agno.os.authz import Authorization
 from fastapi import HTTPException, Request
 
 # --- config: supports BOTH planes by default ---------------------------------
@@ -143,28 +138,42 @@ CORS_ORIGINS = [
 
 os.makedirs("tmp", exist_ok=True)
 
-# ONE database for everything. Pass the same `db` to AgentOS and to each store
-# (db=) and they reuse its connection - agent data, roles, users, and the audit
-# trail all live in the same database, no second db_url to keep in sync. (Each
-# store still uses its own tables: authz_policy, authz_grouping, authz_users, authz_audit, ...)
+# ONE database, and ONE object for authorization. `Authorization` owns token verification, the
+# roles, the user directory, the audit trail, and the /authz + /users admin API. It borrows the OS
+# db below (no second db_url to keep in sync), and it auto-mounts the admin routers, so there is no
+# include_router to wire. Everything still lives in the same database (authz_policy, authz_grouping,
+# authz_users, authz_audit, ...).
 db = SqliteDb(db_file="tmp/console.db")
-audit = DbAuditSink(db=db)
-roles = ManagedRoleStore(db=db, audit=audit)
-users = ManagedUserStore(db=db, audit=audit)
+authz = Authorization(
+    db=db,
+    verification_keys=KEYS,
+    jwks_file=JWKS_FILE,
+    algorithm=ALGORITHM,
+    verify_audience=True,
+    audience=OS_ID,
+    issuer=ISSUER,
+    audit=True,  # record every role/user change AND every access decision
+    # Two authz planes on one OS, in parallel (allowed if either grants):
+    #  - the token's own scopes: operators whose token already carries scopes (an agno-cloud /
+    #    frontend token) are authorized from it.
+    #  - the OS-local role store: end users managed here.
+    # (Without the scope plane, a scope-bearing frontend token gets 403 because the store ignores
+    # token scopes.)
+    trust_token_scopes=True,
+)
 
-# Seed roles + a couple of users so a freshly-connected frontend isn't empty.
-roles.set_role_scopes("admin", ["agent_os:admin"])
-roles.set_role_scopes("viewer", ["agents:*:read"])
-roles.set_role_scopes("runner", ["agents:*:read", "agents:*:run"])
-
-# The bootstrap admin (so the admin API is usable at all), plus two demo users.
-if not roles.roles_of(ADMIN_SUBJECT):
-    roles.assign(ADMIN_SUBJECT, "admin")
-users.upsert(ADMIN_SUBJECT, name="Bootstrap admin")
-users.upsert("bob", email="bob@co", name="Bob")
-roles.assign("bob", "viewer")
-users.upsert("carol", email="carol@co", name="Carol")
-roles.assign("carol", "runner")
+# Seed roles + a couple of users so a freshly-connected frontend isn't empty. Bootstrap-safe: an
+# admin who later changes a role/assignment through the admin API keeps that change across restarts.
+authz.define_role("admin", ["agent_os:admin"])
+authz.define_role("viewer", ["agents:*:read"])
+authz.define_role("runner", ["agents:*:read", "agents:*:run"])
+authz.seed(
+    admin=ADMIN_SUBJECT,  # so the admin API is usable at all
+    users=[
+        ("bob", {"email": "bob@co", "name": "Bob", "role": "viewer"}),
+        ("carol", {"email": "carol@co", "name": "Carol", "role": "runner"}),
+    ],
+)
 
 research_agent = Agent(
     id="research-agent",
@@ -195,32 +204,9 @@ agent_os = AgentOS(
     db=db,  # same database the stores use
     agents=[research_agent, vault_agent],
     cors_allowed_origins=CORS_ORIGINS,
-    authorization=True,
-    authorization_config=AuthorizationConfig(
-        verification_keys=KEYS,
-        jwks_file=JWKS_FILE,
-        algorithm=ALGORITHM,
-        verify_audience=True,
-        audience=OS_ID,
-        issuer=ISSUER,
-        # Two authz planes on one OS, in parallel - pass a LIST, allowed if any
-        # grants:
-        #  - ScopeAuthorizationProvider: operators whose token already carries
-        #    scopes (e.g. an agno-cloud / frontend token) are authorized from it.
-        #  - roles.provider: end users managed in the OS-local store.
-        # (Without the scope plane, a scope-bearing frontend token gets 403
-        # because the store ignores token scopes.)
-        authorization_provider=[ScopeAuthorizationProvider(), roles.provider],
-        audit=audit,  # record every access decision too
-    ),
-    # The user directory is a peer of authorization (who the users are + the off-switch).
-    user_directory=UserDirectoryConfig(user_store=users),
+    authorization=authz,  # one object; /authz and /users are mounted for you
 )
 app = agent_os.get_app()
-app.include_router(get_roles_router(roles))
-app.include_router(
-    get_users_router(users, role_store=roles)
-)  # the /users directory, a peer
 
 # Dev-mode only: let the bundled console.html "become" an end user. An admin
 # trades their token for one minted as any subject (sub only — no scopes, so
@@ -235,7 +221,9 @@ if IS_DEV:
         scopes = getattr(request.state, "scopes", []) or []
         user_id = getattr(request.state, "user_id", None)
         claims = getattr(request.state, "claims", {}) or {}
-        if "agent_os:admin" not in scopes and not roles.can_manage(user_id, claims):
+        if "agent_os:admin" not in scopes and not authz.role_store.can_manage(
+            user_id, claims
+        ):
             raise HTTPException(
                 status_code=403, detail="Only admins can mint persona tokens"
             )
