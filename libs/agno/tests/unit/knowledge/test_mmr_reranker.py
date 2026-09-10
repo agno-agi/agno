@@ -60,11 +60,21 @@ def test_pure_relevance_keeps_the_near_duplicate():
     assert [doc.id for doc in results] == ["a", "b"]
 
 
-def test_reranking_score_is_descending():
-    results = MMRReranker(top_n=3).rerank("q", _documents())
+def test_reranking_score_is_the_score_at_selection_time():
+    # MMR scores are not descending: the pool shrinks as redundancy grows, so a later
+    # pick can score above an earlier one. List order, not score order, is the result.
+    embedder = StubEmbedder()
+    documents = [
+        Document(id="a", content="a", embedding=[-1.0, 0.0], embedder=embedder),
+        Document(id="b", content="b", embedding=[-0.9, 0.44], embedder=embedder),
+        Document(id="c", content="c", embedding=[-0.9, -0.44], embedder=embedder),
+    ]
+
+    results = MMRReranker(lambda_mult=0.5).rerank("q", documents)
 
     scores = [doc.reranking_score for doc in results]
-    assert scores == sorted(scores, reverse=True)
+    assert scores != sorted(scores, reverse=True)
+    assert [doc.id for doc in results] == ["b", "c", "a"]
 
 
 def test_top_n_defaults_to_all_documents():
@@ -179,9 +189,8 @@ def test_named_vector_mapping_is_not_treated_as_an_embedding():
 def test_reranking_score_is_the_mmr_score_not_a_rank_ordinal():
     results = MMRReranker(lambda_mult=0.5, top_n=2).rerank("q", _documents())
 
-    scores = [doc.reranking_score for doc in results]
-    assert scores == sorted(scores, reverse=True)
     # Rank ordinals would be 2.0 and 1.0; real MMR scores are bounded by lambda_mult.
+    scores = [doc.reranking_score for doc in results]
     assert all(score <= 1.0 for score in scores)
 
 

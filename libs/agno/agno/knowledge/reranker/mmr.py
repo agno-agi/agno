@@ -43,6 +43,11 @@ class MMRReranker(Reranker):
 
     Returned documents are shallow copies carrying the MMR score; meta_data and embedding
     are shared with the inputs.
+
+    Do not re-sort the result by reranking_score. Other rerankers score each document
+    independently, so their order can be rebuilt from the scores; MMR chooses each
+    document against the ones already chosen, so its scores are not descending and
+    sorting by them discards the diversity ordering.
     """
 
     # Weight between relevance and diversity: 1.0 ranks by relevance alone, 0.0 by
@@ -120,8 +125,9 @@ class MMRReranker(Reranker):
             # A shallow copy, made only so reranking_score does not land on the caller's
             # documents: meta_data and embedding stay shared with the originals.
             document = replace(documents[index])
-            # The MMR score itself, which descends by construction as candidates are
-            # picked, so sorting by reranking_score preserves this order.
+            # The MMR score at the moment this document was picked. Unlike a relevance
+            # score it is not monotonic across the list, because the candidate pool
+            # shrinks as redundancy grows: the returned order is authoritative.
             document.reranking_score = score
             results.append(document)
         return results

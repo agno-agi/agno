@@ -19,6 +19,10 @@ MMR reads the embedding on each search result. Not every vector db returns one:
 Milvus, MongoDB, Redis, Valkey and Elasticsearch do not, so MMR raises there rather
 than silently returning unreranked results.
 
+Take the returned order as the result: reranking_score holds the MMR score at the
+moment each document was picked, which is not descending, so re-sorting by it discards
+the diversity ordering.
+
 A reranker set on the vector db still runs first, on the widened pool, and MMR then
 reorders its output. Scoring by relevance and then by embedding similarity rarely
 composes usefully, so prefer setting one or the other.
