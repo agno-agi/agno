@@ -12,10 +12,11 @@ try:
 except ImportError:
     raise ImportError("`elasticsearch` not installed. Please install using `pip install elasticsearch`")
 
+from agno.filters import FilterExpr
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.knowledge.reranker.base import Reranker
-from agno.utils.log import log_debug, log_info, logger
+from agno.utils.log import log_debug, log_info, log_warning, logger
 from agno.vectordb.base import (
     VectorDb,
     aembed_before_replace,
@@ -51,6 +52,14 @@ class Elasticsearch(VectorDb):
     The installed client's major version must match the cluster's: an 8.x cluster
     rejects a 9.x client outright ("Accept version must be either version 8 or 7"),
     so pin `elasticsearch` to the major your cluster runs.
+
+    Async strategy: writes and index operations use the native async client. Reads do
+    not. A search embeds the query and optionally reranks the results, both synchronous
+    and both usually slower than the round trip they wrap, so an async transport would
+    leave those blocking the event loop anyway; running the whole search on a worker
+    thread keeps the loop free instead. The same applies to the few synchronous helpers
+    an async write needs - the owner-mapping gate and the upsert's replace prelude -
+    which are offloaded rather than duplicated.
 
     Features:
         - Native dense_vector kNN search with pre-filtering
@@ -292,6 +301,11 @@ class Elasticsearch(VectorDb):
         log_debug(f"Creating mappings with similarity: {self.similarity}")
 
         return {
+            # Off so a date-shaped string stays text. Date detection would map
+            # meta_data.published_on="2024-01-15" as a date field, which has no .keyword
+            # subfield for an equality filter to match, and the filter would silently
+            # select nothing.
+            "date_detection": False,
             "dynamic_templates": [
                 {
                     "meta_data_strings": {
@@ -1632,7 +1646,7 @@ class Elasticsearch(VectorDb):
         self,
         query: str,
         limit: int = 5,
-        filters: Optional[Dict[str, Any]] = None,
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         user_id: Optional[str] = None,
     ) -> List[Document]:
         """
@@ -1669,7 +1683,7 @@ class Elasticsearch(VectorDb):
         self,
         query: str,
         limit: int = 5,
-        filters: Optional[Dict[str, Any]] = None,
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         user_id: Optional[str] = None,
     ) -> List[Document]:
         """
@@ -1696,7 +1710,7 @@ class Elasticsearch(VectorDb):
         self,
         query: str,
         limit: int = 5,
-        filters: Optional[Dict[str, Any]] = None,
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         user_id: Optional[str] = None,
     ) -> List[Document]:
         """
@@ -1719,7 +1733,7 @@ class Elasticsearch(VectorDb):
         self,
         query: str,
         limit: int = 5,
-        filters: Optional[Dict[str, Any]] = None,
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         user_id: Optional[str] = None,
     ) -> List[Document]:
         """
@@ -1745,7 +1759,7 @@ class Elasticsearch(VectorDb):
         self,
         query: str,
         limit: int = 5,
-        filters: Optional[Dict[str, Any]] = None,
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         user_id: Optional[str] = None,
     ) -> List[Document]:
         """
@@ -1774,7 +1788,7 @@ class Elasticsearch(VectorDb):
         query: str,
         limit: int,
         query_builder,
-        filters: Optional[Dict[str, Any]],
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]],
         user_id: Optional[str] = None,
     ) -> List[Document]:
         """
@@ -1816,11 +1830,34 @@ class Elasticsearch(VectorDb):
             return documents
 
         except Exception as e:
+            if self._is_unlicensed_rrf_error(e):
+                # Falling back beats returning nothing: the caller opted into a ranking
+                # strategy, not into an empty knowledge base. Downgrading is announced
+                # once and then sticks, so the next search does not retry the refusal.
+                log_warning(
+                    "This cluster's licence does not cover rrf; falling back to the boost "
+                    "hybrid strategy for the rest of this session. Set hybrid_strategy="
+                    "HybridStrategy.boost to silence this, or use a licensed cluster."
+                )
+                self.hybrid_strategy = HybridStrategy.boost
+                return self._execute_search_with_timing(search_type, query, limit, query_builder, filters, user_id)
             logger.error(f"Error during {search_type} search: {e}")
             return []
         finally:
             end_time = time.time()
             log_debug(f"Total {search_type} search operation took {end_time - start_time:.2f} seconds")
+
+    def _is_unlicensed_rrf_error(self, error: Exception) -> bool:
+        """Whether the cluster refused an rrf search for want of a licence.
+
+        rrf needs a platinum/enterprise licence; a basic-licence cluster answers with a
+        403 security_exception. Ingestion succeeds either way, so without this the agent
+        just sees an empty knowledge base.
+        """
+        if self.hybrid_strategy != HybridStrategy.rrf:
+            return False
+        message = str(error).lower()
+        return "license" in message and "rrf" in message.replace("reciprocal rank fusion", "rrf")
 
     def _resolve_num_candidates(self, limit: int) -> int:
         """
@@ -1875,7 +1912,11 @@ class Elasticsearch(VectorDb):
         return knn
 
     def _build_vector_query(
-        self, query: str, limit: int, filters: Optional[Dict[str, Any]], user_id: Optional[str] = None
+        self,
+        query: str,
+        limit: int,
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]],
+        user_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Build vector search body for Elasticsearch.
@@ -1922,7 +1963,11 @@ class Elasticsearch(VectorDb):
         return {"size": limit, "query": base_query}
 
     def _build_hybrid_query(
-        self, query: str, limit: int, filters: Optional[Dict[str, Any]], user_id: Optional[str] = None
+        self,
+        query: str,
+        limit: int,
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]],
+        user_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Build hybrid search body combining vector and keyword search.
@@ -2124,8 +2169,13 @@ class Elasticsearch(VectorDb):
         range_ops = ["gt", "lt", "gte", "lte"]
         if any(op in value for op in range_ops):
             range_conditions = {op: val for op, val in value.items() if op in range_ops}
+            # A string bound ranges over the keyword subfield: with date detection off an
+            # ISO date is text, and a range on the analyzed parent compares its tokens.
+            # A numeric bound keeps the bare field, which is where numbers are mapped.
+            bound = next(iter(range_conditions.values()))
+            field = self._match_field(key, bound)
             log_debug(f"Added range filter for {key}: {range_conditions}")
-            return {"range": {f"meta_data.{key}": range_conditions}}
+            return {"range": {field: range_conditions}}
 
         logger.warning(f"Unsupported filter operator for key {key}: {value}")
         return None
@@ -2318,8 +2368,25 @@ class Elasticsearch(VectorDb):
             }
         }
 
+    @staticmethod
+    def _usable_filters(filters: Optional[Any]) -> Optional[Dict[str, Any]]:
+        """Drop a filter form this backend cannot translate, loudly.
+
+        ``Knowledge.search`` also accepts the ``FilterExpr`` DSL, which arrives as a
+        list. Passing it on raises inside the query builder, and the search path turns
+        that into an empty result set - so an unsupported filter would read as "nothing
+        matched" rather than "this was not applied".
+        """
+        if isinstance(filters, list):
+            log_warning(
+                "Filter expressions are not supported in Elasticsearch. No filters will be applied. "
+                'Pass a metadata dict instead, e.g. {"team": "eng"}.'
+            )
+            return None
+        return filters
+
     def _scoped_filter_conditions(
-        self, filters: Optional[Dict[str, Any]], user_id: Optional[str]
+        self, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]], user_id: Optional[str]
     ) -> List[Dict[str, Any]]:
         """
         Combine the caller's metadata filters with the per-user scope.
@@ -2334,6 +2401,7 @@ class Elasticsearch(VectorDb):
         Note:
             The scope is a nested bool rather than a term, being an OR of two buckets.
         """
+        filters = self._usable_filters(filters)
         conditions = self._build_filter_conditions(filters) if filters else []
 
         scope = self._user_scope_filter(user_id)

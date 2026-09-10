@@ -59,7 +59,10 @@ async def main():
     print("\nQuerying the agent...")
     await agent.aprint_response("What is the purpose of an Agno Agent?", markdown=True)
 
-    # Release both transports: async-only use still builds a sync client
+    # The async client holds an aiohttp session that Python will not close for you:
+    # skip this and the script exits with "ResourceWarning: Unclosed connector" and a
+    # leaked socket. Closing also covers the sync client, which async-only use still
+    # builds for the owner-mapping gate and for search.
     await vector_db.async_close()
 
 

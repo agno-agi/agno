@@ -805,6 +805,118 @@ class TestElasticsearchSearch:
         mock_search.assert_called_once_with("q", 4, {"a": 1}, "alice")
 
 
+class TestElasticsearchFilterEdgeCases:
+    """Filter forms that used to select nothing, or nothing at all, without saying so."""
+
+    def test_date_detection_is_off(self, es_db):
+        """A date-shaped string must stay text, or its .keyword subfield never exists."""
+        assert es_db.mappings["date_detection"] is False
+
+    def test_equality_on_a_date_string_targets_the_keyword_subfield(self, es_db):
+        """With date detection off the field is text+keyword, so equality can match it."""
+        condition = es_db._build_single_filter_condition("published_on", "2024-01-15")
+
+        assert condition == {"term": {"meta_data.published_on.keyword": "2024-01-15"}}
+
+    def test_a_string_range_targets_the_keyword_subfield(self, es_db):
+        """An ISO date range compares text tokens on the analyzed parent; keyword is exact."""
+        condition = es_db._build_single_filter_condition("published_on", {"gte": "2024-01-01"})
+
+        assert condition == {"range": {"meta_data.published_on.keyword": {"gte": "2024-01-01"}}}
+
+    def test_a_numeric_range_stays_on_the_bare_field(self, es_db):
+        """Numbers are mapped on the parent and have no keyword subfield."""
+        condition = es_db._build_single_filter_condition("views", {"gte": 100, "lt": 500})
+
+        assert condition == {"range": {"meta_data.views": {"gte": 100, "lt": 500}}}
+
+    def test_filter_expressions_are_dropped_with_a_warning(self, es_db):
+        """The DSL arrives as a list and used to raise, which the search path swallowed into []."""
+        from agno.filters import EQ
+
+        assert es_db._usable_filters([EQ("team", "eng")]) is None
+
+    def test_a_dict_filter_is_left_alone(self, es_db):
+        """Only the unsupported form is dropped."""
+        assert es_db._usable_filters({"team": "eng"}) == {"team": "eng"}
+
+    def test_a_filter_expression_does_not_reach_the_query_builder(self, es_db):
+        """Passing the list through raises inside the builder and returns an empty result set."""
+        conditions = es_db._scoped_filter_conditions([{"not": "a dict"}], None)
+
+        assert conditions == []
+
+
+class TestElasticsearchRrfLicence:
+    """rrf needs a platinum licence; a basic cluster answers 403 and the search returns []."""
+
+    @staticmethod
+    def _licence_error():
+        return Exception(
+            "AuthorizationException(403, 'security_exception', "
+            "'current license is non-compliant for [Reciprocal Rank Fusion (RRF)]')"
+        )
+
+    def _rrf_db(self, mock_embedder):
+        with patch(CLIENT_PATH), patch(ASYNC_CLIENT_PATH):
+            return Elasticsearch(
+                index_name=TEST_INDEX_NAME,
+                dimension=TEST_DIMENSION,
+                embedder=mock_embedder,
+                search_type=SearchType.hybrid,
+                hybrid_strategy=HybridStrategy.rrf,
+            )
+
+    def test_the_licence_refusal_is_recognised(self, mock_embedder):
+        db = self._rrf_db(mock_embedder)
+
+        assert db._is_unlicensed_rrf_error(self._licence_error()) is True
+
+    def test_other_errors_are_not_mistaken_for_it(self, mock_embedder):
+        db = self._rrf_db(mock_embedder)
+
+        assert db._is_unlicensed_rrf_error(Exception("connection refused")) is False
+
+    def test_a_boost_search_never_matches(self, es_db):
+        """Only an rrf search can be refused for want of an rrf licence."""
+        assert es_db.hybrid_strategy == HybridStrategy.boost
+        assert es_db._is_unlicensed_rrf_error(self._licence_error()) is False
+
+    def test_search_falls_back_to_boost_instead_of_returning_nothing(self, mock_embedder, mock_es_client):
+        """Ingestion succeeds either way, so an empty result reads as an empty knowledge base."""
+        db = self._rrf_db(mock_embedder)
+        mock_es_client.indices.exists.return_value = True
+        mock_es_client.search.side_effect = [
+            self._licence_error(),
+            {"hits": {"hits": [{"_id": "1", "_score": 1.0, "_source": {"content": "a", "meta_data": {}}}]}},
+        ]
+        db._client = mock_es_client
+        db._owner_field_exact = True
+
+        results = db.search("q", limit=5)
+
+        assert [d.content for d in results] == ["a"]
+        assert db.hybrid_strategy == HybridStrategy.boost, "the downgrade must stick"
+
+    def test_the_downgrade_is_not_retried_on_the_next_search(self, mock_embedder, mock_es_client):
+        """Once downgraded, a later search must not spend a round trip re-learning the refusal."""
+        db = self._rrf_db(mock_embedder)
+        mock_es_client.indices.exists.return_value = True
+        mock_es_client.search.side_effect = [
+            self._licence_error(),
+            {"hits": {"hits": []}},
+            {"hits": {"hits": []}},
+        ]
+        db._client = mock_es_client
+        db._owner_field_exact = True
+
+        db.search("q", limit=5)
+        call_count_after_first = mock_es_client.search.call_count
+        db.search("q", limit=5)
+
+        assert mock_es_client.search.call_count == call_count_after_first + 1
+
+
 class TestElasticsearchClusterLimits:
     """Values the cluster refuses outright, which the search path would turn into empty results."""
 
