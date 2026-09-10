@@ -79,6 +79,31 @@ def _patched_batch(self):
 
 MockFirestore.batch = _patched_batch  # type: ignore[method-assign]
 
+try:
+    from google.api_core.exceptions import AlreadyExists  # type: ignore
+except ImportError:
+    import sys
+    import types
+
+    class AlreadyExists(Exception):  # type: ignore[no-redef]
+        pass
+
+    _api_core_exceptions = types.ModuleType("google.api_core.exceptions")
+    _api_core_exceptions.AlreadyExists = AlreadyExists
+    sys.modules["google.api_core.exceptions"] = _api_core_exceptions
+
+
+def _mock_create(self, document_data):
+    """mock-firestore has no create(); mirror the real precondition: fail if the document exists."""
+    if self.get().exists:
+        raise AlreadyExists(f"Document already exists: {self.id}")
+    self.set(document_data)
+
+
+from mockfirestore import DocumentReference as _MockDocumentRef  # noqa: E402
+
+_MockDocumentRef.create = _mock_create  # type: ignore[attr-defined]
+
 # The adapter imports `DELETE_FIELD` and `FieldFilter` from google.cloud.firestore.
 # Provide a stand-in if google-cloud-firestore isn't installed in the dev env.
 try:

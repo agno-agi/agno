@@ -1750,11 +1750,9 @@ def _migrate_firestore(db: BaseDb, table_type: str, table_name: str) -> bool:
         log_info("Runs collection unavailable, skipping migration")
         return False
 
-    migrated_runs = 0
-    batch = db.db_client.batch()  # type: ignore
-    pending_in_batch = 0
-    BATCH_LIMIT = 400  # Firestore batches max out at 500 writes; stay below the cap
+    from google.api_core.exceptions import AlreadyExists
 
+    migrated_runs = 0
     for doc in sessions_ref.stream():
         data = doc.to_dict() or {}
         legacy_runs = data.get("runs")
@@ -1765,20 +1763,13 @@ def _migrate_firestore(db: BaseDb, table_type: str, table_name: str) -> bool:
             continue
         rows = _build_run_rows(legacy_runs, session_id, data.get("user_id"), run_data_as_string=False)
         for row in rows:
-            run_doc_ref = runs_ref.document(row["run_id"])
-            # The runs collection wins on conflict: a re-run leaves migrated runs untouched.
-            if run_doc_ref.get().exists:
+            # The runs collection wins on conflict: create() is a single write with a server-side
+            # "does not exist" precondition, so a re-run (or a concurrent writer) never loses a run.
+            try:
+                runs_ref.document(row["run_id"]).create(row)
+            except AlreadyExists:
                 continue
-            batch.set(run_doc_ref, row)
-            pending_in_batch += 1
             migrated_runs += 1
-            if pending_in_batch >= BATCH_LIMIT:
-                batch.commit()
-                batch = db.db_client.batch()  # type: ignore
-                pending_in_batch = 0
-
-    if pending_in_batch:
-        batch.commit()
 
     log_info(f"-- Copied {migrated_runs} runs from {table_name} into the runs collection")
     log_info(
@@ -2463,18 +2454,17 @@ def _migrate_surrealdb(db: BaseDb, table_type: str, table_name: str) -> bool:
         rows = _build_run_rows(legacy, session_id, user_id, run_data_as_string=False)
         for row in rows:
             record = RecordID(runs_table, row["run_id"])
-            try:
-                # The runs table wins on conflict: a re-run leaves migrated runs untouched.
-                if db._query_one("SELECT * FROM ONLY $record", {"record": record}, dict) is not None:  # type: ignore
-                    continue
-                db._query_one(  # type: ignore
-                    "CREATE ONLY $record CONTENT $content",
-                    {"record": record, "content": serialize_run_row(row, runs_table)},
-                    dict,
-                )
-                migrated += 1
-            except Exception as e:
-                log_error(f"Failed to migrate run {row.get('run_id')}: {str(e)}")
+            # The runs table wins on conflict: a re-run leaves migrated runs untouched. A failed
+            # read or write propagates so the manager aborts before stamping and a retry picks the
+            # run up; CREATE never overwrites, so a concurrent insert fails loudly instead of losing data.
+            if db._query_one("SELECT * FROM ONLY $record", {"record": record}, dict) is not None:  # type: ignore
+                continue
+            db._query_one(  # type: ignore
+                "CREATE ONLY $record CONTENT $content",
+                {"record": record, "content": serialize_run_row(row, runs_table)},
+                dict,
+            )
+            migrated += 1
 
     log_info(
         f"-- Copied {migrated} runs into {runs_table}. The legacy 'runs' field on each session record "

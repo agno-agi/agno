@@ -24,6 +24,7 @@ class StubSurrealDb:
         self.sessions = sessions
         self.runs: Dict[str, Dict[str, Any]] = {}
         self.queries: List[str] = []
+        self.fail_reads = False
 
     def _get_table(self, table_type: str, create_table_if_not_found: bool = True) -> str:
         return self.runs_table_name
@@ -37,6 +38,8 @@ class StubSurrealDb:
         record = vars["record"]
         assert isinstance(record, RecordID) and record.table_name == self.runs_table_name
         if query.startswith("SELECT"):
+            if self.fail_reads:
+                raise RuntimeError("!! Query execution error: SELECT * FROM ONLY $record")
             return self.runs.get(record.id)
         if query.startswith("CREATE"):
             if record.id in self.runs:
@@ -80,3 +83,15 @@ def test_migration_rerun_keeps_a_run_updated_after_the_first_run():
     assert db.runs["r0"]["run_data"]["content"] == "fresh-0"
     assert db.runs["r1"]["run_data"]["content"] == "stale-1"
     assert not [q for q in db.queries if q.startswith("CREATE")]
+
+
+def test_migration_propagates_a_failed_existence_check():
+    """A failed read must abort the migration (so the manager does not stamp it) instead of
+    skipping the run; the adapter maps every SDK error to RuntimeError."""
+    db = _new_db()
+    db.fail_reads = True
+
+    with pytest.raises(RuntimeError, match="Query execution error"):
+        _migrate_surrealdb(db, "sessions", "agno_sessions")  # type: ignore[arg-type]
+
+    assert db.runs == {}
