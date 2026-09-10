@@ -71,11 +71,10 @@ class InMemoryQueueStore:
         # because a reclaim executes too. deployment_id=None degenerates to
         # claiming only unstamped jobs (mixed fleets safe by construction).
         # queue_per_session restricts claims to each session's HEAD: the
-        # oldest non-terminal (queued/running/paused) job, ordered by
-        # (created_at, seq) - seq is the store-assigned enqueue sequence, so
-        # same-second submissions (created_at has one-second resolution) stay
-        # FIFO. The additional running-sibling check covers legacy pairs
-        # that predate the gate.
+        # non-terminal (queued/running/paused) job with the smallest seq, the
+        # store-assigned enqueue sequence. created_at is the submitter's
+        # clock and is not consulted. The additional running-sibling check
+        # covers legacy pairs that predate the gate.
         async with self._lock:
             now = int(time.time())
             stale = now - lock_grace_seconds
@@ -89,9 +88,9 @@ class InMemoryQueueStore:
                     if j["status"] == "running":
                         session_running[session_id] = j["id"]
                     head = session_heads.get(session_id)
-                    if head is None or (j["created_at"], j.get("seq") or 0) < (
-                        self._jobs[head]["created_at"],
+                    if head is None or (j.get("seq") or 0, j["created_at"]) < (
                         self._jobs[head].get("seq") or 0,
+                        self._jobs[head]["created_at"],
                     ):
                         session_heads[session_id] = j["id"]
             candidates = [
@@ -119,7 +118,7 @@ class InMemoryQueueStore:
             ]
             if not candidates:
                 return None
-            job = min(candidates, key=lambda j: (j["created_at"], j.get("seq") or 0))
+            job = min(candidates, key=lambda j: (j.get("seq") or 0, j["created_at"]))
             job.update(
                 status="running",
                 locked_by=worker_id,

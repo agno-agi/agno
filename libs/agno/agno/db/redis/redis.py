@@ -2629,9 +2629,9 @@ class RedisDb(BaseDb):
         _q_try_claim remains the only authority.
 
         queue_per_session restricts claims to each session's HEAD - the
-        oldest non-terminal (queued/running/paused) job by (created_at, seq),
-        seq being the store-assigned enqueue sequence - with no OTHER line
-        member running. Eligibility is checked twice: an
+        non-terminal (queued/running/paused) job with the smallest seq, the
+        store-assigned enqueue sequence - with no OTHER line member running.
+        created_at is the accepting replica's clock and is not consulted. Eligibility is checked twice: an
         advisory pre-filter in the scan (cheap, per candidate, against the
         session-line zset), then authoritatively INSIDE the claim CAS with
         the line key under WATCH - a concurrent enqueue into the session (a
@@ -2686,7 +2686,7 @@ class RedisDb(BaseDb):
         """Maintain the session-line zset inside the caller's MULTI: a member
         exactly while its job is non-terminal (queued/running/paused), scored
         by created_at. Membership is what matters; the claim order is
-        computed from the documents (created_at, seq). Every transition
+        computed from the documents by seq. Every transition
         MULTI routes
         through this, the same pattern that keeps status-zset membership
         crash-consistent with the document."""
@@ -2752,10 +2752,10 @@ class RedisDb(BaseDb):
             log_info(f"Job queue: indexed {restored} existing job(s) into their session lines (per-session queueing)")
 
     def _q_session_line_view(self, session_id: str) -> List[Tuple[int, int, str, str]]:
-        """(created_at, seq, id, status) of the session line's LIVE members,
-        in claim order. Documents written before the enqueue sequence existed
-        sort first among same-second ties (seq 0): they are the older
-        submissions. Bounded by the session's own backlog, never by retained
+        """(seq, created_at, id, status) of the session line's LIVE members,
+        in claim order: by seq, the submission order; created_at only breaks
+        ties among documents written before the sequence existed (seq 0),
+        which sort first because they are the older submissions. Bounded by the session's own backlog, never by retained
         history. Dead entries (doc gone) and terminal stragglers (a crash
         between a doc write and its line op) are skipped, not trusted."""
         entries: List[Tuple[int, int, str, str]] = []
@@ -2773,7 +2773,7 @@ class RedisDb(BaseDb):
                 continue
             if doc.get("status") not in ("queued", "running", "paused"):
                 continue
-            entries.append((doc.get("created_at") or 0, doc.get("seq") or 0, member_id, doc["status"]))
+            entries.append((doc.get("seq") or 0, doc.get("created_at") or 0, member_id, doc["status"]))
         entries.sort()
         return entries
 

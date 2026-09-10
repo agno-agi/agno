@@ -4860,15 +4860,14 @@ class AsyncPostgresDb(AsyncBaseDb):
         claiming only unstamped jobs.
 
         queue_per_session restricts claims to each session's HEAD - the
-        oldest non-terminal (queued/running/paused) job by (created_at, seq),
-        seq being the database-assigned enqueue sequence - with NO running
-        sibling. Ordering by seq is what makes same-second submissions FIFO
-        (created_at has one-second resolution; the earlier id tiebreak was a
-        random uuid, so a later submission could become the head) and what
-        keeps a concurrent enqueue from inserting a new predecessor: a later
-        insert always sorts after. The explicit running check covers a
-        backdated concurrent enqueue committing after this claim's predicate
-        read, and legacy pairs that predate the gate.
+        non-terminal (queued/running/paused) job with the smallest seq, the
+        database-assigned enqueue sequence - with NO running sibling. seq is
+        the submission order; created_at is the accepting replica's clock
+        and is not consulted (one-second resolution, and skew between
+        replicas can hand a later submission a smaller value, which would
+        both reorder FIFO and let a backdated concurrent enqueue insert a
+        predecessor under an in-flight claim). The explicit running check
+        covers legacy pairs that predate the gate.
         Eligibility is unique per session, so two workers racing one session
         always contend on the SAME row and SKIP LOCKED arbitrates; no
         advisory locks or schema changes are needed. A head that is itself
@@ -4903,10 +4902,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                         .where(
                             sibling.c.session_id == table.c.session_id,
                             sibling.c.status.in_(("queued", "running", "paused")),
-                            or_(
-                                sibling.c.created_at < table.c.created_at,
-                                and_(sibling.c.created_at == table.c.created_at, sibling.c.seq < table.c.seq),
-                            ),
+                            sibling.c.seq < table.c.seq,
                         )
                         .exists()
                     )
@@ -4928,7 +4924,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                     subq = (
                         select(table.c.id)
                         .where(*conditions)
-                        .order_by(table.c.created_at.asc(), table.c.seq.asc())
+                        .order_by(table.c.seq.asc())
                         .limit(1)
                         .with_for_update(skip_locked=True)
                         .scalar_subquery()

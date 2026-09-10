@@ -486,16 +486,20 @@ class TestQueuePerSessionParity:
         assert nxt is not None and nxt["id"] == "r2"
 
     @pytest.mark.asyncio
-    async def test_fifo_by_created_at_not_enqueue_order(self, store):
-        await store.enqueue_job(make_job("r_late", session_id="s1", created_at=1002))
-        await store.enqueue_job(make_job("r_early", session_id="s1", created_at=1000))
-        await store.enqueue_job(make_job("r_mid", session_id="s1", created_at=1001))
+    async def test_fifo_by_enqueue_order_not_created_at(self, store):
+        """Submission order is the store-assigned sequence. created_at is the
+        submitter's clock: with replicas skewed against each other it can
+        run backwards across consecutive submissions, and the earlier pin
+        (order by created_at) would have run a later submission first."""
+        await store.enqueue_job(make_job("r_first", session_id="s1", created_at=1002))
+        await store.enqueue_job(make_job("r_second", session_id="s1", created_at=1000))
+        await store.enqueue_job(make_job("r_third", session_id="s1", created_at=1001))
         order = []
         for worker in ("w1", "w2", "w3"):
             job = await store.claim_job(worker, queue_per_session=True)
             order.append(job["id"])
             assert await store.complete_job(job["id"], worker, job["attempt"], "completed")
-        assert order == ["r_early", "r_mid", "r_late"]
+        assert order == ["r_first", "r_second", "r_third"]
 
     @pytest.mark.asyncio
     async def test_paused_head_blocks_line_until_released(self, store):
@@ -606,6 +610,23 @@ class TestSubmissionOrderParity:
         assert await store.complete_job("r_z", "w1", head["attempt"], "completed")
         nxt = await store.claim_job("w2", queue_per_session=True)
         assert nxt is not None and nxt["id"] == "r_a"
+
+    @pytest.mark.asyncio
+    async def test_submission_order_beats_a_backdated_created_at(self, store):
+        """created_at is the accepting replica's clock. With two replicas
+        skewed by seconds, a LATER submission can carry a SMALLER created_at;
+        ordering by it would run the later one first, and would let a
+        backdated concurrent enqueue insert a new predecessor under an
+        in-flight claim. The store-assigned sequence is the submission order
+        and is the only thing the head-of-line rule consults."""
+        await store.enqueue_job(make_job("r_first", session_id="s1", created_at=1005))
+        await store.enqueue_job(make_job("r_second", session_id="s1", created_at=1000))
+        head = await store.claim_job("w1", queue_per_session=True)
+        assert head is not None and head["id"] == "r_first", "submission order wins over a backdated clock"
+        assert await store.claim_job("w2", queue_per_session=True) is None
+        assert await store.complete_job("r_first", "w1", head["attempt"], "completed")
+        nxt = await store.claim_job("w2", queue_per_session=True)
+        assert nxt is not None and nxt["id"] == "r_second"
 
     @pytest.mark.asyncio
     async def test_enqueue_sequence_is_monotonic_and_survives_round_trip(self, store):
