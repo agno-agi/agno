@@ -14,28 +14,44 @@ from fastapi.testclient import TestClient
 from pydantic import BaseModel, Field
 
 from agno.agent import Agent
+from agno.agent._response import REFUSED_TOOL_CALL_ERROR
 from agno.db.sqlite import SqliteDb
 from agno.models.base import Model
-from agno.models.response import ModelResponse, ModelResponseEvent
+from agno.models.response import ModelResponse, ModelResponseEvent, ToolExecution
 from agno.os.app import AgentOS
 from agno.os.interfaces.agui import AGUI
+from agno.os.interfaces.agui import handlers as agui_handlers
 from agno.os.interfaces.agui import state as agui_state
-from agno.os.interfaces.agui.handlers import process_completion
+from agno.os.interfaces.agui.handlers import _normalize_event, process_completion, process_event
 from agno.os.interfaces.agui.state import StateDeltaUnavailable, StreamState, client_state
 from agno.run import RunContext
 from agno.run.agent import (
     RunCompletedEvent,
     RunContentEvent,
+    RunErrorEvent,
+    RunEvent,
     RunOutputEvent,
+    RunPausedEvent,
+    ToolCallArgsDeltaEvent,
     ToolCallCompletedEvent,
+    ToolCallErrorEvent,
     ToolCallStartedEvent,
 )
+from agno.run.team import TeamRunEvent
+from agno.run.team import ToolCallErrorEvent as TeamToolCallErrorEvent
 from agno.team import Team
 from agno.tools import tool
 from agno.utils import log as agno_log
 
 
 def parse_sse_events(content: str) -> List[Dict[str, Any]]:
+    """The events one SSE response carried, refusing any line that is not one.
+
+    A data line that does not decode is a defect these tests exist to catch,
+    not noise to skip: read as no event at all it satisfies every assertion
+    below about something being absent, so a stream that broke half way
+    through would pass a test asking for no RUN_ERROR and no second call.
+    """
     events = []
     for line in content.split("\n"):
         line = line.strip()
@@ -44,8 +60,8 @@ def parse_sse_events(content: str) -> List[Dict[str, Any]]:
         data_str = line[5:].strip()
         try:
             events.append(json.loads(data_str))
-        except json.JSONDecodeError:
-            continue
+        except json.JSONDecodeError as e:
+            raise AssertionError(f"the stream carried a data line that is no event: {data_str!r} ({e})") from None
     return events
 
 
@@ -111,7 +127,7 @@ class TestAgentStateSnapshot:
 
         # Verify snapshot content
         snapshot_event = events[first_snapshot_idx]
-        assert snapshot_event["snapshot"] == {"counter": 0}
+        assert _same_state_value(snapshot_event["snapshot"], {"counter": 0}), snapshot_event["snapshot"]
 
     def test_final_snapshot_emitted_before_run_finished(self, agent_client):
         client, agent = agent_client
@@ -137,7 +153,7 @@ class TestAgentStateSnapshot:
 
         # Verify final snapshot has updated state
         final_snapshot = events[last_snapshot_idx]
-        assert final_snapshot["snapshot"] == {"counter": 5}
+        assert _same_state_value(final_snapshot["snapshot"], {"counter": 5}), final_snapshot["snapshot"]
 
     def test_no_state_events_when_state_is_none(self, agent_client):
         client, agent = agent_client
@@ -186,6 +202,9 @@ class TestAgentStateSnapshot:
         events = parse_sse_events(response.text)
         types = get_event_types(events)
 
+        # The run really answered, so what is absent is state and not the run.
+        assert "RUN_FINISHED" in types, types
+        assert [e["delta"] for e in events if e.get("type") == "TEXT_MESSAGE_CONTENT"] == ["Hello"], types
         assert "STATE_SNAPSHOT" not in types
         assert "STATE_DELTA" not in types
 
@@ -207,7 +226,8 @@ class TestAgentStateSnapshot:
         # Verify agent.arun received session_state via run_context
         mock_arun.assert_called_once()
         call_kwargs = mock_arun.call_args.kwargs
-        assert call_kwargs["run_context"].session_state == initial_state
+        passed = call_kwargs["run_context"].session_state
+        assert _same_state_value(passed, initial_state), passed
 
 
 class TestAgentStateDelta:
@@ -334,7 +354,7 @@ class TestAgentStateEdgeCases:
         # Empty dict is still valid state
         assert "STATE_SNAPSHOT" in types
         snapshot = next(e for e in events if e.get("type") == "STATE_SNAPSHOT")
-        assert snapshot["snapshot"] == {}
+        assert _same_state_value(snapshot["snapshot"], {}), snapshot["snapshot"]
 
     def test_nested_state_changes(self, agent_client):
         pytest.importorskip("jsonpatch", reason="jsonpatch not installed")
@@ -457,7 +477,7 @@ class TestTeamStateSnapshot:
         assert last_snapshot_idx == run_finished_idx - 1
 
         final_snapshot = events[last_snapshot_idx]
-        assert final_snapshot["snapshot"] == {"task": "completed"}
+        assert _same_state_value(final_snapshot["snapshot"], {"task": "completed"}), final_snapshot["snapshot"]
 
     def test_team_no_state_events_without_state(self, team_client):
         client, team = team_client
@@ -476,6 +496,9 @@ class TestTeamStateSnapshot:
         events = parse_sse_events(response.text)
         types = get_event_types(events)
 
+        # The run really answered, so what is absent is state and not the run.
+        assert "RUN_FINISHED" in types, types
+        assert [e["delta"] for e in events if e.get("type") == "TEXT_MESSAGE_CONTENT"] == ["Team response"], types
         assert "STATE_SNAPSHOT" not in types
         assert "STATE_DELTA" not in types
 
@@ -593,25 +616,27 @@ def _same_state_value(left: Any, right: Any) -> bool:
     return bool(left == right)
 
 
-def _pointed_at(document: Any, pointer: str) -> Tuple[Any, str]:
+def _pointed_at(document: Any, pointer: str, op: Dict[str, Any]) -> Tuple[Any, str]:
     """The (container, token) pair a JSON Pointer's last segment names.
 
     Deliberately a walk of its own rather than a call into ``jsonpatch``:
     resolving a pointer with the library that wrote it lets a pointer built by
     the wrong rule be read back by the same wrong rule and agree with itself,
-    which is the defect these deltas exist to be checked against.
+    which is the defect these deltas exist to be checked against. Every
+    segment is read by the same rule as the last one, so a pointer naming an
+    array by something that is no index is refused wherever it does it.
     """
     tokens = [token.replace("~1", "/").replace("~0", "~") for token in pointer.split("/")[1:]]
     if not tokens:
         raise AssertionError(f"the delta op reads or writes {pointer!r}, the whole document, which names no key of it")
     container = document
     for depth, token in enumerate(tokens[:-1]):
-        try:
-            container = container[int(token)] if isinstance(container, list) else container[token]
-        except (KeyError, IndexError, TypeError, ValueError):
+        key = _child_key(container, token, op)
+        if not _holds(container, key):
             raise AssertionError(
                 f"the delta points at {pointer}, whose {'/'.join(tokens[: depth + 1])} the client does not hold"
-            ) from None
+            )
+        container = container[key]
     return container, tokens[-1]
 
 
@@ -651,7 +676,7 @@ def _client_document_after(document: Any, ops: List[Dict[str, Any]]) -> Any:
     document = copy.deepcopy(document)
     for op in ops:
         if op["op"] in ("move", "copy"):
-            source, source_token = _pointed_at(document, op["from"])
+            source, source_token = _pointed_at(document, op["from"], op)
             source_key = _child_key(source, source_token, op)
             assert _holds(source, source_key), f"the delta op {op} reads a location the client does not hold"
             value = copy.deepcopy(source[source_key])
@@ -664,7 +689,7 @@ def _client_document_after(document: Any, ops: List[Dict[str, Any]]) -> Any:
             document = value
             continue
 
-        container, token = _pointed_at(document, op["path"])
+        container, token = _pointed_at(document, op["path"], op)
         key = _child_key(container, token, op)
         if op["op"] in ("remove", "replace"):
             assert _holds(container, key), f"the delta op {op} names a location the client does not hold"
@@ -679,6 +704,9 @@ def _client_document_after(document: Any, ops: List[Dict[str, Any]]) -> Any:
             )
             container.insert(index, value)
         else:
+            assert isinstance(container, dict), (
+                f"the delta op {op} adds under {container!r}, which is neither an object nor an array"
+            )
             container[token] = value
     return document
 
@@ -811,6 +839,7 @@ def _events_of_completed_run(
         f"the client was left holding {snapshots[-1]['snapshot']!r}, not {left_state!r}"
     )
     _assert_the_deltas_carry_the_run_to_its_closing_snapshot(events)
+    _assert_the_client_accepts_the_tool_call_spans(events)
 
     return events
 
@@ -895,7 +924,8 @@ class TestAMutationInsideAContainerReachesTheClient:
         )
         mid_stream = _snapshots_emitted_for_tool_calls(events)
         assert mid_stream, f"the append never reached the client: {_state_events(events)}"
-        assert mid_stream[-1]["snapshot"]["recipe"]["ingredients"] == ["noodles"], mid_stream[-1]["snapshot"]
+        snapshot = mid_stream[-1]["snapshot"]
+        assert _same_state_value(snapshot["recipe"]["ingredients"], ["noodles"]), snapshot
 
 
 class TestClientStateExcludesAgnoBookkeeping:
@@ -945,7 +975,7 @@ class TestClientStateExcludesAgnoBookkeeping:
             left_state={"counter": 1},
         )
         first_snapshot = next(e for e in events if e.get("type") == "STATE_SNAPSHOT")
-        assert first_snapshot["snapshot"] == {"counter": 0}
+        assert _same_state_value(first_snapshot["snapshot"], {"counter": 0}), first_snapshot["snapshot"]
 
 
 class TestStateStreamingWithoutJsonpatch:
@@ -1965,6 +1995,32 @@ class TestStateWithNoJsonFormCountsAsChangedAndIsReported:
         assert [record for record in warnings_logged if "no JSON form" in record.getMessage()]
 
 
+class TestWhatTheDeltaIsMeasuredAgainstIsAnsweredForToo:
+    """The baseline a change is described against can be missing and can be
+    unrenderable, and neither is the same answer as an unrenderable change: a
+    run that has published no state owes the client nothing, and a baseline
+    with no JSON form leaves a change that cannot be described rather than one
+    that cannot be sent."""
+
+    def test_a_run_that_has_published_no_state_has_no_change_to_describe(self):
+        assert StreamState(thread_id="t", run_id="r").compute_state_delta({"counter": 1}) is None
+
+    def test_a_baseline_with_no_json_form_is_a_patch_that_could_not_be_built(self, warnings_logged):
+        pytest.importorskip("jsonpatch", reason="jsonpatch not installed")
+        state = StreamState(thread_id="typed-thread", run_id="typed-run")
+        state.set_state_snapshot({"value": _HasNoJsonForm()})
+
+        with pytest.raises(StateDeltaUnavailable) as raised:
+            state.compute_state_delta({"value": "a value with a JSON form"})
+
+        # Not STATE_NOT_SENDABLE: what the run holds now can be sent, as the
+        # full snapshot the caller falls back to.
+        assert raised.value.reason == StateDeltaUnavailable.PATCH_FAILED
+        unreadable = [record.getMessage() for record in warnings_logged if "no JSON form" in record.getMessage()]
+        assert len(unreadable) == 1, [record.getMessage() for record in warnings_logged]
+        assert "typed-thread" in unreadable[0] and "typed-run" in unreadable[0], unreadable[0]
+
+
 @tool
 def store_a_value_with_no_json_form(run_context: Optional[RunContext] = None) -> str:
     """Leave a value the event encoder cannot render in the shared state."""
@@ -2184,7 +2240,9 @@ def _ops_by_path(delta: Dict[str, Any]) -> List[Dict[str, Any]]:
 
 
 def _first_snapshot(events: List[Dict[str, Any]]) -> Dict[str, Any]:
-    return next(e for e in events if e.get("type") == "STATE_SNAPSHOT")["snapshot"]
+    snapshots = [e for e in events if e.get("type") == "STATE_SNAPSHOT"]
+    assert snapshots, f"the run sent no snapshot for a client to open on: {get_event_types(events)}"
+    return snapshots[0]["snapshot"]
 
 
 def _only_delta(events: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -2226,13 +2284,18 @@ class TestTheFirstDeltaCarriesTheStateTheRunBeganWith:
             reported="counter is now 8",
             left_state={"recipe": AGENT_DEFAULT_RECIPE, "counter": 8},
         )
-        assert _first_snapshot(events) == {"counter": 7}
+        opened_on = _first_snapshot(events)
+        assert _same_state_value(opened_on, {"counter": 7}), opened_on
         # The tool touched /counter only; /recipe is the agent default arriving
         # with it because the delta's baseline is what the client sent.
-        assert _ops_by_path(_only_delta(events)) == [
-            {"op": "replace", "path": "/counter", "value": 8},
-            {"op": "add", "path": "/recipe", "value": AGENT_DEFAULT_RECIPE},
-        ]
+        ops = _ops_by_path(_only_delta(events))
+        assert _same_state_value(
+            ops,
+            [
+                {"op": "replace", "path": "/counter", "value": 8},
+                {"op": "add", "path": "/recipe", "value": AGENT_DEFAULT_RECIPE},
+            ],
+        ), ops
 
     def test_the_first_delta_also_adds_the_stored_session_row(self, tmp_path):
         pytest.importorskip("jsonpatch", reason="jsonpatch not installed")
@@ -2256,11 +2319,1138 @@ class TestTheFirstDeltaCarriesTheStateTheRunBeganWith:
             reported="counter is 8",
             left_state={"recipe": AGENT_DEFAULT_RECIPE, "counter": 8, "client_only": "kept"},
         )
-        assert _first_snapshot(events) == {"client_only": "kept"}
+        opened_on = _first_snapshot(events)
+        assert _same_state_value(opened_on, {"client_only": "kept"}), opened_on
         # read_counter changes nothing, so every op here is the merge: /counter
         # off the session row the first run persisted, /recipe the agent
         # default. A delta still fires, reporting keys no tool call touched.
-        assert _ops_by_path(_only_delta(events)) == [
-            {"op": "add", "path": "/counter", "value": 8},
-            {"op": "add", "path": "/recipe", "value": AGENT_DEFAULT_RECIPE},
+        ops = _ops_by_path(_only_delta(events))
+        assert _same_state_value(
+            ops,
+            [
+                {"op": "add", "path": "/counter", "value": 8},
+                {"op": "add", "path": "/recipe", "value": AGENT_DEFAULT_RECIPE},
+            ],
+        ), ops
+
+
+# =============================================================================
+# Tool call arguments streamed to the client as they are produced
+#
+# Providers hand the run loop one delta per fragment of a tool call's argument
+# string, and Agno now emits a run event for each. Those fragments arrive
+# before Agno announces the finished call, so the wire has to open the call
+# from the first fragment and add arguments from each one after it. These drive
+# a real run over a fragmenting offline model so what is asserted is the
+# sequence a client decodes.
+# =============================================================================
+
+
+class _FragmentingModel(Model):
+    """Streams a turn's tool calls in fragments, the way a provider does.
+
+    Each turn is ``("content", text)`` or ``("tools", [(name, args, id), ...],
+    chunk_size, preamble)``. A tool turn puts a call's id and function name on
+    its own first fragment, which carries no arguments at all, then interleaves
+    the calls' argument chunks so several calls in one turn arrive at once. A
+    preamble streams that text ahead of the fragments, the way a model that
+    talks before it calls does.
+    """
+
+    def __init__(self, script: List[tuple]):
+        super().__init__(id="fragmenting", name="fragmenting", provider="test")
+        self._script = list(script)
+        self._index = 0
+
+    def _next_turn(self) -> List[ModelResponse]:
+        assert self._index < len(self._script), (
+            f"the run asked for model turn {self._index + 1} of a {len(self._script)}-turn script"
+        )
+        turn = self._script[self._index]
+        self._index += 1
+        if turn[0] == "content":
+            reply = ModelResponse(content=turn[1], role="assistant")
+            reply.event = ModelResponseEvent.assistant_response.value
+            return [reply]
+
+        _, calls, chunk_size = turn[:3]
+        preamble = turn[3] if len(turn) > 3 else ""
+        deltas: List[ModelResponse] = []
+        if preamble:
+            deltas.append(ModelResponse(content=preamble, role="assistant"))
+        for position, (name, args, tool_call_id) in enumerate(calls):
+            deltas.append(_arg_fragment(position, "", tool_call_id=tool_call_id, tool_name=name))
+        chunked = [_chunked(json.dumps(args), chunk_size) for _, args, _ in calls]
+        for step in range(max(len(chunks) for chunks in chunked)):
+            for position, chunks in enumerate(chunked):
+                if step < len(chunks):
+                    deltas.append(_arg_fragment(position, chunks[step]))
+        return deltas
+
+    def invoke_stream(self, *args, **kwargs) -> Iterator[ModelResponse]:
+        yield from self._next_turn()
+
+    async def ainvoke_stream(self, *args, **kwargs) -> AsyncIterator[ModelResponse]:
+        for delta in self._next_turn():
+            yield delta
+
+    def invoke(self, *args, **kwargs) -> ModelResponse:
+        raise AssertionError("this model exists to be streamed")
+
+    async def ainvoke(self, *args, **kwargs) -> ModelResponse:
+        raise AssertionError("this model exists to be streamed")
+
+    def _parse_provider_response(self, response: Any, **kwargs) -> ModelResponse:
+        return response if isinstance(response, ModelResponse) else ModelResponse()
+
+    def _parse_provider_response_delta(self, response: Any) -> ModelResponse:
+        return response if isinstance(response, ModelResponse) else ModelResponse()
+
+    def parse_tool_calls(self, tool_calls_data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Reassemble the fragments by index, as OpenAI-compatible models do."""
+        calls: Dict[int, Dict[str, Any]] = {}
+        order: List[int] = []
+        for fragment in tool_calls_data:
+            index = fragment.get("index", 0)
+            if index not in calls:
+                calls[index] = {"id": None, "type": "function", "function": {"name": "", "arguments": ""}}
+                order.append(index)
+            entry = calls[index]
+            if fragment.get("id"):
+                entry["id"] = fragment["id"]
+            function = fragment.get("function") or {}
+            if function.get("name"):
+                entry["function"]["name"] = function["name"]
+            if function.get("arguments"):
+                entry["function"]["arguments"] += function["arguments"]
+        return [calls[index] for index in order]
+
+
+def _arg_fragment(
+    index: int,
+    arguments: str = "",
+    tool_call_id: Optional[str] = None,
+    tool_name: Optional[str] = None,
+) -> ModelResponse:
+    function: Dict[str, Any] = {"arguments": arguments}
+    if tool_name is not None:
+        function["name"] = tool_name
+    tool_call: Dict[str, Any] = {"index": index, "type": "function", "function": function}
+    if tool_call_id is not None:
+        tool_call["id"] = tool_call_id
+    return ModelResponse(role="assistant", tool_calls=[tool_call])
+
+
+def _chunked(text: str, size: int) -> List[str]:
+    return [text[position : position + size] for position in range(0, len(text), size)]
+
+
+@tool
+def save_line(line: str, run_context: Optional[RunContext] = None) -> str:
+    """Store one line of a document.
+
+    Args:
+        line: the line to store
+    """
+    session_state = run_context.session_state  # type: ignore[union-attr]
+    session_state["lines"] = session_state.get("lines", []) + [line]
+    return f"stored {len(session_state['lines'])} line(s)"
+
+
+@tool
+def save_title(title: str, run_context: Optional[RunContext] = None) -> str:
+    """Store the document title.
+
+    Args:
+        title: the title to store
+    """
+    run_context.session_state["title"] = title  # type: ignore[union-attr]
+    return f"titled {title}"
+
+
+def _fragmenting_client(script: List[tuple], tools: List[Any], tool_call_limit: Optional[int] = None):
+    agent = Agent(
+        name="fragmenting-agent",
+        model=_FragmentingModel(script),
+        tools=tools,
+        tool_call_limit=tool_call_limit,
+    )
+    agent_os = AgentOS(agents=[agent], interfaces=[AGUI(agent=agent)])
+    return TestClient(agent_os.get_app())
+
+
+def _tool_call_wire(events: List[Dict[str, Any]], tool_call_id: str) -> List[Dict[str, Any]]:
+    """Every event on the wire that names one tool call, in order."""
+    return [event for event in events if event.get("toolCallId") == tool_call_id]
+
+
+def _raw_passthroughs_of(events: List[Dict[str, Any]], agno_event: str) -> List[Dict[str, Any]]:
+    """Every RAW event carrying one Agno event straight through to the client.
+
+    A RAW event is what an Agno event with no handler becomes: the whole event
+    dict, for the client to make what it can of.
+    """
+    return [
+        event
+        for event in events
+        if event.get("type") == "RAW"
+        and isinstance(event.get("event"), dict)
+        and event["event"].get("event") == agno_event
+    ]
+
+
+def _results_for(events: List[Dict[str, Any]], tool_call_id: str) -> List[Any]:
+    """What the client was told each of one call's results was, decoded."""
+    return [
+        json.loads(event["content"])
+        for event in events
+        if event.get("type") == "TOOL_CALL_RESULT" and event.get("toolCallId") == tool_call_id
+    ]
+
+
+def _args_deltas(events: List[Dict[str, Any]], tool_call_id: str) -> List[str]:
+    return [
+        event["delta"]
+        for event in events
+        if event.get("type") == "TOOL_CALL_ARGS" and event.get("toolCallId") == tool_call_id
+    ]
+
+
+def _assert_the_client_accepts_the_tool_call_spans(events: List[Dict[str, Any]]) -> None:
+    """Replay the wire under the rules the AG-UI client's own verifier applies.
+
+    The client keeps one entry per tool call id, added by TOOL_CALL_START and
+    deleted by TOOL_CALL_END, and it throws rather than renders when a start
+    names an id that already has an entry, when arguments or an end name an id
+    that has none, or when a run finishes with an entry left. Deletion on end
+    is why the same id may open again afterwards: it is a second call, not a
+    second start of the one that closed.
+
+    A run that ends in error is a run that ended, so an entry left open at
+    RUN_ERROR is the same unclosed span as one left open at RUN_FINISHED: the
+    client throws for either.
+    """
+    open_calls: List[str] = []
+    for event in events:
+        kind = event.get("type")
+        tool_call_id = event.get("toolCallId")
+        if kind == "TOOL_CALL_START":
+            assert tool_call_id not in open_calls, f"a second TOOL_CALL_START for the open call {tool_call_id!r}"
+            open_calls.append(tool_call_id)
+        elif kind == "TOOL_CALL_ARGS":
+            assert tool_call_id in open_calls, f"TOOL_CALL_ARGS for {tool_call_id!r}, which is not open"
+        elif kind == "TOOL_CALL_END":
+            assert tool_call_id in open_calls, f"TOOL_CALL_END for {tool_call_id!r}, which is not open"
+            open_calls.remove(tool_call_id)
+        elif kind in ("RUN_FINISHED", "RUN_ERROR"):
+            assert not open_calls, f"{kind} left the calls {open_calls} open"
+
+
+class TestToolCallArgumentsReachTheClientAsTheyAreProduced:
+    """A client rendering a tool call while it is still running needs the
+    arguments in pieces, so one TOOL_CALL_ARGS per fragment is the point: a
+    single event carrying the finished blob is what the client used to get and
+    is what these tests exist to rule out.
+    """
+
+    def test_each_fragment_becomes_its_own_args_event_under_one_start(self):
+        line = "the sea is wide and the boat is small"
+        args = json.dumps({"line": line})
+        client = _fragmenting_client(
+            [("tools", [(save_line.name, {"line": line}, "call_line")], 5), ("content", "done")],
+            [save_line],
+        )
+
+        response = client.post("/agui", json=make_request_body("write", state={"lines": []}))
+        events = _events_of_completed_run(
+            response, ran=[save_line.name], reported="stored 1 line(s)", left_state={"lines": [line]}
+        )
+
+        deltas = _args_deltas(events, "call_line")
+        assert len(deltas) == len(_chunked(args, 5))
+        assert len(deltas) > 1, "the client got the arguments in one piece, so nothing was streamed"
+        assert "".join(deltas) == args
+        assert json.loads("".join(deltas)) == {"line": line}
+
+    def test_the_announcement_after_the_fragments_repeats_nothing(self):
+        line = "a second look at the same call"
+        args = json.dumps({"line": line})
+        client = _fragmenting_client(
+            [("tools", [(save_line.name, {"line": line}, "call_line")], 5), ("content", "done")],
+            [save_line],
+        )
+
+        response = client.post("/agui", json=make_request_body("write", state={"lines": []}))
+        events = _events_of_completed_run(
+            response, ran=[save_line.name], reported="stored 1 line(s)", left_state={"lines": [line]}
+        )
+
+        wire = [event["type"] for event in _tool_call_wire(events, "call_line")]
+        assert wire.count("TOOL_CALL_START") == 1, wire
+        assert wire.count("TOOL_CALL_END") == 1, wire
+        # Agno announces the finished call after the fragments; the whole
+        # argument string must not arrive again alongside them.
+        deltas = _args_deltas(events, "call_line")
+        assert len(deltas) > 1, "the arguments arrived in one piece, so the announcement carried them"
+        assert "".join(deltas) == args
+        assert args not in deltas, "the announcement resent the whole argument string"
+        # And the wire stays in protocol order: start, arguments, end.
+        assert wire[0] == "TOOL_CALL_START"
+        assert wire.index("TOOL_CALL_END") > max(
+            position for position, kind in enumerate(wire) if kind == "TOOL_CALL_ARGS"
+        )
+
+    def test_the_call_opens_from_its_first_fragment_not_from_the_announcement(self):
+        line = "opened early"
+        client = _fragmenting_client(
+            [("tools", [(save_line.name, {"line": line}, "call_line")], 4), ("content", "done")],
+            [save_line],
+        )
+
+        response = client.post("/agui", json=make_request_body("write", state={"lines": []}))
+        events = _events_of_completed_run(
+            response, ran=[save_line.name], reported="stored 1 line(s)", left_state={"lines": [line]}
+        )
+
+        start = next(event for event in events if event.get("type") == "TOOL_CALL_START")
+        assert start["toolCallName"] == save_line.name
+        # A start with no parent is a protocol violation, and the parent has to
+        # be a message the client has already been told about.
+        parent = start["parentMessageId"]
+        assert parent
+        # Unmapped, every fragment reached the client as a raw event it has no
+        # way to render, one per fragment.
+        raw = [event.get("event", {}).get("event") for event in events if event.get("type") == "RAW"]
+        assert "ToolCallArgsDelta" not in raw, raw
+        assert len(_args_deltas(events, "call_line")) > 1
+        opened = [
+            position
+            for position, event in enumerate(events)
+            if event.get("type") == "TEXT_MESSAGE_START" and event.get("messageId") == parent
         ]
+        assert opened and opened[0] < events.index(start)
+
+    def test_two_calls_in_one_turn_stay_apart_on_the_wire(self):
+        line = "the first of two"
+        title = "a longer title than the line, so it keeps streaming after the line runs out"
+        client = _fragmenting_client(
+            [
+                (
+                    "tools",
+                    [(save_line.name, {"line": line}, "call_line"), (save_title.name, {"title": title}, "call_title")],
+                    6,
+                ),
+                ("content", "done"),
+            ],
+            [save_line, save_title],
+        )
+
+        response = client.post("/agui", json=make_request_body("write", state={"lines": []}))
+        events = _events_of_completed_run(
+            response,
+            ran=[save_line.name, save_title.name],
+            left_state={"lines": [line], "title": title},
+        )
+
+        assert json.loads("".join(_args_deltas(events, "call_line"))) == {"line": line}
+        assert json.loads("".join(_args_deltas(events, "call_title"))) == {"title": title}
+        starts = {
+            event["toolCallId"]: event["toolCallName"] for event in events if event.get("type") == "TOOL_CALL_START"
+        }
+        assert starts == {"call_line": save_line.name, "call_title": save_title.name}
+        # Each call opens before any of its own arguments and closes after the
+        # last of them, whatever the other call was doing in between.
+        for tool_call_id in ("call_line", "call_title"):
+            wire = [event["type"] for event in _tool_call_wire(events, tool_call_id)]
+            assert wire[0] == "TOOL_CALL_START", wire
+            assert wire.count("TOOL_CALL_START") == 1, wire
+            assert wire.count("TOOL_CALL_ARGS") > 1, wire
+            assert wire.index("TOOL_CALL_END") > max(
+                position for position, kind in enumerate(wire) if kind == "TOOL_CALL_ARGS"
+            ), wire
+
+    def test_a_call_whose_arguments_never_streamed_still_carries_them_whole(self, agent_client):
+        """A provider that hands the run loop no argument text leaves the
+        announcement as the only thing that can carry the arguments, and it
+        still carries all of them in one event, exactly as before."""
+        client, agent = agent_client
+        tool_mock = MagicMock()
+        tool_mock.tool_call_id = "call_unstreamed"
+        tool_mock.tool_name = "save_line"
+        tool_mock.tool_args = {"line": "never fragmented"}
+        tool_mock.result = "stored"
+
+        async def mock_stream() -> AsyncIterator[RunOutputEvent]:
+            yield ToolCallStartedEvent(content="", tool=tool_mock)
+            yield ToolCallCompletedEvent(content="", tool=tool_mock)
+            yield RunCompletedEvent(content="")
+
+        with patch.object(agent, "arun") as mock_arun:
+            mock_arun.return_value = mock_stream()
+            response = client.post("/agui", json=make_request_body("write"))
+
+        events = parse_sse_events(response.text)
+        wire = [event["type"] for event in _tool_call_wire(events, "call_unstreamed")]
+        assert wire.count("TOOL_CALL_START") == 1, wire
+        assert _args_deltas(events, "call_unstreamed") == [json.dumps({"line": "never fragmented"})]
+
+    def test_a_provider_that_does_not_fragment_sends_the_arguments_once(self):
+        """A provider that hands over a finished call rather than fragments of
+        one leaves a single fragment carrying the whole argument string, and
+        the client gets a single TOOL_CALL_ARGS, exactly as before."""
+        client = _real_run_client(mutates=True)
+
+        response = client.post("/agui", json=make_request_body("bump", state={"counter": 0}))
+        events = _events_of_completed_run(
+            response, ran=[bump_counter.name], reported="counter is now 1", left_state={"counter": 1}
+        )
+
+        wire = [event["type"] for event in _tool_call_wire(events, "tc_1")]
+        assert wire.count("TOOL_CALL_START") == 1, wire
+        assert _args_deltas(events, "tc_1") == ["{}"]
+
+    def test_fragments_arriving_under_an_open_message_parent_to_it(self):
+        """The fragments arrive earlier than the announcement used to, so what
+        they close and parent to is whatever text message is open at that
+        moment, not a fresh empty one."""
+        line = "after a word of warning"
+        client = _fragmenting_client(
+            [
+                ("tools", [(save_line.name, {"line": line}, "call_line")], 5, "Let me write that down. "),
+                ("content", "done"),
+            ],
+            [save_line],
+        )
+
+        response = client.post("/agui", json=make_request_body("write", state={"lines": []}))
+        events = _events_of_completed_run(
+            response, ran=[save_line.name], reported="stored 1 line(s)", left_state={"lines": [line]}
+        )
+
+        types = get_event_types(events)
+        start = next(event for event in events if event.get("type") == "TOOL_CALL_START")
+        spoken = next(
+            event
+            for event in events
+            if event.get("type") == "TEXT_MESSAGE_CONTENT" and "Let me write that down." in event["delta"]
+        )
+        assert start["parentMessageId"] == spoken["messageId"], (
+            "the call was parented to a message the preamble was not spoken in"
+        )
+        # That message is closed before the call opens, and no empty stand-in
+        # was minted alongside it.
+        ended = [
+            position
+            for position, event in enumerate(events)
+            if event.get("type") == "TEXT_MESSAGE_END" and event.get("messageId") == spoken["messageId"]
+        ]
+        assert ended and ended[0] < events.index(start), types
+        opened = [event for event in events if event.get("type") == "TEXT_MESSAGE_START"]
+        assert [event["messageId"] for event in opened].count(spoken["messageId"]) == 1
+        assert len(opened) == 2, [event["messageId"] for event in opened]
+        assert len(_args_deltas(events, "call_line")) > 1
+
+    def test_a_paused_call_whose_arguments_streamed_is_not_rendered_twice(self, agent_client):
+        """A client tool pauses the run, and the terminal handler renders the
+        paused calls for the frontend to execute. A call the fragments already
+        opened, carried and closed must not be rendered again there."""
+        client, agent = agent_client
+        paused_tool = ToolExecution(
+            tool_call_id="call_client",
+            tool_name="generate_haiku",
+            tool_args={"line": "streamed"},
+            external_execution_required=True,
+        )
+
+        async def mock_stream() -> AsyncIterator[RunOutputEvent]:
+            yield ToolCallArgsDeltaEvent(
+                tool_call_id="call_client", tool_name="generate_haiku", tool_args_delta='{"line":'
+            )
+            yield ToolCallArgsDeltaEvent(
+                tool_call_id="call_client", tool_name="generate_haiku", tool_args_delta='"streamed"}'
+            )
+            yield RunPausedEvent(tools=[paused_tool])
+
+        with patch.object(agent, "arun") as mock_arun:
+            mock_arun.return_value = mock_stream()
+            response = client.post("/agui", json=make_request_body("write"))
+
+        events = parse_sse_events(response.text)
+        wire = [event["type"] for event in _tool_call_wire(events, "call_client")]
+        assert wire.count("TOOL_CALL_START") == 1, wire
+        assert wire.count("TOOL_CALL_END") == 1, wire
+        assert _args_deltas(events, "call_client") == ['{"line":', '"streamed"}']
+        # And no stand-in parent message was minted for a call that never
+        # needed rendering.
+        assert [event["type"] for event in events].count("TEXT_MESSAGE_START") == 1
+
+    def test_a_paused_call_that_never_streamed_is_still_rendered(self, agent_client):
+        """The same terminal handler, for a call with no fragments: it opens
+        the call, carries the whole argument string and closes it, as before."""
+        client, agent = agent_client
+        paused_tool = ToolExecution(
+            tool_call_id="call_client",
+            tool_name="generate_haiku",
+            tool_args={"line": "unstreamed"},
+            external_execution_required=True,
+        )
+
+        async def mock_stream() -> AsyncIterator[RunOutputEvent]:
+            yield RunPausedEvent(tools=[paused_tool])
+
+        with patch.object(agent, "arun") as mock_arun:
+            mock_arun.return_value = mock_stream()
+            response = client.post("/agui", json=make_request_body("write"))
+
+        events = parse_sse_events(response.text)
+        wire = [event["type"] for event in _tool_call_wire(events, "call_client")]
+        assert wire == ["TOOL_CALL_START", "TOOL_CALL_ARGS", "TOOL_CALL_END"], wire
+        assert _args_deltas(events, "call_client") == [json.dumps({"line": "unstreamed"})]
+
+
+# =============================================================================
+# One call id, one call on the wire
+#
+# Three things can be the first sight of a tool call: an argument fragment,
+# Agno's announcement of the finished call, and the terminal handler rendering
+# a paused run's pending calls. Whichever sees a call first is the one that
+# opens it, and the others have to recognise it as open, or already closed, and
+# stay quiet. A client cannot repair any of this: a second start for an open
+# call, or arguments for one that has ended, is where its verifier throws and
+# takes the rest of the run with it.
+# =============================================================================
+
+
+def _announced(tool_call_id: str, tool_name: str, tool_args: Dict[str, Any], result: str = "stored") -> Any:
+    """Agno's record of a finished call, as its announcement carries it."""
+    tool = MagicMock()
+    tool.tool_call_id = tool_call_id
+    tool.tool_name = tool_name
+    tool.tool_args = tool_args
+    tool.result = result
+    return tool
+
+
+class TestOneCallIdOpensOneCallWhicheverOpenerSeesItFirst:
+    def test_a_fragment_after_the_announcement_opens_no_second_call(self, agent_client):
+        """The announcement got there first and carried the whole argument
+        string, so a fragment behind it has nothing to add: opening the call
+        again would give the client two calls under one id, and passing the
+        fragment on would append to arguments that are already complete."""
+        client, agent = agent_client
+        args = {"line": "announced first"}
+        tool = _announced("call_late_fragment", "save_line", args)
+
+        async def mock_stream() -> AsyncIterator[RunOutputEvent]:
+            yield ToolCallStartedEvent(content="", tool=tool)
+            yield ToolCallArgsDeltaEvent(
+                tool_call_id="call_late_fragment", tool_name="save_line", tool_args_delta='{"line":'
+            )
+            yield ToolCallCompletedEvent(content="", tool=tool)
+            yield RunCompletedEvent(content="")
+
+        with patch.object(agent, "arun") as mock_arun:
+            mock_arun.return_value = mock_stream()
+            response = client.post("/agui", json=make_request_body("write"))
+
+        events = parse_sse_events(response.text)
+        _assert_the_client_accepts_the_tool_call_spans(events)
+        wire = [event["type"] for event in _tool_call_wire(events, "call_late_fragment")]
+        assert wire == ["TOOL_CALL_START", "TOOL_CALL_ARGS", "TOOL_CALL_END", "TOOL_CALL_RESULT"], wire
+        assert _args_deltas(events, "call_late_fragment") == [json.dumps(args)]
+
+    def test_an_announcement_behind_an_open_call_leaves_dropped_fragments_dropped(self, agent_client):
+        """A call some of whose fragments never went out, which is the case the
+        run warns about when it can place no call for a fragment or the
+        provider wrote the arguments as a structure. TOOL_CALL_ARGS only ever
+        appends, so the announcement behind an open call cannot carry the whole
+        string without doubling what the client already holds. What the client
+        is left with is the fragments that did go out, and nothing more."""
+        client, agent = agent_client
+        streamed = 'piece never went out"}'
+        tool = _announced("call_short", "save_line", {"line": "the opening piece never went out"})
+
+        async def mock_stream() -> AsyncIterator[RunOutputEvent]:
+            # The opening fragment is the one that never reached the client.
+            yield ToolCallArgsDeltaEvent(tool_call_id="call_short", tool_name="save_line", tool_args_delta=streamed)
+            yield ToolCallStartedEvent(content="", tool=tool)
+            yield ToolCallCompletedEvent(content="", tool=tool)
+            yield RunCompletedEvent(content="")
+
+        with patch.object(agent, "arun") as mock_arun:
+            mock_arun.return_value = mock_stream()
+            response = client.post("/agui", json=make_request_body("write"))
+
+        events = parse_sse_events(response.text)
+        _assert_the_client_accepts_the_tool_call_spans(events)
+        wire = [event["type"] for event in _tool_call_wire(events, "call_short")]
+        assert wire == ["TOOL_CALL_START", "TOOL_CALL_ARGS", "TOOL_CALL_END", "TOOL_CALL_RESULT"], wire
+        assert "".join(_args_deltas(events, "call_short")) == streamed
+        with pytest.raises(json.JSONDecodeError):
+            json.loads(streamed)
+
+    def test_an_id_reused_after_its_call_ended_opens_a_new_call(self, agent_client):
+        """A provider is free to hand the same call id to a later call in the
+        same run, and by then the first call has ended. The fragments of the
+        second one open a call of their own: adding them to the one that closed
+        is arguments after an end, which the client refuses."""
+        client, agent = agent_client
+        first = _announced("call_reused", "save_line", {"line": "one"}, result="stored 1")
+        second = _announced("call_reused", "save_line", {"line": "two"}, result="stored 2")
+
+        async def mock_stream() -> AsyncIterator[RunOutputEvent]:
+            yield ToolCallArgsDeltaEvent(tool_call_id="call_reused", tool_name="save_line", tool_args_delta='{"line":')
+            yield ToolCallArgsDeltaEvent(tool_call_id="call_reused", tool_name="save_line", tool_args_delta='"one"}')
+            yield ToolCallCompletedEvent(content="", tool=first)
+            yield ToolCallArgsDeltaEvent(tool_call_id="call_reused", tool_name="save_line", tool_args_delta='{"line":')
+            yield ToolCallArgsDeltaEvent(tool_call_id="call_reused", tool_name="save_line", tool_args_delta='"two"}')
+            yield ToolCallCompletedEvent(content="", tool=second)
+            yield RunCompletedEvent(content="")
+
+        with patch.object(agent, "arun") as mock_arun:
+            mock_arun.return_value = mock_stream()
+            response = client.post("/agui", json=make_request_body("write"))
+
+        events = parse_sse_events(response.text)
+        _assert_the_client_accepts_the_tool_call_spans(events)
+        wire = [event["type"] for event in _tool_call_wire(events, "call_reused")]
+        assert wire == [
+            "TOOL_CALL_START",
+            "TOOL_CALL_ARGS",
+            "TOOL_CALL_ARGS",
+            "TOOL_CALL_END",
+            "TOOL_CALL_RESULT",
+            "TOOL_CALL_START",
+            "TOOL_CALL_ARGS",
+            "TOOL_CALL_ARGS",
+            "TOOL_CALL_END",
+            "TOOL_CALL_RESULT",
+        ], wire
+        assert _args_deltas(events, "call_reused") == ['{"line":', '"one"}', '{"line":', '"two"}']
+        results = [json.loads(event["content"]) for event in events if event.get("type") == "TOOL_CALL_RESULT"]
+        assert results == ["stored 1", "stored 2"], results
+
+    def test_a_first_fragment_carrying_no_arguments_opens_nothing(self, agent_client):
+        """A provider names a call on a fragment that carries no argument text
+        at all. There is nothing to say about the call yet, so nothing goes out
+        for it, and the announcement behind it is still the opener that carries
+        the arguments. Opening on that empty fragment instead leaves the client
+        a call that starts and ends with no arguments between."""
+        client, agent = agent_client
+        args = {"line": "arguments came later"}
+        tool = _announced("call_empty_first", "save_line", args)
+
+        async def mock_stream() -> AsyncIterator[RunOutputEvent]:
+            yield ToolCallArgsDeltaEvent(tool_call_id="call_empty_first", tool_name="save_line", tool_args_delta="")
+            yield ToolCallStartedEvent(content="", tool=tool)
+            yield ToolCallCompletedEvent(content="", tool=tool)
+            yield RunCompletedEvent(content="")
+
+        with patch.object(agent, "arun") as mock_arun:
+            mock_arun.return_value = mock_stream()
+            response = client.post("/agui", json=make_request_body("write"))
+
+        events = parse_sse_events(response.text)
+        _assert_the_client_accepts_the_tool_call_spans(events)
+        wire = [event["type"] for event in _tool_call_wire(events, "call_empty_first")]
+        assert wire == ["TOOL_CALL_START", "TOOL_CALL_ARGS", "TOOL_CALL_END", "TOOL_CALL_RESULT"], wire
+        assert _args_deltas(events, "call_empty_first") == [json.dumps(args)]
+
+    def test_a_call_only_an_empty_fragment_ever_named_reaches_the_client_at_all(self, agent_client):
+        """Nothing else ever mentions the call, so the run has said nothing
+        about it and neither does the wire, rather than an empty pair of
+        brackets around no arguments."""
+        client, agent = agent_client
+
+        async def mock_stream() -> AsyncIterator[RunOutputEvent]:
+            yield ToolCallArgsDeltaEvent(tool_call_id="call_named_only", tool_name="save_line", tool_args_delta="")
+            yield RunCompletedEvent(content="")
+
+        with patch.object(agent, "arun") as mock_arun:
+            mock_arun.return_value = mock_stream()
+            response = client.post("/agui", json=make_request_body("write"))
+
+        events = parse_sse_events(response.text)
+        _assert_the_client_accepts_the_tool_call_spans(events)
+        assert "RUN_FINISHED" in get_event_types(events), get_event_types(events)
+        assert _tool_call_wire(events, "call_named_only") == []
+
+    def test_a_call_only_the_announcement_ever_mentions_is_carried_as_before(self, agent_client):
+        """The case with no fragments in it at all: the announcement opens the
+        call and carries every argument in one event, and the completion closes
+        it. None of the reconciling above shows up here."""
+        client, agent = agent_client
+        args = {"line": "no fragments anywhere"}
+        tool = _announced("call_announced_only", "save_line", args)
+
+        async def mock_stream() -> AsyncIterator[RunOutputEvent]:
+            yield ToolCallStartedEvent(content="", tool=tool)
+            yield ToolCallCompletedEvent(content="", tool=tool)
+            yield RunCompletedEvent(content="")
+
+        with patch.object(agent, "arun") as mock_arun:
+            mock_arun.return_value = mock_stream()
+            response = client.post("/agui", json=make_request_body("write"))
+
+        events = parse_sse_events(response.text)
+        _assert_the_client_accepts_the_tool_call_spans(events)
+        wire = [event["type"] for event in _tool_call_wire(events, "call_announced_only")]
+        assert wire == ["TOOL_CALL_START", "TOOL_CALL_ARGS", "TOOL_CALL_END", "TOOL_CALL_RESULT"], wire
+        assert _args_deltas(events, "call_announced_only") == [json.dumps(args)]
+
+    def test_a_completion_for_a_call_nothing_opened_ends_nothing(self, agent_client):
+        """A run configured to skip the announcement leaves a completion as the
+        only sight of a call whose arguments never streamed. There is no open
+        call to close, and an end for one the client does not hold open is
+        where its verifier stops reading, so the completion passes in silence
+        and the rest of the run still reaches the client."""
+        client, agent = agent_client
+        tool = _announced("call_never_opened", "save_line", {"line": "unannounced"})
+
+        async def mock_stream() -> AsyncIterator[RunOutputEvent]:
+            yield ToolCallCompletedEvent(content="", tool=tool)
+            yield RunContentEvent(content="answered anyway")
+            yield RunCompletedEvent(content="")
+
+        with patch.object(agent, "arun") as mock_arun:
+            mock_arun.return_value = mock_stream()
+            response = client.post("/agui", json=make_request_body("write"))
+
+        events = parse_sse_events(response.text)
+        _assert_the_client_accepts_the_tool_call_spans(events)
+        assert _tool_call_wire(events, "call_never_opened") == []
+        spoken = [event["delta"] for event in events if event.get("type") == "TEXT_MESSAGE_CONTENT"]
+        assert spoken == ["answered anyway"], spoken
+        assert "RUN_FINISHED" in get_event_types(events)
+
+    def test_a_paused_call_the_announcement_opened_is_not_rendered_twice(self, agent_client):
+        """The terminal handler renders a paused run's pending calls so the
+        frontend can execute them. A call already opened, carried and closed on
+        the wire is not pending anything the client has not seen, whichever
+        opener put it there."""
+        client, agent = agent_client
+        args = {"line": "announced then paused"}
+        tool = _announced("call_paused", "generate_haiku", args)
+        paused_tool = ToolExecution(
+            tool_call_id="call_paused",
+            tool_name="generate_haiku",
+            tool_args=args,
+            external_execution_required=True,
+        )
+
+        async def mock_stream() -> AsyncIterator[RunOutputEvent]:
+            yield ToolCallStartedEvent(content="", tool=tool)
+            yield RunPausedEvent(tools=[paused_tool])
+
+        with patch.object(agent, "arun") as mock_arun:
+            mock_arun.return_value = mock_stream()
+            response = client.post("/agui", json=make_request_body("write"))
+
+        events = parse_sse_events(response.text)
+        _assert_the_client_accepts_the_tool_call_spans(events)
+        wire = [event["type"] for event in _tool_call_wire(events, "call_paused")]
+        assert wire == ["TOOL_CALL_START", "TOOL_CALL_ARGS", "TOOL_CALL_END"], wire
+        assert _args_deltas(events, "call_paused") == [json.dumps(args)]
+
+
+class TestTheFragmentsAreTheClientsCopyOfTheArguments:
+    """What the announcement of a finished call does about the fragments.
+
+    Nothing. A client's copy of a call's arguments is the text the provider
+    streamed, which is what a streaming client reads them out of, and the
+    announcement neither repeats that text nor sits in judgement on it: the
+    arguments the run ends up holding differ from the text a healthy provider
+    sent in more ways than any comparison can allow for, from a parameter the
+    run defaulted to a literal it read as a Python value, and a client told
+    such a call failed cannot act on it at all. What a call did is what its
+    result event says it did.
+    """
+
+    def _streamed_then_announced(self, agent_client, fragments: List[str], tool_args: Any):
+        client, agent = agent_client
+        tool = _announced("call_checked", "save_line", tool_args)
+
+        async def mock_stream() -> AsyncIterator[RunOutputEvent]:
+            for fragment in fragments:
+                yield ToolCallArgsDeltaEvent(
+                    tool_call_id="call_checked", tool_name="save_line", tool_args_delta=fragment
+                )
+            yield ToolCallStartedEvent(content="", tool=tool)
+            yield ToolCallCompletedEvent(content="", tool=tool)
+            yield RunCompletedEvent(content="")
+
+        with patch.object(agent, "arun") as mock_arun:
+            mock_arun.return_value = mock_stream()
+            response = client.post("/agui", json=make_request_body("write"))
+        return parse_sse_events(response.text)
+
+    def test_arguments_the_provider_spelled_differently_are_left_alone(self, agent_client):
+        """The check is on the JSON the client parses, not on its characters.
+
+        A provider writes its argument JSON with whatever spacing it likes,
+        none of which the client can see, so the fragments here spell the same
+        object Agno's own encoder would spell with spaces after its colons.
+        """
+        args = {"line": "spelled tight"}
+        fragments = ['{"line":', '"spelled tight"}']
+        assert "".join(fragments) != json.dumps(args), "the fixture no longer differs from the canonical spelling"
+
+        events = self._streamed_then_announced(agent_client, fragments, args)
+
+        _assert_the_client_accepts_the_tool_call_spans(events)
+        # Nothing was added: the fragments are all the arguments the client got,
+        # and the call ran its ordinary course to a result.
+        assert _args_deltas(events, "call_checked") == fragments
+        wire = [event["type"] for event in _tool_call_wire(events, "call_checked")]
+        assert wire == ["TOOL_CALL_START", "TOOL_CALL_ARGS", "TOOL_CALL_ARGS", "TOOL_CALL_END", "TOOL_CALL_RESULT"]
+        assert _results_for(events, "call_checked") == ["stored"]
+
+    def test_a_provider_that_offers_its_arguments_twice_still_carries_the_calls_result(
+        self, agent_client, warnings_logged
+    ):
+        """A provider stream that restarts offers argument text a second time.
+
+        TOOL_CALL_ARGS appends and no AG-UI event replaces, so the client's
+        copy is the text twice over and nothing can put it right. What the call
+        did is still reported: the result is the run's own, and a client told
+        the truth about the result can act on it, which one told the call
+        failed cannot.
+        """
+        args = {"line": "written once"}
+        whole = json.dumps(args)
+        events = self._streamed_then_announced(agent_client, [whole, whole], args)
+
+        _assert_the_client_accepts_the_tool_call_spans(events)
+        assert _args_deltas(events, "call_checked") == [whole, whole]
+        wire = [event["type"] for event in _tool_call_wire(events, "call_checked")]
+        assert wire == ["TOOL_CALL_START", "TOOL_CALL_ARGS", "TOOL_CALL_ARGS", "TOOL_CALL_END", "TOOL_CALL_RESULT"]
+        assert _results_for(events, "call_checked") == ["stored"]
+        assert wire.count("TOOL_CALL_END") == 1, wire
+        warnings = [record.getMessage() for record in warnings_logged if record.levelno >= logging.WARNING]
+        assert warnings == [], warnings
+
+    @pytest.mark.parametrize(
+        ("fragment", "tool_args"),
+        [
+            ('{"line": "hello"}', {"line": "hello"}),
+            ('{"flag": "true"}', {"flag": True}),
+            ('{"flag": " FALSE "}', {"flag": False}),
+            ('{"flag": "none"}', {"flag": None}),
+            ('{"flag": "yes"}', {"flag": True}),
+            ('{"count": 1}', {"count": True}),
+            ("[]", None),
+            ('{"line": "hello"}', {"line": "hello", "run_context": "<injected>"}),
+        ],
+        ids=[
+            "arguments the run holds as they were sent",
+            "a literal the run read as a Python value",
+            "the same literal in another casing",
+            "a literal the run read as nothing at all",
+            "a string the run coerced to something else",
+            "a whole number where the run holds a boolean",
+            "a call with no parameters the provider sent as an empty list",
+            "a parameter the run filled in for itself",
+        ],
+    )
+    def test_arguments_the_run_holds_differently_still_reach_the_client_as_the_calls_own(
+        self, agent_client, fragment, tool_args
+    ):
+        """Every one of these is a healthy call, and each leaves the run
+        holding arguments the fragments never spelled: Agno reads the strings
+        "true", "false" and "none" out of a provider's top-level arguments as
+        Python values, a provider names a no-parameter call with whatever it
+        likes, and the run fills parameters in for itself. The client is left
+        the text it was streamed and the call runs its ordinary course to its
+        own result.
+        """
+        events = self._streamed_then_announced(agent_client, [fragment], tool_args)
+
+        _assert_the_client_accepts_the_tool_call_spans(events)
+        assert _args_deltas(events, "call_checked") == [fragment]
+        wire = [event["type"] for event in _tool_call_wire(events, "call_checked")]
+        assert wire == ["TOOL_CALL_START", "TOOL_CALL_ARGS", "TOOL_CALL_END", "TOOL_CALL_RESULT"], wire
+        assert _results_for(events, "call_checked") == ["stored"]
+
+    def test_a_paused_call_whose_fragments_left_a_prefix_is_still_closed_once(self, agent_client):
+        """A paused call is never started and never completed, and the terminal
+        handler renders only the calls the stream never carried, so closing the
+        spans is all that is left to do for one the fragments opened. The
+        client is left holding the prefix that was streamed, which is as much
+        of the arguments as the provider ever sent, under a call it holds
+        closed rather than pending."""
+        client, agent = agent_client
+        paused_tool = ToolExecution(
+            tool_call_id="call_flight",
+            tool_name="book_flight",
+            tool_args={"dest": "Oslo"},
+            requires_confirmation=True,
+        )
+
+        async def mock_stream() -> AsyncIterator[RunOutputEvent]:
+            yield ToolCallArgsDeltaEvent(
+                tool_call_id="call_flight", tool_name="book_flight", tool_args_delta='{"dest": "Osl'
+            )
+            yield RunPausedEvent(tools=[paused_tool])
+
+        with patch.object(agent, "arun") as mock_arun:
+            mock_arun.return_value = mock_stream()
+            response = client.post("/agui", json=make_request_body("fly"))
+
+        events = parse_sse_events(response.text)
+        _assert_the_client_accepts_the_tool_call_spans(events)
+        wire = [event["type"] for event in _tool_call_wire(events, "call_flight")]
+        assert wire == ["TOOL_CALL_START", "TOOL_CALL_ARGS", "TOOL_CALL_END"], wire
+        assert _args_deltas(events, "call_flight") == ['{"dest": "Osl']
+        # And it is not rendered a second time: a second call under the same id
+        # is where a client's verifier stops reading the run.
+        assert wire.count("TOOL_CALL_START") == 1, wire
+
+    def test_a_paused_call_whose_fragments_carried_its_arguments_is_left_alone(self, agent_client):
+        """The same path for a call whose fragments did reassemble: nothing to
+        report, nothing to close early, and no second render."""
+        paused_tool = ToolExecution(
+            tool_call_id="call_flight",
+            tool_name="book_flight",
+            tool_args={"dest": "Oslo"},
+            requires_confirmation=True,
+        )
+        client, agent = agent_client
+
+        async def mock_stream() -> AsyncIterator[RunOutputEvent]:
+            yield ToolCallArgsDeltaEvent(
+                tool_call_id="call_flight", tool_name="book_flight", tool_args_delta='{"dest": '
+            )
+            yield ToolCallArgsDeltaEvent(tool_call_id="call_flight", tool_args_delta='"Oslo"}')
+            yield RunPausedEvent(tools=[paused_tool])
+
+        with patch.object(agent, "arun") as mock_arun:
+            mock_arun.return_value = mock_stream()
+            response = client.post("/agui", json=make_request_body("fly"))
+
+        events = parse_sse_events(response.text)
+        _assert_the_client_accepts_the_tool_call_spans(events)
+        wire = [event["type"] for event in _tool_call_wire(events, "call_flight")]
+        assert wire == ["TOOL_CALL_START", "TOOL_CALL_ARGS", "TOOL_CALL_ARGS", "TOOL_CALL_END"], wire
+        assert json.loads("".join(_args_deltas(events, "call_flight"))) == {"dest": "Oslo"}
+
+    def test_a_fragment_naming_no_tool_leaves_the_call_to_the_announcement(self):
+        """A call is opened once and under one name, and the name is what a
+        client renders it as and what says whether the arguments are the state
+        tool's: a call opened without one is nameless for the rest of the
+        stream and its state updates are never read. Waiting costs nothing,
+        because the announcement carries the whole argument string and
+        appending to nothing leaves the client holding exactly it."""
+        state = StreamState(thread_id="thread", run_id="run")
+        args = {"line": "never named"}
+
+        streamed = agui_handlers.on_tool_call_args_delta(
+            ToolCallArgsDeltaEvent(tool_call_id="call_unnamed", tool_args_delta='{"line": '), state
+        )
+
+        assert streamed == [], streamed
+        assert not state.tool_call_open("call_unnamed")
+
+        announced = agui_handlers.on_tool_call_started(
+            ToolCallStartedEvent(content="", tool=_announced("call_unnamed", "save_line", args)), state
+        )
+
+        started = [event for event in announced if event.type == EventType.TOOL_CALL_START]
+        assert [event.tool_call_name for event in started] == ["save_line"], announced
+        assert announced[-1].type == EventType.TOOL_CALL_ARGS, announced
+        assert announced[-1].delta == json.dumps(args), announced[-1]  # type: ignore[attr-defined]
+        assert state.tool_call_open("call_unnamed")
+
+
+class TestACallThatFailedIsClosedRatherThanLeftPending:
+    """A tool call the run refuses, or one that fails, is reported by an event
+    of its own, and a client holds the call open until something ends it. Left
+    unhandled that event reaches the client as an opaque passthrough carrying
+    no result, and the call renders as pending until the run ends.
+    """
+
+    def test_a_call_refused_after_its_arguments_streamed_closes_with_what_agno_said(self):
+        """A run declining a call it has already shown the client, here by the
+        tool call limit, never starts or completes it, so the failure is the
+        only event that can close it."""
+        line = "the first of two"
+        refused = "the second of two"
+        client = _fragmenting_client(
+            [
+                (
+                    "tools",
+                    [(save_line.name, {"line": line}, "call_a"), (save_line.name, {"line": refused}, "call_b")],
+                    5,
+                ),
+                ("content", "done"),
+            ],
+            [save_line],
+            tool_call_limit=1,
+        )
+
+        response = client.post("/agui", json=make_request_body("write", state={"lines": []}))
+        events = _events_of_completed_run(
+            response,
+            ran=[save_line.name, save_line.name],
+            left_state={"lines": [line]},
+        )
+        _assert_the_client_accepts_the_tool_call_spans(events)
+
+        # The whole argument string the client was shown, then a close of its
+        # own carrying Agno's own account of the refusal.
+        assert json.loads("".join(_args_deltas(events, "call_b"))) == {"line": refused}
+        wire = [event["type"] for event in _tool_call_wire(events, "call_b")]
+        assert wire[-2:] == ["TOOL_CALL_END", "TOOL_CALL_RESULT"], wire
+        assert wire.count("TOOL_CALL_END") == 1, wire
+        assert _results_for(events, "call_b") == [REFUSED_TOOL_CALL_ERROR]
+        assert _raw_passthroughs_of(events, RunEvent.tool_call_error.value) == []
+
+        # Closed where it was refused rather than at the end of the run, so
+        # nothing the run says afterwards renders under a pending call.
+        closed = next(
+            position
+            for position, event in enumerate(events)
+            if event.get("type") == "TOOL_CALL_END" and event.get("toolCallId") == "call_b"
+        )
+        spoke_again = next(
+            position for position, event in enumerate(events) if event.get("type") == "TEXT_MESSAGE_CONTENT"
+        )
+        assert events[spoke_again]["delta"] == "done"
+        assert closed < spoke_again, get_event_types(events)
+
+    def test_an_error_on_an_open_call_closes_it_with_what_went_wrong(self, agent_client):
+        """A call still open when its failure arrives is closed by it, and the
+        client is told what the failure said."""
+        client, agent = agent_client
+        tool = ToolExecution(tool_call_id="call_open", tool_name="save_line", tool_args={"line": "written"})
+
+        async def mock_stream() -> AsyncIterator[RunOutputEvent]:
+            yield ToolCallStartedEvent(content="", tool=tool)
+            yield ToolCallErrorEvent(tool=tool, error="the tool broke")
+            yield RunCompletedEvent(content="")
+
+        with patch.object(agent, "arun") as mock_arun:
+            mock_arun.return_value = mock_stream()
+            response = client.post("/agui", json=make_request_body("write"))
+
+        events = parse_sse_events(response.text)
+        _assert_the_client_accepts_the_tool_call_spans(events)
+        wire = [event["type"] for event in _tool_call_wire(events, "call_open")]
+        assert wire == ["TOOL_CALL_START", "TOOL_CALL_ARGS", "TOOL_CALL_END", "TOOL_CALL_RESULT"], wire
+        assert _results_for(events, "call_open") == ["the tool broke"]
+        assert _raw_passthroughs_of(events, RunEvent.tool_call_error.value) == []
+
+    def test_an_error_for_a_call_that_was_never_opened_says_nothing(self, agent_client):
+        """Nothing is open to close, and an end for a call the client does not
+        hold open is where its verifier stops reading the run."""
+        client, agent = agent_client
+        tool = ToolExecution(tool_call_id="call_ghost", tool_name="save_line", tool_args={"line": "never shown"})
+
+        async def mock_stream() -> AsyncIterator[RunOutputEvent]:
+            yield ToolCallErrorEvent(tool=tool, error="the tool broke")
+            yield RunContentEvent(content="answered anyway")
+            yield RunCompletedEvent(content="")
+
+        with patch.object(agent, "arun") as mock_arun:
+            mock_arun.return_value = mock_stream()
+            response = client.post("/agui", json=make_request_body("write"))
+
+        events = parse_sse_events(response.text)
+        _assert_the_client_accepts_the_tool_call_spans(events)
+        assert _tool_call_wire(events, "call_ghost") == []
+        assert _raw_passthroughs_of(events, RunEvent.tool_call_error.value) == []
+        spoken = [event["delta"] for event in events if event.get("type") == "TEXT_MESSAGE_CONTENT"]
+        assert spoken == ["answered anyway"], spoken
+        assert "RUN_FINISHED" in get_event_types(events)
+
+    def test_a_failure_the_completion_already_closed_is_carried_once(self, agent_client):
+        """An ordinary tool failure is announced as a completion first, which
+        closes the call and carries the same text as its result, so the failure
+        behind it has nothing left to add."""
+        client, agent = agent_client
+        tool = ToolExecution(
+            tool_call_id="call_broke",
+            tool_name="save_line",
+            tool_args={"line": "written"},
+            result="the tool broke",
+            tool_call_error=True,
+        )
+
+        async def mock_stream() -> AsyncIterator[RunOutputEvent]:
+            yield ToolCallStartedEvent(content="", tool=tool)
+            yield ToolCallCompletedEvent(content="", tool=tool)
+            yield ToolCallErrorEvent(tool=tool, error="the tool broke")
+            yield RunCompletedEvent(content="")
+
+        with patch.object(agent, "arun") as mock_arun:
+            mock_arun.return_value = mock_stream()
+            response = client.post("/agui", json=make_request_body("write"))
+
+        events = parse_sse_events(response.text)
+        _assert_the_client_accepts_the_tool_call_spans(events)
+        wire = [event["type"] for event in _tool_call_wire(events, "call_broke")]
+        assert wire == ["TOOL_CALL_START", "TOOL_CALL_ARGS", "TOOL_CALL_END", "TOOL_CALL_RESULT"], wire
+        assert _results_for(events, "call_broke") == ["the tool broke"]
+        assert _raw_passthroughs_of(events, RunEvent.tool_call_error.value) == []
+
+    def test_a_run_that_fails_mid_call_leaves_no_call_open_at_the_error(self, agent_client):
+        """A client keeps one entry per open call and throws when a run ends
+        with one left, whichever terminal event ended it. A run that fails
+        while a call's arguments are still streaming is such a run."""
+        client, agent = agent_client
+
+        async def mock_stream() -> AsyncIterator[RunOutputEvent]:
+            yield ToolCallArgsDeltaEvent(
+                tool_call_id="call_cut", tool_name="save_line", tool_args_delta='{"line": "half'
+            )
+            yield RunErrorEvent(content="the model went away")
+
+        with patch.object(agent, "arun") as mock_arun:
+            mock_arun.return_value = mock_stream()
+            response = client.post("/agui", json=make_request_body("write"))
+
+        events = parse_sse_events(response.text)
+        types = get_event_types(events)
+        assert types[-1] == "RUN_ERROR", types
+        _assert_the_client_accepts_the_tool_call_spans(events)
+
+    def test_a_teams_failed_call_is_closed_by_the_same_handler(self):
+        """A team's events are dispatched under the same names an agent's are,
+        so the one handler entry serves both."""
+        assert _normalize_event(TeamRunEvent.tool_call_error.value) == RunEvent.tool_call_error.value
+
+        state = StreamState(thread_id="thread", run_id="run")
+        state.start_tool_call("call_member")
+        tool = ToolExecution(tool_call_id="call_member", tool_name="save_line", tool_args={"line": "written"})
+
+        events = process_event(TeamToolCallErrorEvent(tool=tool, error="the tool broke"), state)
+
+        assert [event.type for event in events] == [EventType.TOOL_CALL_END, EventType.TOOL_CALL_RESULT]
+        assert json.loads(events[1].content) == "the tool broke"
+        assert not state.tool_call_open("call_member")
+
+
+class TestTheHelpersTheseTestsReadTheWireWith:
+    """The helpers above read the wire the way a client reads it, deliberately
+    not by calling the code they check, so a rule applied wrongly on both
+    sides cannot agree with itself. What they refuse matters as much as what
+    they accept: a helper that reads a frame it cannot parse as no frame at
+    all satisfies every assertion here about something being absent, and one
+    that reaches a library error says nothing about what the wire was
+    missing."""
+
+    def test_a_data_line_that_is_not_an_event_is_refused_rather_than_skipped(self):
+        with pytest.raises(AssertionError, match="no event"):
+            parse_sse_events('data: {"type": "RUN_STARTED"}\ndata: {oops\n')
+
+    def test_a_pointer_naming_an_array_by_something_that_is_no_index_is_refused(self):
+        """An array index is digits and nothing else, at every segment of a
+        pointer and not only at its last: a token a client refuses outright is
+        refused here rather than read as an index it never named."""
+        with pytest.raises(AssertionError, match="no array index"):
+            _client_document_after({"rows": [{"a": 1}]}, [{"op": "replace", "path": "/rows/01/a", "value": 2}])
+        with pytest.raises(AssertionError, match="does not hold"):
+            _client_document_after({"rows": [{"a": 1}]}, [{"op": "replace", "path": "/rows/-/a", "value": 2}])
+
+    def test_an_addition_under_a_scalar_says_what_the_wire_was_missing(self):
+        with pytest.raises(AssertionError, match="neither an object nor an array"):
+            _client_document_after({"title": "Soup"}, [{"op": "add", "path": "/title/deeper", "value": 1}])

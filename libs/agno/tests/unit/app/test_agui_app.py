@@ -1,4 +1,5 @@
 import base64
+import json
 from unittest.mock import MagicMock
 
 import pytest
@@ -26,134 +27,148 @@ from agno.run.team import RunErrorEvent as TeamRunErrorEvent
 from agno.run.team import ToolCallStartedEvent as TeamToolCallStartedEvent
 
 
-def test_event_buffer_initial_state():
+def test_stream_state_initial_state():
     """Test StreamState initial state"""
-    buffer = StreamState()
+    state = StreamState()
 
-    assert len(buffer.active_tool_call_ids) == 0
-    assert len(buffer.ended_tool_call_ids) == 0
+    assert len(state.active_tool_call_ids) == 0
+    assert len(state.ended_tool_call_ids) == 0
 
 
-def test_event_buffer_tool_call_lifecycle():
+def test_stream_state_tool_call_lifecycle():
     """Test complete tool call lifecycle in StreamState"""
-    buffer = StreamState()
+    state = StreamState()
 
     # Initial state
-    assert len(buffer.active_tool_call_ids) == 0
+    assert len(state.active_tool_call_ids) == 0
 
     # Start tool call
-    buffer.start_tool_call("tool_1")
-    assert "tool_1" in buffer.active_tool_call_ids
+    state.start_tool_call("tool_1")
+    assert "tool_1" in state.active_tool_call_ids
 
     # End tool call
-    buffer.end_tool_call("tool_1")
-    assert "tool_1" in buffer.ended_tool_call_ids
-    assert "tool_1" not in buffer.active_tool_call_ids
+    state.end_tool_call("tool_1")
+    assert "tool_1" in state.ended_tool_call_ids
+    assert "tool_1" not in state.active_tool_call_ids
 
 
-def test_event_buffer_multiple_tool_calls():
+def test_stream_state_multiple_tool_calls():
     """Test multiple concurrent tool calls"""
-    buffer = StreamState()
+    state = StreamState()
 
     # Start first tool call
-    buffer.start_tool_call("tool_1")
-    assert "tool_1" in buffer.active_tool_call_ids
+    state.start_tool_call("tool_1")
+    assert "tool_1" in state.active_tool_call_ids
 
     # Start second tool call
-    buffer.start_tool_call("tool_2")
-    assert len(buffer.active_tool_call_ids) == 2
-    assert "tool_1" in buffer.active_tool_call_ids
-    assert "tool_2" in buffer.active_tool_call_ids
+    state.start_tool_call("tool_2")
+    assert len(state.active_tool_call_ids) == 2
+    assert "tool_1" in state.active_tool_call_ids
+    assert "tool_2" in state.active_tool_call_ids
 
-    # End first tool call
-    buffer.end_tool_call("tool_2")
-    assert "tool_2" in buffer.ended_tool_call_ids
-    assert "tool_2" not in buffer.active_tool_call_ids
-    assert "tool_1" in buffer.active_tool_call_ids  # Still active
+    # End the second tool call, the one started last
+    state.end_tool_call("tool_2")
+    assert "tool_2" in state.ended_tool_call_ids
+    assert "tool_2" not in state.active_tool_call_ids
+    assert "tool_1" in state.active_tool_call_ids  # Still active
 
-    # End second tool call
-    buffer.end_tool_call("tool_1")
-    assert "tool_1" in buffer.ended_tool_call_ids
-    assert "tool_1" not in buffer.active_tool_call_ids
-    assert len(buffer.active_tool_call_ids) == 0
+    # End the first tool call, the one that outlived it
+    state.end_tool_call("tool_1")
+    assert "tool_1" in state.ended_tool_call_ids
+    assert "tool_1" not in state.active_tool_call_ids
+    assert len(state.active_tool_call_ids) == 0
 
 
-def test_event_buffer_end_nonexistent_tool_call():
+def test_stream_state_end_nonexistent_tool_call():
     """Test ending a tool call that was never started"""
-    buffer = StreamState()
+    state = StreamState()
 
     # End tool call that was never started
-    buffer.end_tool_call("nonexistent_tool")
-    assert "nonexistent_tool" in buffer.ended_tool_call_ids
+    state.end_tool_call("nonexistent_tool")
+    assert "nonexistent_tool" in state.ended_tool_call_ids
+    assert "nonexistent_tool" not in state.active_tool_call_ids
 
 
-def test_event_buffer_duplicate_start_tool_call():
+def test_stream_state_duplicate_start_tool_call():
     """Test starting the same tool call multiple times"""
-    buffer = StreamState()
+    state = StreamState()
 
     # Start same tool call twice
-    buffer.start_tool_call("tool_1")
-    buffer.start_tool_call("tool_1")  # Should not cause issues
+    state.start_tool_call("tool_1")
+    state.start_tool_call("tool_1")  # Should not cause issues
 
-    assert len(buffer.active_tool_call_ids) == 1  # Should still be 1
-    assert "tool_1" in buffer.active_tool_call_ids
+    assert len(state.active_tool_call_ids) == 1  # Should still be 1
+    assert "tool_1" in state.active_tool_call_ids
 
 
-def test_event_buffer_duplicate_end_tool_call():
+def test_stream_state_duplicate_end_tool_call():
     """Test ending the same tool call multiple times"""
-    buffer = StreamState()
+    state = StreamState()
 
-    buffer.start_tool_call("tool_1")
+    state.start_tool_call("tool_1")
 
     # End same tool call twice
-    buffer.end_tool_call("tool_1")
-    buffer.end_tool_call("tool_1")  # Second end should be no-op
+    state.end_tool_call("tool_1")
+    state.end_tool_call("tool_1")  # Second end should be no-op
 
-    assert "tool_1" in buffer.ended_tool_call_ids
-    assert "tool_1" not in buffer.active_tool_call_ids
+    assert state.ended_tool_call_ids == {"tool_1"}
+    assert len(state.active_tool_call_ids) == 0
 
 
-def test_event_buffer_complex_sequence():
+def test_stream_state_complex_sequence():
     """Test complex sequence of tool call operations"""
-    buffer = StreamState()
+    state = StreamState()
 
     # Start multiple tool calls
-    buffer.start_tool_call("tool_1")
-    buffer.start_tool_call("tool_2")
-    buffer.start_tool_call("tool_3")
+    state.start_tool_call("tool_1")
+    state.start_tool_call("tool_2")
+    state.start_tool_call("tool_3")
 
-    assert len(buffer.active_tool_call_ids) == 3
+    assert len(state.active_tool_call_ids) == 3
 
     # End middle tool call
-    buffer.end_tool_call("tool_2")
-    assert "tool_2" in buffer.ended_tool_call_ids
-    assert len(buffer.active_tool_call_ids) == 2
+    state.end_tool_call("tool_2")
+    assert "tool_2" in state.ended_tool_call_ids
+    assert len(state.active_tool_call_ids) == 2
 
     # End first tool call
-    buffer.end_tool_call("tool_1")
-    assert "tool_1" in buffer.ended_tool_call_ids
+    state.end_tool_call("tool_1")
+    assert "tool_1" in state.ended_tool_call_ids
 
     # End remaining tool call
-    buffer.end_tool_call("tool_3")
-    assert "tool_3" in buffer.ended_tool_call_ids
+    state.end_tool_call("tool_3")
+    assert "tool_3" in state.ended_tool_call_ids
 
     # Check final state
-    assert len(buffer.active_tool_call_ids) == 0
-    assert len(buffer.ended_tool_call_ids) == 3
+    assert len(state.active_tool_call_ids) == 0
+    assert len(state.ended_tool_call_ids) == 3
 
 
-def test_event_buffer_edge_cases():
-    """Test edge cases in tool call handling"""
-    buffer = StreamState()
+def test_stream_state_tells_a_call_with_no_arguments_yet_from_one_that_never_streamed():
+    """Test that empty argument text and no argument text are different answers.
 
-    # Test that empty string tool_call_id is handled gracefully
-    buffer.start_tool_call("")  # Empty string
-    assert "" in buffer.active_tool_call_ids
+    A call opened for streaming has sent empty argument text until its first
+    fragment arrives. A call whose arguments never streamed has sent none at
+    all, and is owed the whole string from Agno's announcement of it, so the
+    two cannot share an answer.
+    """
+    state = StreamState()
 
-    # End with empty string
-    buffer.end_tool_call("")
-    assert "" in buffer.ended_tool_call_ids
-    assert "" not in buffer.active_tool_call_ids
+    state.start_tool_call("streaming_call", args_streaming=True)
+    state.start_tool_call("announced_call")
+
+    assert state.streamed_tool_call_args("streaming_call") == ""
+    assert state.streamed_tool_call_args("announced_call") is None
+    assert state.streamed_tool_call_args("call_never_seen") is None
+
+    state.note_streamed_tool_call_args("streaming_call", '{"query": ')
+    state.note_streamed_tool_call_args("streaming_call", '"test"}')
+    assert state.streamed_tool_call_args("streaming_call") == '{"query": "test"}'
+
+    # The text describes a call in progress, so it goes when the call ends and
+    # an id handed to a later call starts from nothing again.
+    state.end_tool_call("streaming_call")
+    assert state.streamed_tool_call_args("streaming_call") is None
 
 
 @pytest.mark.asyncio
@@ -270,8 +285,14 @@ async def test_stream_error_closes_open_tool_call(tool_event, error_event):
 
 
 @pytest.mark.asyncio
-async def test_stream_with_tool_call_blocking():
-    """Test that events are properly buffered during tool calls"""
+async def test_text_arriving_during_an_open_tool_call_is_sent_straight_through():
+    """Nothing is held back while a tool call is open.
+
+    Text that arrives between a call's start and its end is passed on where it
+    arrived, in a second message of its own: the first message closes to let
+    the call open and parent to it, the second opens while the call is still
+    open, and the call closes after it rather than before it.
+    """
     from agno.run.agent import RunEvent
 
     async def mock_stream_with_tool_calls():
@@ -285,18 +306,14 @@ async def test_stream_with_tool_call_blocking():
         tool_start_response = ToolCallStartedEvent()
         tool_start_response.event = RunEvent.tool_call_started
         tool_start_response.content = ""
-        tool_call = MagicMock()
-        tool_call.tool_call_id = "tool_1"
-        tool_call.tool_name = "search"
-        tool_call.tool_args = {"query": "test"}
-        tool_call.result = None
+        tool_call = ToolExecution(tool_call_id="tool_1", tool_name="search", tool_args={"query": "test"})
         tool_start_response.tool = tool_call
         yield tool_start_response
 
-        buffered_text_response = RunContentEvent()
-        buffered_text_response.event = RunEvent.run_content
-        buffered_text_response.content = "Searching..."
-        yield buffered_text_response
+        mid_call_text_response = RunContentEvent()
+        mid_call_text_response.event = RunEvent.run_content
+        mid_call_text_response.content = "Searching..."
+        yield mid_call_text_response
         tool_end_response = ToolCallCompletedEvent()
         tool_end_response.event = RunEvent.tool_call_completed
         tool_end_response.content = ""
@@ -311,20 +328,33 @@ async def test_stream_with_tool_call_blocking():
     async for event in async_stream_agno_response_as_agui_events(mock_stream_with_tool_calls(), "thread_1", "run_1"):
         events.append(event)
 
-    # Asserting all expected events are present
-    event_types = [event.type for event in events]
-    assert EventType.TEXT_MESSAGE_START in event_types
-    assert EventType.TEXT_MESSAGE_CONTENT in event_types
-    assert EventType.TOOL_CALL_START in event_types
-    assert EventType.TOOL_CALL_ARGS in event_types
-    assert EventType.TOOL_CALL_END in event_types
-    assert EventType.TEXT_MESSAGE_END in event_types
-    assert EventType.RUN_FINISHED in event_types
+    assert [event.type for event in events] == [
+        EventType.TEXT_MESSAGE_START,
+        EventType.TEXT_MESSAGE_CONTENT,
+        EventType.TEXT_MESSAGE_END,
+        EventType.TOOL_CALL_START,
+        EventType.TOOL_CALL_ARGS,
+        EventType.TEXT_MESSAGE_START,
+        EventType.TEXT_MESSAGE_CONTENT,
+        EventType.TOOL_CALL_END,
+        EventType.TEXT_MESSAGE_END,
+        EventType.RUN_FINISHED,
+    ], [event.type for event in events]
 
-    # Verify tool call ordering
-    tool_start_idx = event_types.index(EventType.TOOL_CALL_START)
-    tool_end_idx = event_types.index(EventType.TOOL_CALL_END)
-    assert tool_start_idx < tool_end_idx
+    # The text on either side of the call is carried whole, in the order it
+    # arrived, and the mid-call text belongs to a message of its own.
+    assert events[1].delta == "I'll help you"
+    assert events[6].delta == "Searching..."
+    assert events[5].message_id != events[0].message_id
+    assert events[8].message_id == events[5].message_id
+
+    # The call parents to the message that closed for it, not to the one that
+    # opened while it was running.
+    assert events[3].tool_call_id == "tool_1"
+    assert events[3].parent_message_id == events[0].message_id
+    assert events[4].tool_call_id == "tool_1"
+    assert json.loads(events[4].delta) == {"query": "test"}
+    assert events[7].tool_call_id == "tool_1"
 
 
 @pytest.mark.asyncio
@@ -362,11 +392,11 @@ async def test_concurrent_tool_calls_no_infinite_loop():
         tool_start_3.tool = tool_call_3
         yield tool_start_3
 
-        # Some buffered content during tool calls
-        buffered_response = RunContentEvent()
-        buffered_response.event = RunEvent.run_content
-        buffered_response.content = "Fetching stock data..."
-        yield buffered_response
+        # Some content arriving while the tool calls are open
+        mid_call_response = RunContentEvent()
+        mid_call_response.event = RunEvent.run_content
+        mid_call_response.content = "Fetching stock data..."
+        yield mid_call_response
 
         # Complete all tool calls
         tool_call_1.result = {"price": 250.50, "symbol": "TSLA"}
@@ -637,10 +667,15 @@ async def test_empty_content_chunks_handling():
     async for event in async_stream_agno_response_as_agui_events(mock_stream_with_empty_content(), "thread_1", "run_1"):
         events.append(event)
 
-    # Should only have content events for non-empty content
-    content_events = [e for e in events if e.type == EventType.TEXT_MESSAGE_CONTENT]
-    assert len(content_events) == 1, f"Expected 1 content event for non-empty content, got {len(content_events)}"
-    assert content_events[0].delta == "Valid content"
+    # The empty and None chunks should leave nothing behind them at all: the
+    # wire is what it would have been had only the valid chunk arrived
+    assert [event.type for event in events] == [
+        EventType.TEXT_MESSAGE_START,
+        EventType.TEXT_MESSAGE_CONTENT,
+        EventType.TEXT_MESSAGE_END,
+        EventType.RUN_FINISHED,
+    ], [event.type for event in events]
+    assert events[1].delta == "Valid content"
 
 
 @pytest.mark.asyncio
@@ -705,6 +740,13 @@ async def test_reasoning_events_handling():
     assert EventType.REASONING_MESSAGE_START in event_types, "Should have REASONING_MESSAGE_START"
     assert EventType.REASONING_MESSAGE_END in event_types, "Should have REASONING_MESSAGE_END"
     assert EventType.REASONING_END in event_types, "Should have REASONING_END"
+
+    # The reasoning the stream carried should reach the client, under the
+    # message the reasoning phase opened
+    reasoning_content_events = [e for e in events if e.type == EventType.REASONING_MESSAGE_CONTENT]
+    assert [e.delta for e in reasoning_content_events] == ["Thinking about this problem..."]
+    reasoning_start_event = next(e for e in events if e.type == EventType.REASONING_MESSAGE_START)
+    assert reasoning_content_events[0].message_id == reasoning_start_event.message_id
 
     # Should have text content (the run_content event between reasoning phases)
     assert EventType.TEXT_MESSAGE_CONTENT in event_types
@@ -1233,22 +1275,30 @@ async def test_event_ordering_invariants():
 
     # Critical ordering invariants
 
-    # 1. TEXT_MESSAGE_START must come before any TEXT_MESSAGE_CONTENT
-    start_indices = [i for i, t in enumerate(event_types) if t == EventType.TEXT_MESSAGE_START]
-    content_indices = [i for i, t in enumerate(event_types) if t == EventType.TEXT_MESSAGE_CONTENT]
+    # 1. Every TEXT_MESSAGE_CONTENT arrives inside an open message and under
+    #    the message_id that message was opened with, and every message that
+    #    opens is closed once, under that same id.
+    assert EventType.TEXT_MESSAGE_CONTENT in event_types, "the run carried no text at all"
 
-    for start_idx in start_indices:
-        related_content_indices = [i for i in content_indices if i > start_idx]
-        if related_content_indices:
-            next_end_idx = next(
-                (i for i, t in enumerate(event_types[start_idx:], start_idx) if t == EventType.TEXT_MESSAGE_END),
-                len(event_types),
+    open_message_id = None
+    for index, event in enumerate(events):
+        if event.type == EventType.TEXT_MESSAGE_START:
+            assert open_message_id is None, (
+                f"TEXT_MESSAGE_START at {index} opens a message while {open_message_id} is still open"
             )
-            related_content_indices = [i for i in related_content_indices if i < next_end_idx]
-            for content_idx in related_content_indices:
-                assert start_idx < content_idx, (
-                    f"TEXT_MESSAGE_START at {start_idx} should come before TEXT_MESSAGE_CONTENT at {content_idx}"
-                )
+            open_message_id = event.message_id
+        elif event.type == EventType.TEXT_MESSAGE_CONTENT:
+            assert open_message_id is not None, f"TEXT_MESSAGE_CONTENT at {index} arrives with no message open"
+            assert event.message_id == open_message_id, (
+                f"TEXT_MESSAGE_CONTENT at {index} carries {event.message_id}, not the open {open_message_id}"
+            )
+        elif event.type == EventType.TEXT_MESSAGE_END:
+            assert event.message_id == open_message_id, (
+                f"TEXT_MESSAGE_END at {index} closes {event.message_id}, not the open {open_message_id}"
+            )
+            open_message_id = None
+
+    assert open_message_id is None, f"the run left message {open_message_id} open"
 
     # 2. TOOL_CALL_START must come before TOOL_CALL_ARGS for same tool
     tool_starts = [(i, e) for i, e in enumerate(events) if e.type == EventType.TOOL_CALL_START]
@@ -1743,33 +1793,36 @@ def test_validate_state_with_invalid_to_dict():
 # --- State Events Tests ---
 
 
-def test_event_buffer_state_snapshot_deep_copy():
+def test_stream_state_snapshot_is_a_deep_copy():
     """Test StreamState state snapshot stores a deep copy and computes deltas correctly."""
-    buffer = StreamState()
+    state = StreamState()
 
-    state = {"score": 0, "items": ["a"]}
-    buffer.set_state_snapshot(state)
+    session_state = {"score": 0, "items": ["a"]}
+    state.set_state_snapshot(session_state)
 
-    # Verify deep copy: mutating original dict should not affect snapshot
-    state["score"] = 10
-    state["items"].append("b")
+    # Verify deep copy: mutating the original, nested values included, should
+    # not affect the snapshot
+    session_state["score"] = 10
+    session_state["items"].append("b")
 
-    delta = buffer.compute_state_delta(state)
+    delta = state.compute_state_delta(session_state)
     assert delta is not None
-    # Should have ops for score change and items change
+    # Should have ops for score change and items change. A snapshot sharing
+    # the list would have grown with it and reported the append as nothing.
     ops_paths = [op["path"] for op in delta]
     assert "/score" in ops_paths
+    assert "/items/1" in ops_paths
 
     # No change should return None
-    buffer.set_state_snapshot(state)
-    delta = buffer.compute_state_delta(state)
+    state.set_state_snapshot(session_state)
+    delta = state.compute_state_delta(session_state)
     assert delta is None
 
 
-def test_event_buffer_compute_delta_no_snapshot():
+def test_stream_state_compute_delta_no_snapshot():
     """Test compute_state_delta returns None when no snapshot has been set."""
-    buffer = StreamState()
-    result = buffer.compute_state_delta({"key": "value"})
+    state = StreamState()
+    result = state.compute_state_delta({"key": "value"})
     assert result is None
 
 
@@ -1829,10 +1882,7 @@ async def test_state_delta_after_tool_call():
         tool_start = ToolCallStartedEvent()
         tool_start.event = RunEvent.tool_call_started
         tool_start.content = ""
-        tool = MagicMock()
-        tool.tool_call_id = "tool_1"
-        tool.tool_name = "increment"
-        tool.tool_args = {}
+        tool = ToolExecution(tool_call_id="tool_1", tool_name="increment", tool_args={})
         tool_start.tool = tool
         yield tool_start
 
@@ -1871,6 +1921,68 @@ async def test_state_delta_after_tool_call():
     delta_paths = [op["path"] for op in delta_event.delta]
     assert "/counter" in delta_paths
     assert "/status" in delta_paths
+
+
+@pytest.mark.parametrize(
+    ("tool_call_error", "result"),
+    [(None, "incremented"), (True, "increment() failed: the counter is closed")],
+    ids=["a call that succeeded", "a call that failed"],
+)
+@pytest.mark.asyncio
+async def test_a_completion_carries_its_calls_own_result_whether_it_succeeded_or_failed(tool_call_error, result):
+    """What a call did is what its result event says it did.
+
+    A real execution reports a failure on the completion it arrives with, and
+    reports none at all where the call succeeded, so the two are pinned side
+    by side: the events are the same shape either way, the result is the run's
+    own, and the state the call left behind goes out in both cases. A call
+    that succeeded is never reported to a client as one that failed, and a
+    call that failed carries what went wrong rather than nothing at all.
+    """
+    run_state = {"counter": 0}
+
+    async def mock_stream():
+        tool_start = ToolCallStartedEvent()
+        tool_start.event = RunEvent.tool_call_started
+        tool_start.content = ""
+        tool = ToolExecution(tool_call_id="tool_1", tool_name="increment", tool_args={})
+        tool_start.tool = tool
+        yield tool_start
+
+        run_state["counter"] = 1
+
+        tool_end = ToolCallCompletedEvent()
+        tool_end.event = RunEvent.tool_call_completed
+        tool_end.content = ""
+        tool.result = result
+        tool.tool_call_error = tool_call_error
+        tool_end.tool = tool
+        yield tool_end
+
+        completed = RunContentEvent()
+        completed.event = RunEvent.run_completed
+        completed.content = ""
+        yield completed
+
+    events = []
+    async for event in async_stream_agno_response_as_agui_events(
+        mock_stream(), "thread_1", "run_1", run_state=run_state
+    ):
+        events.append(event)
+
+    assert [event.type for event in events] == [
+        EventType.TEXT_MESSAGE_START,
+        EventType.TEXT_MESSAGE_END,
+        EventType.TOOL_CALL_START,
+        EventType.TOOL_CALL_ARGS,
+        EventType.TOOL_CALL_END,
+        EventType.TOOL_CALL_RESULT,
+        EventType.STATE_DELTA,
+        EventType.STATE_SNAPSHOT,
+        EventType.RUN_FINISHED,
+    ], [event.type for event in events]
+    assert json.loads(events[5].content) == result
+    assert [op["path"] for op in events[6].delta] == ["/counter"], events[6].delta
 
 
 @pytest.mark.asyncio
@@ -1914,10 +2026,7 @@ async def test_no_delta_when_state_unchanged():
         tool_start = ToolCallStartedEvent()
         tool_start.event = RunEvent.tool_call_started
         tool_start.content = ""
-        tool = MagicMock()
-        tool.tool_call_id = "tool_1"
-        tool.tool_name = "noop"
-        tool.tool_args = {}
+        tool = ToolExecution(tool_call_id="tool_1", tool_name="noop", tool_args={})
         tool_start.tool = tool
         yield tool_start
 

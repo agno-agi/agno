@@ -121,9 +121,23 @@ class StreamState:
     text_message_open: bool = False
 
     # Tool call tracking
+    # Calls open on the wire, meaning a TOOL_CALL_START went out for them and
+    # no TOOL_CALL_END has. The one record every opener asks, so a call is
+    # opened once however many of them see it, and released on end, so a
+    # stream that hands the same id to a later call opens a call of its own
+    # rather than adding to the one that closed.
     active_tool_call_ids: Set[str] = field(default_factory=set)
+    # Every id a call has ended under, kept for the whole stream: it is what
+    # says a call has already been carried in full, which the terminal handler
+    # needs before it renders a paused run's pending calls.
     ended_tool_call_ids: Set[str] = field(default_factory=set)
     pending_tool_calls_parent_id: str = ""
+    # Open calls whose arguments are arriving in fragments, against the
+    # argument text those fragments have sent. Their arguments reach the client
+    # a piece at a time, so Agno's announcement of the finished call has
+    # nothing left to send, and the text is what that announcement holds the
+    # client's copy against: the protocol only ever appends to it.
+    _streamed_tool_call_args: Dict[str, str] = field(default_factory=dict, repr=False)
 
     # Reasoning tracking
     reasoning_message_id: Optional[str] = None
@@ -148,11 +162,45 @@ class StreamState:
         # ID persists for tool call parenting — only flag changes
         self.text_message_open = False
 
-    def start_tool_call(self, tool_call_id: str) -> None:
+    def start_tool_call(self, tool_call_id: str, args_streaming: bool = False) -> None:
+        """Record a call as open on the wire.
+
+        ``args_streaming`` says its arguments are arriving in fragments rather
+        than whole from Agno's announcement of the finished call.
+        """
         self.active_tool_call_ids.add(tool_call_id)
+        if args_streaming:
+            self._streamed_tool_call_args[tool_call_id] = ""
+
+    def tool_call_open(self, tool_call_id: str) -> bool:
+        """Whether a start went out for this call and no end has."""
+        return tool_call_id in self.active_tool_call_ids
+
+    def note_streamed_tool_call_args(self, tool_call_id: str, delta: str) -> None:
+        """Record argument text sent to the client for a call being streamed."""
+        self._streamed_tool_call_args[tool_call_id] = self._streamed_tool_call_args.get(tool_call_id, "") + delta
+
+    def streamed_tool_call_args(self, tool_call_id: str) -> Optional[str]:
+        """The argument text this call's fragments have sent, or ``None``.
+
+        ``None`` says the call's arguments never streamed: it was opened by
+        Agno's announcement of the finished call, which carried them whole.
+        """
+        return self._streamed_tool_call_args.get(tool_call_id)
+
+    def tool_call_ended(self, tool_call_id: str) -> bool:
+        """Whether a call under this id has already been closed on the wire."""
+        return tool_call_id in self.ended_tool_call_ids
 
     def end_tool_call(self, tool_call_id: str) -> None:
+        """Release everything held for a call that has closed on the wire.
+
+        What is held describes a call in progress, so it goes with the call:
+        a later call handed the same id is a call of its own, and would
+        otherwise inherit an argument string that is already complete.
+        """
         self.active_tool_call_ids.discard(tool_call_id)
+        self._streamed_tool_call_args.pop(tool_call_id, None)
         self.ended_tool_call_ids.add(tool_call_id)
 
     def get_parent_message_id_for_tool_call(self) -> str:
