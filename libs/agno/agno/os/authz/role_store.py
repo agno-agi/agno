@@ -438,6 +438,11 @@ class ManagedRoleStore:
     def roles_of(self, subject: str) -> List[str]:
         return self._engine.roles_of(subject)
 
+    def roles_of_many(self, subjects: List[str]) -> Dict[str, List[str]]:
+        """Roles of each subject in one call; used where a caller needs the whole
+        directory's roles (metrics) rather than one page of it."""
+        return self._engine.roles_of_many(subjects)
+
     @property
     def is_bound(self) -> bool:
         """True once the store has a DB for both its policy engine and its role

@@ -8472,6 +8472,10 @@ class PostgresDb(BaseDb):
         table = self._get_table(table_type=AUTHZ_GROUPING, create_table_if_not_found=True)
         return authz_store.get_direct_roles(self.db_engine, table, subject)
 
+    def get_authz_direct_roles_many(self, subjects: List[str]) -> Dict[str, List[str]]:
+        table = self._get_table(table_type=AUTHZ_GROUPING, create_table_if_not_found=True)
+        return authz_store.get_direct_roles_many(self.db_engine, table, subjects)
+
     def authz_name_is_role(self, name: str) -> bool:
         policy = self._get_table(table_type=AUTHZ_POLICY, create_table_if_not_found=True)
         grouping = self._get_table(table_type=AUTHZ_GROUPING, create_table_if_not_found=True)
@@ -8535,6 +8539,16 @@ class PostgresDb(BaseDb):
     def count_authz_users(self, include_disabled: bool = True, search: Optional[str] = None) -> int:
         table = self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)
         return authz_store.count_users(self.db_engine, table, include_disabled, search)
+
+    def list_authz_user_ids(self, include_disabled: bool = True) -> List[str]:
+        table = self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)
+        return authz_store.list_user_ids(self.db_engine, table, include_disabled)
+
+    def count_authz_users_by_day(
+        self, starting_at: Optional[int] = None, ending_before: Optional[int] = None
+    ) -> List[Dict[str, int]]:
+        table = self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)
+        return authz_store.count_users_by_day(self.db_engine, table, starting_at, ending_before)
 
     def upsert_authz_user(self, user_id: str, values: Dict[str, Any]) -> None:
         table = self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)

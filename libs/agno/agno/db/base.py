@@ -2088,6 +2088,11 @@ class BaseDb(ABC):
         """Roles directly assigned to ``subject``."""
         raise NotImplementedError
 
+    def get_authz_direct_roles_many(self, subjects: List[str]) -> Dict[str, List[str]]:
+        """Roles directly assigned to each of ``subjects`` (empty list when none), as
+        one bulk read instead of one query per subject."""
+        raise NotImplementedError
+
     def authz_name_is_role(self, name: str) -> bool:
         """True if ``name`` is used as a ROLE: it carries policy, or something is assigned
         to it. Used by the collision guard, so it runs on every subject decision."""
@@ -2155,6 +2160,17 @@ class BaseDb(ABC):
 
     def count_authz_users(self, include_disabled: bool = True, search: Optional[str] = None) -> int:
         """How many directory rows match, for pagination alongside list_authz_users."""
+        raise NotImplementedError
+
+    def list_authz_user_ids(self, include_disabled: bool = True) -> List[str]:
+        """Every directory id, for bulk lookups keyed on the id."""
+        raise NotImplementedError
+
+    def count_authz_users_by_day(
+        self, starting_at: Optional[int] = None, ending_before: Optional[int] = None
+    ) -> List[Dict[str, int]]:
+        """Users created per UTC day as ``{"date": <day start epoch>, "count": n}`` rows,
+        oldest first, bounded by ``created_at`` in ``[starting_at, ending_before)``."""
         raise NotImplementedError
 
     def upsert_authz_user(self, user_id: str, values: Dict[str, Any]) -> None:

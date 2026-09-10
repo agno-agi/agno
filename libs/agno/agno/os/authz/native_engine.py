@@ -302,6 +302,10 @@ class NativePolicyEngine(PolicyEngine):
     def roles_of(self, subject: str) -> List[str]:
         return sorted(self._direct_roles(subject))
 
+    def roles_of_many(self, subjects: List[str]) -> Dict[str, List[str]]:
+        self._require_engine()
+        return self._db.get_authz_direct_roles_many(subjects)
+
     # --- decisions -------------------------------------------------------
     def _allowed_for_root(
         self, root: str, request_resource: str, request_action: str, *, is_subject: bool = False

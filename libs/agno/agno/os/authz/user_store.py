@@ -344,6 +344,36 @@ class ManagedUserStore:
 
         return int(self._db.count_authz_users(include_disabled=include_disabled, search=search))
 
+    def ids(self, include_disabled: bool = True) -> List[str]:
+        """Every user id, sorted. For bulk lookups keyed on the id (resolving roles for
+        the whole directory) where :meth:`list` would fetch profile columns nobody reads."""
+        if self._mem is not None:
+            return sorted(r["id"] for r in self._filtered_mem_rows(include_disabled, None))
+
+        return list(self._db.list_authz_user_ids(include_disabled=include_disabled))
+
+    def created_by_day(
+        self, starting_at: Optional[int] = None, ending_before: Optional[int] = None
+    ) -> List[Dict[str, int]]:
+        """Users created per UTC day as ``{"date": <day start epoch>, "count": n}``,
+        oldest first; days with no registrations are absent. ``starting_at`` and
+        ``ending_before`` bound ``created_at`` (inclusive / exclusive, epoch seconds).
+        Deleted users drop out of history, so this is the directory as it is now."""
+        if self._mem is not None:
+            seconds_per_day = 24 * 60 * 60
+            counts: Dict[int, int] = {}
+            for row in self._mem.values():
+                created_at = int(row["created_at"])
+                if starting_at is not None and created_at < starting_at:
+                    continue
+                if ending_before is not None and created_at >= ending_before:
+                    continue
+                day = created_at - (created_at % seconds_per_day)
+                counts[day] = counts.get(day, 0) + 1
+            return [{"date": day, "count": counts[day]} for day in sorted(counts)]
+
+        return self._db.count_authz_users_by_day(starting_at=starting_at, ending_before=ending_before)
+
     def is_disabled(self, id: Optional[str]) -> bool:
         """Fast path for the enforcement point: True only if the user exists AND is
         disabled. Unknown subjects are NOT disabled (the app may legitimately mint

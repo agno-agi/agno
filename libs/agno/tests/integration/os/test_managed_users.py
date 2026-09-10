@@ -80,6 +80,45 @@ def test_store_crud_and_disable(tmp_path, db_url):
     assert store.remove("u2") is False
 
 
+def _backdate(store: ManagedUserStore, user_id: str, created_at: int) -> None:
+    """Rewrite a user's ``created_at`` through the store's own write path. The upsert
+    carries every NOT NULL column for its insert half, so the whole row goes back."""
+    row = {**store.get(user_id), "created_at": created_at}
+    if store._mem is not None:
+        store._mem[user_id] = row
+        return
+    store._db.upsert_authz_user(user_id, {k: v for k, v in row.items() if k != "id"})
+
+
+@pytest.mark.parametrize("db_url", [None, "sqlite"])
+def test_store_created_by_day_and_ids(tmp_path, db_url):
+    """The two directory reads behind /metrics/users agree across the in-memory and
+    SQL paths: per-day counts honour the bounds, ids are sorted and skip disabled
+    users on request."""
+    day = 24 * 60 * 60
+    url = None if db_url is None else f"sqlite:///{tmp_path / 'users.db'}"
+    store = ManagedUserStore(db_url=url)
+    store.upsert("u1")
+    store.upsert("u2")
+    store.upsert("u3")
+    store.set_disabled("u3", True)
+    # backdate u2 by two days through the same write path the store uses
+    older = store.get("u2")["created_at"] - 2 * day
+    if store._mem is not None:
+        store._mem["u2"]["created_at"] = older
+    else:
+        _backdate(store, "u2", older)
+
+    series = store.created_by_day()
+    assert [row["count"] for row in series] == [1, 2]
+    assert series[0]["date"] % day == 0 and series[1]["date"] - series[0]["date"] == 2 * day
+    assert store.created_by_day(starting_at=series[1]["date"]) == [series[1]]
+    assert store.created_by_day(ending_before=series[1]["date"]) == [series[0]]
+
+    assert store.ids() == ["u1", "u2", "u3"]
+    assert store.ids(include_disabled=False) == ["u1", "u2"]
+
+
 def test_store_emits_audit_with_actor_and_diff():
     sink = _CapturingSink()
     store = ManagedUserStore(audit=sink)
@@ -198,6 +237,76 @@ def test_users_api_crud_and_role_merge():
     assert enabled["status"] == "active" and users.is_disabled("bob") is False
     assert client.delete("/users/bob", headers=_auth("alice")).json()["deleted"] is True
     assert client.get("/users/bob", headers=_auth("alice")).status_code == 404
+
+
+def test_user_metrics_api_with_a_role_store():
+    """/metrics/users is auto-mounted beside /users: directory counts, the per-day
+    series (bounded by the date range), and the role breakdown from the role store."""
+    roles = ManagedRoleStore(db_url=_db_url())
+    roles.set_role_scopes("admin", ["agent_os:admin"])
+    roles.set_role_scopes("viewer", ["agents:*:read"])
+    roles.assign("alice", "admin")
+    users = ManagedUserStore(db_url=_db_url())
+    for user in ("alice", "bob", "carol", "dave"):
+        users.upsert(user)
+    roles.assign("bob", "viewer")
+    roles.assign("carol", "viewer")
+    users.set_disabled("dave", True)
+    day = 24 * 60 * 60
+    _backdate(users, "bob", users.get("bob")["created_at"] - 2 * day)
+
+    client = TestClient(_os(roles, users).get_app())
+
+    # a subject with no role is denied; the metrics need metrics:read, which admin has
+    assert client.get("/metrics/users", headers=_auth("nobody")).status_code == 403
+
+    body = client.get("/metrics/users", headers=_auth("alice")).json()
+    assert body["users"] == {"total": 4, "active": 3, "disabled": 1, "without_role": 1}
+    assert [row["count"] for row in body["users_created"]] == [1, 3]
+    assert body["users_by_role"] == [{"role": "admin", "count": 1}, {"role": "viewer", "count": 2}]
+
+    # the date range bounds the series only; the counts stay whole-directory
+    today = datetime.now(UTC).date().isoformat()
+    bounded = client.get(f"/metrics/users?starting_date={today}", headers=_auth("alice")).json()
+    assert bounded["users_created"] == [{"date": today, "count": 3}]
+    assert bounded["users"]["total"] == 4
+    assert (
+        client.get("/metrics/users?starting_date=2030-01-01&ending_date=2020-01-01", headers=_auth("alice")).status_code
+        == 422
+    )
+
+    # deleting a user moves every number at once, with no refresh step in between
+    client.delete("/users/carol", headers=_auth("alice"))
+    after = client.get("/metrics/users", headers=_auth("alice")).json()
+    assert after["users"]["total"] == 3
+    assert after["users_by_role"] == [{"role": "admin", "count": 1}, {"role": "viewer", "count": 1}]
+
+
+def test_user_metrics_api_without_a_role_store(tmp_path):
+    """A directory on the plain scope plane still gets /metrics/users; the role fields
+    are null rather than zero so a frontend can tell 'no role store' from 'no roles'."""
+    from agno.db.sqlite import SqliteDb
+
+    users = ManagedUserStore()
+    users.upsert("zed")
+    agent = Agent(id="research-agent", name="Research Agent", db=InMemoryDb())
+    app = AgentOS(
+        id=OS_ID,
+        db=SqliteDb(db_file=str(tmp_path / "os.db")),
+        agents=[agent],
+        authorization=True,
+        authorization_config=AuthorizationConfig(
+            verification_keys=[SECRET], algorithm="HS256", verify_audience=True, audience=OS_ID
+        ),
+        user_directory=UserDirectoryConfig(user_store=users),
+    ).get_app()
+    client = TestClient(app)
+
+    assert client.get("/metrics/users", headers=_auth("x")).status_code == 403
+    body = client.get("/metrics/users", headers=_auth("x", scopes=["metrics:read"])).json()
+    assert body["users"] == {"total": 1, "active": 1, "disabled": 0, "without_role": None}
+    assert [row["count"] for row in body["users_created"]] == [1]
+    assert body["users_by_role"] is None
 
 
 def test_users_api_is_admin_only():

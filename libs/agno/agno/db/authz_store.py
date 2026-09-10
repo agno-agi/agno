@@ -138,6 +138,32 @@ def get_direct_roles(engine: Engine, table: Any, subject: str) -> List[str]:
         return [r[0] for r in conn.execute(select(table.c.role).where(table.c.subject == subject))]
 
 
+# SQLite caps bound parameters per statement (999 on older builds), so bulk IN-lists are
+# chunked well under that. Postgres has no such limit; chunking is harmless there.
+_IN_CHUNK = 500
+
+
+def get_direct_roles_many(engine: Engine, table: Any, subjects: List[str]) -> Dict[str, List[str]]:
+    """Roles directly assigned to each of ``subjects``, in one query per chunk.
+
+    Subjects with no assignment are present with an empty list, so callers can tell
+    "no role" apart from "not asked". Replaces one query per subject when a caller
+    needs roles for a whole directory at once.
+    """
+    roles: Dict[str, List[str]] = {subject: [] for subject in subjects}
+    if not subjects:
+        return roles
+    with engine.connect() as conn:
+        for start in range(0, len(subjects), _IN_CHUNK):
+            chunk = subjects[start : start + _IN_CHUNK]
+            stmt = select(table.c.subject, table.c.role).where(table.c.subject.in_(chunk))
+            for subject, role in conn.execute(stmt):
+                roles[subject].append(role)
+    for assigned in roles.values():
+        assigned.sort()
+    return roles
+
+
 def name_is_role(engine: Engine, policy_table: Any, grouping_table: Any, name: str) -> bool:
     """True if ``name`` is used as a ROLE: it carries policy, or something is assigned to it.
 
@@ -283,6 +309,43 @@ def count_users(engine: Engine, table: Any, include_disabled: bool = True, searc
     stmt = select(func.count()).select_from(table).where(*_user_filters(table, include_disabled, search))
     with engine.connect() as conn:
         return int(conn.execute(stmt).scalar() or 0)
+
+
+def list_user_ids(engine: Engine, table: Any, include_disabled: bool = True) -> List[str]:
+    """Every directory id, without the profile columns. Feeds bulk lookups that key on
+    the id (role resolution for the whole directory), where paging through
+    :func:`list_users` would fetch rows nobody reads."""
+    stmt = select(table.c.id).where(*_user_filters(table, include_disabled, None)).order_by(table.c.id.asc())
+    with engine.connect() as conn:
+        return [str(row[0]) for row in conn.execute(stmt)]
+
+
+def count_users_by_day(
+    engine: Engine, table: Any, starting_at: Optional[int] = None, ending_before: Optional[int] = None
+) -> List[Dict[str, int]]:
+    """How many users were created on each UTC day, oldest day first.
+
+    Days with no registrations are absent rather than zero. ``starting_at`` and
+    ``ending_before`` are epoch seconds bounding ``created_at`` (inclusive / exclusive);
+    the column is indexed so a bounded read stays cheap as the directory grows.
+    """
+    seconds_per_day = 24 * 60 * 60
+    day_start = (table.c.created_at - (table.c.created_at % seconds_per_day)).label("date")
+    filters = []
+    if starting_at is not None:
+        filters.append(table.c.created_at >= starting_at)
+    if ending_before is not None:
+        filters.append(table.c.created_at < ending_before)
+    # The total is labelled ``users_created`` rather than ``count``: a Row already has
+    # a tuple ``count`` method, which would shadow the column.
+    stmt = (
+        select(day_start, func.count().label("users_created"))
+        .where(*filters)
+        .group_by(day_start)
+        .order_by(day_start.asc())
+    )
+    with engine.connect() as conn:
+        return [{"date": int(row.date), "count": int(row.users_created)} for row in conn.execute(stmt)]
 
 
 def upsert_user(engine: Engine, table: Any, user_id: str, values: Dict[str, Any]) -> None:
