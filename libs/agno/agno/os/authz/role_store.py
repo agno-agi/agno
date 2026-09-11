@@ -14,11 +14,11 @@ A DB is **required** — managed roles must be persisted, and an in-memory store
 can't stay consistent across the replicas an AgentOS deployment runs. Give the
 store a DB directly (``db=``/``db_url=``) or let AgentOS lend the OS DB via
 ``Authorization(role_store=...)``; without one, every operation raises.
-Persistence to a DB needs SQLAlchemy: ``pip install "agno[roles]"`` (or ``agno[os]``).
+Persistence to a DB needs SQLAlchemy: ``pip install "agno[os]"`` (or ``agno[os]``).
 
 Example::
 
-    store = ManagedRoleStore(db_url="postgresql+psycopg://...", roles_claim="roles")
+    store = RoleStore(db_url="postgresql+psycopg://...", roles_claim="roles")
     store.set_role_scopes("member", ["agents:*:read", "agents:research-agent:run"])
     store.set_role_scopes("admin", ["agent_os:admin"])
     store.assign("bob", "member")           # runtime, persisted
@@ -66,7 +66,7 @@ def _normalize_scope(entry: ScopeInput) -> Tuple[str, str]:
     return scope, effect
 
 
-class ManagedRoleStore:
+class RoleStore:
     """Runtime-mutable, persisted role store. agno-native API; the policy engine
     (the native engine by default) is a swappable backend behind the
     :class:`PolicyEngine` port — pass ``engine=`` to use a different one."""
@@ -132,7 +132,7 @@ class ManagedRoleStore:
     def attach_audit(self, sink: Optional["AuditSink"]) -> None:
         """Adopt ``sink`` as the change-audit sink if one wasn't set explicitly.
 
-        Mirrors :meth:`attach_db`: ``AgentOS(audit=...)`` is a single switch that feeds both the
+        Mirrors :meth:`attach_db`: ``Authorization(audit=...)`` is a single switch that feeds both the
         decision trail and this change trail, but an ``audit=`` passed to the store directly wins.
         No-op when the store already has a sink or ``sink`` is None."""
         if self._audit is None and sink is not None:

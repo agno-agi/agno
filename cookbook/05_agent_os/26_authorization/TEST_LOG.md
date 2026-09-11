@@ -2,15 +2,15 @@
 
 Last updated: 2026-09-11 (the user directory is now fully separate from `Authorization`. It is the
 top-level `AgentOS(user_directory=...)` switch, a peer of `user_isolation`, and its roster is seeded
-on the `ManagedUserStore` directly (`users.upsert(...)`). `Authorization` never touches it:
+on the `UserStore` directly (`users.upsert(...)`). `Authorization` never touches it:
 `seed()` bootstraps the admin ROLE only, and per-user roles are assigned via `role_store.assign(...)`.
 The directory-using cookbooks (00/02/06/07) build the store, seed it, and pass it via
-`UserDirectoryConfig(user_store=...)`. Re-ran 00/02 end to end (pass) and 06/07 to boot with the
+`UserDirectory(user_store=...)`. Re-ran 00/02 end to end (pass) and 06/07 to boot with the
 correct `/authz` + `/users` routes. 03 was already top-level; 01/04/05/08/09/10 are roles-only or
 no-directory and unchanged.)
 
-Earlier (2026-09-10): migrated 01-10 from AuthorizationConfig/ManagedRoleStore to the `Authorization`
-facade; all re-run clean.
+Earlier (2026-09-10): migrated 01-10 from AuthorizationConfig/RoleStore to the `Authorization`
+object; all re-run clean.
 
 All examples were run with `.venvs/demo/bin/python` against the branch's library.
 None of the local examples need a database server, a model key, or an external
@@ -24,9 +24,9 @@ throwaway keys.
 
 **Test mode:** LIVE (driven via TestClient; no model calls needed)
 
-**Description:** The `Authorization` facade carries verification + roles + audit + the
+**Description:** The `Authorization` object carries verification + roles + audit + the
 admin API in one object that borrows the OS db; the user directory is separate, a
-`ManagedUserStore` seeded directly and passed as the top-level
+`UserStore` seeded directly and passed as the top-level
 `AgentOS(user_directory=...)`. Defines three roles, bootstraps an admin role, assigns
 two users their roles, and makes real requests.
 

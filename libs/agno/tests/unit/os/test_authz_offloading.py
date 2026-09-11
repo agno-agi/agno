@@ -81,10 +81,10 @@ def test_authz_admin_handlers_are_sync():
     """
     pytest.importorskip("sqlalchemy")  # managed roles need SQLAlchemy
 
-    from agno.os.authz.role_router import get_roles_router
-    from agno.os.authz.role_store import ManagedRoleStore
+    from agno.os.authz.admin_router import get_roles_router
+    from agno.os.authz.role_store import RoleStore
 
-    router = get_roles_router(ManagedRoleStore(db_url="sqlite:///:memory:"))
+    router = get_roles_router(RoleStore(db_url="sqlite:///:memory:"))
     coroutine_routes = [route.name for route in router.routes if iscoroutinefunction(getattr(route, "endpoint", None))]
     assert coroutine_routes == [], (
         f"/authz handlers must stay sync so FastAPI threadpools their DB access; "

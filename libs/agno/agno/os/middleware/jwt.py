@@ -979,7 +979,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
         reason: Optional[str] = None,
     ) -> None:
         """Record one authorization decision to the audit sink, if one is configured
-        on ``app.state.authz_audit`` (seeded from ``Authorization(audit=...)`` / ``AgentOS(audit=...)``).
+        on ``app.state.authz_audit`` (seeded from ``Authorization(audit=...)``).
 
         Captures the principal, route, required scopes, the caller's scopes, and a
         NON-secret token reference (see :meth:`_token_reference`). Never the token
@@ -1422,7 +1422,6 @@ class AuthMiddleware(BaseHTTPMiddleware):
                         provisioned = await aprovision_user_with_default_role(
                             user_store,
                             getattr(request.app.state, "role_store", None),
-                            getattr(request.app.state, "user_default_role", None),
                             user_id,
                             payload,
                             email_claim=getattr(request.app.state, "user_email_claim", "email"),

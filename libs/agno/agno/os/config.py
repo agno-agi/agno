@@ -400,7 +400,7 @@ class AuthorizationConfig(BaseModel):
     excluded_route_paths: Optional[List[str]] = None
     # NOTE: the credential-less user DIRECTORY (who the users are + the disabled
     # kill-switch) is a peer concern, not authorization -- configure it via
-    # AgentOS(user_directory=UserDirectoryConfig(...)), see UserDirectoryConfig below.
+    # AgentOS(user_directory=UserDirectory(...)) from agno.os.authz.
     # Opt-in per-user data isolation. When True, AgentOS:
     #   - threads the JWT sub as ``user_id`` on every user-scoped DB read
     #     (sessions, memory, traces) for non-admin callers
@@ -411,48 +411,6 @@ class AuthorizationConfig(BaseModel):
     # When False (default) JWT/RBAC still apply, but routes operate on the
     # unscoped DB and don't add per-user ownership gates on top of RBAC.
     user_isolation: bool = False
-
-
-class UserDirectoryConfig(BaseModel):
-    """The credential-less user directory — WHO the users are and whether they're active.
-
-    A PEER of authorization, not a part of it: it stores no policy, only a list of people
-    with a ``disabled`` kill-switch (a revocation that outlives a valid token) and optional
-    just-in-time provisioning from token claims. Identity is still asserted by the JWT; this
-    never stores credentials. Configure via ``AgentOS(user_directory=...)`` -- separate from
-    ``authorization_config`` because "who the users are" and "what they may do" are different
-    concerns and can be adopted independently.
-
-    Requires ``AgentOS(authorization=True)``: the disabled check is enforced in the auth
-    middleware, so without it the kill-switch would never run.
-    """
-
-    model_config = ConfigDict(arbitrary_types_allowed=True)
-
-    # A ManagedUserStore (typed Any to avoid importing the concrete store here), OR ``True`` to
-    # have AgentOS build one from its own ``db`` -- the zero-ceremony path, equivalent to
-    # ``AgentOS(user_directory=True)``. Needs a SQL database: AgentOS adopts the OS db if the
-    # store was created without one (and requires ``AgentOS(db=...)`` when you pass ``True``).
-    # Named ``user_store`` to mirror ``Authorization(role_store=...)``.
-    user_store: Any
-    # Just-in-time provisioning: when True, the first valid token from a subject not yet in
-    # the directory creates a row from the token claims below.
-    auto_provision: bool = False
-    email_claim: str = "email"
-    name_claim: str = "name"
-    # How to treat a directory read that errors (e.g. the directory DB is unreachable) while
-    # checking the disabled flag. Default False = fail OPEN (let the request through;
-    # availability over the kill-switch). True = fail CLOSED (reject 503) so a directory
-    # outage cannot silently re-enable every disabled/compromised account.
-    fail_closed: bool = False
-
-    # The role granted to a user the first time they are auto-provisioned (JIT). Single-role
-    # model (a subject holds one role): this is the code-first override -- it wins over the
-    # role flagged ``is_default`` in the role store. When None, provisioning falls back to
-    # that ``is_default`` role. If neither resolves, a new user is left with no role (denied
-    # until an admin assigns one) and a warning is logged -- never a silent grant. Only
-    # meaningful under managed roles; the scope plane has no roles to grant.
-    default_role: Optional[str] = None
 
 
 class EvalsDomainConfig(BaseModel):

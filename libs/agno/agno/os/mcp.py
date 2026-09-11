@@ -2837,13 +2837,11 @@ def _identity_bridge_kwargs(os: "AgentOS") -> Dict[str, Any]:
         "user_email_claim": directory.email_claim if directory is not None else "email",
         "user_name_claim": directory.name_claim if directory is not None else "name",
         "user_directory_fail_closed": bool(directory.fail_closed) if directory is not None else False,
-        # Role store + explicit default role so a first-time auto-provision on the MCP path
-        # grants the same default role it would on the HTTP/WebSocket paths. The store lives on
-        # the Authorization object (AuthorizationConfig no longer carries one), same as the HTTP
-        # path reads it via app.state.role_store; without this the MCP path provisions a user but
-        # never grants their default role.
-        "role_store": getattr(os, "_facade_role_store", None),
-        "default_role": directory.default_role if directory is not None else None,
+        # Role store so a first-time auto-provision on the MCP path grants the same default role
+        # it would on the HTTP/WebSocket paths. The store lives on the Authorization object, same
+        # as the HTTP path reads it via app.state.role_store; without this the MCP path provisions
+        # a user but never grants their default role.
+        "role_store": getattr(os, "_authz_role_store", None),
     }
 
 

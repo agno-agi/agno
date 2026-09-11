@@ -4,7 +4,7 @@ This is the "no IdP" tier. When a customer has no external identity provider,
 their app still authenticates users its own way and mints a JWT that AgentOS
 verifies (see :class:`~agno.os.middleware.jwt.JWTValidator`). agno does NOT store
 passwords and is NOT an authenticator — it owns a *directory* of the users the
-app asserts, plus their roles (via :class:`ManagedRoleStore`) and enforcement.
+app asserts, plus their roles (via :class:`RoleStore`) and enforcement.
 
 What this store buys you over "roles only":
     - **Enumeration / management UX**: list the users that exist, not just react
@@ -50,7 +50,7 @@ def _now() -> int:
     return int(time.time())
 
 
-class ManagedUserStore:
+class UserStore:
     """Credential-less user directory. agno-native; identity asserted externally."""
 
     def __init__(
@@ -102,7 +102,7 @@ class ManagedUserStore:
 
         No-op if the store already has its own DB, or the db isn't SQL-capable. AgentOS
         calls this to default the directory to the OS database, mirroring what it does
-        for ``ManagedRoleStore``. Any rows written while the store was in-memory are
+        for ``RoleStore``. Any rows written while the store was in-memory are
         migrated across, so adoption never silently drops a disabled user.
         """
         from agno.os.authz._db import is_async_authz_db, supports_authz
@@ -121,7 +121,7 @@ class ManagedUserStore:
     def attach_audit(self, sink: Optional["AuditSink"]) -> None:
         """Adopt ``sink`` as the change-audit sink if one wasn't set explicitly.
 
-        Mirrors :meth:`attach_db`: ``AgentOS(audit=...)`` feeds both the decision trail and this
+        Mirrors :meth:`attach_db`: ``Authorization(audit=...)`` feeds both the decision trail and this
         directory's change trail, but an ``audit=`` passed to the store directly wins. No-op when
         the store already has a sink or ``sink`` is None."""
         if self._audit is None and sink is not None:
@@ -242,7 +242,7 @@ class ManagedUserStore:
         those live in the role store; remove them there if needed.
 
         NOTE: delete is NOT a revocation primitive. With JIT auto-provisioning on
-        (``UserDirectoryConfig(auto_provision=True)``), the next valid token
+        (``UserDirectory(auto_provision=True)``), the next valid token
         from this subject re-creates the row as *active*, and any surviving role
         assignments come back with it. To revoke access, use :meth:`set_disabled`
         (a durable tombstone enforced at every request), not :meth:`remove`."""
