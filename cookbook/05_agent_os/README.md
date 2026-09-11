@@ -103,7 +103,7 @@ surface.
 | `23_skills` | `OPENAI_API_KEY` | Local sample-skill files with executable Python scripts |
 | `24_showcase` | `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `OS_SECURITY_KEY` | `./cookbook/scripts/run_pgvector.sh`, internet access, and tracing |
 | `25_agentos_tools` | `OPENAI_API_KEY` | Local SQLite with tracing enabled |
-| `26_authorization` | None for the local examples | Throwaway SQLite; `agno[roles]`, and `agno[fga]` only to swap in a real OpenFGA |
+| `26_authorization` | None for the local examples | Throwaway SQLite; `agno[os]`, and `agno[fga]` only to swap in a real OpenFGA |
 
 Run cookbook files with `.venvs/demo/bin/python`. Development checks use
 `.venv`.

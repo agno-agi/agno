@@ -5,18 +5,18 @@ tables (see :class:`DbAuditSink`) because they answer different questions:
 
 1. Decision audit ("was alice allowed to run agent X, and with which token?") —
    recorded by the JWT middleware on every protected request when an
-   :class:`AuditSink` is set via ``Authorization(audit=...)`` / ``AgentOS(audit=...)``. Each row is an
+   :class:`AuditSink` is set via ``Authorization(audit=...)``. Each row is an
    ``access.allowed`` / ``access.denied`` event with the principal, the route, the
    required scopes, the caller's scopes, and a NON-secret token reference (the
    token's ``jti`` when present, otherwise a short hash — never the token itself).
    (The native policy engine also logs every decision to the ``agno.authz.engine``
-   logger; ``ManagedRoleStore(decision_log=True)`` bumps it to INFO.)
+   logger; ``RoleStore(decision_log=True)`` bumps it to INFO.)
 
 2. Change audit ("who granted alice the admin role, when, before/after?") — the
    policy engine cannot provide this: it never sees the acting principal, and its
    policy rows are overwrite-in-place with no history. So it must be captured at
    the layer that knows the actor — the management API / store. Plug an
-   :class:`AuditSink` into :class:`~agno.os.authz.role_store.ManagedRoleStore`
+   :class:`AuditSink` into :class:`~agno.os.authz.role_store.RoleStore`
    (directly or via ``get_roles_router``) and every role/assignment mutation emits
    a structured, append-only :class:`AuditEvent` with the actor and before/after.
 

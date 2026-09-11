@@ -30,8 +30,8 @@ from agno.os import AgentOS  # noqa: E402
 from agno.os.authz import Authorization  # noqa: E402
 from agno.os.authz.audit import DbAuditSink  # noqa: E402
 from agno.os.authz.native_engine import NativePolicyEngine  # noqa: E402
-from agno.os.authz.role_store import ManagedRoleStore  # noqa: E402
-from agno.os.authz.user_store import ManagedUserStore  # noqa: E402
+from agno.os.authz.role_store import RoleStore  # noqa: E402
+from agno.os.authz.user_store import UserStore  # noqa: E402
 from agno.os.config import AuthorizationConfig  # noqa: E402
 
 SECRET = "async-authz-secret-at-least-256-bits-xxxxxxxxxxxxxx"
@@ -89,14 +89,14 @@ def test_sync_and_async_decisions_agree(tmp_path):
 
 
 def test_managed_stores_and_audit_async_on_async_db(tmp_path):
-    """ManagedRoleStore, ManagedUserStore and DbAuditSink round-trip on an async DB, and the
+    """RoleStore, UserStore and DbAuditSink round-trip on an async DB, and the
     change trail is written and read back."""
 
     async def scenario():
         db = AsyncSqliteDb(db_file=str(tmp_path / "stores.db"))
         audit = DbAuditSink(db=db)
-        roles = ManagedRoleStore(db=db, audit=audit)
-        users = ManagedUserStore(db=db, audit=audit)
+        roles = RoleStore(db=db, audit=audit)
+        users = UserStore(db=db, audit=audit)
 
         await roles.aset_role_scopes("member", ["agents:*:read"], name="Member", is_default=True, actor="admin")
         await roles.aassign("bob", "member", actor="admin")
@@ -136,7 +136,7 @@ class _MockRunOutput:
 def _served_os(tmp_path):
     """AgentOS whose OS db is async, with managed roles bound to it."""
     adb = AsyncSqliteDb(db_file=str(tmp_path / "served.db"))
-    roles = ManagedRoleStore(db=adb)
+    roles = RoleStore(db=adb)
     asyncio.run(roles.aset_role_scopes("runner", ["agents:research:run", "agents:research:read"]))
     asyncio.run(roles.aassign("alice", "runner"))
     asyncio.run(roles.aset_role_scopes("admin", ["agent_os:admin"]))
@@ -208,10 +208,10 @@ def test_disabled_user_denied_over_async_directory(tmp_path):
     even with a valid token, enforced in the middleware over the async store."""
     from unittest.mock import AsyncMock, patch
 
-    from agno.os.config import UserDirectoryConfig
+    from agno.os.authz import UserDirectory
 
     adb = AsyncSqliteDb(db_file=str(tmp_path / "dir.db"))
-    store = ManagedUserStore(db=adb)
+    store = UserStore(db=adb)
     asyncio.run(store.aupsert("dave", email="dave@x.com"))
     asyncio.run(store.aset_disabled("dave", True))
 
@@ -223,7 +223,7 @@ def test_disabled_user_denied_over_async_directory(tmp_path):
         authorization_config=AuthorizationConfig(
             verification_keys=[SECRET], algorithm="HS256", verify_audience=True, audience=OS_ID
         ),
-        user_directory=UserDirectoryConfig(user_store=store, auto_provision=True),
+        user_directory=UserDirectory(user_store=store, auto_provision=True),
     )
     client = TestClient(os_.get_app())
 
@@ -238,14 +238,14 @@ def test_user_management_metrics_async_on_async_db(tmp_path):
     served endpoint works on one, and the sync collector on a sync DB agrees with the
     async one."""
     from agno.os.authz import Authorization
-    from agno.os.authz.role_router import (
+    from agno.os.authz.admin_router import (
         acollect_user_management_metrics,
         collect_user_management_metrics,
     )
 
     adb = AsyncSqliteDb(db_file=str(tmp_path / "metrics.db"))
-    roles = ManagedRoleStore(db=adb)
-    users = ManagedUserStore(db=adb)
+    roles = RoleStore(db=adb)
+    users = UserStore(db=adb)
 
     async def seed():
         await roles.aset_role_scopes("admin", ["agent_os:admin"])
@@ -273,14 +273,14 @@ def test_user_management_metrics_async_on_async_db(tmp_path):
 
     # served end to end on the async DB: the admin gate awaits the role store, and the
     # handler awaits the collector, so nothing on the path touches the DB synchronously
-    from agno.os.config import UserDirectoryConfig
+    from agno.os.authz import UserDirectory
 
     os_ = AgentOS(
         id=OS_ID,
         agents=[Agent(id="research", name="R", db=InMemoryDb())],
         db=adb,
         # the directory is a top-level concern (mounts /users); roles stay on Authorization (/authz)
-        user_directory=UserDirectoryConfig(user_store=users, auto_provision=False),
+        user_directory=UserDirectory(user_store=users, auto_provision=False),
         authorization=Authorization(
             verification_keys=[SECRET],
             algorithm="HS256",
@@ -298,7 +298,7 @@ def test_user_management_metrics_async_on_async_db(tmp_path):
 
     # parity: the sync collector on a sync DB produces the same numbers the async one does
     sdb = SqliteDb(db_file=str(tmp_path / "metrics_sync.db"))
-    sroles, susers = ManagedRoleStore(db=sdb), ManagedUserStore(db=sdb)
+    sroles, susers = RoleStore(db=sdb), UserStore(db=sdb)
     sroles.set_role_scopes("admin", ["agent_os:admin"])
     sroles.set_role_scopes("viewer", ["agents:*:read"])
     for user in ("alice", "bob", "carol", "dave"):

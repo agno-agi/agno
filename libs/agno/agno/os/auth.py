@@ -113,7 +113,6 @@ def _store_default_role(role_store: Any) -> Optional[str]:
 def provision_user_with_default_role(
     user_store: Any,
     role_store: Any,
-    default_role: Optional[str],
     subject: str,
     claims: Dict[str, Any],
     *,
@@ -125,9 +124,8 @@ def provision_user_with_default_role(
     Shared by the three provisioning choke points (HTTP middleware, WebSocket connect, MCP
     identity bridge) so the behaviour is identical wherever a token first arrives.
 
-    Single-role model (a subject holds one role). Default resolution: the explicit
-    ``default_role`` (``UserDirectoryConfig.default_role`` override) wins; otherwise the role
-    flagged ``is_default`` in the role store. If neither resolves and a role store is present,
+    Single-role model (a subject holds one role). The default is the role flagged
+    ``define_role(..., default=True)`` in the role store. If none is flagged and a role store is present,
     the new user is left inert -- denied until an admin assigns a role -- and a warning is
     logged, never a silent grant. With no role store (the scope plane) roles do not apply, so
     nothing is granted and nothing is warned. Granting happens only on first creation, so a
@@ -141,7 +139,7 @@ def provision_user_with_default_role(
     # already hold a role (an admin granted via seed(admin=)/role_store.assign but never added to the
     # roster), and granting the default here would DEMOTE them on their first request. Guard on it.
     if created and role_store is not None and not role_store.roles_of(subject):
-        role = default_role or _store_default_role(role_store)
+        role = _store_default_role(role_store)
         if role:
             try:
                 role_store.assign(subject, role, actor="system:jit")
@@ -150,7 +148,7 @@ def provision_user_with_default_role(
         else:
             log_warning(
                 f"auto-provisioned user {subject!r} has no default role "
-                "(set UserDirectoryConfig(default_role=...) or flag a role is_default); "
+                "(flag one with define_role(..., default=True)); "
                 "they are denied until a role is assigned"
             )
     return user
@@ -179,7 +177,6 @@ async def _aroles_of(role_store: Any, subject: str) -> List[str]:
 async def aprovision_user_with_default_role(
     user_store: Any,
     role_store: Any,
-    default_role: Optional[str],
     subject: str,
     claims: Dict[str, Any],
     *,
@@ -196,7 +193,7 @@ async def aprovision_user_with_default_role(
     # Only grant the default to a subject that holds no role yet (see the sync twin): a subject new to
     # the directory may already be an admin, and the default must not demote them on first request.
     if created and role_store is not None and not await _aroles_of(role_store, subject):
-        role = default_role or await _astore_default_role(role_store)
+        role = await _astore_default_role(role_store)
         if role:
             try:
                 aassign = getattr(role_store, "aassign", None)
@@ -209,7 +206,7 @@ async def aprovision_user_with_default_role(
         else:
             log_warning(
                 f"auto-provisioned user {subject!r} has no default role "
-                "(set UserDirectoryConfig(default_role=...) or flag a role is_default); "
+                "(flag one with define_role(..., default=True)); "
                 "they are denied until a role is assigned"
             )
     return user
@@ -239,7 +236,7 @@ def create_dev_token(
             db=db,
             authorization=True,
             authorization_config=AuthorizationConfig(verification_keys=[secret]),
-            user_directory=UserDirectoryConfig(user_store=True, auto_provision=True),
+            user_directory=True,
         )
         alice = create_dev_token("alice", secret=secret, email="alice@example.com", name="Alice")
         client.get("/agents/x", headers={"Authorization": f"Bearer {alice}"})

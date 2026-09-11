@@ -24,7 +24,7 @@ from agno.agent import Agent  # noqa: E402
 from agno.db.in_memory import InMemoryDb  # noqa: E402
 from agno.os import AgentOS  # noqa: E402
 from agno.os.authz import Authorization  # noqa: E402
-from agno.os.authz.role_store import ManagedRoleStore  # noqa: E402
+from agno.os.authz.role_store import RoleStore  # noqa: E402
 
 SECRET = "managed-roles-internal-token-test-secret-at-least-256-bits-long"
 OS_ID = "managed-roles-internal-token-os"
@@ -50,7 +50,7 @@ def _user_token(sub: str) -> str:
 
 @pytest.fixture
 def client_and_store():
-    store = ManagedRoleStore(db_url=_db_url())
+    store = RoleStore(db_url=_db_url())
     # A real user with NO role assigned — should be denied at the per-resource gate.
     agent = Agent(id="research-agent", name="Research Agent", db=InMemoryDb())
     agent_os = AgentOS(
@@ -116,7 +116,7 @@ def test_service_account_pat_passes_the_resource_gate_under_managed_roles(tmp_pa
     agent = Agent(id="research-agent", name="Research Agent", db=db)
     agent.deep_copy = lambda **kwargs: agent
 
-    store = ManagedRoleStore(db_url=f"sqlite:///{tmp_path / 'roles.db'}")
+    store = RoleStore(db_url=f"sqlite:///{tmp_path / 'roles.db'}")
     store.set_role_scopes("viewer", ["agents:*:read"])  # no role mentions the PAT principal
     store.set_role_scopes("os-admin", ["agent_os:admin"])
     store.assign("human-admin", "os-admin")  # the human who mints the PAT is a directory user
@@ -166,7 +166,7 @@ def test_service_account_pat_sees_collections_under_managed_roles(tmp_path):
     agent = Agent(id="research-agent", name="Research Agent", db=db)
     agent.deep_copy = lambda **kwargs: agent
 
-    store = ManagedRoleStore(db_url=f"sqlite:///{tmp_path / 'roles.db'}")
+    store = RoleStore(db_url=f"sqlite:///{tmp_path / 'roles.db'}")
     store.set_role_scopes("os-admin", ["agent_os:admin"])
     store.assign("human-admin", "os-admin")
 
@@ -206,7 +206,7 @@ def test_pat_mint_subset_rule_uses_the_provider_not_token_scopes(tmp_path):
 
     db = SqliteDb(db_file=str(tmp_path / "pat_subset.db"))
     agent = Agent(id="research-agent", name="Research Agent", db=db)
-    store = ManagedRoleStore(db_url=f"sqlite:///{tmp_path / 'roles.db'}")
+    store = RoleStore(db_url=f"sqlite:///{tmp_path / 'roles.db'}")
     store.set_role_scopes("minter", ["service_accounts:write"])  # may create accounts, nothing else
     store.assign("eve", "minter")
 
@@ -254,7 +254,7 @@ def test_schedule_endpoint_gate_uses_the_provider_not_token_scopes(tmp_path):
 
     db = SqliteDb(db_file=str(tmp_path / "sched.db"))
     agent = Agent(id="research-agent", name="Research Agent", db=db)
-    store = ManagedRoleStore(db_url=f"sqlite:///{tmp_path / 'roles.db'}")
+    store = RoleStore(db_url=f"sqlite:///{tmp_path / 'roles.db'}")
     store.set_role_scopes("scheduler", ["schedules:read", "schedules:write"])  # no agents:run
     store.assign("dave", "scheduler")
 
@@ -293,7 +293,7 @@ def test_admin_pat_can_mint_a_child_under_managed_roles(tmp_path):
 
     db = SqliteDb(db_file=str(tmp_path / "pat_child.db"))
     agent = Agent(id="research-agent", name="Research Agent", db=db)
-    store = ManagedRoleStore(db_url=f"sqlite:///{tmp_path / 'roles.db'}")
+    store = RoleStore(db_url=f"sqlite:///{tmp_path / 'roles.db'}")
     store.set_role_scopes("os-admin", ["agent_os:admin"])
     store.assign("human-admin", "os-admin")
 

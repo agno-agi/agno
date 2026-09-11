@@ -541,7 +541,6 @@ def get_websocket_router(
                                         provisioned = await aprovision_user_with_default_role(
                                             user_store,
                                             getattr(websocket.app.state, "role_store", None),
-                                            getattr(websocket.app.state, "user_default_role", None),
                                             ws_user_id,
                                             payload,
                                             email_claim=getattr(websocket.app.state, "user_email_claim", "email"),

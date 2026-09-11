@@ -1,4 +1,4 @@
-"""HTTP management API for :class:`ManagedRoleStore` — the governance product surface.
+"""HTTP management API for :class:`RoleStore` — the governance product surface.
 
 Admin-only REST API to create roles, set their permissions (in agno scope terms,
 with allow/deny), and grant or revoke them at runtime.
@@ -77,8 +77,8 @@ from agno.os.schema import PaginatedResponse, PaginationInfo, SortOrder
 from agno.os.scopes import AgentOSScope
 
 if TYPE_CHECKING:
-    from agno.os.authz.role_store import ManagedRoleStore
-    from agno.os.authz.user_store import ManagedUserStore
+    from agno.os.authz.role_store import RoleStore
+    from agno.os.authz.user_store import UserStore
 
 
 # --------------------------------------------------------------------- schemas
@@ -139,7 +139,7 @@ class RoleSchema(BaseModel):
         )
 
 
-class AuthzUserSchema(BaseModel):
+class UserSchema(BaseModel):
     """A directory user with their role merged in (one role per user)."""
 
     id: str = Field(description="User id (the JWT 'sub')")
@@ -152,7 +152,7 @@ class AuthzUserSchema(BaseModel):
     updated_at: Optional[int] = None
 
     @classmethod
-    def from_user(cls, user: dict, role: Optional[str]) -> "AuthzUserSchema":
+    def from_user(cls, user: dict, role: Optional[str]) -> "UserSchema":
         return cls(
             id=user["id"],
             email=user.get("email"),
@@ -303,7 +303,7 @@ def _token_scopes_enforced(request: Request) -> bool:
     return token_scopes_are_authoritative(request)
 
 
-def _make_require_admin(role_store: "Optional[ManagedRoleStore]" = None, *, auth_enabled: bool = True) -> Any:
+def _make_require_admin(role_store: "Optional[RoleStore]" = None, *, auth_enabled: bool = True) -> Any:
     """Build the admin gate shared by the roles admin API and the user-directory API.
 
     Admin can come from two planes (both run in parallel on one OS):
@@ -346,7 +346,7 @@ def _make_require_admin(role_store: "Optional[ManagedRoleStore]" = None, *, auth
 
 
 def get_roles_router(
-    store: "ManagedRoleStore",
+    store: "RoleStore",
     prefix: str = "/authz",
     tags: Optional[List[Union[str, Enum]]] = None,
 ) -> APIRouter:
@@ -602,8 +602,8 @@ def _build_user_management_metrics(
 
 
 def collect_user_management_metrics(
-    user_store: "ManagedUserStore",
-    role_store: "Optional[ManagedRoleStore]" = None,
+    user_store: "UserStore",
+    role_store: "Optional[RoleStore]" = None,
     starting_at: Optional[int] = None,
     ending_before: Optional[int] = None,
 ) -> UserManagementMetrics:
@@ -623,8 +623,8 @@ def collect_user_management_metrics(
 
 
 async def acollect_user_management_metrics(
-    user_store: "ManagedUserStore",
-    role_store: "Optional[ManagedRoleStore]" = None,
+    user_store: "UserStore",
+    role_store: "Optional[RoleStore]" = None,
     starting_at: Optional[int] = None,
     ending_before: Optional[int] = None,
 ) -> UserManagementMetrics:
@@ -637,8 +637,8 @@ async def acollect_user_management_metrics(
 
 
 def get_users_router(
-    user_store: "ManagedUserStore",
-    role_store: "Optional[ManagedRoleStore]" = None,
+    user_store: "UserStore",
+    role_store: "Optional[RoleStore]" = None,
     prefix: str = "/users",
     tags: Optional[List[Union[str, Enum]]] = None,
     auth_enabled: bool = True,
@@ -664,10 +664,10 @@ def get_users_router(
         roles = role_store.roles_of(subject)
         return roles[0] if roles else None
 
-    def _user(user: dict) -> AuthzUserSchema:
-        return AuthzUserSchema.from_user(user, _role_of(user["id"]))
+    def _user(user: dict) -> UserSchema:
+        return UserSchema.from_user(user, _role_of(user["id"]))
 
-    @router.get("", response_model=PaginatedResponse[AuthzUserSchema])
+    @router.get("", response_model=PaginatedResponse[UserSchema])
     def list_users(
         include_disabled: bool = True,
         limit: int = Query(default=20, ge=1, le=100, description="Items per page"),
@@ -699,7 +699,7 @@ def get_users_router(
             search_time_ms=round(time.time() * 1000 - start_ms, 2),
         )
 
-    @router.post("", response_model=AuthzUserSchema)
+    @router.post("", response_model=UserSchema)
     def create_user(body: CreateUserRequest, actor: str = Depends(require_admin)):
         return _user(user_store.upsert(body.id, email=body.email, name=body.name, actor=actor))
 
@@ -720,14 +720,14 @@ def get_users_router(
             user_store, role_store, starting_at=starting_at, ending_before=ending_before
         )
 
-    @router.get("/{user_id}", response_model=AuthzUserSchema)
+    @router.get("/{user_id}", response_model=UserSchema)
     def get_user(user_id: str):
         user = user_store.get(user_id)
         if user is None:
             raise HTTPException(status_code=404, detail=f"User {user_id!r} not found")
         return _user(user)
 
-    @router.patch("/{user_id}", response_model=AuthzUserSchema)
+    @router.patch("/{user_id}", response_model=UserSchema)
     def update_user(user_id: str, body: UpdateUserRequest, actor: str = Depends(require_admin)):
         """Update a user. ``disabled`` is the revocation kill-switch: a disabled user is
         denied at the enforcement point on their next request, even with a still-valid token."""
