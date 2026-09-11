@@ -259,7 +259,7 @@ class TableResolutionCache:
         for key in [k for k in self._tables if k[1] == table_name]:
             self._tables.pop(key, None)
             evicted += 1
-        log_debug(f"Table cache: invalidated '{table_name}' ({evicted} cached resolution(s) evicted)")
+        log_debug(f"Table cache: invalidated '{table_name}' ({evicted} cached resolution(s) evicted)", log_level=2)
 
     def clear(self) -> None:
         self._tables.clear()
@@ -388,7 +388,7 @@ class BaseDb(ABC):
         if cached is not None:
             return cached
         if not create_table_if_not_found and not self.table_exists(table_name):
-            log_debug(f"Table '{table_name}' does not exist")
+            log_debug(f"Table '{table_name}' does not exist", log_level=2)
             return None
         with self._resolve_lock:
             cached = self._table_cache.get(table_type, table_name)
@@ -2176,7 +2176,7 @@ class AsyncBaseDb(ABC):
         if cached is not None:
             return cached
         if not create_table_if_not_found and not await self.table_exists(table_name):
-            log_debug(f"Table '{table_name}' does not exist")
+            log_debug(f"Table '{table_name}' does not exist", log_level=2)
             return None
         async with self._resolve_lock_async:
             cached = self._table_cache.get(table_type, table_name)

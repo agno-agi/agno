@@ -2,6 +2,7 @@ import asyncio
 import hashlib
 import io
 import json
+import math
 import time
 from dataclasses import dataclass
 from enum import Enum
@@ -35,6 +36,14 @@ from agno.utils.string import generate_id
 
 ContentDict = Dict[str, Union[str, Dict[str, str]]]
 _DATABASE_UNSET = object()
+
+
+def _validate_full_page_read(max_chars: int, timeout: float) -> None:
+    # PostgreSQL substr accepts a signed 32-bit integer length.
+    if isinstance(max_chars, bool) or not isinstance(max_chars, int) or not 0 <= max_chars <= 2**31 - 1:
+        raise ValueError("max_chars must be an integer between 0 and 2147483647")
+    if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or not math.isfinite(timeout) or timeout <= 0:
+        raise ValueError("timeout must be finite and positive")
 
 
 class KnowledgeContentOrigin(Enum):
@@ -158,13 +167,19 @@ class Knowledge(RemoteKnowledge):
 
     def setup(self) -> None:
         """Prepare and validate coordinated page storage before query traffic."""
-        self._pages().setup()
+        pages = self._pages()
+        log_info(f"Preparing knowledge storage: namespace={pages.namespace}")
+        pages.setup()
+        log_info(f"Knowledge storage ready: namespace={pages.namespace}")
 
     async def asetup(self) -> None:
         """Prepare page storage on bounded workers."""
         from agno.knowledge.page._coordinator import SYNC_WORKERS
 
-        await SYNC_WORKERS.run(self._pages().setup, seconds=60)
+        pages = self._pages()
+        log_info(f"Preparing knowledge storage: namespace={pages.namespace}")
+        await SYNC_WORKERS.run(pages.setup, seconds=60)
+        log_info(f"Knowledge storage ready: namespace={pages.namespace}")
 
     def sync_pages(
         self,
@@ -289,6 +304,62 @@ class Knowledge(RemoteKnowledge):
         try:
             return await READ_WORKERS.run(
                 self._pages().read, path, revision=revision, offset=offset, max_chars=max_chars, seconds=2
+            )
+        except (TimeoutError, asyncio.TimeoutError, PoolTimeout, DBAPIError) as exc:
+            raise PageError() from exc
+
+    def read_full_page(
+        self, path: str, *, revision: Optional[str] = None, max_chars: int = 24000, timeout: float = 2.0
+    ) -> Optional[str]:
+        """Read a complete published page within a character and time budget.
+
+        max_chars must be an integer from 0 through 2147483647. Return None
+        if the page exceeds max_chars; zero skips storage entirely.
+        Limits count Unicode code points, not serialized JSON bytes. A single
+        read-only snapshot returns the text without continuation round trips.
+        Pass a search hit's revision to reject a changed publication. Missing,
+        changed and unavailable pages raise PageNotFound, PageChanged and
+        PageError respectively. The timeout covers worker and database work;
+        capacity stays occupied until cleanup finishes after a timeout. Both
+        full-page variants use the shared eight-slot page-read worker pool and
+        raise PageError immediately when all slots are occupied.
+        """
+        from sqlalchemy.exc import DBAPIError
+        from sqlalchemy.exc import TimeoutError as PoolTimeout
+
+        from agno.knowledge.page import PageError
+        from agno.knowledge.page._coordinator import READ_WORKERS
+
+        _validate_full_page_read(max_chars, timeout)
+        if max_chars == 0:
+            return None
+        try:
+            return READ_WORKERS.run_sync(
+                self._pages().read_full, path, revision=revision, max_chars=max_chars, seconds=timeout
+            )
+        except (TimeoutError, asyncio.TimeoutError, PoolTimeout, DBAPIError) as exc:
+            raise PageError() from exc
+
+    async def aread_full_page(
+        self, path: str, *, revision: Optional[str] = None, max_chars: int = 24000, timeout: float = 2.0
+    ) -> Optional[str]:
+        """Async read_full_page with the same size, revision and deadline contract.
+
+        Cancellation propagates and retains worker capacity until cleanup.
+        Applications choose their own overall budget when expanding many pages.
+        """
+        from sqlalchemy.exc import DBAPIError
+        from sqlalchemy.exc import TimeoutError as PoolTimeout
+
+        from agno.knowledge.page import PageError
+        from agno.knowledge.page._coordinator import READ_WORKERS
+
+        _validate_full_page_read(max_chars, timeout)
+        if max_chars == 0:
+            return None
+        try:
+            return await READ_WORKERS.run(
+                self._pages().read_full, path, revision=revision, max_chars=max_chars, seconds=timeout
             )
         except (TimeoutError, asyncio.TimeoutError, PoolTimeout, DBAPIError) as exc:
             raise PageError() from exc

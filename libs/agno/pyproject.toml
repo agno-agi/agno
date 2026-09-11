@@ -1,6 +1,6 @@
 [project]
 name = "agno"
-version = "3.0.6"
+version = "3.0.9"
 description = "The programming language for agentic software."
 requires-python = ">=3.9,<4"
 readme = "README.md"
@@ -203,6 +203,7 @@ cassandra = ["cassio"]
 chromadb = ["chromadb"]
 clickhouse = ["clickhouse-connect"]
 couchbase = ["couchbase"]
+elasticsearch = ["elasticsearch[async]>=8.14.0"]
 lancedb = ["lancedb>=0.26.0"]
 milvusdb = ["pymilvus>=2.5.10"]
 mongodb = ["pymongo[srv]"]
@@ -225,7 +226,7 @@ csv = ["aiofiles"]
 docx = ["python-docx"]
 excel = ["openpyxl", "xlrd"]
 markdown = ["aiofiles"]
-pdf = ["pypdf"]
+pdf = ["pypdf", "fonttools"]
 pptx = ["python-pptx"]
 text = ["aiofiles"]
 # The website and llms_txt readers both import bs4 at module scope.
@@ -372,6 +373,7 @@ vectordbs = [
   "agno[chromadb]",
   "agno[clickhouse]",
   "agno[couchbase]",
+  "agno[elasticsearch]",
   "agno[lancedb]",
   "agno[milvusdb]",
   "agno[mongodb]",
@@ -575,6 +577,7 @@ module = [
   "docx.*",
   "duckdb.*",
   "ddgs.*",
+  "elasticsearch.*",
   "email_validator.*",
   "e2b_code_interpreter.*",
   "ipykernel.*",

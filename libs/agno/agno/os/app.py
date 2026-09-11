@@ -1562,6 +1562,9 @@ class AgentOS:
             from contextlib import asynccontextmanager
 
             from agno.os.public._middleware import PublicMiddleware
+            from agno.os.public._policy import PublicRoutePolicy
+
+            fastapi_app.state.public_route_policy = PublicRoutePolicy(self.public, self)
 
             original_lifespan = fastapi_app.router.lifespan_context
 
@@ -1573,7 +1576,9 @@ class AgentOS:
                     yield state
 
             fastapi_app.router.lifespan_context = public_lifespan
-            fastapi_app.add_middleware(PublicMiddleware, surface=self.public, agent_os=self)
+            fastapi_app.add_middleware(
+                PublicMiddleware, surface=self.public, agent_os=self, policy=fastapi_app.state.public_route_policy
+            )
 
         auth_configured = bool(self.authorization or jwt_env_configured or security_key)
         if auth_configured:
@@ -2035,6 +2040,7 @@ class AgentOS:
             try:
                 if hasattr(db, "_create_all_tables") and callable(db._create_all_tables):
                     db._create_all_tables()
+                    log_info(f"Database ready: {db.__class__.__name__} id={db.id}")
             except Exception as e:
                 log_warning(f"Failed to initialize {db.__class__.__name__} (id: {db.id}): {str(e)}")
 
@@ -2059,6 +2065,7 @@ class AgentOS:
             try:
                 if hasattr(db, "_create_all_tables") and callable(db._create_all_tables):
                     await db._create_all_tables()
+                    log_info(f"Database ready: {db.__class__.__name__} id={db.id}")
             except Exception as e:
                 log_warning(f"Failed to initialize async {db.__class__.__name__} (id: {db.id}): {str(e)}")
 
