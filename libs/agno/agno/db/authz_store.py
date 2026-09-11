@@ -178,6 +178,7 @@ def get_direct_roles_many(engine: Engine, table: Any, subjects: List[str]) -> Di
             pairs.extend((subject, role) for subject, role in conn.execute(stmt))
     return _collect_direct_roles(subjects, pairs)
 
+
 def get_role_subjects(engine: Engine, table: Any, role: str) -> List[str]:
     """Names directly assigned ``role`` (served by the index on ``role``)."""
     with engine.connect() as conn:
@@ -627,6 +628,7 @@ async def aget_direct_roles_many(engine: "AsyncEngine", table: Any, subjects: Li
             result = await conn.execute(stmt)
             pairs.extend((subject, role) for subject, role in result)
     return _collect_direct_roles(subjects, pairs)
+
 
 async def aget_role_subjects(engine: "AsyncEngine", table: Any, role: str) -> List[str]:
     async with engine.connect() as conn:

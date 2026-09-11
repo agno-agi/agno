@@ -293,11 +293,11 @@ def test_user_metrics_api_with_a_role_store():
 
 
 def test_user_metrics_api_without_a_role_store(tmp_path):
-    """A users-only setup mounts get_users_router itself and gets /users/metrics with it.
-    Admin is the token's agent_os:admin scope; the role fields are null rather than zero
-    so a frontend can tell 'no role store' from 'no roles'."""
+    """A users-only setup (a directory, no roles) still mounts /users and gets /users/metrics
+    with it. Admin is the token's agent_os:admin scope; the role fields are null rather than
+    zero so a frontend can tell 'no role store' from 'no roles'."""
     from agno.db.sqlite import SqliteDb
-    from agno.os.authz.role_router import get_users_router
+    from agno.os.authz import Authorization
 
     users = ManagedUserStore()
     users.upsert("zed")
@@ -306,13 +306,14 @@ def test_user_metrics_api_without_a_role_store(tmp_path):
         id=OS_ID,
         db=SqliteDb(db_file=str(tmp_path / "os.db")),
         agents=[agent],
-        authorization=True,
-        authorization_config=AuthorizationConfig(
-            verification_keys=[SECRET], algorithm="HS256", verify_audience=True, audience=OS_ID
+        authorization=Authorization(
+            verification_keys=[SECRET],
+            algorithm="HS256",
+            verify_audience=True,
+            audience=OS_ID,
+            user_directory=users,
         ),
-        user_directory=UserDirectoryConfig(user_store=users),
     ).get_app()
-    app.include_router(get_users_router(users))
     client = TestClient(app)
 
     # a metrics:read token is not an admin of the directory

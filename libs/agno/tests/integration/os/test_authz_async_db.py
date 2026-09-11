@@ -237,12 +237,11 @@ def test_user_management_metrics_async_on_async_db(tmp_path):
     """The reads behind /users/metrics have async twins that work on an async DB, the
     served endpoint works on one, and the sync collector on a sync DB agrees with the
     async one."""
+    from agno.os.authz import Authorization
     from agno.os.authz.role_router import (
         acollect_user_management_metrics,
         collect_user_management_metrics,
-        get_users_router,
     )
-    from agno.os.config import UserDirectoryConfig
 
     adb = AsyncSqliteDb(db_file=str(tmp_path / "metrics.db"))
     roles = ManagedRoleStore(db=adb)
@@ -278,18 +277,16 @@ def test_user_management_metrics_async_on_async_db(tmp_path):
         id=OS_ID,
         agents=[Agent(id="research", name="R", db=InMemoryDb())],
         db=adb,
-        authorization=True,
-        authorization_config=AuthorizationConfig(
+        authorization=Authorization(
             verification_keys=[SECRET],
             algorithm="HS256",
             verify_audience=True,
             audience=OS_ID,
-            authorization_provider=roles.provider,
+            role_store=roles,
+            user_directory=users,
         ),
-        user_directory=UserDirectoryConfig(user_store=users),
     )
     app = os_.get_app()
-    app.include_router(get_users_router(users, role_store=roles))
     client = TestClient(app)
     assert client.get("/users/metrics", headers=_auth("bob")).status_code == 403
     body = client.get("/users/metrics", headers=_auth("alice")).json()
