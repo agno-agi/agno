@@ -7,7 +7,7 @@ from agno.knowledge.embedder.openai import OpenAIEmbedder
 
 @dataclass
 class NebiusEmbedder(OpenAIEmbedder):
-    id: str = "BAAI/bge-en-icl"
-    dimensions: int = 1024
+    id: str = "Qwen/Qwen3-Embedding-8B"
+    dimensions: int = 4096
     api_key: Optional[str] = getenv("NEBIUS_API_KEY")
     base_url: str = "https://api.tokenfactory.nebius.com/v1/"

@@ -5,7 +5,7 @@ from agno.agent import Agent, RunOutput  # noqa
 from agno.db.sqlite import SqliteDb
 from agno.models.nebius import Nebius
 
-NEBIUS_MODEL_ID = "Qwen/Qwen3-4B-fast"
+NEBIUS_MODEL_ID = "openai/gpt-oss-120b"
 
 
 def _assert_metrics(response: RunOutput):

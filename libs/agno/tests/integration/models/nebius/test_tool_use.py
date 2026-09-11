@@ -8,7 +8,7 @@ from agno.tools.exa import ExaTools
 from agno.tools.websearch import WebSearchTools
 from agno.tools.yfinance import YFinanceTools
 
-NEBIUS_MODEL_ID = "Qwen/Qwen3-30B-A3B"
+NEBIUS_MODEL_ID = "openai/gpt-oss-120b"
 
 
 def test_tool_use():
