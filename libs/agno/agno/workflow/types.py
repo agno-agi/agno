@@ -535,6 +535,14 @@ class StepInput:
 
 
 @dataclass
+class StepProgress:
+    """A function executor's observer update; never a separate executor run."""
+
+    content: Optional[str] = None
+    data: Optional[Dict[str, Any]] = None
+
+
+@dataclass
 class StepOutput:
     """Output data from a step execution"""
 

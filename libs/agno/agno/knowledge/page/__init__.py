@@ -12,6 +12,7 @@ from agno.knowledge.page.types import (
     PageRead,
     PageResult,
     PageSearchConfig,
+    PageSyncProgress,
     SearchHit,
     SearchResult,
     SearchUnavailable,
@@ -38,6 +39,7 @@ __all__ = [
     "SearchUnavailable",
     "SyncFailed",
     "SyncReport",
+    "PageSyncProgress",
     "encoded_size",
     "tool_error",
 ]

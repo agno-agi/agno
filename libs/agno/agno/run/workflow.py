@@ -50,6 +50,7 @@ class WorkflowRunEvent(str, Enum):
 
     step_started = "StepStarted"
     step_completed = "StepCompleted"
+    step_progress = "StepProgress"
     step_paused = "StepPaused"
     step_continued = "StepContinued"
     step_executor_paused = "StepExecutorPaused"
@@ -312,6 +313,18 @@ class StepStartedEvent(BaseWorkflowRunOutputEvent):
     event: str = WorkflowRunEvent.step_started.value
     step_name: Optional[str] = None
     step_index: Optional[Union[int, tuple]] = None
+
+
+@dataclass
+class StepProgressEvent(BaseWorkflowRunOutputEvent):
+    """Function progress attached to the existing workflow/step and retry attempt."""
+
+    event: str = WorkflowRunEvent.step_progress.value
+    step_name: Optional[str] = None
+    step_index: Optional[Union[int, tuple]] = None
+    attempt: int = 1
+    content: Optional[str] = None
+    data: Optional[Dict[str, Any]] = None
 
 
 @dataclass
@@ -655,6 +668,7 @@ WorkflowRunOutputEvent = Union[
     WorkflowCancelledEvent,
     StepStartedEvent,
     StepCompletedEvent,
+    StepProgressEvent,
     StepPausedEvent,
     StepContinuedEvent,
     StepExecutorPausedEvent,
@@ -694,6 +708,7 @@ WORKFLOW_RUN_EVENT_TYPE_REGISTRY = {
     WorkflowRunEvent.workflow_error.value: WorkflowErrorEvent,
     WorkflowRunEvent.step_started.value: StepStartedEvent,
     WorkflowRunEvent.step_completed.value: StepCompletedEvent,
+    WorkflowRunEvent.step_progress.value: StepProgressEvent,
     WorkflowRunEvent.step_paused.value: StepPausedEvent,
     WorkflowRunEvent.step_continued.value: StepContinuedEvent,
     WorkflowRunEvent.step_executor_paused.value: StepExecutorPausedEvent,

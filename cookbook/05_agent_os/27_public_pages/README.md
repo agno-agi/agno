@@ -277,3 +277,38 @@ normalizer that leaves code unchanged; run it without a database or provider key
 
 Component-specific MDX transformations, prompt rendering, citations and query
 alternatives remain application-owned.
+
+
+### Native sync and function progress
+
+`Knowledge.stream_sync_pages(...)` and `astream_sync_pages(...)` accept the
+normal sync arguments and yield typed `PageSyncProgress` snapshots followed by
+one final `SyncReport`. Errors propagate; a partial report stays partial.
+Snapshots carry absolute discovery/processed/update/delete/failure/uncertain
+counts. At most 32 pending observer updates are retained, so a slow consumer may
+skip intermediate snapshots without losing the terminal report. The same bounded
+sync worker pool owns the operation. Use `closing`/`aclosing` when stopping early;
+cancellation requests propagate and capacity remains held until worker cleanup.
+
+For callback consumers, `sync_pages`/`async_sync_pages` accept a synchronous
+`on_progress(PageSyncProgress)` observer. A failing observer is logged and disabled
+without failing publication. Keep observer work short. Intentional index-shrink
+validation still belongs in `validate_discovery` and retains its failure semantics.
+
+A function executor can yield `StepProgress(content=..., data=...)` followed by
+its normal `StepOutput`. With workflow event streaming enabled, Agno emits native
+`StepProgressEvent` values under the existing workflow run ID and step ID, with a
+one-based retry attempt. Progress never enters final function output and creates
+no synthetic AgentRun or executor history. Non-streaming execution ignores it.
+Existing step/workflow completion, failure and cancellation remain authoritative.
+
+Run `page_sync_progress.py --check` without storage/provider calls, or provide a
+docs source URL to sync the configured example namespace. The example shows the
+small application adapter: translate progress snapshots and the terminal report
+into StepProgress/StepOutput. Source selection and sync policy remain explicit.
+
+Consumers must support the new `StepProgress` event to render its content. Native
+SSE/event-stream delivery and durable queue execution are tested here; Control
+Plane visual rendering is a separate adoption gate. Existing AG-UI progress work
+can map this event into its presentation layer; no AG-UI/Control Plane renderer is
+changed by this PR. SSE transport keepalives remain separate from page milestones.
