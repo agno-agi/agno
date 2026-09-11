@@ -1162,7 +1162,7 @@ async def test_mcp_audio_mime_type_preserves_openai_audio_format():
 
 
 @pytest.mark.asyncio
-async def test_mcp_audio_invalid_base64_returns_error_tool_result():
+async def test_mcp_audio_invalid_base64_is_reported_without_failing_the_call():
     mock_tool = MagicMock()
     mock_tool.name = "speak"
 
@@ -1177,8 +1177,59 @@ async def test_mcp_audio_invalid_base64_returns_error_tool_result():
 
     result = await get_entrypoint_for_tool(mock_tool, session)()
 
-    assert result.content.startswith("Error: ")
+    assert result.content == "[Audio content could not be decoded]"
+    assert not result.content.startswith("Error: ")
     assert result.audios is None
+
+
+@pytest.mark.asyncio
+async def test_mcp_audio_invalid_base64_keeps_sibling_content():
+    mock_tool = MagicMock()
+    mock_tool.name = "speak"
+    good_audio = b"good-audio-bytes"
+
+    session = AsyncMock()
+    session.send_ping = AsyncMock()
+    session.call_tool = AsyncMock(
+        return_value=CallToolResult(
+            content=[
+                TextContent(type="text", text="Weather report: 22C and sunny."),
+                AudioContent(data=base64.b64encode(good_audio).decode(), mimeType="audio/wav"),
+                AudioContent(data="not valid base64!", mimeType="audio/wav"),
+            ],
+            is_error=False,
+        )
+    )
+
+    result = await get_entrypoint_for_tool(mock_tool, session)()
+
+    assert "Weather report: 22C and sunny." in result.content
+    assert "[Audio content could not be decoded]" in result.content
+    assert result.audios is not None
+    assert len(result.audios) == 1
+    assert result.audios[0].content == good_audio
+
+
+@pytest.mark.asyncio
+async def test_mcp_audio_accepts_whitespace_wrapped_base64():
+    mock_tool = MagicMock()
+    mock_tool.name = "speak"
+    audio_bytes = b"chunked-audio-payload" * 8
+
+    session = AsyncMock()
+    session.send_ping = AsyncMock()
+    session.call_tool = AsyncMock(
+        return_value=CallToolResult(
+            # base64.encodebytes wraps at 76 characters, as MIME-style encoders do
+            content=[AudioContent(data=base64.encodebytes(audio_bytes).decode(), mimeType="audio/wav")],
+            is_error=False,
+        )
+    )
+
+    result = await get_entrypoint_for_tool(mock_tool, session)()
+
+    assert result.audios is not None
+    assert result.audios[0].content == audio_bytes
 
 
 @pytest.mark.asyncio

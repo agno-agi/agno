@@ -268,10 +268,17 @@ def get_entrypoint_for_tool(
                 elif isinstance(content_item, AudioContent):
                     # Handle standard MCP AudioContent
                     audio_data = getattr(content_item, "data", None)
+                    audio_bytes: Optional[bytes] = None
 
                     if audio_data and isinstance(audio_data, str):
+                        try:
+                            audio_bytes = base64.b64decode(audio_data)
+                        except Exception as e:
+                            log_debug(f"Failed to decode base64 audio data: {e}")
+
+                    # Undecodable audio must not discard content already collected from this result
+                    if audio_bytes:
                         mime_type = getattr(content_item, "mime_type", None)
-                        audio_bytes = base64.b64decode(audio_data, validate=True)
                         audio_artifact = Audio(
                             id=str(uuid4()),
                             content=audio_bytes,
@@ -281,7 +288,7 @@ def get_entrypoint_for_tool(
                         audios.append(audio_artifact)
                         response_str += "Audio has been generated and added to the response.\n"
                     else:
-                        raise ValueError("MCP AudioContent did not contain valid base64 audio data")
+                        response_str += "[Audio content could not be decoded]\n"
 
                 elif isinstance(content_item, EmbeddedResource):
                     # Handle embedded resources
