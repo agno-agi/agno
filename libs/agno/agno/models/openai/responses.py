@@ -17,6 +17,7 @@ from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 from agno.tools.function import Function
 from agno.utils.log import log_debug, log_error, log_warning
+from agno.utils.models.openai import drop_fixed_sampling_params, has_fixed_sampling_params
 from agno.utils.models.openai_responses import images_to_message
 from agno.utils.models.schema_utils import get_response_schema_for_provider
 from agno.utils.tokens import count_schema_tokens
@@ -104,6 +105,10 @@ class OpenAIResponses(Model):
     def _using_reasoning_model(self) -> bool:
         """Return True if the contextual used model is a known reasoning model."""
         return self.id.startswith("o3") or self.id.startswith("o4-mini") or self.id.startswith("gpt-5")
+
+    def _has_fixed_sampling_params(self) -> bool:
+        """Return True if the model only accepts the default sampling values (o-series, gpt-5 family)."""
+        return has_fixed_sampling_params(self.id)
 
     def _set_reasoning_request_param(self, base_params: Dict[str, Any]) -> Dict[str, Any]:
         """Set the reasoning request parameter."""
@@ -397,6 +402,9 @@ class OpenAIResponses(Model):
         # Add additional request params if provided
         if self.request_params:
             request_params.update(self.request_params)
+
+        if self._has_fixed_sampling_params():
+            drop_fixed_sampling_params(request_params)
 
         if request_params:
             log_debug(f"Calling {self.provider} with request parameters: {request_params}", log_level=2)
