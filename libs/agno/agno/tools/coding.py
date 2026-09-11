@@ -247,8 +247,11 @@ class CodingTools(Toolkit):
                 pass
         self._temp_files.clear()
 
-    # Shell operators that enable command chaining or substitution
-    _DANGEROUS_PATTERNS: List[str] = ["&&", "||", ";", "|", "$(", "`", ">", ">>", "<"]
+    # Shell operators that enable command chaining or substitution.
+    # Newlines and a bare "&" are separators too: `shlex.split` flattens them into
+    # ordinary tokens, so without them here a second (non-allowlisted) command after
+    # `\n`/`&` would pass validation yet still run under `shell=True`.
+    _DANGEROUS_PATTERNS: List[str] = ["&&", "||", ";", "|", "&", "\n", "\r", "$(", "`", ">", ">>", "<"]
 
     def _check_command(self, command: str) -> Optional[str]:
         """Check if a shell command is safe to execute.
