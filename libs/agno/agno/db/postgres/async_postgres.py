@@ -12,6 +12,7 @@ from agno.db.migrations.manager import MigrationManager
 from agno.db.postgres.engine import _engine_options
 from agno.db.postgres.schemas import get_table_schema_definition
 from agno.db.postgres.utils import (
+    JOBS_SESSION_LOCK_SQL,
     _get_table_columns,
     abulk_upsert_metrics,
     acreate_schema,
@@ -4841,6 +4842,10 @@ class AsyncPostgresDb(AsyncBaseDb):
                         queued = (await sess.execute(count_stmt)).scalar() or 0
                         if queued >= max_depth:
                             return {"accepted": False, "reason": "queue_full", "job": None}
+                    # Session lock, held to commit: a gated claim on this
+                    # session waits for this row to become visible before
+                    # choosing its head
+                    await sess.execute(text(JOBS_SESSION_LOCK_SQL), {"sid": job["session_id"]})
                     # seq is database-assigned: an explicit NULL would defeat
                     # the identity default and violate NOT NULL
                     values = {k: v for k, v in job.items() if k != "seq" or v is not None}
@@ -4893,8 +4898,13 @@ class AsyncPostgresDb(AsyncBaseDb):
         predecessor under an in-flight claim). The explicit running check
         covers legacy pairs that predate the gate.
         Eligibility is unique per session, so two workers racing one session
-        always contend on the SAME row and SKIP LOCKED arbitrates; no
-        advisory locks or schema changes are needed. A head that is itself
+        contend on the SAME row and SKIP LOCKED arbitrates between them. What
+        SKIP LOCKED cannot see is an UNCOMMITTED enqueue or claim of the same
+        session (a predecessor whose insert has not committed, or a sibling
+        whose queued -> running flip has not), so a gated claim takes the
+        session's transaction-scoped advisory lock after locking its
+        candidate and re-validates the head under it; enqueue holds the same
+        lock from before its insert to commit. A head that is itself
         stale-running is reclaimed, not bypassed - FIFO holds across crash
         recovery too (the running check excludes the candidate itself; two
         running siblings can only predate this feature, and that legacy pair
@@ -4918,9 +4928,10 @@ class AsyncPostgresDb(AsyncBaseDb):
                     ),
                 ),
             ]
+            session_conditions: List[Any] = []
             if queue_per_session:
                 sibling = table.alias("session_sibling")
-                conditions.append(
+                session_conditions.append(
                     ~(
                         select(sibling.c.id)
                         .where(
@@ -4932,7 +4943,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                     )
                 )
                 running_sibling = table.alias("session_running_sibling")
-                conditions.append(
+                session_conditions.append(
                     ~(
                         select(running_sibling.c.id)
                         .where(
@@ -4945,17 +4956,33 @@ class AsyncPostgresDb(AsyncBaseDb):
                 )
             async with self.async_session_factory() as sess:
                 async with sess.begin():
-                    subq = (
-                        select(table.c.id)
-                        .where(*conditions)
-                        .order_by(table.c.seq.asc())
-                        .limit(1)
-                        .with_for_update(skip_locked=True)
-                        .scalar_subquery()
-                    )
+                    candidate = (
+                        await sess.execute(
+                            select(table.c.id, table.c.session_id)
+                            .where(*conditions, *session_conditions)
+                            .order_by(table.c.seq.asc())
+                            .limit(1)
+                            .with_for_update(skip_locked=True)
+                        )
+                    ).fetchone()
+                    if candidate is None:
+                        return None
+                    if queue_per_session:
+                        # Under the session lock every in-flight enqueue or
+                        # claim of this session has committed; re-validate
+                        # the head against that state before taking it (READ
+                        # COMMITTED gives this statement a fresh snapshot)
+                        await sess.execute(text(JOBS_SESSION_LOCK_SQL), {"sid": candidate.session_id})
+                        still_head = (
+                            await sess.execute(
+                                select(table.c.id).where(table.c.id == candidate.id, *session_conditions)
+                            )
+                        ).fetchone()
+                        if still_head is None:
+                            return None
                     stmt = (
                         update(table)
-                        .where(table.c.id == subq)
+                        .where(table.c.id == candidate.id)
                         .values(
                             status="running",
                             locked_by=worker_id,

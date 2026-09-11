@@ -1055,3 +1055,136 @@ class TestPostgresJobsTableUpgradeIsGuarded:
             assert reopened.get_job("r1")["seq"] is not None
         finally:
             self._drop(first)
+
+
+@pytest.mark.skipif(not _PG_AVAILABLE, reason="Postgres not available on localhost:5532")
+class TestPostgresSessionSerialization:
+    """Enqueue and claim of one session are serialized by a transaction-scoped
+    advisory lock on the session id, in both Postgres adapters.
+
+    Why ordering alone is not enough: identity values are allocated at
+    insert, before commit. Insert A takes seq 1 and stays open; insert B
+    takes seq 2 and commits; a worker claims B; A commits; a second worker
+    sees A as the head and, with the first claim still uncommitted, no
+    running sibling. Both run. The predecessor was invisible, not misordered,
+    so no ORDER BY closes it. Holding the session lock from before the insert
+    to commit, and taking it in the claim before re-validating the head,
+    makes the uncommitted insert wait out the claim and the claim wait out
+    the insert."""
+
+    from agno.db.postgres.utils import JOBS_SESSION_LOCK_SQL as LOCK_SQL
+
+    @staticmethod
+    def _drop(db):
+        import sqlalchemy
+
+        engine = sqlalchemy.create_engine(PG_URL)
+        with engine.begin() as conn:
+            conn.execute(sqlalchemy.text(f'DROP TABLE IF EXISTS {db.db_schema}."{db.job_table_name}"'))
+        engine.dispose()
+
+    @staticmethod
+    def _run_in_thread(fn):
+        import threading
+
+        done = threading.Event()
+        result: dict = {}
+
+        def _target():
+            try:
+                result["value"] = fn()
+            except Exception as exc:  # pragma: no cover - surfaced by the assertion
+                result["error"] = exc
+            finally:
+                done.set()
+
+        threading.Thread(target=_target, daemon=True).start()
+        return done, result
+
+    def _held_session_lock(self, session_id: str):
+        """A connection holding the session's advisory lock in an open
+        transaction, standing in for an in-flight enqueue or claim."""
+        import sqlalchemy
+
+        engine = sqlalchemy.create_engine(PG_URL)
+        conn = engine.connect()
+        txn = conn.begin()
+        conn.execute(sqlalchemy.text(self.LOCK_SQL), {"sid": session_id})
+        return engine, conn, txn
+
+    @pytest.mark.parametrize("async_db", [False, True])
+    def test_enqueue_waits_for_an_in_flight_session_transaction(self, async_db):
+        import asyncio
+
+        from agno.db.postgres import AsyncPostgresDb, PostgresDb
+
+        db_type = AsyncPostgresDb if async_db else PostgresDb
+        db = db_type(db_url=PG_URL, job_table=f"parity_lockenq_{uuid.uuid4().hex[:8]}")
+        engine, conn, txn = self._held_session_lock("s1")
+        try:
+            if async_db:
+                asyncio.run(db.ensure_jobs_table())
+            else:
+                db.ensure_jobs_table()
+            job = make_job("r_b", session_id="s1", created_at=1000)
+            fn = (lambda: asyncio.run(db.enqueue_job(job))) if async_db else (lambda: db.enqueue_job(job))
+            done, result = self._run_in_thread(fn)
+            assert not done.wait(0.6), "enqueue must block while another transaction holds the session lock"
+            txn.commit()
+            assert done.wait(5), "enqueue must complete once the lock is released"
+            assert "error" not in result and result["value"]["accepted"]
+        finally:
+            conn.close()
+            engine.dispose()
+            self._drop(db)
+
+    @pytest.mark.parametrize("async_db", [False, True])
+    def test_claim_waits_for_an_in_flight_session_transaction(self, async_db):
+        import asyncio
+
+        from agno.db.postgres import AsyncPostgresDb, PostgresDb
+
+        db_type = AsyncPostgresDb if async_db else PostgresDb
+        db = db_type(db_url=PG_URL, job_table=f"parity_lockclaim_{uuid.uuid4().hex[:8]}")
+        try:
+            job = make_job("r_a", session_id="s1", created_at=1000)
+            if async_db:
+                asyncio.run(db.enqueue_job(job))
+            else:
+                db.enqueue_job(job)
+            engine, conn, txn = self._held_session_lock("s1")
+            try:
+                fn = (
+                    (lambda: asyncio.run(db.claim_job("w1", queue_per_session=True)))
+                    if async_db
+                    else (lambda: db.claim_job("w1", queue_per_session=True))
+                )
+                done, result = self._run_in_thread(fn)
+                assert not done.wait(0.6), "a gated claim must block while another transaction holds the session lock"
+                txn.commit()
+                assert done.wait(5), "the claim must complete once the lock is released"
+                assert "error" not in result and result["value"] is not None and result["value"]["id"] == "r_a"
+            finally:
+                conn.close()
+                engine.dispose()
+        finally:
+            self._drop(db)
+
+    def test_ungated_claim_does_not_take_the_session_lock(self):
+        """With queue_per_session off there is nothing to serialize against:
+        the claim must not wait on a session lock it has no use for."""
+        from agno.db.postgres import PostgresDb
+
+        db = PostgresDb(db_url=PG_URL, job_table=f"parity_lockoff_{uuid.uuid4().hex[:8]}")
+        try:
+            db.enqueue_job(make_job("r_a", session_id="s1", created_at=1000))
+            engine, conn, txn = self._held_session_lock("s1")
+            try:
+                done, result = self._run_in_thread(lambda: db.claim_job("w1"))
+                assert done.wait(5) and result["value"] is not None and result["value"]["id"] == "r_a"
+            finally:
+                txn.rollback()
+                conn.close()
+                engine.dispose()
+        finally:
+            self._drop(db)
