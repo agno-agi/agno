@@ -645,6 +645,7 @@ module = [
   "plivo.*",
   "psycopg.*",
   "pyarrow.*",
+  "pyatr.*",
   "pycountry.*",
   "pymilvus.*",
   "pymongo.*",
