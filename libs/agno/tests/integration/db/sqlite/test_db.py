@@ -135,3 +135,21 @@ def test_full_workflow(sqlite_db_real):
 
         assert result is not None
         assert result.session_type == "agent"
+
+
+def test_upsert_schema_version_stores_utc_timestamp(sqlite_db_real):
+    """Test that schema versions table stores timezone-aware UTC timestamps"""
+    sqlite_db_real.upsert_schema_version(table_name="test_schema", version="2.1.0")
+
+    version_table = sqlite_db_real._get_table("versions")
+    with sqlite_db_real.Session() as sess:
+        row = sess.execute(
+            version_table.select().where(version_table.c.table_name == "test_schema")
+        ).fetchone()
+
+        assert row is not None
+        assert row.version == "2.1.0"
+        # Verify timestamps are ISO format and include UTC offset (+00:00 or ending with Z)
+        assert "+00:00" in row.created_at or row.created_at.endswith("Z")
+        assert "+00:00" in row.updated_at or row.updated_at.endswith("Z")
+
