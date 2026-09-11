@@ -21,6 +21,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
 
 from agno.agent import Agent, RemoteAgent
+from agno.os.interfaces.agui.handlers import validate_subagent_visibility
 from agno.os.interfaces.agui.input import (
     extract_context,
     extract_media,
@@ -41,6 +42,7 @@ async def run_entity(
     entity: Union[Agent, RemoteAgent, Team, RemoteTeam],
     run_input: RunAgentInput,
     user_id: Optional[str] = None,
+    subagent_visibility: Optional[str] = None,
 ) -> AsyncIterator[BaseEvent]:
     """Shared handler for running an Agent or Team with AG-UI input/output mapping.
 
@@ -126,6 +128,7 @@ async def run_entity(
             thread_id=run_input.thread_id,
             run_id=run_id,
             run_state=session_state,
+            subagent_visibility=subagent_visibility,
         ):
             yield event
 
@@ -135,12 +138,21 @@ async def run_entity(
 
 
 def attach_routes(
-    router: APIRouter, agent: Optional[Union[Agent, RemoteAgent]] = None, team: Optional[Union[Team, RemoteTeam]] = None
+    router: APIRouter,
+    agent: Optional[Union[Agent, RemoteAgent]] = None,
+    team: Optional[Union[Team, RemoteTeam]] = None,
+    subagent_visibility: Optional[str] = None,
 ) -> APIRouter:
     if agent is None and team is None:
         raise ValueError("Either agent or team must be provided.")
 
-    entity = agent or team
+    # Validated at mount time, not per request: an unserveable setting is a
+    # startup failure, never an in-band error after a run has already begun.
+    subagent_visibility = validate_subagent_visibility(subagent_visibility)
+
+    # An agent takes precedence over a team, decided on presence, so the entity a
+    # request runs is the one the interface's scope mapping named.
+    entity = agent if agent is not None else team
     encoder = EventEncoder()
 
     @router.post("/agui", name="run_agent")
@@ -160,7 +172,12 @@ def attach_routes(
         )
 
         async def event_generator():
-            async for event in run_entity(entity, run_input, user_id=user_id):  # type: ignore
+            async for event in run_entity(
+                entity,  # type: ignore[arg-type]
+                run_input,
+                user_id=user_id,
+                subagent_visibility=subagent_visibility,
+            ):
                 yield encoder.encode(event)
 
         return StreamingResponse(
