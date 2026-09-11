@@ -1202,6 +1202,7 @@ class ChromaDb(VectorDb):
                     name=name,
                     meta_data=doc_metadata,
                     content=content,
+                    embedder=self.embedder,
                     embedding=embedding,
                     content_id=content_id,
                 )
@@ -1297,6 +1298,7 @@ class ChromaDb(VectorDb):
                         name=name,
                         meta_data=doc_metadata,
                         content=content,
+                        embedder=self.embedder,
                         embedding=embedding,
                         content_id=content_id,
                     )
@@ -1384,6 +1386,7 @@ class ChromaDb(VectorDb):
                         name=name,
                         meta_data=doc_metadata,
                         content=content,
+                        embedder=self.embedder,
                         embedding=embedding,
                         content_id=content_id,
                     )

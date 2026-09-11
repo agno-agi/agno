@@ -482,6 +482,7 @@ class UpstashVectorDb(VectorDb):
                         content=result.data,
                         id=result.id,
                         meta_data=result.metadata or {},
+                        embedder=self.embedder,
                         embedding=result.vector,
                     )
                 )
