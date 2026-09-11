@@ -10,6 +10,44 @@ def test_default_model_id():
     assert Cerebras().id == "gpt-oss-120b"
 
 
+def test_request_parameters_are_forwarded_without_nesting():
+    model = Cerebras(
+        max_completion_tokens=64,
+        max_tokens=32,
+        stop=["END"],
+        seed=7,
+        reasoning_effort="low",
+        logprobs=True,
+        top_logprobs=3,
+        frequency_penalty=0.2,
+        presence_penalty=0.3,
+        logit_bias={"42": -1},
+        service_tier="default",
+        prompt_cache_key="conversation-1",
+        prediction={"type": "content", "content": "expected"},
+        user="test-user",
+        request_params={"custom_field": "custom-value"},
+    )
+    tools = [
+        {
+            "function": {
+                "name": "get_weather",
+                "description": "Get the weather",
+                "parameters": {"type": "object", "properties": {}},
+            }
+        }
+    ]
+
+    params = model.get_request_params(tools=tools, tool_choice="required")
+
+    assert params["max_completion_tokens"] == 64
+    assert params["max_tokens"] == 32
+    assert params["reasoning_effort"] == "low"
+    assert params["tool_choice"] == "required"
+    assert params["custom_field"] == "custom-value"
+    assert "request_params" not in params
+
+
 @pytest.fixture(scope="module")
 def cerebras_model():
     """Fixture that provides a Cerebras model and reuses it across all tests in the module."""
