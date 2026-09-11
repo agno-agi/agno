@@ -351,6 +351,41 @@ class TestPersistRunInSession:
 
         assert run_response.session_state == {"k": "v"}
         assert session.session_data == {"session_state": {"k": "v"}}
+        assert session.runs is not None
+        assert session.runs[0].session_state == {"k": "v"}
+
+    def test_persist_can_omit_run_session_state_snapshot(self):
+        db = InMemoryDb()
+        agent = _make_agent(db=db)
+        agent.store_run_session_state = False
+        run_response = _make_run_response()
+        session = _make_session()
+        session_state = {"large_registry": {"item": "value"}}
+        run_context = RunContext(run_id="r1", session_id="s1", session_state=session_state)
+
+        persist_run_in_session(agent, run_response, session, run_context=run_context)
+
+        assert run_response.session_state is session_state
+        assert session.session_data == {"session_state": session_state}
+        assert session.runs is not None
+        assert session.runs[0].session_state is None
+
+    @pytest.mark.asyncio
+    async def test_apersist_can_omit_run_session_state_snapshot(self):
+        db = InMemoryDb()
+        agent = _make_agent(db=db)
+        agent.store_run_session_state = False
+        run_response = _make_run_response()
+        session = _make_session()
+        session_state = {"large_registry": {"item": "value"}}
+        run_context = RunContext(run_id="r1", session_id="s1", session_state=session_state)
+
+        await apersist_run_in_session(agent, run_response, session, run_context=run_context)
+
+        assert run_response.session_state is session_state
+        assert session.session_data == {"session_state": session_state}
+        assert session.runs is not None
+        assert session.runs[0].session_state is None
 
 
 class TestCallbackEndToEnd:
