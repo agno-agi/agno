@@ -14,14 +14,15 @@ the same database. :class:`Authorization` owns all of that and wires itself into
     authz.define_role("viewer", ["agents:*:read"], default=True)
     authz.define_role("runner", ["agents:*:read", "agents:*:run"])
     authz.seed(admin=ADMIN_SUBJECT)   # bootstrap the admin ROLE
+    authz.assign("carol", "runner")   # give a specific user a non-default role (bootstrap-safe)
 
     agent_os = AgentOS(id=OS_ID, db=db, agents=[...], user_directory=True, authorization=authz)
 
 Roles are opt-in: ``define_role`` puts roles in play, and a verify-only Authorization defines none.
 The user directory is NOT configured here, and Authorization never touches it. It is a top-level
 ``AgentOS(user_directory=...)`` concern, a peer of ``user_isolation``, and it works with or without
-auth. Seed people on the ``ManagedUserStore`` itself (``users.upsert(...)``) and assign their roles
-through ``role_store.assign(...)`` or the ``/authz`` admin API. Verification lives here because it
+auth. Seed people on the ``ManagedUserStore`` itself (``users.upsert(...)``) and give them roles with
+``assign(subject, role)`` (bootstrap-safe) or the ``/authz`` admin API. Verification lives here because it
 already lives under authorization today (``authorization=True`` + ``AuthorizationConfig(...)``), and
 plenty of setups verify tokens with no roles (isolation, scope-based access, service accounts). So the
 verify-only case is a one-liner:
@@ -167,6 +168,7 @@ class Authorization:
         # Buffers applied at bind time (used when no db is available yet).
         self._role_defs: List[Tuple[str, List[ScopeInput], bool, Optional[str], Optional[str]]] = []
         self._seed_calls: List[Tuple[str, str]] = []
+        self._assign_calls: List[Tuple[str, str]] = []
         # Admins seeded, checked once at finalize so a warning never depends on define_role/seed order.
         self._seeded_admins: List[Tuple[str, str]] = []
         self._admins_checked = False
@@ -204,8 +206,8 @@ class Authorization:
     def seed(self, *, admin: str, admin_role: str = _ADMIN_ROLE) -> "Authorization":
         """Bootstrap the admin: grant ``admin_role`` (default ``"admin"`` -- define it first) to
         ``admin`` if no subject already holds an admin role. A role concern only. The user directory
-        is separate: seed people on the ``ManagedUserStore`` (``users.upsert(...)``) and assign their
-        roles through ``role_store.assign(...)`` or the ``/authz`` admin API.
+        is separate: seed people on the ``ManagedUserStore`` (``users.upsert(...)``) and give them
+        roles with :meth:`assign` or the ``/authz`` admin API.
 
         BOOTSTRAP semantics: an existing admin is left as is, so seeding on every start is safe. A
         handover to another admin survives restarts; only a true lockout (nobody holds an admin role)
@@ -214,6 +216,21 @@ class Authorization:
             self._apply_seed(admin, admin_role)
         else:
             self._seed_calls.append((admin, admin_role))
+        return self
+
+    def assign(self, subject: str, role: str) -> "Authorization":
+        """Give ``subject`` a ``role`` if they hold none yet -- the bootstrap way to grant a seeded
+        user their role (define the role first).
+
+        BOOTSTRAP semantics: create-if-absent, so re-running on every start never clobbers a role an
+        admin changed at runtime through the ``/authz`` API. That is the difference from
+        ``role_store.assign``, which overwrites unconditionally (use it directly for a declarative,
+        code-owns-the-assignment model). Applied now if a db is bound, else buffered. Chainable."""
+        self._roles_defined = True
+        if self._bound:
+            self._apply_assign(subject, role)
+        else:
+            self._assign_calls.append((subject, role))
         return self
 
     # ------------------------------------------------------------------ binding
@@ -251,6 +268,9 @@ class Authorization:
         for admin, admin_role in self._seed_calls:
             self._apply_seed(admin, admin_role)
         self._seed_calls.clear()
+        for subject, role in self._assign_calls:
+            self._apply_assign(subject, role)
+        self._assign_calls.clear()
 
     def _needs_own_db(self) -> bool:
         """Whether binding has to have a database: a role store the facade must build (or was handed
@@ -311,6 +331,13 @@ class Authorization:
         # Checked once at finalize (authorization_config), so the warning never depends on whether
         # define_role ran before or after this seed.
         self._seeded_admins.append((admin, admin_role))
+
+    def _apply_assign(self, subject: str, role: str) -> None:
+        """Assign a role to a subject, create-if-absent so a runtime promotion survives a restart."""
+        self._require_sync_setup()
+        role_store = self._ensure_role_store()
+        if not role_store.roles_of(subject):  # bootstrap: never clobber an existing (runtime) role
+            role_store.assign(subject, role)
 
     @staticmethod
     def _restore_bootstrap_admin(role_store: "ManagedRoleStore", admin: str, admin_role: str) -> None:

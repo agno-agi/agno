@@ -698,3 +698,24 @@ def test_seeded_admin_not_in_directory_is_not_demoted_on_first_request(tmp_path)
     assert authz.role_store.roles_of("alice") == ["admin"]  # kept, NOT demoted to the default
     assert authz.role_store.roles_of("dave") == ["viewer"]  # role-less still gets the default
     assert users.get("alice") is not None and users.get("dave") is not None  # both provisioned
+
+
+def test_assign_is_bootstrap_safe_and_buffers(tmp_path):
+    """Authorization.assign(subject, role) is the facade's bootstrap-safe role grant: create-if-absent
+    (a runtime promotion survives re-running the boot sequence, unlike role_store.assign which
+    overwrites), and buffered so it needs no db of its own -- applied when AgentOS lends the db."""
+    dbfile = str(tmp_path / "assign.db")
+
+    def boot():
+        a = Authorization()  # no db -> assign must buffer, not require one
+        a.define_role("viewer", ["agents:*:read"], default=True)
+        a.define_role("runner", ["agents:*:read", "agents:*:run"])
+        a.assign("bob", "viewer")
+        a._bind(SqliteDb(db_file=dbfile))  # AgentOS lends the db here
+        return a
+
+    a1 = boot()
+    assert a1.role_store.roles_of("bob") == ["viewer"]
+    a1.role_store.assign("bob", "runner")  # an admin promotes bob at runtime
+    a2 = boot()  # a restart re-runs the identical authz.assign("bob", "viewer")
+    assert a2.role_store.roles_of("bob") == ["runner"]  # create-if-absent: the promotion is NOT clobbered

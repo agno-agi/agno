@@ -14,9 +14,10 @@ Permissions are written as "scopes":
 - "agents:research:run"       -> can run the one agent called research
 - "agent_os:admin"            -> can do everything
 
-The whole setup is one object, Authorization. It owns token verification, the roles,
-the user directory, the audit trail, and the admin API. It borrows the AgentOS
-database, so you never wire four things to the same db by hand.
+The core object is Authorization: token verification, the roles, the audit trail, and
+the admin API. The user directory (the roster) is a separate top-level AgentOS switch,
+seeded on its own store. Authorization borrows the AgentOS database, so you never wire
+the same db by hand.
 
 Run it:
     pip install "agno[roles]"
@@ -66,8 +67,10 @@ authz.define_role("runner", ["agents:*:read", "agents:*:run"])
 
 # Bootstrap the admin ROLE, then hand roles to the seeded users. Safe to run on every start.
 authz.seed(admin="alice")  # alice is the bootstrap admin
-authz.role_store.assign("bob", "viewer")
-authz.role_store.assign("carol", "runner")
+authz.assign(
+    "bob", "viewer"
+)  # bootstrap-safe: a runtime role change survives a restart
+authz.assign("carol", "runner")
 
 agent_os = AgentOS(
     id=OS_ID,
