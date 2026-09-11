@@ -1,15 +1,17 @@
 """
 MMR with Elasticsearch
 ======================
-The same diversity selection as 08_mmr_diverse_results.py, against Elasticsearch.
+The same diversity selection as 07_mmr_diverse_results.py, against Elasticsearch.
 
 MMR compares candidates to each other, so it needs the embedding of every search
-result. Elasticsearch returns embeddings on search, so MMR works against it directly.
+result. Elasticsearch returns embeddings on search, so MMR works against it directly,
+and it composes with hybrid search: Elasticsearch runs the hybrid query on the widened
+pool, then MMR selects from it.
 
 Setup:
     ./cookbook/scripts/run_elasticsearch.sh
 
-See also: 08_mmr_diverse_results.py for what lambda_mult controls.
+See also: 07_mmr_diverse_results.py for what lambda_mult controls.
 """
 
 import asyncio
@@ -27,21 +29,27 @@ from agno.vectordb.search import SearchType
 # ---------------------------------------------------------------------------
 
 elasticsearch_url = "http://localhost:9200"
+index_name = "mmr_demo"
+embedder = OpenAIEmbedder(id="text-embedding-3-small")
 
-vector_db = Elasticsearch(
-    index_name="mmr_demo",
+mmr_db = Elasticsearch(
+    index_name=index_name,
     url=elasticsearch_url,
     search_type=SearchType.hybrid,
-    embedder=OpenAIEmbedder(id="text-embedding-3-small"),
+    embedder=embedder,
+    reranker=MMRReranker(lambda_mult=0.5),
 )
 
-knowledge = Knowledge(
-    vector_db=vector_db,
-    # Runs after Elasticsearch returns candidates.
-    reranker=MMRReranker(lambda_mult=0.5),
-    # Retrieve 5x the requested results so MMR has candidates to choose between.
-    rerank_multiplier=5,
+# The same index without MMR, to compare against.
+plain_db = Elasticsearch(
+    index_name=index_name,
+    url=elasticsearch_url,
+    search_type=SearchType.hybrid,
+    embedder=embedder,
 )
+
+knowledge = Knowledge(vector_db=mmr_db)
+plain = Knowledge(vector_db=plain_db)
 
 # ---------------------------------------------------------------------------
 # Create Agent
@@ -84,15 +92,12 @@ if __name__ == "__main__":
         print("=" * 60 + "\n")
 
         query = "What are some Thai curry dishes?"
-
-        # Same query without MMR, to compare against.
-        plain = Knowledge(vector_db=knowledge.vector_db)
         candidates = len(await plain.asearch(query, max_results=25))
 
         print("Without MMR")
         show(await plain.asearch(query, max_results=5), candidates)
 
-        # Retrieves 25 candidates, selects 5 that are relevant but unlike each other.
+        # Fetches 25 candidates, selects 5 that are relevant but unlike each other.
         print("With MMR")
         show(await knowledge.asearch(query, max_results=5), candidates)
 
@@ -100,6 +105,7 @@ if __name__ == "__main__":
 
         # The async client holds an aiohttp session that Python will not close for
         # you: skip this and the script exits with an unclosed connector warning.
-        await vector_db.async_close()
+        await mmr_db.async_close()
+        await plain_db.async_close()
 
     asyncio.run(main())

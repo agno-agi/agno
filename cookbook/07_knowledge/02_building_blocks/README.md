@@ -7,6 +7,7 @@ Core components you can configure to customize knowledge behavior.
 1. Run Qdrant: `./cookbook/scripts/run_qdrant.sh`
 2. Set `OPENAI_API_KEY` environment variable
 3. For reranking: set `COHERE_API_KEY` environment variable
+4. For the PgVector and Elasticsearch MMR examples: `./cookbook/scripts/run_pgvector.sh` or `./cookbook/scripts/run_elasticsearch.sh`
 
 ## Examples
 
@@ -18,6 +19,9 @@ Core components you can configure to customize knowledge behavior.
 | [04_filtering.py](./04_filtering.py) | Dict filters, FilterExpr, and metadata tagging |
 | [05_agentic_filtering.py](./05_agentic_filtering.py) | Agent-driven dynamic filter selection |
 | [06_embedders.py](./06_embedders.py) | Comparing OpenAI and Ollama embedders |
+| [07_mmr_diverse_results.py](./07_mmr_diverse_results.py) | MMR reranking for diverse, non-redundant results |
+| [08_mmr_with_pgvector.py](./08_mmr_with_pgvector.py) | MMR over PgVector hybrid search |
+| [09_mmr_with_elasticsearch.py](./09_mmr_with_elasticsearch.py) | MMR over Elasticsearch hybrid search |
 
 ## Running
 

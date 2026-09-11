@@ -11,23 +11,20 @@ lambda_mult controls the tradeoff:
 - 0.5 balances relevance against difference
 - 0.0 ranks by difference alone
 
-MMR needs a pool larger than the number of results requested, which is what the
-knowledge-level reranker provides: rerank_multiplier widens the fetch, MMR selects
-from it, and max_results are returned.
+MMR is configured as the vector db's reranker, like any other reranker. Because it
+selects a subset, it needs more candidates than the number of results requested.
+Knowledge widens the vector db fetch when MMR is set (5x the request, capped at 100),
+MMR selects from that pool inside the vector db, and max_results are returned.
 
 MMR reads the embedding on each search result. Not every vector db returns one:
-Milvus, MongoDB, Redis and Valkey do not, so MMR raises there rather
-than silently returning unreranked results.
+Milvus, MongoDB, Redis and Valkey do not, so MMR raises there rather than silently
+returning unreranked results.
 
 Take the returned order as the result: reranking_score holds the MMR score at the
 moment each document was picked, which is not descending, so re-sorting by it discards
 the diversity ordering.
 
-A reranker set on the vector db still runs first, on the widened pool, and MMR then
-reorders its output. Scoring by relevance and then by embedding similarity rarely
-composes usefully, so prefer setting one or the other.
-
-See also: 07_knowledge_level_reranking.py for how the widened fetch works.
+See also: 03_reranking.py for relevance reranking with Cohere.
 """
 
 import asyncio
@@ -43,13 +40,18 @@ from agno.vectordb.qdrant import Qdrant
 # ---------------------------------------------------------------------------
 
 qdrant_url = "http://localhost:6333"
+collection = "mmr_demo"
 
 knowledge = Knowledge(
-    vector_db=Qdrant(collection="mmr_demo", url=qdrant_url),
-    reranker=MMRReranker(lambda_mult=0.5),
-    # Retrieve 5x the requested results so MMR has candidates to choose between.
-    rerank_multiplier=5,
+    vector_db=Qdrant(
+        collection=collection,
+        url=qdrant_url,
+        reranker=MMRReranker(lambda_mult=0.5),
+    ),
 )
+
+# The same collection without MMR, to compare against.
+plain = Knowledge(vector_db=Qdrant(collection=collection, url=qdrant_url))
 
 agent = Agent(
     model=OpenAIResponses(id="gpt-5.6-luna"),
@@ -74,15 +76,12 @@ async def main():
     )
 
     query = "What are some Thai curry dishes?"
-
-    # Same query without MMR, to compare against.
-    plain = Knowledge(vector_db=knowledge.vector_db)
     candidates = len(await plain.asearch(query, max_results=25))
 
     print("\nWithout MMR")
     show(await plain.asearch(query, max_results=5), candidates)
 
-    # Retrieves 25 candidates, selects 5 that are relevant but unlike each other.
+    # Fetches 25 candidates, selects 5 that are relevant but unlike each other.
     print("With MMR")
     show(await knowledge.asearch(query, max_results=5), candidates)
 
