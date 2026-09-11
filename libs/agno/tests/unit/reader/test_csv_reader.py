@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from agno.knowledge.chunking.row import RowChunking
 from agno.knowledge.document.base import Document
 from agno.knowledge.reader.csv_reader import CSVReader
 
@@ -225,6 +226,22 @@ async def test_async_read_multi_page_csv(csv_reader, multi_page_csv_file):
     assert documents[10].meta_data["page"] == 3
     assert documents[10].meta_data["start_row"] == 11
     assert documents[10].meta_data["rows"] == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("skip_header", [False, True])
+@pytest.mark.parametrize("page_size", [1, 5, 1000])
+async def test_async_read_multi_page_csv_preserves_rows_and_numbers(multi_page_csv_file, skip_header, page_size):
+    reader = CSVReader(chunking_strategy=RowChunking(skip_header=skip_header))
+
+    sync_documents = reader.read(multi_page_csv_file)
+    async_documents = await reader.async_read(multi_page_csv_file, page_size=page_size)
+
+    assert [document.content for document in async_documents] == [document.content for document in sync_documents]
+    assert [document.meta_data["row_number"] for document in async_documents] == list(
+        range(2 if skip_header else 1, 12)
+    )
+    assert reader.chunking_strategy.skip_header is skip_header
 
 
 @pytest.mark.asyncio
