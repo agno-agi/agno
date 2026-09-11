@@ -132,7 +132,15 @@ from agno.workflow.condition import Condition
 from agno.workflow.loop import Loop
 from agno.workflow.parallel import Parallel
 from agno.workflow.router import Router
-from agno.workflow.step import Step, UnresolvableCallableError
+from agno.workflow.step import (
+    HitlExecutorMismatchError,
+    HitlExecutorTypeMismatchError,
+    MissingHitlExecutorError,
+    MissingHitlExecutorResponseError,
+    Step,
+    UnresolvableCallableError,
+)
+
 from agno.workflow.steps import Steps
 from agno.workflow.types import (
     OnError,
@@ -161,6 +169,14 @@ from agno.workflow.utils import (
     resolve_executor_pause,
     save_paused_session,
     step_pause_status,
+)
+
+_FATAL_STEP_EXCEPTIONS = (
+    UnresolvableCallableError,
+    MissingHitlExecutorError,
+    MissingHitlExecutorResponseError,
+    HitlExecutorMismatchError,
+    HitlExecutorTypeMismatchError,
 )
 
 # Set to prevent background tasks from being garbage-collected
@@ -424,6 +440,8 @@ def _step_link_specs(step: Any, position: int) -> List[Dict[str, Any]]:
         ("agent_id", "step_agent"),
         ("team_id", "step_team"),
         ("workflow_id", "step_workflow"),
+        ("hitl_agent_id", "step_agent"),
+        ("hitl_team_id", "step_team"),
     ):
         child_component_id = step.get(config_key)
         if not child_component_id:
@@ -1433,6 +1451,28 @@ class Workflow:
                 workflow_version = step.workflow.save(db=db_, stage=stage, label=label, notes=notes)
                 if step.workflow.id is not None and workflow_version is not None:
                     saved_versions[step.workflow.id] = workflow_version
+
+            # Save hitl_executor if present (Agent or Team)
+            if getattr(step, "hitl_executor", None) is not None:
+                hitl_exec = step.hitl_executor
+                if isinstance(hitl_exec, Agent):
+                    agent_version = hitl_exec.save(
+                        db=db_,
+                        stage=stage,
+                        label=label,
+                        notes=notes,
+                    )
+                    if hitl_exec.id is not None and agent_version is not None:
+                        saved_versions[hitl_exec.id] = agent_version
+                elif isinstance(hitl_exec, Team):
+                    team_version = hitl_exec.save(
+                        db=db_,
+                        stage=stage,
+                        label=label,
+                        notes=notes,
+                    )
+                    if hitl_exec.id is not None and team_version is not None:
+                        saved_versions[hitl_exec.id] = team_version
 
         def _pin_saved_version(link: Dict[str, Any]) -> Dict[str, Any]:
             """Pin a link at the version this save just wrote for that child."""
@@ -3034,9 +3074,7 @@ class Workflow:
                         )
                     except RunCancelledException:
                         raise
-                    except UnresolvableCallableError:
-                        # A placeholder for an unresolved reference executed: skipping
-                        # would silently complete a run that could not do its work.
+                    except _FATAL_STEP_EXCEPTIONS:
                         raise
                     except Exception as step_error:
                         # Handle step execution error based on on_error policy
@@ -3129,6 +3167,12 @@ class Workflow:
                         )
                         save_paused_session(self, session, workflow_run_response)
                         return workflow_run_response
+
+                    if getattr(step_output, "is_paused", False):
+                        raise MissingHitlExecutorResponseError(
+                            f"Step '{step_name}' produced a paused output, but workflow could not resolve a "
+                            "paused executor run. Ensure the step executor provides a recoverable RunOutput/TeamRunOutput."
+                        )
 
                     # Update the workflow-level previous_step_outputs dictionary
                     previous_step_outputs[step_name] = step_output
@@ -3478,6 +3522,12 @@ class Workflow:
                                         save_paused_session(self, session, workflow_run_response)
                                         return
 
+                                if getattr(step_output, "is_paused", False):
+                                    raise MissingHitlExecutorResponseError(
+                                        f"Step '{step_name}' produced a paused output, but workflow could not resolve a "
+                                        "paused executor run. Ensure the step executor provides a recoverable RunOutput/TeamRunOutput."
+                                    )
+
                                 collected_step_outputs.append(step_output)
                                 _check_failed_step(step, step_output, workflow_run_response, collected_step_outputs)
 
@@ -3541,9 +3591,7 @@ class Workflow:
                                     yield self._handle_event(enriched_event, workflow_run_response)  # type: ignore
                     except RunCancelledException:
                         raise
-                    except UnresolvableCallableError:
-                        # A placeholder for an unresolved reference executed: skipping
-                        # would silently complete a run that could not do its work.
+                    except _FATAL_STEP_EXCEPTIONS:
                         raise
                     except Exception as step_error:
                         step_error_occurred = True
@@ -4058,9 +4106,7 @@ class Workflow:
                         )
                     except RunCancelledException:
                         raise
-                    except UnresolvableCallableError:
-                        # A placeholder for an unresolved reference executed: skipping
-                        # would silently complete a run that could not do its work.
+                    except _FATAL_STEP_EXCEPTIONS:
                         raise
                     except Exception as step_error:
                         # Handle step execution error based on on_error policy
@@ -4153,6 +4199,12 @@ class Workflow:
                         )
                         await asave_paused_session(self, workflow_session, workflow_run_response)
                         return workflow_run_response
+
+                    if getattr(step_output, "is_paused", False):
+                        raise MissingHitlExecutorResponseError(
+                            f"Step '{step_name}' produced a paused output, but workflow could not resolve a "
+                            "paused executor run. Ensure the step executor provides a recoverable RunOutput/TeamRunOutput."
+                        )
 
                     # Update the workflow-level previous_step_outputs dictionary
                     previous_step_outputs[step_name] = step_output
@@ -4538,6 +4590,12 @@ class Workflow:
                                         await asave_paused_session(self, workflow_session, workflow_run_response)
                                         return
 
+                                if getattr(step_output, "is_paused", False):
+                                    raise MissingHitlExecutorResponseError(
+                                        f"Step '{step_name}' produced a paused output, but workflow could not resolve a "
+                                        "paused executor run. Ensure the step executor provides a recoverable RunOutput/TeamRunOutput."
+                                    )
+
                                 collected_step_outputs.append(step_output)
                                 _check_failed_step(step, step_output, workflow_run_response, collected_step_outputs)
 
@@ -4603,9 +4661,7 @@ class Workflow:
                             raise RunCancelledException(f"Run {workflow_run_response.run_id} was cancelled")
                     except RunCancelledException:
                         raise
-                    except UnresolvableCallableError:
-                        # A placeholder for an unresolved reference executed: skipping
-                        # would silently complete a run that could not do its work.
+                    except _FATAL_STEP_EXCEPTIONS:
                         raise
                     except Exception as step_error:
                         step_error_occurred = True
@@ -7349,9 +7405,7 @@ class Workflow:
                     )
                 except RunCancelledException:
                     raise
-                except UnresolvableCallableError:
-                    # A placeholder for an unresolved reference executed: skipping
-                    # would silently complete a run that could not do its work.
+                except _FATAL_STEP_EXCEPTIONS:
                     raise
                 except Exception as step_error:
                     # Handle step execution error based on on_error policy
@@ -7531,7 +7585,11 @@ class Workflow:
         if inner_step is None:
             inner_step = step
 
-        executor = getattr(inner_step, "agent", None) or getattr(inner_step, "team", None)
+        executor = (
+            getattr(inner_step, "_get_hitl_executor", lambda: None)()
+            or getattr(inner_step, "agent", None)
+            or getattr(inner_step, "team", None)
+        )
         if executor is None:
             raise ValueError(f"Step '{getattr(inner_step, 'name', 'unknown')}' has no agent or team executor")
 
@@ -7593,7 +7651,11 @@ class Workflow:
         if inner_step is None:
             inner_step = step
 
-        executor = getattr(inner_step, "agent", None) or getattr(inner_step, "team", None)
+        executor = (
+            getattr(inner_step, "_get_hitl_executor", lambda: None)()
+            or getattr(inner_step, "agent", None)
+            or getattr(inner_step, "team", None)
+        )
         if executor is None:
             raise ValueError(f"Step '{getattr(inner_step, 'name', 'unknown')}' has no agent or team executor")
 
@@ -7682,7 +7744,11 @@ class Workflow:
         if inner_step is None:
             inner_step = step
 
-        executor = getattr(inner_step, "agent", None) or getattr(inner_step, "team", None)
+        executor = (
+            getattr(inner_step, "_get_hitl_executor", lambda: None)()
+            or getattr(inner_step, "agent", None)
+            or getattr(inner_step, "team", None)
+        )
         if executor is None:
             raise ValueError(f"Step '{getattr(inner_step, 'name', 'unknown')}' has no agent or team executor")
 
@@ -7767,7 +7833,11 @@ class Workflow:
         if inner_step is None:
             inner_step = step
 
-        executor = getattr(inner_step, "agent", None) or getattr(inner_step, "team", None)
+        executor = (
+            getattr(inner_step, "_get_hitl_executor", lambda: None)()
+            or getattr(inner_step, "agent", None)
+            or getattr(inner_step, "team", None)
+        )
         if executor is None:
             raise ValueError(f"Step '{getattr(inner_step, 'name', 'unknown')}' has no agent or team executor")
 
@@ -8393,9 +8463,7 @@ class Workflow:
                         raise RunCancelledException(f"Run {workflow_run_response.run_id} was cancelled")
                 except RunCancelledException:
                     raise
-                except UnresolvableCallableError:
-                    # A placeholder for an unresolved reference executed: skipping
-                    # would silently complete a run that could not do its work.
+                except _FATAL_STEP_EXCEPTIONS:
                     raise
                 except Exception as step_error:
                     step_error_occurred = True
@@ -9399,9 +9467,7 @@ class Workflow:
                     )
                 except RunCancelledException:
                     raise
-                except UnresolvableCallableError:
-                    # A placeholder for an unresolved reference executed: skipping
-                    # would silently complete a run that could not do its work.
+                except _FATAL_STEP_EXCEPTIONS:
                     raise
                 except Exception as step_error:
                     # Handle step execution error based on on_error policy
@@ -10153,9 +10219,7 @@ class Workflow:
                         raise RunCancelledException(f"Run {workflow_run_response.run_id} was cancelled")
                 except RunCancelledException:
                     raise
-                except UnresolvableCallableError:
-                    # A placeholder for an unresolved reference executed: skipping
-                    # would silently complete a run that could not do its work.
+                except _FATAL_STEP_EXCEPTIONS:
                     raise
                 except Exception as step_error:
                     step_error_occurred = True
@@ -11803,6 +11867,12 @@ class Workflow:
                 step_kwargs["workflow"] = (
                     step.workflow.deep_copy() if hasattr(step.workflow, "deep_copy") else step.workflow
                 )
+            hitl_exec = getattr(step, "hitl_executor", None)
+            if hitl_exec is not None:
+                # Custom function closures capture the original Agent/Team reference. Deep-copying hitl_executor
+                # would disconnect the continue_run target from the in-memory session created during pause.
+                # Preserving the reference keeps the executor closure and resume target aligned.
+                step_kwargs["hitl_executor"] = hitl_exec
             # Copy Step configuration attributes.
             # NOTE: step_id is intentionally omitted so each copy gets a fresh uuid. Workflows are
             # deep-copied per request for isolation, and reusing a step_id across copies would make
@@ -11821,7 +11891,12 @@ class Workflow:
                     # Only include non-default values to avoid overriding defaults
                     if value is not None:
                         step_kwargs[attr] = value
-            return Step(**step_kwargs)
+            new_step = Step(**step_kwargs)
+            if getattr(step, "_unresolved_hitl_team_id", None) is not None:
+                new_step._unresolved_hitl_team_id = step._unresolved_hitl_team_id
+            if getattr(step, "_unresolved_hitl_agent_id", None) is not None:
+                new_step._unresolved_hitl_agent_id = step._unresolved_hitl_agent_id
+            return new_step
 
         # Handle direct Agent
         if isinstance(step, Agent):
