@@ -36,35 +36,12 @@ import re
 
 from agno.knowledge.chunking.strategy import ChunkingStrategy
 from agno.knowledge.document.base import Document
+from agno.utils.markdown import FenceState, advance_code_fence
 
 DEFAULT_CHUNK_SIZE = 2000
 HEADING = re.compile(r"^(#{1,6})\s+(.*?)\s*#*\s*$")
-FENCE = re.compile(r"^\s*(`{3,}|~{3,})(.*)$")
 ANCHOR_SUFFIX = re.compile(r"\s*\[#[^\]]*\]\s*$")  # fumadocs '## Heading [#anchor]'
 TITLE_PATH_SUFFIX = re.compile(r"\s*\(/[^)\s]*\)\s*$")  # fumadocs '# Title (/docs/path)'
-
-# (delimiter character, opening length, complete opening line). A closing fence
-# must use the same character and at least the opening length; shorter runs are
-# literal content, which is why four-backtick blocks can safely show ``` fences.
-FenceState = tuple[str, int, str]
-
-
-def _fence_step(line: str, opened: FenceState | None) -> tuple[FenceState | None, bool]:
-    """Advance fenced-code state and say whether `line` opened or closed it."""
-    match = FENCE.match(line)
-    if match is None:
-        return opened, False
-    delimiter, suffix = match.groups()
-    if opened is None:
-        # Backticks are forbidden in a backtick fence's info string. Treat such
-        # a line as prose instead of opening a fence that can never close.
-        if delimiter[0] == "`" and "`" in suffix:
-            return None, False
-        return (delimiter[0], len(delimiter), line), True
-    character, length, _ = opened
-    if delimiter[0] == character and len(delimiter) >= length and not suffix.strip():
-        return None, True
-    return opened, False
 
 
 def clean_heading(title: str, page_title: bool = False) -> str:
@@ -85,7 +62,7 @@ def page_intro(text: str, limit: int = 300) -> str:
     fence: FenceState | None = None
     for line in text.splitlines():
         stripped = line.strip()
-        fence, _ = _fence_step(line, fence)
+        fence, _ = advance_code_fence(line, fence)
         if fence is not None or not stripped or stripped.startswith(("#", "```", "~~~", "**Step")):
             if lines:
                 break
@@ -105,7 +82,7 @@ def _sections(text: str, split_level: int) -> list[tuple[list[str], str]]:
     sections: list[tuple[list[str], list[str]]] = [([], [])]
     fence: FenceState | None = None
     for line in text.splitlines():
-        fence, _ = _fence_step(line, fence)
+        fence, _ = advance_code_fence(line, fence)
         match = None if fence is not None else HEADING.match(line)
         if match and len(match.group(1)) <= split_level:
             level = len(match.group(1))
@@ -170,7 +147,7 @@ def _split_long(body: str, limit: int) -> list[str]:
         tail_left = total - consumed > limit // 4  # this line and everything after it
         consumed += len(line) + 1
         was_open = fence is not None
-        fence, is_delimiter = _fence_step(line, fence)
+        fence, is_delimiter = advance_code_fence(line, fence)
         if is_delimiter:
             if was_open and fence is None:  # the closing fence stays with its block
                 current.append(line)
