@@ -19,6 +19,22 @@ class StreamState:
         text_message_open=F   text_message_open=T    text_message_open=F
 
     The text_message_id persists after close so tool calls can parent to it.
+
+    Reasoning Span Lifecycle:
+        CLOSED (initial)           OPEN                     CLOSED
+        reasoning_message_id=None  reasoning_message_id=X   reasoning_message_id=None
+
+    The reasoning id is dropped on close rather than persisted, so every span gets a fresh id and
+    one run opens and closes as many spans as the text/reasoning alternation calls for.
+
+    The reasoning_step_count is per run, not per span, so step numbering keeps counting however
+    many spans a run opens and closes.
+
+    Tool Call Parenting:
+        pending_tool_calls_parent_id, when set, wins over the persisted text_message_id. It holds
+        the message a tool call was parented to, either the text message closed to make room for
+        it or a synthetic empty one, and is cleared when a new text message opens, so a run of
+        sequential tool calls all parent to that same message.
     """
 
     # Text message tracking
@@ -73,7 +89,6 @@ class StreamState:
 
     def start_reasoning(self) -> str:
         self.reasoning_message_id = str(uuid.uuid4())
-        self.reasoning_step_count = 0
         return self.reasoning_message_id
 
     def ensure_reasoning_started(self) -> Tuple[str, bool]:
@@ -87,7 +102,6 @@ class StreamState:
 
     def end_reasoning(self) -> None:
         self.reasoning_message_id = None
-        self.reasoning_step_count = 0
 
     def set_state_snapshot(self, state: Dict[str, Any]) -> None:
         self._last_snapshot = copy.deepcopy(state)
