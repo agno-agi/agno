@@ -13,17 +13,18 @@ the same database. :class:`Authorization` owns all of that and wires itself into
     authz.define_role("admin", ["agent_os:admin"])
     authz.define_role("viewer", ["agents:*:read"], default=True)
     authz.define_role("runner", ["agents:*:read", "agents:*:run"])
-    authz.seed(admin=ADMIN_SUBJECT, users=[("bob", {"email": "bob@co", "role": "viewer"})])
+    authz.seed(admin=ADMIN_SUBJECT)   # bootstrap the admin ROLE
 
     agent_os = AgentOS(id=OS_ID, db=db, agents=[...], user_directory=True, authorization=authz)
 
 Roles are opt-in: ``define_role`` puts roles in play, and a verify-only Authorization defines none.
-The user directory is NOT configured here. It is a top-level ``AgentOS(user_directory=...)`` concern,
-a peer of ``user_isolation``, and it works with or without auth. ``seed(users=...)`` still names the
-people to put in it, but the directory itself is turned on top-level; seeding users with no directory
-configured is an error. Verification lives here because it already lives under authorization today
-(``authorization=True`` + ``AuthorizationConfig(...)``), and plenty of setups verify tokens with no
-roles at all (isolation, scope-based access, service accounts). So the verify-only case is a one-liner:
+The user directory is NOT configured here, and Authorization never touches it. It is a top-level
+``AgentOS(user_directory=...)`` concern, a peer of ``user_isolation``, and it works with or without
+auth. Seed people on the ``ManagedUserStore`` itself (``users.upsert(...)``) and assign their roles
+through ``role_store.assign(...)`` or the ``/authz`` admin API. Verification lives here because it
+already lives under authorization today (``authorization=True`` + ``AuthorizationConfig(...)``), and
+plenty of setups verify tokens with no roles (isolation, scope-based access, service accounts). So the
+verify-only case is a one-liner:
 
     Authorization(verification_keys=KEYS, audience=OS_ID)   # no roles, no ceremony
 
@@ -33,7 +34,7 @@ full override: your provider decides alone, no store, no ``/authz``. Simplicity 
 control when you need it.
 
 The database is borrowed from AgentOS when you don't pass one, so you never write ``db=`` twice --
-role and user definitions are buffered and applied once the db binds (the same way
+role definitions and the admin seed are buffered and applied once the db binds (the same way
 ``AgentOS(user_directory=True)`` adopts the OS db).
 """
 
@@ -47,7 +48,6 @@ if TYPE_CHECKING:
     from agno.os.authz.engine import PolicyEngine
     from agno.os.authz.provider import AuthorizationProvider
     from agno.os.authz.role_store import ManagedRoleStore
-    from agno.os.authz.user_store import ManagedUserStore
     from agno.os.config import AuthorizationConfig
 
 # The role name :meth:`Authorization.seed` grants to its ``admin=`` subject. Define a role with
@@ -156,18 +156,15 @@ class Authorization:
         self._audit_sink: Optional["AuditSink"] = None
 
         # The user directory is NOT owned here: it is a top-level AgentOS(user_directory=...) concern,
-        # a peer of user_isolation. seed() below still names people to put in it; those names are
-        # accumulated and applied into AgentOS's directory store at bind (see _seed_directory), and
-        # AgentOS refuses seed(users=...) with no directory configured.
-        self._directory_admins: List[str] = []
-        self._directory_users: List[Tuple[str, Dict[str, Any]]] = []
+        # a peer of user_isolation, seeded on the ManagedUserStore itself. Authorization never touches
+        # it -- seed() below bootstraps the admin ROLE only.
 
         # Roles are in play if any were defined, or a store/engine was supplied.
         self._roles_defined = role_store is not None or engine is not None or roles_claim is not None
 
         # Buffers applied at bind time (used when no db is available yet).
         self._role_defs: List[Tuple[str, List[ScopeInput], bool, Optional[str], Optional[str]]] = []
-        self._seed_calls: List[Tuple[Optional[str], str, Optional[List[Tuple[str, Dict[str, Any]]]]]] = []
+        self._seed_calls: List[Tuple[str, str]] = []
         # Admins seeded, checked once at finalize so a warning never depends on define_role/seed order.
         self._seeded_admins: List[Tuple[str, str]] = []
         self._admins_checked = False
@@ -202,34 +199,19 @@ class Authorization:
             self._role_defs.append((slug, scopes, default, name, description))
         return self
 
-    def seed(
-        self,
-        *,
-        admin: Optional[str] = None,
-        admin_role: str = _ADMIN_ROLE,
-        users: Optional[List[Tuple[str, Dict[str, Any]]]] = None,
-    ) -> "Authorization":
-        """Bootstrap an admin and directory users, without ever clobbering runtime state.
+    def seed(self, *, admin: str, admin_role: str = _ADMIN_ROLE) -> "Authorization":
+        """Bootstrap the admin: grant ``admin_role`` (default ``"admin"`` -- define it first) to
+        ``admin`` if no subject already holds an admin role. A role concern only. The user directory
+        is separate: seed people on the ``ManagedUserStore`` (``users.upsert(...)``) and assign their
+        roles through ``role_store.assign(...)`` or the ``/authz`` admin API.
 
-        ``admin=<subject>`` grants ``admin_role`` (default ``"admin"`` -- define it first) to that
-        subject if they hold no role yet. ``users=[(subject, {"email", "name", "role"})]`` adds each
-        to the directory and assigns its role, again only if the subject is new.
-
-        BOOTSTRAP semantics: anything that already exists is left as is, so seeding on every start is
-        safe -- an operator who promoted a user or edited a profile through the admin API keeps that
-        change across restarts. Manage users/assignments after first boot through the admin API.
-
-        ``users=...`` needs a top-level ``AgentOS(user_directory=...)`` to put them in; AgentOS refuses
-        the combination otherwise. The role side (the admin grant and each user's role) is applied to
-        the role store here; the directory rows are applied into AgentOS's directory store at bind."""
-        if admin is not None:
-            self._directory_admins.append(admin)
-        if users:
-            self._directory_users.extend(users)
+        BOOTSTRAP semantics: an existing admin is left as is, so seeding on every start is safe. A
+        handover to another admin survives restarts; only a true lockout (nobody holds an admin role)
+        re-grants ``admin`` here. Applied now if a db is bound, else buffered until AgentOS lends one."""
         if self._bound:
-            self._apply_seed(admin, admin_role, users)
+            self._apply_seed(admin, admin_role)
         else:
-            self._seed_calls.append((admin, admin_role, users))
+            self._seed_calls.append((admin, admin_role))
         return self
 
     # ------------------------------------------------------------------ binding
@@ -264,8 +246,8 @@ class Authorization:
         for slug, scopes, default, name, description in self._role_defs:
             self._apply_role_def(slug, scopes, default, name, description)
         self._role_defs.clear()
-        for admin, admin_role, users in self._seed_calls:
-            self._apply_seed(admin, admin_role, users)
+        for admin, admin_role in self._seed_calls:
+            self._apply_seed(admin, admin_role)
         self._seed_calls.clear()
 
     def _needs_own_db(self) -> bool:
@@ -319,39 +301,14 @@ class Authorization:
             return
         store.set_role_scopes(slug, scopes, name=name, description=description, is_default=default)
 
-    def _apply_seed(
-        self, admin: Optional[str], admin_role: str, users: Optional[List[Tuple[str, Dict[str, Any]]]]
-    ) -> None:
-        """The role side of seeding: grant the bootstrap admin and assign each user's role. The
-        directory rows (email/name) are applied separately by :meth:`_seed_directory`, into AgentOS's
-        top-level store."""
+    def _apply_seed(self, admin: str, admin_role: str) -> None:
+        """Grant the bootstrap admin role. A role concern only; the directory is separate."""
         self._require_sync_setup()
         role_store = self._ensure_role_store()
-        if admin is not None:
-            self._restore_bootstrap_admin(role_store, admin, admin_role)
-            # Checked once at finalize (authorization_config), so the warning never depends on whether
-            # define_role ran before or after this seed.
-            self._seeded_admins.append((admin, admin_role))
-        for subject, info in users or []:
-            role = info.get("role")
-            if role and not role_store.roles_of(subject):  # bootstrap: keep a runtime promotion
-                role_store.assign(subject, role)
-
-    def _seed_directory(self, user_store: "ManagedUserStore") -> None:
-        """Create the seeded admin and user rows in AgentOS's top-level directory store, once that
-        store is bound. Create-if-absent, so an operator's profile edits survive a restart. AgentOS
-        calls this from ``_seed_user_directory``; a no-op when nothing was seeded."""
-        for admin in self._directory_admins:
-            if user_store.get(admin) is None:
-                user_store.upsert(admin, name="Bootstrap admin")
-        for subject, info in self._directory_users:
-            if user_store.get(subject) is None:  # bootstrap: keep an admin's profile edits
-                user_store.upsert(subject, email=info.get("email"), name=info.get("name"))
-
-    @property
-    def _seeds_directory_users(self) -> bool:
-        """True when ``seed(users=...)`` named people, so AgentOS must have a directory to hold them."""
-        return bool(self._directory_users)
+        self._restore_bootstrap_admin(role_store, admin, admin_role)
+        # Checked once at finalize (authorization_config), so the warning never depends on whether
+        # define_role ran before or after this seed.
+        self._seeded_admins.append((admin, admin_role))
 
     @staticmethod
     def _restore_bootstrap_admin(role_store: "ManagedRoleStore", admin: str, admin_role: str) -> None:

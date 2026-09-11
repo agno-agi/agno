@@ -9,8 +9,8 @@ can create roles, add users, assign roles, and disable people - live. It works
 both with a control plane / login service (operators authorized by their token
 scopes) and on its own (end users managed in the OS-local store) - both at once.
 
-What it serves (all admin-only). The Authorization facade mounts both the roles admin API
-(/authz) and the user directory (/users) for you -- no include_router:
+What it serves (all admin-only). Authorization (roles) and the top-level user directory together
+mount the roles admin API (/authz) and the user directory (/users) for you -- no include_router:
     GET    /authz/roles                 list roles
     POST   /authz/roles                 create a role (PUT/PATCH .../{slug}/scopes for permissions)
     GET    /authz/scopes                the permission catalog (for a UI grid)
@@ -64,7 +64,8 @@ from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS
-from agno.os.authz import Authorization
+from agno.os.authz import Authorization, ManagedUserStore
+from agno.os.config import UserDirectoryConfig
 from fastapi import HTTPException, Request
 
 # --- config: supports BOTH planes by default ---------------------------------
@@ -138,12 +139,20 @@ CORS_ORIGINS = [
 
 os.makedirs("tmp", exist_ok=True)
 
-# ONE database, and ONE object for authorization. `Authorization` owns token verification, the
-# roles, the user directory, the audit trail, and the /authz + /users admin API. It borrows the OS
-# db below (no second db_url to keep in sync), and it auto-mounts the admin routers, so there is no
-# include_router to wire. Everything still lives in the same database (authz_policy, authz_grouping,
-# authz_users, authz_audit, ...).
+# ONE database. `Authorization` owns token verification, the roles, the audit trail, and the /authz
+# admin API; the user directory is the separate top-level user_directory switch below that mounts
+# /users. Both use the OS db (no second db_url to keep in sync), and the admin routers auto-mount, so
+# there is no include_router to wire. Everything lives in the same database (authz_policy,
+# authz_grouping, authz_users, authz_audit, ...).
 db = SqliteDb(db_file="tmp/console.db")
+
+# The user directory (roster) is its own thing, seeded on the store directly, so a freshly-connected
+# frontend isn't empty. No passwords -- id + optional email/name + the disabled off-switch.
+users = ManagedUserStore(db=db)
+users.upsert(ADMIN_SUBJECT, name="Bootstrap admin")
+users.upsert("bob", email="bob@co", name="Bob")
+users.upsert("carol", email="carol@co", name="Carol")
+
 authz = Authorization(
     db=db,
     verification_keys=KEYS,
@@ -162,18 +171,16 @@ authz = Authorization(
     trust_token_scopes=True,
 )
 
-# Seed roles + a couple of users so a freshly-connected frontend isn't empty. Bootstrap-safe: an
-# admin who later changes a role/assignment through the admin API keeps that change across restarts.
+# Define the roles, bootstrap the admin, and hand roles to the seeded users. Bootstrap-safe: an admin
+# who later changes a role/assignment through the admin API keeps that change across restarts.
 authz.define_role("admin", ["agent_os:admin"])
 authz.define_role("viewer", ["agents:*:read"])
 authz.define_role("runner", ["agents:*:read", "agents:*:run"])
 authz.seed(
-    admin=ADMIN_SUBJECT,  # so the admin API is usable at all
-    users=[
-        ("bob", {"email": "bob@co", "name": "Bob", "role": "viewer"}),
-        ("carol", {"email": "carol@co", "name": "Carol", "role": "runner"}),
-    ],
-)
+    admin=ADMIN_SUBJECT
+)  # grant the admin role, so the admin API is usable at all
+authz.role_store.assign("bob", "viewer")
+authz.role_store.assign("carol", "runner")
 
 research_agent = Agent(
     id="research-agent",
@@ -204,9 +211,9 @@ agent_os = AgentOS(
     db=db,  # same database the stores use
     agents=[research_agent, vault_agent],
     cors_allowed_origins=CORS_ORIGINS,
-    # The directory is a top-level switch (a peer of user_isolation), so the seeded users have
-    # somewhere to live. Authorization carries verification + roles; together they mount /authz + /users.
-    user_directory=True,
+    # The directory is a top-level switch (a peer of user_isolation). Pass the store you seeded above;
+    # Authorization carries verification + roles, and together they mount /authz + /users.
+    user_directory=UserDirectoryConfig(user_store=users, auto_provision=True),
     authorization=authz,
 )
 app = agent_os.get_app()

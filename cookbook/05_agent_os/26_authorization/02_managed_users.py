@@ -38,21 +38,26 @@ from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS, create_dev_token
-from agno.os.authz import Authorization
+from agno.os.authz import Authorization, ManagedUserStore
+from agno.os.config import UserDirectoryConfig
 
 JWT_SECRET = os.getenv("JWT_VERIFICATION_KEY", "your-secret-key-at-least-256-bits-long")
 OS_ID = "managed-users-os"
 
 os.makedirs("tmp", exist_ok=True)
 
-# Authorization is one object for both the roles (what users may do) and the user directory
-# (who they are + the disabled off-switch). It verifies the token too, and persists roles and
-# users together.
-# One database for everything: roles, the directory, and audit all live in the OS db. The
-# Authorization object borrows it (no db= here), so the db is configured once, on AgentOS.
+# One database for everything: the directory, roles, and audit all live in the OS db.
 db = SqliteDb(db_file="tmp/managed_users.db")
 
+# The user directory (roster) is its own thing, separate from authorization. Create the store and
+# seed people on it directly: an id + optional email/name, no passwords, plus the disabled off-switch.
+users = ManagedUserStore(db=db)
+users.upsert("alice", email="alice@co", name="Alice")
+users.upsert("bob", email="bob@co", name="Bob")
+
+# Authorization is verification + roles + the admin bootstrap. It never touches the directory.
 authz = Authorization(
+    db=db,
     verification_keys=[JWT_SECRET],
     algorithm="HS256",
     verify_audience=True,
@@ -62,16 +67,10 @@ authz = Authorization(
 # gets - single-role model, so exactly one role is the default (flagging another moves the flag).
 authz.define_role("viewer", ["agents:*:read"], default=True)
 authz.define_role("admin", ["agent_os:admin"])
-
-# Seed the directory: people (id + optional email/name, no passwords) with a role each. Seeding is
-# create-if-absent, so it is safe to re-run on every boot. The people need a directory to live in,
-# turned on with user_directory=True on AgentOS below; seeding users without one is an error.
-authz.seed(
-    users=[
-        ("alice", {"email": "alice@co", "name": "Alice", "role": "admin"}),
-        ("bob", {"email": "bob@co", "name": "Bob", "role": "viewer"}),
-    ]
-)
+authz.seed(admin="alice")  # alice is the bootstrap admin (the admin ROLE)
+authz.role_store.assign(
+    "bob", "viewer"
+)  # give bob a role explicitly; everyone else gets the default
 
 research_agent = Agent(
     id="research-agent",
@@ -80,22 +79,21 @@ research_agent = Agent(
     db=db,
 )
 
-# The user directory is a top-level AgentOS switch, a peer of user_isolation, not part of the
-# Authorization object. user_directory=True builds the roster from the OS db and auto-provisions an
-# unknown-but-authenticated user with the default role on first request. Authorization carries
-# verification and the roles; together they auto-mount the admin HTTP API (/users, /authz/roles).
+# The user directory is a top-level AgentOS switch, a peer of user_isolation. Pass the store you
+# seeded; auto_provision creates + default-roles an unknown-but-authenticated user on first request.
+# Authorization carries verification + roles; together they auto-mount the admin API (/users, /authz).
 agent_os = AgentOS(
     id=OS_ID,
     db=db,
     description="Managed-users AgentOS",
     agents=[research_agent],
-    user_directory=True,
+    user_directory=UserDirectoryConfig(user_store=users, auto_provision=True),
     authorization=authz,
 )
 app = agent_os.get_app()
-# Inspect and manage the directory through the top-level store (list / set_disabled / get) and roles
-# through authz.role_store. See 06_manage_users_and_roles.py for a frontend that drives the admin API.
-user_store = agent_os.user_directory.user_store
+# Inspect and manage the directory through the store (list / set_disabled / get) and roles through
+# authz.role_store. See 06_manage_users_and_roles.py for a frontend that drives the admin API.
+user_store = users
 
 
 if __name__ == "__main__":

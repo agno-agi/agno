@@ -20,7 +20,8 @@ from agno.agent import Agent  # noqa: E402
 from agno.db.in_memory import InMemoryDb  # noqa: E402
 from agno.db.sqlite import SqliteDb  # noqa: E402
 from agno.os import AgentOS  # noqa: E402
-from agno.os.authz import Authorization  # noqa: E402
+from agno.os.authz import Authorization, ManagedUserStore  # noqa: E402
+from agno.os.config import UserDirectoryConfig  # noqa: E402
 
 SECRET = "authz-facade-secret-at-least-256-bits-xxxxxxxxxx"
 OS_ID = "facade-os"
@@ -87,29 +88,39 @@ def test_user_directory_is_not_on_the_authorization_object(tmp_path):
 
 def test_borrowed_db_applies_buffered_definitions(tmp_path):
     """No db passed to Authorization: role definitions buffer, then apply when the OS db binds
-    (the 'never pass db twice' path). Seeded people land in the top-level AgentOS directory."""
+    (the 'never pass db twice' path). The directory is a separate top-level store."""
     authz = Authorization(audit=True, verification_keys=[SECRET], audience=OS_ID)
     authz.define_role("runner", ["agents:*:run"])
-    authz.seed(users=[("carol", {"email": "c@co", "role": "runner"})])
     assert authz._bound is False
 
     db = SqliteDb(db_file=str(tmp_path / "borrow.db"))
-    os_ = AgentOS(id=OS_ID, db=db, agents=_agents(), user_directory=True, authorization=authz)
-    os_.get_app()  # binds the facade (roles) and seeds the top-level directory
+    users = ManagedUserStore(db=db)
+    users.upsert("carol", email="c@co")  # directory row, seeded on the store directly
+    os_ = AgentOS(
+        id=OS_ID,
+        db=db,
+        agents=_agents(),
+        user_directory=UserDirectoryConfig(user_store=users),
+        authorization=authz,
+    )
+    os_.get_app()  # binds the facade -> buffered role defs apply
+    authz.role_store.assign("carol", "runner")  # role assigned through the now-bound store
     assert authz.role_store.list_roles() == ["runner"]
     assert authz.role_store.roles_of("carol") == ["runner"]
     assert os_.user_directory.user_store.get("carol") is not None
 
 
 def test_seed_is_idempotent(tmp_path):
-    """Seeding on every start is safe: single-role assigns and directory upserts are no-ops when
+    """Seeding on every start is safe: the admin seed and single-role assigns are no-ops when
     unchanged, so a restart neither re-grants nor duplicates."""
     db = SqliteDb(db_file=str(tmp_path / "seed.db"))
     authz = Authorization(db=db)
     authz.define_role("admin", ["agent_os:admin"])
     authz.define_role("viewer", ["agents:*:read"], default=True)
-    authz.seed(admin="root", users=[("bob", {"email": "bob@co", "role": "viewer"})])
-    authz.seed(admin="root", users=[("bob", {"email": "bob@co", "role": "viewer"})])  # again
+    authz.seed(admin="root")
+    authz.seed(admin="root")  # again -> no-op
+    authz.role_store.assign("bob", "viewer")
+    authz.role_store.assign("bob", "viewer")  # again -> no-op
     assert authz.role_store.roles_of("root") == ["admin"]
     assert authz.role_store.roles_of("bob") == ["viewer"]
     assert authz.role_store.default_role() == "viewer"
@@ -125,7 +136,8 @@ def test_reboot_preserves_runtime_operator_edits(tmp_path):
         a = Authorization(db=SqliteDb(db_file=dbfile))
         a.define_role("viewer", ["agents:*:read"], default=True)
         a.define_role("runner", ["agents:*:read", "agents:*:run"])
-        a.seed(users=[("bob", {"role": "viewer"})])
+        if not a.role_store.roles_of("bob"):  # bootstrap: assign only if new, so a promotion survives
+            a.role_store.assign("bob", "viewer")
         return a
 
     a1 = boot()
@@ -257,12 +269,24 @@ def _served(tmp_path, *, borrow_db, trust_token_scopes=False):
     authz.define_role("admin", ["agent_os:admin"])
     authz.define_role("viewer", ["agents:*:read"], default=True)
     authz.define_role("runner", ["agents:research:read", "agents:research:run"])
-    authz.seed(
-        admin="root",
-        users=[("bob", {"email": "bob@co", "name": "Bob", "role": "viewer"}), ("carol", {"role": "runner"})],
+    authz.seed(admin="root")  # admin ROLE only
+    # The directory is a separate top-level store, a peer of user_isolation; seed rows on it directly.
+    # Include the admin: with auto_provision + a default role, a subject not in the directory is
+    # provisioned to the default role on first request, which would demote the seeded admin.
+    users = ManagedUserStore(db=db)
+    users.upsert("root", name="Bootstrap admin")
+    users.upsert("bob", email="bob@co", name="Bob")
+    users.upsert("carol")
+    os_ = AgentOS(
+        id=OS_ID,
+        db=db,
+        agents=_agents(),
+        user_directory=UserDirectoryConfig(user_store=users, auto_provision=True),
+        authorization=authz,
     )
-    # The directory is top-level now (auto_provision on by default), a peer of user_isolation.
-    os_ = AgentOS(id=OS_ID, db=db, agents=_agents(), user_directory=True, authorization=authz)
+    # AgentOS bound the facade's role store; assign the seeded users their roles through it.
+    authz.role_store.assign("bob", "viewer")
+    authz.role_store.assign("carol", "runner")
     return os_
 
 
@@ -327,7 +351,8 @@ def test_authorization_config_is_deprecated_not_a_second_spelling(tmp_path):
 def test_directory_is_explicit_top_level_never_inferred_from_roles(tmp_path):
     """The directory is a top-level AgentOS(user_directory=...) concern, never inferred from roles. A
     roles-only deployment gets no directory and no /users; adding user_directory=True gives both.
-    seed(users=...) with no top-level directory is a config error, not a silent no-op."""
+    Authorization no longer seeds users at all: seeding is on the ManagedUserStore, and seed(users=...)
+    is rejected."""
     # Roles only, no top-level directory -> role store, but no directory and no /users.
     roles_only = Authorization(
         db=SqliteDb(db_file=str(tmp_path / "explicit.db")),
@@ -351,27 +376,29 @@ def test_directory_is_explicit_top_level_never_inferred_from_roles(tmp_path):
     )
     assert idp.role_store is not None
 
-    # Ask for the directory top-level -> it exists and /users mounts (under auth).
+    # Ask for the directory top-level -> it exists and /users mounts (under auth). People are seeded on
+    # the store; Authorization only bootstraps the admin role.
+    adb = SqliteDb(db_file=str(tmp_path / "asked.db"))
+    store = ManagedUserStore(db=adb)
+    store.upsert("bob", email="bob@co")
     asked = Authorization(verification_keys=[SECRET], algorithm="HS256", verify_audience=True, audience=OS_ID)
     asked.define_role("admin", ["agent_os:admin"])
-    asked.seed(admin="root", users=[("bob", {"role": "admin"})])
+    asked.seed(admin="root")
     os_asked = AgentOS(
         id=OS_ID,
-        db=SqliteDb(db_file=str(tmp_path / "asked.db")),
+        db=adb,
         agents=_agents(),
-        user_directory=True,
+        user_directory=UserDirectoryConfig(user_store=store),
         authorization=asked,
     )
     client2 = TestClient(os_asked.get_app())
-    assert os_asked.user_directory.user_store.get("bob") is not None  # seeded person landed in the directory
+    assert os_asked.user_directory.user_store.get("bob") is not None  # the seeded person is in the directory
     assert client2.get("/users", headers=_auth("root")).status_code == 200
 
-    # seed(users=...) with NO top-level directory is a config error, caught at construction.
+    # seed(users=...) no longer exists: user seeding is a directory concern, off the Authorization object.
     orphan = Authorization(verification_keys=[SECRET], audience=OS_ID)
-    orphan.define_role("viewer", ["agents:*:read"])
-    orphan.seed(users=[("bob", {"role": "viewer"})])
-    with pytest.raises(ValueError, match="needs a user directory"):
-        AgentOS(id=OS_ID, db=SqliteDb(db_file=str(tmp_path / "orphan.db")), agents=_agents(), authorization=orphan)
+    with pytest.raises(TypeError, match="users"):
+        orphan.seed(users=[("bob", {"role": "viewer"})])
 
 
 def test_seed_admin_heals_a_lockout_but_respects_a_handover(tmp_path):
@@ -619,3 +646,35 @@ def test_audit_api_404s_when_audit_is_off(tmp_path):
     on = client(True)
     assert on.get("/authz/audit", headers=admin).status_code == 200
     assert on.get("/authz/decisions", headers=admin).status_code == 200
+
+
+def test_seeded_admin_not_in_directory_is_not_demoted_on_first_request(tmp_path):
+    """A subject granted a role (seed(admin=) / role_store.assign) but never added to the directory
+    keeps that role on their first request. Auto-provision creates the directory row but must NOT
+    grant the default role over an existing one -- that would silently demote an admin. A truly
+    role-less user still gets the default, so provisioning is not broken, only the demotion is."""
+    from agno.os.authz.user_store import ManagedUserStore
+    from agno.os.config import UserDirectoryConfig
+
+    db = SqliteDb(db_file=str(tmp_path / "demote.db"))
+    users = ManagedUserStore(db=db)  # alice deliberately NOT seeded into the directory
+    authz = Authorization(db=db, verification_keys=[SECRET], algorithm="HS256", verify_audience=True, audience=OS_ID)
+    authz.define_role("viewer", ["agents:*:read"], default=True)
+    authz.define_role("admin", ["agent_os:admin"])
+    authz.seed(admin="alice")
+
+    client = TestClient(
+        AgentOS(
+            id=OS_ID,
+            db=db,
+            agents=_agents(),
+            user_directory=UserDirectoryConfig(user_store=users, auto_provision=True),
+            authorization=authz,
+        ).get_app()
+    )
+    client.get("/agents/research", headers=_auth("alice"))  # first request auto-provisions alice
+    client.get("/agents/research", headers=_auth("dave"))  # unknown, role-less
+
+    assert authz.role_store.roles_of("alice") == ["admin"]  # kept, NOT demoted to the default
+    assert authz.role_store.roles_of("dave") == ["viewer"]  # role-less still gets the default
+    assert users.get("alice") is not None and users.get("dave") is not None  # both provisioned

@@ -32,7 +32,8 @@ from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS
-from agno.os.authz import Authorization
+from agno.os.authz import Authorization, ManagedUserStore
+from agno.os.config import UserDirectoryConfig
 
 JWT_SECRET = os.getenv("JWT_VERIFICATION_KEY", "your-secret-key-at-least-256-bits-long")
 OS_ID = "authz-quickstart-os"
@@ -40,9 +41,16 @@ OS_ID = "authz-quickstart-os"
 os.makedirs("tmp", exist_ok=True)
 db = SqliteDb(db_file="tmp/authz_quickstart.db")
 
-# One object. It borrows the AgentOS db below (no db= here), turns on the audit trail,
-# and runs a token-scope plane next to the roles so an operator token works too.
+# The user directory (roster) is separate from authorization: create the store and seed people on it.
+users = ManagedUserStore(db=db)
+users.upsert("alice", email="alice@example.com", name="Alice")
+users.upsert("bob", email="bob@example.com", name="Bob")
+users.upsert("carol", email="carol@example.com", name="Carol")
+
+# Authorization is verification + roles + the admin bootstrap. It borrows the AgentOS db below, turns
+# on the audit trail, and runs a token-scope plane next to the roles so an operator token works too.
 authz = Authorization(
+    db=db,
     audit=True,
     trust_token_scopes=True,
     verification_keys=[JWT_SECRET],
@@ -56,14 +64,10 @@ authz.define_role("admin", ["agent_os:admin"])
 authz.define_role("viewer", ["agents:*:read"], default=True)
 authz.define_role("runner", ["agents:*:read", "agents:*:run"])
 
-# Bootstrap an admin and a couple of users. Safe to run on every start (idempotent).
-authz.seed(
-    admin="alice",
-    users=[
-        ("bob", {"email": "bob@example.com", "name": "Bob", "role": "viewer"}),
-        ("carol", {"email": "carol@example.com", "name": "Carol", "role": "runner"}),
-    ],
-)
+# Bootstrap the admin ROLE, then hand roles to the seeded users. Safe to run on every start.
+authz.seed(admin="alice")  # alice is the bootstrap admin
+authz.role_store.assign("bob", "viewer")
+authz.role_store.assign("carol", "runner")
 
 agent_os = AgentOS(
     id=OS_ID,
@@ -79,10 +83,9 @@ agent_os = AgentOS(
             id="vault", name="Vault", model=OpenAIResponses(id="gpt-5.6-luna"), db=db
         ),
     ],
-    # The user directory is a top-level switch (a peer of user_isolation), so the seeded users have
-    # somewhere to live. user_directory=True builds it from the OS db and auto-provisions an unknown
-    # but authenticated user with the default role on first request.
-    user_directory=True,
+    # The user directory is a top-level switch (a peer of user_isolation). Pass the store you seeded;
+    # auto_provision creates + default-roles an unknown but authenticated user on first request.
+    user_directory=UserDirectoryConfig(user_store=users, auto_provision=True),
     authorization=authz,
 )
 app = agent_os.get_app()
