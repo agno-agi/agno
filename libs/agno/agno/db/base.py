@@ -2091,6 +2091,7 @@ class BaseDb(ABC):
     def get_authz_direct_roles_many(self, subjects: List[str]) -> Dict[str, List[str]]:
         """Roles directly assigned to each of ``subjects`` (empty list when none), as
         one bulk read instead of one query per subject."""
+        raise NotImplementedError
 
     def list_authz_role_subjects(self, role: str) -> List[str]:
         """Names directly assigned ``role`` (subjects, plus roles when nesting)."""
@@ -3619,6 +3620,7 @@ class AsyncBaseDb(ABC):
     async def get_authz_direct_roles_many(self, subjects: List[str]) -> Dict[str, List[str]]:
         """Roles directly assigned to each of ``subjects`` (empty list when none), as
         one bulk read instead of one query per subject."""
+        raise NotImplementedError
 
     async def list_authz_role_subjects(self, role: str) -> List[str]:
         """Names directly assigned ``role`` (subjects, plus roles when nesting)."""

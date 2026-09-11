@@ -312,6 +312,7 @@ def test_user_metrics_api_without_a_role_store(tmp_path):
             verify_audience=True,
             audience=OS_ID,
             user_directory=users,
+            auto_provision=False,  # the caller below must not register itself and move the counts
         ),
     ).get_app()
     client = TestClient(app)
