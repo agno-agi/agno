@@ -23,7 +23,7 @@ it runs offline against a simulated issuer.
 
 | File | Lesson |
 |---|---|
-| `00_quickstart_authorization.py` | Start here. The whole setup in one `Authorization` object: verification, roles, users, audit, and the admin API, borrowing the OS db |
+| `00_quickstart_authorization.py` | Start here. Verification, roles, audit and the admin API in one `Authorization` object, plus the user directory on `AgentOS(user_directory=True)`, all on the OS db |
 | `01_managed_roles.py` | Roles only: define what each role may do and hand people roles through `authz.role_store`, no directory |
 | `02_managed_users.py` | The credential-less user directory and the disabled-user kill switch that outlives a valid token |
 | `03_directory_without_auth.py` | `AgentOS(db=db, user_isolation=True, user_directory=True)` with NO auth: a roster + per-user isolation that key off the run's user_id (advisory without auth) |

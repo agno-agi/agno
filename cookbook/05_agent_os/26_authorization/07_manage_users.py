@@ -70,8 +70,9 @@ CORS_ORIGINS = [
 
 os.makedirs("tmp", exist_ok=True)
 
-# One database, one object, users-only. No define_role, so there is no role store and no /authz:
-# the default scope plane (the caller's token scopes) governs, and Authorization mounts just /users.
+# One database, users-only. Authorization here is verify-only: no define_role, so there is no role
+# store and no /authz; the default scope plane (the caller's token scopes) governs. The directory is
+# AgentOS's (user_directory=True below), and /users mounts from it because authorization is on.
 db = SqliteDb(db_file="tmp/manage_users.db")
 authz = Authorization(
     db=db,
@@ -81,17 +82,7 @@ authz = Authorization(
     verify_audience=True,
     audience=OS_ID,
     issuer=ISSUER,
-    audit=True,  # record every access decision
-)
-
-# Seed a couple of people so a freshly-connected frontend isn't empty. No roles here -- admin of
-# /users is the agent_os:admin scope on the caller's token.
-authz.seed(
-    users=[
-        (ADMIN_SUBJECT, {"name": "Bootstrap admin"}),
-        ("bob", {"email": "bob@co", "name": "Bob"}),
-        ("carol", {"email": "carol@co", "name": "Carol"}),
-    ]
+    audit=True,  # record every access decision (and every directory change)
 )
 
 research_agent = Agent(
@@ -107,9 +98,17 @@ agent_os = AgentOS(
     db=db,
     agents=[research_agent],
     cors_allowed_origins=CORS_ORIGINS,
-    authorization=authz,  # mounts /users only; no roles means no /authz surface
+    authorization=authz,  # verify-only; no roles means no /authz surface
+    user_directory=True,  # the roster; /users mounts from it (admin = agent_os:admin on the token)
 )
 app = agent_os.get_app()
+
+# Seed a couple of people so a freshly-connected frontend isn't empty. upsert is create-or-update,
+# so re-running on every start is harmless.
+users = agent_os.user_directory.user_store
+users.upsert(ADMIN_SUBJECT, name="Bootstrap admin")
+users.upsert("bob", email="bob@co", name="Bob")
+users.upsert("carol", email="carol@co", name="Carol")
 # Only /users is mounted (no roles were defined), so there is no /authz roles surface for a frontend
 # to render. That is the difference from 06_manage_users_and_roles.py.
 

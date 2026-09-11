@@ -19,6 +19,7 @@ from agno.os.authz import Authorization  # noqa: E402
 from agno.os.authz.audit import DbAuditSink  # noqa: E402
 from agno.os.authz.role_store import ManagedRoleStore  # noqa: E402
 from agno.os.authz.user_store import ManagedUserStore  # noqa: E402
+from agno.os.config import UserDirectoryConfig  # noqa: E402
 
 SECRET = "audit-switch-secret-at-least-256-bits-xxxxxxxxxx"
 
@@ -32,9 +33,8 @@ def _os(db, roles, users, audit=False):
         id="audit-os",
         agents=[Agent(id="a", name="R", db=InMemoryDb())],
         db=db,
-        authorization=Authorization(
-            verification_keys=[SECRET], algorithm="HS256", role_store=roles, user_directory=users, audit=audit
-        ),
+        authorization=Authorization(verification_keys=[SECRET], algorithm="HS256", role_store=roles, audit=audit),
+        user_directory=UserDirectoryConfig(user_store=users),
     )
 
 

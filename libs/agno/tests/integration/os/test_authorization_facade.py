@@ -57,54 +57,75 @@ def test_verify_only_facade_builds_no_stores(tmp_path):
     authz = Authorization(verification_keys=[SECRET], audience=OS_ID)  # the exact documented shape
     authz._bind(db)
     assert authz.role_store is None
-    assert authz.user_store is None  # auto directory stays OFF with no roles/users
+    assert authz.provider is None  # AgentOS defaults to ScopeAuthorizationProvider
     cfg = authz.authorization_config()
-    assert cfg.authorization_provider is None  # AgentOS defaults to ScopeAuthorizationProvider
     assert cfg.verification_keys == [SECRET] and cfg.audience == OS_ID
 
 
-def test_user_directory_is_one_knob(tmp_path):
-    """The directory has a single knob: user_directory=<store> brings your own (no separate
-    user_store= param), mirroring AgentOS(user_directory=bool | ...)."""
+def test_object_owns_no_directory(tmp_path):
+    """The user directory is AgentOS's, not the object's: Authorization has no directory knob and
+    seed() never writes a directory row. Served, the directory comes from AgentOS(user_directory=)
+    and /users mounts only when one is configured (a 404 means not mounted; a mounted router
+    answers 200/403)."""
     import inspect
 
-    from agno.os.authz.user_store import ManagedUserStore
-
     params = inspect.signature(Authorization.__init__).parameters
-    assert "user_directory" in params
-    assert "user_store" not in params  # collapsed to one way
+    assert "user_directory" not in params and "auto_provision" not in params
+    assert not hasattr(Authorization, "user_store")
 
-    db = SqliteDb(db_file=str(tmp_path / "onedir.db"))
-    store = ManagedUserStore(db=db)
-    authz = Authorization(db=db, user_directory=store)
-    authz.define_role("viewer", ["agents:*:read"])
-    assert authz.user_store is store  # your store is used, on by virtue of being passed
+    def authz():
+        a = Authorization(verification_keys=[SECRET], algorithm="HS256", verify_audience=True, audience=OS_ID)
+        a.define_role("admin", ["agent_os:admin"])
+        a.seed(admin="root")
+        return a
+
+    without = TestClient(
+        AgentOS(
+            id=OS_ID, db=SqliteDb(db_file=str(tmp_path / "no.db")), agents=_agents(), authorization=authz()
+        ).get_app()
+    )
+    assert without.get("/authz/roles", headers=_auth("root")).status_code == 200
+    assert without.get("/users", headers=_auth("root")).status_code == 404
+
+    os_ = AgentOS(
+        id=OS_ID,
+        db=SqliteDb(db_file=str(tmp_path / "yes.db")),
+        agents=_agents(),
+        authorization=authz(),
+        user_directory=True,
+    )
+    with_dir = TestClient(os_.get_app())
+    assert os_.user_directory.user_store.get("root") is None  # seed(admin=) wrote no directory row
+    assert with_dir.get("/users", headers=_auth("root")).status_code == 200
+    # That request JIT-provisioned root's row, and it did NOT replace the seeded admin role with the
+    # default: a pre-assigned subject keeps their role when their directory row is created.
+    assert os_.user_directory.user_store.get("root") is not None
+    assert with_dir.get("/authz/roles", headers=_auth("root")).status_code == 200
 
 
 def test_borrowed_db_applies_buffered_definitions(tmp_path):
-    """No db passed to Authorization: role/user definitions buffer, then apply when the OS db binds
-    (the 'never pass db twice' path)."""
+    """No db passed to Authorization: role definitions and seeds buffer, then apply when the OS db
+    binds (the 'never pass db twice' path)."""
     authz = Authorization(audit=True)
     authz.define_role("runner", ["agents:*:run"])
-    authz.seed(users=[("carol", {"email": "c@co", "role": "runner"})])
+    authz.seed(assignments={"carol": "runner"})
     assert authz._bound is False
 
     db = SqliteDb(db_file=str(tmp_path / "borrow.db"))
     authz._bind(db)
     assert authz.role_store.list_roles() == ["runner"]
     assert authz.role_store.roles_of("carol") == ["runner"]
-    assert authz.user_store.get("carol") is not None
 
 
 def test_seed_is_idempotent(tmp_path):
-    """Seeding on every start is safe: single-role assigns and directory upserts are no-ops when
-    unchanged, so a restart neither re-grants nor duplicates."""
+    """Seeding on every start is safe: single-role assigns are no-ops when unchanged, so a restart
+    neither re-grants nor duplicates."""
     db = SqliteDb(db_file=str(tmp_path / "seed.db"))
     authz = Authorization(db=db)
     authz.define_role("admin", ["agent_os:admin"])
     authz.define_role("viewer", ["agents:*:read"], default=True)
-    authz.seed(admin="root", users=[("bob", {"email": "bob@co", "role": "viewer"})])
-    authz.seed(admin="root", users=[("bob", {"email": "bob@co", "role": "viewer"})])  # again
+    authz.seed(admin="root", assignments={"bob": "viewer"})
+    authz.seed(admin="root", assignments={"bob": "viewer"})  # again
     assert authz.role_store.roles_of("root") == ["admin"]
     assert authz.role_store.roles_of("bob") == ["viewer"]
     assert authz.role_store.default_role() == "viewer"
@@ -120,7 +141,7 @@ def test_reboot_preserves_runtime_operator_edits(tmp_path):
         a = Authorization(db=SqliteDb(db_file=dbfile))
         a.define_role("viewer", ["agents:*:read"], default=True)
         a.define_role("runner", ["agents:*:read", "agents:*:run"])
-        a.seed(users=[("bob", {"role": "viewer"})])
+        a.seed(assignments={"bob": "viewer"})
         return a
 
     a1 = boot()
@@ -219,18 +240,21 @@ def test_facade_prebuilt_async_store_no_setup_ok(tmp_path):
     adb = AsyncSqliteDb(db_file=str(tmp_path / "a.db"))
     authz = Authorization(role_store=ManagedRoleStore(db=adb), verification_keys=[SECRET], audience=OS_ID)
     authz._bind(adb)
-    cfg = authz.authorization_config()  # no writes, just wires the provider
-    assert cfg.authorization_provider is not None
+    authz.authorization_config()  # no writes
+    assert authz.provider is not None  # just wires the provider
 
 
 def test_agentos_rejects_config_alongside_facade(tmp_path):
-    """Passing authorization_config / user_directory / audit alongside an Authorization facade is a
-    silent-preference footgun (a data split if the facade has its own db), so AgentOS rejects it."""
+    """Passing authorization_config / audit alongside an Authorization facade is a silent-preference
+    footgun, so AgentOS rejects it. user_directory is NOT a conflict: the directory is AgentOS's."""
+    from agno.os.authz.audit import LoggingAuditSink
+
     db = SqliteDb(db_file=str(tmp_path / "conflict.db"))
     authz = Authorization(db=db, verification_keys=[SECRET], audience=OS_ID)
     authz.define_role("admin", ["agent_os:admin"])
-    with pytest.raises(ValueError, match="already owns"):
-        AgentOS(id=OS_ID, db=db, agents=_agents(), authorization=authz, user_directory=True)
+    with pytest.raises(ValueError, match="already owns audit"):
+        AgentOS(id=OS_ID, db=db, agents=_agents(), authorization=authz, audit=LoggingAuditSink())
+    AgentOS(id=OS_ID, db=db, agents=_agents(), authorization=authz, user_directory=True)  # fine
 
 
 # --------------------------------------------------------------------------- served end to end
@@ -246,18 +270,14 @@ def _served(tmp_path, *, borrow_db, trust_token_scopes=False):
         algorithm="HS256",
         verify_audience=True,
         audience=OS_ID,
-        auto_provision=True,
     )
     authz = Authorization(**kwargs) if borrow_db else Authorization(db=db, **kwargs)
     authz.define_role("admin", ["agent_os:admin"])
     authz.define_role("viewer", ["agents:*:read"], default=True)
     authz.define_role("runner", ["agents:research:read", "agents:research:run"])
-    authz.seed(
-        admin="root",
-        users=[("bob", {"email": "bob@co", "name": "Bob", "role": "viewer"}), ("carol", {"role": "runner"})],
-    )
-    os_ = AgentOS(id=OS_ID, db=db, agents=_agents(), authorization=authz)
-    return os_
+    authz.seed(admin="root", assignments={"bob": "viewer", "carol": "runner"})
+    # The directory is AgentOS's: True builds a roster on the OS db with JIT provisioning on.
+    return AgentOS(id=OS_ID, db=db, agents=_agents(), authorization=authz, user_directory=True)
 
 
 @pytest.mark.parametrize("borrow_db", [True, False], ids=["borrowed-db", "own-db"])
@@ -316,44 +336,6 @@ def test_authorization_config_is_deprecated_not_a_second_spelling(tmp_path):
 
     with pytest.raises(TypeError, match="authorization_config="):
         AgentOS(id=OS_ID, db=SqliteDb(db_file=str(tmp_path / "cfg2.db")), agents=_agents(), authorization=cfg)
-
-
-def test_directory_is_explicit_never_inferred_from_roles(tmp_path):
-    """Defining roles (or reading them off a token claim) must not stand up a roster: a roles-only
-    deployment gets no ManagedUserStore, no JIT provisioning, and no /users. The directory exists
-    only when asked for -- user_directory=True, a store of your own, or seed(users=...) naming
-    people."""
-    db = SqliteDb(db_file=str(tmp_path / "explicit.db"))
-
-    roles_only = Authorization(db=db, verification_keys=[SECRET], audience=OS_ID)
-    roles_only.define_role("viewer", ["agents:*:read"])
-    assert roles_only.role_store is not None
-    assert roles_only.user_store is None
-    assert roles_only.user_directory_config() is None
-
-    idp = Authorization(db=db, verification_keys=[SECRET], audience=OS_ID, roles_claim="role")
-    assert idp.role_store is not None and idp.user_store is None
-
-    asked = Authorization(db=db, verification_keys=[SECRET], audience=OS_ID, user_directory=True)
-    assert asked.user_store is not None
-
-    seeded = Authorization(db=db, verification_keys=[SECRET], audience=OS_ID)
-    seeded.define_role("viewer", ["agents:*:read"])
-    seeded.seed(users=[("bob", {"role": "viewer"})])
-    assert seeded.user_store is not None and seeded.user_store.get("bob") is not None
-
-    # Served: roles only mounts /authz but not /users (routes exist only once the app serves, so
-    # ask over HTTP rather than reading app.routes).
-    served = Authorization(verification_keys=[SECRET], algorithm="HS256", verify_audience=True, audience=OS_ID)
-    served.define_role("admin", ["agent_os:admin"])
-    served.seed(admin="root")  # an admin, but no users= -> still no directory
-    client = TestClient(
-        AgentOS(
-            id=OS_ID, db=SqliteDb(db_file=str(tmp_path / "ro.db")), agents=_agents(), authorization=served
-        ).get_app()
-    )
-    assert client.get("/authz/roles", headers=_auth("root")).status_code == 200
-    assert client.get("/users", headers=_auth("root")).status_code == 404
 
 
 def test_seed_admin_heals_a_lockout_but_respects_a_handover(tmp_path):
@@ -509,4 +491,24 @@ def test_bring_your_own_provider_overrides(tmp_path):
 
     db = SqliteDb(db_file=str(tmp_path / "byo.db"))
     authz = Authorization(db=db, verification_keys=[SECRET], audience=OS_ID, authorization_provider=DenyAll())
-    assert isinstance(authz.authorization_config().authorization_provider, DenyAll)
+    assert isinstance(authz.provider, DenyAll)
+
+
+def test_issuer_on_the_object_is_enforced(tmp_path):
+    """Authorization(issuer=) pins the ``iss`` claim on the served OS even though the released
+    AuthorizationConfig has no such field: the object hands it to the middleware directly."""
+    authz = Authorization(
+        verification_keys=[SECRET], algorithm="HS256", verify_audience=True, audience=OS_ID, issuer="https://good/"
+    )
+    client = TestClient(
+        AgentOS(
+            id=OS_ID, db=SqliteDb(db_file=str(tmp_path / "iss.db")), agents=_agents(), authorization=authz
+        ).get_app()
+    )
+
+    def tok(iss):
+        payload = {"sub": "u", "aud": OS_ID, "iss": iss, "scopes": ["agents:read"], "exp": int(time.time()) + 3600}
+        return {"Authorization": f"Bearer {jwt.encode(payload, SECRET, algorithm='HS256')}"}
+
+    assert client.get("/agents", headers=tok("https://good/")).status_code == 200
+    assert client.get("/agents", headers=tok("https://evil/")).status_code == 401

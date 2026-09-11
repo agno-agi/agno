@@ -1297,16 +1297,14 @@ def test_mcp_identity_bridge_carries_the_role_store_for_first_provision():
     from agno.os.mcp import _identity_bridge_kwargs
 
     with tempfile.NamedTemporaryFile(suffix=".db") as f:
-        authz = Authorization(
-            db=SqliteDb(db_file=f.name),
-            verification_keys=["x" * 40],
-            algorithm="HS256",
-            user_directory=True,
-            auto_provision=True,
-        )
+        db = SqliteDb(db_file=f.name)
+        authz = Authorization(db=db, verification_keys=["x" * 40], algorithm="HS256")
         authz.define_role("viewer", ["agents:*:read"], default=True)
         authz.define_role("admin", ["agent_os:admin"])
-        os = AgentOS(id="mcp-provision", agents=[_agent()], mcp_server=True, authorization=authz)
+        # The directory is AgentOS's; True builds it with JIT provisioning on.
+        os = AgentOS(
+            id="mcp-provision", db=db, agents=[_agent()], mcp_server=True, authorization=authz, user_directory=True
+        )
         os.get_app()
 
         kw = _identity_bridge_kwargs(os)

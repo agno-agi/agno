@@ -118,6 +118,7 @@ pytest.importorskip("sqlalchemy")  # managed roles persist/enforce via the nativ
 from agno.agent import Agent  # noqa: E402
 from agno.db.in_memory import InMemoryDb  # noqa: E402
 from agno.os import AgentOS  # noqa: E402
+from agno.os.authz import Authorization  # noqa: E402
 from agno.os.authz.role_store import ManagedRoleStore  # noqa: E402
 from agno.os.config import AuthorizationConfig, UserDirectoryConfig  # noqa: E402
 
@@ -146,9 +147,8 @@ def _os(role_store, user_store, *, auto_provision=False):
             verify_audience=True,
             audience=OS_ID,
             role_store=role_store,  # mounts /authz (roles) ...
-            user_directory=user_store,  # ... and /users (directory)
-            auto_provision=auto_provision,
         ),
+        user_directory=UserDirectoryConfig(user_store=user_store, auto_provision=auto_provision),  # ... and /users
     )
 
 
@@ -432,9 +432,8 @@ def test_agentos_adopts_its_db_so_the_kill_switch_persists(tmp_path):
         id="user-adopt-os",
         agents=[Agent(id="a1", name="A", db=os_db)],
         db=os_db,
-        authorization=Authorization(
-            verification_keys=["k" * 40], algorithm="HS256", role_store=roles, user_directory=users
-        ),
+        authorization=Authorization(verification_keys=["k" * 40], algorithm="HS256", role_store=roles),
+        user_directory=UserDirectoryConfig(user_store=users),
     ).get_app()
 
     # adopted, and the revocation made before adoption came across
@@ -479,12 +478,8 @@ def test_user_store_without_a_persistable_db_fails_fast():
             id="unpersisted-users-os",
             agents=[Agent(id="a1", name="A", db=non_sql_db)],
             db=non_sql_db,
-            authorization=Authorization(
-                verification_keys=["k" * 40],
-                algorithm="HS256",
-                role_store=roles,
-                user_directory=ManagedUserStore(),  # bare: nothing to persist into
-            ),
+            authorization=Authorization(verification_keys=["k" * 40], algorithm="HS256", role_store=roles),
+            user_directory=UserDirectoryConfig(user_store=ManagedUserStore()),  # bare: nothing to persist into
         ).get_app()
 
 
@@ -594,8 +589,7 @@ def test_workflow_continue_over_ws_enforces_the_approval_gate(monkeypatch):
         id=OS_ID,
         agents=[agent],
         db=os_db,
-        authorization=True,
-        authorization_config=AuthorizationConfig(
+        authorization=Authorization(
             verification_keys=[SECRET],
             algorithm="HS256",
             verify_audience=True,
@@ -638,3 +632,32 @@ def test_workflow_continue_over_ws_enforces_the_approval_gate(monkeypatch):
                 break
         else:
             raise AssertionError("no error frame within 8 messages")
+
+
+def test_jit_provisioning_never_replaces_a_pre_assigned_role(tmp_path):
+    """A subject can hold a role before their first login (seeded, or assigned through /authz ahead
+    of time). Creating their directory row on that first token must not overwrite it with the
+    default: the default is a floor for people nobody assigned. Regression: the bootstrap admin's
+    first request used to demote them to viewer."""
+    import asyncio
+
+    from agno.db.sqlite import SqliteDb
+    from agno.os.auth import aprovision_user_with_default_role, provision_user_with_default_role
+    from agno.os.authz.role_store import ManagedRoleStore
+
+    db = SqliteDb(db_file=str(tmp_path / "jit.db"))
+    roles, users = ManagedRoleStore(db=db), ManagedUserStore(db=db)
+    roles.set_role_scopes("admin", ["agent_os:admin"])
+    roles.set_role_scopes("viewer", ["agents:*:read"], is_default=True)
+    roles.assign("root", "admin")  # pre-assigned, no directory row yet
+    roles.assign("ops", "admin")
+
+    provision_user_with_default_role(users, roles, None, "root", {"email": "root@co"})
+    assert users.get("root") is not None  # row created ...
+    assert roles.roles_of("root") == ["admin"]  # ... role untouched
+
+    asyncio.run(aprovision_user_with_default_role(users, roles, None, "ops", {}))
+    assert roles.roles_of("ops") == ["admin"]
+
+    provision_user_with_default_role(users, roles, None, "newbie", {})
+    assert roles.roles_of("newbie") == ["viewer"]  # nobody assigned newbie: the default applies

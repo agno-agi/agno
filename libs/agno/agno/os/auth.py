@@ -133,11 +133,16 @@ def provision_user_with_default_role(
     nothing is granted and nothing is warned. Granting happens only on first creation, so a
     later login never re-grants and never fights an admin who removed the role.
 
+    A subject can hold a role before they ever log in (seeded by ``Authorization.seed``, or
+    assigned through ``/authz`` ahead of their first token). Creating their directory row must
+    not touch that: the default is a floor for people nobody assigned, never a replacement, so
+    the bootstrap admin's first request cannot demote them to viewer.
+
     Returns the provisioned user row (so the caller can read ``disabled`` off it without a
     second query).
     """
     user, created = user_store.provision_from_claims(subject, claims, email_claim=email_claim, name_claim=name_claim)
-    if created and role_store is not None:
+    if created and role_store is not None and not _holds_a_role(role_store, subject):
         role = default_role or _store_default_role(role_store)
         if role:
             try:
@@ -151,6 +156,29 @@ def provision_user_with_default_role(
                 "they are denied until a role is assigned"
             )
     return user
+
+
+def _holds_a_role(role_store: Any, subject: str) -> bool:
+    """Whether ``subject`` already holds a stored role; False (grant the default) if the store
+    cannot say, matching the tolerance for custom stores elsewhere in provisioning."""
+    fn = getattr(role_store, "roles_of", None)
+    if not callable(fn):
+        return False
+    try:
+        return bool(fn(subject))
+    except Exception:
+        return False
+
+
+async def _aholds_a_role(role_store: Any, subject: str) -> bool:
+    """Async twin of :func:`_holds_a_role`."""
+    afn = getattr(role_store, "aroles_of", None)
+    if callable(afn):
+        try:
+            return bool(await afn(subject))
+        except Exception:
+            return False
+    return await asyncio.to_thread(_holds_a_role, role_store, subject)
 
 
 async def _astore_default_role(role_store: Any) -> Optional[str]:
@@ -181,7 +209,7 @@ async def aprovision_user_with_default_role(
     user, created = await user_store.aprovision_from_claims(
         subject, claims, email_claim=email_claim, name_claim=name_claim
     )
-    if created and role_store is not None:
+    if created and role_store is not None and not await _aholds_a_role(role_store, subject):
         role = default_role or await _astore_default_role(role_store)
         if role:
             try:

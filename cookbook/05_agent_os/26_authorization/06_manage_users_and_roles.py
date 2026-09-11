@@ -162,18 +162,14 @@ authz = Authorization(
     trust_token_scopes=True,
 )
 
-# Seed roles + a couple of users so a freshly-connected frontend isn't empty. Bootstrap-safe: an
-# admin who later changes a role/assignment through the admin API keeps that change across restarts.
+# Seed roles + a couple of assignments so a freshly-connected frontend isn't empty. Bootstrap-safe:
+# an admin who later changes a role/assignment through the admin API keeps that change across
+# restarts. (If the bootstrap admin is ever demoted with nobody else holding admin, the next boot
+# re-grants it, so the admin API can always be reached.)
 authz.define_role("admin", ["agent_os:admin"])
 authz.define_role("viewer", ["agents:*:read"])
 authz.define_role("runner", ["agents:*:read", "agents:*:run"])
-authz.seed(
-    admin=ADMIN_SUBJECT,  # so the admin API is usable at all
-    users=[
-        ("bob", {"email": "bob@co", "name": "Bob", "role": "viewer"}),
-        ("carol", {"email": "carol@co", "name": "Carol", "role": "runner"}),
-    ],
-)
+authz.seed(admin=ADMIN_SUBJECT, assignments={"bob": "viewer", "carol": "runner"})
 
 research_agent = Agent(
     id="research-agent",
@@ -204,9 +200,17 @@ agent_os = AgentOS(
     db=db,  # same database the stores use
     agents=[research_agent, vault_agent],
     cors_allowed_origins=CORS_ORIGINS,
-    authorization=authz,  # one object; /authz and /users are mounted for you
+    authorization=authz,  # what callers may do; /authz is mounted for you
+    user_directory=True,  # who they are, a peer of authorization; /users is mounted for you
 )
 app = agent_os.get_app()
+
+# The directory: seed a couple of profiles so the Users tab isn't empty. upsert is create-or-update,
+# so re-running is harmless; roles were assigned above, this is just name + email.
+users = agent_os.user_directory.user_store
+users.upsert(ADMIN_SUBJECT, name="Bootstrap admin")
+users.upsert("bob", email="bob@co", name="Bob")
+users.upsert("carol", email="carol@co", name="Carol")
 
 # Dev-mode only: let the bundled console.html "become" an end user. An admin
 # trades their token for one minted as any subject (sub only — no scopes, so

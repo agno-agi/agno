@@ -40,8 +40,8 @@ OS_ID = "authz-quickstart-os"
 os.makedirs("tmp", exist_ok=True)
 db = SqliteDb(db_file="tmp/authz_quickstart.db")
 
-# One object. It borrows the AgentOS db below (no db= here), turns on the audit trail,
-# and runs a token-scope plane next to the roles so an operator token works too.
+# One object for what callers may DO. It borrows the AgentOS db below (no db= here), turns on the
+# audit trail, and runs a token-scope plane next to the roles so an operator token works too.
 authz = Authorization(
     audit=True,
     trust_token_scopes=True,
@@ -49,7 +49,6 @@ authz = Authorization(
     algorithm="HS256",  # matches how the tokens below are signed
     audience=OS_ID,
     verify_audience=True,
-    auto_provision=True,  # first valid token from an unknown user creates them with the default role
 )
 
 # Define the roles. "default=True" is what a brand-new user gets on first sign-in.
@@ -57,14 +56,9 @@ authz.define_role("admin", ["agent_os:admin"])
 authz.define_role("viewer", ["agents:*:read"], default=True)
 authz.define_role("runner", ["agents:*:read", "agents:*:run"])
 
-# Bootstrap an admin and a couple of users. Safe to run on every start (idempotent).
-authz.seed(
-    admin="alice",
-    users=[
-        ("bob", {"email": "bob@example.com", "name": "Bob", "role": "viewer"}),
-        ("carol", {"email": "carol@example.com", "name": "Carol", "role": "runner"}),
-    ],
-)
+# Bootstrap an admin and hand a couple of people their roles. Safe to run on every start: an
+# assignment an admin changed later through the API is kept.
+authz.seed(admin="alice", assignments={"bob": "viewer", "carol": "runner"})
 
 agent_os = AgentOS(
     id=OS_ID,
@@ -81,6 +75,10 @@ agent_os = AgentOS(
         ),
     ],
     authorization=authz,
+    # Who the callers ARE is the user directory, a peer of authorization on AgentOS: a roster with a
+    # per-person off switch. True builds it on the OS db with JIT provisioning on, so the first
+    # valid token from an unknown user creates them with the default role. /users mounts with it.
+    user_directory=True,
 )
 app = agent_os.get_app()
 

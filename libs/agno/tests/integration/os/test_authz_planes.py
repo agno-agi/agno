@@ -11,12 +11,12 @@ pytest.importorskip("sqlalchemy")  # managed roles persist/enforce via the nativ
 from agno.agent import Agent  # noqa: E402
 from agno.db.in_memory import InMemoryDb  # noqa: E402
 from agno.os import AgentOS  # noqa: E402
+from agno.os.authz import Authorization  # noqa: E402
 from agno.os.authz._composite import CompositeAuthorizationProvider  # noqa: E402 (internal mechanism)
 from agno.os.authz.provider import AuthorizationContext  # noqa: E402
 from agno.os.authz.role_router import get_roles_router  # noqa: E402
 from agno.os.authz.role_store import ManagedRoleStore  # noqa: E402
 from agno.os.authz.scope_provider import ScopeAuthorizationProvider  # noqa: E402
-from agno.os.config import AuthorizationConfig  # noqa: E402
 
 SECRET = "composite-secret-at-least-256-bits-long-padding-xxxxxxxx"
 OS_ID = "composite-os"
@@ -95,8 +95,7 @@ def test_both_planes_enforce_on_one_os_end_to_end():
     agent_os = AgentOS(
         id=OS_ID,
         agents=[agent],
-        authorization=True,
-        authorization_config=AuthorizationConfig(
+        authorization=Authorization(
             verification_keys=[SECRET],
             algorithm="HS256",
             verify_audience=True,
@@ -124,8 +123,7 @@ def test_admin_gate_accepts_admin_from_token_scope():
     agent_os = AgentOS(
         id=OS_ID,
         agents=[agent],
-        authorization=True,
-        authorization_config=AuthorizationConfig(
+        authorization=Authorization(
             verification_keys=[SECRET],
             algorithm="HS256",
             verify_audience=True,
@@ -172,8 +170,7 @@ def test_custom_provider_does_not_fail_open_on_non_resource_routes():
     agent_os = AgentOS(
         id=OS_ID,
         agents=[agent],
-        authorization=True,
-        authorization_config=AuthorizationConfig(
+        authorization=Authorization(
             verification_keys=[SECRET],
             algorithm="HS256",
             verify_audience=True,
@@ -193,15 +190,18 @@ def test_custom_provider_does_not_fail_open_on_non_resource_routes():
 
 
 def test_authorization_provider_rejects_a_string():
-    """A list of providers is supported; a string is a mistake. The typed
-    AuthorizationConfig field rejects it at construction (pydantic ValidationError,
-    a ValueError), so it can never be mistaken for an iterable of characters."""
+    """A list of providers is supported; a string is a mistake. AgentOS rejects it when it seeds
+    the provider, so it can never be mistaken for an iterable of characters."""
+    from agno.agent import Agent
+    from agno.db.in_memory import InMemoryDb
+
+    authz = Authorization(
+        verification_keys=[SECRET],
+        algorithm="HS256",
+        authorization_provider="ScopeAuthorizationProvider",  # oops, a string
+    )
     with pytest.raises(ValueError, match="AuthorizationProvider"):
-        AuthorizationConfig(
-            verification_keys=[SECRET],
-            algorithm="HS256",
-            authorization_provider="ScopeAuthorizationProvider",  # oops, a string
-        )
+        AgentOS(id=OS_ID, agents=[Agent(id="a", name="A", db=InMemoryDb())], authorization=authz).get_app()
 
 
 def test_composite_filter_accessible_unions_and_respects_per_plane_deny():
