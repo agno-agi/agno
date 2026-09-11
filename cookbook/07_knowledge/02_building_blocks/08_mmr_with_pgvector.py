@@ -1,15 +1,17 @@
 """
 MMR with PgVector
 =================
-The same diversity selection as 08_mmr_diverse_results.py, against PgVector.
+The same diversity selection as 07_mmr_diverse_results.py, against PgVector.
 
 MMR compares candidates to each other, so it needs the embedding of every search
-result. PgVector returns embeddings on search, so MMR works against it directly.
+result. PgVector returns embeddings on search, so MMR works against it directly, and
+it composes with hybrid search: PgVector runs the hybrid query on the widened pool,
+then MMR selects from it.
 
 Setup:
     ./cookbook/scripts/run_pgvector.sh
 
-See also: 08_mmr_diverse_results.py for what lambda_mult controls.
+See also: 07_mmr_diverse_results.py for what lambda_mult controls.
 """
 
 import asyncio
@@ -27,18 +29,27 @@ from agno.vectordb.search import SearchType
 # ---------------------------------------------------------------------------
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
+table_name = "mmr_demo"
+embedder = OpenAIEmbedder(id="text-embedding-3-small")
 
 knowledge = Knowledge(
     vector_db=PgVector(
-        table_name="mmr_demo",
+        table_name=table_name,
         db_url=db_url,
         search_type=SearchType.hybrid,
-        embedder=OpenAIEmbedder(id="text-embedding-3-small"),
+        embedder=embedder,
+        reranker=MMRReranker(lambda_mult=0.5),
     ),
-    # Runs after PgVector returns candidates.
-    reranker=MMRReranker(lambda_mult=0.5),
-    # Retrieve 5x the requested results so MMR has candidates to choose between.
-    rerank_multiplier=5,
+)
+
+# The same table without MMR, to compare against.
+plain = Knowledge(
+    vector_db=PgVector(
+        table_name=table_name,
+        db_url=db_url,
+        search_type=SearchType.hybrid,
+        embedder=embedder,
+    ),
 )
 
 # ---------------------------------------------------------------------------
@@ -82,15 +93,12 @@ if __name__ == "__main__":
         print("=" * 60 + "\n")
 
         query = "What are some Thai curry dishes?"
-
-        # Same query without MMR, to compare against.
-        plain = Knowledge(vector_db=knowledge.vector_db)
         candidates = len(await plain.asearch(query, max_results=25))
 
         print("Without MMR")
         show(await plain.asearch(query, max_results=5), candidates)
 
-        # Retrieves 25 candidates, selects 5 that are relevant but unlike each other.
+        # Fetches 25 candidates, selects 5 that are relevant but unlike each other.
         print("With MMR")
         show(await knowledge.asearch(query, max_results=5), candidates)
 
