@@ -113,6 +113,35 @@ def _find_paused_run(
     return None
 
 
+async def afind_paused_run(
+    entity: Union[Agent, Team],
+    session_id: str,
+    tool_messages: List[AGUIToolMessage],
+):
+    """The paused run these tool results answer, or None if there is none.
+
+    A trailing tool result is not by itself proof of a resume. Clients append
+    one for a tool call this backend never emitted and never offered: that is
+    how an interactive surface reports a click. What separates the two cases is
+    whether a paused run in this session is actually waiting on one of these
+    tool call ids, so that is the only thing consulted here.
+
+    Every "no" is a None rather than a raise, including the ones that say this
+    entity could never resume at all. A remote entity, an entity with no
+    database, and a session that no longer exists all mean the same thing to
+    the caller: there is no paused run here, so the results belong to a new
+    turn.
+    """
+    if not isinstance(entity, (Agent, Team)) or not entity.db:
+        return None
+
+    session = await entity.aget_session(session_id=session_id)
+    if not isinstance(session, (AgentSession, TeamSession)):
+        return None
+
+    return _find_paused_run(session, tool_messages, is_team=isinstance(entity, Team))
+
+
 async def resume_paused_run(
     entity: Union[Agent, Team],
     session_id: str,
@@ -120,20 +149,10 @@ async def resume_paused_run(
     run_context: RunContext,
     run_kwargs: dict,
 ):
-    if not isinstance(entity, (Agent, Team)):
-        raise ValueError("Frontend tool resume requires a local Agent or Team")
-    if not entity.db:
-        raise ValueError("Frontend tool resume requires a database")
-
-    session = await entity.aget_session(session_id=session_id)
-    if not session:
-        raise ValueError(f"Session {session_id} not found")
-    if not isinstance(session, (AgentSession, TeamSession)):
-        raise ValueError(f"Session {session_id} is not a valid session type")
-
-    paused_run = _find_paused_run(session, tool_messages, is_team=isinstance(entity, Team))
-    if not paused_run:
-        raise ValueError(f"No paused run matching the provided tool results found in session {session_id}")
+    """Continue the paused run these tool results answer, or None if there is none."""
+    paused_run = await afind_paused_run(entity, session_id, tool_messages)
+    if paused_run is None:
+        return None
     if not paused_run.requirements:
         raise ValueError(f"Run {paused_run.run_id} has no requirements to resume")
 
