@@ -233,21 +233,23 @@ def set_result_store(agent: Agent) -> None:
 
 def set_filesystem(agent: Agent) -> None:
     """Resolve the filesystem shorthand or attach an explicitly provided instance."""
-    from agno.utils.callables import is_callable_factory
-
     if agent.filesystem is None or agent.filesystem is False:
         agent._filesystem = None
         return
     if agent._filesystem is not None:
         return
-    if is_callable_factory(agent.tools, excluded_types=(Toolkit, Function)):
-        raise ValueError("filesystem cannot be combined with a callable tools factory")
 
     from agno.fs import FileSystem
     from agno.fs.toolkit import FileSystemTools
 
-    existing_tools = list(agent.tools or [])
-    existing_filesystem = next((tool for tool in existing_tools if isinstance(tool, FileSystemTools)), None)
+    existing_filesystem = (
+        next(
+            (tool for tool in agent.tools if isinstance(tool, FileSystemTools)),
+            None,
+        )
+        if isinstance(agent.tools, list)
+        else None
+    )
     if existing_filesystem is not None:
         raise ValueError(
             "filesystem manages its own FileSystemTools. Remove the manually configured "
@@ -263,17 +265,10 @@ def set_filesystem(agent: Agent) -> None:
             raise ValueError("filesystem=True currently requires a synchronous database")
         if not agent.id:
             raise ValueError("filesystem=True requires the agent to have a stable id")
-        namespace = (
-            f"users/{{user_id}}/agents/{agent.id}"
-            if agent._filesystem_user_isolation
-            else f"agents/{agent.id}"
-        )
-        agent._filesystem = FileSystem(agent.db, namespace=namespace)
+        namespace = "users/{user_id}/agents/{agent_id}" if agent._filesystem_user_isolation else "agents/{agent_id}"
+        agent._filesystem = FileSystem(agent.db, namespace=namespace).resolve(agent_id=agent.id)
     else:
         raise TypeError("filesystem must be True, False, None, or a FileSystem instance")
-
-    existing_tools.append(agent._filesystem.tools(add_instructions=True))
-    agent.tools = existing_tools
 
 
 def set_filesystem_user_isolation(agent: Agent, enabled: bool) -> None:
@@ -287,15 +282,6 @@ def set_filesystem_user_isolation(agent: Agent, enabled: bool) -> None:
         agent._filesystem_user_isolation = enabled
         return
 
-    managed_filesystem = agent._filesystem
-    if managed_filesystem is not None and isinstance(agent.tools, list):
-        from agno.fs.toolkit import FileSystemTools
-
-        agent.tools = [
-            tool
-            for tool in agent.tools
-            if not (isinstance(tool, FileSystemTools) and tool.fs is managed_filesystem)
-        ]
     agent._filesystem = None
     agent._filesystem_user_isolation = enabled
 

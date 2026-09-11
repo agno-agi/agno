@@ -22,6 +22,9 @@ managed `filesystem=True` shorthand.
 The agent receives its filesystem tools automatically. With the default
 `user_isolation=False`, the namespace is shared by users of that agent:
 
+Agent component versions with the same stable `agent.id` share this namespace;
+versioning the component does not fork or snapshot its files.
+
 ```text
 agents/{agent_id}
 ```

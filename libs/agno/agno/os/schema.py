@@ -189,12 +189,49 @@ def _extract_model(entity: Any) -> Optional[Model]:
     return Model(id=model_id, provider=provider)
 
 
+class FileSystemSummary(BaseModel):
+    backend_type: str = Field(..., description="Filesystem backend type")
+    db_id: Optional[str] = Field(None, description="Database identifier for a database-backed filesystem")
+    db_schema: Optional[str] = Field(None, description="Database schema containing filesystem rows")
+    table_name: Optional[str] = Field(None, description="Database table containing filesystem rows")
+    namespace_template: str = Field(..., description="Namespace or namespace template used by the agent")
+    user_isolation: bool = Field(..., description="Whether the namespace is partitioned by user identity")
+    max_file_bytes: int = Field(..., description="Maximum UTF-8 bytes per file")
+    max_namespace_bytes: int = Field(..., description="Maximum bytes across the namespace")
+
+
+def _extract_filesystem(agent: Any) -> Optional[FileSystemSummary]:
+    if not getattr(agent, "filesystem", False):
+        return None
+    filesystem = getattr(agent, "filesystem_instance", None)
+    if filesystem is None:
+        return None
+    backend = filesystem.backend
+    backend_db = getattr(backend, "db", None)
+    if backend_db is not None or hasattr(backend, "db_engine"):
+        backend_type = "db"
+    elif hasattr(backend, "root"):
+        backend_type = "local"
+    else:
+        backend_type = type(backend).__name__
+    return FileSystemSummary(
+        backend_type=backend_type,
+        db_id=getattr(backend_db, "id", None),
+        db_schema=getattr(backend, "db_schema", None),
+        table_name=getattr(backend, "table_name", None),
+        namespace_template=getattr(filesystem, "_raw_namespace", filesystem.namespace),
+        user_isolation="user_id" in filesystem._placeholders,
+        max_file_bytes=filesystem.max_file_bytes,
+        max_namespace_bytes=filesystem.max_namespace_bytes,
+    )
+
+
 class AgentSummaryResponse(BaseModel):
     id: Optional[str] = Field(None, description="Unique identifier for the agent")
     name: Optional[str] = Field(None, description="Name of the agent")
     description: Optional[str] = Field(None, description="Description of the agent")
     db_id: Optional[str] = Field(None, description="Database identifier")
-    filesystem: bool = Field(False, description="Whether the agent has a durable filesystem")
+    filesystem: Optional[FileSystemSummary] = Field(None, description="Durable filesystem configuration")
     model: Optional[Model] = Field(None, description="Model used by the agent")
     metadata: Optional[Dict[str, Any]] = Field(None, description="Additional metadata")
 
@@ -216,7 +253,7 @@ class AgentSummaryResponse(BaseModel):
             name=agent.name,
             description=getattr(agent, "description", None),
             db_id=agent_db.id if agent_db else None,
-            filesystem=bool(getattr(agent, "filesystem", False)),
+            filesystem=_extract_filesystem(agent),
             model=_extract_model(agent),
             metadata=metadata,
         )

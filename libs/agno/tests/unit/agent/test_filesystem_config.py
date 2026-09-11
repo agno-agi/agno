@@ -1,11 +1,24 @@
+import pytest
+
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
+from agno.exceptions import ComponentRehydrationError
 from agno.fs import FileSystem
 from agno.fs.toolkit import FileSystemTools
+from agno.registry import Registry
+from agno.run import RunContext
+from agno.run.agent import RunOutput
+from agno.session import AgentSession
 
 
 def _filesystem_tools(agent: Agent) -> list[FileSystemTools]:
-    return [tool for tool in agent.tools if isinstance(tool, FileSystemTools)]  # type: ignore[union-attr]
+    session_id = "filesystem-config-test"
+    tools = agent.get_tools(
+        run_response=RunOutput(run_id="run", session_id=session_id),
+        run_context=RunContext(run_id="run", session_id=session_id),
+        session=AgentSession(session_id=session_id, session_data={}),
+    )
+    return [tool for tool in tools if isinstance(tool, FileSystemTools)]
 
 
 def test_filesystem_true_adds_one_isolated_toolkit(tmp_path):
@@ -53,6 +66,55 @@ def test_explicit_filesystem_round_trips_with_agent_config(tmp_path):
     assert restored_filesystem.max_namespace_bytes == 10_000
 
 
+def test_encoded_namespace_round_trip_does_not_double_encode(tmp_path):
+    db = SqliteDb(db_file=str(tmp_path / "agents.db"))
+    agent = Agent(id="research-agent", db=db, filesystem=FileSystem(db, namespace="My Namespace"))
+
+    restored = Agent.from_dict(agent.to_dict())
+
+    assert restored.filesystem_instance is not None
+    assert restored.filesystem_instance.namespace == "my%20namespace"
+
+
+def test_template_values_preserve_identity_case(tmp_path):
+    filesystem = FileSystem(
+        SqliteDb(db_file=str(tmp_path / "agents.db")),
+        namespace="Users/{user_id}/Agents/{agent_id}",
+    )
+
+    upper = filesystem.resolve(user_id="Alice", agent_id="Research")
+    lower = filesystem.resolve(user_id="alice", agent_id="research")
+
+    assert upper.namespace == "users/%41lice/agents/%52esearch"
+    assert lower.namespace == "users/alice/agents/research"
+    assert upper.namespace != lower.namespace
+
+
+def test_explicit_filesystem_round_trip_preserves_separate_database(tmp_path):
+    agent_db = SqliteDb(id="agent-db", db_file=str(tmp_path / "agents.db"))
+    files_db = SqliteDb(id="files-db", db_file=str(tmp_path / "files.db"))
+    registry = Registry(dbs=[files_db])
+    agent = Agent(
+        id="research-agent",
+        db=agent_db,
+        filesystem=FileSystem(files_db, namespace="agents/research-agent"),
+    )
+
+    restored = Agent.from_dict(agent.to_dict(), registry=registry, strict=True)
+
+    assert restored.filesystem_instance is not None
+    assert restored.filesystem_instance.backend.db is files_db  # type: ignore[attr-defined]
+
+
+def test_strict_restore_refuses_missing_filesystem_database(tmp_path):
+    agent_db = SqliteDb(id="agent-db", db_file=str(tmp_path / "agents.db"))
+    files_db = SqliteDb(id="files-db", db_file=str(tmp_path / "files.db"))
+    agent = Agent(id="research-agent", db=agent_db, filesystem=FileSystem(files_db))
+
+    with pytest.raises(ComponentRehydrationError, match="files-db"):
+        Agent.from_dict(agent.to_dict(), strict=True)
+
+
 def test_filesystem_namespace_isolated_by_agent_id(tmp_path):
     db = SqliteDb(db_file=str(tmp_path / "agents.db"))
     first = Agent(id="first-agent", db=db, filesystem=True)
@@ -95,6 +157,31 @@ def test_managed_filesystem_toolkit_is_not_serialized_as_user_tool(tmp_path):
     assert "tools" not in config
 
 
+def test_callable_tools_factory_keeps_managed_filesystem(tmp_path):
+    agent = Agent(
+        id="research-agent",
+        db=SqliteDb(db_file=str(tmp_path / "agents.db")),
+        filesystem=True,
+        tools=lambda: [],
+    )
+    agent.initialize_agent()
+
+    assert len(_filesystem_tools(agent)) == 1
+
+
+def test_set_tools_does_not_drop_managed_filesystem(tmp_path):
+    agent = Agent(
+        id="research-agent",
+        db=SqliteDb(db_file=str(tmp_path / "agents.db")),
+        filesystem=True,
+    )
+    agent.initialize_agent()
+
+    agent.set_tools([])
+
+    assert len(_filesystem_tools(agent)) == 1
+
+
 def test_deep_copy_rebuilds_managed_filesystem_toolkit(tmp_path):
     agent = Agent(
         id="research-agent",
@@ -110,3 +197,18 @@ def test_deep_copy_rebuilds_managed_filesystem_toolkit(tmp_path):
     assert copied.filesystem_instance is not agent.filesystem_instance
     assert copied.filesystem_instance.namespace == "users/{user_id}/agents/research-agent"  # type: ignore[union-attr]
     assert len(_filesystem_tools(copied)) == 1
+
+
+def test_stored_filesystem_agent_rehydrates_namespace_and_toolkit(tmp_path):
+    from agno.agent.agent import get_agent_by_id
+
+    db = SqliteDb(id="catalog", db_file=str(tmp_path / "catalog.db"))
+    agent = Agent(id="research-agent", db=db, filesystem=True)
+    agent.save()
+
+    loaded = get_agent_by_id(db=db, id="research-agent", registry=Registry(dbs=[db]))
+
+    assert loaded is not None
+    assert loaded.filesystem_instance is not None
+    assert loaded.filesystem_instance.namespace == "agents/research-agent"
+    assert len(_filesystem_tools(loaded)) == 1

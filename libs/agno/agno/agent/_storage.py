@@ -975,14 +975,6 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
     # processed in declaration order and the first one to claim a name wins.
     _owning_toolkit: Dict[str, str] = {}
     tools_to_serialize = agent.tools
-    if agent.filesystem and agent._filesystem is not None and isinstance(agent.tools, list):
-        from agno.fs.toolkit import FileSystemTools
-
-        tools_to_serialize = [
-            tool
-            for tool in agent.tools
-            if not (isinstance(tool, FileSystemTools) and tool.fs is agent._filesystem)
-        ]
     if agent.model is not None and tools_to_serialize and isinstance(tools_to_serialize, list):
         _tools = parse_tools(
             agent,
@@ -1304,7 +1296,23 @@ def from_dict(
         from agno.fs import FileSystem
 
         try:
-            config["filesystem"] = FileSystem.from_dict(config["filesystem"], db=config.get("db"))
+            filesystem_config = config["filesystem"]
+            filesystem_db_id = (filesystem_config.get("backend") or {}).get("db_id")
+            agent_db = config.get("db")
+            filesystem_db = None
+            if filesystem_db_id is None:
+                # Backward compatibility for configs saved before filesystem db
+                # identity was serialized: these always borrowed the agent db.
+                filesystem_db = agent_db
+            elif getattr(agent_db, "id", None) == filesystem_db_id:
+                filesystem_db = agent_db
+            elif registry is not None:
+                filesystem_db = registry.get_db(filesystem_db_id)
+            if filesystem_db_id is not None and filesystem_db is None:
+                raise ValueError(
+                    f"database {filesystem_db_id!r} was not found on the agent or in the registry"
+                )
+            config["filesystem"] = FileSystem.from_dict(filesystem_config, db=filesystem_db)
         except (TypeError, ValueError) as e:
             if strict:
                 raise ComponentRehydrationError(f"{component_label} filesystem could not be restored: {e}") from e

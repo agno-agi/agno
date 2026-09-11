@@ -707,10 +707,13 @@ class TestExcludeToolsTypos:
     caller believes a tool is gone and it is still registered.
     """
 
-    def test_a_typo_warns_and_excludes_nothing(self, fs, caplog) -> None:
+    def test_a_typo_warns_and_excludes_nothing(self, fs, caplog, monkeypatch) -> None:
         import logging
 
-        with caplog.at_level(logging.WARNING):
+        from agno.utils.log import logger as agno_logger
+
+        monkeypatch.setattr(agno_logger, "propagate", True)
+        with caplog.at_level(logging.WARNING, logger=agno_logger.name):
             toolkit = fs.tools(exclude_tools=["delete_fil"])
         assert any("not FileSystem tools" in r.getMessage() for r in caplog.records)
         # the call still resolves; nothing was excluded for the misspelled name

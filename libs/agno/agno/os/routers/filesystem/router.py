@@ -4,8 +4,6 @@ from typing import TYPE_CHECKING, Dict
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from agno.agent import Agent
-from agno.agent import _init as agent_init
-from agno.exceptions import ComponentRehydrationError
 from agno.fs import FileSystem, InvalidPathError
 from agno.fs._paths import normalize_directory, normalize_path, path_sort_key
 from agno.os.auth import get_authentication_dependency, require_resource_access
@@ -27,7 +25,7 @@ from agno.os.schema import (
     ValidationErrorResponse,
 )
 from agno.os.settings import AgnoAPISettings
-from agno.os.utils import get_agent_by_id
+from agno.os.utils import resolve_agent
 from agno.utils.log import log_error
 
 if TYPE_CHECKING:
@@ -37,22 +35,25 @@ if TYPE_CHECKING:
 _MAX_PREVIEW_CHARS = 100_000
 
 
-def _get_agent_filesystem(os: "AgentOS", agent_id: str, request: Request) -> FileSystem:
+async def _get_agent_filesystem(os: "AgentOS", agent_id: str, request: Request) -> FileSystem:
     user_isolation_enabled = bool(getattr(request.state, "user_isolation_enabled", False))
     scoped_user_id = get_scoped_user_id(request)
 
     try:
-        agent = get_agent_by_id(
-            agent_id=agent_id,
-            agents=os.agents,
-            db=os.db,
-            registry=os.registry,
-            create_fresh=True,
+        # The browser follows the other current-config AgentOS surfaces: an
+        # authorized caller may browse the current draft as well as a published
+        # config. Explicit version browsing remains outside this route.
+        agent = await resolve_agent(
+            agent_id,
+            os.agents,
+            os.db,
+            os.registry,
+            request=request,
             user_id=scoped_user_id,
             published_only=False,
         )
-    except ComponentRehydrationError as e:
-        raise HTTPException(status_code=e.status_code, detail=str(e))
+    except HTTPException:
+        raise
     except Exception as e:
         log_error(f"Error resolving filesystem agent '{agent_id}': {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
@@ -64,7 +65,6 @@ def _get_agent_filesystem(os: "AgentOS", agent_id: str, request: Request) -> Fil
     if not agent.filesystem:
         raise HTTPException(status_code=404, detail="This agent does not have a filesystem")
 
-    agent_init.set_filesystem_user_isolation(agent, user_isolation_enabled)
     try:
         filesystem = agent.filesystem_instance
     except Exception as e:
@@ -72,12 +72,18 @@ def _get_agent_filesystem(os: "AgentOS", agent_id: str, request: Request) -> Fil
         raise HTTPException(status_code=503, detail="Agent filesystem is unavailable")
     if filesystem is None:
         raise HTTPException(status_code=503, detail="Agent filesystem is unavailable")
-    if not user_isolation_enabled:
-        return filesystem
     effective_user_id = scoped_user_id or getattr(request.state, "user_id", None)
-    if not isinstance(effective_user_id, str) or not effective_user_id.strip():
+    if user_isolation_enabled and (not isinstance(effective_user_id, str) or not effective_user_id.strip()):
         raise HTTPException(status_code=403, detail="A user identity is required when user isolation is enabled")
-    return filesystem.resolve(user_id=effective_user_id)
+    try:
+        return filesystem._resolve_from_context(
+            agent=agent,
+            user_id=effective_user_id,
+            agent_id=agent.id,
+            team_id=agent.team_id,
+        )
+    except InvalidPathError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 def _list_entries(filesystem: FileSystem, directory: str) -> list[FileSystemEntry]:
@@ -148,7 +154,7 @@ def get_filesystem_router(
         page: int = Query(1, ge=1, description="1-indexed page number"),
         limit: int = Query(50, ge=1, le=100, description="Page size"),
     ) -> FileSystemListResponse:
-        filesystem = _get_agent_filesystem(os, agent_id, request)
+        filesystem = await _get_agent_filesystem(os, agent_id, request)
         try:
             normalized_directory = normalize_directory(directory)
             entries = await asyncio.to_thread(_list_entries, filesystem, normalized_directory)
@@ -187,17 +193,21 @@ def get_filesystem_router(
         agent_id: str,
         request: Request,
         path: str = Query(..., description="Relative file path inside the agent filesystem"),
+        offset: int = Query(0, ge=0, description="Character offset into the file"),
+        limit: int = Query(_MAX_PREVIEW_CHARS, ge=1, le=_MAX_PREVIEW_CHARS, description="Characters to return"),
     ) -> FileSystemContentResponse:
-        filesystem = _get_agent_filesystem(os, agent_id, request)
+        filesystem = await _get_agent_filesystem(os, agent_id, request)
         try:
             normalized_path = normalize_path(path)
-            metadata = await filesystem.astat(normalized_path)
-            content = await filesystem.aread(normalized_path)
+            file_data = await filesystem.aread_with_meta(normalized_path)
         except InvalidPathError as e:
             raise HTTPException(status_code=400, detail=str(e))
-        if metadata is None or content is None:
+        if file_data is None:
             raise HTTPException(status_code=404, detail="File not found")
-        preview = content[:_MAX_PREVIEW_CHARS]
+        metadata = file_data.meta
+        content = file_data.content
+        end = min(offset + limit, len(content))
+        preview = content[offset:end]
         return FileSystemContentResponse(
             agent_id=agent_id,
             path=metadata.path,
@@ -206,7 +216,10 @@ def get_filesystem_router(
             version=metadata.version,
             updated_at=metadata.updated_at,
             line_count=0 if not content else content.count("\n") + (0 if content.endswith("\n") else 1),
-            truncated=len(preview) < len(content),
+            truncated=end < len(content),
+            offset=offset,
+            limit=limit,
+            next_offset=end if end < len(content) else None,
         )
 
     @router.get(
@@ -224,7 +237,7 @@ def get_filesystem_router(
         page: int = Query(1, ge=1, description="1-indexed page number"),
         limit: int = Query(50, ge=1, le=100, description="Page size"),
     ) -> FileSystemSearchResponse:
-        filesystem = _get_agent_filesystem(os, agent_id, request)
+        filesystem = await _get_agent_filesystem(os, agent_id, request)
         try:
             normalized_directory = normalize_directory(directory)
             files = await filesystem.alist(normalized_directory)

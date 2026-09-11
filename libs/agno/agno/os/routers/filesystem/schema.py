@@ -36,6 +36,9 @@ class FileSystemContentResponse(BaseModel):
     updated_at: Optional[int] = None
     line_count: int
     truncated: bool
+    offset: int
+    limit: int
+    next_offset: Optional[int] = None
 
 
 class FileSystemSearchEntry(BaseModel):

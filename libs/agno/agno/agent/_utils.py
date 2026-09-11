@@ -154,14 +154,6 @@ def deep_copy(agent: Agent, *, update: Optional[Dict[str, Any]] = None) -> Agent
             continue
 
         field_value = getattr(agent, f.name)
-        if f.name == "tools" and agent.filesystem and agent._filesystem is not None and isinstance(field_value, list):
-            from agno.fs.toolkit import FileSystemTools
-
-            field_value = [
-                tool
-                for tool in field_value
-                if not (isinstance(tool, FileSystemTools) and tool.fs is agent._filesystem)
-            ]
         if field_value is not None:
             try:
                 fields_for_new_agent[f.name] = deep_copy_field(agent, f.name, field_value)
