@@ -425,7 +425,12 @@ def get_roles_router(
         sort_order: SortOrder = Query(default=SortOrder.DESC, description="Sort order (asc or desc)"),
     ) -> PaginatedResponse:
         """*Change* events (role/assignment mutations), paginated ``{data, meta}``.
-        Empty unless the store was given a readable audit sink (e.g. DbAuditSink)."""
+
+        404 when the change trail is off (no readable audit sink), so a frontend can tell "audit
+        disabled" from "enabled but empty" and hide the tab. Mirrors how the whole ``/authz`` and
+        ``/users`` surfaces 404 when their capability is not configured."""
+        if not store.audit_readable:
+            raise HTTPException(status_code=404, detail="Change audit is not enabled")
         start_ms = time.time() * 1000
         events = store.audit_log(
             limit,
@@ -450,11 +455,13 @@ def get_roles_router(
 
         Decision audit is configured on ``AuthorizationConfig(audit=...)`` and lands
         on ``app.state.authz_audit`` — a separate table from the change trail above,
-        so a high-volume decision log never buries the change history. Empty unless a
-        readable decision sink (e.g. DbAuditSink) is configured."""
+        so a high-volume decision log never buries the change history.
+
+        404 when decision audit is off (no readable decision sink), the same signal the change
+        trail above gives, so a frontend hides the tab instead of showing a permanently empty one."""
         sink = getattr(request.app.state, "authz_audit", None)
         if sink is None or not hasattr(sink, "read_decisions"):
-            return _paginated([], page, limit, 0)
+            raise HTTPException(status_code=404, detail="Decision audit is not enabled")
         start_ms = time.time() * 1000
         events = sink.read_decisions(
             limit,

@@ -483,6 +483,15 @@ class ManagedRoleStore:
             self._meta_db_is_async = is_async_authz_db(db)
 
     # ------------------------------------------------------------------ audit
+    @property
+    def audit_readable(self) -> bool:
+        """True when a readable change-audit sink is configured (e.g. ``DbAuditSink``), so
+        ``audit_log`` returns real events rather than always ``[]``. The ``/authz/audit`` route uses
+        this to 404 when the change trail is off, rather than serve an empty 200 a frontend cannot
+        tell apart from an enabled-but-empty trail."""
+        sink = self._audit
+        return sink is not None and hasattr(sink, "read")
+
     def audit_log(
         self,
         limit: int = 100,

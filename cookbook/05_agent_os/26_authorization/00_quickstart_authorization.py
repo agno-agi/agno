@@ -49,7 +49,6 @@ authz = Authorization(
     algorithm="HS256",  # matches how the tokens below are signed
     audience=OS_ID,
     verify_audience=True,
-    auto_provision=True,  # first valid token from an unknown user creates them with the default role
 )
 
 # Define the roles. "default=True" is what a brand-new user gets on first sign-in.
@@ -80,6 +79,10 @@ agent_os = AgentOS(
             id="vault", name="Vault", model=OpenAIResponses(id="gpt-5.6-luna"), db=db
         ),
     ],
+    # The user directory is a top-level switch (a peer of user_isolation), so the seeded users have
+    # somewhere to live. user_directory=True builds it from the OS db and auto-provisions an unknown
+    # but authenticated user with the default role on first request.
+    user_directory=True,
     authorization=authz,
 )
 app = agent_os.get_app()

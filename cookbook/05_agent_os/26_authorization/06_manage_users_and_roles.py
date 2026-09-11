@@ -204,7 +204,10 @@ agent_os = AgentOS(
     db=db,  # same database the stores use
     agents=[research_agent, vault_agent],
     cors_allowed_origins=CORS_ORIGINS,
-    authorization=authz,  # one object; /authz and /users are mounted for you
+    # The directory is a top-level switch (a peer of user_isolation), so the seeded users have
+    # somewhere to live. Authorization carries verification + roles; together they mount /authz + /users.
+    user_directory=True,
+    authorization=authz,
 )
 app = agent_os.get_app()
 

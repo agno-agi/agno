@@ -483,6 +483,9 @@ class AgentOS:
         # adopts this OS db so role/user definitions persist alongside agent data.
         self._facade_role_store: Any = None
         self._facade_user_store: Any = None
+        # The Authorization facade object, kept so its seeded directory rows can be applied into the
+        # top-level user directory once that store is bound (see _seed_user_directory).
+        self._authz_facade: Any = None
 
         # authorization= takes the switch or the object, never the low-level config: one spelling
         # for the deprecated type is enough, and it is the keyword that already exists.
@@ -502,13 +505,15 @@ class AgentOS:
         from agno.os.authz.facade import Authorization as _Authorization
 
         if isinstance(authorization, _Authorization):
-            # The facade owns these, so accepting them here too would silently pick one and drop the
-            # other (a data-split footgun if the facade points at a different db). Fail loudly.
+            # The facade owns verification, roles, and audit, so accepting those here too would
+            # silently pick one and drop the other (a data-split footgun if the facade points at a
+            # different db). Fail loudly. The user directory is NOT owned by the facade: it stays a
+            # top-level AgentOS(user_directory=...) concern, a peer of user_isolation, so it is left
+            # out of this guard on purpose.
             conflicts = [
                 name
                 for name, value in (
                     ("authorization_config", authorization_config),
-                    ("user_directory", user_directory),
                     ("audit", audit),
                 )
                 if value is not None
@@ -523,9 +528,8 @@ class AgentOS:
             authorization._bind(self.db)
             authorization_config = authorization.authorization_config()
             audit = authorization.audit_sink
-            user_directory = authorization.user_directory_config()
             self._facade_role_store = authorization.role_store
-            self._facade_user_store = authorization.user_store
+            self._authz_facade = authorization
             authorization = True
 
         self.authorization = authorization
@@ -546,6 +550,20 @@ class AgentOS:
         # ``user_directory=True`` (or ``store=True`` on the config) is a shorthand: AgentOS
         # builds the ManagedUserStore from its own db, so callers avoid the manual wiring.
         self.user_directory = self._resolve_user_directory(user_directory)
+        # An Authorization facade may name people to seed (seed(users=...)), but the directory that
+        # holds them is this top-level concern. Naming people with no directory to put them in is a
+        # config error, caught here rather than silently dropped.
+        if self._authz_facade is not None and self._authz_facade._seeds_directory_users and self.user_directory is None:
+            raise ValueError(
+                "Authorization.seed(users=...) needs a user directory to hold the seeded people, but "
+                "AgentOS(user_directory=...) is not set. Add AgentOS(user_directory=True) (or pass a "
+                "UserDirectoryConfig), which is where the directory lives now."
+            )
+        # The /users admin API is served from the directory store, but only under a verified identity
+        # (never auto-opened on a no-auth instance). Expose the store for mounting when both hold.
+        self._facade_user_store = (
+            self.user_directory.user_store if (self.authorization and self.user_directory is not None) else None
+        )
 
         # CORS configuration - merge user-provided origins with defaults from settings
         self.cors_allowed_origins = resolve_origins(cors_allowed_origins, self.settings.cors_origin_list)
@@ -2157,6 +2175,11 @@ class AgentOS:
                     "seen by other workers). Give the store a db (ManagedUserStore(db_url=...) / "
                     "db=...) or pass a SQL-capable db to AgentOS(db=...) for it to adopt."
                 )
+            # Apply the people named via Authorization.seed(users=...)/seed(admin=...) into the
+            # now-bound directory store (create-if-absent). The role side was applied when the facade
+            # bound; only the directory rows wait for this top-level store.
+            if self._authz_facade is not None:
+                self._authz_facade._seed_directory(user_store)
         fastapi_app.state.user_store = user_store
         fastapi_app.state.user_auto_provision = directory.auto_provision if directory is not None else False
         fastapi_app.state.user_email_claim = directory.email_claim if directory is not None else "email"

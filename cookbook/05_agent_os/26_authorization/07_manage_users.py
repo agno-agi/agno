@@ -70,8 +70,9 @@ CORS_ORIGINS = [
 
 os.makedirs("tmp", exist_ok=True)
 
-# One database, one object, users-only. No define_role, so there is no role store and no /authz:
-# the default scope plane (the caller's token scopes) governs, and Authorization mounts just /users.
+# One database, users-only. No define_role, so there is no role store and no /authz: the default
+# scope plane (the caller's token scopes) governs. The directory is the top-level user_directory
+# switch on AgentOS below, so only /users is mounted.
 db = SqliteDb(db_file="tmp/manage_users.db")
 authz = Authorization(
     db=db,
@@ -107,7 +108,8 @@ agent_os = AgentOS(
     db=db,
     agents=[research_agent],
     cors_allowed_origins=CORS_ORIGINS,
-    authorization=authz,  # mounts /users only; no roles means no /authz surface
+    user_directory=True,  # the directory is a top-level switch; here it holds the seeded users
+    authorization=authz,  # verify-only (no roles) -> mounts /users, no /authz surface
 )
 app = agent_os.get_app()
 # Only /users is mounted (no roles were defined), so there is no /authz roles surface for a frontend
