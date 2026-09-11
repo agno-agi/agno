@@ -31,9 +31,9 @@ class MMRReranker(Reranker):
 
     Requires an embedding on every candidate document. Verified against live backends:
     pgvector, Qdrant (vector and hybrid), Chroma and LanceDB return them; Milvus,
-    MongoDB, Redis, Valkey, Elasticsearch and Qdrant keyword search do not, and MMR
-    raises there rather than returning an unreranked list. Pinecone omits vectors unless
-    the store is built with return_vectors=True.
+    MongoDB, Redis, Valkey and Qdrant keyword search do not, and MMR raises there rather
+    than returning an unreranked list. Pinecone omits vectors unless the store is built
+    with return_vectors=True.
 
     It also needs an embedder to embed the query. Vector dbs that embed queries
     themselves (Upstash hosted embeddings) expose none, so MMR cannot run there.
@@ -148,7 +148,7 @@ class MMRReranker(Reranker):
             raise ValueError(
                 "MMRReranker requires embeddings on search results, but the vector db returned "
                 f"{len(missing)} document(s) without one. Some vector dbs (Milvus, MongoDB, "
-                "Redis, Valkey, Elasticsearch) do not return embeddings on search."
+                "Redis, Valkey) do not return embeddings on search."
             )
 
         limit = self.top_n if self.top_n is not None else len(documents)

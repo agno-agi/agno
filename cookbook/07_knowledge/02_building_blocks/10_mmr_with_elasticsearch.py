@@ -1,13 +1,13 @@
 """
-MMR with PgVector
-=================
-The same diversity selection as 08_mmr_diverse_results.py, against PgVector.
+MMR with Elasticsearch
+======================
+The same diversity selection as 08_mmr_diverse_results.py, against Elasticsearch.
 
 MMR compares candidates to each other, so it needs the embedding of every search
-result. PgVector returns embeddings on search, so MMR works against it directly.
+result. Elasticsearch returns embeddings on search, so MMR works against it directly.
 
 Setup:
-    ./cookbook/scripts/run_pgvector.sh
+    ./cookbook/scripts/run_elasticsearch.sh
 
 See also: 08_mmr_diverse_results.py for what lambda_mult controls.
 """
@@ -19,23 +19,25 @@ from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.reranker.mmr import MMRReranker
 from agno.models.openai import OpenAIResponses
-from agno.vectordb.pgvector import PgVector
+from agno.vectordb.elasticsearch import Elasticsearch
 from agno.vectordb.search import SearchType
 
 # ---------------------------------------------------------------------------
 # Setup
 # ---------------------------------------------------------------------------
 
-db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
+elasticsearch_url = "http://localhost:9200"
+
+vector_db = Elasticsearch(
+    index_name="mmr_demo",
+    url=elasticsearch_url,
+    search_type=SearchType.hybrid,
+    embedder=OpenAIEmbedder(id="text-embedding-3-small"),
+)
 
 knowledge = Knowledge(
-    vector_db=PgVector(
-        table_name="mmr_demo",
-        db_url=db_url,
-        search_type=SearchType.hybrid,
-        embedder=OpenAIEmbedder(id="text-embedding-3-small"),
-    ),
-    # Runs after PgVector returns candidates.
+    vector_db=vector_db,
+    # Runs after Elasticsearch returns candidates.
     reranker=MMRReranker(lambda_mult=0.5),
     # Retrieve 5x the requested results so MMR has candidates to choose between.
     rerank_multiplier=5,
@@ -78,7 +80,7 @@ if __name__ == "__main__":
         )
 
         print("\n" + "=" * 60)
-        print("PgVector hybrid search + MMR")
+        print("Elasticsearch hybrid search + MMR")
         print("=" * 60 + "\n")
 
         query = "What are some Thai curry dishes?"
@@ -95,5 +97,9 @@ if __name__ == "__main__":
         show(await knowledge.asearch(query, max_results=5), candidates)
 
         await agent.aprint_response("What are some Thai curry dishes?", stream=True)
+
+        # The async client holds an aiohttp session that Python will not close for
+        # you: skip this and the script exits with an unclosed connector warning.
+        await vector_db.async_close()
 
     asyncio.run(main())

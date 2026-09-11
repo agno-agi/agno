@@ -988,6 +988,7 @@ class Elasticsearch(VectorDb):
             content=doc_data["content"],
             name=doc_data.get("name"),
             meta_data=meta_data,
+            embedder=self.embedder,
             embedding=doc_data.get("embedding"),
             usage=doc_data.get("usage"),
             reranking_score=doc_data.get("reranking_score"),

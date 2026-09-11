@@ -16,7 +16,7 @@ knowledge-level reranker provides: rerank_multiplier widens the fetch, MMR selec
 from it, and max_results are returned.
 
 MMR reads the embedding on each search result. Not every vector db returns one:
-Milvus, MongoDB, Redis, Valkey and Elasticsearch do not, so MMR raises there rather
+Milvus, MongoDB, Redis and Valkey do not, so MMR raises there rather
 than silently returning unreranked results.
 
 Take the returned order as the result: reranking_score holds the MMR score at the
@@ -59,16 +59,32 @@ agent = Agent(
 )
 
 
+def show(results, candidates: int) -> None:
+    """Print a snippet per result: every chunk shares the source file name."""
+    print(f"Selected {len(results)} of {candidates} candidates:\n")
+    for document in results:
+        snippet = " ".join(document.content.split())[:100]
+        print(f"  - {snippet}...")
+    print()
+
+
 async def main():
     await knowledge.ainsert(
         url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
     )
 
+    query = "What are some Thai curry dishes?"
+
+    # Same query without MMR, to compare against.
+    plain = Knowledge(vector_db=knowledge.vector_db)
+    candidates = len(await plain.asearch(query, max_results=25))
+
+    print("\nWithout MMR")
+    show(await plain.asearch(query, max_results=5), candidates)
+
     # Retrieves 25 candidates, selects 5 that are relevant but unlike each other.
-    results = await knowledge.asearch("What are some Thai curry dishes?", max_results=5)
-    print("Diverse results:")
-    for document in results:
-        print(f"  {document.name}")
+    print("With MMR")
+    show(await knowledge.asearch(query, max_results=5), candidates)
 
     await agent.aprint_response("What are some Thai curry dishes?", stream=True)
 
