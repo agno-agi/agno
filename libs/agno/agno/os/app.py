@@ -546,11 +546,11 @@ class AgentOS:
         # ``user_directory=True`` (or ``store=True`` on the config) is a shorthand: AgentOS
         # builds the ManagedUserStore from its own db, so callers avoid the manual wiring.
         self.user_directory = self._resolve_user_directory(user_directory)
-        # The /users admin API is served from the directory store, but only under a verified identity
-        # (never auto-opened on a no-auth instance). Expose the store for mounting when both hold.
-        self._facade_user_store = (
-            self.user_directory.user_store if (self.authorization and self.user_directory is not None) else None
-        )
+        # The /users directory API is served whenever a directory is configured. It is admin-gated
+        # under authorization; on a no-auth OS it mounts open, matching every other route (the admin
+        # gate needs a verified identity to check, and there is none). See _facade_admin_routers,
+        # which passes auth_enabled so the gate knows which mode it is in.
+        self._facade_user_store = self.user_directory.user_store if self.user_directory is not None else None
 
         # CORS configuration - merge user-provided origins with defaults from settings
         self.cors_allowed_origins = resolve_origins(cors_allowed_origins, self.settings.cors_origin_list)
@@ -1590,11 +1590,11 @@ class AgentOS:
             log_debug("Registry router not enabled: requires a registry to be provided to AgentOS")
             routers.append(_get_disabled_feature_router("/registry", "Registry", "registry"))
 
-        # Managed-roles / directory admin API (/authz, /users), mounted from the Authorization
-        # object. Registered HERE, with the other built-in routers, so it lands ahead of the MCP
-        # catch-all mount added just below: a router included after get_app() returns sits behind
-        # that mount and 404s on any OS with mcp_server=True. Independent of the OS db, since the
-        # object may carry its own.
+        # Roles admin API (/authz, from an Authorization object) and the user directory API (/users,
+        # from a top-level user_directory; open on a no-auth OS). Registered HERE, with the other
+        # built-in routers, so it lands ahead of the MCP catch-all mount added just below: a router
+        # included after get_app() returns sits behind that mount and 404s on any OS with
+        # mcp_server=True.
         routers.extend(self._facade_admin_routers())
 
         for router in routers:
@@ -2031,12 +2031,13 @@ class AgentOS:
         fastapi_app.add_middleware(AuthMiddleware, **middleware_kwargs)
 
     def _facade_admin_routers(self) -> List[Any]:
-        """The admin-API routers to mount from the Authorization object's stores.
+        """The admin-API routers to mount, so there is never a manual ``include_router``.
 
-        Returns ``/authz`` (roles) when it uses roles and ``/users`` (directory) when it has a
-        directory, so there is never a manual ``include_router``. Empty when authorization is a
-        bare switch or provider (no stores, nothing to administer). The routers carry their own
-        admin gate, so mounting them is always safe."""
+        ``/authz`` (roles) mounts from an ``Authorization`` object's role store, so it always runs
+        under authorization and stays admin-gated. ``/users`` (directory) mounts from the top-level
+        ``AgentOS(user_directory=...)``, with or without authorization: it is admin-gated when
+        authorization is on, and open on a no-auth OS (where every route is open and the roster is
+        already writable via auto-provision), passed through as ``auth_enabled``."""
         routers: List[Any] = []
         if self._facade_role_store is not None or self._facade_user_store is not None:
             from agno.os.authz.role_router import get_roles_router, get_users_router
@@ -2044,7 +2045,17 @@ class AgentOS:
             if self._facade_role_store is not None:
                 routers.append(get_roles_router(self._facade_role_store))
             if self._facade_user_store is not None:
-                routers.append(get_users_router(self._facade_user_store, role_store=self._facade_role_store))
+                # /users is admin-gated under authorization; on a no-auth OS it mounts open, matching
+                # every other route (the whole OS serves anonymous callers, and the roster is already
+                # writable via auto-provision). The roles router stays gated -- it exists only when
+                # there is an Authorization object, so authorization is always on there.
+                routers.append(
+                    get_users_router(
+                        self._facade_user_store,
+                        role_store=self._facade_role_store,
+                        auth_enabled=bool(self.authorization),
+                    )
+                )
         return routers
 
     def _seed_authorization_provider(self, fastapi_app: FastAPI) -> None:

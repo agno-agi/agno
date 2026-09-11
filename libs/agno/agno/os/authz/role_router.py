@@ -267,7 +267,7 @@ def _token_scopes_enforced(request: Request) -> bool:
     return token_scopes_are_authoritative(request)
 
 
-def _make_require_admin(role_store: "Optional[ManagedRoleStore]" = None) -> Any:
+def _make_require_admin(role_store: "Optional[ManagedRoleStore]" = None, *, auth_enabled: bool = True) -> Any:
     """Build the admin gate shared by the roles admin API and the user-directory API.
 
     Admin can come from two planes (both run in parallel on one OS):
@@ -285,6 +285,13 @@ def _make_require_admin(role_store: "Optional[ManagedRoleStore]" = None) -> Any:
     """
 
     def require_admin(request: Request) -> str:
+        if not auth_enabled:
+            # No authorization configured: the whole OS serves anonymous callers, so the directory
+            # admin API is open too. The roster is already writable by anyone (a run with a new
+            # user_id provisions a row) and the disabled switch is advisory without a verified
+            # identity, so gating /users alone would be inconsistent. Turn authorization on to make it
+            # a real boundary. The actor recorded is whatever user_id the request asserts.
+            return getattr(request.state, "user_id", None) or ""
         if not getattr(request.state, "authenticated", False):
             raise HTTPException(status_code=401, detail="Not authenticated")
         principal_id = getattr(request.state, "user_id", None)
@@ -509,19 +516,21 @@ def get_users_router(
     role_store: "Optional[ManagedRoleStore]" = None,
     prefix: str = "/users",
     tags: Optional[List[Union[str, Enum]]] = None,
+    auth_enabled: bool = True,
 ) -> APIRouter:
-    """Build the admin-only user-DIRECTORY router (who the users are + the disabled
-    kill-switch), a PEER of the roles admin API.
+    """Build the user-DIRECTORY router (who the users are + the disabled kill-switch), a PEER of the
+    roles admin API.
 
-    AgentOS mounts this from ``AgentOS(user_directory=...)``. Identity is still asserted by
-    the app's JWT; this is a directory + revocation switch, never credentials. Pass
-    ``role_store`` to merge each user's role into the view and to cascade role revocation on
-    delete (omit it for a directory running on plain scope RBAC).
+    AgentOS mounts this from ``AgentOS(user_directory=...)``. Identity is still asserted by the app's
+    JWT; this is a directory + revocation switch, never credentials. Pass ``role_store`` to merge each
+    user's role into the view and to cascade role revocation on delete (omit it for a directory
+    running on plain scope RBAC). ``auth_enabled=False`` mounts it open, matching a no-auth OS where
+    every route already serves anonymous callers (the admin gate needs a verified identity to check).
     """
     if tags is None:
         tags = ["User directory"]
 
-    require_admin = _make_require_admin(role_store)
+    require_admin = _make_require_admin(role_store, auth_enabled=auth_enabled)
     router = APIRouter(prefix=prefix, tags=tags, dependencies=[Depends(require_admin)])
 
     def _role_of(subject: str) -> Optional[str]:

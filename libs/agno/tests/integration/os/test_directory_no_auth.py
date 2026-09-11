@@ -225,22 +225,27 @@ def test_no_auth_isolation_without_a_user_id_stays_unscoped_not_403(tmp_path):
     assert captured["scoped"] is None  # no id -> unscoped, no 403
 
 
-def test_users_admin_api_requires_auth_even_on_a_no_auth_instance(tmp_path):
-    """The /users (and /authz) admin API is admin-gated and always requires a verified identity --
-    it is NOT auto-opened on a no-auth instance. Inferring "open" from "no agno auth config" is
-    unsafe (a third-party auth proxy sets nothing agno can see, so the gate would fail open). Serve
-    the admin API under authorization (see manage_users.py) or manage the directory via the store."""
+def test_users_api_is_open_on_a_no_auth_instance(tmp_path):
+    """A no-auth OS serves every route to anonymous callers, and the /users directory API follows the
+    OS: with no authorization there is no verified admin to gate on, and the roster is already writable
+    by anyone (any run with a new user_id provisions a row), so /users mounts OPEN rather than as a
+    permanently-401 route. The /authz roles API stays UNMOUNTED, because without an Authorization
+    object there is no role store. Anyone who needs /users to be a real boundary turns authorization
+    on."""
     from fastapi.testclient import TestClient
 
-    from agno.os.authz.role_router import get_users_router
     from agno.os.authz.user_store import ManagedUserStore
 
     store = ManagedUserStore(db=SqliteDb(db_file=str(tmp_path / "u.db")))
     os_ = _os(tmp_path, user_directory=UserDirectoryConfig(user_store=store, auto_provision=True))
-    app = os_.get_app()
-    app.include_router(get_users_router(store))
-    client = TestClient(app)
-    assert client.get("/users").status_code == 401  # admin API is not auto-opened
+    client = TestClient(os_.get_app())  # auto-mounted, no manual include_router
+
+    # /users is open: read and write both work with no token.
+    assert client.get("/users").status_code == 200
+    assert client.post("/users", json={"id": "newuser"}).status_code == 200
+    assert store.get("newuser") is not None  # the write landed
+    # /authz stays unmounted: no Authorization object -> no role store.
+    assert client.get("/authz/roles").status_code == 404
 
 
 def test_no_auth_run_refuses_a_reserved_principal(tmp_path):
