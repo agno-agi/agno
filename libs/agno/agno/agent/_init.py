@@ -192,6 +192,39 @@ def set_compression_manager(agent: Agent) -> None:
         agent.compress_tool_results = True
 
 
+def set_compaction(agent: Agent) -> None:
+    """Resolve ``agent.compaction`` into the Compaction the run uses.
+
+    ``True`` builds one with the defaults. The model defaults to the agent's,
+    so the cheapest correct configuration is a bare ``compaction=True``.
+    """
+    from agno.compaction.manager import Compaction
+
+    if agent.compaction is True:
+        agent.compaction = Compaction()
+    elif agent.compaction is False:
+        agent.compaction = None
+
+    if isinstance(agent.compaction, Compaction) and agent.compaction.model is None:
+        agent.compaction.model = agent.model
+
+    # A replay window at or below the kept tail cannot express a working compaction: the tail
+    # would not fit inside what the planner may read, so the boundary anchor could never be
+    # found again and every summary would be dropped on the next run. The planner widens its
+    # own read to keep that from happening - say so, because silently ignoring a number the
+    # user set is worse than the misconfiguration it works around.
+    if isinstance(agent.compaction, Compaction) and not getattr(agent, "_num_history_runs_defaulted", False):
+        keep = agent.compaction.keep_last_runs
+        window = agent.num_history_runs
+        if keep is not None and window is not None and window <= keep:
+            log_warning(
+                f"num_history_runs={window} is not larger than compaction's keep_last_runs={keep}, "
+                f"so there would be no history in front of the kept tail to fold. Compaction will "
+                f"read {keep + 1} runs instead; num_history_runs still governs what the model "
+                f"replays. Set keep_last_runs below num_history_runs to silence this."
+            )
+
+
 def set_result_store(agent: Agent) -> None:
     """Resolve ``agent.offload_tool_results`` into the store the run uses.
 
@@ -283,6 +316,11 @@ def get_models(agent: Agent) -> None:
     if agent.compression_manager is not None and agent.compression_manager.model is None:
         agent.compression_manager.model = agent.model
 
+    from agno.compaction.manager import Compaction as _Compaction
+
+    if isinstance(agent.compaction, _Compaction) and agent.compaction.model is None:
+        agent.compaction.model = agent.model
+
 
 def initialize_agent(agent: Agent, debug_mode: Optional[bool] = None) -> None:
     set_default_model(agent)
@@ -296,6 +334,8 @@ def initialize_agent(agent: Agent, debug_mode: Optional[bool] = None) -> None:
         set_session_summary_manager(agent)
     if agent.compress_tool_results or agent.compression_manager is not None:
         set_compression_manager(agent)
+    if agent.compaction is not None:
+        set_compaction(agent)
     # Resolved when a setting is present or when a store exists.
     if agent.offload_tool_results or agent._result_store is not None:
         set_result_store(agent)

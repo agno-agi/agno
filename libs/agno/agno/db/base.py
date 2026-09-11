@@ -355,6 +355,7 @@ class BaseDb(ABC):
         self.schedule_runs_table_name = schedule_runs_table or "agno_schedule_runs"
         self.job_table_name = job_table or "agno_jobs"
         self.tool_results_table_name = "agno_tool_results"
+        self.compactions_table_name = "agno_compactions"
         self.approvals_table_name = approvals_table or "agno_approvals"
         self.auth_tokens_table_name = auth_tokens_table or "agno_auth_tokens"
         self.service_accounts_table_name = service_accounts_table or "agno_service_accounts"
@@ -1899,6 +1900,37 @@ class BaseDb(ABC):
         """Rows whose expires_at has passed."""
         raise NotImplementedError
 
+    # --- Compactions (Optional) ---
+    # Optional: the record table for conversation compaction (agno_compactions).
+    # A record is an immutable fact - one fold, produced by one run - so rows are
+    # written once and never updated. The fold in force for a run is a query over
+    # them, not a stored value, which is what keeps concurrent writers from
+    # clobbering one another.
+    #
+    # ``archived_messages`` carries the folded transcript verbatim. A backend that
+    # cannot store a large text column may leave it null: the summary still stands,
+    # and only recoverability is lost.
+
+    def upsert_compaction(self, row: Dict[str, Any]) -> None:
+        """Insert one compaction record."""
+        raise NotImplementedError
+
+    def get_compaction(self, compaction_id: str) -> Optional[Dict[str, Any]]:
+        """Get one compaction record by id."""
+        raise NotImplementedError
+
+    def get_compactions_for_session(self, session_id: str, limit: Optional[int] = None) -> List[Dict[str, Any]]:
+        """The session's compaction records, newest first."""
+        raise NotImplementedError
+
+    def delete_compactions_for_session(self, session_id: str) -> int:
+        """Delete a session's records. Returns the number deleted."""
+        raise NotImplementedError
+
+    def search_compactions(self, session_id: str, query: str, limit: int = 10) -> List[Dict[str, Any]]:
+        """Records in this session whose archived transcript contains ``query``."""
+        raise NotImplementedError
+
     # --- Approvals (Optional) ---
     # These methods are optional. Override in subclasses to enable approval persistence.
 
@@ -2149,6 +2181,7 @@ class AsyncBaseDb(ABC):
         self.schedule_runs_table_name = schedule_runs_table or "agno_schedule_runs"
         self.job_table_name = job_table or "agno_jobs"
         self.tool_results_table_name = "agno_tool_results"
+        self.compactions_table_name = "agno_compactions"
         self.approvals_table_name = approvals_table or "agno_approvals"
         self.auth_tokens_table_name = auth_tokens_table or "agno_auth_tokens"
         self.service_accounts_table_name = service_accounts_table or "agno_service_accounts"
@@ -3272,6 +3305,29 @@ class AsyncBaseDb(ABC):
 
     async def get_expired_tool_results(self, now: int) -> List[Dict[str, Any]]:
         """Rows whose expires_at has passed."""
+        raise NotImplementedError
+
+    # --- Compactions (Optional) ---
+    # See the sync contract above; same semantics, async surface.
+
+    async def upsert_compaction(self, row: Dict[str, Any]) -> None:
+        """Insert one compaction record."""
+        raise NotImplementedError
+
+    async def get_compaction(self, compaction_id: str) -> Optional[Dict[str, Any]]:
+        """Get one compaction record by id."""
+        raise NotImplementedError
+
+    async def get_compactions_for_session(self, session_id: str, limit: Optional[int] = None) -> List[Dict[str, Any]]:
+        """The session's compaction records, newest first."""
+        raise NotImplementedError
+
+    async def delete_compactions_for_session(self, session_id: str) -> int:
+        """Delete a session's records. Returns the number deleted."""
+        raise NotImplementedError
+
+    async def search_compactions(self, session_id: str, query: str, limit: int = 10) -> List[Dict[str, Any]]:
+        """Records in this session whose archived transcript contains ``query``."""
         raise NotImplementedError
 
     # --- Approvals (Optional) ---
