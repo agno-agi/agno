@@ -28,7 +28,7 @@ from agno.models.message import Message
 from agno.models.response import ModelResponse, ModelResponseEvent
 from agno.reasoning.step import NextAction, ReasoningStep, ReasoningSteps
 from agno.run import RunContext
-from agno.run.agent import RUN_OUTPUT_EVENT_TYPES, RunOutput, RunOutputEvent
+from agno.run.agent import RUN_OUTPUT_EVENT_TYPES, RunEvent, RunOutput, RunOutputEvent
 from agno.run.messages import RunMessages
 from agno.run.requirement import RunRequirement
 from agno.run.team import (
@@ -53,6 +53,7 @@ from agno.utils.events import (
     create_team_reasoning_started_event,
     create_team_reasoning_step_event,
     create_team_run_output_content_event,
+    create_team_tool_call_args_delta_event,
     create_team_tool_call_completed_event,
     create_team_tool_call_error_event,
     create_team_tool_call_started_event,
@@ -67,15 +68,45 @@ from agno.utils.reasoning import (
     update_run_output_with_reasoning,
 )
 from agno.utils.string import parse_response_dict_str, parse_response_model_str
+from agno.utils.tools import (
+    REFUSED_TOOL_CALL_ERROR,
+    ToolCallArgsStream,
+    answer_streamed_tool_calls,
+    take_refused_tool_calls,
+)
 
 if TYPE_CHECKING:
     from agno.reasoning.manager import ReasoningEvent
     from agno.team.team import Team
 
 
+# The fragment event under both the names it reaches a team under: its own, and
+# the one a member agent or a nested team sends it out as.
+_TOOL_CALL_ARGS_DELTA_EVENTS = frozenset({RunEvent.tool_call_args_delta.value, TeamRunEvent.tool_call_args_delta.value})
+
+
 # ---------------------------------------------------------------------------
 # Response format
 # ---------------------------------------------------------------------------
+
+
+def _close_refused_tool_calls(
+    team: "Team",
+    run_response: TeamRunOutput,
+    tool_args_stream: Optional[ToolCallArgsStream],
+) -> Iterator[TeamRunOutputEvent]:
+    """Report as failed each call a client was shown that the run refused."""
+    for tool in take_refused_tool_calls(tool_args_stream):
+        yield handle_event(  # type: ignore
+            create_team_tool_call_error_event(
+                from_run_response=run_response,
+                tool=tool,
+                error=REFUSED_TOOL_CALL_ERROR,
+            ),
+            run_response,
+            events_to_skip=team.events_to_skip,
+            store_events=team.store_events,
+        )
 
 
 def get_response_format(
@@ -260,6 +291,10 @@ def parse_response_with_parser_model_stream(
             messages_for_parser_model = _get_messages_for_parser_model_stream(
                 team, run_response, parser_response_format, run_context=run_context
             )
+            # The parser model is asked for its answer in one piece rather than
+            # streamed, so no delta of its own ever carries a call's arguments a
+            # fragment at a time. Nothing here threads the record that would
+            # attribute such fragments.
             for model_response_event in team.parser_model.response_stream(
                 messages=messages_for_parser_model,
                 response_format=parser_response_format,
@@ -337,6 +372,10 @@ async def aparse_response_with_parser_model_stream(
                 stream_model_response=False,
                 run_response=run_response,
             )
+            # The parser model is asked for its answer in one piece rather than
+            # streamed, so no delta of its own ever carries a call's arguments a
+            # fragment at a time. Nothing here threads the record that would
+            # attribute such fragments.
             async for model_response_event in model_response_stream:  # type: ignore
                 for event in _handle_model_response_chunk(
                     team,
@@ -436,16 +475,32 @@ def generate_response_with_output_model_stream(
     messages_for_output_model = _get_messages_for_output_model(team, run_messages.messages)
     model_response = ModelResponse(content="")
 
-    for model_response_event in team.output_model.response_stream(
-        messages=messages_for_output_model, run_response=run_response
-    ):
-        yield from _handle_model_response_chunk(
-            team,
-            session=session,
-            run_response=run_response,
-            full_model_response=model_response,
-            model_response_event=model_response_event,
-        )
+    # The run hands the output model none of its own tools, but a provider can
+    # answer with a call to one of its built-in tools whatever it was passed, so
+    # the record that attributes a call's argument fragments is threaded here.
+    # A caller that asked for no events is sent no fragments, so it is given no
+    # stream. Which of the call's other events this path announces is settled
+    # elsewhere and left as it was.
+    tool_args_stream = ToolCallArgsStream(run_response.session_id, run_response.run_id) if stream_events else None
+    try:
+        for model_response_event in team.output_model.response_stream(
+            messages=messages_for_output_model, run_response=run_response
+        ):
+            yield from _handle_model_response_chunk(
+                team,
+                session=session,
+                run_response=run_response,
+                full_model_response=model_response,
+                model_response_event=model_response_event,
+                tool_args_stream=tool_args_stream,
+            )
+    except Exception:
+        # As in the team's own model loop: a stream that raised can still be
+        # yielded into, a generator the consumer abandoned cannot.
+        yield from _close_refused_tool_calls(team, run_response, tool_args_stream)
+        raise
+
+    yield from _close_refused_tool_calls(team, run_response, tool_args_stream)
 
     # Update the TeamRunResponse content
     run_response.content = model_response.content
@@ -521,17 +576,35 @@ async def agenerate_response_with_output_model_stream(
     messages_for_output_model = _get_messages_for_output_model(team, run_messages.messages)
     model_response = ModelResponse(content="")
 
-    async for model_response_event in team.output_model.aresponse_stream(
-        messages=messages_for_output_model, run_response=run_response
-    ):
-        for event in _handle_model_response_chunk(
-            team,
-            session=session,
-            run_response=run_response,
-            full_model_response=model_response,
-            model_response_event=model_response_event,
+    # The run hands the output model none of its own tools, but a provider can
+    # answer with a call to one of its built-in tools whatever it was passed, so
+    # the record that attributes a call's argument fragments is threaded here.
+    # A caller that asked for no events is sent no fragments, so it is given no
+    # stream. Which of the call's other events this path announces is settled
+    # elsewhere and left as it was.
+    tool_args_stream = ToolCallArgsStream(run_response.session_id, run_response.run_id) if stream_events else None
+    try:
+        async for model_response_event in team.output_model.aresponse_stream(
+            messages=messages_for_output_model, run_response=run_response
         ):
-            yield event
+            for event in _handle_model_response_chunk(
+                team,
+                session=session,
+                run_response=run_response,
+                full_model_response=model_response,
+                model_response_event=model_response_event,
+                tool_args_stream=tool_args_stream,
+            ):
+                yield event
+    except Exception:
+        # As in the team's own model loop: a stream that raised can still be
+        # yielded into, a generator the consumer abandoned cannot.
+        for refused in _close_refused_tool_calls(team, run_response, tool_args_stream):
+            yield refused
+        raise
+
+    for refused in _close_refused_tool_calls(team, run_response, tool_args_stream):
+        yield refused
 
     # Update the TeamRunResponse content
     run_response.content = model_response.content
@@ -1015,99 +1088,118 @@ def _handle_model_response_stream(
     from agno.team._run import build_team_after_tool_results_callback
 
     full_model_response = ModelResponse()
-    for model_response_event in call_model_stream_with_fallback(
-        team.model,
-        team.fallback_config,
-        messages=run_messages.messages,
-        response_format=response_format,
-        tools=tools,
-        tool_choice=team.tool_choice,
-        tool_call_limit=team.tool_call_limit,
-        stream_model_response=stream_model_response,
-        run_response=run_response,
-        send_media_to_model=team.send_media_to_model,
-        compression_manager=team.compression_manager if team.compress_tool_results else None,
-        **result_store_kwargs(team),
-        after_tool_results=build_team_after_tool_results_callback(
-            team, run_response, session, run_messages, run_context
-        ),
-    ):
-        # Handle LLM request events and compression events from ModelResponse
-        if isinstance(model_response_event, ModelResponse):
-            if model_response_event.event == ModelResponseEvent.model_request_started.value:
-                if stream_events:
-                    yield handle_event(  # type: ignore
-                        create_team_model_request_started_event(
-                            from_run_response=run_response,
-                            model=team.model.id,
-                            model_provider=team.model.provider,
-                        ),
-                        run_response,
-                        events_to_skip=team.events_to_skip,
-                        store_events=team.store_events,
-                    )
-                continue
-
-            if model_response_event.event == ModelResponseEvent.model_request_completed.value:
-                if stream_events:
-                    yield handle_event(  # type: ignore
-                        create_team_model_request_completed_event(
-                            from_run_response=run_response,
-                            model=team.model.id,
-                            model_provider=team.model.provider,
-                            input_tokens=model_response_event.input_tokens,
-                            output_tokens=model_response_event.output_tokens,
-                            total_tokens=model_response_event.total_tokens,
-                            time_to_first_token=model_response_event.time_to_first_token,
-                            reasoning_tokens=model_response_event.reasoning_tokens,
-                            cache_read_tokens=model_response_event.cache_read_tokens,
-                            cache_write_tokens=model_response_event.cache_write_tokens,
-                        ),
-                        run_response,
-                        events_to_skip=team.events_to_skip,
-                        store_events=team.store_events,
-                    )
-                continue
-
-            # Handle compression events
-            if model_response_event.event == ModelResponseEvent.compression_started.value:
-                if stream_events:
-                    yield handle_event(  # type: ignore
-                        create_team_compression_started_event(from_run_response=run_response),
-                        run_response,
-                        events_to_skip=team.events_to_skip,
-                        store_events=team.store_events,
-                    )
-                continue
-
-            if model_response_event.event == ModelResponseEvent.compression_completed.value:
-                if stream_events:
-                    stats = model_response_event.compression_stats or {}
-                    yield handle_event(  # type: ignore
-                        create_team_compression_completed_event(
-                            from_run_response=run_response,
-                            tool_results_compressed=stats.get("tool_results_compressed"),
-                            original_size=stats.get("original_size"),
-                            compressed_size=stats.get("compressed_size"),
-                        ),
-                        run_response,
-                        events_to_skip=team.events_to_skip,
-                        store_events=team.store_events,
-                    )
-                continue
-
-        yield from _handle_model_response_chunk(
-            team,
-            session=session,
+    tool_args_stream = ToolCallArgsStream(run_response.session_id, run_response.run_id) if stream_events else None
+    try:
+        for model_response_event in call_model_stream_with_fallback(
+            team.model,
+            team.fallback_config,
+            messages=run_messages.messages,
+            response_format=response_format,
+            tools=tools,
+            tool_choice=team.tool_choice,
+            tool_call_limit=team.tool_call_limit,
+            stream_model_response=stream_model_response,
             run_response=run_response,
-            full_model_response=full_model_response,
-            model_response_event=model_response_event,
-            reasoning_state=reasoning_state,
-            stream_events=stream_events,
-            parse_structured_output=should_parse_structured_output,
-            session_state=session_state,
-            run_context=run_context,
-        )
+            send_media_to_model=team.send_media_to_model,
+            compression_manager=team.compression_manager if team.compress_tool_results else None,
+            **result_store_kwargs(team),
+            after_tool_results=build_team_after_tool_results_callback(
+                team, run_response, session, run_messages, run_context
+            ),
+        ):
+            # Handle LLM request events and compression events from ModelResponse
+            if isinstance(model_response_event, ModelResponse):
+                if model_response_event.event == ModelResponseEvent.model_request_started.value:
+                    # By now the run has decided what to do with every call the last
+                    # turn made, and its tool call identities do not carry forward
+                    yield from _close_refused_tool_calls(team, run_response, tool_args_stream)
+                    if tool_args_stream is not None:
+                        tool_args_stream.begin_turn()
+                    if stream_events:
+                        yield handle_event(  # type: ignore
+                            create_team_model_request_started_event(
+                                from_run_response=run_response,
+                                model=team.model.id,
+                                model_provider=team.model.provider,
+                            ),
+                            run_response,
+                            events_to_skip=team.events_to_skip,
+                            store_events=team.store_events,
+                        )
+                    continue
+
+                if model_response_event.event == ModelResponseEvent.model_request_completed.value:
+                    if stream_events:
+                        yield handle_event(  # type: ignore
+                            create_team_model_request_completed_event(
+                                from_run_response=run_response,
+                                model=team.model.id,
+                                model_provider=team.model.provider,
+                                input_tokens=model_response_event.input_tokens,
+                                output_tokens=model_response_event.output_tokens,
+                                total_tokens=model_response_event.total_tokens,
+                                time_to_first_token=model_response_event.time_to_first_token,
+                                reasoning_tokens=model_response_event.reasoning_tokens,
+                                cache_read_tokens=model_response_event.cache_read_tokens,
+                                cache_write_tokens=model_response_event.cache_write_tokens,
+                            ),
+                            run_response,
+                            events_to_skip=team.events_to_skip,
+                            store_events=team.store_events,
+                        )
+                    continue
+
+                # Handle compression events
+                if model_response_event.event == ModelResponseEvent.compression_started.value:
+                    if stream_events:
+                        yield handle_event(  # type: ignore
+                            create_team_compression_started_event(from_run_response=run_response),
+                            run_response,
+                            events_to_skip=team.events_to_skip,
+                            store_events=team.store_events,
+                        )
+                    continue
+
+                if model_response_event.event == ModelResponseEvent.compression_completed.value:
+                    if stream_events:
+                        stats = model_response_event.compression_stats or {}
+                        yield handle_event(  # type: ignore
+                            create_team_compression_completed_event(
+                                from_run_response=run_response,
+                                tool_results_compressed=stats.get("tool_results_compressed"),
+                                original_size=stats.get("original_size"),
+                                compressed_size=stats.get("compressed_size"),
+                            ),
+                            run_response,
+                            events_to_skip=team.events_to_skip,
+                            store_events=team.store_events,
+                        )
+                    continue
+
+            yield from _handle_model_response_chunk(
+                team,
+                session=session,
+                run_response=run_response,
+                full_model_response=full_model_response,
+                model_response_event=model_response_event,
+                reasoning_state=reasoning_state,
+                stream_events=stream_events,
+                parse_structured_output=should_parse_structured_output,
+                session_state=session_state,
+                run_context=run_context,
+                tool_args_stream=tool_args_stream,
+            )
+    except Exception:
+        # A stream that raised is still being read, so this generator can
+        # yield the closures. A generator the consumer abandoned cannot:
+        # that arrives as GeneratorExit, which is no Exception and is left
+        # alone, as are a keyboard interrupt and a process exit.
+        yield from _close_refused_tool_calls(team, run_response, tool_args_stream)
+        raise
+
+    # The stream ends here whether the run completed or paused, and a call
+    # refused on its last turn gets no later turn to be closed out on.
+    yield from _close_refused_tool_calls(team, run_response, tool_args_stream)
 
     # 3. Update TeamRunOutput
     if full_model_response.content is not None:
@@ -1176,6 +1268,7 @@ async def _ahandle_model_response_stream(
     from agno.team._run import abuild_team_after_tool_results_callback
 
     full_model_response = ModelResponse()
+    tool_args_stream = ToolCallArgsStream(run_response.session_id, run_response.run_id) if stream_events else None
     model_stream = acall_model_stream_with_fallback(
         team.model,
         team.fallback_config,
@@ -1193,84 +1286,105 @@ async def _ahandle_model_response_stream(
             team, run_response, session, run_messages, run_context
         ),
     )  # type: ignore
-    async for model_response_event in model_stream:
-        # Handle LLM request events and compression events from ModelResponse
-        if isinstance(model_response_event, ModelResponse):
-            if model_response_event.event == ModelResponseEvent.model_request_started.value:
-                if stream_events:
-                    yield handle_event(  # type: ignore
-                        create_team_model_request_started_event(
-                            from_run_response=run_response,
-                            model=team.model.id,
-                            model_provider=team.model.provider,
-                        ),
-                        run_response,
-                        events_to_skip=team.events_to_skip,
-                        store_events=team.store_events,
-                    )
-                continue
+    try:
+        async for model_response_event in model_stream:
+            # Handle LLM request events and compression events from ModelResponse
+            if isinstance(model_response_event, ModelResponse):
+                if model_response_event.event == ModelResponseEvent.model_request_started.value:
+                    # By now the run has decided what to do with every call the last
+                    # turn made, and its tool call identities do not carry forward
+                    for refused in _close_refused_tool_calls(team, run_response, tool_args_stream):
+                        yield refused
+                    if tool_args_stream is not None:
+                        tool_args_stream.begin_turn()
+                    if stream_events:
+                        yield handle_event(  # type: ignore
+                            create_team_model_request_started_event(
+                                from_run_response=run_response,
+                                model=team.model.id,
+                                model_provider=team.model.provider,
+                            ),
+                            run_response,
+                            events_to_skip=team.events_to_skip,
+                            store_events=team.store_events,
+                        )
+                    continue
 
-            if model_response_event.event == ModelResponseEvent.model_request_completed.value:
-                if stream_events:
-                    yield handle_event(  # type: ignore
-                        create_team_model_request_completed_event(
-                            from_run_response=run_response,
-                            model=team.model.id,
-                            model_provider=team.model.provider,
-                            input_tokens=model_response_event.input_tokens,
-                            output_tokens=model_response_event.output_tokens,
-                            total_tokens=model_response_event.total_tokens,
-                            time_to_first_token=model_response_event.time_to_first_token,
-                            reasoning_tokens=model_response_event.reasoning_tokens,
-                            cache_read_tokens=model_response_event.cache_read_tokens,
-                            cache_write_tokens=model_response_event.cache_write_tokens,
-                        ),
-                        run_response,
-                        events_to_skip=team.events_to_skip,
-                        store_events=team.store_events,
-                    )
-                continue
+                if model_response_event.event == ModelResponseEvent.model_request_completed.value:
+                    if stream_events:
+                        yield handle_event(  # type: ignore
+                            create_team_model_request_completed_event(
+                                from_run_response=run_response,
+                                model=team.model.id,
+                                model_provider=team.model.provider,
+                                input_tokens=model_response_event.input_tokens,
+                                output_tokens=model_response_event.output_tokens,
+                                total_tokens=model_response_event.total_tokens,
+                                time_to_first_token=model_response_event.time_to_first_token,
+                                reasoning_tokens=model_response_event.reasoning_tokens,
+                                cache_read_tokens=model_response_event.cache_read_tokens,
+                                cache_write_tokens=model_response_event.cache_write_tokens,
+                            ),
+                            run_response,
+                            events_to_skip=team.events_to_skip,
+                            store_events=team.store_events,
+                        )
+                    continue
 
-            # Handle compression events
-            if model_response_event.event == ModelResponseEvent.compression_started.value:
-                if stream_events:
-                    yield handle_event(  # type: ignore
-                        create_team_compression_started_event(from_run_response=run_response),
-                        run_response,
-                        events_to_skip=team.events_to_skip,
-                        store_events=team.store_events,
-                    )
-                continue
+                # Handle compression events
+                if model_response_event.event == ModelResponseEvent.compression_started.value:
+                    if stream_events:
+                        yield handle_event(  # type: ignore
+                            create_team_compression_started_event(from_run_response=run_response),
+                            run_response,
+                            events_to_skip=team.events_to_skip,
+                            store_events=team.store_events,
+                        )
+                    continue
 
-            if model_response_event.event == ModelResponseEvent.compression_completed.value:
-                if stream_events:
-                    stats = model_response_event.compression_stats or {}
-                    yield handle_event(  # type: ignore
-                        create_team_compression_completed_event(
-                            from_run_response=run_response,
-                            tool_results_compressed=stats.get("tool_results_compressed"),
-                            original_size=stats.get("original_size"),
-                            compressed_size=stats.get("compressed_size"),
-                        ),
-                        run_response,
-                        events_to_skip=team.events_to_skip,
-                        store_events=team.store_events,
-                    )
-                continue
+                if model_response_event.event == ModelResponseEvent.compression_completed.value:
+                    if stream_events:
+                        stats = model_response_event.compression_stats or {}
+                        yield handle_event(  # type: ignore
+                            create_team_compression_completed_event(
+                                from_run_response=run_response,
+                                tool_results_compressed=stats.get("tool_results_compressed"),
+                                original_size=stats.get("original_size"),
+                                compressed_size=stats.get("compressed_size"),
+                            ),
+                            run_response,
+                            events_to_skip=team.events_to_skip,
+                            store_events=team.store_events,
+                        )
+                    continue
 
-        for event in _handle_model_response_chunk(
-            team,
-            session=session,
-            run_response=run_response,
-            full_model_response=full_model_response,
-            model_response_event=model_response_event,
-            reasoning_state=reasoning_state,
-            stream_events=stream_events,
-            parse_structured_output=should_parse_structured_output,
-            session_state=session_state,
-            run_context=run_context,
-        ):
-            yield event
+            for event in _handle_model_response_chunk(
+                team,
+                session=session,
+                run_response=run_response,
+                full_model_response=full_model_response,
+                model_response_event=model_response_event,
+                reasoning_state=reasoning_state,
+                stream_events=stream_events,
+                parse_structured_output=should_parse_structured_output,
+                session_state=session_state,
+                run_context=run_context,
+                tool_args_stream=tool_args_stream,
+            ):
+                yield event
+    except Exception:
+        # A stream that raised is still being read, so this generator can
+        # yield the closures. A generator the consumer abandoned cannot:
+        # that arrives as GeneratorExit, which is no Exception and is left
+        # alone, as are a keyboard interrupt and a process exit.
+        for refused in _close_refused_tool_calls(team, run_response, tool_args_stream):
+            yield refused
+        raise
+
+    # The stream ends here whether the run completed or paused, and a call
+    # refused on its last turn gets no later turn to be closed out on.
+    for refused in _close_refused_tool_calls(team, run_response, tool_args_stream):
+        yield refused
 
     # Update TeamRunOutput
     if full_model_response.content is not None:
@@ -1319,11 +1433,19 @@ def _handle_model_response_chunk(
     parse_structured_output: bool = False,
     session_state: Optional[Dict[str, Any]] = None,
     run_context: Optional[RunContext] = None,
+    tool_args_stream: Optional[ToolCallArgsStream] = None,
 ) -> Iterator[Union[TeamRunOutputEvent, RunOutputEvent]]:
     if isinstance(model_response_event, RUN_OUTPUT_EVENT_TYPES) or isinstance(
         model_response_event, TEAM_RUN_OUTPUT_EVENT_TYPES
     ):
         if team.stream_member_events:
+            # A run told not to stream events is told that about its members
+            # too. Members are run with events on so the leader can read them,
+            # so their argument fragments arrive here and stop here, as the
+            # leader's own do.
+            if not stream_events and model_response_event.event in _TOOL_CALL_ARGS_DELTA_EVENTS:
+                return
+
             if model_response_event.event == TeamRunEvent.custom_event:  # type: ignore
                 if hasattr(model_response_event, "team_id"):
                     model_response_event.team_id = team.id
@@ -1373,6 +1495,18 @@ def _handle_model_response_chunk(
             full_model_response.reasoning_content = None
             run_response.content = None
             run_response.reasoning_content = None
+            # A replaced stream's own calls will never be made under its own ids
+            yield from _close_refused_tool_calls(team, run_response, tool_args_stream)
+            if tool_args_stream is not None:
+                tool_args_stream.begin_turn()
+            return
+        if model_response_event.event == ModelResponseEvent.model_request_started.value:
+            # The team's own loop reads this event before delegating here. The
+            # output model's stream does not, and this is where its turns end:
+            # a provider's numbering restarts with each request it answers.
+            yield from _close_refused_tool_calls(team, run_response, tool_args_stream)
+            if tool_args_stream is not None:
+                tool_args_stream.begin_turn()
             return
         # If the model response is an assistant_response, yield a RunOutput
         if model_response_event.event == ModelResponseEvent.assistant_response.value:
@@ -1510,10 +1644,31 @@ def _handle_model_response_chunk(
                         store_events=team.store_events,
                     )
 
+            # A chunk can carry both what the model said and the call it went on
+            # to make, and the saying came first, so the fragments go out last.
+            # A path threads a stream exactly when its fragments are the
+            # client's to receive, so the stream's presence is the whole gate.
+            if model_response_event.tool_calls and tool_args_stream is not None:
+                for tool_call_id, tool_name, tool_args_delta in tool_args_stream.fragments(
+                    model_response_event.tool_calls
+                ):
+                    yield handle_event(  # type: ignore
+                        create_team_tool_call_args_delta_event(
+                            from_run_response=run_response,
+                            tool_call_id=tool_call_id,
+                            tool_args_delta=tool_args_delta,
+                            tool_name=tool_name,
+                        ),
+                        run_response,
+                        events_to_skip=team.events_to_skip,
+                        store_events=team.store_events,
+                    )
+
         # Handle tool interruption events (HITL flow)
         elif model_response_event.event == ModelResponseEvent.tool_call_paused.value:
             tool_executions_list = model_response_event.tool_executions
             if tool_executions_list is not None:
+                answer_streamed_tool_calls(tool_args_stream, tool_executions_list)
                 if run_response.tools is None:
                     run_response.tools = tool_executions_list
                 else:
@@ -1527,6 +1682,7 @@ def _handle_model_response_chunk(
             # Add tool calls to the run_response
             tool_executions_list = model_response_event.tool_executions
             if tool_executions_list is not None:
+                answer_streamed_tool_calls(tool_args_stream, tool_executions_list)
                 # Add tool calls to the agent.run_response
                 if run_response.tools is None:
                     run_response.tools = tool_executions_list
@@ -1584,6 +1740,7 @@ def _handle_model_response_chunk(
             reasoning_step: Optional[ReasoningStep] = None
             tool_executions_list = model_response_event.tool_executions
             if tool_executions_list is not None:
+                answer_streamed_tool_calls(tool_args_stream, tool_executions_list)
                 # Update the existing tool call in the run_response
                 if run_response.tools:
                     # Create a mapping of tool_call_id to index

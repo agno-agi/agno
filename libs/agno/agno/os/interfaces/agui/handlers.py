@@ -1,4 +1,3 @@
-import copy
 import json
 import uuid
 from typing import Any, Callable, Dict, List, Optional
@@ -29,7 +28,7 @@ from ag_ui.core import (
 )
 
 from agno.models.response import ToolExecution
-from agno.os.interfaces.agui.state import StreamState
+from agno.os.interfaces.agui.state import StateDeltaUnavailable, StreamState, client_state
 from agno.os.interfaces.agui.utils import to_json_str
 from agno.reasoning.step import ReasoningStep
 from agno.run.agent import RunContentEvent, RunEvent
@@ -38,6 +37,7 @@ from agno.run.base import BaseRunOutputEvent
 from agno.run.team import RunContentEvent as TeamRunContentEvent
 from agno.run.team import RunPausedEvent as TeamRunPausedEvent
 from agno.run.team import TeamRunEvent
+from agno.utils.log import log_warning
 from agno.utils.message import get_text_from_message
 
 EventHandler = Callable[[BaseRunOutputEvent, StreamState], List[BaseEvent]]
@@ -95,7 +95,27 @@ def _format_reasoning_step(step: Optional[ReasoningStep], step_number: int = 0) 
 def _emit_state_delta(state: StreamState) -> List[BaseEvent]:
     if state.run_state is None:
         return []
-    ops = state.compute_state_delta(state.run_state)
+    try:
+        ops = state.compute_state_delta(state.run_state)
+    except StateDeltaUnavailable as e:
+        if e.reason == StateDeltaUnavailable.STATE_NOT_SENDABLE:
+            # A snapshot would carry the very state the encoder has just
+            # refused, and the encoder runs after this handler, on the way to
+            # the socket: the event would take the rest of the response with
+            # it, terminal event included. So nothing goes out, and the
+            # baseline stays where the client is, which is what lets a later
+            # change the encoder can render be described against what it holds.
+            if state.should_warn_delta_fallback(e.reason):
+                log_warning(f"{e} The client keeps the state it was last sent. {state.run_label()}")
+            return []
+        # State did change, so staying quiet would hide the mutation from the
+        # client for the rest of the run. A full snapshot carries everything
+        # the patch would have.
+        if state.should_warn_delta_fallback(e.reason):
+            log_warning(f"{e} Sending a full STATE_SNAPSHOT instead. {state.run_label()}")
+        snapshot = client_state(state.run_state)
+        state.set_state_snapshot(state.run_state)
+        return [StateSnapshotEvent(type=EventType.STATE_SNAPSHOT, snapshot=snapshot)]
     if ops is None:
         return []
     state.set_state_snapshot(state.run_state)
@@ -116,9 +136,8 @@ def _close_open_spans(state: StreamState) -> List[BaseEvent]:
 
     # Close remaining active tool calls
     for tool_call_id in list(state.active_tool_call_ids):
-        if tool_call_id not in state.ended_tool_call_ids:
-            events.append(ToolCallEndEvent(type=EventType.TOOL_CALL_END, tool_call_id=tool_call_id))
-            state.end_tool_call(tool_call_id)
+        events.append(ToolCallEndEvent(type=EventType.TOOL_CALL_END, tool_call_id=tool_call_id))
+        state.end_tool_call(tool_call_id)
 
     # Close open text message
     if state.text_message_open:
@@ -162,11 +181,17 @@ def on_run_content(chunk: BaseRunOutputEvent, state: StreamState) -> List[BaseEv
     return events
 
 
-def on_tool_call_started(chunk: BaseRunOutputEvent, state: StreamState) -> List[BaseEvent]:
+def _open_tool_call(
+    state: StreamState, tool_call_id: str, tool_call_name: str, args_streaming: bool = False
+) -> List[BaseEvent]:
+    """TOOL_CALL_START for one call, parented to the message open at this moment.
+
+    Shared by the events that can be the first sight of a call: an argument
+    fragment and Agno's own announcement. Every caller has to have found the
+    call closed first, because a second start for a call the client holds open
+    is where its verifier stops reading the run.
+    """
     events: List[BaseEvent] = []
-    tool = getattr(chunk, "tool", None)
-    if tool is None:
-        return events
 
     # Close open text message before tool call
     if state.text_message_open:
@@ -192,11 +217,73 @@ def on_tool_call_started(chunk: BaseRunOutputEvent, state: StreamState) -> List[
     events.append(
         ToolCallStartEvent(
             type=EventType.TOOL_CALL_START,
-            tool_call_id=tool.tool_call_id,
-            tool_call_name=tool.tool_name,
+            tool_call_id=tool_call_id,
+            tool_call_name=tool_call_name,
             parent_message_id=parent_message_id,
         )
     )
+
+    state.start_tool_call(tool_call_id, args_streaming=args_streaming)
+    return events
+
+
+def on_tool_call_args_delta(chunk: BaseRunOutputEvent, state: StreamState) -> List[BaseEvent]:
+    """Pass one fragment of a tool call's arguments straight through to the client.
+
+    A provider streams a call's arguments in pieces, and these usually arrive
+    before Agno has the finished call to announce, so a fragment carrying
+    argument text for a call nothing has opened yet is what opens it. That is
+    also why the fragment carries the tool name: there is nothing else to read
+    it off yet.
+    """
+    events: List[BaseEvent] = []
+    tool_call_id = getattr(chunk, "tool_call_id", None)
+    if not tool_call_id:
+        return events
+
+    delta = getattr(chunk, "tool_args_delta", None)
+    if not delta:
+        # A provider can name a call on a fragment carrying no argument text at
+        # all. Opening the call on that would leave the client a start and an
+        # end with nothing between them, so the call waits for something to be
+        # said about it.
+        return events
+
+    if state.tool_call_open(tool_call_id):
+        if state.streamed_tool_call_args(tool_call_id) is None:
+            # Agno's announcement opened this call and carried its whole
+            # argument string, so passing this fragment on would append to
+            # arguments the client already holds complete.
+            return events
+    else:
+        tool_name = getattr(chunk, "tool_name", None)
+        if not tool_name:
+            # A call is opened once and under one name, and the name is what a
+            # client renders it as. A fragment that names no tool cannot open
+            # one, so the call waits for Agno's announcement of the finished
+            # call, which names it and carries its whole argument string.
+            return events
+        events.extend(_open_tool_call(state, tool_call_id, tool_name, args_streaming=True))
+
+    events.append(ToolCallArgsEvent(type=EventType.TOOL_CALL_ARGS, tool_call_id=tool_call_id, delta=delta))
+    state.note_streamed_tool_call_args(tool_call_id, delta)
+    return events
+
+
+def on_tool_call_started(chunk: BaseRunOutputEvent, state: StreamState) -> List[BaseEvent]:
+    events: List[BaseEvent] = []
+    tool = getattr(chunk, "tool", None)
+    if tool is None:
+        return events
+
+    # The call is already open, which means a fragment opened it, so this
+    # announcement neither opens it again nor carries the arguments:
+    # TOOL_CALL_ARGS appends, so anything sent here would be added to the text
+    # the fragments carried, whether or not they carried all of it.
+    if state.tool_call_open(tool.tool_call_id):
+        return events
+
+    events.extend(_open_tool_call(state, tool.tool_call_id, tool.tool_name))
 
     events.append(
         ToolCallArgsEvent(
@@ -206,7 +293,33 @@ def on_tool_call_started(chunk: BaseRunOutputEvent, state: StreamState) -> List[
         )
     )
 
-    state.start_tool_call(tool.tool_call_id)
+    return events
+
+
+def _close_tool_call(state: StreamState, tool_call_id: str, result: Optional[str]) -> List[BaseEvent]:
+    """End an open call on the wire and report what it left behind.
+
+    Every call that ends with something to report ends here, so a call is
+    released from the open record and its result carried the same way however
+    it ended. ``result`` is what the call is to be shown as having produced,
+    an error text included, and ``None`` where it produced nothing to show.
+    """
+    events: List[BaseEvent] = [ToolCallEndEvent(type=EventType.TOOL_CALL_END, tool_call_id=tool_call_id)]
+    state.end_tool_call(tool_call_id)
+
+    if result is not None:
+        events.append(
+            ToolCallResultEvent(
+                type=EventType.TOOL_CALL_RESULT,
+                tool_call_id=tool_call_id,
+                content=to_json_str(result),
+                role="tool",
+                # Use tool_call_id as message_id so frontend can link result to the tool call
+                message_id=tool_call_id,
+            )
+        )
+
+    events.extend(_emit_state_delta(state))
     return events
 
 
@@ -216,27 +329,41 @@ def on_tool_call_completed(chunk: BaseRunOutputEvent, state: StreamState) -> Lis
     if tool is None:
         return events
 
-    if tool.tool_call_id in state.ended_tool_call_ids:
+    # Nothing to close, and nothing to report the result of: either the call
+    # was never opened on the wire, or a completion for it has already been
+    # handled. An end for a call the client does not hold open is where its
+    # verifier stops reading the run.
+    if not state.tool_call_open(tool.tool_call_id):
         return events
 
-    events.append(ToolCallEndEvent(type=EventType.TOOL_CALL_END, tool_call_id=tool.tool_call_id))
-    state.end_tool_call(tool.tool_call_id)
+    return _close_tool_call(state, tool.tool_call_id, tool.result)
 
-    if tool.result is not None:
-        content = to_json_str(tool.result)
-        events.append(
-            ToolCallResultEvent(
-                type=EventType.TOOL_CALL_RESULT,
-                tool_call_id=tool.tool_call_id,
-                content=content,
-                role="tool",
-                # Use tool_call_id as message_id so frontend can link result to the tool call
-                message_id=tool.tool_call_id,
-            )
-        )
 
-    events.extend(_emit_state_delta(state))
-    return events
+def on_tool_call_error(chunk: BaseRunOutputEvent, state: StreamState) -> List[BaseEvent]:
+    """Close a call that failed, with what went wrong as its result.
+
+    A call the run refuses once its arguments have gone out is never started
+    and never completed, so this is the only event that says anything about
+    it: unhandled, it reaches the client as an opaque passthrough and leaves
+    the call pending until the run ends. What the failure says is Agno's to
+    word, a refusal included, so it is carried rather than restated.
+
+    An error for a call that is not open closes nothing. An ordinary tool
+    failure is announced as a completion first, which has already closed the
+    call and carried the same text as its result, and an end for a call the
+    client does not hold open is where its verifier stops reading the run.
+    """
+    events: List[BaseEvent] = []
+    tool = getattr(chunk, "tool", None)
+    if tool is None:
+        return events
+
+    tool_call_id = tool.tool_call_id
+    if not tool_call_id or not state.tool_call_open(tool_call_id):
+        return events
+
+    error = getattr(chunk, "error", None)
+    return _close_tool_call(state, tool_call_id, error if error is not None else tool.result)
 
 
 def on_reasoning_started(chunk: BaseRunOutputEvent, state: StreamState) -> List[BaseEvent]:
@@ -365,10 +492,8 @@ def on_run_error(chunk: BaseRunOutputEvent, state: StreamState) -> List[BaseEven
     return events
 
 
-def on_run_completed(chunk: BaseRunOutputEvent, state: StreamState) -> List[BaseEvent]:
-    events = _close_open_spans(state)
-
-    # 1. Collect paused tools for frontend rendering
+def _paused_tool_calls(chunk: BaseRunOutputEvent) -> List[ToolExecution]:
+    """The calls a paused run is waiting on the client for."""
     paused_tools: List[ToolExecution] = []
     if isinstance(chunk, AgentRunPausedEvent):
         paused_tools = (
@@ -386,8 +511,31 @@ def on_run_completed(chunk: BaseRunOutputEvent, state: StreamState) -> List[Base
         for req in chunk.active_requirements:
             if req.member_agent_id and req.tool_execution:
                 paused_tools.append(req.tool_execution)
+    return paused_tools
 
-    if paused_tools:
+
+def on_run_completed(chunk: BaseRunOutputEvent, state: StreamState) -> List[BaseEvent]:
+    paused_tools = _paused_tool_calls(chunk)
+    events = _close_open_spans(state)
+
+    # A paused call the stream already opened, whichever opener did it, has
+    # been carried and closed by now: its fragments carried its arguments and
+    # the close above ended it. Rendering it again would give the client a
+    # second call under the same id, and a second stand-in message to parent it
+    # to. A pause can also name the same call twice, once as a team leader's
+    # and once as its member's.
+    tools_to_render: List[ToolExecution] = []
+    for tool in paused_tools:
+        if tool.tool_call_id is None or tool.tool_name is None:
+            continue
+        if state.tool_call_ended(tool.tool_call_id) or any(
+            tool.tool_call_id == picked.tool_call_id for picked in tools_to_render
+        ):
+            continue
+        tools_to_render.append(tool)
+    paused_content = getattr(chunk, "content", None) if paused_tools else None
+
+    if tools_to_render or paused_content:
         assistant_message_id = str(uuid.uuid4())
         events.append(
             TextMessageStartEvent(
@@ -397,46 +545,45 @@ def on_run_completed(chunk: BaseRunOutputEvent, state: StreamState) -> List[Base
             )
         )
 
-        content = getattr(chunk, "content", None)
-        if content:
+        if paused_content:
             events.append(
                 TextMessageContentEvent(
                     type=EventType.TEXT_MESSAGE_CONTENT,
                     message_id=assistant_message_id,
-                    delta=str(content),
+                    delta=str(paused_content),
                 )
             )
 
         events.append(TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=assistant_message_id))
 
-        for tool in paused_tools:
-            if tool.tool_call_id is None or tool.tool_name is None:
-                continue
-
+        for tool in tools_to_render:
+            tool_call_id = str(tool.tool_call_id)
             events.append(
                 ToolCallStartEvent(
                     type=EventType.TOOL_CALL_START,
-                    tool_call_id=tool.tool_call_id,
+                    tool_call_id=tool_call_id,
                     tool_call_name=tool.tool_name,
                     parent_message_id=assistant_message_id,
                 )
             )
+            state.start_tool_call(tool_call_id)
 
             events.append(
                 ToolCallArgsEvent(
                     type=EventType.TOOL_CALL_ARGS,
-                    tool_call_id=tool.tool_call_id,
+                    tool_call_id=tool_call_id,
                     delta=json.dumps(tool.tool_args),
                 )
             )
 
-            events.append(ToolCallEndEvent(type=EventType.TOOL_CALL_END, tool_call_id=tool.tool_call_id))
+            events.append(ToolCallEndEvent(type=EventType.TOOL_CALL_END, tool_call_id=tool_call_id))
+            state.end_tool_call(tool_call_id)
 
     # Emit final state snapshot
     if state.run_state is not None:
         authoritative_state = getattr(chunk, "session_state", None)
         final_state = authoritative_state if authoritative_state is not None else state.run_state
-        events.append(StateSnapshotEvent(type=EventType.STATE_SNAPSHOT, snapshot=copy.deepcopy(final_state)))
+        events.append(StateSnapshotEvent(type=EventType.STATE_SNAPSHOT, snapshot=client_state(final_state)))
 
     events.append(RunFinishedEvent(type=EventType.RUN_FINISHED, thread_id=state.thread_id, run_id=state.run_id))
     return events
@@ -451,7 +598,9 @@ def _normalize_event(event: str) -> str:
 HANDLERS: Dict[str, EventHandler] = {
     RunEvent.run_content.value: on_run_content,
     RunEvent.tool_call_started.value: on_tool_call_started,
+    RunEvent.tool_call_args_delta.value: on_tool_call_args_delta,
     RunEvent.tool_call_completed.value: on_tool_call_completed,
+    RunEvent.tool_call_error.value: on_tool_call_error,
     RunEvent.reasoning_started.value: on_reasoning_started,
     RunEvent.reasoning_content_delta.value: on_reasoning_content_delta,
     RunEvent.reasoning_step.value: on_reasoning_step,

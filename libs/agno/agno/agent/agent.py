@@ -665,10 +665,12 @@ class Agent:
 
         self.store_events = store_events
         self.role = role
-        # By default, we skip the run response content event
+        # By default we keep the high frequency events out of the stored run: one
+        # row per token or per argument fragment is not what a caller wants. They
+        # are still streamed to subscribers; this list only governs storage.
         self.events_to_skip = events_to_skip
         if self.events_to_skip is None:
-            self.events_to_skip = [RunEvent.run_content]
+            self.events_to_skip = [RunEvent.run_content, RunEvent.tool_call_args_delta]
 
         self.debug_mode = debug_mode
         if debug_level not in [1, 2]:

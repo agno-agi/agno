@@ -7,6 +7,35 @@ from agno.utils.log import log_debug, log_error
 T = TypeVar("T")
 
 
+def coerce_literal_argument_values(arguments: Dict[str, Any]) -> Dict[str, Any]:
+    """Read the literal strings models write for Python values as those values.
+
+    Models do send "true", "false", "none" and "null" as argument strings where
+    they mean the value, so a top-level string of any of those becomes ``True``,
+    ``False`` or ``None``, in whatever casing and surrounded by whatever
+    whitespace it arrived in. Every other string is left exactly as it arrived,
+    its own whitespace included, and so is anything nested inside a value.
+
+    Anything holding arguments against the ones a run made a call with reads
+    them this way too, or Agno's own tidying looks like a disagreement.
+    """
+    coerced: Dict[str, Any] = {}
+    for key, value in arguments.items():
+        if isinstance(value, str):
+            literal = value.strip().lower()
+            if literal in ("none", "null"):
+                coerced[key] = None
+            elif literal == "true":
+                coerced[key] = True
+            elif literal == "false":
+                coerced[key] = False
+            else:
+                coerced[key] = value
+        else:
+            coerced[key] = value
+    return coerced
+
+
 def get_function_call(
     name: str,
     arguments: Optional[str] = None,
@@ -52,22 +81,7 @@ def get_function_call(
             return function_call
 
         try:
-            clean_arguments: Dict[str, Any] = {}
-            for k, v in _arguments.items():
-                if isinstance(v, str):
-                    _v = v.strip().lower()
-                    if _v in ("none", "null"):
-                        clean_arguments[k] = None
-                    elif _v == "true":
-                        clean_arguments[k] = True
-                    elif _v == "false":
-                        clean_arguments[k] = False
-                    else:
-                        clean_arguments[k] = v
-                else:
-                    clean_arguments[k] = v
-
-            function_call.arguments = clean_arguments
+            function_call.arguments = coerce_literal_argument_values(_arguments)
         except Exception as e:
             log_error(f"Unable to parsing function arguments:\n{arguments}\nError: {str(e)}")
             function_call.error = f"Error while parsing function arguments: {e}\n\n Please fix and retry."
