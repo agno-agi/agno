@@ -27,6 +27,7 @@ from agno.db.in_memory import InMemoryDb  # noqa: E402
 from agno.db.sqlite import SqliteDb  # noqa: E402
 from agno.db.sqlite.async_sqlite import AsyncSqliteDb  # noqa: E402
 from agno.os import AgentOS  # noqa: E402
+from agno.os.authz import Authorization  # noqa: E402
 from agno.os.authz.audit import DbAuditSink  # noqa: E402
 from agno.os.authz.native_engine import NativePolicyEngine  # noqa: E402
 from agno.os.authz.role_store import ManagedRoleStore  # noqa: E402
@@ -144,8 +145,7 @@ def _served_os(tmp_path):
         id=OS_ID,
         agents=[Agent(id="research", name="R", db=InMemoryDb()), Agent(id="secret", name="S", db=InMemoryDb())],
         db=adb,
-        authorization=True,
-        authorization_config=AuthorizationConfig(
+        authorization=Authorization(
             verification_keys=[SECRET],
             algorithm="HS256",
             verify_audience=True,

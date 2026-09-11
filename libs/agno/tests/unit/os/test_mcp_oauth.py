@@ -39,6 +39,7 @@ from starlette.middleware.base import BaseHTTPMiddleware  # noqa: E402
 from agno.agent import Agent  # noqa: E402
 from agno.db.schemas.service_accounts import ServiceAccount  # noqa: E402
 from agno.os import AgentOS, MCPServerConfig  # noqa: E402
+from agno.os.authz import Authorization  # noqa: E402
 from agno.os.mcp import _mcp_server_is_open, get_mcp_server  # noqa: E402
 from agno.os.mcp_auth import (  # noqa: E402
     AUTHORIZATION_ENABLED_CLAIM,
@@ -542,13 +543,11 @@ async def test_issuer_pin_is_enforced_on_mcp(monkeypatch):
     JWT verifier must enforce it too -- not just REST. Before the fix the issuer kwarg was
     dropped when building the MCP verifier (audience was threaded, issuer was not), so a
     token from an untrusted issuer that REST rejects still verified on /mcp."""
-    from agno.os.config import AuthorizationConfig
 
     os = AgentOS(
         agents=[_agent()],
         mcp_auth=_oauth_provider(),
-        authorization=True,
-        authorization_config=AuthorizationConfig(
+        authorization=Authorization(
             verification_keys=["test-jwt-secret"], algorithm="HS256", issuer="https://trusted.example"
         ),
         mcp_server=MCPServerConfig(tools=[_ok_tool], enable_builtin_tools=False),

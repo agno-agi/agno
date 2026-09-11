@@ -267,14 +267,3 @@ def test_no_auth_run_refuses_a_reserved_principal(tmp_path):
     assert store.get("sa:backend") is None  # reserved -> refused
     assert store.get("__scheduler__") is None  # reserved -> refused
     assert store.get("realuser") is not None  # normal -> provisioned
-
-
-def test_authz_plane_still_requires_authorization(tmp_path):
-    """Unchanged by the directory/isolation relaxation: a provider (an authz plane) still needs
-    authorization=True, because an unenforced plane would serve every route unauthenticated."""
-    from agno.os.authz.role_store import ManagedRoleStore
-
-    db = SqliteDb(db_file=str(tmp_path / "plane.db"))
-    provider = ManagedRoleStore(db=db).provider
-    with pytest.raises(ValueError, match="authorization=True"):
-        _os(tmp_path, authorization_config=AuthorizationConfig(authorization_provider=provider)).get_app()
