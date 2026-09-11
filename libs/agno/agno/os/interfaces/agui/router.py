@@ -1,3 +1,5 @@
+import asyncio
+import contextlib
 import copy
 import uuid
 from typing import AsyncIterator, Optional, Union
@@ -21,6 +23,14 @@ from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
 
 from agno.agent import Agent, RemoteAgent
+from agno.os.interfaces.agui.background import (
+    background_cursor,
+    background_cursor_of,
+    background_error_event,
+    background_requested,
+    run_entity_background,
+    supports_background,
+)
 from agno.os.interfaces.agui.input import (
     extract_context,
     extract_media,
@@ -134,6 +144,91 @@ async def run_entity(
         yield RunErrorEvent(type=EventType.RUN_ERROR, message=str(e))
 
 
+_SSE_HEADERS = {
+    "Cache-Control": "no-cache",
+    "Connection": "keep-alive",
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
+    "Access-Control-Allow-Headers": "*",
+}
+
+
+# Idle window before an SSE comment goes out to hold the connection open.
+_KEEPALIVE_INTERVAL_SECONDS = 15.0
+_KEEPALIVE_QUEUE_SIZE = 64
+
+
+async def _with_keepalives(events: AsyncIterator[BaseEvent], encoder: EventEncoder) -> AsyncIterator[str]:
+    """Encode events, emitting an SSE comment through any long silence."""
+    # Bounded so a client reading slower than a replay produces cannot make the
+    # whole encoded run pile up in memory.
+    pending: asyncio.Queue = asyncio.Queue(maxsize=_KEEPALIVE_QUEUE_SIZE)
+    delivered: Optional[tuple] = None
+    failure: Optional[str] = None
+    done = object()
+
+    async def _pump() -> None:
+        nonlocal delivered
+        try:
+            async for event in events:
+                position = background_cursor_of(event)
+                if position is not None and (delivered is None or position > delivered):
+                    delivered = position
+                await pending.put(encoder.encode(event))
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            nonlocal failure
+            log_error("AG-UI background stream failed", exc_info=True)
+            # Held rather than queued: a full queue would drop it, and a client
+            # that never hears why the stream ended is the thing this is for.
+            failure = encoder.encode(background_error_event(str(e)[:200], delivered))
+        finally:
+            # Never awaited: a client that has gone away leaves nobody draining
+            # the queue, and a blocking put here would hang the cancellation
+            # that is trying to clean this task up.
+            with contextlib.suppress(asyncio.QueueFull):
+                pending.put_nowait(done)
+
+    pump = asyncio.create_task(_pump())
+    try:
+        while True:
+            try:
+                frame = await asyncio.wait_for(pending.get(), timeout=_KEEPALIVE_INTERVAL_SECONDS)
+            except asyncio.TimeoutError:
+                if pump.done() and pending.empty():
+                    # The queue was full when the pump finished, so its
+                    # end-of-stream signal had nowhere to go. Holding the
+                    # connection open on keepalives forever is worse than
+                    # noticing here.
+                    break
+                yield ": keepalive\n\n"
+                continue
+            if frame is done:
+                break
+            yield frame
+    finally:
+        pump.cancel()
+        with contextlib.suppress(BaseException):
+            await pump
+    if failure is not None:
+        yield failure
+
+
+def _refusal_response(encoder: EventEncoder, message: str, after: Optional[tuple]) -> StreamingResponse:
+    """Answer a resume request the server cannot honor, without re-running it.
+
+    Stamped past the client's position like every other background event: a
+    client that filters by cursor would otherwise drop the refusal and keep
+    reconnecting into it.
+    """
+
+    async def event_generator():
+        yield encoder.encode(background_error_event(message, after))
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream", headers=_SSE_HEADERS)
+
+
 def attach_routes(
     router: APIRouter, agent: Optional[Union[Agent, RemoteAgent]] = None, team: Optional[Union[Team, RemoteTeam]] = None
 ) -> APIRouter:
@@ -159,20 +254,73 @@ def attach_routes(
             is_admin=caller_is_admin(request),
         )
 
+        # A background run is opt-in per request: without it the run streams
+        # inline and dies with the connection, exactly as it always has.
+        run_in_background = background_requested(run_input)
+        continuing = bool(extract_tool_messages(run_input.messages or []))
+        resuming_is_unreadable = False
+        try:
+            resuming = background_cursor(run_input) is not None
+        except ValueError:
+            # Unreadable, so it cannot be honored, but it is still a claim to be
+            # continuing a run rather than starting one.
+            resuming = True
+            resuming_is_unreadable = True
+        if resuming and not run_in_background and not continuing:
+            # A resume position with the feature switched off would otherwise
+            # fall through to a foreground run and execute the whole thing again.
+            return _refusal_response(
+                encoder,
+                "A resume position was sent with background execution disabled",
+                None if resuming_is_unreadable else background_cursor(run_input),
+            )
+
+        declined: Optional[str] = None
+        if run_in_background and continuing:
+            # Continuing a paused run starts a new leg rather than resuming the
+            # buffered one, so it takes the foreground continuation path and any
+            # resume position the client is still echoing does not apply to it.
+            # Decided first, so a continuation is never refused for carrying one.
+            log_warning(
+                "Background execution does not apply to a paused-run continuation; continuing in the foreground"
+            )
+            run_in_background = False
+        elif run_in_background and not supports_background(entity):
+            declined = (
+                f"Background execution is unavailable for '{getattr(entity, 'id', None)}': it needs a database, "
+                "an agent or team that runs in this process, and a readable run history"
+            )
+
+        if declined is not None:
+            run_in_background = False
+            # A request carrying a resume position is asking to continue a run
+            # that already exists. Quietly running it in the foreground would
+            # execute the whole thing a second time instead.
+            if resuming:
+                log_warning(f"{declined}; refusing to resume rather than running the whole run again")
+                return _refusal_response(
+                    encoder, declined, background_cursor(run_input) if not resuming_is_unreadable else None
+                )
+            log_warning(f"{declined}; running in the foreground (the run will not survive a disconnect)")
+
         async def event_generator():
-            async for event in run_entity(entity, run_input, user_id=user_id):  # type: ignore
-                yield encoder.encode(event)
+            if not run_in_background:
+                async for event in run_entity(entity, run_input, user_id=user_id):  # type: ignore[arg-type]
+                    yield encoder.encode(event)
+                return
+            # A background run can sit waiting for a slot before it says
+            # anything, and a client whose connection a proxy closes in that
+            # silence has never seen a cursor to reconnect with.
+            async for frame in _with_keepalives(
+                run_entity_background(entity, run_input, user_id=user_id),  # type: ignore[arg-type]
+                encoder,
+            ):
+                yield frame
 
         return StreamingResponse(
             event_generator(),
             media_type="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache",
-                "Connection": "keep-alive",
-                "Access-Control-Allow-Origin": "*",
-                "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
-                "Access-Control-Allow-Headers": "*",
-            },
+            headers=_SSE_HEADERS,
         )
 
     @router.get("/status")
