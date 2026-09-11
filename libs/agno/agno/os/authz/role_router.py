@@ -6,8 +6,8 @@ with allow/deny), and grant or revoke them at runtime.
 With ``AgentOS(authorization=Authorization(...))`` you do not mount this yourself: AgentOS
 registers it at ``/authz`` whenever the object has a role store. The credential-less user
 DIRECTORY (who the users are + the disabled kill-switch) is a PEER concern served by
-:func:`get_users_router` at ``/users`` -- mounted from ``Authorization(user_directory=...)``,
-not this router.
+:func:`get_users_router` at ``/users`` -- mounted from ``AgentOS(user_directory=...)``, not this
+router.
 
     from agno.os.authz import Authorization
 

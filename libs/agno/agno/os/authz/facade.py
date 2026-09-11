@@ -1,10 +1,9 @@
-"""One object for AgentOS authorization: verification, roles, users, audit, admin API.
+"""One object for AgentOS authorization: verification, roles, audit, and the ``/authz`` admin API.
 
-Standing up managed roles + a user directory + the admin API by hand means assembling a dozen
-objects (a ``DbAuditSink``, a ``ManagedRoleStore``, a ``ManagedUserStore``, an
-``AuthorizationConfig``, a ``UserDirectoryConfig``, a ``ScopeAuthorizationProvider``, the store's
-provider, two router factories, two ``include_router`` calls) and keeping four of them pointed at
-the same database. :class:`Authorization` owns all of that and wires itself into AgentOS:
+Standing up managed roles by hand means assembling a ``DbAuditSink``, a ``ManagedRoleStore``, an
+``AuthorizationConfig``, a ``ScopeAuthorizationProvider``, the store's provider, a router factory
+and an ``include_router`` call, and keeping them pointed at the same database.
+:class:`Authorization` owns all of that and wires itself into AgentOS:
 
     from agno.os.authz import Authorization
 

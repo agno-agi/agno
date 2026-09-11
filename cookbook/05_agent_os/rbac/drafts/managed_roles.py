@@ -29,8 +29,8 @@ from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS
+from agno.os.authz import Authorization
 from agno.os.authz.role_store import ManagedRoleStore
-from agno.os.config import AuthorizationConfig
 
 # ---------------------------------------------------------------------------
 # Create Example
@@ -61,14 +61,13 @@ roles.assign("carol", "viewer")
 roles.assign("bob", "member")
 roles.assign("alice", "admin")
 
-# Wire the store into AgentOS. `role_store=` is the shortcut: AgentOS uses the
-# store's authorization provider for you.
+# Wire the store into AgentOS through the Authorization object: it uses the
+# store's authorization provider for you and mounts the /authz admin API.
 agent_os = AgentOS(
     description="AgentOS protected by managed roles",
     agents=[research_agent],
     db=db,
-    authorization=True,
-    authorization_config=AuthorizationConfig(
+    authorization=Authorization(
         verification_keys=[JWT_SECRET],
         algorithm="HS256",
         role_store=roles,
