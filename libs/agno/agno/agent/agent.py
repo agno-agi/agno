@@ -113,7 +113,9 @@ class Agent:
     session_summary_manager: Optional[SessionSummaryManager] = None
 
     # --- Agent Dependencies ---
-    # Dependencies available for tools and prompt functions
+    # Dependencies available for tools and prompt functions. Callables may request
+    # agent, run_context, run_input and session; resolved before pre-hooks.
+    # On continuation, run_input is the original RunInput (None for runs stored without it).
     dependencies: Optional[Dict[str, Any]] = None
     # If True, add the dependencies to the user prompt
     add_dependencies_to_context: bool = False
