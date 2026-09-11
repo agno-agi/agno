@@ -9,6 +9,7 @@ Covers the gap #8565 leaves open:
 """
 
 import json
+from datetime import datetime
 from unittest.mock import MagicMock
 
 import pytest
@@ -39,9 +40,30 @@ from agno.run.team import RunPausedEvent as TeamRunPausedEvent
 from agno.tools import tool
 from agno.tools.function import UserFeedbackOption, UserFeedbackQuestion
 
+from ._agui_stream_rules import assert_valid_agui_stream
+
+
+def _emitted(chunk) -> list:
+    """Drive a pause through the handler, checking the framing of everything it emits.
+
+    A pause emits the approval cards and the run's terminal event in one batch, so the
+    batch is a whole stream and the same rules apply to it as to a mapper's output. The
+    per-test assertions below each name one tool_call_id; none of them would notice the
+    batch opening a message it never closes or ending a tool call it never started.
+    """
+    events = on_run_completed(chunk, StreamState())
+    assert_valid_agui_stream(events)
+    return events
+
 
 def _tool_call_start_ids(events) -> list:
     return [e.tool_call_id for e in events if type(e).__name__ == "ToolCallStartEvent"]
+
+
+def _tool_args_delta(events, tool_call_id: str) -> str:
+    deltas = [e.delta for e in events if type(e).__name__ == "ToolCallArgsEvent" and e.tool_call_id == tool_call_id]
+    assert len(deltas) == 1
+    return deltas[0]
 
 
 def _paused(tool: ToolExecution) -> RunPausedEvent:
@@ -70,7 +92,7 @@ class TestPauseEmission:
             tool_args={"steps": []},
             requires_confirmation=True,
         )
-        assert "tc-confirm" in _tool_call_start_ids(on_run_completed(_paused(tool), StreamState()))
+        assert "tc-confirm" in _tool_call_start_ids(_emitted(_paused(tool)))
 
     def test_requires_user_input_emits_tool_call(self):
         tool = ToolExecution(
@@ -79,7 +101,7 @@ class TestPauseEmission:
             tool_args={},
             requires_user_input=True,
         )
-        assert "tc-input" in _tool_call_start_ids(on_run_completed(_paused(tool), StreamState()))
+        assert "tc-input" in _tool_call_start_ids(_emitted(_paused(tool)))
 
     def test_external_execution_still_emits_tool_call(self):
         tool = ToolExecution(
@@ -88,7 +110,7 @@ class TestPauseEmission:
             tool_args={},
             external_execution_required=True,
         )
-        assert "tc-external" in _tool_call_start_ids(on_run_completed(_paused(tool), StreamState()))
+        assert "tc-external" in _tool_call_start_ids(_emitted(_paused(tool)))
 
     def test_user_feedback_emits_exactly_one_tool_call(self):
         """A user_feedback (ask_user) tool already surfaces via the user_input partition
@@ -107,8 +129,48 @@ class TestPauseEmission:
                 )
             ],
         )
-        ids = _tool_call_start_ids(on_run_completed(_paused(tool), StreamState()))
+        ids = _tool_call_start_ids(_emitted(_paused(tool)))
         assert ids.count("tc-feedback") == 1
+
+
+class TestPauseArguments:
+    """A pause emits its cards and the run's terminal event in one batch.
+
+    Serializing an argument is the one step in that batch that reads a value the tool
+    author chose, so it is the one step that can raise. The batch is built before any of
+    it is yielded, so raising sends none of it: the route catches the exception and the
+    client gets the run's error in place of the cards it would have answered with.
+    """
+
+    def test_an_argument_json_cannot_serialize_keeps_the_card_and_the_terminal_event(self):
+        tool = ToolExecution(
+            tool_call_id="tc-datetime",
+            tool_name="schedule_meeting",
+            tool_args={"starts_at": datetime(2026, 1, 2, 3, 4, 5), "title": "review"},
+            requires_confirmation=True,
+        )
+
+        events = _emitted(_paused(tool))
+
+        assert "tc-datetime" in _tool_call_start_ids(events)
+        assert type(events[-1]).__name__ == "RunFinishedEvent"
+        assert json.loads(_tool_args_delta(events, "tc-datetime")) == {
+            "starts_at": "2026-01-02 03:04:05",
+            "title": "review",
+        }
+
+    def test_absent_arguments_are_an_empty_object_not_a_null(self):
+        """A tool call's arguments are an object, and a card cannot read a null as one."""
+        tool = ToolExecution(
+            tool_call_id="tc-noargs",
+            tool_name="approve",
+            tool_args=None,
+            requires_confirmation=True,
+        )
+
+        events = _emitted(_paused(tool))
+
+        assert json.loads(_tool_args_delta(events, "tc-noargs")) == {}
 
 
 class TestPauseResolution:
@@ -257,8 +319,8 @@ class TestDedupe:
 
 class TestStreamWrappers:
     """The pause emission must surface through BOTH AG-UI stream wrappers (sync + async),
-    not only the path-agnostic on_run_completed. Both delegate to process_completion ->
-    on_run_completed; these drive a requires_confirmation pause through each wrapper.
+    not only the path-agnostic on_run_completed. Both delegate to the shared terminal
+    tracker -> on_run_completed; these drive a requires_confirmation pause through each wrapper.
     (The resume path is async-only - acontinue_run - so it has no sync twin to cover.)"""
 
     def test_sync_wrapper_emits_tool_call_on_confirmation_pause(self):
@@ -266,6 +328,7 @@ class TestStreamWrappers:
         events = list(
             stream_agno_response_as_agui_events(iter([RunPausedEvent(tools=[tool])]), thread_id="t", run_id="r")
         )
+        assert_valid_agui_stream(events)
         assert "tc-sync" in _tool_call_start_ids(events)
 
     async def test_async_wrapper_emits_tool_call_on_confirmation_pause(self):
@@ -281,6 +344,7 @@ class TestStreamWrappers:
                 _aiter([RunPausedEvent(tools=[tool])]), thread_id="t", run_id="r"
             )
         ]
+        assert_valid_agui_stream(events)
         assert "tc-async" in _tool_call_start_ids(events)
 
 
@@ -313,12 +377,12 @@ class TestUnresolvedGuard:
 
 class TestTeamPauseEmission:
     """A Team paused run carries member pauses (all types) in active_requirements with member_agent_id,
-    and the team leader's external tools in .tools. on_run_completed must surface both as TOOL_CALL_*
-    (deduped by tool_call_id), not just external_execution."""
+    and the team leader's external tools in .tools. on_run_completed must surface both as TOOL_CALL_*,
+    not just external_execution. Nothing dedupes the two channels; see the last test here."""
 
     def test_team_member_confirmation_emits_tool_call(self):
         req = _member_req(ToolExecution(tool_call_id="m-confirm", tool_name="send_email", requires_confirmation=True))
-        assert "m-confirm" in _tool_call_start_ids(on_run_completed(_team_paused(requirements=[req]), StreamState()))
+        assert "m-confirm" in _tool_call_start_ids(_emitted(_team_paused(requirements=[req])))
 
     def test_team_member_user_input_emits_tool_call(self):
         req = _member_req(
@@ -329,7 +393,7 @@ class TestTeamPauseEmission:
                 user_input_schema=[UserInputField(name="city", field_type=str)],
             )
         )
-        assert "m-input" in _tool_call_start_ids(on_run_completed(_team_paused(requirements=[req]), StreamState()))
+        assert "m-input" in _tool_call_start_ids(_emitted(_team_paused(requirements=[req])))
 
     def test_team_member_user_feedback_emits_tool_call(self):
         req = _member_req(
@@ -340,20 +404,32 @@ class TestTeamPauseEmission:
                 user_feedback_schema=[UserFeedbackQuestion(question="Pick", options=[UserFeedbackOption(label="a")])],
             )
         )
-        assert "m-feedback" in _tool_call_start_ids(on_run_completed(_team_paused(requirements=[req]), StreamState()))
+        assert "m-feedback" in _tool_call_start_ids(_emitted(_team_paused(requirements=[req])))
 
     def test_team_leader_external_still_emits(self):
         """Regression guard: leader external tools live in .tools; the seam switch must not drop them."""
         tool = ToolExecution(tool_call_id="leader-ext", tool_name="run_browser_tool", external_execution_required=True)
-        assert "leader-ext" in _tool_call_start_ids(on_run_completed(_team_paused(tools=[tool]), StreamState()))
+        assert "leader-ext" in _tool_call_start_ids(_emitted(_team_paused(tools=[tool])))
 
-    def test_team_pause_dedups_by_tool_call_id(self):
-        """A leader external tool sits in BOTH .tools and active_requirements; it must emit exactly once."""
+    def test_a_tool_reported_through_both_channels_is_announced_twice(self):
+        """A leader external tool sits in BOTH .tools and active_requirements.
+
+        The handler folds a requirement in when it names a member agent, and nothing
+        compares tool_call_ids across the two channels, so the same call is announced
+        twice and the reference client aborts the run on the second TOOL_CALL_START.
+        This pins what ships: the dedupe is a known gap held out of this change, and
+        both assertions below fail the moment it is closed.
+
+        Built with the file's own member-requirement helper on purpose. A bare
+        RunRequirement carries no member_agent_id, the handler skips it, and the count
+        then comes from .tools alone and holds whether a dedupe exists or not.
+        """
         tool = ToolExecution(tool_call_id="dup-ext", tool_name="run_browser_tool", external_execution_required=True)
-        ids = _tool_call_start_ids(
-            on_run_completed(_team_paused(requirements=[RunRequirement(tool)], tools=[tool]), StreamState())
-        )
-        assert ids.count("dup-ext") == 1
+        events = on_run_completed(_team_paused(requirements=[_member_req(tool)], tools=[tool]), StreamState())
+
+        assert _tool_call_start_ids(events).count("dup-ext") == 2
+        with pytest.raises(AssertionError, match="tool call id dup-ext is started twice in one stream"):
+            assert_valid_agui_stream(events)
 
     def test_team_member_requirement_resolves_via_existing_merge(self):
         """A member (member_agent_id) confirmation resolves through the EXISTING

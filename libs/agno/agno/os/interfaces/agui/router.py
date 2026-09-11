@@ -35,14 +35,16 @@ from agno.os.middleware.user_scope import assert_session_writable, caller_is_adm
 from agno.run.base import RunContext
 from agno.team.remote import RemoteTeam
 from agno.team.team import Team
+from agno.workflow.remote import RemoteWorkflow
+from agno.workflow.workflow import Workflow
 
 
 async def run_entity(
-    entity: Union[Agent, RemoteAgent, Team, RemoteTeam],
+    entity: Union[Agent, RemoteAgent, Team, RemoteTeam, Workflow, RemoteWorkflow],
     run_input: RunAgentInput,
     user_id: Optional[str] = None,
 ) -> AsyncIterator[BaseEvent]:
-    """Shared handler for running an Agent or Team with AG-UI input/output mapping.
+    """Shared handler for running an Agent, Team or Workflow with AG-UI input/output mapping.
 
     ``user_id`` is the server-resolved identity (see the route handler). It is
     deliberately NOT read from ``run_input.forwarded_props`` here: an authenticated
@@ -80,12 +82,14 @@ async def run_entity(
             session_state=session_state,
         )
 
+        is_workflow = isinstance(entity, (Workflow, RemoteWorkflow))
+
         run_kwargs: dict = {}
-        if ui_deps:
+        if ui_deps and not isinstance(entity, RemoteWorkflow):
             run_kwargs["add_dependencies_to_context"] = True
 
         # 4. Determine if this is a resume (trailing ToolMessages) or fresh run
-        if tool_messages:
+        if tool_messages and not is_workflow:
             # Resume: frontend executed external tools and sent results back
             response_stream = await resume_paused_run(
                 entity=entity,  # type: ignore[arg-type]
@@ -96,7 +100,27 @@ async def run_entity(
             )
         else:
             # Fresh run: new user input
-            if isinstance(entity, (RemoteAgent, RemoteTeam)):
+            if is_workflow:
+                if tool_messages:
+                    # Dropped: this interface has no workflow resume, so the answers the
+                    # client sent back go nowhere and the run below starts over.
+                    log_warning(
+                        "AG-UI cannot resume a paused workflow: the tool results were dropped and the "
+                        "workflow is being re-run from the start against the last user message"
+                    )
+                # Workflow.arun takes no RunContext, so it cannot carry client tools.
+                # Send the wire fields the RunContext would have carried instead.
+                run_kwargs["session_state"] = session_state
+                if not isinstance(entity, RemoteWorkflow):
+                    run_kwargs["dependencies"] = ui_deps
+                elif ui_deps:
+                    # Dropped: RemoteWorkflow.arun sends every unknown kwarg to the remote
+                    # server as a form field, and dependencies are not one it declares.
+                    log_warning("AG-UI context is not forwarded to remote workflows")
+                if client_tools:
+                    # Dropped: a workflow has no way to execute a frontend tool.
+                    log_warning("AG-UI client tools are not forwarded to workflows")
+            elif isinstance(entity, (RemoteAgent, RemoteTeam)):
                 # A RunContext is an in-process object: RemoteAgent/RemoteTeam forward every
                 # unknown kwarg as a form field, and the remote AgentOS would hand the
                 # stringified object to Agent.arun. Send the wire fields it carries instead.
@@ -135,12 +159,15 @@ async def run_entity(
 
 
 def attach_routes(
-    router: APIRouter, agent: Optional[Union[Agent, RemoteAgent]] = None, team: Optional[Union[Team, RemoteTeam]] = None
+    router: APIRouter,
+    agent: Optional[Union[Agent, RemoteAgent]] = None,
+    team: Optional[Union[Team, RemoteTeam]] = None,
+    workflow: Optional[Union[Workflow, RemoteWorkflow]] = None,
 ) -> APIRouter:
-    if agent is None and team is None:
-        raise ValueError("Either agent or team must be provided.")
+    if agent is None and team is None and workflow is None:
+        raise ValueError("Either agent, team or workflow must be provided.")
 
-    entity = agent or team
+    entity = agent or team or workflow
     encoder = EventEncoder()
 
     @router.post("/agui", name="run_agent")

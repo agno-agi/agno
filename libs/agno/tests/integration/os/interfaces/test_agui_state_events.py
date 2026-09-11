@@ -1,5 +1,4 @@
-import json
-from typing import Any, Dict, List
+import os
 
 import pytest
 from fastapi.testclient import TestClient
@@ -10,40 +9,16 @@ from agno.os.app import AgentOS
 from agno.run import RunContext
 from agno.team import Team
 
+from ._agui_sse import assert_event_absent, get_event_types, make_request_body, parse_sse_events
+
 pytest.importorskip("ag_ui", reason="ag_ui not installed")
 
-from agno.os.interfaces.agui import AGUI
+from agno.os.interfaces.agui import AGUI  # noqa: E402
 
-
-def parse_sse_events(content: str) -> List[Dict[str, Any]]:
-    events = []
-    for line in content.split("\n"):
-        line = line.strip()
-        if not line or not line.startswith("data:"):
-            continue
-        data_str = line[5:].strip()
-        try:
-            events.append(json.loads(data_str))
-        except json.JSONDecodeError:
-            continue
-    return events
-
-
-def get_event_types(events: List[Dict[str, Any]]) -> List[str]:
-    return [e.get("type") for e in events]
-
-
-def make_request_body(message: str, state: Any = None, thread_id: str = "test-thread") -> Dict[str, Any]:
-    return {
-        "threadId": thread_id,
-        "runId": "test-run",
-        "state": state,
-        "messages": [{"id": "msg-1", "role": "user", "content": message}],
-        "tools": [],
-        "context": [],
-        "forwardedProps": {},
-    }
-
+pytestmark = [
+    pytest.mark.integration,
+    pytest.mark.skipif(not os.getenv("OPENAI_API_KEY"), reason="OPENAI_API_KEY not set"),
+]
 
 # =============================================================================
 # Tools that mutate session state
@@ -87,20 +62,21 @@ class TestAgentStateEventsIntegration:
 When asked to add items, use the add_item_to_list tool.
 When asked to increment, use the increment_counter tool.
 Be brief in your responses.""",
+            telemetry=False,
         )
 
     @pytest.fixture
     def client(self, state_agent: Agent):
-        agent_os = AgentOS(agents=[state_agent], interfaces=[AGUI(agent=state_agent)])
-        app = agent_os.get_app()
-        return TestClient(app)
+        agent_os = AgentOS(agents=[state_agent], interfaces=[AGUI(agent=state_agent)], telemetry=False)
+        # As a context manager so the app lifespan runs, which is what a served AgentOS does.
+        with TestClient(agent_os.get_app()) as client:
+            yield client
 
     def test_initial_and_final_snapshot_with_real_agent(self, client):
         """Real agent emits initial and final STATE_SNAPSHOT when state is provided."""
         response = client.post(
             "/agui",
             json=make_request_body("Say hello briefly", state={"counter": 0}),
-            timeout=60.0,
         )
 
         assert response.status_code == 200
@@ -127,15 +103,14 @@ Be brief in your responses.""",
         response = client.post(
             "/agui",
             json=make_request_body("Say hello briefly", state=None),
-            timeout=60.0,
         )
 
         assert response.status_code == 200
         events = parse_sse_events(response.text)
         types = get_event_types(events)
 
-        assert "STATE_SNAPSHOT" not in types
-        assert "STATE_DELTA" not in types
+        assert_event_absent(types, "STATE_SNAPSHOT")
+        assert_event_absent(types, "STATE_DELTA")
         assert "RUN_FINISHED" in types
 
     def test_state_delta_emitted_when_tool_mutates_state(self, client):
@@ -146,7 +121,6 @@ Be brief in your responses.""",
                 "Add 'milk' to my list using the tool",
                 state={"items": []},
             ),
-            timeout=60.0,
         )
 
         assert response.status_code == 200
@@ -182,7 +156,6 @@ Be brief in your responses.""",
                 "Increment the counter by 5 using the tool",
                 state={"counter": 0},
             ),
-            timeout=60.0,
         )
 
         assert response.status_code == 200
@@ -208,7 +181,6 @@ Be brief in your responses.""",
                 "Add 'eggs' to my list",
                 state={"metadata": {"created": "today"}, "items": []},
             ),
-            timeout=60.0,
         )
 
         assert response.status_code == 200
@@ -235,25 +207,27 @@ class TestTeamStateEventsIntegration:
             model=OpenAIChat(id="gpt-4o-mini"),
             tools=[add_item_to_list],
             instructions="You manage a shopping list. Use add_item_to_list when asked to add items.",
+            telemetry=False,
         )
         return Team(
             name="state-test-team",
             members=[member],
             instructions="Delegate list management to the list-manager agent.",
+            telemetry=False,
         )
 
     @pytest.fixture
     def team_client(self, state_team: Team):
-        agent_os = AgentOS(teams=[state_team], interfaces=[AGUI(team=state_team)])
-        app = agent_os.get_app()
-        return TestClient(app)
+        agent_os = AgentOS(teams=[state_team], interfaces=[AGUI(team=state_team)], telemetry=False)
+        # As a context manager so the app lifespan runs, which is what a served AgentOS does.
+        with TestClient(agent_os.get_app()) as client:
+            yield client
 
     def test_team_emits_state_snapshots(self, team_client):
         """Team emits initial and final STATE_SNAPSHOT."""
         response = team_client.post(
             "/agui",
             json=make_request_body("Say hello", state={"task": "pending"}),
-            timeout=60.0,
         )
 
         assert response.status_code == 200
@@ -269,12 +243,11 @@ class TestTeamStateEventsIntegration:
         response = team_client.post(
             "/agui",
             json=make_request_body("Say hello", state=None),
-            timeout=60.0,
         )
 
         assert response.status_code == 200
         events = parse_sse_events(response.text)
         types = get_event_types(events)
 
-        assert "STATE_SNAPSHOT" not in types
-        assert "STATE_DELTA" not in types
+        assert_event_absent(types, "STATE_SNAPSHOT")
+        assert_event_absent(types, "STATE_DELTA")
