@@ -17,7 +17,16 @@ To use the script simply:
 - For PgVector, set the `pg_vector_db_url` and `pg_vector_config` variables
 - For SingleStore, set the `singlestore_db_url` and `singlestore_config` variables
 - Run the script
+
+`table_names` is optional. Leave it out and the script discovers every Agno vector table
+in the schema, which is what you want when the table names come from application config
+rather than being known up front. Discovery matches Agno's own vector-table shape (an
+`embedding` column plus `content_hash` and `content_id`), so a vector table created by
+something other than Agno in the same schema is left alone. Set `table_names` explicitly
+to migrate an exact list and skip discovery entirely.
 """
+
+from typing import List
 
 from agno.utils.log import log_error, log_info, log_warning
 
@@ -29,7 +38,7 @@ pg_vector_db_url = ""  # Example: "postgresql+psycopg://ai:ai@localhost:5532/ai"
 ## Configuration of the schema and tables to migrate
 pg_vector_config = {
     # "schema": "ai",  # Schema where your tables are located
-    # "table_names": ["documents"],  # Tables to migrate
+    # "table_names": ["documents"],  # Omit to discover every Agno vector table in the schema
 }
 # -----------------------------------------
 
@@ -41,9 +50,60 @@ singlestore_db_url = ""  # Example: "mysql+pymysql://user:password@host:port/dat
 # Exact configuration of the tables to migrate
 singlestore_config = {
     # "schema": "ai",  # Schema where your tables are located
-    # "table_names": ["documents"],  # Tables to migrate
+    # "table_names": ["documents"],  # Omit to discover every Agno vector table in the schema
 }
 # -----------------------------------------
+
+# Columns that together identify a table as an Agno vector store. `embedding` alone would
+# also match vector tables written by other tools sharing the schema; the content columns
+# are what make the match Agno-specific.
+_AGNO_VECTOR_COLUMNS = {"embedding", "content_hash", "content_id"}
+
+
+def discover_pgvector_tables(schema: str = "ai") -> List[str]:
+    """Find every Agno vector table in a PgVector schema.
+
+    Args:
+        schema: Database schema to scan.
+
+    Returns:
+        Sorted table names carrying Agno's vector-table column signature.
+    """
+    from sqlalchemy import create_engine, inspect
+
+    engine = create_engine(pg_vector_db_url)
+    try:
+        inspector = inspect(engine)
+        return sorted(
+            table_name
+            for table_name in inspector.get_table_names(schema=schema)
+            if _AGNO_VECTOR_COLUMNS.issubset({col["name"] for col in inspector.get_columns(table_name, schema=schema)})
+        )
+    finally:
+        engine.dispose()
+
+
+def discover_singlestore_tables(schema: str = "ai") -> List[str]:
+    """Find every Agno vector table in a SingleStore schema.
+
+    Args:
+        schema: Database schema to scan.
+
+    Returns:
+        Sorted table names carrying Agno's vector-table column signature.
+    """
+    from sqlalchemy import create_engine, inspect
+
+    engine = create_engine(singlestore_db_url)
+    try:
+        inspector = inspect(engine)
+        return sorted(
+            table_name
+            for table_name in inspector.get_table_names(schema=schema)
+            if _AGNO_VECTOR_COLUMNS.issubset({col["name"] for col in inspector.get_columns(table_name, schema=schema)})
+        )
+    finally:
+        engine.dispose()
 
 
 def migrate_pgvector_table(table_name: str, schema: str = "ai") -> None:
@@ -135,25 +195,42 @@ def migrate_singlestore_table(table_name: str, schema: str = "ai") -> None:
 
 
 def run() -> None:
-    """Run the configured SQL vector-DB schema migrations."""
-    if not (pg_vector_db_url and pg_vector_config) and not (singlestore_db_url and singlestore_config):
-        log_error(
-            "To run the migration, set `pg_vector_db_url` + `pg_vector_config` for PgVector, "
-            "or `singlestore_db_url` + `singlestore_config` for SingleStore."
-        )
+    """Run the configured SQL vector-DB schema migrations.
+
+    Each backend migrates the tables named in its config, or -- when `table_names` is
+    omitted -- every Agno vector table discovered in its schema.
+    """
+    if not pg_vector_db_url and not singlestore_db_url:
+        log_error("To run the migration, set `pg_vector_db_url` for PgVector, or `singlestore_db_url` for SingleStore.")
         return
 
     tasks = []
-    if pg_vector_config:
+    if pg_vector_db_url:
+        pg_schema = pg_vector_config.get("schema", "ai")
+        pg_tables = pg_vector_config.get("table_names")
+        if pg_tables is None:
+            log_info(f"No `table_names` set for PgVector: discovering Agno vector tables in schema '{pg_schema}'")
+            pg_tables = discover_pgvector_tables(pg_schema)  # type: ignore[arg-type]
+            log_info(f"Discovered {len(pg_tables)} PgVector table(s): {', '.join(pg_tables) or 'none'}")
         tasks += [
-            (f"pgvector:{t}", lambda t=t: migrate_pgvector_table(t, pg_vector_config.get("schema", "ai")))  # type: ignore
-            for t in pg_vector_config["table_names"]
+            (f"pgvector:{t}", lambda t=t: migrate_pgvector_table(t, pg_schema))  # type: ignore
+            for t in pg_tables
         ]
-    if singlestore_config:
+    if singlestore_db_url:
+        s2_schema = singlestore_config.get("schema", "ai")
+        s2_tables = singlestore_config.get("table_names")
+        if s2_tables is None:
+            log_info(f"No `table_names` set for SingleStore: discovering Agno vector tables in schema '{s2_schema}'")
+            s2_tables = discover_singlestore_tables(s2_schema)  # type: ignore[arg-type]
+            log_info(f"Discovered {len(s2_tables)} SingleStore table(s): {', '.join(s2_tables) or 'none'}")
         tasks += [
-            (f"singlestore:{t}", lambda t=t: migrate_singlestore_table(t, singlestore_config.get("schema", "ai")))  # type: ignore
-            for t in singlestore_config["table_names"]
+            (f"singlestore:{t}", lambda t=t: migrate_singlestore_table(t, s2_schema))  # type: ignore
+            for t in s2_tables
         ]
+
+    if not tasks:
+        log_warning("No tables to migrate. Nothing was changed.")
+        return
 
     failures = []
     for label, task in tasks:
