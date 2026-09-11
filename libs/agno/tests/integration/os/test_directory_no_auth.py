@@ -107,6 +107,7 @@ def test_user_isolation_top_level_flag_wires_through_under_auth(tmp_path):
     secret = "isolation-flag-secret-at-least-256-bits-xxxxxxxxx"
     os_ = _os(
         tmp_path,
+        authorization=True,
         authorization_config=AuthorizationConfig(verification_keys=[secret], algorithm="HS256"),
         user_isolation=True,
     )

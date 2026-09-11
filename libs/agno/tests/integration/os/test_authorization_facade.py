@@ -173,11 +173,20 @@ def test_seed_admin_role_configurable_and_warns_when_missing(tmp_path):
 
     handler = _Capture()
     handler.setLevel(logging.WARNING)  # ignore INFO decision logs
-    logging.getLogger("agno").addHandler(handler)
+    # log_warning writes to whichever agno logger the last agent/team/workflow run selected
+    # (agno, agno-agent, agno-team, agno-workflow), and that run may have raised its level to
+    # ERROR. Capture on all four with the level pinned, so this test is order-independent.
+    _agno_loggers = [logging.getLogger(n) for n in ("agno", "agno-agent", "agno-team", "agno-workflow")]
+    _prev_levels = [lg.level for lg in _agno_loggers]
+    for lg in _agno_loggers:
+        lg.setLevel(logging.WARNING)
+        lg.addHandler(handler)
     try:
         authz.authorization_config()  # AgentOS calls this once, after all setup
     finally:
-        logging.getLogger("agno").removeHandler(handler)
+        for lg, lvl in zip(_agno_loggers, _prev_levels):
+            lg.removeHandler(handler)
+            lg.setLevel(lvl)
     assert any("agent_os:admin" in m and "bob" in m for m in messages)  # warned, not silent
     assert not any("alice" in m for m in messages)  # alice's real admin role is not flagged
 
@@ -197,11 +206,20 @@ def test_seed_admin_warning_survives_define_after_seed_order(tmp_path):
     authz.define_role("boss", ["agent_os:admin"])  # define after
     handler = _Capture()
     handler.setLevel(logging.WARNING)  # ignore INFO decision logs
-    logging.getLogger("agno").addHandler(handler)
+    # log_warning writes to whichever agno logger the last agent/team/workflow run selected
+    # (agno, agno-agent, agno-team, agno-workflow), and that run may have raised its level to
+    # ERROR. Capture on all four with the level pinned, so this test is order-independent.
+    _agno_loggers = [logging.getLogger(n) for n in ("agno", "agno-agent", "agno-team", "agno-workflow")]
+    _prev_levels = [lg.level for lg in _agno_loggers]
+    for lg in _agno_loggers:
+        lg.setLevel(logging.WARNING)
+        lg.addHandler(handler)
     try:
         authz.authorization_config()
     finally:
-        logging.getLogger("agno").removeHandler(handler)
+        for lg, lvl in zip(_agno_loggers, _prev_levels):
+            lg.removeHandler(handler)
+            lg.setLevel(lvl)
     assert authz.role_store.can_manage("alice") is True
     assert not messages  # no false-positive warning despite seed-before-define
 
@@ -330,7 +348,14 @@ def test_authorization_config_is_deprecated_not_a_second_spelling(tmp_path):
 
     handler = _Capture()
     handler.setLevel(logging.WARNING)
-    logging.getLogger("agno").addHandler(handler)
+    # log_warning writes to whichever agno logger the last agent/team/workflow run selected
+    # (agno, agno-agent, agno-team, agno-workflow), and that run may have raised its level to
+    # ERROR. Capture on all four with the level pinned, so this test is order-independent.
+    _agno_loggers = [logging.getLogger(n) for n in ("agno", "agno-agent", "agno-team", "agno-workflow")]
+    _prev_levels = [lg.level for lg in _agno_loggers]
+    for lg in _agno_loggers:
+        lg.setLevel(logging.WARNING)
+        lg.addHandler(handler)
     try:
         os_ = AgentOS(
             id=OS_ID,
@@ -340,7 +365,9 @@ def test_authorization_config_is_deprecated_not_a_second_spelling(tmp_path):
             authorization_config=cfg,
         )
     finally:
-        logging.getLogger("agno").removeHandler(handler)
+        for lg, lvl in zip(_agno_loggers, _prev_levels):
+            lg.removeHandler(handler)
+            lg.setLevel(lvl)
     assert os_.authorization is True and os_.authorization_config is cfg  # still honoured
     assert any("authorization_config" in m and "deprecated" in m for m in messages)
 
@@ -614,6 +641,20 @@ def test_bring_your_own_provider_overrides(tmp_path):
     db = SqliteDb(db_file=str(tmp_path / "byo.db"))
     authz = Authorization(db=db, verification_keys=[SECRET], audience=OS_ID, authorization_provider=DenyAll())
     assert isinstance(authz.provider, DenyAll)
+
+
+def test_config_rejects_fields_that_moved_to_the_object():
+    """The released AuthorizationConfig never had a provider, audit sink or issuer. A config carrying
+    one must fail at construction, not silently drop it: an ignored provider would boot an OS that
+    enforces token scopes where the author expected managed roles or FGA. The error names the
+    object the field moved to."""
+    from agno.os.config import AuthorizationConfig
+
+    for name, value in (("authorization_provider", object()), ("audit", object()), ("issuer", "https://idp/")):
+        with pytest.raises(ValueError, match=f"no longer takes {name}.*Authorization"):
+            AuthorizationConfig(verification_keys=[SECRET], **{name: value})
+    with pytest.raises(ValueError, match="[Ee]xtra"):
+        AuthorizationConfig(verification_keys=[SECRET], not_a_field=1)  # anything unknown, same rule
 
 
 def test_issuer_on_the_object_is_enforced(tmp_path):

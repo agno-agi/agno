@@ -355,6 +355,12 @@ class MCPConfig(BaseModel):
 MCPServerConfig = MCPConfig
 
 
+# Fields that briefly existed on AuthorizationConfig and now live on ``Authorization``. Named in
+# the rejection so the error says where they went instead of a bare "extra inputs are not
+# permitted".
+_AUTHZ_FIELDS_MOVED_TO_AUTHORIZATION = ("issuer", "authorization_provider", "audit", "role_store")
+
+
 class AuthorizationConfig(BaseModel):
     """Low-level JWT verification config. Deprecated as a public type.
 
@@ -363,10 +369,25 @@ class AuthorizationConfig(BaseModel):
     these internally to feed the JWT middleware; ``AgentOS(authorization_config=...)`` still accepts
     one so deployments written against the released field set keep booting, with a warning.
     Frozen at exactly that released field set: do NOT add fields here -- add them to
-    ``Authorization``.
+    ``Authorization``. Unknown fields are rejected rather than ignored: a config carrying a
+    field this class never had (or no longer has) must fail at construction, because silently
+    dropping, say, an authorization provider would boot an OS that enforces token scopes where
+    the author expected managed roles.
     """
 
-    model_config = ConfigDict(arbitrary_types_allowed=True)
+    model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_fields_moved_to_authorization(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            moved = [name for name in _AUTHZ_FIELDS_MOVED_TO_AUTHORIZATION if name in data]
+            if moved:
+                raise ValueError(
+                    f"AuthorizationConfig no longer takes {', '.join(moved)}: configure "
+                    "Authorization(...) from agno.os.authz and pass it as AgentOS(authorization=...)."
+                )
+        return data
 
     verification_keys: Optional[List[str]] = None
     jwks_file: Optional[str] = None
