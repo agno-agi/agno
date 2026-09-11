@@ -256,7 +256,7 @@ def test_selected_team_has_reduced_roster_and_private_members():
         assert client.post("/teams/support/runs", data={"message": "hi", "user_id": "spoof"}).status_code == 400
 
 
-def test_recovered_public_team_preserves_native_member_results():
+def test_public_team_pauses_before_member_execution():
     import json
 
     class Delegate(ShortAnswerModel):
@@ -285,9 +285,9 @@ def test_recovered_public_team_preserves_native_member_results():
         response = client.post("/teams/support/runs", data={"message": "Hello", "stream": "false"})
     assert response.status_code == 200
     payload = response.json()
-    assert payload["status"] == "COMPLETED" and payload["content"] == "Short answer."
-    assert any("private-diagnostic-marker" in str(message) for message in payload["messages"])
-    assert any("private-diagnostic-marker" in str(tool) for tool in payload["tools"])
+    assert payload["status"] == "PAUSED"
+    assert payload["requirements"][0]["tool_execution"]["tool_name"] == "delegate_task_to_member"
+    assert "private-diagnostic-marker" not in str(payload)
 
 
 def test_selected_team_and_agent_share_active_run_capacity():
