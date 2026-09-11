@@ -58,8 +58,8 @@ def test_verify_only_facade_builds_no_stores(tmp_path):
     authz = Authorization(verification_keys=[SECRET], audience=OS_ID)  # the exact documented shape
     authz._bind(db)
     assert authz.role_store is None
+    assert authz.provider is None  # AgentOS defaults to ScopeAuthorizationProvider
     cfg = authz.authorization_config()
-    assert cfg.authorization_provider is None  # AgentOS defaults to ScopeAuthorizationProvider
     assert cfg.verification_keys == [SECRET] and cfg.audience == OS_ID
 
 
@@ -236,8 +236,8 @@ def test_facade_prebuilt_async_store_no_setup_ok(tmp_path):
     adb = AsyncSqliteDb(db_file=str(tmp_path / "a.db"))
     authz = Authorization(role_store=ManagedRoleStore(db=adb), verification_keys=[SECRET], audience=OS_ID)
     authz._bind(adb)
-    cfg = authz.authorization_config()  # no writes, just wires the provider
-    assert cfg.authorization_provider is not None
+    authz.authorization_config()  # no writes
+    assert authz.provider is not None  # just wires the provider
 
 
 def test_agentos_rejects_config_alongside_facade(tmp_path):
@@ -613,7 +613,27 @@ def test_bring_your_own_provider_overrides(tmp_path):
 
     db = SqliteDb(db_file=str(tmp_path / "byo.db"))
     authz = Authorization(db=db, verification_keys=[SECRET], audience=OS_ID, authorization_provider=DenyAll())
-    assert isinstance(authz.authorization_config().authorization_provider, DenyAll)
+    assert isinstance(authz.provider, DenyAll)
+
+
+def test_issuer_on_the_object_is_enforced(tmp_path):
+    """Authorization(issuer=) pins the ``iss`` claim on the served OS even though the released
+    AuthorizationConfig has no such field: the object hands it to the middleware directly."""
+    authz = Authorization(
+        verification_keys=[SECRET], algorithm="HS256", verify_audience=True, audience=OS_ID, issuer="https://good/"
+    )
+    client = TestClient(
+        AgentOS(
+            id=OS_ID, db=SqliteDb(db_file=str(tmp_path / "iss.db")), agents=_agents(), authorization=authz
+        ).get_app()
+    )
+
+    def tok(iss):
+        payload = {"sub": "u", "aud": OS_ID, "iss": iss, "scopes": ["agents:read"], "exp": int(time.time()) + 3600}
+        return {"Authorization": f"Bearer {jwt.encode(payload, SECRET, algorithm='HS256')}"}
+
+    assert client.get("/agents", headers=tok("https://good/")).status_code == 200
+    assert client.get("/agents", headers=tok("https://evil/")).status_code == 401
 
 
 def test_audit_api_404s_when_audit_is_off(tmp_path):

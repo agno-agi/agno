@@ -453,7 +453,7 @@ def get_roles_router(
     ) -> PaginatedResponse:
         """*Decision* events (allow/deny per request), paginated ``{data, meta}``.
 
-        Decision audit is configured on ``AuthorizationConfig(audit=...)`` and lands
+        Decision audit is configured on ``Authorization(audit=...)`` and lands
         on ``app.state.authz_audit`` — a separate table from the change trail above,
         so a high-volume decision log never buries the change history.
 

@@ -1,11 +1,8 @@
 """Schemas related to the AgentOS configuration"""
 
-from typing import Any, Callable, Dict, Generic, List, Literal, Optional, Set, TypeVar, Union
+from typing import Any, Callable, Dict, Generic, List, Literal, Optional, Set, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
-
-from agno.os.authz.audit import AuditSink
-from agno.os.authz.provider import AuthorizationProvider
 
 # Tags carried by the built-in MCP tools, exposed here so callers (and the IDE) can see
 # the valid values for ``MCPConfig.include_tags`` / ``exclude_tags`` without reading
@@ -359,14 +356,14 @@ MCPServerConfig = MCPConfig
 
 
 class AuthorizationConfig(BaseModel):
-    """Low-level authorization config for the JWT middleware. Deprecated as a public type.
+    """Low-level JWT verification config. Deprecated as a public type.
 
-    Superseded by :class:`agno.os.authz.Authorization`, which owns every field here (verification,
-    provider, audit, excluded routes) plus the higher-level surface (define_role, seed, the user
-    directory, the admin API). ``Authorization`` builds one of these internally to feed the
-    pipeline; ``AgentOS(authorization_config=...)`` still accepts one so deployments written against
-    the released field set keep booting, with a warning. Frozen: do NOT add fields here -- add them
-    to ``Authorization``.
+    Superseded by :class:`agno.os.authz.Authorization`, which owns every field here plus the
+    higher-level surface (roles, seeding, audit, the admin API). ``Authorization`` builds one of
+    these internally to feed the JWT middleware; ``AgentOS(authorization_config=...)`` still accepts
+    one so deployments written against the released field set keep booting, with a warning.
+    Frozen at exactly that released field set: do NOT add fields here -- add them to
+    ``Authorization``.
     """
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
@@ -376,23 +373,7 @@ class AuthorizationConfig(BaseModel):
     algorithm: Optional[str] = None
     verify_audience: Optional[bool] = None
     audience: Optional[str] = None
-    # Expected token issuer (the ``iss`` claim). When set, a token minted by anyone
-    # else is rejected even if its signature verifies -- pin this whenever more than
-    # one IdP can produce tokens your verification keys accept.
-    issuer: Optional[str] = None
     admin_scope: Optional[str] = None
-    # Pluggable authorization strategy. When None, AgentOS uses scope-based RBAC
-    # (JWT/PAT scopes, no external dependency). Supply an AuthorizationProvider to
-    # swap in a richer model (managed roles, ReBAC/ABAC, OpenFGA, ...) enforced at
-    # the same points as scopes — the REST route gate, per-resource gate, WS gates,
-    # and MCP tool gate all resolve through it. Pass a LIST of them to run several
-    # authz planes at once (e.g. token scopes for operators + a managed role store
-    # for end users) — a request is allowed if any of them allows it.
-    authorization_provider: Optional[Union[AuthorizationProvider, List[AuthorizationProvider]]] = None
-    # Optional AuditSink. When set, AgentOS records each authorization decision
-    # (allow/deny) alongside the change trail, so you get an access audit, not just a
-    # change audit. Pass the same sink you give ManagedRoleStore to unify both.
-    audit: Optional[AuditSink] = None
     # Additional fnmatch path patterns that bypass all AgentOS authentication,
     # merged with the default public-route exclusions.
     excluded_route_paths: Optional[List[str]] = None

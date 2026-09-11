@@ -136,16 +136,18 @@ class Authorization:
             )
         # Verification settings, splatted into the AuthorizationConfig at build time. Typed Any so
         # the per-key kwarg splat type-checks against AuthorizationConfig's specific field types.
+        # ``issuer`` is handed to AgentOS separately: the released AuthorizationConfig has no such
+        # field and stays frozen at its released shape.
         self._verification: Dict[str, Any] = {
             "verification_keys": verification_keys,
             "jwks_file": jwks_file,
             "algorithm": algorithm,
             "verify_audience": verify_audience,
             "audience": audience,
-            "issuer": issuer,
             "admin_scope": admin_scope,
             "excluded_route_paths": excluded_route_paths,
         }
+        self._issuer = issuer
         self._audit_arg = audit
         self._trust_token_scopes = trust_token_scopes
         self._roles_claim = roles_claim
@@ -362,9 +364,12 @@ class Authorization:
                     "seed(admin_role=<your admin role>)."
                 )
 
-    # ------------------------------------------------------------------ provider
-    def _provider(self) -> Optional[Union["AuthorizationProvider", List["AuthorizationProvider"]]]:
-        """The provider AgentOS should enforce with, or None to fall back to scope RBAC."""
+    # ------------------------------------------------------------------ what AgentOS reads
+    @property
+    def provider(self) -> Optional[Union["AuthorizationProvider", List["AuthorizationProvider"]]]:
+        """The provider AgentOS should enforce with: your override, the role store's provider (with
+        the scope plane alongside under ``trust_token_scopes``), or None so AgentOS falls back to
+        scope RBAC. A list means several planes composed with OR."""
         if self._provider_override is not None:
             return self._provider_override
         store = self.role_store
@@ -377,10 +382,14 @@ class Authorization:
         return store.provider
 
     @property
+    def issuer(self) -> Optional[str]:
+        """The pinned token issuer (the ``iss`` claim), or None when not pinned."""
+        return self._issuer
+
+    @property
     def _uses_roles(self) -> bool:
         return self._roles_defined
 
-    # ------------------------------------------------------------------ what AgentOS reads
     @property
     def role_store(self) -> Optional["ManagedRoleStore"]:
         """The role store, or None when the facade is verify-only. Mount the ``/authz`` admin API
@@ -395,10 +404,11 @@ class Authorization:
         return self._audit_sink
 
     def authorization_config(self) -> "AuthorizationConfig":
-        """The ``AuthorizationConfig`` AgentOS enforces: verification settings plus the composed
-        provider (or none, so AgentOS uses scope RBAC). AgentOS calls this once after all setup, so it
-        is where a seeded admin whose role does not grant admin is finally validated."""
+        """The verification settings as the ``AuthorizationConfig`` the JWT middleware reads (its
+        released field set, nothing more; the provider, issuer and audit sink travel separately).
+        AgentOS calls this once after all setup, so it is where a seeded admin whose role does not
+        grant admin is finally validated."""
         from agno.os.config import AuthorizationConfig
 
         self._check_seeded_admins()
-        return AuthorizationConfig(authorization_provider=self._provider(), **self._verification)
+        return AuthorizationConfig(**self._verification)
