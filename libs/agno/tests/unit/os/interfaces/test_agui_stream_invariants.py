@@ -50,6 +50,7 @@ from ag_ui.core import (
     ToolCallStartEvent,
 )
 
+from . import agui_stream_invariants
 from .agui_stream_invariants import (
     A_CHILDS_TERMINAL_PRECEDES_ITS_PARENTS,
     A_SPAN_CLOSES_IN_THE_MEMBER_IT_OPENED_IN,
@@ -84,6 +85,8 @@ from .agui_stream_invariants import (
     RUN_EVENTS_ARE_NEVER_STAMPED,
     STATE_EVENTS_ARE_NEVER_STAMPED,
     TRAILING_OUTPUT_AFTER_A_MEMBER_TERMINAL,
+    ScriptedModel,
+    StreamInvariantCheckerFailure,
     announced_lane,
     announcement_fields_missing_from,
     assert_stream_carries_exactly,
@@ -845,7 +848,7 @@ def test_the_run_lifecycle_rule_refuses_a_stamped_terminal_as_well_as_a_stamped_
 
 
 def test_an_exemption_nobody_justified_is_refused():
-    with pytest.raises(AssertionError, match="not a justified stream invariant exemption"):
+    with pytest.raises(StreamInvariantCheckerFailure, match="not a justified stream invariant exemption"):
         assert_well_formed_stream([_run_finished()], exempt=["whatever_i_felt_like"])
 
 
@@ -854,8 +857,54 @@ def test_an_exemption_the_stream_does_not_need_is_refused():
     well_formed = [_text_start("m-1"), _text_content("m-1"), _text_end("m-1"), _run_finished()]
 
     assert_well_formed_stream(well_formed)
-    with pytest.raises(AssertionError, match="well formed without the abandoned_mid_stream exemption"):
+    with pytest.raises(StreamInvariantCheckerFailure, match="well formed without the abandoned_mid_stream exemption"):
         assert_well_formed_stream(well_formed, exempt=[ABANDONED_MID_STREAM])
+
+
+# --- A checker fault is not a verdict about the stream ------------------------
+
+# The reporter returns the violation a stream breaks, and callers read the
+# returned string as a fact about that stream. Anything the checker itself got
+# wrong therefore has to leave by a different door, or a bug in the harness is
+# filed against the subject it was checking.
+
+
+def test_a_stream_that_is_well_formed_is_reported_as_breaking_nothing():
+    well_formed = [_text_start("m-1"), _text_content("m-1"), _text_end("m-1"), _run_finished()]
+
+    assert stream_invariant_violation(well_formed) is None
+
+
+def test_an_exemption_nobody_justified_reaches_the_caller_as_a_checker_failure():
+    """Not a string: a harness typo returned as prose reads as the stream's violation."""
+    well_formed = [_text_start("m-1"), _text_content("m-1"), _text_end("m-1"), _run_finished()]
+
+    with pytest.raises(StreamInvariantCheckerFailure, match="not a justified stream invariant exemption"):
+        stream_invariant_violation(well_formed, exempt=["abandoned_mid_strem"])
+
+
+def test_an_exemption_the_stream_does_not_need_reaches_the_caller_as_a_checker_failure():
+    well_formed = [_text_start("m-1"), _text_content("m-1"), _text_end("m-1"), _run_finished()]
+
+    with pytest.raises(StreamInvariantCheckerFailure, match="well formed without the abandoned_mid_stream exemption"):
+        stream_invariant_violation(well_formed, exempt=[ABANDONED_MID_STREAM])
+
+
+def test_an_invariant_that_raises_rather_than_fails_is_reported_as_a_checker_failure(monkeypatch):
+    """A ``TypeError`` inside an invariant says the checker is broken, not the stream."""
+    well_formed = [_text_start("m-1"), _text_content("m-1"), _text_end("m-1"), _run_finished()]
+
+    def _raises_rather_than_asserting(events, *args, **kwargs):
+        raise TypeError("the invariant itself is broken")
+
+    monkeypatch.setattr(
+        agui_stream_invariants,
+        "_assert_nothing_follows_the_run_terminal",
+        _raises_rather_than_asserting,
+    )
+
+    with pytest.raises(StreamInvariantCheckerFailure, match="an invariant raised TypeError"):
+        stream_invariant_violation(well_formed)
 
 
 @pytest.mark.parametrize("exemption", list(EXEMPTIONS))
@@ -1128,3 +1177,22 @@ def test_the_encoder_check_reports_the_event_a_wire_would_die_on():
     assert [name for name, _ in encoding_failures([StateDeltaEvent(type=EventType.STATE_DELTA, delta=[refused])])] == [
         "STATE_DELTA"
     ]
+
+
+# --- The scripted model answers only what a test scripted ---------------------
+
+
+def test_the_scripted_model_serves_each_turn_it_was_given_in_order():
+    model = ScriptedModel("scripted", [("content", "first"), ("content", "second")])
+
+    assert [model.invoke().content, model.invoke().content] == ["first", "second"]
+
+
+def test_the_scripted_model_refuses_a_turn_it_was_never_given():
+    """Clamping to the last turn would answer, so the over-asking test would pass."""
+    model = ScriptedModel("scripted", [("content", "first"), ("content", "second")])
+    model.invoke()
+    model.invoke()
+
+    with pytest.raises(AssertionError, match="was asked for turn 2 of a 2-turn script"):
+        model.invoke()

@@ -13,11 +13,33 @@ the resolved-visibility checks for `team_subagent_lineage.py` were measured on
 after the review rounds that added
 `libs/agno/tests/unit/os/interfaces/test_agui_stream_invariants.py` and changed
 what a member's own terminal event closes; that later date is the one the suite
-results here describe. The branch is based on Agno source commit
-`d1a388446e1b44b20498c772e91303588e2734cf`, which is the base it was written
-against and does not contain the work: the results below were measured on the
-branch, not on that tree. The branch squashes into one commit whose id does not
-exist yet, so the base is the only commit this log can name.
+results here describe. As of 2026-09-10 that branch sits on Agno source commit
+`4253dedc95250afddfcea05dfc28f26a4833a117`, which is on Agno's `main` and does
+not contain the work: the results below were measured on the branch, not on that
+tree. The branch's own commit is not on Agno's `main`, so that base is the only
+Agno source commit this log can name for it.
+
+The interrupt round trip addition was tested on 2026-09-10, on the branch that
+adds it. That branch is not based on an Agno source commit at all: it sits on top
+of the attribution branch above, which is itself unmerged, and only that
+branch's base is on Agno's `main`. So the tree these results were measured on is
+the Agno source commit named in the previous paragraph plus the commits of the
+two unmerged branches, none of which is on Agno's `main`, and the interrupt work
+itself is not pushed anywhere. How many commits that is stays unwritten: the
+branch grows one per review round, and the number said nothing about what was
+measured. As with the attribution entry, the results were measured on the branch
+rather than on either base.
+
+That entry is AUTOMATED, not LIVE, and the reason is worth stating plainly: no
+model API key was available in the environment the work was done in, so the one
+thing this addition most needs proving against a real model, that a client is
+told the run is waiting and that answering continues the same run rather than
+starting a new one, was proven against a scripted model over real HTTP instead.
+The scripted proof is real end to end below the model: a real AgentOS app, real
+`POST /agui` requests, real SSE, a real persisted pause, and the real tool body
+running on resume. What it does not cover is a real provider deciding to call
+the tool in the first place. Anyone with a key should run
+`interrupt_round_trip.py` and confirm that by hand.
 
 Each checked-in server was first booted on its default port 7777. The sweep
 asserted `GET /health`, `GET /config`, every mounted AG-UI status route, and a
@@ -142,6 +164,84 @@ tool call `fc_0555339da3dade57006a62d9a7a6388191a2c63cd5b0cebfd6` without
 executing it. Sending `{"accepted": true}` resumed the persisted run, emitted
 the tool result, and completed with the recipient `ops@example.com` and subject
 `Test Alert`.
+
+---
+
+### interrupt_round_trip.py
+
+**Status:** PASS
+
+**Test mode:** AUTOMATED
+
+**Description:** Added on 2026-09-10. Booted the two-interface server, checked
+`/health`, `/config`, and both status routes, and asserted the setting each
+mount resolved. The behaviour itself was measured by the unit suite rather than
+by a live provider, because no model API key was available; see the note at the
+top of this log for what that leaves uncovered.
+
+**Result:** Health returned `ok`; config returned OS `agui-interrupt-os`, agent
+`agui-interrupt-agent`, and the two AG-UI interfaces at `/interrupts` and
+`/interrupts-quiet`; both status routes returned `available`. The mounts
+resolved `emit_interrupt_outcome` to `True` and `False` respectively.
+
+`libs/agno/tests/unit/os/interfaces/test_agui_interrupts.py` covers the
+behaviour, all passing on `ag-ui-protocol` 0.1.22 as measured on 2026-09-10. It
+drives the resume half over a real `POST /agui` against a real Agent and a real
+Team with a scripted model: the first request pauses and reports the interrupt,
+the second answers it through `RunAgentInput.resume`, and the assertion is that
+the tool body ran and its result reached the wire under the tool call id the
+pause reported, which a restarted run could not produce.
+
+The wider AG-UI unit surface is green with it. Re-measured on 2026-09-10 by
+
+```bash
+pytest libs/agno/tests/unit/os/interfaces/ libs/agno/tests/unit/app/ -q \
+  --ignore=libs/agno/tests/unit/os/interfaces/test_a2a.py \
+  --ignore=libs/agno/tests/unit/os/interfaces/test_slack_bot_filtering.py
+```
+
+which passed. Both exclusions are required rather than tidying: those two files
+fail to collect in this environment on optional dependencies it does not have,
+`a2a-sdk` and `slack_sdk`, neither of which this change touches, and without them
+pytest stops on the two collection errors and runs nothing at all. So the pass
+holds only under those exclusions, and says nothing about whatever the two
+excluded files would have contributed.
+
+No test count is written here, for one suite or for the whole run. Every count
+this log wrote went stale within days, and one pair of them had gone
+arithmetically impossible: a suite total, and a difference from an earlier total
+said to be one suite's whole contribution, while that suite had grown to more
+tests than the difference. Those totals move with every commit to directories
+this folder does not own. Run the command above for a current tally.
+
+Five of the counts kept below are facts about this folder rather than about a
+run, and all five are recomputed from the folder itself by
+`libs/agno/tests/unit/os/interfaces/test_agui_documented_contract.py`, which
+fails when one of them drifts: the Python files in this folder's root, the
+server files booted, the Python files the pattern check scanned, the POST flows
+completed, and the status routes the examples mount. Every other number below is
+what one dated run measured, the events a stream carried and the files a sweep
+walked among them. Nothing recomputes those, and a later run will report its
+own.
+
+Existing suites did have their assertions rewritten by this addition. The
+documented-floor check in
+`libs/agno/tests/unit/os/interfaces/test_agui_documented_contract.py` went from
+one folder-wide protocol floor to a floor per example plus a set comparison
+against the README, because the folder now has two optional protocol features
+with different floors. That suite now also recomputes what this entry's own
+document claims about the round trip: the option's documented values and default
+against the constructor's signature, Agno's four pause kinds against the reasons
+the interface maps them to, every constraint the advertised answer schemas state
+against what the resume side enforces and what the README names, the
+failure-report path against the constants both directions read, the
+not-continuable code against the terminal a pause nothing can answer really
+sends, that the outcome is counted by open requirement rather than by prompted
+call, and every request body the README shows against the protocol's own input
+model. The startup-check test in
+`libs/agno/tests/unit/os/interfaces/test_agui_subagent_lineage.py` now asserts
+over the union of two feature-detection tables instead of one, because the
+suspended member outcome is feature-detected separately from the lineage fields.
 
 ---
 
@@ -271,19 +371,24 @@ TypeScript compilation, and the Vite production build passed.
 
 ## Validation
 
-- All 11 server files booted, exposed their expected `/status` route, and
-  shut down cleanly. The count is every Python file under this folder: the 10
-  in its root plus `openui/server.py`, which is the backend half of the nested
-  OpenUI example rather than a standalone one. `multiple_instances.py` and
-  `team_subagent_lineage.py` each mount two interfaces and exposed both of
-  their `/status` routes.
-- 10 of the 11 files completed a real capability-specific AG-UI POST flow.
-  `team_subagent_lineage.py` was verified without a provider key, so its POST
-  flow is covered by the unit suites instead.
-- Recursive pattern validation checked exactly 11 Python files, the same root 10
+- All 12 server files booted, exposed their expected `/status` route, and shut
+  down cleanly, each on the date recorded with it rather than all in one sweep.
+  The most recent sweep, on 2026-09-10, re-booted 11 of the 12; the dated bullet
+  below names the one it could not boot and why. So the 12 is the union of the
+  sweeps across the dates in this log, not a count any single run reached. The
+  count is every Python file under this folder: the 11 in its root plus
+  `openui/server.py`, which is the backend half of the nested OpenUI example
+  rather than a standalone one. `multiple_instances.py`,
+  `team_subagent_lineage.py` and `interrupt_round_trip.py` each mount two
+  interfaces and exposed both of their `/status` routes.
+- 10 of the 12 files completed a real capability-specific AG-UI POST flow, each
+  on the date recorded with it rather than all in one pass.
+  `team_subagent_lineage.py` and `interrupt_round_trip.py` were verified without
+  a provider key, so their POST flows are covered by the unit suites instead.
+- Recursive pattern validation checked exactly 12 Python files, the same root 11
   plus `openui/server.py`, with 0 violations, from
   `python cookbook/scripts/check_cookbook_pattern.py --base-dir cookbook/05_agent_os/16_agui --recursive`.
-  Without `--recursive` that command sees 10 files, so the flag is what makes
+  Without `--recursive` that command sees 11 files, so the flag is what makes
   the two counts above comparable.
 - Targeted Ruff format and check passed.
 - Python compilation, banned-model, stale-route, scope, Unicode/emoji,
@@ -293,10 +398,30 @@ TypeScript compilation, and the Vite production build passed.
 - The OpenUI server passed Python compilation, import, Ruff format, and Ruff
   check. Its frontend passed five tests, TypeScript compilation, and a
   production build.
-- Repository-wide Ruff, agnoctl mypy, and cookbook pattern checks passed. On
-  2026-07-24 the core Agno mypy step reported 27 existing errors in six files
-  outside this integration's diff; re-run on 2026-09-08 by `./scripts/validate.sh`
-  it reported none, across 1033 Agno source files and 21 agnoctl ones.
+- Repository-wide Ruff, agnoctl mypy, and cookbook pattern checks passed. The
+  core Agno mypy step reported errors outside this integration's diff on
+  2026-07-24 and none when it was re-run on 2026-09-08 by
+  `./scripts/validate.sh`. Neither an error count nor a count of the source
+  files either run walked is written down: both move with which optional model
+  packages the environment has installed, and neither says anything about this
+  folder.
+- Re-measured on 2026-09-10 for the interrupt round trip addition: the boot
+  sweep booted 11 of the 12 and asserted `/health` plus every mounted
+  `/status`, 14 status routes in all, one per AG-UI interface those 11 files
+  mount, which is the one number this sweep measured that something recomputes.
+  `openui/server.py` was the exception, and
+  it refused to boot for a reason unrelated to this change: its system prompt is
+  generated by `npm run generate:prompt`, which had not been run in this
+  environment. The recursive pattern check saw 12 files with 0 violations and
+  the non-recursive one 11, and targeted Ruff format and check passed on all 12.
+  The pytest command in the interrupt entry above passed, under the two
+  `--ignore` exclusions it names, and no count is recorded for it. `mypy`
+  reported no error in the AG-UI
+  interface and the same pre-existing ones elsewhere as it reports on the
+  attribution commit this one sits on top of.
+  How many pre-existing errors that is stays unquoted, because it moves with
+  which optional model packages the environment has installed and says nothing
+  about this change either way.
 - Re-measured on 2026-09-08 against the current tree: `./scripts/validate.sh`
   passed every step it runs, the recursive pattern check saw 11 files and the
   non-recursive one 10 with 0 violations either way, Ruff format and check
@@ -304,6 +429,17 @@ TypeScript compilation, and the Vite production build passed.
   `git diff --check` passed, and
   `pytest libs/agno/tests/unit/os/interfaces -k agui` passed on an install
   whose `ag-ui-protocol` serves the lineage events.
+- Re-measured on 2026-09-10 for the pass that corrected these documents against
+  the merged behaviour, which changed this folder's `README.md`, this log and
+  `interrupt_round_trip.py`, plus
+  `libs/agno/tests/unit/os/interfaces/test_agui_documented_contract.py`, and no
+  interface source at all. `interrupt_round_trip.py` was booted again: `/health`
+  answered `ok`, `/config` returned OS `agui-interrupt-os`, both
+  `/interrupts/status` and `/interrupts-quiet/status` returned `available`, the
+  two mounts resolved `emit_interrupt_outcome` to `True` and `False`, and the
+  server shut down cleanly. The recursive pattern check saw 12 files with 0
+  violations and the non-recursive one 11; `ruff format` and `ruff check` passed
+  on `cookbook` and on `libs/agno`; and the pytest command above passed.
 - Not re-run on 2026-09-08: the server boots, the per-file AG-UI POST flows and
   the OpenUI frontend checks recorded above, which need the servers started and
   a provider key. Those stand as measured on the dates given with them, and the

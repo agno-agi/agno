@@ -31,6 +31,17 @@ suites do the thing that kept going wrong:
     The single door to everything the subagent lineage protocol release added.
     Asking for the attributed setting, or for a ``SUBAGENT_*`` event type, on an
     install that has neither skips the test instead of failing it.
+``member_mentions``
+    Every way one stream names a member, for the assertions whose subject is a
+    visibility that must name none. Reading one member event class passes while
+    the privacy is broken, because a member announced and then closed as an
+    error is named twice and counted zero times.
+``assert_stream_is_malformed_as_recorded``
+    The stream this interface emits malformed today, pinned to the violation it
+    breaks. For a behaviour that is deferred rather than blessed: an exemption
+    would say the stream is well formed and stop an invariant being checked on
+    every later stream that names it, and these streams are not well formed at
+    all.
 ``HOSTILE_VALUES`` / ``encoding_failures``
     Values a run's content can hold that serialization handles badly or not at
     all, to drive through every boundary that builds an event out of run
@@ -45,6 +56,7 @@ suites do the thing that kept going wrong:
     can only widen what a test sees, never narrow it.
 """
 
+import json
 import logging
 from collections import Counter
 from collections.abc import Iterator
@@ -58,6 +70,8 @@ import pytest
 from ag_ui.core import BaseEvent, EventType
 from ag_ui.encoder import EventEncoder
 
+from agno.models.base import Model
+from agno.models.response import ModelResponse, ModelResponseEvent
 from agno.os.interfaces.agui.handlers import validate_subagent_visibility
 from agno.os.interfaces.agui.state import SUBAGENT_VISIBILITY_ATTRIBUTED
 from agno.os.interfaces.agui.stream import (
@@ -186,6 +200,14 @@ SUBAGENT_FINISHED = _event_type("SUBAGENT_FINISHED")
 SUBAGENT_ERROR = _event_type("SUBAGENT_ERROR")
 
 _MEMBER_TERMINAL_TYPES = tuple(t for t in (SUBAGENT_FINISHED, SUBAGENT_ERROR) if t is not None)
+# Every event kind that is about a member at all, read off the installed
+# EventType rather than listed beside the three the interface writes today, so a
+# release that adds a fourth is covered here without an edit.
+_MEMBER_EVENT_TYPES = tuple(
+    event_type
+    for event_type in (_event_type(name) for name in dir(EventType) if name.startswith("SUBAGENT_"))
+    if event_type is not None
+)
 _RUN_TERMINAL_TYPES = (EventType.RUN_FINISHED, EventType.RUN_ERROR)
 # The lifecycle of the run itself. Derived from the terminals rather than listed
 # beside them, so the two cannot come to disagree about what ends a run.
@@ -328,6 +350,25 @@ def short_type_name(event_type: "EventType") -> str:
     return str(event_type).removeprefix("EventType.")
 
 
+def member_mentions(events: Sequence[BaseEvent]) -> List[Tuple[str, Optional[str]]]:
+    """(event, member) for everything in this stream that names a member.
+
+    For an assertion whose subject is a visibility that must name none. A member
+    reaches a client two ways: an event of one of the member kinds, and a lane
+    stamped on any event at all. Reading one of those kinds is a check that
+    holds while the privacy it is about is broken, because a member announced
+    and then closed as an error is named twice over and counted zero times.
+
+    The lane is read for presence rather than truthiness, as the invariants read
+    it: an empty lane is still a lane on the wire.
+    """
+    return [
+        (short_type(event), lane_of(event))
+        for event in events
+        if event.type in _MEMBER_EVENT_TYPES or lane_of(event) is not None
+    ]
+
+
 # --- The named invariants ---------------------------------------------------
 
 # One name per structural promise, so an exemption can waive exactly the one it
@@ -424,6 +465,18 @@ _EXEMPTIONS: Dict[str, Tuple[str, str]] = {
 EXEMPTIONS = tuple(_EXEMPTIONS)
 
 
+class StreamInvariantCheckerFailure(Exception):
+    """The checker could not reach a verdict, which is never a fact about the stream.
+
+    An exemption nobody justified, an exemption the stream does not need, and
+    anything raised inside an invariant that is not that invariant failing, all
+    say the harness is wrong rather than the stream. Deliberately not an
+    ``AssertionError``: the reporter returns those as the stream's violation, so
+    a checker fault needs a channel of its own or it reaches the caller dressed
+    as the verdict it prevented.
+    """
+
+
 def exemption_waives(exemption: str) -> str:
     """The single invariant one exemption waives."""
     return _EXEMPTIONS[exemption][0]
@@ -431,13 +484,69 @@ def exemption_waives(exemption: str) -> str:
 
 def _assert_exemptions_are_justified(exempt: Sequence[str]) -> None:
     for granted in exempt:
-        assert granted in _EXEMPTIONS, f"{granted!r} is not a justified stream invariant exemption"
+        if granted not in _EXEMPTIONS:
+            raise StreamInvariantCheckerFailure(f"{granted!r} is not a justified stream invariant exemption")
 
 
 def _waived(exempt: Sequence[str], invariant: str) -> bool:
     """Whether one named invariant is waived, refusing an exemption nobody justified."""
     _assert_exemptions_are_justified(exempt)
     return any(_EXEMPTIONS[granted][0] == invariant for granted in exempt)
+
+
+# --- Streams this interface emits malformed today ---------------------------
+
+# A stream the interface really emits that the invariants above reject, whose
+# behaviour is deferred rather than agreed to be correct. Deliberately not an
+# exemption: an exemption says a stream is well formed for a stated reason and
+# stops one named invariant being checked on every later stream that claims it,
+# and these streams are not well formed at all. Naming one here pins the
+# violation instead. Nothing stops being checked, the caller states the
+# disagreement where a reader sees it, and the day the behaviour changes the pin
+# fails rather than going quiet.
+A_CALL_PROMPTED_ONCE_PER_PAUSE_KIND = "a_call_prompted_once_per_pause_kind"
+
+_DEFERRED_VIOLATIONS: Dict[str, Tuple[str, str]] = {
+    A_CALL_PROMPTED_ONCE_PER_PAUSE_KIND: (
+        "tool call ids opened more than once",
+        "the pause prompt shows every pending call the pause listed, so two of "
+        "them under one tool call id reach the client as one id opened, argued "
+        "and closed twice. Three promises break at once there, not the one an "
+        "exemption could waive: the span opens twice, it closes twice, and the "
+        "second batch of arguments arrives after the first end. The prompt is "
+        "what this interface has always emitted and no test here changes it. "
+        "Two shapes reach it. A pause reporting one call under two pause-kind "
+        "lists is the first, and asking for the interrupt outcome ends that run "
+        "instead of prompting it only where the two kinds are one requirement "
+        "nothing can answer. A run reports them as two entries under the call's "
+        "own id and raises one answerable requirement, and a model is free to "
+        "number two of its calls alike, so both reach the prompt under either "
+        "setting.",
+    ),
+}
+
+
+def deferred_violation(deferred: str) -> str:
+    """The violation one deliberately malformed stream is pinned to."""
+    assert deferred in _DEFERRED_VIOLATIONS, f"{deferred!r} is not a recorded deferred stream violation"
+    return _DEFERRED_VIOLATIONS[deferred][0]
+
+
+def assert_stream_is_malformed_as_recorded(events: Sequence[BaseEvent], deferred: str) -> None:
+    """Hold a deliberately malformed stream to the violation recorded for it.
+
+    A stream that is well formed now fails here, and so does one that breaks
+    something other than what is recorded, so pinning a violation waives
+    nothing: every invariant still runs, and what the run reports is compared
+    against the one thing this stream is allowed to break.
+    """
+    recorded = deferred_violation(deferred)
+    violation = stream_invariant_violation(events)
+    assert violation is not None, (
+        f"this stream is well formed now, so the {deferred} record is stale: "
+        "delete the record and the pin that names it"
+    )
+    assert recorded in violation, f"this stream breaks {violation!r}, and not the recorded {recorded!r}"
 
 
 # --- One executable definition of a well-formed stream ----------------------
@@ -485,7 +594,7 @@ def assert_well_formed_stream(events: Sequence[BaseEvent], exempt: Sequence[str]
             _assert_invariants(events, narrowed)
         except AssertionError:
             continue
-        raise AssertionError(
+        raise StreamInvariantCheckerFailure(
             f"this stream is well formed without the {granted} exemption, so granting it waives "
             f"{exemption_waives(granted)} on a stream that does not break it"
         )
@@ -496,11 +605,22 @@ def stream_invariant_violation(events: Sequence[BaseEvent], exempt: Sequence[str
 
     For the few callers that have to state, and pin, that a stream is NOT well
     formed today. Everything else asserts well-formedness directly.
+
+    Three outcomes, not two: the string, ``None``, or a raised
+    ``StreamInvariantCheckerFailure`` when the checker never reached a verdict.
+    Callers read the returned string as the thing this stream breaks, so a fault
+    in the checker has to arrive as a raise or it is filed against the stream.
     """
     try:
         assert_well_formed_stream(events, exempt)
     except AssertionError as violation:
         return str(violation)
+    except StreamInvariantCheckerFailure:
+        raise
+    except BaseException as raised:
+        raise StreamInvariantCheckerFailure(
+            f"an invariant raised {type(raised).__name__} instead of failing: {raised}"
+        ) from raised
     return None
 
 
@@ -1114,8 +1234,8 @@ def captured_agno_logs(caplog: Any, level: str) -> Iterator[None]:
 
 # --- The same chunks through both mappers -----------------------------------
 
-Collected = Tuple[List[BaseEvent], Optional[Exception]]
-MalformedCollected = Tuple[List[BaseEvent], Optional[Exception], Optional[str]]
+Collected = Tuple[List[BaseEvent], Optional[BaseException]]
+MalformedCollected = Tuple[List[BaseEvent], Optional[BaseException], Optional[str]]
 
 
 class SideEffect:
@@ -1128,6 +1248,67 @@ class SideEffect:
 
     def __init__(self, action: Callable[[], Any]) -> None:
         self.action = action
+
+
+def sse_events(body: str) -> List[Dict[str, Any]]:
+    """The events of an SSE response body, decoded in the order they arrived.
+
+    Shared, because a suite that drives the mounted route reads its result this
+    way and a second copy of the decoding is a second thing that can be wrong
+    about what the wire carried.
+    """
+    return [json.loads(line[len("data: ") :]) for line in body.splitlines() if line.startswith("data: ")]
+
+
+class ScriptedModel(Model):
+    """Emits scripted turns offline: ('tool', name, args, id) or ('content', text)."""
+
+    def __init__(self, model_id: str, script: List[tuple], fail_with: Optional[str] = None):
+        super().__init__(id=model_id, name=model_id, provider="test")
+        self._script = list(script)
+        self._i = 0
+        self._fail_with = fail_with
+
+    def _next(self) -> ModelResponse:
+        if self._fail_with:
+            raise RuntimeError(self._fail_with)
+        if not self._script:
+            raise AssertionError(f"{self.id} was asked for a turn but was given an empty script")
+        # Refused rather than clamped to the last turn: a test that asks for more
+        # turns than it scripted is asserting about a turn it never wrote.
+        assert self._i < len(self._script), (
+            f"{self.id} was asked for turn {self._i} of a {len(self._script)}-turn script"
+        )
+        turn = self._script[self._i]
+        self._i += 1
+        if turn[0] == "tool":
+            _, name, args, tcid = turn
+            response = ModelResponse(role="assistant")
+            response.tool_calls = [
+                {"id": tcid, "type": "function", "function": {"name": name, "arguments": json.dumps(args)}}
+            ]
+            return response
+        response = ModelResponse(content=turn[1], role="assistant")
+        response.event = ModelResponseEvent.assistant_response.value
+        return response
+
+    def invoke(self, *args, **kwargs):
+        return self._next()
+
+    async def ainvoke(self, *args, **kwargs):
+        return self._next()
+
+    def invoke_stream(self, *args, **kwargs) -> Iterator[ModelResponse]:
+        yield self._next()
+
+    async def ainvoke_stream(self, *args, **kwargs) -> AsyncIterator[ModelResponse]:
+        yield self._next()
+
+    def _parse_provider_response(self, response: Any, **kwargs) -> ModelResponse:
+        return response if isinstance(response, ModelResponse) else ModelResponse()
+
+    def _parse_provider_response_delta(self, response: Any) -> ModelResponse:
+        return response if isinstance(response, ModelResponse) else ModelResponse()
 
 
 def sync_source(chunks: Iterable[Any]) -> Iterator[Any]:
@@ -1165,27 +1346,46 @@ def _servable(visibility: Optional[str]) -> Optional[str]:
     return visibility
 
 
+def _recorded(raised: BaseException, chunks: Sequence[Any]) -> BaseException:
+    """The failure a driver collects, re-raising an interruption no chunk placed.
+
+    The sources above raise whatever the chunk list holds, and a chunk list may
+    hold any ``BaseException``. Catching ``Exception`` alone let one of those
+    out of the driver, which returned nothing: no invariant ran on the events it
+    had already collected, and the test read a raise where it had asked for a
+    recorded failure. What still has to pass through is an interruption from
+    outside the run, which is why this is by identity against the list rather
+    than a wider except.
+    """
+    if isinstance(raised, Exception) or any(raised is chunk for chunk in chunks):
+        return raised
+    raise raised
+
+
 def _drive_sync(
     chunks: Iterable[Any],
     visibility: Optional[str],
     thread_id: str,
     run_id: str,
     run_state: Optional[Dict[str, Any]],
+    emit_interrupt_outcome: bool,
 ) -> Collected:
     resolved = _servable(visibility)
+    driving = list(chunks)
     events: List[BaseEvent] = []
-    error: Optional[Exception] = None
+    error: Optional[BaseException] = None
     try:
         for event in stream_agno_response_as_agui_events(
-            sync_source(chunks),
+            sync_source(driving),
             thread_id=thread_id,
             run_id=run_id,
             run_state=run_state,
             subagent_visibility=resolved,
+            emit_interrupt_outcome=emit_interrupt_outcome,
         ):
             events.append(event)
-    except Exception as raised:
-        error = raised
+    except BaseException as raised:
+        error = _recorded(raised, driving)
     return events, error
 
 
@@ -1195,21 +1395,24 @@ async def _drive_async(
     thread_id: str,
     run_id: str,
     run_state: Optional[Dict[str, Any]],
+    emit_interrupt_outcome: bool,
 ) -> Collected:
     resolved = _servable(visibility)
+    driving = list(chunks)
     events: List[BaseEvent] = []
-    error: Optional[Exception] = None
+    error: Optional[BaseException] = None
     try:
         async for event in async_stream_agno_response_as_agui_events(
-            async_source(chunks),
+            async_source(driving),
             thread_id=thread_id,
             run_id=run_id,
             run_state=run_state,
             subagent_visibility=resolved,
+            emit_interrupt_outcome=emit_interrupt_outcome,
         ):
             events.append(event)
-    except Exception as raised:
-        error = raised
+    except BaseException as raised:
+        error = _recorded(raised, driving)
     return events, error
 
 
@@ -1221,8 +1424,9 @@ async def collect_sync(
     run_id: str,
     run_state: Optional[Dict[str, Any]] = None,
     exempt: Sequence[str] = (),
+    emit_interrupt_outcome: bool = False,
 ) -> Collected:
-    events, error = _drive_sync(chunks, visibility, thread_id, run_id, run_state)
+    events, error = _drive_sync(chunks, visibility, thread_id, run_id, run_state, emit_interrupt_outcome)
     assert_well_formed_stream(events, exempt)
     return events, error
 
@@ -1235,8 +1439,9 @@ async def collect_async(
     run_id: str,
     run_state: Optional[Dict[str, Any]] = None,
     exempt: Sequence[str] = (),
+    emit_interrupt_outcome: bool = False,
 ) -> Collected:
-    events, error = await _drive_async(chunks, visibility, thread_id, run_id, run_state)
+    events, error = await _drive_async(chunks, visibility, thread_id, run_id, run_state, emit_interrupt_outcome)
     assert_well_formed_stream(events, exempt)
     return events, error
 
@@ -1249,6 +1454,7 @@ async def collect_sync_recording_violations(
     run_id: str,
     run_state: Optional[Dict[str, Any]] = None,
     exempt: Sequence[str] = (),
+    emit_interrupt_outcome: bool = False,
 ) -> MalformedCollected:
     """As ``collect_sync``, reporting the invariant a stream broke instead of failing.
 
@@ -1256,7 +1462,7 @@ async def collect_sync_recording_violations(
     invariants still run, on exactly the same definition, so a stream that stops
     being malformed is a diff rather than a silence.
     """
-    events, error = _drive_sync(chunks, visibility, thread_id, run_id, run_state)
+    events, error = _drive_sync(chunks, visibility, thread_id, run_id, run_state, emit_interrupt_outcome)
     return events, error, stream_invariant_violation(events, exempt)
 
 
@@ -1268,8 +1474,9 @@ async def collect_async_recording_violations(
     run_id: str,
     run_state: Optional[Dict[str, Any]] = None,
     exempt: Sequence[str] = (),
+    emit_interrupt_outcome: bool = False,
 ) -> MalformedCollected:
-    events, error = await _drive_async(chunks, visibility, thread_id, run_id, run_state)
+    events, error = await _drive_async(chunks, visibility, thread_id, run_id, run_state, emit_interrupt_outcome)
     return events, error, stream_invariant_violation(events, exempt)
 
 
@@ -1328,6 +1535,37 @@ class RaisesOnSerialization:
         raise RuntimeError("to_dict exploded")
 
 
+class UnrenderableError(Exception):
+    """A failure that raises while being described, as one carrying a value does.
+
+    An exception built out of the thing that failed holds that thing, so
+    rendering the exception runs the same code the read did. Every guard that
+    interpolates a caught exception into its own record is running this.
+    """
+
+    def __str__(self) -> str:
+        raise RuntimeError("the exception cannot render itself")
+
+
+class RaisesAnUnreadableError(RaisesOnSerialization):
+    """A value whose serialization raises a failure that cannot be rendered either.
+
+    One level past ``RaisesOnSerialization``, which raises a failure that does
+    render: a guard can catch that one and still write its record. This value is
+    the case where catching is not enough, so it drives what a recovery path
+    does with the exception it caught rather than what it does with the value.
+    """
+
+    def model_dump_json(self) -> str:
+        raise UnrenderableError("dump exploded")
+
+    def __repr__(self) -> str:
+        raise UnrenderableError("repr exploded")
+
+    def to_dict(self) -> Dict[str, Any]:
+        raise UnrenderableError("to_dict exploded")
+
+
 def circular() -> Dict[str, Any]:
     """A mapping that holds itself, which the JSON encoder refuses."""
     cycle: Dict[str, Any] = {}
@@ -1340,9 +1578,13 @@ def circular() -> Dict[str, Any]:
 # of them are unserializable: ``not_a_number`` and ``none`` are the two most
 # serializers do handle, and what they are here for is that the boundaries
 # disagree about them, which the hostile suite's own table records.
+# ``raises_an_unreadable_error`` is not about serialization at all: it is the
+# level past a value that raises, where the failure raised cannot be rendered
+# either, so it drives the recovery paths rather than the reads they guard.
 HOSTILE_VALUES: Tuple[Tuple[str, Callable[[], Any]], ...] = (
     ("circular", circular),
     ("raises_on_serialization", RaisesOnSerialization),
+    ("raises_an_unreadable_error", RaisesAnUnreadableError),
     ("set", lambda: {"a", "b"}),
     ("not_a_number", lambda: float("nan")),
     ("none", lambda: None),

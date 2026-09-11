@@ -82,6 +82,7 @@ protocol does not define out of the comparison on both sides rather than
 reporting the rows naming it as claims about nothing.
 """
 
+import json
 from types import MappingProxyType
 from typing import Any, Callable, Dict, List, Mapping, NamedTuple, Optional, Set, Tuple
 
@@ -90,6 +91,7 @@ import pytest
 pytest.importorskip("ag_ui", reason="ag_ui not installed")
 
 from ag_ui.core import BaseEvent, EventType, RunAgentInput, UserMessage
+from ag_ui.encoder import EventEncoder
 
 from agno.models.response import ToolExecution
 from agno.os.interfaces.agui.router import run_entity
@@ -116,10 +118,12 @@ from .agui_stream_invariants import (
     HOSTILE_VALUES,
     TOP_LEVEL_RUN,
     MalformedCollected,
+    RaisesAnUnreadableError,
     SideEffect,
     agent_said,
     assert_stream_contains,
     attributed,
+    captured_agno_logs,
     collect_async_recording_violations,
     collect_sync_recording_violations,
     encoding_failures,
@@ -526,6 +530,7 @@ _ALL_VALUES = tuple(name for name, _ in HOSTILE_VALUES)
 _HOSTILE_VALUE_NAMES = (
     "circular",
     "raises_on_serialization",
+    "raises_an_unreadable_error",
     "set",
     "not_a_number",
     "none",
@@ -592,15 +597,22 @@ class Boundary(NamedTuple):
 # which the coverage test at the bottom of this module checks the whole table
 # against.
 _BOUNDARIES: Tuple[Boundary, ...] = (
-    # The one hardened boundary: every route falls back rather than raising.
+    # The boundary hardened against a value that cannot be serialized: every
+    # route falls back rather than raising. Each of those fallbacks records the
+    # failure by rendering it, though, so the value whose failure cannot be
+    # rendered either ends the run from inside the record of the first route
+    # that refused it, before any of the later routes is tried.
     Boundary(
         "member_terminal_result",
         _member_terminal_result,
         "SUBAGENT_FINISHED",
         "handlers._lane_finished",
         lambda: "scout done",
-        _everywhere(TERMINATES),
+        _terminates_except(raises_an_unreadable_error=ENDS_THE_RUN),
         lineage_only=True,
+        # The default opens no member lane, so the serialization this boundary
+        # is about is never run there at all and the value reaches nothing.
+        under_the_default={"raises_an_unreadable_error": REACHES_ITS_TERMINAL},
     ),
     # json.dumps of the content is unguarded, so a cycle ends the run. Every
     # other value is swallowed by the text extractor before a delta is built,
@@ -640,7 +652,12 @@ _BOUNDARIES: Tuple[Boundary, ...] = (
         "TOOL_CALL_ARGS",
         "handlers.on_tool_call_started",
         lambda: {"query": "agno"},
-        _terminates_except(circular=ENDS_THE_RUN, raises_on_serialization=ENDS_THE_RUN, set=ENDS_THE_RUN),
+        _terminates_except(
+            circular=ENDS_THE_RUN,
+            raises_on_serialization=ENDS_THE_RUN,
+            raises_an_unreadable_error=ENDS_THE_RUN,
+            set=ENDS_THE_RUN,
+        ),
     ),
     # The call is marked ended in the mapper's state before its result is
     # serialized, so a result the serializer refuses discards the end event and
@@ -654,6 +671,7 @@ _BOUNDARIES: Tuple[Boundary, ...] = (
         _terminates_except(
             circular=ENDS_THE_RUN_MALFORMED,
             raises_on_serialization=ENDS_THE_RUN_MALFORMED,
+            raises_an_unreadable_error=ENDS_THE_RUN_MALFORMED,
             set=ENDS_THE_RUN_MALFORMED,
             none=DROPPED_BEFORE_THE_BOUNDARY,
         ),
@@ -671,6 +689,7 @@ _BOUNDARIES: Tuple[Boundary, ...] = (
         _terminates_except(
             circular=ENDS_THE_RUN_MALFORMED,
             raises_on_serialization=ENDS_THE_RUN_MALFORMED,
+            raises_an_unreadable_error=ENDS_THE_RUN_MALFORMED,
             set=ENDS_THE_RUN_MALFORMED,
             not_a_number=ENDS_THE_RUN_MALFORMED,
             none=DROPPED_BEFORE_THE_BOUNDARY,
@@ -685,6 +704,7 @@ _BOUNDARIES: Tuple[Boundary, ...] = (
         _terminates_except(
             circular=ENDS_THE_RUN_MALFORMED,
             raises_on_serialization=ENDS_THE_RUN_MALFORMED,
+            raises_an_unreadable_error=ENDS_THE_RUN_MALFORMED,
             set=ENDS_THE_RUN_MALFORMED,
             not_a_number=ENDS_THE_RUN_MALFORMED,
             none=DROPPED_BEFORE_THE_BOUNDARY,
@@ -701,6 +721,7 @@ _BOUNDARIES: Tuple[Boundary, ...] = (
         _terminates_except(
             circular=ENDS_THE_RUN_MALFORMED,
             raises_on_serialization=ENDS_THE_RUN_MALFORMED,
+            raises_an_unreadable_error=ENDS_THE_RUN_MALFORMED,
             set=ENDS_THE_RUN_MALFORMED,
             not_a_number=ENDS_THE_RUN_MALFORMED,
         ),
@@ -715,7 +736,11 @@ _BOUNDARIES: Tuple[Boundary, ...] = (
         "CUSTOM",
         "handlers.on_custom_event",
         lambda: {"payload": "fine"},
-        _terminates_except(circular=TERMINATES_UNSENDABLE, raises_on_serialization=TERMINATES_UNSENDABLE),
+        _terminates_except(
+            circular=TERMINATES_UNSENDABLE,
+            raises_on_serialization=TERMINATES_UNSENDABLE,
+            raises_an_unreadable_error=TERMINATES_UNSENDABLE,
+        ),
     ),
     Boundary(
         "raw_event_payload",
@@ -723,32 +748,50 @@ _BOUNDARIES: Tuple[Boundary, ...] = (
         "RAW",
         "handlers.on_unknown_event",
         lambda: {"payload": "fine"},
-        _terminates_except(circular=TERMINATES_UNSENDABLE, raises_on_serialization=TERMINATES_UNSENDABLE),
+        _terminates_except(
+            circular=TERMINATES_UNSENDABLE,
+            raises_on_serialization=TERMINATES_UNSENDABLE,
+            raises_an_unreadable_error=TERMINATES_UNSENDABLE,
+        ),
     ),
-    # The run terminal is built after the mapper's own cleanup has run, so a
-    # message that cannot be rendered leaves the open text message unclosed and
-    # writes no terminal at all.
+    # The message is read through the interface's guarded reader, so one that
+    # cannot be rendered falls back to a fixed line and the terminal is still
+    # written, spans closed. The terminal embeds the failing chunk verbatim
+    # though, and the value rides out inside that dump, so the encoder refuses
+    # the very event this boundary builds.
     Boundary(
         "run_error_message",
         _failing_run_with_a_member_mid_sentence,
         "RUN_ERROR",
         "handlers.on_run_error",
         lambda: "the team blew up",
-        _terminates_except(raises_on_serialization=ENDS_THE_RUN_MALFORMED),
+        _terminates_except(
+            raises_on_serialization=TERMINATES_UNSENDABLE,
+            raises_an_unreadable_error=TERMINATES_UNSENDABLE,
+        ),
     ),
     # The same content, read at the other boundary it reaches: closing the run
-    # writes it as the terminal of every member lane still open. It is rendered
-    # with a bare stringification here, unlike a member's own failure message,
-    # so the value that cannot be rendered ends the run from inside the record
-    # of why it stopped, before either terminal is built.
+    # writes it as the terminal of every member lane still open. It is the same
+    # guarded reading as the run's own message, so the lane terminates under the
+    # fallback line and this event is sendable; the stream still dies at the run
+    # terminal, which embeds the failing chunk verbatim.
     Boundary(
         "run_error_lane_message",
         _failing_run_with_a_member_mid_sentence,
         "SUBAGENT_ERROR",
         "handlers._lane_errored",
         lambda: "the team blew up",
-        _terminates_except(raises_on_serialization=ENDS_THE_RUN_MALFORMED),
+        _terminates_except(
+            raises_on_serialization=dies_on("RUN_ERROR"),
+            raises_an_unreadable_error=dies_on("RUN_ERROR"),
+        ),
         lineage_only=True,
+        # The default builds no lane terminal, and the run's own terminal
+        # embeds the same dump there too, so the stream dies at the same event.
+        under_the_default={
+            "raises_on_serialization": dies_on("RUN_ERROR"),
+            "raises_an_unreadable_error": dies_on("RUN_ERROR"),
+        },
     ),
     # The delta is a diff of the session state, which holds anything, and the
     # ops it carries are untyped, so the value reaches the encoder unfiltered.
@@ -758,7 +801,11 @@ _BOUNDARIES: Tuple[Boundary, ...] = (
         "STATE_DELTA",
         "handlers._emit_state_delta",
         lambda: "approved",
-        _terminates_except(circular=TERMINATES_UNSENDABLE, raises_on_serialization=TERMINATES_UNSENDABLE),
+        _terminates_except(
+            circular=TERMINATES_UNSENDABLE,
+            raises_on_serialization=TERMINATES_UNSENDABLE,
+            raises_an_unreadable_error=TERMINATES_UNSENDABLE,
+        ),
     ),
     # The four things a paused run puts on the wire out of its own content, one
     # row each rather than one fixture carrying the value into several of them:
@@ -771,10 +818,18 @@ _BOUNDARIES: Tuple[Boundary, ...] = (
         "TEXT_MESSAGE_CONTENT",
         "handlers._prompt_block",
         lambda: "confirm this before I send it",
-        # Rendered with a bare stringification, which only the value that raises
-        # from its own repr refuses. A run that says nothing while pausing sends
-        # no delta, which is where the empty value stops.
-        _terminates_except(raises_on_serialization=ENDS_THE_RUN, none=DROPPED_BEFORE_THE_BOUNDARY),
+        # Read through the interface's guarded reader, so the value that raises
+        # from its own repr is dropped and the prompt sends no delta, which is
+        # where the empty value stops too. The reader's own record names the
+        # failure's type rather than rendering it, so the value whose failure
+        # cannot be rendered either is dropped here as well rather than ending
+        # the run from inside the recovery, several events before this terminal
+        # writes anything.
+        _terminates_except(
+            raises_on_serialization=DROPPED_BEFORE_THE_BOUNDARY,
+            raises_an_unreadable_error=DROPPED_BEFORE_THE_BOUNDARY,
+            none=DROPPED_BEFORE_THE_BOUNDARY,
+        ),
     ),
     # The protocol model requires a string name and a string id here as much as
     # it does on a streamed call, and nothing coerces either. The one difference
@@ -803,7 +858,11 @@ _BOUNDARIES: Tuple[Boundary, ...] = (
         "TOOL_CALL_ARGS",
         "handlers._prompt_block",
         lambda: {"to": "ops"},
-        _terminates_except(circular=ENDS_THE_RUN, raises_on_serialization=ENDS_THE_RUN, set=ENDS_THE_RUN),
+        # Serialized behind a guard, unlike the arguments of a streamed call:
+        # this is the run terminal, and a raise here would discard the closing
+        # sweep built before it. Arguments the encoder refuses are dropped, and
+        # the call is still prompted under the id a resume answers it by.
+        _everywhere(TERMINATES),
     ),
     # The protocol model requires a string name, and nothing coerces the value
     # or drops the call before the event is built.
@@ -838,12 +897,18 @@ _BOUNDARIES: Tuple[Boundary, ...] = (
         "SUBAGENT_STARTED",
         "handlers._announce_subagent",
         lambda: "Scout",
-        _terminates_except(raises_on_serialization=dies_on("RAW")),
+        _terminates_except(
+            raises_on_serialization=dies_on("RAW"),
+            raises_an_unreadable_error=dies_on("RAW"),
+        ),
         lineage_only=True,
         # The default announces no member, so nothing here builds an event at
         # all; the member's unmapped chunks still go out as RAW, and the
         # identity the encoder refuses rides out on one of those.
-        under_the_default={"raises_on_serialization": dies_on("RAW")},
+        under_the_default={
+            "raises_on_serialization": dies_on("RAW"),
+            "raises_an_unreadable_error": dies_on("RAW"),
+        },
     ),
     # The three ways a member's own terminal reports what happened to it, each
     # read through the same guarded stringification the names are: a failure
@@ -870,7 +935,10 @@ _BOUNDARIES: Tuple[Boundary, ...] = (
         # cancellation as the run's own: the RUN_ERROR it writes embeds the
         # cancelled chunk verbatim, reason included, so the reason the encoder
         # refuses truncates the stream at the run's own terminal.
-        under_the_default={"raises_on_serialization": dies_on("RAW")},
+        under_the_default={
+            "raises_on_serialization": dies_on("RAW"),
+            "raises_an_unreadable_error": dies_on("RAW"),
+        },
     ),
     # The identifiers that failure is recorded with never reach the wire, so the
     # value is driven through the log line the terminal is accompanied by: one
@@ -1143,9 +1211,9 @@ async def test_hostile_session_state_still_reaches_the_state_snapshot(collect, v
         ],
         run_state={"value": injected},
     )
-    # Two of these snapshots are ones the protocol's encoder refuses, so the run
-    # terminates in memory while the client's stream stops at the snapshot.
-    unsendable = value in ("circular", "raises_on_serialization")
+    # Three of these snapshots are ones the protocol's encoder refuses, so the
+    # run terminates in memory while the client's stream stops at the snapshot.
+    unsendable = value in ("circular", "raises_on_serialization", "raises_an_unreadable_error")
 
     events, error, violation = await _collect(collect, fixture, attributed())
 
@@ -1159,6 +1227,121 @@ async def test_hostile_session_state_still_reaches_the_state_snapshot(collect, v
     # repr, which an equality failure would try to render.
     assert "value" in snapshot, "the hostile value never reached the snapshot"
     assert type(snapshot["value"]) is type(injected), "the snapshot holds something other than the injected value"
+
+
+# --- The recovery path a run terminal is built inside ------------------------
+
+# The table above says what became of a value at each boundary. These two say
+# what a client is actually handed when the value is one the interface's guarded
+# reader cannot read, at the two run terminals that reader is called from: a
+# record written by rendering the failure runs the same value the read did, so
+# the guard raises out of its own recovery and takes the terminal being built
+# around it with it. A cell of the table would report that as "ends the run",
+# which is true of any raise; these name what a client loses instead.
+
+
+def _as_a_client_receives(events: List[BaseEvent]) -> List[Dict[str, Any]]:
+    """Every event read back off the bytes the protocol's encoder puts on a wire.
+
+    Read off the encoding rather than off the mapped objects. The events built
+    before a raise exist in memory whatever happens after it, so a list of
+    mapped objects cannot say where a client's stream stopped, and the symptom
+    here is a stream that stops before its terminal.
+    """
+    encoder = EventEncoder()
+    received: List[Dict[str, Any]] = []
+    for event in events:
+        encoded = encoder.encode(event)
+        prefix, _, payload = encoded.partition("data: ")
+        assert not prefix and payload, f"the encoder no longer writes one data frame per event: {encoded!r}"
+        received.append(json.loads(payload))
+    return received
+
+
+@pytest.mark.asyncio
+@mappers
+async def test_a_pause_whose_own_words_cannot_be_read_still_prompts_the_client(collect, caplog):
+    """A pause that says something unreadable still asks its question and terminates.
+
+    The words are read through the guarded reader, at the run terminal. A raise
+    out of the reader's recovery discards the prompt, the call the client is
+    meant to answer and the terminal itself, leaving a run that was merely
+    waiting for an answer to end as a failure over its prose.
+    """
+    with captured_agno_logs(caplog, "WARNING"):
+        events, error, violation = await _collect(
+            collect, _pause_prompt_content(RaisesAnUnreadableError()), attributed()
+        )
+
+    assert error is None, f"reading the paused run's own words ended the run: {error!r}"
+    assert violation is None, f"the pause left the stream malformed: {violation}"
+
+    received = _as_a_client_receives(events)
+    assert [event["type"] for event in received] == [
+        "RAW",
+        "TEXT_MESSAGE_START",
+        "TEXT_MESSAGE_END",
+        "TOOL_CALL_START",
+        "TOOL_CALL_ARGS",
+        "TOOL_CALL_END",
+        "RUN_FINISHED",
+    ], "the pause prompt a client receives is not the whole prompt"
+    # The words are the one thing dropped: the call is still advertised under
+    # the id a resume answers it by, which is what the pause is for.
+    assert [event["toolCallId"] for event in received if event["type"] == "TOOL_CALL_START"] == ["tc-hostile-confirm"]
+    assert "AG-UI could not read a paused run's own words: UnrenderableError" in [
+        record.getMessage() for record in caplog.records
+    ], "nothing records the words the client was not sent"
+
+
+@pytest.mark.asyncio
+@mappers
+async def test_a_failure_whose_own_message_cannot_be_read_still_terminates_the_run(collect, caplog):
+    """A run that fails unreadably still reports a failure and closes what it opened.
+
+    The message is read through the same reader, before the terminal's cleanup
+    runs, and is also what every member lane still open terminates under. A
+    raise out of the reader's recovery here closes no span, terminates no lane
+    and writes no terminal: the client is left mid-sentence, and the run's real
+    failure is replaced by the one raised while naming it.
+    """
+    failure = TeamRunErrorEvent(error_type="RuntimeError", **_TOP_LEVEL)
+    failure.content = RaisesAnUnreadableError()
+    # Dumped as a payload that holds none of the value, so the terminal carrying
+    # this dump is one the encoder accepts and the test is about the message
+    # rather than about the verbatim chunk beside it.
+    failure.to_dict = lambda: {"event": "TeamRunError"}  # type: ignore[method-assign]
+    fixture = Fixture(
+        [
+            TeamRunStartedEvent(**_TOP_LEVEL),
+            RunStartedEvent(**_MEMBER),
+            agent_said("half a sen", **_MEMBER),
+            failure,
+        ]
+    )
+
+    with captured_agno_logs(caplog, "WARNING"):
+        events, error, violation = await _collect(collect, fixture, attributed())
+
+    assert error is None, f"reading the failed run's own message ended the run: {error!r}"
+    assert violation is None, f"the failed terminal left the stream malformed: {violation}"
+
+    received = _as_a_client_receives(events)
+    assert [event["type"] for event in received] == [
+        "RAW",
+        "SUBAGENT_STARTED",
+        "RAW",
+        "TEXT_MESSAGE_START",
+        "TEXT_MESSAGE_CONTENT",
+        "TEXT_MESSAGE_END",
+        "SUBAGENT_ERROR",
+        "RUN_ERROR",
+    ], "the failed run a client receives is not the whole terminal"
+    assert received[-1]["message"] == "Run failed"
+    assert received[-1]["code"] == "RuntimeError"
+    assert "AG-UI could not read a failed run message: UnrenderableError" in [
+        record.getMessage() for record in caplog.records
+    ], "nothing records the failure text the client was not sent"
 
 
 # --- The router's own terminal ----------------------------------------------
@@ -1301,7 +1484,7 @@ _BUILDS_NOTHING_OUT_OF_RUN_CONTENT: Dict[Tuple[str, str], str] = _one_justificat
     _because(
         "writes the run's own terminal, carrying the thread and run ids the request named and nothing "
         "the response stream produced",
-        ("handlers.on_run_completed", "RUN_FINISHED"),
+        ("handlers._run_end_events", "RUN_FINISHED"),
     ),
     _because(
         "writes the run's opening and the request's own state, neither of which comes out of the "
@@ -1316,7 +1499,7 @@ _BUILDS_NOTHING_OUT_OF_RUN_CONTENT: Dict[Tuple[str, str], str] = _one_justificat
 _COVERED_BY_ANOTHER_TEST: Dict[Tuple[str, str], str] = {
     # The snapshot is built out of the run's session state, which is content,
     # but by a route no chunk of the stream carries.
-    ("handlers.on_run_completed", "STATE_SNAPSHOT"): "test_hostile_session_state_still_reaches_the_state_snapshot",
+    ("handlers._run_end_events", "STATE_SNAPSHOT"): "test_hostile_session_state_still_reaches_the_state_snapshot",
     # The router's own terminal, built from the stringified failure the mapper
     # raised rather than from a chunk, so it is reached by driving a run that
     # ends the run rather than by a row of the table.

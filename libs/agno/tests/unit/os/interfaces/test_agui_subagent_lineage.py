@@ -34,20 +34,20 @@ from dataclasses import fields
 from functools import partial
 from itertools import combinations
 from pathlib import Path
-from typing import Any, AsyncIterator, Callable, Dict, Iterable, Iterator, List, Optional, Sequence, Set, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 import pytest
 
 pytest.importorskip("ag_ui", reason="ag_ui not installed")
 
 from ag_ui.core import BaseEvent, EventType
+from ag_ui.encoder import EventEncoder
 from pydantic import BaseModel
 
 from agno.agent import Agent
 from agno.db.in_memory import InMemoryDb
-from agno.models.base import Model
-from agno.models.response import ModelResponse, ModelResponseEvent, ToolExecution
-from agno.os.interfaces.agui import handlers
+from agno.models.response import ToolExecution
+from agno.os.interfaces.agui import handlers, interrupts
 from agno.os.interfaces.agui.handlers import validate_subagent_visibility
 from agno.os.interfaces.agui.state import (
     ROOT_LANE,
@@ -90,6 +90,7 @@ from .agui_stream_invariants import (
     ATTRIBUTED_EVEN_WHEN_REFUSED,
     TOP_LEVEL_RUN,
     TRAILING_OUTPUT_AFTER_A_MEMBER_TERMINAL,
+    ScriptedModel,
     SideEffect,
     agent_said,
     announcements,
@@ -111,6 +112,7 @@ from .agui_stream_invariants import (
     needs_lineage_events,
     of_type,
     require_lineage_events,
+    sse_events,
     stream_invariant_violation,
     team_chunk_kwargs,
     team_said,
@@ -118,51 +120,11 @@ from .agui_stream_invariants import (
 
 THREAD_ID = "lineage-session"
 
-
-class ScriptedModel(Model):
-    """Emits scripted turns offline: ('tool', name, args, id) or ('content', text)."""
-
-    def __init__(self, model_id: str, script: List[tuple], fail_with: Optional[str] = None):
-        super().__init__(id=model_id, name=model_id, provider="test")
-        self._script = list(script)
-        self._i = 0
-        self._fail_with = fail_with
-
-    def _next(self) -> ModelResponse:
-        if self._fail_with:
-            raise RuntimeError(self._fail_with)
-        if not self._script:
-            raise AssertionError(f"{self.id} was asked for a turn but was given an empty script")
-        turn = self._script[min(self._i, len(self._script) - 1)]
-        self._i += 1
-        if turn[0] == "tool":
-            _, name, args, tcid = turn
-            response = ModelResponse(role="assistant")
-            response.tool_calls = [
-                {"id": tcid, "type": "function", "function": {"name": name, "arguments": json.dumps(args)}}
-            ]
-            return response
-        response = ModelResponse(content=turn[1], role="assistant")
-        response.event = ModelResponseEvent.assistant_response.value
-        return response
-
-    def invoke(self, *args, **kwargs):
-        return self._next()
-
-    async def ainvoke(self, *args, **kwargs):
-        return self._next()
-
-    def invoke_stream(self, *args, **kwargs) -> Iterator[ModelResponse]:
-        yield self._next()
-
-    async def ainvoke_stream(self, *args, **kwargs) -> AsyncIterator[ModelResponse]:
-        yield self._next()
-
-    def _parse_provider_response(self, response: Any, **kwargs) -> ModelResponse:
-        return response if isinstance(response, ModelResponse) else ModelResponse()
-
-    def _parse_provider_response_delta(self, response: Any) -> ModelResponse:
-        return response if isinstance(response, ModelResponse) else ModelResponse()
+# The suspended subagent outcome arrived after the lineage events themselves, so
+# a release can serve member attribution and still declare no ``outcome`` on a
+# member's terminal. Anything here that reads or expects that field asks this
+# rather than taking the lineage gate to cover it.
+_SUSPENDED_OUTCOME_IS_SERVABLE = interrupts.subagent_suspension_available()
 
 
 @tool
@@ -309,10 +271,17 @@ async def _collect_chunks_sync(
     run_id: str = TOP_LEVEL_RUN,
     run_state: Optional[Dict[str, Any]] = None,
     exempt: Sequence[str] = (),
+    emit_interrupt_outcome: bool = False,
 ) -> List[BaseEvent]:
     """One hand-built chunk list, mapped by the sync mapper."""
     events, error = await collect_sync(
-        chunks, visibility, thread_id=THREAD_ID, run_id=run_id, run_state=run_state, exempt=exempt
+        chunks,
+        visibility,
+        thread_id=THREAD_ID,
+        run_id=run_id,
+        run_state=run_state,
+        exempt=exempt,
+        emit_interrupt_outcome=emit_interrupt_outcome,
     )
     assert error is None, f"the source stream raised {error!r}"
     return events
@@ -325,10 +294,17 @@ async def _collect_chunks_async(
     run_id: str = TOP_LEVEL_RUN,
     run_state: Optional[Dict[str, Any]] = None,
     exempt: Sequence[str] = (),
+    emit_interrupt_outcome: bool = False,
 ) -> List[BaseEvent]:
     """One hand-built chunk list, mapped by the async mapper."""
     events, error = await collect_async(
-        chunks, visibility, thread_id=THREAD_ID, run_id=run_id, run_state=run_state, exempt=exempt
+        chunks,
+        visibility,
+        thread_id=THREAD_ID,
+        run_id=run_id,
+        run_state=run_state,
+        exempt=exempt,
+        emit_interrupt_outcome=emit_interrupt_outcome,
     )
     assert error is None, f"the source stream raised {error!r}"
     return events
@@ -371,6 +347,20 @@ def _is_terminal(event: BaseEvent) -> bool:
     """
     require_lineage_events()
     return event.type in (EventType.SUBAGENT_FINISHED, EventType.SUBAGENT_ERROR)
+
+
+def _suspended_outcomes(terminals: Sequence[BaseEvent]) -> List[Any]:
+    """What each member terminal says about being suspended, in the order given.
+
+    A release that declares the field is read straight, so one that later drops
+    it fails here rather than quietly reading as carrying nothing. A release
+    that never had it can carry no outcome, and an outcome written on it anyway
+    would ride out as an undeclared attribute, so it is read through ``getattr``
+    and a terminal that carries nothing reads as ``None``.
+    """
+    if _SUSPENDED_OUTCOME_IS_SERVABLE:
+        return [event.outcome for event in terminals]  # type: ignore[attr-defined]
+    return [getattr(event, "outcome", None) for event in terminals]
 
 
 def _lane_names(events: List[BaseEvent]) -> Dict[str, str]:
@@ -1912,10 +1902,6 @@ async def test_a_real_member_that_pauses_is_prompted_on_its_own_lane(collect_ent
 # --- Over the wire ----------------------------------------------------------
 
 
-def _sse_events(body: str) -> List[Dict[str, Any]]:
-    return [json.loads(line[len("data: ") :]) for line in body.splitlines() if line.startswith("data: ")]
-
-
 @needs_lineage_events
 def test_lineage_reaches_the_wire_through_the_agui_interface():
     """The AGUI constructor option must survive all the way to the SSE stream."""
@@ -1947,7 +1933,7 @@ def test_lineage_reaches_the_wire_through_the_agui_interface():
     )
     assert response.status_code == 200
 
-    events = _sse_events(response.text)
+    events = sse_events(response.text)
     # The body is the whole deliverable here, so it has to end the way every
     # other stream in this module ends. Without this the run terminal could go
     # missing from the response and every payload assertion below would still
@@ -2132,9 +2118,11 @@ async def test_a_paused_member_gets_one_plain_terminal_after_all_of_its_events(c
     finished = _of_type(events, EventType.SUBAGENT_FINISHED)
 
     # Pausing is not finishing, so the lane stays open until the run-end drain
-    # closes it. No suspended outcome: this interface emits no run-level
-    # interrupt outcome to pair one with.
-    assert [(e.subagent_run_id, e.result, e.outcome) for e in finished] == [("run-scout", None, None)]  # type: ignore[attr-defined]
+    # closes it. No suspended outcome either: the run-level interrupt outcome is
+    # opt-in and this stream did not ask for one, and a suspended lane only ever
+    # travels with it.
+    assert [(e.subagent_run_id, e.result) for e in finished] == [("run-scout", None)]  # type: ignore[attr-defined]
+    assert _suspended_outcomes(finished) == [None]
     terminal_at = events.index(finished[0])
     assert [str(e.type) for i, e in enumerate(events) if _lane(e) == "run-scout" and i > terminal_at] == []
     assert str(events[-1].type) == str(EventType.RUN_FINISHED)
@@ -3060,6 +3048,127 @@ async def test_hidden_prompts_a_paused_tool_listed_twice_once_and_names_no_membe
     assert in_emitted_order(events, EventType.TOOL_CALL_END, "tool_call_id", _lane) == [("tc-shared-confirm", None)]
     assert not [e for e in events if "SUBAGENT" in str(e.type)]
     assert not [e for e in events if _lane(e) is not None]
+
+
+# --- The terminal's interrupts against the calls the prompt showed ----------
+
+# The interrupt-aware lifecycle arrived after the lineage events, so an install
+# that serves member attribution can still have no terminal to advertise an
+# interrupt on.
+needs_interrupt_outcome = pytest.mark.skipif(
+    not interrupts.INTERRUPT_OUTCOME_AVAILABLE,
+    reason="the installed ag_ui.core has no interrupt-aware run lifecycle",
+)
+
+
+def _encoded(event: BaseEvent) -> Dict[str, Any]:
+    """One event as the bytes a client receives, through the protocol's own encoder.
+
+    A field the installed models do not declare still sets an attribute, so
+    reading the object says nothing about what reached the client.
+    """
+    return json.loads(EventEncoder().encode(event)[len("data: ") :])
+
+
+def _prompted_call_ids(events: List[BaseEvent]) -> List[str]:
+    """Every pending call the prompt sent, in the order a client reads them."""
+    return [_encoded(event)["toolCallId"] for event in _of_type(events, EventType.TOOL_CALL_START)]
+
+
+def _advertised_interrupts(events: List[BaseEvent]) -> List[Dict[str, Any]]:
+    """The interrupts the run terminal carried, in the order it advertised them."""
+    finished = _of_type(events, EventType.RUN_FINISHED)
+    assert len(finished) == 1, f"expected one run terminal, got {[str(event.type) for event in events]}"
+    outcome = _encoded(finished[0]).get("outcome")
+    assert outcome is not None, "the run terminal carried no interrupt outcome"
+    return list(outcome["interrupts"])
+
+
+def _confirmable(tool_call_id: str, tool_name: str) -> ToolExecution:
+    """A pending call waiting on a confirmation a client can answer."""
+    return ToolExecution(
+        tool_call_id=tool_call_id, tool_name=tool_name, tool_args={"to": "ops"}, requires_confirmation=True
+    )
+
+
+def _two_requirements_on_one_call_chunks() -> Tuple[List[Any], List[str]]:
+    """A pause whose requirements wait on one call, with the ids it needs answered.
+
+    The ids come back alongside because they are minted per requirement: they
+    are what tells the two apart once they are on the wire, the call they share
+    cannot.
+    """
+    shared = _confirmable("tc-shared", "send_email")
+    other = _confirmable("tc-other", "publish")
+    reported = [RunRequirement(shared), RunRequirement(shared), RunRequirement(other)]
+    solo = {"agent_id": "solo", "agent_name": "Solo", "run_id": TOP_LEVEL_RUN}
+
+    return (
+        [RunStartedEvent(**solo), AgentRunPausedEvent(tools=[shared, other], requirements=reported, **solo)],
+        [requirement.id for requirement in reported],
+    )
+
+
+@needs_interrupt_outcome
+@pytest.mark.asyncio
+@chunk_mappers
+async def test_two_requirements_waiting_on_one_call_are_both_advertised(collect):
+    """Neither answer the run needs is displaced by the other naming the same call.
+
+    The terminal advertises what the run cannot continue without, and both of
+    these are that, so a client told about one of them answers what it was told
+    and the resume refuses it over the requirement nobody named. They go out in
+    the order the pause reported them, at the place the prompt showed the call
+    they share.
+
+    Driven on the default visibility: no member is involved, so this is a run
+    any supported protocol release serves.
+    """
+    chunks, needed = _two_requirements_on_one_call_chunks()
+
+    events = await collect(chunks, emit_interrupt_outcome=True)
+
+    advertised = _advertised_interrupts(events)
+    assert _prompted_call_ids(events) == ["tc-shared", "tc-other"]
+    assert [interrupt["id"] for interrupt in advertised] == needed
+    assert [interrupt["toolCallId"] for interrupt in advertised] == ["tc-shared", "tc-shared", "tc-other"]
+
+
+def _pause_interleaving_two_members_chunks() -> Tuple[List[Any], List[str]]:
+    """Two members' pending calls, reported in an order that returns to the first."""
+    reported = [
+        _requirement(_confirmable("tc-1", "send_email"), "scout", "run-scout", "Scout"),
+        _requirement(_confirmable("tc-2", "publish"), "writer", "run-writer", "Writer"),
+        _requirement(_confirmable("tc-3", "archive"), "scout", "run-scout", "Scout"),
+    ]
+
+    return (
+        [TeamRunStartedEvent(**_TOP_LEVEL), TeamRunPausedEvent(tools=[], requirements=reported, **_TOP_LEVEL)],
+        [requirement.id for requirement in reported],
+    )
+
+
+@needs_lineage_events
+@needs_interrupt_outcome
+@pytest.mark.asyncio
+@chunk_mappers
+async def test_the_terminal_advertises_in_the_order_the_prompt_sent_the_calls(collect):
+    """The prompt sends one message per member, so a member's calls arrive together.
+
+    A client renders the pending calls in the order they arrived and reads the
+    terminal's interrupts beside them, so the terminal follows what the wire
+    showed rather than the order the pause happened to list its requirements in.
+    """
+    chunks, reported = _pause_interleaving_two_members_chunks()
+
+    events = await collect(chunks, attributed(), emit_interrupt_outcome=True)
+
+    advertised = _advertised_interrupts(events)
+    assert _prompted_call_ids(events) == ["tc-1", "tc-3", "tc-2"]
+    assert [interrupt["toolCallId"] for interrupt in advertised] == ["tc-1", "tc-3", "tc-2"]
+    # Named by id too, which is what a client answers under, and in an order the
+    # pause did not report: the middle requirement is advertised last.
+    assert [interrupt["id"] for interrupt in advertised] == [reported[0], reported[2], reported[1]]
 
 
 def _pause_while_a_member_tool_is_still_running_chunks() -> List[Any]:
@@ -4137,6 +4246,19 @@ class _AnnouncementWithoutADescription(BaseModel):
     parent_message_id: Optional[str] = None
 
 
+def _one_of_the_protocols_events(name: str) -> bool:
+    """Whether this class is one of the protocol's events rather than an outcome.
+
+    Resolved against the installed release, because what separates the two is
+    where the discriminator comes from: an event inherits it from the base every
+    release declares, and an outcome brought its own with it.
+    """
+    import ag_ui.core
+
+    candidate = getattr(ag_ui.core, name, None)
+    return isinstance(candidate, type) and issubclass(candidate, BaseEvent)
+
+
 def _lineage_fields_the_interface_writes(event_class_names: Set[str]) -> Dict[str, Set[str]]:
     """The arguments the interface really passes to each lineage event class.
 
@@ -4165,12 +4287,31 @@ def _lineage_fields_the_interface_writes(event_class_names: Set[str]) -> Dict[st
             assert all(keyword.arg is not None for keyword in node.keywords), (
                 f"{path.name} builds a {node.func.id} from a starred mapping, which this scan cannot read"
             )
-            # ``type`` is the protocol's own discriminator, which every event
-            # declares by definition, so it is not one of the fields at issue.
+            # ``type`` on an event is the protocol's own discriminator, declared
+            # by the base every release carries, so it is not one of the fields
+            # at issue. On an outcome it is the tag the union is read by, and it
+            # arrived with the outcome itself, so it is one of them: excluding it
+            # everywhere is how a tag written by two builders stayed invisible to
+            # both this scan and the check it feeds.
             written.setdefault(node.func.id, set()).update(
-                keyword.arg for keyword in node.keywords if keyword.arg is not None and keyword.arg != "type"
+                keyword.arg
+                for keyword in node.keywords
+                if keyword.arg is not None
+                and not (keyword.arg == "type" and _one_of_the_protocols_events(node.func.id))
             )
     return written
+
+
+# The suspended outcome's own contribution to what the interface writes. The
+# interrupt round trip builds both of these behind its suspension probe, so a
+# release without that outcome detects neither while the source still reads as
+# writing them and nothing can reach the wire under either name. Named here so
+# the comparison below holds on such a release, and checked against the probe's
+# own table wherever it is served, so the two cannot drift.
+_SUSPENDED_OUTCOME_WRITES: Dict[str, Set[str]] = {
+    "SubagentFinishedEvent": {"outcome"},
+    "SubagentFinishedSuspendedOutcome": {"type", "interrupt_ids"},
+}
 
 
 @needs_lineage_events
@@ -4182,17 +4323,31 @@ def test_the_startup_check_feature_detects_every_lineage_field_the_interface_wri
     here instead of the one the wire format defines, and the client reads a lane
     with no description, no parent or no result.
     """
-    detected = {event_class.__name__: set(fields) for event_class, fields in handlers._lineage_event_fields().items()}
+    lineage: Dict[str, Set[str]] = {
+        event_class.__name__: set(field_names) for event_class, field_names in handlers._lineage_event_fields().items()
+    }
     # The scan below is handed the very names this table is keyed by, so an
     # empty table leaves it scanning for nothing and the comparison is between
     # two empty mappings. The three classes the interface builds are the floor.
     scanned_for = _enumerated_by_the_interface(
-        detected,
+        lineage,
         "SubagentStartedEvent",
         "SubagentFinishedEvent",
         "SubagentErrorEvent",
         described="the lineage classes the startup check feature-detects fields on",
-    )
+    ) | set(_SUSPENDED_OUTCOME_WRITES)
+    # The interrupt round trip's own check, kept separate because the protocol
+    # added the suspended outcome after the lineage events: a release carrying
+    # that outcome has to detect exactly the fields written for it, and a
+    # release without it has no class to key them by and detects none.
+    suspension = {
+        event_class.__name__: set(field_names)
+        for event_class, field_names in interrupts.subagent_suspension_fields().items()
+    }
+    assert suspension == (_SUSPENDED_OUTCOME_WRITES if interrupts.SUBAGENT_SUSPENDED_OUTCOME_AVAILABLE else {})
+    detected = {name: set(field_names) for name, field_names in lineage.items()}
+    for name, field_names in _SUSPENDED_OUTCOME_WRITES.items():
+        detected.setdefault(name, set()).update(field_names)
 
     assert _lineage_fields_the_interface_writes(scanned_for) == detected
 
@@ -4717,10 +4872,12 @@ async def test_a_member_name_the_interface_cannot_read_does_not_end_the_run(coll
     assert [(e.subagent_run_id, e.name) for e in _announcements(events)] == [("run-scout", "run-scout")]  # type: ignore[attr-defined]
     assert str(events[-1].type) == str(EventType.RUN_FINISHED)
     # The client is shown a run id where a name belongs, so the raise that cost
-    # it the name has to reach the operator.
-    assert [record.message for record in caplog.records if "name exploded" in record.message], (
-        "the member name the interface could not read left no trace at all"
-    )
+    # it the name has to reach the operator. Recorded by type rather than by the
+    # failure's own text: rendering that text runs the same name the read did,
+    # which is the read raising a second time from inside its own record.
+    assert "AG-UI could not read a subagent name from agent_name: RuntimeError" in [
+        record.getMessage() for record in caplog.records
+    ], "the member name the interface could not read left no trace at all"
 
 
 @pytest.mark.parametrize(
