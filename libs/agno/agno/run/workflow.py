@@ -115,6 +115,7 @@ class BaseWorkflowRunOutputEvent(BaseRunOutputEvent):
             "step_results",
             "step_executor_runs",
             "step_response",
+            "step_output",
             "iteration_results",
         )
         _saved: Dict[str, Any] = {}
@@ -134,6 +135,13 @@ class BaseWorkflowRunOutputEvent(BaseRunOutputEvent):
 
         if hasattr(self, "metrics") and self.metrics is not None:
             _dict["metrics"] = self.metrics.to_dict()
+
+        if isinstance(self, StepOutputEvent) and self.step_output is not None:
+            _dict["step_output"] = self.step_output.to_dict()
+            # Preserve the structured-content alias exposed by earlier events,
+            # using the same JSON-safe conversion as the nested StepOutput.
+            if "content" in _dict:
+                _dict["content"] = _dict["step_output"]["content"]
 
         # Handle StepOutput fields that contain Message objects
         if hasattr(self, "step_results") and self.step_results is not None:
@@ -584,6 +592,15 @@ class StepOutputEvent(BaseWorkflowRunOutputEvent):
 
     # Store actual step execution result as StepOutput object
     step_output: Optional[StepOutput] = None
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "StepOutputEvent":
+        from agno.workflow.types import StepOutput
+
+        data = data.copy()
+        if isinstance(data.get("step_output"), dict):
+            data["step_output"] = StepOutput.from_dict(data["step_output"])
+        return super().from_dict(data)
 
     # Properties for backward compatibility
     @property
