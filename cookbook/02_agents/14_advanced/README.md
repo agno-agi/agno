@@ -28,3 +28,17 @@ Advanced examples covering caching, compression, concurrency, events, retries, d
 
 ## Run
 - `.venvs/demo/bin/python cookbook/02_agents/14_advanced/<file>.py`
+
+
+### Domain-aware follow-ups
+
+`followup_instructions.py` uses `FollowupConfig` with an agent that answers only
+Python documentation questions. The same configuration works on `Team`.
+`FollowupConfig.model` takes precedence over `followup_model`, then the main model.
+Only the question, answer and follow-up instructions are sent to this call; the
+main system prompt and retrieved evidence are not copied automatically.
+
+`num_followups` is a maximum. The default prompt respects refusals and permits
+fewer suggestions or `[]`; malformed generation still produces `None`. Streaming
+completion events and persisted run output preserve the list, including `[]`.
+Consumers should hide suggestion controls for an empty list.
