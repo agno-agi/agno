@@ -1,11 +1,8 @@
 """Schemas related to the AgentOS configuration"""
 
-from typing import Any, Callable, Dict, Generic, List, Literal, Optional, Set, TypeVar, Union
+from typing import Any, Callable, Dict, Generic, List, Literal, Optional, Set, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
-
-from agno.os.authz.audit import AuditSink
-from agno.os.authz.provider import AuthorizationProvider
 
 # Tags carried by the built-in MCP tools, exposed here so callers (and the IDE) can see
 # the valid values for ``MCPConfig.include_tags`` / ``exclude_tags`` without reading
@@ -358,41 +355,46 @@ class MCPConfig(BaseModel):
 MCPServerConfig = MCPConfig
 
 
-class AuthorizationConfig(BaseModel):
-    """Low-level authorization config for the JWT middleware. Deprecated as a public type.
+# Fields that briefly existed on AuthorizationConfig and now live on ``Authorization``. Named in
+# the rejection so the error says where they went instead of a bare "extra inputs are not
+# permitted".
+_AUTHZ_FIELDS_MOVED_TO_AUTHORIZATION = ("issuer", "authorization_provider", "audit", "role_store")
 
-    Superseded by :class:`agno.os.authz.Authorization`, which owns every field here (verification,
-    provider, audit, excluded routes) plus the higher-level surface (define_role, seed, the user
-    directory, the admin API). ``Authorization`` builds one of these internally to feed the
-    pipeline; ``AgentOS(authorization_config=...)`` still accepts one so deployments written against
-    the released field set keep booting, with a warning. Frozen: do NOT add fields here -- add them
-    to ``Authorization``.
+
+class AuthorizationConfig(BaseModel):
+    """Low-level JWT verification config. Deprecated as a public type.
+
+    Superseded by :class:`agno.os.authz.Authorization`, which owns every field here plus the
+    higher-level surface (roles, seeding, audit, the admin API). ``Authorization`` builds one of
+    these internally to feed the JWT middleware; ``AgentOS(authorization_config=...)`` still accepts
+    one so deployments written against the released field set keep booting, with a warning.
+    Frozen at exactly that released field set: do NOT add fields here -- add them to
+    ``Authorization``. Unknown fields are rejected rather than ignored: a config carrying a
+    field this class never had (or no longer has) must fail at construction, because silently
+    dropping, say, an authorization provider would boot an OS that enforces token scopes where
+    the author expected managed roles.
     """
 
-    model_config = ConfigDict(arbitrary_types_allowed=True)
+    model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_fields_moved_to_authorization(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            moved = [name for name in _AUTHZ_FIELDS_MOVED_TO_AUTHORIZATION if name in data]
+            if moved:
+                raise ValueError(
+                    f"AuthorizationConfig no longer takes {', '.join(moved)}: configure "
+                    "Authorization(...) from agno.os.authz and pass it as AgentOS(authorization=...)."
+                )
+        return data
 
     verification_keys: Optional[List[str]] = None
     jwks_file: Optional[str] = None
     algorithm: Optional[str] = None
     verify_audience: Optional[bool] = None
     audience: Optional[str] = None
-    # Expected token issuer (the ``iss`` claim). When set, a token minted by anyone
-    # else is rejected even if its signature verifies -- pin this whenever more than
-    # one IdP can produce tokens your verification keys accept.
-    issuer: Optional[str] = None
     admin_scope: Optional[str] = None
-    # Pluggable authorization strategy. When None, AgentOS uses scope-based RBAC
-    # (JWT/PAT scopes, no external dependency). Supply an AuthorizationProvider to
-    # swap in a richer model (managed roles, ReBAC/ABAC, OpenFGA, ...) enforced at
-    # the same points as scopes — the REST route gate, per-resource gate, WS gates,
-    # and MCP tool gate all resolve through it. Pass a LIST of them to run several
-    # authz planes at once (e.g. token scopes for operators + a managed role store
-    # for end users) — a request is allowed if any of them allows it.
-    authorization_provider: Optional[Union[AuthorizationProvider, List[AuthorizationProvider]]] = None
-    # Optional AuditSink. When set, AgentOS records each authorization decision
-    # (allow/deny) alongside the change trail, so you get an access audit, not just a
-    # change audit. Pass the same sink you give ManagedRoleStore to unify both.
-    audit: Optional[AuditSink] = None
     # Additional fnmatch path patterns that bypass all AgentOS authentication,
     # merged with the default public-route exclusions.
     excluded_route_paths: Optional[List[str]] = None

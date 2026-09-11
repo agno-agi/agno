@@ -118,6 +118,7 @@ pytest.importorskip("sqlalchemy")  # managed roles persist/enforce via the nativ
 from agno.agent import Agent  # noqa: E402
 from agno.db.in_memory import InMemoryDb  # noqa: E402
 from agno.os import AgentOS  # noqa: E402
+from agno.os.authz import Authorization  # noqa: E402
 from agno.os.authz.role_store import ManagedRoleStore  # noqa: E402
 from agno.os.config import AuthorizationConfig, UserDirectoryConfig  # noqa: E402
 
@@ -593,8 +594,7 @@ def test_workflow_continue_over_ws_enforces_the_approval_gate(monkeypatch):
         id=OS_ID,
         agents=[agent],
         db=os_db,
-        authorization=True,
-        authorization_config=AuthorizationConfig(
+        authorization=Authorization(
             verification_keys=[SECRET],
             algorithm="HS256",
             verify_audience=True,

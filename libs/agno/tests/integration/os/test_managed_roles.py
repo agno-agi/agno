@@ -19,7 +19,6 @@ from agno.db.in_memory import InMemoryDb  # noqa: E402
 from agno.os import AgentOS  # noqa: E402
 from agno.os.authz import Authorization  # noqa: E402
 from agno.os.authz.role_store import ManagedRoleStore  # noqa: E402
-from agno.os.config import AuthorizationConfig  # noqa: E402
 
 SECRET = "managed-roles-test-secret-at-least-256-bits-long-xxxxx"
 OS_ID = "managed-roles-test-os"
@@ -50,8 +49,7 @@ def _build(store: ManagedRoleStore) -> TestClient:
     agent_os = AgentOS(
         id=OS_ID,
         agents=[agent, other],
-        authorization=True,
-        authorization_config=AuthorizationConfig(
+        authorization=Authorization(
             verification_keys=[SECRET],
             algorithm="HS256",
             verify_audience=True,
@@ -165,8 +163,7 @@ def test_non_resource_routes_are_gated_sessions():
         id=OS_ID,
         agents=[agent],
         db=db,
-        authorization=True,
-        authorization_config=AuthorizationConfig(
+        authorization=Authorization(
             verification_keys=[SECRET],
             algorithm="HS256",
             verify_audience=True,
@@ -514,8 +511,7 @@ def test_db_registered_teams_are_filtered_like_configured_ones(tmp_path):
         id=OS_ID,
         agents=[Agent(id="a1", name="A", db=db)],
         db=db,
-        authorization=True,
-        authorization_config=AuthorizationConfig(
+        authorization=Authorization(
             verification_keys=[SECRET],
             algorithm="HS256",
             verify_audience=True,
