@@ -683,6 +683,29 @@ class TestSyncPostgresSubmissionOrder:
         finally:
             self._drop(db)
 
+    def test_unprovisioned_pre_sequence_table_surfaces_the_mismatch(self):
+        """Without the provisioning hook (auto_provision=False, an externally
+        managed database) nothing alters the table: first use raises the
+        standard schema mismatch, naming the missing column."""
+        import sqlalchemy
+
+        from agno.db.postgres import PostgresDb
+        from agno.db.utils import SchemaMismatchError
+
+        table_name = f"parity_unprov_{uuid.uuid4().hex[:8]}"
+        db = PostgresDb(db_url=PG_URL, job_table=table_name)
+        try:
+            db.ensure_jobs_table()
+            engine = sqlalchemy.create_engine(PG_URL)
+            with engine.begin() as conn:
+                conn.execute(sqlalchemy.text(f'ALTER TABLE {db.db_schema}."{table_name}" DROP COLUMN seq'))
+            engine.dispose()
+            reopened = PostgresDb(db_url=PG_URL, job_table=table_name)
+            with pytest.raises(SchemaMismatchError):
+                reopened.enqueue_job(make_job("r_new", session_id="s1", created_at=1000))
+        finally:
+            self._drop(db)
+
     def test_pre_sequence_jobs_table_is_upgraded_on_first_use(self):
         import sqlalchemy
 
@@ -699,6 +722,7 @@ class TestSyncPostgresSubmissionOrder:
             engine.dispose()
 
             reopened = PostgresDb(db_url=PG_URL, job_table=table_name)
+            reopened.ensure_jobs_table()  # the worker's provisioning step at start
             reopened.enqueue_job(make_job("r_z", session_id="s1", created_at=1000))
             reopened.enqueue_job(make_job("r_a", session_id="s1", created_at=1000))
             old = reopened.get_job("r_old")
@@ -728,6 +752,7 @@ class TestSyncPostgresSubmissionOrder:
             engine.dispose()
 
             reopened = AsyncPostgresDb(db_url=PG_URL, job_table=table_name)
+            await reopened.ensure_jobs_table()  # the worker's provisioning step at start
             await reopened.enqueue_job(make_job("r_z", session_id="s1", created_at=1000))
             await reopened.enqueue_job(make_job("r_a", session_id="s1", created_at=1000))
             old = await reopened.get_job("r_old")
@@ -960,3 +985,73 @@ class TestRedisSessionLineScanCost:
             )
         finally:
             self._cleanup(prefix)
+
+
+@pytest.mark.skipif(not _PG_AVAILABLE, reason="Postgres not available on localhost:5532")
+class TestPostgresJobsTableUpgradeIsGuarded:
+    """The enqueue-sequence column is added to a pre-existing jobs table by
+    the provisioning hook, and only when it is actually missing. An
+    unconditional ADD COLUMN IF NOT EXISTS is not free even as a no-op: it
+    still takes an ACCESS EXCLUSIVE lock and still needs ALTER privilege
+    before the IF NOT EXISTS clause is evaluated, on every process start."""
+
+    @staticmethod
+    def _drop(db):
+        import sqlalchemy
+
+        engine = sqlalchemy.create_engine(PG_URL)
+        with engine.begin() as conn:
+            conn.execute(sqlalchemy.text(f'DROP TABLE IF EXISTS {db.db_schema}."{db.job_table_name}"'))
+        engine.dispose()
+
+    @staticmethod
+    def _record_ddl(db):
+        from sqlalchemy import event
+
+        statements: list = []
+
+        def _capture(conn, cursor, statement, parameters, context, executemany):
+            if "ALTER TABLE" in statement.upper():
+                statements.append(statement)
+
+        event.listen(db.db_engine, "before_cursor_execute", _capture)
+        return statements
+
+    def test_up_to_date_table_provokes_no_alter(self):
+        from agno.db.postgres import PostgresDb
+
+        table_name = f"parity_noalter_{uuid.uuid4().hex[:8]}"
+        first = PostgresDb(db_url=PG_URL, job_table=table_name)
+        try:
+            first.ensure_jobs_table()  # creates the table with the column
+            reopened = PostgresDb(db_url=PG_URL, job_table=table_name)
+            alters = self._record_ddl(reopened)
+            reopened.ensure_jobs_table()
+            reopened.enqueue_job(make_job("r1", session_id="s1", created_at=1000))
+            assert alters == [], f"a table that already has the column must not be altered: {alters}"
+        finally:
+            self._drop(first)
+
+    def test_missing_column_is_added_once_by_provisioning(self):
+        import sqlalchemy
+
+        from agno.db.postgres import PostgresDb
+
+        table_name = f"parity_addonce_{uuid.uuid4().hex[:8]}"
+        first = PostgresDb(db_url=PG_URL, job_table=table_name)
+        try:
+            first.ensure_jobs_table()
+            engine = sqlalchemy.create_engine(PG_URL)
+            with engine.begin() as conn:
+                conn.execute(sqlalchemy.text(f'ALTER TABLE {first.db_schema}."{table_name}" DROP COLUMN seq'))
+            engine.dispose()
+
+            reopened = PostgresDb(db_url=PG_URL, job_table=table_name)
+            alters = self._record_ddl(reopened)
+            reopened.ensure_jobs_table()
+            reopened.ensure_jobs_table()
+            assert len(alters) == 1, f"exactly one ALTER for a missing column, got {alters}"
+            reopened.enqueue_job(make_job("r1", session_id="s1", created_at=1000))
+            assert reopened.get_job("r1")["seq"] is not None
+        finally:
+            self._drop(first)
