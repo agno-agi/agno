@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any, Callable, Optional, Union
 
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.db.schemas.evals import EvalRunRecord, EvalType
-from agno.utils.log import log_warning
+from agno.utils.log import log_debug, log_warning
 
 if TYPE_CHECKING:
     from rich.console import Console
@@ -195,17 +195,53 @@ async def async_log_eval(
         log_warning(f"Could not log eval run: {e}")
 
 
+def log_eval_telemetry(
+    *, run_id: str, eval_type: EvalType, get_data: Optional[Callable[[], Optional[dict]]] = None
+) -> None:
+    """Queue an eval telemetry event; never raises.
+
+    Everything telemetry needs stays inside the try, the import and the
+    ``get_data`` call that builds the payload included: a telemetry failure
+    must never change the outcome of an eval that already completed.
+    """
+    try:
+        data = get_data() if get_data is not None else None
+        from agno.api.evals import EvalRunCreate, create_eval_run_telemetry
+
+        create_eval_run_telemetry(eval_run=EvalRunCreate(run_id=run_id, eval_type=eval_type, data=data))
+    except Exception as e:
+        log_debug(f"Could not create eval run telemetry event: {type(e).__name__}")
+
+
+async def async_log_eval_telemetry(
+    *, run_id: str, eval_type: EvalType, get_data: Optional[Callable[[], Optional[dict]]] = None
+) -> None:
+    """Async pair of ``log_eval_telemetry``; never raises."""
+    try:
+        data = get_data() if get_data is not None else None
+        from agno.api.evals import EvalRunCreate, async_create_eval_run_telemetry
+
+        await async_create_eval_run_telemetry(eval_run=EvalRunCreate(run_id=run_id, eval_type=eval_type, data=data))
+    except Exception as e:
+        log_debug(f"Could not create eval run telemetry event: {type(e).__name__}")
+
+
 def store_result_in_file(
     file_path: str,
     result: Union["AccuracyResult", "AgentAsJudgeResult", "PerformanceResult", "ReliabilityResult"],
-    eval_id: Optional[str] = None,
+    run_id: Optional[str] = None,
     name: Optional[str] = None,
 ):
-    """Store the given result in the given file path"""
+    """Store the given result in the given file path.
+
+    ``file_path`` accepts the ``{name}`` and ``{run_id}`` placeholders, in the filename or
+    in a directory segment. An unknown placeholder raises and is logged below, so nothing
+    is written.
+    """
     try:
         import json
 
-        fn_path = Path(file_path.format(name=name, eval_id=eval_id))
+        fn_path = Path(file_path.format(name=name, run_id=run_id))
         if not fn_path.parent.exists():
             fn_path.parent.mkdir(parents=True, exist_ok=True)
         fn_path.write_text(json.dumps(asdict(result), indent=4))

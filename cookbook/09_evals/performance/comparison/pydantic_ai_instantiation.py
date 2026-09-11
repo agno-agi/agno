@@ -15,7 +15,9 @@ from pydantic_ai import Agent
 # Create Benchmark Function
 # ---------------------------------------------------------------------------
 def instantiate_agent():
-    agent = Agent("openai:gpt-4o", system_prompt="Be concise, reply with one sentence.")
+    agent = Agent(
+        "openai:gpt-5.6-luna", system_prompt="Be concise, reply with one sentence."
+    )
 
     # Tool definition remains scoped to agent construction by design.
     @agent.tool_plain

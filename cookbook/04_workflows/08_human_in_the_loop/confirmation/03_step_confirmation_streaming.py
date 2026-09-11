@@ -28,7 +28,7 @@ from agno.run.workflow import (
     WorkflowCompletedEvent,
     WorkflowStartedEvent,
 )
-from agno.workflow import OnReject
+from agno.workflow import HumanReview, OnReject
 from agno.workflow.step import Step
 from agno.workflow.workflow import Workflow
 
@@ -64,9 +64,11 @@ workflow = Workflow(
         Step(
             name="process_data",
             agent=process_agent,
-            requires_confirmation=True,
-            confirmation_message="About to process sensitive data. Confirm?",
-            on_reject=OnReject.skip,  # If rejected, skip this step and continue with save_results
+            human_review=HumanReview(
+                requires_confirmation=True,
+                confirmation_message="About to process sensitive data. Confirm?",
+                on_reject=OnReject.skip,  # If rejected, skip this step and continue with save_results
+            ),
         ),
         Step(
             name="save_results",

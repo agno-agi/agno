@@ -1572,6 +1572,7 @@ class TestOpenSearchBatchEmbedding:
         mock_embedder.async_get_embeddings_batch_and_usage = AsyncMock(
             return_value=([[0.1] * TEST_DIMENSION], [{"tokens": 10}])
         )
+        mock_embedder.async_get_embedding_and_usage = AsyncMock(return_value=([0.1] * TEST_DIMENSION, {"tokens": 1}))
 
         with (
             patch("agno.vectordb.opensearch.opensearch.OpenSearchClient"),
@@ -1599,6 +1600,7 @@ class TestOpenSearchBatchEmbedding:
         mock_embedder.async_get_embeddings_batch_and_usage = AsyncMock(
             return_value=([[0.1] * TEST_DIMENSION], [{"tokens": 10}])
         )
+        mock_embedder.async_get_embedding_and_usage = AsyncMock(return_value=([0.1] * TEST_DIMENSION, {"tokens": 1}))
 
         with (
             patch("agno.vectordb.opensearch.opensearch.OpenSearchClient"),

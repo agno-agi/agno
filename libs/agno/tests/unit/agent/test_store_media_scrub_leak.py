@@ -7,19 +7,24 @@ Without the fix, member responses and workflow executor runs leak media to DB
 when the member/executor has store_media=False.
 """
 
+import tempfile
+from pathlib import Path
 from typing import Any, AsyncIterator, Iterator
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
 from agno.agent.agent import Agent
 from agno.media import Image, Video
+from agno.media.storage.local import AsyncLocalMediaStorage, LocalMediaStorage
 from agno.models.base import Model
 from agno.models.message import MessageMetrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 from agno.run.team import TeamRunOutput
 from agno.utils.agent import scrub_media_from_run_output
+
+IMAGE_BYTES = b"\x89PNG\r\n\x1a\ngenerated-image-bytes"
 
 
 class MockModelWithImage(Model):
@@ -70,6 +75,41 @@ class MockModelWithImage(Model):
 
     def _parse_provider_response_delta(self, response: Any) -> ModelResponse:
         return self._mock_response
+
+
+class MockModelWithImageBytes(MockModelWithImage):
+    """Same model, but the generated image carries real bytes so it can be offloaded."""
+
+    def __init__(self):
+        super().__init__()
+        self._mock_response = ModelResponse(
+            content="Here is your generated image",
+            role="assistant",
+            images=[Image(content=IMAGE_BYTES, id="img-1", mime_type="image/png")],
+            response_usage=MessageMetrics(),
+        )
+        self.response = Mock(return_value=self._mock_response)
+        self.aresponse = AsyncMock(return_value=self._mock_response)
+
+
+def _persisted_images(agent: Agent):
+    """The images on the run as it was read back from the DB, not as returned to the caller."""
+    session = agent.get_session()
+    assert session is not None and session.runs
+    return session.runs[-1].images
+
+
+def _media_agent(tmpdir: str, **kwargs) -> Agent:
+    """Agent with a real DB, so the persisted run can be read back and inspected."""
+    from agno.db.sqlite import SqliteDb
+
+    return Agent(
+        model=MockModelWithImageBytes(),
+        db=SqliteDb(db_file=f"{tmpdir}/agent.db"),
+        session_id="s1",
+        store_media=True,
+        **kwargs,
+    )
 
 
 # -- Core scrub function tests --
@@ -195,6 +235,73 @@ async def test_acleanup_and_store_restores_media_after_scrub():
     assert result.images is not None, "Caller should see images after acleanup_and_store"
     assert len(result.images) == 1
     assert result.images[0].url == "https://example.com/generated.png"
+
+
+# -- media_storage on the sync run path --
+
+
+def test_sync_media_storage_offloads_persisted_media():
+    """Baseline for the two tests below: on run(), a sync backend replaces the persisted
+    bytes with a reference and writes the payload out, while the caller keeps its bytes."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        media_dir = f"{tmpdir}/media"
+        agent = _media_agent(tmpdir, media_storage=LocalMediaStorage(base_path=media_dir))
+
+        result = agent.run("Generate an image")
+
+        persisted = _persisted_images(agent)[0]
+        assert persisted.media_reference is not None
+        assert persisted.content is None
+        assert [f for f in Path(media_dir).iterdir() if not f.name.endswith(".meta.json")]
+        assert result.images[0].content == IMAGE_BYTES
+
+
+def test_async_media_storage_on_sync_run_raises():
+    """An AsyncMediaStorage on a sync run() is a configuration error, reported the same way an
+    async database is: loudly. Skipping it wrote the whole run inline while reporting success,
+    so the one configuration difference between run() and arun() silently turned the feature
+    off."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        media_dir = f"{tmpdir}/media"
+        agent = _media_agent(tmpdir, media_storage=AsyncLocalMediaStorage(base_path=media_dir))
+
+        with pytest.raises(ValueError, match="Cannot use sync run\\(\\) with an AsyncMediaStorage"):
+            agent.run("Generate an image")
+
+        assert not Path(media_dir).exists() or not list(Path(media_dir).iterdir())
+
+
+@pytest.mark.asyncio
+async def test_async_media_storage_on_arun_offloads():
+    """The other half of the raise above: the same backend on arun() is the supported
+    combination and offloads, so the run row carries a reference rather than the bytes."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        media_dir = f"{tmpdir}/media"
+        agent = _media_agent(tmpdir, media_storage=AsyncLocalMediaStorage(base_path=media_dir))
+
+        result = await agent.arun("Generate an image")
+
+        persisted = _persisted_images(agent)[0]
+        assert persisted.media_reference is not None
+        assert persisted.content is None
+        assert [f for f in Path(media_dir).iterdir() if not f.name.endswith(".meta.json")]
+        # The caller's run keeps its bytes; only the stored copy is stripped.
+        assert result.images[0].content == IMAGE_BYTES
+
+
+def test_no_media_storage_on_sync_run_does_not_warn():
+    """The other half of the same distinction: with no backend the media is inline for the
+    same reason it always was, and nothing was skipped, so no offload warning is emitted."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        agent = _media_agent(tmpdir)
+
+        with patch("agno.agent._run.log_warning") as mock_warn:
+            agent.run("Generate an image")
+
+        persisted = _persisted_images(agent)[0]
+        assert persisted.media_reference is None
+        assert persisted.content == IMAGE_BYTES
+        assert not any("media offload" in str(call.args[0]) for call in mock_warn.call_args_list)
 
 
 # -- Session cache isolation --

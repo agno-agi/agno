@@ -21,7 +21,6 @@ def run_example() -> None:
         # Create an agent with reasoning enabled
         agent = Agent(
             reasoning_model=AzureOpenAI(id="gpt-4.1"),
-            reasoning=True,
             instructions="Think step by step about the problem.",
         )
 

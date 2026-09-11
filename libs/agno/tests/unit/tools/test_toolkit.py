@@ -70,6 +70,27 @@ def test_toolkit_with_tools_initialization(basic_toolkit):
     assert "example_func" in basic_toolkit.functions
 
 
+def test_toolkit_id_generated_from_name():
+    """Test that the toolkit id is generated from the name when not provided."""
+    toolkit = Toolkit(name="My Toolkit")
+
+    assert toolkit.id == "my-toolkit"
+
+
+def test_toolkit_id_explicit():
+    """Test that an explicitly provided toolkit id is used as-is."""
+    toolkit = Toolkit(name="My Toolkit", id="custom-id")
+
+    assert toolkit.id == "custom-id"
+
+
+def test_toolkit_id_in_repr():
+    """Test that the toolkit id is included in the repr."""
+    toolkit = Toolkit(name="My Toolkit", id="custom-id")
+
+    assert "id=custom-id" in repr(toolkit)
+
+
 def test_tool_registration():
     """Test manual registration of tools."""
     toolkit = Toolkit(name="manual_toolkit", auto_register=False)

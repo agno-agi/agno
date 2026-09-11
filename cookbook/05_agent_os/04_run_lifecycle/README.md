@@ -1,8 +1,8 @@
 # Run Lifecycle
 
-These five examples cover the lifecycle APIs around an AgentOS agent run:
+These six examples cover the lifecycle APIs around an AgentOS agent run:
 background submission and polling, cancellation, resumable SSE, persisted
-checkpoints, and background hooks.
+checkpoints, background hooks, and preprocessing uploads before the model call.
 
 ## Setup
 
@@ -24,6 +24,42 @@ Each server example listens on port 7777. Start only one at a time.
 | `sse_reconnect.py` | Resume both a new background SSE run and a background continuation with raw `httpx`. |
 | `checkpoints.py` | List `tool-batch` checkpoints and continue from a selected `message_index`. |
 | `hooks_in_background.py` | Choose AgentOS-wide background hooks or mix blocking and per-hook background work. |
+| `unpack_archives.py` | Replace an uploaded `.zip` with the files inside it from a `pre_hook`. |
+
+## Run states
+
+`RunStatus` has seven members: `PENDING`, `RUNNING`, `PAUSED`, `COMPLETED`,
+`CANCELLED`, `ERROR` and `REGENERATED`. The persisted run output is where you
+read them — no run event carries a `status` field except `WorkflowPaused`, and a
+cancelled run's stream ends on a *completed* event, because cancellation emits
+the pair (cancelled, then completed).
+
+A cancelled run keeps the work it finished: agents and teams in `content`, a
+workflow in `step_results`.
+
+## Continuing a paused run
+
+The three components do not share a continue contract, which is the difference
+most likely to break a client:
+
+| | Agent | Team | Workflow |
+|---|---|---|---|
+| Field on `/continue` | `tools` | `requirements` | `step_requirements` |
+| Also accepts | `input`, `continue_from`, `fork`, `regenerate`, `replace_original`, `additional_instructions`, `session_id`, `user_id`, `stream`, `background` | same as agent | `session_id`, `user_id`, `stream`, `background`, `factory_input` |
+| Error event | `RunError` | `TeamRunError` | `WorkflowError` |
+
+Send the array back as it arrived with the resolution added. A continued run can
+pause again — the next tool call or step may need approval too — so loop on the
+status rather than treating the `/continue` response as terminal. The array
+carries the decisions already resolved as well as the new one, so resolve only
+the entries still awaiting a decision.
+
+`run_id` and `session_id` both survive a `/continue`: it is the same run. A
+`/continue` with `regenerate=true` is the exception, keeping `session_id` and
+returning a new `run_id`; workflows have no `regenerate`.
+
+Driving a pause and continue over HTTP is shown for teams in
+[`05_human_in_the_loop/user_input.py`](../05_human_in_the_loop/user_input.py).
 
 ## Examples
 

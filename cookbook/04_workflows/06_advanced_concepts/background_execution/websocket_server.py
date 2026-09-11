@@ -29,14 +29,14 @@ SECURITY_KEY = os.getenv("SECURITY_KEY", "your-secret-key")  # Set your key here
 # ---------------------------------------------------------------------------
 hackernews_agent = Agent(
     name="HackerNews Researcher",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[HackerNewsTools()],
     instructions="Research tech news and trends from HackerNews",
 )
 
 search_agent = Agent(
     name="Search Agent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[WebSearchTools()],
     instructions="Search for additional information on the web",
 )

@@ -24,7 +24,7 @@ agent = Agent(
         id="anthropic/claude-sonnet-4",  # Primary model
         models=[
             "deepseek/deepseek-r1",  # First fallback model
-            "openai/gpt-4o",  # Second fallback model
+            "openai/gpt-5.6-luna",  # Second fallback model
         ],
     ),
     markdown=True,

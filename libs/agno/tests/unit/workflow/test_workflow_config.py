@@ -18,7 +18,7 @@ import pytest
 
 from agno.db.base import BaseDb, ComponentType
 from agno.registry import Registry
-from agno.workflow.workflow import Workflow, get_workflow_by_id, get_workflows
+from agno.workflow.workflow import _COMPONENT_LIST_PAGE, Workflow, get_workflow_by_id, get_workflows
 
 # =============================================================================
 # Fixtures
@@ -93,6 +93,23 @@ def sample_workflow_config() -> Dict[str, Any]:
 # =============================================================================
 # to_dict() Tests
 # =============================================================================
+
+
+def _force_delete_config(db, component_id: str, version: int) -> None:
+    """Simulate a corrupt/legacy catalog by removing a config row directly.
+
+    The hardened delete_config refuses to break
+    a pin, so the broken state these tests exercise can only arrive from
+    outside the API - which is exactly what this raw delete reproduces.
+    """
+    table = db._get_table(table_type="component_configs")
+    with db.Session() as sess, sess.begin():
+        sess.execute(
+            table.delete().where(
+                table.c.component_id == component_id,
+                table.c.version == version,
+            )
+        )
 
 
 class TestWorkflowToDict:
@@ -471,7 +488,9 @@ class TestWorkflowDelete:
         basic_workflow.db = mock_db
         result = basic_workflow.delete()
 
-        mock_db.delete_component.assert_called_once_with(component_id="test-workflow", hard_delete=False)
+        mock_db.delete_component.assert_called_once_with(
+            component_id="test-workflow", hard_delete=False, require_no_dependents=True
+        )
         assert result is True
 
     def test_delete_with_hard_delete(self, basic_workflow, mock_db):
@@ -481,7 +500,9 @@ class TestWorkflowDelete:
         basic_workflow.db = mock_db
         result = basic_workflow.delete(hard_delete=True)
 
-        mock_db.delete_component.assert_called_once_with(component_id="test-workflow", hard_delete=True)
+        mock_db.delete_component.assert_called_once_with(
+            component_id="test-workflow", hard_delete=True, require_no_dependents=True
+        )
         assert result is True
 
     def test_delete_with_explicit_db(self, basic_workflow, mock_db):
@@ -518,6 +539,8 @@ class TestGetWorkflowById:
 
     def test_get_workflow_by_id_returns_workflow(self, mock_db):
         """Test get_workflow_by_id returns workflow from database."""
+        # published_only resolution reads the component row first (spec 3.3)
+        mock_db.get_component = MagicMock(return_value={"component_id": "c", "current_version": 1})
         mock_db.get_config.return_value = {
             "config": {"id": "found-workflow", "name": "Found Workflow"},
             "version": 1,
@@ -556,6 +579,8 @@ class TestGetWorkflowById:
 
     def test_get_workflow_by_id_fetches_links(self, mock_db):
         """Test get_workflow_by_id fetches links for the workflow version."""
+        # published_only resolution reads the component row first (spec 3.3)
+        mock_db.get_component = MagicMock(return_value={"component_id": "c", "current_version": 1})
         mock_db.get_config.return_value = {
             "config": {"id": "linked-workflow", "name": "Linked"},
             "version": 5,
@@ -576,6 +601,8 @@ class TestGetWorkflowById:
 
     def test_get_workflow_by_id_sets_db(self, mock_db):
         """Test get_workflow_by_id sets db on returned workflow via registry."""
+        # published_only resolution reads the component row first (spec 3.3)
+        mock_db.get_component = MagicMock(return_value={"component_id": "c", "current_version": 1})
         # The db is set via registry lookup when config contains a serialized db reference
         mock_db.id = "test-db"
         mock_db.get_config.return_value = {
@@ -620,7 +647,7 @@ class TestGetWorkflows:
                 {"component_id": "workflow-1"},
                 {"component_id": "workflow-2"},
             ],
-            None,
+            2,
         )
         mock_db.get_config.side_effect = [
             {"config": {"id": "workflow-1", "name": "Workflow 1"}},
@@ -639,7 +666,13 @@ class TestGetWorkflows:
 
         get_workflows(db=mock_db)
 
-        mock_db.list_components.assert_called_once_with(component_type=ComponentType.WORKFLOW)
+        mock_db.list_components.assert_called_once_with(
+            component_type=ComponentType.WORKFLOW,
+            exclude_component_ids=None,
+            user_id=None,
+            limit=_COMPONENT_LIST_PAGE,
+            offset=0,
+        )
 
     def test_get_workflows_returns_empty_list_on_error(self, mock_db):
         """Test get_workflows returns empty list on error."""
@@ -656,7 +689,7 @@ class TestGetWorkflows:
                 {"component_id": "valid-workflow"},
                 {"component_id": "invalid-workflow"},
             ],
-            None,
+            2,
         )
         mock_db.get_config.side_effect = [
             {"config": {"id": "valid-workflow", "name": "Valid"}},
@@ -674,7 +707,7 @@ class TestGetWorkflows:
         mock_db.id = "test-db"
         mock_db.list_components.return_value = (
             [{"component_id": "workflow-1"}],
-            None,
+            1,
         )
         mock_db.get_config.return_value = {
             "config": {
@@ -817,7 +850,7 @@ class TestStepPinFailures:
         member.save(db=db)
         links = db.get_links(component_id="dp-wf", version=1)
         pinned = next(link for link in links if link["link_kind"] == "step_agent")["child_version"]
-        assert db.delete_config(component_id="dp-agent", version=pinned)
+        _force_delete_config(db, "dp-agent", pinned)
 
         lenient = get_workflow_by_id(db=db, id="dp-wf", strict=False)
         assert lenient is not None
@@ -878,7 +911,9 @@ class TestWritePathFidelity:
 
         db = SqliteDb(db_file=str(tmp_path / "noname.db"))
         Workflow(id="nn-wf", name="WF", steps=[Step(agent=Agent(id="nn-agent", name="A"))]).save(db=db)
-        db.delete_component("nn-agent", hard_delete=True)
+        # The hardened delete refuses to break nn-wf's pin; the degraded state
+        # this test exercises arrives from outside the API.
+        db.delete_component("nn-agent", hard_delete=True, require_no_dependents=False)
 
         loaded = Workflow.load(id="nn-wf", db=db, strict=False)
 
@@ -947,12 +982,18 @@ def _honesty_cases():
     from agno.workflow.parallel import Parallel
     from agno.workflow.step import Step
     from agno.workflow.steps import Steps
+    from agno.workflow.types import HumanReview
 
     return {
         "plain": lambda: [Step(name="s1", executor=_honesty_enrich)],
         "skip_on_failure": lambda: [Step(name="s1", executor=_honesty_enrich, skip_on_failure=True)],
         "condition_on_error_skip": lambda: [
-            Condition(name="c", evaluator=True, steps=[Step(name="s1", executor=_honesty_enrich)], on_error="skip")
+            Condition(
+                name="c",
+                evaluator=True,
+                steps=[Step(name="s1", executor=_honesty_enrich)],
+                human_review=HumanReview(on_error="skip"),
+            )
         ],
         "steps_container": lambda: [Steps(name="grp", steps=[Step(name="s1", executor=_honesty_enrich)])],
         "parallel_container": lambda: [Parallel(Step(name="s1", executor=_honesty_enrich), name="par")],
@@ -1217,3 +1258,88 @@ class TestBranchQualifiedPins:
 
         with pytest.raises(ComponentRehydrationError, match="multiple versions"):
             get_workflow_by_id(db=db, id="am-wf", strict=True)
+
+
+# =============================================================================
+# get_workflows() Pagination Tests
+# =============================================================================
+
+
+class TestGetWorkflowsPagination:
+    """get_workflows must page past the DB's default list_components limit.
+
+    Published components from other users share the catalog, so without
+    paging they crowd a user's own workflows out of the first page.
+    """
+
+    @pytest.fixture
+    def sqlite_db(self, tmp_path):
+        from agno.db.sqlite import SqliteDb
+
+        return SqliteDb(db_file=str(tmp_path / "workflows_pagination.db"))
+
+    def _create(self, db, component_id, user_id):
+        db.create_component_with_config(
+            component_id=component_id,
+            component_type=ComponentType.WORKFLOW,
+            name=component_id,
+            config={"name": component_id, "steps": []},
+            stage="published",
+            user_id=user_id,
+        )
+
+    def test_returns_all_own_workflows_beyond_default_page(self, sqlite_db):
+        for i in range(25):
+            self._create(sqlite_db, f"own-wf-{i:02d}", "owner")
+
+        workflows = get_workflows(db=sqlite_db, user_id="owner")
+
+        assert {w.id for w in workflows} == {f"own-wf-{i:02d}" for i in range(25)}
+
+    def test_own_workflows_not_crowded_out_by_foreign_published(self, sqlite_db):
+        # Own rows first (older), foreign rows second (newer): the listing
+        # orders created_at DESC with component_id ASC ties, so the foreign
+        # rows fill the first page either way.
+        for i in range(5):
+            self._create(sqlite_db, f"z-own-wf-{i}", "owner")
+        for i in range(25):
+            self._create(sqlite_db, f"a-pub-wf-{i:02d}", "someone-else")
+
+        workflows = get_workflows(db=sqlite_db, user_id="owner")
+
+        ids = {w.id for w in workflows}
+        assert {f"z-own-wf-{i}" for i in range(5)} <= ids
+        assert len(workflows) == 30
+
+    def test_cap_truncates_with_single_warning(self, mock_db, monkeypatch):
+        import agno.workflow.workflow as workflow_module
+
+        monkeypatch.setattr(workflow_module, "_COMPONENT_LIST_PAGE", 5)
+        monkeypatch.setattr(workflow_module, "_COMPONENT_LIST_CAP", 10)
+        mock_warn = MagicMock()
+        monkeypatch.setattr(workflow_module, "log_warning", mock_warn)
+
+        def fake_list_components(**kwargs):
+            rows = [{"component_id": f"wf-{kwargs['offset'] + i:03d}"} for i in range(kwargs["limit"])]
+            return rows, 50
+
+        mock_db.list_components.side_effect = fake_list_components
+        mock_db.get_config.side_effect = lambda component_id: {"config": {"name": component_id, "steps": []}}
+
+        workflows = get_workflows(db=mock_db, user_id="owner")
+
+        assert len(workflows) == 10
+        mock_warn.assert_called_once()
+        assert "10 of 50" in mock_warn.call_args[0][0]
+
+    def test_paging_advances_the_offset_past_the_first_block(self, sqlite_db):
+        # A loop stuck at offset=0 still terminates (len >= total after two
+        # identical pages) but returns duplicates and misses the tail; unique
+        # recovery of 120 rows requires the offset to actually advance.
+        for i in range(120):
+            self._create(sqlite_db, f"own-workflow-{i:03d}", "owner")
+
+        loaded = get_workflows(db=sqlite_db, user_id="owner")
+
+        assert len(loaded) == 120
+        assert {item.id for item in loaded} == {f"own-workflow-{i:03d}" for i in range(120)}

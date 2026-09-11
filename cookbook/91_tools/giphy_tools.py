@@ -19,7 +19,7 @@ from agno.tools.giphy import GiphyTools
 # Example 1: Enable specific Giphy functions
 gif_agent = Agent(
     name="Gif Generator Agent",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[GiphyTools(limit=5, enable_search_gifs=True)],
     description="You are an AI agent that can generate gifs using Giphy.",
     instructions=[
@@ -30,7 +30,7 @@ gif_agent = Agent(
 # Example 2: Enable all Giphy functions
 gif_agent_all = Agent(
     name="Full Giphy Agent",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[GiphyTools(limit=10, all=True)],
     description="You are an AI agent with full Giphy capabilities.",
     instructions=[

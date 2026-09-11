@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import re
+import string
+from collections import ChainMap
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -35,8 +38,9 @@ from agno.utils.agent import (
     execute_system_message,
 )
 from agno.utils.common import is_typed_dict
+from agno.utils.knowledge import get_user_id_kwarg
 from agno.utils.log import log_debug, log_warning
-from agno.utils.message import filter_tool_calls, get_text_from_message
+from agno.utils.message import copy_history_message, filter_tool_calls, get_text_from_message, render_instructions
 from agno.utils.prompts import get_json_output_prompt, get_response_model_format_prompt
 from agno.utils.timer import Timer
 
@@ -59,12 +63,13 @@ def format_message_with_state_variables(
     run_context: Optional[RunContext] = None,
 ) -> Any:
     """Format a message with the session state variables from run_context."""
-    import re
-    import string
-    from collections import ChainMap
-    from copy import deepcopy
-
     if not isinstance(message, str):
+        return message
+
+    # A message without "{" cannot contain a {var} placeholder, and without "$"
+    # Template.safe_substitute is an identity transform - skip the regex and
+    # template machinery entirely for the common plain-text case.
+    if "{" not in message and "$" not in message:
         return message
 
     # Extract values from run_context
@@ -81,7 +86,7 @@ def format_message_with_state_variables(
         {"user_id": user_id} if user_id is not None else {},
     )
 
-    converted_msg = deepcopy(message)
+    converted_msg = message
     for var_name in format_variables.keys():
         # Only convert standalone {var_name} patterns, not nested ones
         pattern = r"\{" + re.escape(var_name) + r"\}"
@@ -147,7 +152,7 @@ def get_system_message(
     """
 
     # Extract values from run_context
-    from agno.agent._init import set_culture_manager, set_memory_manager
+    from agno.agent._init import set_memory_manager
 
     session_state = run_context.session_state if run_context else None
     user_id = run_context.user_id if run_context else None
@@ -257,6 +262,11 @@ def get_system_message(
     # 3.2.4 Add agent name if provided
     if agent.name is not None and agent.add_name_to_context:
         additional_information.append(f"Your name is: {agent.name}.")
+    # Tell the model what a result envelope is and how to read the rest
+    if agent._result_store is not None:
+        from agno.offload.tools import OFFLOAD_INSTRUCTION
+
+        additional_information.append(OFFLOAD_INSTRUCTION)
 
     # 3.3 Build the default system message for the Agent.
     system_message_content: str = ""
@@ -268,20 +278,11 @@ def get_system_message(
         system_message_content += f"\n<your_role>\n{agent.role}\n</your_role>\n\n"
     # 3.3.3 Then add instructions for the Agent
     if len(instructions) > 0:
+        rendered = render_instructions(instructions)
         if agent.use_instruction_tags:
-            system_message_content += "<instructions>"
-            if len(instructions) > 1:
-                for _upi in instructions:
-                    system_message_content += f"\n- {_upi}"
-            else:
-                system_message_content += "\n" + instructions[0]
-            system_message_content += "\n</instructions>\n\n"
+            system_message_content += f"<instructions>\n{rendered}\n</instructions>\n\n"
         else:
-            if len(instructions) > 1:
-                for _upi in instructions:
-                    system_message_content += f"- {_upi}\n"
-            else:
-                system_message_content += instructions[0] + "\n\n"
+            system_message_content += rendered + "\n\n"
     # 3.3.4 Add additional information
     if len(additional_information) > 0:
         system_message_content += "<additional_information>"
@@ -353,68 +354,7 @@ def get_system_message(
                 "</updating_user_memories>\n\n"
             )
 
-    # 3.3.10 Then add cultural knowledge to the system prompt
-    if agent.add_culture_to_context:
-        _culture_manager_not_set = False
-        if not agent.culture_manager:
-            set_culture_manager(agent)
-            _culture_manager_not_set = True
-
-        cultural_knowledge = agent.culture_manager.get_all_knowledge()  # type: ignore
-
-        if cultural_knowledge and len(cultural_knowledge) > 0:
-            system_message_content += (
-                "You have access to shared **Cultural Knowledge**, which provides context, norms, rules and guidance "
-                "for your reasoning, communication, and decision-making. "
-                "Cultural Knowledge represents the collective understanding, values, rules and practices that have "
-                "emerged across agents and teams. It encodes collective experience — including preferred "
-                "approaches, common patterns, lessons learned, and ethical guardrails.\n\n"
-                "When performing any task:\n"
-                "- **Reference Cultural Knowledge** to align with shared norms and best practices.\n"
-                "- **Apply it contextually**, not mechanically — adapt principles to the current situation.\n"
-                "- **Preserve consistency** with cultural values (tone, reasoning, and style) unless explicitly told otherwise.\n"
-                "- **Extend it** when you discover new insights — your outputs may become future Cultural Knowledge.\n"
-                "- **Clarify conflicts** if Cultural Knowledge appears to contradict explicit user instructions.\n\n"
-                "Your goal is to act not only intelligently but also *culturally coherently* — reflecting the "
-                "collective intelligence of the system.\n\n"
-                "Below is the currently available Cultural Knowledge for this context:\n\n"
-            )
-            system_message_content += "<cultural_knowledge>"
-            for _knowledge in cultural_knowledge:  # type: ignore
-                system_message_content += "\n---"
-                system_message_content += f"\nName: {_knowledge.name}"
-                system_message_content += f"\nSummary: {_knowledge.summary}"
-                system_message_content += f"\nContent: {_knowledge.content}"
-            system_message_content += "\n</cultural_knowledge>\n"
-        else:
-            system_message_content += (
-                "You have the capability to access shared **Cultural Knowledge**, which normally provides "
-                "context, norms, and guidance for your behavior and reasoning. However, no cultural knowledge "
-                "is currently available in this session.\n"
-                "Proceed thoughtfully and document any useful insights you create — they may become future "
-                "Cultural Knowledge for others.\n\n"
-            )
-
-        if _culture_manager_not_set:
-            agent.culture_manager = None
-
-        if agent.enable_agentic_culture:
-            system_message_content += (
-                "\n<contributing_to_culture>\n"
-                "When you discover an insight, pattern, rule, or best practice that will help future agents, use the `create_or_update_cultural_knowledge` tool to add or update entries in the shared cultural knowledge.\n"
-                "\n"
-                "When to contribute:\n"
-                "- You discover a reusable insight, pattern, rule, or best practice that will help future agents.\n"
-                "- You correct or clarify an existing cultural entry.\n"
-                "- You capture a guardrail, decision rationale, postmortem lesson, or example template.\n"
-                "- You identify missing context that should persist across sessions or teams.\n"
-                "\n"
-                "Cultural knowledge should capture reusable insights, best practices, or contextual knowledge that transcends individual conversations.\n"
-                "Mention your contribution to the user only if it is relevant to their request or they asked to be notified.\n"
-                "</contributing_to_culture>\n\n"
-            )
-
-    # 3.3.11 Then add a summary of the interaction to the system prompt
+    # 3.3.10 Then add a summary of the interaction to the system prompt
     if agent.add_session_summary_to_context and session.summary is not None:
         system_message_content += "Here is a brief summary of your previous interactions:\n\n"
         system_message_content += "<summary_of_previous_interactions>\n"
@@ -450,9 +390,12 @@ def get_system_message(
     if _resolved_knowledge is not None and agent.search_knowledge and agent.add_search_knowledge_instructions:
         build_context_fn = getattr(_resolved_knowledge, "build_context", None)
         if callable(build_context_fn):
-            knowledge_context = build_context_fn(
-                enable_agentic_filters=agent.enable_agentic_knowledge_filters,
+            # The filter keys rendered here come from stored content, so scope them like retrieval
+            build_context_kwargs: Dict[str, Any] = {"enable_agentic_filters": agent.enable_agentic_knowledge_filters}
+            build_context_kwargs.update(
+                get_user_id_kwarg(build_context_fn, run_context.user_id if run_context else agent.user_id)
             )
+            knowledge_context = build_context_fn(**build_context_kwargs)
             if knowledge_context is not None:
                 system_message_content += knowledge_context + "\n"
 
@@ -505,7 +448,7 @@ async def aget_system_message(
     """
 
     # Extract values from run_context
-    from agno.agent._init import has_async_db, set_culture_manager, set_memory_manager
+    from agno.agent._init import has_async_db, set_memory_manager
 
     session_state = run_context.session_state if run_context else None
     user_id = run_context.user_id if run_context else None
@@ -616,6 +559,11 @@ async def aget_system_message(
     # 3.2.4 Add agent name if provided
     if agent.name is not None and agent.add_name_to_context:
         additional_information.append(f"Your name is: {agent.name}.")
+    # Tell the model what a result envelope is and how to read the rest
+    if agent._result_store is not None:
+        from agno.offload.tools import OFFLOAD_INSTRUCTION
+
+        additional_information.append(OFFLOAD_INSTRUCTION)
 
     # 3.3 Build the default system message for the Agent.
     system_message_content: str = ""
@@ -627,20 +575,11 @@ async def aget_system_message(
         system_message_content += f"\n<your_role>\n{agent.role}\n</your_role>\n\n"
     # 3.3.3 Then add instructions for the Agent
     if len(instructions) > 0:
+        rendered = render_instructions(instructions)
         if agent.use_instruction_tags:
-            system_message_content += "<instructions>"
-            if len(instructions) > 1:
-                for _upi in instructions:
-                    system_message_content += f"\n- {_upi}"
-            else:
-                system_message_content += "\n" + instructions[0]
-            system_message_content += "\n</instructions>\n\n"
+            system_message_content += f"<instructions>\n{rendered}\n</instructions>\n\n"
         else:
-            if len(instructions) > 1:
-                for _upi in instructions:
-                    system_message_content += f"- {_upi}\n"
-            else:
-                system_message_content += instructions[0] + "\n\n"
+            system_message_content += rendered + "\n\n"
     # 3.3.4 Add additional information
     if len(additional_information) > 0:
         system_message_content += "<additional_information>"
@@ -715,68 +654,7 @@ async def aget_system_message(
                 "</updating_user_memories>\n\n"
             )
 
-    # 3.3.10 Then add cultural knowledge to the system prompt
-    if agent.add_culture_to_context:
-        _culture_manager_not_set = False
-        if not agent.culture_manager:
-            set_culture_manager(agent)
-            _culture_manager_not_set = True
-
-        cultural_knowledge = await agent.culture_manager.aget_all_knowledge()  # type: ignore
-
-        if cultural_knowledge and len(cultural_knowledge) > 0:
-            system_message_content += (
-                "You have access to shared **Cultural Knowledge**, which provides context, norms, rules and guidance "
-                "for your reasoning, communication, and decision-making.\n\n"
-                "Cultural Knowledge represents the collective understanding, values, rules and practices that have "
-                "emerged across agents and teams. It encodes collective experience — including preferred "
-                "approaches, common patterns, lessons learned, and ethical guardrails.\n\n"
-                "When performing any task:\n"
-                "- **Reference Cultural Knowledge** to align with shared norms and best practices.\n"
-                "- **Apply it contextually**, not mechanically — adapt principles to the current situation.\n"
-                "- **Preserve consistency** with cultural values (tone, reasoning, and style) unless explicitly told otherwise.\n"
-                "- **Extend it** when you discover new insights — your outputs may become future Cultural Knowledge.\n"
-                "- **Clarify conflicts** if Cultural Knowledge appears to contradict explicit user instructions.\n\n"
-                "Your goal is to act not only intelligently but also *culturally coherently* — reflecting the "
-                "collective intelligence of the system.\n\n"
-                "Below is the currently available Cultural Knowledge for this context:\n\n"
-            )
-            system_message_content += "<cultural_knowledge>"
-            for _knowledge in cultural_knowledge:  # type: ignore
-                system_message_content += "\n---"
-                system_message_content += f"\nName: {_knowledge.name}"
-                system_message_content += f"\nSummary: {_knowledge.summary}"
-                system_message_content += f"\nContent: {_knowledge.content}"
-            system_message_content += "\n</cultural_knowledge>\n"
-        else:
-            system_message_content += (
-                "You have the capability to access shared **Cultural Knowledge**, which normally provides "
-                "context, norms, and guidance for your behavior and reasoning. However, no cultural knowledge "
-                "is currently available in this session.\n"
-                "Proceed thoughtfully and document any useful insights you create — they may become future "
-                "Cultural Knowledge for others.\n\n"
-            )
-
-        if _culture_manager_not_set:
-            agent.culture_manager = None
-
-        if agent.enable_agentic_culture:
-            system_message_content += (
-                "\n<contributing_to_culture>\n"
-                "When you discover an insight, pattern, rule, or best practice that will help future agents, use the `create_or_update_cultural_knowledge` tool to add or update entries in the shared cultural knowledge.\n"
-                "\n"
-                "When to contribute:\n"
-                "- You discover a reusable insight, pattern, rule, or best practice that will help future agents.\n"
-                "- You correct or clarify an existing cultural entry.\n"
-                "- You capture a guardrail, decision rationale, postmortem lesson, or example template.\n"
-                "- You identify missing context that should persist across sessions or teams.\n"
-                "\n"
-                "Cultural knowledge should capture reusable insights, best practices, or contextual knowledge that transcends individual conversations.\n"
-                "Mention your contribution to the user only if it is relevant to their request or they asked to be notified.\n"
-                "</contributing_to_culture>\n\n"
-            )
-
-    # 3.3.11 Then add a summary of the interaction to the system prompt
+    # 3.3.10 Then add a summary of the interaction to the system prompt
     if agent.add_session_summary_to_context and session.summary is not None:
         system_message_content += "Here is a brief summary of your previous interactions:\n\n"
         system_message_content += "<summary_of_previous_interactions>\n"
@@ -810,16 +688,17 @@ async def aget_system_message(
         # Prefer async version if available for async databases
         abuild_context_fn = getattr(_resolved_knowledge, "abuild_context", None)
         build_context_fn = getattr(_resolved_knowledge, "build_context", None)
+        scope_uid = run_context.user_id if run_context else agent.user_id
         if callable(abuild_context_fn):
-            knowledge_context = await abuild_context_fn(
-                enable_agentic_filters=agent.enable_agentic_knowledge_filters,
-            )
+            abuild_context_kwargs: Dict[str, Any] = {"enable_agentic_filters": agent.enable_agentic_knowledge_filters}
+            abuild_context_kwargs.update(get_user_id_kwarg(abuild_context_fn, scope_uid))
+            knowledge_context = await abuild_context_fn(**abuild_context_kwargs)
             if knowledge_context is not None:
                 system_message_content += knowledge_context + "\n"
         elif callable(build_context_fn):
-            knowledge_context = build_context_fn(
-                enable_agentic_filters=agent.enable_agentic_knowledge_filters,
-            )
+            build_context_kwargs: Dict[str, Any] = {"enable_agentic_filters": agent.enable_agentic_knowledge_filters}
+            build_context_kwargs.update(get_user_id_kwarg(build_context_fn, scope_uid))
+            knowledge_context = build_context_fn(**build_context_kwargs)
             if knowledge_context is not None:
                 system_message_content += knowledge_context + "\n"
 
@@ -1200,6 +1079,15 @@ async def aget_user_message(
 # ---------------------------------------------------------------------------
 
 
+def _resolve_media_storage(agent: Agent) -> Optional[Any]:
+    """The agent's own media storage, falling back to the team's.
+
+    A member reads its history out of the shared team session, whose rows were written through
+    the team's backend, so a member with no backend of its own cannot resolve those references.
+    """
+    return agent.media_storage or getattr(getattr(agent, "_team", None), "media_storage", None)
+
+
 def get_run_messages(
     agent: Agent,
     *,
@@ -1287,8 +1175,6 @@ def get_run_messages(
 
     # 3. Add history to run_messages
     if add_history_to_context:
-        from copy import deepcopy
-
         # Only skip messages from history when system_message_role is NOT a standard conversation role.
         # Standard conversation roles ("user", "assistant", "tool") should never be filtered
         # to preserve conversation continuity.
@@ -1304,12 +1190,7 @@ def get_run_messages(
         )
 
         if len(history) > 0:
-            # Create a deep copy of the history messages to avoid modifying the original messages
-            history_copy = [deepcopy(msg) for msg in history]
-
-            # Tag each message as coming from history
-            for _msg in history_copy:
-                _msg.from_history = True
+            history_copy = [copy_history_message(msg) for msg in history]
 
             # Filter tool calls from history if limit is set (before adding to run_messages)
             if agent.max_tool_calls_from_history is not None:
@@ -1399,6 +1280,13 @@ def get_run_messages(
     if user_message is not None:
         run_messages.user_message = user_message
         run_messages.messages.append(user_message)
+
+    # Read offloaded media back on every message headed for the model: a member's history arrives as input.
+    media_storage = _resolve_media_storage(agent)
+    if media_storage is not None:
+        from agno.utils.media_offload import refresh_messages_media
+
+        refresh_messages_media(run_messages.messages, media_storage)
 
     # Set messages on run_context so tool hooks can access the current message history
     run_context.messages = run_messages.messages
@@ -1493,8 +1381,6 @@ async def aget_run_messages(
 
     # 3. Add history to run_messages
     if add_history_to_context:
-        from copy import deepcopy
-
         # Only skip messages from history when system_message_role is NOT a standard conversation role.
         # Standard conversation roles ("user", "assistant", "tool") should never be filtered
         # to preserve conversation continuity.
@@ -1510,12 +1396,7 @@ async def aget_run_messages(
         )
 
         if len(history) > 0:
-            # Create a deep copy of the history messages to avoid modifying the original messages
-            history_copy = [deepcopy(msg) for msg in history]
-
-            # Tag each message as coming from history
-            for _msg in history_copy:
-                _msg.from_history = True
+            history_copy = [copy_history_message(msg) for msg in history]
 
             # Filter tool calls from history if limit is set (before adding to run_messages)
             if agent.max_tool_calls_from_history is not None:
@@ -1606,13 +1487,20 @@ async def aget_run_messages(
         run_messages.user_message = user_message
         run_messages.messages.append(user_message)
 
+    # Read offloaded media back on every message headed for the model: a member's history arrives as input.
+    media_storage = _resolve_media_storage(agent)
+    if media_storage is not None:
+        from agno.utils.media_offload import arefresh_messages_media
+
+        await arefresh_messages_media(run_messages.messages, media_storage)
+
     # Set messages on run_context so tool hooks can access the current message history
     run_context.messages = run_messages.messages
 
     return run_messages
 
 
-def get_continue_run_messages(
+def _build_continue_run_messages(
     agent: Agent,
     input: List[Message],
     session: Optional[AgentSession] = None,
@@ -1665,8 +1553,6 @@ def get_continue_run_messages(
 
     # 2. Add history messages if not already present in input
     if add_history_to_context and session is not None and not input_has_history:
-        from copy import deepcopy
-
         # Only skip messages from history when system_message_role is NOT a standard conversation role.
         # Standard conversation roles ("user", "assistant", "tool") should never be filtered
         # to preserve conversation continuity.
@@ -1682,12 +1568,7 @@ def get_continue_run_messages(
         )
 
         if len(history) > 0:
-            # Create a deep copy of the history messages to avoid modifying the original messages
-            history_copy = [deepcopy(msg) for msg in history]
-
-            # Tag each message as coming from history
-            for _msg in history_copy:
-                _msg.from_history = True
+            history_copy = [copy_history_message(msg) for msg in history]
 
             # Filter tool calls from history if limit is set (before adding to run_messages)
             if agent.max_tool_calls_from_history is not None:
@@ -1705,6 +1586,43 @@ def get_continue_run_messages(
     if run_context is not None:
         run_context.messages = run_messages.messages
 
+    return run_messages
+
+
+def get_continue_run_messages(
+    agent: Agent,
+    input: List[Message],
+    session: Optional[AgentSession] = None,
+    add_history_to_context: Optional[bool] = None,
+    run_context: Optional[RunContext] = None,
+) -> RunMessages:
+    """Build the messages that resume a paused run, reading offloaded media back first.
+
+    The paused run's own messages come off the database carrying a reference and no bytes.
+    """
+    run_messages = _build_continue_run_messages(agent, input, session, add_history_to_context, run_context)
+    media_storage = _resolve_media_storage(agent)
+    if media_storage is not None:
+        from agno.utils.media_offload import refresh_messages_media
+
+        refresh_messages_media(run_messages.messages, media_storage)
+    return run_messages
+
+
+async def aget_continue_run_messages(
+    agent: Agent,
+    input: List[Message],
+    session: Optional[AgentSession] = None,
+    add_history_to_context: Optional[bool] = None,
+    run_context: Optional[RunContext] = None,
+) -> RunMessages:
+    """Async variant of :func:`get_continue_run_messages`."""
+    run_messages = _build_continue_run_messages(agent, input, session, add_history_to_context, run_context)
+    media_storage = _resolve_media_storage(agent)
+    if media_storage is not None:
+        from agno.utils.media_offload import arefresh_messages_media
+
+        await arefresh_messages_media(run_messages.messages, media_storage)
     return run_messages
 
 
@@ -1819,10 +1737,17 @@ def get_relevant_docs_from_knowledge(
 
     if num_documents is None and resolved_knowledge is not None:
         num_documents = getattr(resolved_knowledge, "max_results", None)
+
     # Validate the filters against known valid filter keys
     if resolved_knowledge is not None and filters is not None:
         if validate_filters:
-            valid_filters, invalid_keys = resolved_knowledge.validate_filters(filters)  # type: ignore
+            validate_kwargs: Dict[str, Any] = {}
+            validate_kwargs.update(
+                get_user_id_kwarg(
+                    resolved_knowledge.validate_filters, run_context.user_id if run_context else agent.user_id
+                )  # type: ignore
+            )
+            valid_filters, invalid_keys = resolved_knowledge.validate_filters(filters, **validate_kwargs)  # type: ignore
 
             # Warn about invalid filter keys
             if invalid_keys:
@@ -1854,6 +1779,13 @@ def get_relevant_docs_from_knowledge(
                 # Backward compatibility: support dependencies parameter
                 knowledge_retriever_kwargs["dependencies"] = dependencies
             knowledge_retriever_kwargs.update({"query": query, "num_documents": num_documents, **kwargs})
+            # After the **kwargs merge so caller kwargs cannot override the run context owner
+            knowledge_retriever_kwargs.update(
+                get_user_id_kwarg(
+                    agent.knowledge_retriever,
+                    run_context.user_id if run_context else agent.user_id,
+                )
+            )
             return agent.knowledge_retriever(**knowledge_retriever_kwargs)
         except Exception as e:
             log_warning(f"Knowledge retriever failed: {str(e)}")
@@ -1874,7 +1806,13 @@ def get_relevant_docs_from_knowledge(
             num_documents = getattr(resolved_knowledge, "max_results", 10)
 
         log_debug(f"Retrieving from knowledge base with filters: {filters}")
-        relevant_docs: List[Document] = retrieve_fn(query=query, max_results=num_documents, filters=filters)
+        retrieve_kwargs: Dict[str, Any] = {
+            "query": query,
+            "max_results": num_documents,
+            "filters": filters,
+        }
+        retrieve_kwargs.update(get_user_id_kwarg(retrieve_fn, run_context.user_id if run_context else agent.user_id))
+        relevant_docs: List[Document] = retrieve_fn(**retrieve_kwargs)
 
         if not relevant_docs or len(relevant_docs) == 0:
             log_debug("No relevant documents found for query")
@@ -1909,7 +1847,13 @@ async def aget_relevant_docs_from_knowledge(
     # Validate the filters against known valid filter keys
     if resolved_knowledge is not None and filters is not None:
         if validate_filters:
-            valid_filters, invalid_keys = await resolved_knowledge.avalidate_filters(filters)  # type: ignore
+            avalidate_kwargs: Dict[str, Any] = {}
+            avalidate_kwargs.update(
+                get_user_id_kwarg(
+                    resolved_knowledge.avalidate_filters, run_context.user_id if run_context else agent.user_id
+                )  # type: ignore
+            )
+            valid_filters, invalid_keys = await resolved_knowledge.avalidate_filters(filters, **avalidate_kwargs)  # type: ignore
 
             # Warn about invalid filter keys
             if invalid_keys:  # type: ignore
@@ -1940,6 +1884,13 @@ async def aget_relevant_docs_from_knowledge(
                 # Backward compatibility: support dependencies parameter
                 knowledge_retriever_kwargs["dependencies"] = dependencies
             knowledge_retriever_kwargs.update({"query": query, "num_documents": num_documents, **kwargs})
+            # After the **kwargs merge so caller kwargs cannot override the run context owner
+            knowledge_retriever_kwargs.update(
+                get_user_id_kwarg(
+                    agent.knowledge_retriever,
+                    run_context.user_id if run_context else agent.user_id,
+                )
+            )
             result = agent.knowledge_retriever(**knowledge_retriever_kwargs)
 
             if isawaitable(result):
@@ -1968,10 +1919,19 @@ async def aget_relevant_docs_from_knowledge(
 
         log_debug(f"Retrieving from knowledge base with filters: {filters}")
 
+        scope_user_id = run_context.user_id if run_context else agent.user_id
+        retrieve_kwargs: Dict[str, Any] = {
+            "query": query,
+            "max_results": num_documents,
+            "filters": filters,
+        }
+
         if callable(aretrieve_fn):
-            relevant_docs: List[Document] = await aretrieve_fn(query=query, max_results=num_documents, filters=filters)
+            retrieve_kwargs.update(get_user_id_kwarg(aretrieve_fn, scope_user_id))
+            relevant_docs: List[Document] = await aretrieve_fn(**retrieve_kwargs)
         elif callable(retrieve_fn):
-            relevant_docs = retrieve_fn(query=query, max_results=num_documents, filters=filters)
+            retrieve_kwargs.update(get_user_id_kwarg(retrieve_fn, scope_user_id))
+            relevant_docs = retrieve_fn(**retrieve_kwargs)
         else:
             return None
 

@@ -21,7 +21,7 @@ def run_example() -> None:
 
     # Create an agent with ReasoningTools
     agent = Agent(
-        model=OpenAIChat(id="gpt-4o"),
+        model=OpenAIChat(id="gpt-5.6-luna"),
         tools=[ReasoningTools(add_instructions=True)],
         instructions=dedent("""\
             You are an expert problem-solving assistant with strong analytical skills!         Use step-by-step reasoning to solve the problem.
@@ -52,7 +52,7 @@ def run_example() -> None:
 
     # Create another fresh agent
     streaming_agent_alt = Agent(
-        model=OpenAIChat(id="gpt-4o"),
+        model=OpenAIChat(id="gpt-5.6-luna"),
         tools=[ReasoningTools(add_instructions=True)],
         instructions=dedent("""\
             You are an expert problem-solving assistant with strong analytical skills!         Use step-by-step reasoning to solve the problem.

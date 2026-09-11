@@ -15,6 +15,7 @@ Start here to learn the basics of RAG (Retrieval-Augmented Generation) with Agno
 | [02_agentic_rag.py](./02_agentic_rag.py) | Agentic RAG where the agent decides when to search |
 | [03_loading_content.py](./03_loading_content.py) | Loading from files, URLs, text, topics, and batches |
 | [04_choosing_components.md](./04_choosing_components.md) | Decision guide for vector DBs, embedders, and chunking |
+| [05_website_per_page.py](./05_website_per_page.py) | Loading a website page by page from its sitemap, with per-page citations |
 
 ## Start Here
 

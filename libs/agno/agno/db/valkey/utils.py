@@ -74,6 +74,11 @@ def get_all_keys_for_table(valkey_client: "AnyValkeyClient", prefix: str, table_
     pattern = f"{prefix}:{table_type}:*"
     relevant_keys: List[str] = []
 
+    # Helper namespaces, matched by prefix so a record id that merely contains one
+    # of these markers is not dropped from the results
+    index_prefix = f"{prefix}:{table_type}:index:"
+    runs_by_session_prefix = f"{prefix}:runs:by_session:"
+
     if isinstance(valkey_client, ValkeyClusterClient):
         # Cluster client uses ClusterScanCursor with .is_finished()
         cluster_cursor = ClusterScanCursor()
@@ -84,7 +89,11 @@ def get_all_keys_for_table(valkey_client: "AnyValkeyClient", prefix: str, table_
             cluster_keys = cast(List[bytes], scan_result[1])
             for key in cluster_keys:
                 key_str = _decode_value(key)
-                if ":index:" in key_str:
+                if key_str.startswith(index_prefix):
+                    continue
+                # Skip helper indexes maintained by the v3+ runs collection
+                # (e.g. `<prefix>:runs:by_session:<session_id>` sorted-set indexes)
+                if key_str.startswith(runs_by_session_prefix):
                     continue
                 relevant_keys.append(key_str)
     else:
@@ -99,7 +108,11 @@ def get_all_keys_for_table(valkey_client: "AnyValkeyClient", prefix: str, table_
 
             for key in scan_keys:
                 key_str = _decode_value(key)
-                if ":index:" in key_str:
+                if key_str.startswith(index_prefix):
+                    continue
+                # Skip helper indexes maintained by the v3+ runs collection
+                # (e.g. `<prefix>:runs:by_session:<session_id>` sorted-set indexes)
+                if key_str.startswith(runs_by_session_prefix):
                     continue
                 relevant_keys.append(key_str)
 
@@ -159,6 +172,14 @@ def apply_sorting(
 def apply_pagination(
     records: List[Dict[str, Any]], limit: Optional[int] = None, page: Optional[int] = None
 ) -> List[Dict[str, Any]]:
+    """Apply pagination.
+
+    Raises ``ValueError`` when ``page`` is provided without ``limit`` — see
+    ``agno.db.utils.validate_pagination``.
+    """
+    from agno.db.utils import validate_pagination
+
+    validate_pagination(limit, page)
     if limit is None:
         return records
 
@@ -368,17 +389,14 @@ def remove_index_entries(
 # -- Metrics utils --
 
 
-def calculate_date_metrics(date_to_process: date, sessions_data: dict, user_isolation: bool = False) -> List[dict]:
+def calculate_date_metrics(date_to_process: date, sessions_data: dict) -> List[dict]:
     """Calculate metrics for the given date, bucketed per user_id.
 
-    Each session is attributed to its owning user when user_isolation is
-    enabled. Sessions without a user_id aggregate under the sentinel
-    empty-string bucket.
+    Sessions without a user_id aggregate under the sentinel empty-string bucket.
 
     Args:
         date_to_process (date): The date to calculate metrics for.
         sessions_data (dict): The sessions data.
-        user_isolation (bool): Whether to bucket metrics per user_id.
 
     Returns:
         List[dict]: A list of per-user metrics records.
@@ -405,7 +423,6 @@ def calculate_date_metrics(date_to_process: date, sessions_data: dict, user_isol
                 "reasoning_tokens": 0,
             },
             "model_counts": {},
-            "user_ids": set(),
         }
 
     session_types = [
@@ -420,11 +437,8 @@ def calculate_date_metrics(date_to_process: date, sessions_data: dict, user_isol
         sessions = sessions_data.get(session_type, []) or []
 
         for session in sessions:
-            session_user_id = session.get("user_id") or ""
-            bucket_key = session_user_id if user_isolation else ""
+            bucket_key = session.get("user_id") or ""
             bucket = per_user.setdefault(bucket_key, _empty_metric_record())
-            if session_user_id:
-                bucket["user_ids"].add(session_user_id)
             bucket[sessions_count_key] += 1
 
             runs = session.get("runs") or []
@@ -435,7 +449,7 @@ def calculate_date_metrics(date_to_process: date, sessions_data: dict, user_isol
                     key = f"{model_id}:{model_provider}"
                     bucket["model_counts"][key] = bucket["model_counts"].get(key, 0) + 1
 
-            session_metrics = (session.get("session_data") or {}).get("session_metrics", {})
+            session_metrics = (session.get("session_data") or {}).get("session_metrics", {}) or {}
             for field in bucket["token_metrics"]:
                 bucket["token_metrics"][field] += session_metrics.get(field, 0)
 
@@ -449,7 +463,7 @@ def calculate_date_metrics(date_to_process: date, sessions_data: dict, user_isol
             model_id, model_provider = model.rsplit(":", 1)
             model_metrics.append({"model_id": model_id, "model_provider": model_provider, "count": count})
 
-        users_count = len(bucket["user_ids"])
+        users_count = 0 if user_id == "" else 1
         # Create a deterministic ID based on date and user. This simplifies avoiding duplicates
         metric_id = f"{date_to_process.isoformat()}_{user_id}_daily"
 

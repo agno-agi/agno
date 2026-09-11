@@ -1,6 +1,19 @@
 # Test Log: 12_scheduler
 
-Tested on 2026-07-24 against Agno source commit
+Re-verified LIVE on 2026-08-18 against worktree commit `9ea0b121a`
+(branch `feat/studio-3.0`) after the schedules table gained Studio 3.0
+provenance columns (`managed_by`, `target_type`/`target_id`, actor stamps,
+`disabled_reason`) and `update_schedule` gained its column allow-list. All
+four examples pass unchanged against live pgvector Postgres:
+`03_manage_with_python.py` exercised sync + async managers (create, cron
+update, paging, 3 validation errors); `01_run_in_agentos.py` +
+`02_rest_api.py` covered the REST surface including trigger and history
+paging (2 runs recorded); `04_scheduler_tools_agent.py --demo` had the live
+agent create a schedule preserving the toolkit's default endpoint and
+payload. These generic schedules carry no provenance, which is the
+compatibility contract the migration must keep.
+
+Original pass on 2026-07-24 against Agno source commit
 `74c0bfb1499c2636aa7c3f1ccd8935ceeb824b4b`.
 
 ### 01_run_in_agentos.py
