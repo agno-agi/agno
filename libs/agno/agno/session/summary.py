@@ -93,6 +93,12 @@ class SessionSummaryManager:
     # Maximum number of messages to include in the summary conversation. None means no limit.
     conversation_limit: Optional[int] = None
 
+    # When True, tool-role messages (tool results) are included in the summary
+    # input. Defaults to False to preserve the historical behavior (only user /
+    # assistant turns were summarized). Enable for tool-heavy sessions where
+    # cross-run tool context should survive into the summary (agno-agi/agno#8790).
+    include_tool_messages: bool = False
+
     def __post_init__(self) -> None:
         if self.id is None:
             self.id = f"session_summary_manager_{uuid4().hex[:8]}"
@@ -100,6 +106,8 @@ class SessionSummaryManager:
             raise ValueError(f"last_n_runs must be a positive integer, got {self.last_n_runs}")
         if self.conversation_limit is not None and self.conversation_limit <= 0:
             raise ValueError(f"conversation_limit must be a positive integer, got {self.conversation_limit}")
+        if not isinstance(self.include_tool_messages, bool):
+            raise TypeError(f"include_tool_messages must be a bool, got {type(self.include_tool_messages).__name__}")
 
     def get_response_format(self, model: "Model") -> Union[Dict[str, Any], Type[BaseModel]]:  # type: ignore
         if model.supports_native_structured_outputs:
@@ -153,6 +161,11 @@ class SessionSummaryManager:
                     conversation_messages.append(f"User: {message.content}")
             elif message.role in ["assistant", "model"]:
                 conversation_messages.append(f"Assistant: {message.content}\n")
+            elif message.role == "tool" and self.include_tool_messages:
+                # Tool results carry cross-run context (search output, query results,
+                # API payloads) that is otherwise lost in the summary layer (#8790).
+                content = message.content if message.content is not None else ""
+                conversation_messages.append(f"Tool: {content}\n")
         system_prompt += "\n".join(conversation_messages)
         system_prompt += "</conversation>"
 
@@ -309,4 +322,128 @@ class SessionSummaryManager:
             session.summary = session_summary
             self.summaries_updated = True
 
+        return session_summary
+
+    # ------------------------------------------------------------------
+    # Rolling compaction: fold older messages into an existing summary
+    # incrementally (summaryₙ + fold batch → summaryₙ₊₁) instead of a full
+    # re-summarization of the whole session. Input size is bounded by the
+    # existing summary + the fold batch, not the total session length (#8790).
+    # ------------------------------------------------------------------
+
+    def _get_compaction_system_message(
+        self,
+        existing_summary: Optional[SessionSummary],
+        messages_to_fold: List[Message],
+        response_format: Union[Dict[str, Any], Type[BaseModel]],
+    ) -> Message:
+        """Build the system prompt for an incremental compaction step."""
+        system_prompt = dedent("""\
+        You are compacting a running conversation summary. Integrate the new
+        messages below into the existing summary, preserving all facts, removing
+        redundancy, and keeping the result concise.
+        """)
+
+        seed = existing_summary.summary if existing_summary else "(none — seed a new summary)"
+        system_prompt += f"<existing_summary>\n{seed}\n</existing_summary>\n"
+
+        system_prompt += "<messages_to_fold>\n"
+        for message in messages_to_fold:
+            if message.role == "user":
+                system_prompt += f"User: {message.content}\n"
+            elif message.role in ["assistant", "model"]:
+                system_prompt += f"Assistant: {message.content}\n"
+            elif message.role == "tool" and self.include_tool_messages:
+                content = message.content if message.content is not None else ""
+                system_prompt += f"Tool: {content}\n"
+        system_prompt += "</messages_to_fold>\n"
+
+        system_prompt += (
+            "Produce an updated summary that integrates the new information into the existing summary. "
+            "Do not make anything up."
+        )
+
+        if response_format == {"type": "json_object"}:
+            from agno.utils.prompts import get_json_output_prompt
+
+            system_prompt += "\n" + get_json_output_prompt(SessionSummaryResponse)  # type: ignore
+
+        return Message(role="system", content=system_prompt)
+
+    def compact(
+        self,
+        existing_summary: Optional[SessionSummary],
+        messages_to_fold: List[Message],
+        run_metrics: Optional["RunMetrics"] = None,
+    ) -> Optional[SessionSummary]:
+        """Fold ``messages_to_fold`` into ``existing_summary`` → a new summary (sync).
+
+        Unlike ``create_session_summary`` (which re-summarizes the whole session),
+        this seeds the model with the prior summary and only the batch being
+        folded, so cost scales with the fold batch, not the session length.
+
+        Args:
+            existing_summary: The current compacted summary (None to bootstrap).
+            messages_to_fold: Older verbatim messages to fold into the summary.
+            run_metrics: Optional metrics accumulator.
+
+        Returns:
+            The new :class:`SessionSummary`, or None if there is nothing to fold
+            or no model is configured.
+        """
+        if not messages_to_fold:
+            log_debug("No messages to fold, skipping compaction")
+            return None
+
+        self.model = get_model(self.model)
+        if self.model is None:
+            return None
+
+        log_debug("Compacting session summary", center=True)
+        response_format = self.get_response_format(self.model)
+        system_message = self._get_compaction_system_message(existing_summary, messages_to_fold, response_format)
+        messages = [system_message, Message(role="user", content=self.summary_request_message)]
+
+        summary_response = self.model.response(messages=messages, response_format=response_format)
+
+        if run_metrics is not None:
+            from agno.metrics import ModelType, accumulate_model_metrics
+
+            accumulate_model_metrics(summary_response, self.model, ModelType.SESSION_SUMMARY_MODEL, run_metrics)
+
+        session_summary = self._process_summary_response(summary_response, self.model)
+        if session_summary is not None:
+            self.summaries_updated = True
+        return session_summary
+
+    async def acompact(
+        self,
+        existing_summary: Optional[SessionSummary],
+        messages_to_fold: List[Message],
+        run_metrics: Optional["RunMetrics"] = None,
+    ) -> Optional[SessionSummary]:
+        """Async variant of :meth:`compact`."""
+        if not messages_to_fold:
+            log_debug("No messages to fold, skipping compaction")
+            return None
+
+        self.model = get_model(self.model)
+        if self.model is None:
+            return None
+
+        log_debug("Compacting session summary", center=True)
+        response_format = self.get_response_format(self.model)
+        system_message = self._get_compaction_system_message(existing_summary, messages_to_fold, response_format)
+        messages = [system_message, Message(role="user", content=self.summary_request_message)]
+
+        summary_response = await self.model.aresponse(messages=messages, response_format=response_format)
+
+        if run_metrics is not None:
+            from agno.metrics import ModelType, accumulate_model_metrics
+
+            accumulate_model_metrics(summary_response, self.model, ModelType.SESSION_SUMMARY_MODEL, run_metrics)
+
+        session_summary = self._process_summary_response(summary_response, self.model)
+        if session_summary is not None:
+            self.summaries_updated = True
         return session_summary
