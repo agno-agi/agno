@@ -68,9 +68,9 @@ authz = Authorization(
 authz.define_role("viewer", ["agents:*:read"], default=True)
 authz.define_role("admin", ["agent_os:admin"])
 authz.seed(admin="alice")  # alice is the bootstrap admin (the admin ROLE)
-authz.role_store.assign(
-    "bob", "viewer"
-)  # give bob a role explicitly; everyone else gets the default
+# give bob a role explicitly (everyone else gets the default). assign is bootstrap-safe: a role an
+# admin later changes at runtime survives a restart, unlike role_store.assign which overwrites.
+authz.assign("bob", "viewer")
 
 research_agent = Agent(
     id="research-agent",

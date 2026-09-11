@@ -179,8 +179,10 @@ authz.define_role("runner", ["agents:*:read", "agents:*:run"])
 authz.seed(
     admin=ADMIN_SUBJECT
 )  # grant the admin role, so the admin API is usable at all
-authz.role_store.assign("bob", "viewer")
-authz.role_store.assign("carol", "runner")
+authz.assign(
+    "bob", "viewer"
+)  # bootstrap-safe: a runtime role change survives a restart
+authz.assign("carol", "runner")
 
 research_agent = Agent(
     id="research-agent",
