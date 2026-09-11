@@ -20,6 +20,12 @@ _PROVIDERS: Dict[str, Tuple[str, str, str, str]] = {
     "azure-ai-foundry": ("agno.models.azure", "AzureAIFoundry", "AzureAIFoundry", "azure"),
     "azure-foundry-claude": ("agno.models.azure", "AzureFoundryClaude", "AzureFoundryClaude", "azurefoundry"),
     "azure-openai": ("agno.models.azure", "AzureOpenAI", "AzureOpenAI", "azure"),
+    "azure-openai-responses": (
+        "agno.models.azure",
+        "AzureOpenAIResponses",
+        "AzureOpenAIResponses",
+        "azure",
+    ),
     "cerebras": ("agno.models.cerebras", "Cerebras", "Cerebras", "cerebras"),
     "cerebras-openai": ("agno.models.cerebras", "CerebrasOpenAI", "CerebrasOpenAI", "cerebrasopenai"),
     "cohere": ("agno.models.cohere", "Cohere", "cohere", "cohere"),

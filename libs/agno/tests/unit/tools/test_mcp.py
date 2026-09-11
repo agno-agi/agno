@@ -1,15 +1,17 @@
 import asyncio
+import base64
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from mcp import StdioServerParameters
-from mcp.types import CallToolResult, TextContent
+from mcp.types import AudioContent, CallToolResult, TextContent
 
 from agno.tools.function import Function, FunctionCall, ToolResult
 from agno.tools.mcp import MCPTools
 from agno.tools.mcp.params import SSEClientParams, StreamableHTTPClientParams
 from agno.utils.mcp import get_entrypoint_for_tool
+from agno.utils.openai import audio_to_message
 
 
 class _AsyncContextManager:
@@ -1103,6 +1105,134 @@ async def test_mcp_tool_result_preserves_structured_content():
 
 
 @pytest.mark.asyncio
+async def test_mcp_tool_result_preserves_audio_content():
+    mock_tool = MagicMock()
+    mock_tool.name = "speak"
+    audio_bytes = b"audio-bytes"
+
+    session = AsyncMock()
+    session.send_ping = AsyncMock()
+    session.call_tool = AsyncMock(
+        return_value=CallToolResult(
+            content=[
+                AudioContent(
+                    data=base64.b64encode(audio_bytes).decode(),
+                    mimeType="audio/wav",
+                )
+            ],
+            is_error=False,
+        )
+    )
+
+    entrypoint = get_entrypoint_for_tool(mock_tool, session)
+    result = await entrypoint()
+
+    assert result.content == "Audio has been generated and added to the response."
+    assert result.audios is not None
+    assert len(result.audios) == 1
+    assert result.audios[0].content == audio_bytes
+    assert result.audios[0].mime_type == "audio/wav"
+
+
+@pytest.mark.asyncio
+async def test_mcp_audio_mime_type_preserves_openai_audio_format():
+    mock_tool = MagicMock()
+    mock_tool.name = "speak"
+    audio_bytes = b"format-probe-sentinel"
+
+    session = AsyncMock()
+    session.send_ping = AsyncMock()
+    session.call_tool = AsyncMock(
+        return_value=CallToolResult(
+            content=[
+                AudioContent(
+                    data=base64.b64encode(audio_bytes).decode(),
+                    mimeType="audio/mpeg",
+                )
+            ],
+            is_error=False,
+        )
+    )
+
+    result = await get_entrypoint_for_tool(mock_tool, session)()
+
+    assert result.audios is not None
+    assert result.audios[0].format == "mp3"
+    assert audio_to_message(result.audios)[0]["input_audio"]["format"] == "mp3"
+
+
+@pytest.mark.asyncio
+async def test_mcp_audio_invalid_base64_is_reported_without_failing_the_call():
+    mock_tool = MagicMock()
+    mock_tool.name = "speak"
+
+    session = AsyncMock()
+    session.send_ping = AsyncMock()
+    session.call_tool = AsyncMock(
+        return_value=CallToolResult(
+            content=[AudioContent(data="not valid base64!", mimeType="audio/wav")],
+            is_error=False,
+        )
+    )
+
+    result = await get_entrypoint_for_tool(mock_tool, session)()
+
+    assert result.content == "[Audio content could not be decoded]"
+    assert not result.content.startswith("Error: ")
+    assert result.audios is None
+
+
+@pytest.mark.asyncio
+async def test_mcp_audio_invalid_base64_keeps_sibling_content():
+    mock_tool = MagicMock()
+    mock_tool.name = "speak"
+    good_audio = b"good-audio-bytes"
+
+    session = AsyncMock()
+    session.send_ping = AsyncMock()
+    session.call_tool = AsyncMock(
+        return_value=CallToolResult(
+            content=[
+                TextContent(type="text", text="Weather report: 22C and sunny."),
+                AudioContent(data=base64.b64encode(good_audio).decode(), mimeType="audio/wav"),
+                AudioContent(data="not valid base64!", mimeType="audio/wav"),
+            ],
+            is_error=False,
+        )
+    )
+
+    result = await get_entrypoint_for_tool(mock_tool, session)()
+
+    assert "Weather report: 22C and sunny." in result.content
+    assert "[Audio content could not be decoded]" in result.content
+    assert result.audios is not None
+    assert len(result.audios) == 1
+    assert result.audios[0].content == good_audio
+
+
+@pytest.mark.asyncio
+async def test_mcp_audio_accepts_whitespace_wrapped_base64():
+    mock_tool = MagicMock()
+    mock_tool.name = "speak"
+    audio_bytes = b"chunked-audio-payload" * 8
+
+    session = AsyncMock()
+    session.send_ping = AsyncMock()
+    session.call_tool = AsyncMock(
+        return_value=CallToolResult(
+            # base64.encodebytes wraps at 76 characters, as MIME-style encoders do
+            content=[AudioContent(data=base64.encodebytes(audio_bytes).decode(), mimeType="audio/wav")],
+            is_error=False,
+        )
+    )
+
+    result = await get_entrypoint_for_tool(mock_tool, session)()
+
+    assert result.audios is not None
+    assert result.audios[0].content == audio_bytes
+
+
+@pytest.mark.asyncio
 async def test_mcp_tool_result_uses_structured_content_when_content_is_empty():
     mock_tool = MagicMock()
     mock_tool.name = "get_data"
@@ -2067,9 +2197,9 @@ async def test_failed_tool_call_returns_is_error_rather_than_raising():
 @pytest.mark.asyncio
 async def test_client_session_call_tool_is_not_given_raise_on_error():
     """A caller-supplied ClientSession has no such kwarg and would reject it."""
-    from agno.utils.mcp import get_entrypoint_for_tool
-
     from mcp.types import CallToolResult, TextContent
+
+    from agno.utils.mcp import get_entrypoint_for_tool
 
     ok = CallToolResult(content=[TextContent(type="text", text="fine")], isError=False)
     session = AsyncMock()
