@@ -37,8 +37,7 @@ from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS
-from agno.os.authz import ManagedRoleStore
-from agno.os.config import AuthorizationConfig
+from agno.os.authz import Authorization
 
 # ---------------------------------------------------------------------------
 # Create Example
@@ -50,31 +49,34 @@ OS_ID = "managed-roles-os"
 
 os.makedirs("tmp", exist_ok=True)
 
-# Define your roles in agno scope terms. Policy persists to your DB (point the
-# url at Postgres in production). This is the entire authorization model.
+# Authorization is one object for the whole setup: it verifies the token AND owns the
+# roles. A DB is REQUIRED - there is no in-memory mode; roles must persist and stay
+# consistent across replicas. Point the url at Postgres in production.
 #
-# ManagedRoleStore constructor parameters (a DB is REQUIRED - there is no
-# in-memory mode; roles must persist and stay consistent across replicas):
-#   db_url       SQLAlchemy URL for the DB that holds the policy, e.g.
-#                "postgresql+psycopg://..." or "sqlite:///roles.db".
-#   db           an agno Db object (e.g. SqliteDb/PostgresDb) instead of a url;
-#                reuses that DB's engine so roles live beside your agent data.
-#                Takes precedence over db_url. (Pass one of db_url / db - or hand
-#                the store to AuthorizationConfig(role_store=...) and let AgentOS
-#                adopt its db for you.)
-#   roles_claim  JWT claim carrying a caller's roles (external-IdP case). Omitted
-#                here, so roles come from this store's own assignments below.
-#   audit        an AuditSink: when set, every role/assignment change emits an
-#                append-only AuditEvent (the actor + before/after). Off here.
+# Key Authorization parameters:
+#   db_url / db  where roles persist: a SQLAlchemy URL (e.g. "postgresql+psycopg://..."
+#                or "sqlite:///roles.db"), or an agno Db to reuse its engine. Omit both
+#                and hand the object to AgentOS(db=...) to borrow the OS db.
+#   verification_keys / algorithm / audience / verify_audience  how tokens are verified.
+#   roles_claim  read a caller's role from a JWT claim (external-IdP case). Omitted here,
+#                so roles come from the assignments below. See 09_idp_workos_auth0.py.
+#   audit=True   record every role/assignment change (actor + before/after). Off here.
 #                See 05_managed_roles_audit.py.
-#   decision_log when True, raises the "agno.authz.engine" logger to INFO so every
-#                allow/deny decision is logged. Off by default. Off here.
-roles = ManagedRoleStore(db_url="sqlite:///tmp/managed_roles.db")
-roles.set_role_scopes("viewer", ["agents:*:read"])
-roles.set_role_scopes("member", ["agents:*:read", "agents:research-agent:run"])
-roles.set_role_scopes("admin", ["agent_os:admin"])
-roles.assign("bob", "viewer")  # bob can read agents but not run them
-roles.assign("alice", "admin")
+authz = Authorization(
+    db_url="sqlite:///tmp/managed_roles.db",
+    verification_keys=[JWT_SECRET],
+    algorithm="HS256",
+    verify_audience=True,
+    audience=OS_ID,
+)
+# Define what each role can do (persisted). This is the entire authorization model.
+authz.define_role("viewer", ["agents:*:read"])
+authz.define_role("member", ["agents:*:read", "agents:research-agent:run"])
+authz.define_role("admin", ["agent_os:admin"])
+# Hand people roles. authz.role_store is the live handle used for assignments (and for
+# the runtime changes further down).
+authz.role_store.assign("bob", "viewer")  # bob can read agents but not run them
+authz.role_store.assign("alice", "admin")
 
 # Setup database
 db = SqliteDb(db_file="tmp/agentos.db")
@@ -86,23 +88,15 @@ research_agent = Agent(
     db=db,
 )
 
-# Create AgentOS using the managed-role store. The only wiring.
-# `role_store=store` is the preferred shortcut: AgentOS uses the store's provider
-# internally (equivalent to authorization_provider=roles.provider, which also
-# works). The store already has its own db_url above; had we created it without a
-# db, this shortcut would also let AgentOS adopt the OS db= for it.
+# Create AgentOS with the Authorization object. That is the only wiring: it carries
+# both the token verification and the roles, so there is no separate authorization
+# config to build. (authz already has its own db_url above; had we built it without a
+# db, AgentOS would lend it the OS db= here.)
 agent_os = AgentOS(
     id=OS_ID,
     description="Managed-roles AgentOS",
     agents=[research_agent],
-    authorization=True,
-    authorization_config=AuthorizationConfig(
-        verification_keys=[JWT_SECRET],
-        algorithm="HS256",
-        verify_audience=True,
-        audience=OS_ID,
-        role_store=roles,
-    ),
+    authorization=authz,
 )
 
 # Get the app
@@ -176,7 +170,7 @@ if __name__ == "__main__":
     )
 
     print("\n  >> now we make bob a 'member' while the server is running...\n")
-    roles.assign("bob", "member")
+    authz.role_store.assign("bob", "member")
     show(
         "bob (member)  asks to RUN the agent",
         client.post(
@@ -186,7 +180,7 @@ if __name__ == "__main__":
     )
 
     print("\n  >> ...and now we take the 'member' role back...\n")
-    roles.unassign("bob", "member")
+    authz.role_store.unassign("bob", "member")
     show(
         "bob (no role) asks to RUN the agent",
         client.post(

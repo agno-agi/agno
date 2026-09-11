@@ -3,16 +3,17 @@
 Admin-only REST API to create roles, set their permissions (in agno scope terms,
 with allow/deny), and grant or revoke them at runtime.
 
-With ``AuthorizationConfig(role_store=...)`` you do not mount this yourself: AgentOS
-registers it at ``/authz`` for you. The credential-less user DIRECTORY (who the users are
-+ the disabled kill-switch) is a PEER concern served by :func:`get_users_router` at
-``/users`` -- configured via ``AgentOS(user_directory=...)``, not this router.
+With ``AgentOS(authorization=Authorization(...))`` you do not mount this yourself: AgentOS
+registers it at ``/authz`` whenever the object has a role store. The credential-less user
+DIRECTORY (who the users are + the disabled kill-switch) is a PEER concern served by
+:func:`get_users_router` at ``/users`` -- mounted from ``Authorization(user_directory=...)``,
+not this router.
 
-    from agno.os.authz.role_store import ManagedRoleStore
+    from agno.os.authz import Authorization
 
-    roles = ManagedRoleStore(db_url="postgresql+psycopg://...")
-    agent_os = AgentOS(agents=[...], authorization=True,
-                       authorization_config=AuthorizationConfig(role_store=roles, ...))
+    authz = Authorization(db_url="postgresql+psycopg://...", verification_keys=KEYS, audience=OS_ID)
+    authz.define_role("admin", ["agent_os:admin"])
+    agent_os = AgentOS(agents=[...], authorization=authz)
     app = agent_os.get_app()   # /authz is already served
 
 It is registered alongside the other built-in routers, which is what keeps it ahead

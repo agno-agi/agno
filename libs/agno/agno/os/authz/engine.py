@@ -90,6 +90,12 @@ class PolicyEngine(ABC):
         assignments in bulk override this; the default resolves one subject at a time."""
         return {subject: self.roles_of(subject) for subject in subjects}
 
+    def subjects_of(self, role: str) -> List[str]:
+        """Names directly assigned ``role``. Optional: the bootstrap's admin-lockout check uses it
+        to ask whether anyone still holds an admin role, and skips that check on an engine that
+        cannot enumerate assignments."""
+        raise NotImplementedError("subjects_of")
+
     # --- decisions ---
     @abstractmethod
     def check_resource(
@@ -168,6 +174,9 @@ class PolicyEngine(ABC):
 
     async def aroles_of_many(self, subjects: List[str]) -> Dict[str, List[str]]:
         return await asyncio.to_thread(self.roles_of_many, subjects)
+
+    async def asubjects_of(self, role: str) -> List[str]:
+        return await asyncio.to_thread(self.subjects_of, role)
 
     async def acheck_resource(
         self,

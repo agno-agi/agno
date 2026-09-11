@@ -6,7 +6,6 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from agno.os.authz.audit import AuditSink
 from agno.os.authz.provider import AuthorizationProvider
-from agno.os.authz.role_store import ManagedRoleStore
 
 # Tags carried by the built-in MCP tools, exposed here so callers (and the IDE) can see
 # the valid values for ``MCPConfig.include_tags`` / ``exclude_tags`` without reading
@@ -360,7 +359,15 @@ MCPServerConfig = MCPConfig
 
 
 class AuthorizationConfig(BaseModel):
-    """Configuration for the JWT middleware"""
+    """Low-level authorization config for the JWT middleware. Deprecated as a public type.
+
+    Superseded by :class:`agno.os.authz.Authorization`, which owns every field here (verification,
+    provider, audit, excluded routes) plus the higher-level surface (define_role, seed, the user
+    directory, the admin API). ``Authorization`` builds one of these internally to feed the
+    pipeline; ``AgentOS(authorization_config=...)`` still accepts one so deployments written against
+    the released field set keep booting, with a warning. Frozen: do NOT add fields here -- add them
+    to ``Authorization``.
+    """
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
@@ -382,10 +389,6 @@ class AuthorizationConfig(BaseModel):
     # authz planes at once (e.g. token scopes for operators + a managed role store
     # for end users) — a request is allowed if any of them allows it.
     authorization_provider: Optional[Union[AuthorizationProvider, List[AuthorizationProvider]]] = None
-    # Managed-roles shortcut: pass a ManagedRoleStore and AgentOS uses its provider
-    # (mutually exclusive with authorization_provider). If the store has no DB, AgentOS
-    # binds the OS database to it so roles persist alongside agent data.
-    role_store: Optional[ManagedRoleStore] = None
     # Optional AuditSink. When set, AgentOS records each authorization decision
     # (allow/deny) alongside the change trail, so you get an access audit, not just a
     # change audit. Pass the same sink you give ManagedRoleStore to unify both.
@@ -406,15 +409,6 @@ class AuthorizationConfig(BaseModel):
     # When False (default) JWT/RBAC still apply, but routes operate on the
     # unscoped DB and don't add per-user ownership gates on top of RBAC.
     user_isolation: bool = False
-
-    @model_validator(mode="after")
-    def _provider_xor_role_store(self) -> "AuthorizationConfig":
-        if self.role_store is not None and self.authorization_provider is not None:
-            raise ValueError(
-                "Pass either authorization_provider or role_store on AuthorizationConfig, not both — "
-                "role_store is the shortcut that wires the store's provider for you."
-            )
-        return self
 
 
 class UserDirectoryConfig(BaseModel):
@@ -437,7 +431,7 @@ class UserDirectoryConfig(BaseModel):
     # have AgentOS build one from its own ``db`` -- the zero-ceremony path, equivalent to
     # ``AgentOS(user_directory=True)``. Needs a SQL database: AgentOS adopts the OS db if the
     # store was created without one (and requires ``AgentOS(db=...)`` when you pass ``True``).
-    # Named ``user_store`` to mirror ``AuthorizationConfig.role_store``.
+    # Named ``user_store`` to mirror ``Authorization(role_store=...)``.
     user_store: Any
     # Just-in-time provisioning: when True, the first valid token from a subject not yet in
     # the directory creates a row from the token claims below.

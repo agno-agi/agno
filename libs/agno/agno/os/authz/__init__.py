@@ -8,7 +8,7 @@ behaviour is unchanged.
 
 Customers who need a richer model (relationship-based / ReBAC, attribute-based,
 or an external engine such as OpenFGA, SpiceDB or Cerbos) implement the same
-interface and pass it via ``AuthorizationConfig(authorization_provider=...)``.
+interface and pass it via ``Authorization(authorization_provider=...)``.
 
 Managed roles (runtime-editable RBAC) are backed by agno's own
 :class:`NativePolicyEngine` behind the swappable :class:`PolicyEngine` port — no

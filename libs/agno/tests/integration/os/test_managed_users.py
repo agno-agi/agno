@@ -173,21 +173,22 @@ def _db_url() -> str:
     return f"sqlite:///{path}"
 
 
-def _os(role_store, user_store, *, auto_provision=False, **cfg):
+def _os(role_store, user_store, *, auto_provision=False):
+    from agno.os.authz import Authorization
+
     agent = Agent(id="research-agent", name="Research Agent", db=InMemoryDb())
     return AgentOS(
         id=OS_ID,
         agents=[agent],
-        authorization=True,
-        authorization_config=AuthorizationConfig(
+        authorization=Authorization(
             verification_keys=[SECRET],
             algorithm="HS256",
             verify_audience=True,
             audience=OS_ID,
-            role_store=role_store,  # auto-mounts /authz (roles) and /users (directory)
-            **cfg,
+            role_store=role_store,  # mounts /authz (roles) ...
+            user_directory=user_store,  # ... and /users (directory)
+            auto_provision=auto_provision,
         ),
-        user_directory=UserDirectoryConfig(user_store=user_store, auto_provision=auto_provision),
     )
 
 
@@ -536,8 +537,8 @@ def test_agentos_adopts_its_db_so_the_kill_switch_persists(tmp_path):
     from agno.agent import Agent
     from agno.db.sqlite import SqliteDb
     from agno.os import AgentOS
+    from agno.os.authz import Authorization
     from agno.os.authz.role_store import ManagedRoleStore
-    from agno.os.config import AuthorizationConfig
 
     db_file = str(tmp_path / "os.db")
     os_db = SqliteDb(db_file=db_file)
@@ -553,9 +554,9 @@ def test_agentos_adopts_its_db_so_the_kill_switch_persists(tmp_path):
         id="user-adopt-os",
         agents=[Agent(id="a1", name="A", db=os_db)],
         db=os_db,
-        authorization=True,
-        authorization_config=AuthorizationConfig(verification_keys=["k" * 40], algorithm="HS256", role_store=roles),
-        user_directory=UserDirectoryConfig(user_store=users),
+        authorization=Authorization(
+            verification_keys=["k" * 40], algorithm="HS256", role_store=roles, user_directory=users
+        ),
     ).get_app()
 
     # adopted, and the revocation made before adoption came across
@@ -588,8 +589,8 @@ def test_user_store_without_a_persistable_db_fails_fast():
     from agno.agent import Agent
     from agno.db.in_memory import InMemoryDb
     from agno.os import AgentOS
+    from agno.os.authz import Authorization
     from agno.os.authz.role_store import ManagedRoleStore
-    from agno.os.config import AuthorizationConfig, UserDirectoryConfig
 
     non_sql_db = InMemoryDb()  # stands in for any db with no SQLAlchemy engine (e.g. Mongo)
     roles = ManagedRoleStore(db_url="sqlite:///:memory:")
@@ -600,13 +601,12 @@ def test_user_store_without_a_persistable_db_fails_fast():
             id="unpersisted-users-os",
             agents=[Agent(id="a1", name="A", db=non_sql_db)],
             db=non_sql_db,
-            authorization=True,
-            authorization_config=AuthorizationConfig(
+            authorization=Authorization(
                 verification_keys=["k" * 40],
                 algorithm="HS256",
                 role_store=roles,
+                user_directory=ManagedUserStore(),  # bare: nothing to persist into
             ),
-            user_directory=UserDirectoryConfig(user_store=ManagedUserStore()),  # bare: nothing to persist into
         ).get_app()
 
 

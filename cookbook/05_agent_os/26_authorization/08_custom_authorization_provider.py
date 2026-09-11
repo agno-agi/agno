@@ -49,8 +49,8 @@ from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS
+from agno.os.authz import Authorization
 from agno.os.authz.provider import AuthorizationContext, AuthorizationProvider
-from agno.os.config import AuthorizationConfig
 
 JWT_SECRET = os.getenv("JWT_VERIFICATION_KEY", "your-secret-key-at-least-256-bits-long")
 OS_ID = "custom-provider-os"
@@ -123,7 +123,7 @@ class TierAuthorizationProvider(AuthorizationProvider):
 
 
 # ---------------------------------------------------------------------------
-# Wire it in: AuthorizationConfig(authorization_provider=<your provider>).
+# Wire it in: Authorization(authorization_provider=<your provider>).
 # ---------------------------------------------------------------------------
 
 db = SqliteDb(db_file="tmp/agentos.db")
@@ -138,13 +138,12 @@ agent_os = AgentOS(
     id=OS_ID,
     description="AgentOS with a custom authorization provider",
     agents=[research_agent],
-    authorization=True,
-    authorization_config=AuthorizationConfig(
+    authorization=Authorization(
         verification_keys=[JWT_SECRET],
         algorithm="HS256",
         verify_audience=True,
         audience=OS_ID,
-        # The seam: hand AgentOS your provider. That's the entire integration.
+        # The seam: hand Authorization your provider. That's the entire integration.
         authorization_provider=TierAuthorizationProvider(),
     ),
 )

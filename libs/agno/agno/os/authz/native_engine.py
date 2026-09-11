@@ -346,6 +346,10 @@ class NativePolicyEngine(PolicyEngine):
         self._require_engine()
         return self._db.get_authz_direct_roles_many(subjects)
 
+    def subjects_of(self, role: str) -> List[str]:
+        self._require_engine()
+        return sorted(self._db.list_authz_role_subjects(role))
+
     # --- decisions -------------------------------------------------------
     def _allowed_for_root(
         self, root: str, request_resource: str, request_action: str, *, is_subject: bool = False
@@ -639,6 +643,9 @@ class NativePolicyEngine(PolicyEngine):
 
     async def aroles_of_many(self, subjects: List[str]) -> Dict[str, List[str]]:
         return await self._acall("get_authz_direct_roles_many", subjects)
+
+    async def asubjects_of(self, role: str) -> List[str]:
+        return sorted(await self._acall("list_authz_role_subjects", role))
 
     # --- async decisions ---
     async def _aallowed_for_root(

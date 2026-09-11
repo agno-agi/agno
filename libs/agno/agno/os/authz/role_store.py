@@ -12,8 +12,8 @@ stale).
 
 A DB is **required** — managed roles must be persisted, and an in-memory store
 can't stay consistent across the replicas an AgentOS deployment runs. Give the
-store a DB directly (``db=``/``db_url=``) or let AgentOS adopt the OS DB via
-``AuthorizationConfig(role_store=...)``; without one, every operation raises.
+store a DB directly (``db=``/``db_url=``) or let AgentOS lend the OS DB via
+``Authorization(role_store=...)``; without one, every operation raises.
 Persistence to a DB needs SQLAlchemy: ``pip install "agno[roles]"`` (or ``agno[os]``).
 
 Example::
@@ -445,6 +445,22 @@ class ManagedRoleStore:
         directory's roles (metrics) rather than one page of it."""
         return self._engine.roles_of_many(subjects)
 
+    def admin_subjects(self) -> List[str]:
+        """Subjects whose STORED role satisfies ``agent_os:admin`` -- everyone who can reach the admin
+        API without an admin claim on their token. Empty means the store has locked itself out.
+
+        Only stored assignments count: a role carried on a token (``roles_claim``) is per-request and
+        cannot be enumerated. Raises ``NotImplementedError`` on an engine that cannot list a role's
+        holders (``subjects_of``)."""
+        roles = self.list_roles()
+        admin_roles = [r for r in roles if self._engine.check_scope("agent_os:admin", roles=[r])]
+        holders: set = set()
+        for role in admin_roles:
+            # Assignments share one namespace with role-to-role inheritance, so drop names that are
+            # themselves roles: those are nested roles, not people.
+            holders.update(name for name in self._engine.subjects_of(role) if name not in roles)
+        return sorted(holders)
+
     @property
     def is_bound(self) -> bool:
         """True once the store has a DB for both its policy engine and its role
@@ -458,8 +474,8 @@ class ManagedRoleStore:
     def attach_db(self, db: Any) -> None:
         """Bind an agno ``Db`` to a store created without one, so managed roles
         persist in (and read fresh from) that DB. No-op if the store already has its
-        own DB, or the db isn't SQL-capable. AgentOS calls this to default a managed
-        store to the OS database when you pass ``AuthorizationConfig(role_store=...)``."""
+        own DB, or the db isn't SQL-capable. The Authorization object calls this to default a
+        managed store to the OS database when you pass ``Authorization(role_store=...)``."""
         attach = getattr(self._engine, "attach_db", None)
         if callable(attach):
             attach(db)
@@ -765,6 +781,15 @@ class ManagedRoleStore:
     async def aroles_of_many(self, subjects: List[str]) -> Dict[str, List[str]]:
         """Async twin of :meth:`roles_of_many`."""
         return await self._engine.aroles_of_many(subjects)
+
+    async def aadmin_subjects(self) -> List[str]:
+        """Async twin of :meth:`admin_subjects`."""
+        roles = await self.alist_roles()
+        holders: set = set()
+        for role in roles:
+            if await self._engine.acheck_scope("agent_os:admin", roles=[role]):
+                holders.update(name for name in await self._engine.asubjects_of(role) if name not in roles)
+        return sorted(holders)
 
     # --- async audit + gating ---
     async def aaudit_log(

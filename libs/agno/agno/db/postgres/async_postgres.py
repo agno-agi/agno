@@ -5754,6 +5754,10 @@ class AsyncPostgresDb(AsyncBaseDb):
         table = await self._get_table(table_type=AUTHZ_GROUPING, create_table_if_not_found=True)
         return await authz_store.aget_direct_roles_many(self.db_engine, table, subjects)
 
+    async def list_authz_role_subjects(self, role: str) -> List[str]:
+        table = await self._get_table(table_type=AUTHZ_GROUPING, create_table_if_not_found=True)
+        return await authz_store.aget_role_subjects(self.db_engine, table, role)
+
     async def authz_name_is_role(self, name: str) -> bool:
         policy = await self._get_table(table_type=AUTHZ_POLICY, create_table_if_not_found=True)
         grouping = await self._get_table(table_type=AUTHZ_GROUPING, create_table_if_not_found=True)

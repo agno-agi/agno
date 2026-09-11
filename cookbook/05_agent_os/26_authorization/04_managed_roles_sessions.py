@@ -32,8 +32,7 @@ from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS
-from agno.os.authz import ManagedRoleStore
-from agno.os.config import AuthorizationConfig
+from agno.os.authz import Authorization
 from agno.session import AgentSession
 
 # ---------------------------------------------------------------------------
@@ -46,16 +45,21 @@ OS_ID = "managed-roles-sessions-os"
 
 os.makedirs("tmp", exist_ok=True)
 
-# Define roles in agno scope terms. support is read-only; operator can delete.
-roles = ManagedRoleStore(db_url="sqlite:///tmp/managed_roles_sessions.db")
-roles.set_role_scopes("support", ["sessions:read"])
-roles.set_role_scopes(
-    "operator", ["sessions:read", "sessions:write", "sessions:delete"]
+# Authorization owns verification and the roles in one object. support is read-only; operator
+# can delete. define_role sets what a role may do; authz.role_store hands people the roles.
+authz = Authorization(
+    db_url="sqlite:///tmp/managed_roles_sessions.db",
+    verification_keys=[JWT_SECRET],
+    algorithm="HS256",
+    verify_audience=True,
+    audience=OS_ID,
 )
-roles.set_role_scopes("admin", ["agent_os:admin"])
-roles.assign("bob", "support")
-roles.assign("val", "operator")
-roles.assign("alice", "admin")
+authz.define_role("support", ["sessions:read"])
+authz.define_role("operator", ["sessions:read", "sessions:write", "sessions:delete"])
+authz.define_role("admin", ["agent_os:admin"])
+authz.role_store.assign("bob", "support")
+authz.role_store.assign("val", "operator")
+authz.role_store.assign("alice", "admin")
 
 # Setup database
 db = SqliteDb(db_file="tmp/agentos_sessions.db")
@@ -88,20 +92,13 @@ research_agent = Agent(
     db=db,
 )
 
-# Create AgentOS using the managed-role store as the provider.
+# Create AgentOS with the Authorization object - it carries verification and the roles.
 agent_os = AgentOS(
     id=OS_ID,
     description="Managed-roles AgentOS gating session access",
     agents=[research_agent],
     db=db,
-    authorization=True,
-    authorization_config=AuthorizationConfig(
-        verification_keys=[JWT_SECRET],
-        algorithm="HS256",
-        verify_audience=True,
-        audience=OS_ID,
-        authorization_provider=roles.provider,
-    ),
+    authorization=authz,
 )
 
 # Get the app

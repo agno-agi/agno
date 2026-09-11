@@ -35,9 +35,7 @@ import jwt
 from agno.agent import Agent
 from agno.db.in_memory import InMemoryDb
 from agno.os import AgentOS
-from agno.os.authz import ManagedRoleStore
-from agno.os.authz.audit import DbAuditSink
-from agno.os.config import AuthorizationConfig
+from agno.os.authz import Authorization
 from fastapi.testclient import TestClient
 
 SECRET = "managed-roles-audit-demo-secret-at-least-256-bits-long-xx"
@@ -59,32 +57,29 @@ def token(sub: str) -> dict:
 
 
 def main() -> None:
-    # One DB for everything; the SAME sink records both trails.
-    audit = DbAuditSink(db_url="sqlite:///tmp/audit_demo.db")
-    store = ManagedRoleStore(db_url="sqlite:///tmp/audit_demo.db", audit=audit)
+    # One object, one DB. audit=True is the single switch: it records BOTH trails (the change
+    # log of who edited roles/users, and the decision log of every allow/deny).
+    authz = Authorization(
+        db_url="sqlite:///tmp/audit_demo.db",
+        verification_keys=[SECRET],
+        algorithm="HS256",
+        verify_audience=True,
+        audience=OS_ID,
+        audit=True,
+    )
 
     # --- role changes (each is recorded on the change trail, with the actor) ---
-    store.set_role_scopes("viewer", ["agents:*:read"], actor="alice")
-    store.set_role_scopes(
+    # define_role establishes the role; later edits go through authz.role_store, the live handle
+    # the /authz admin API writes to, so each carries the acting admin (actor=).
+    authz.define_role("viewer", ["agents:*:read"])
+    authz.role_store.set_role_scopes(
         "viewer", ["agents:*:read", "agents:research-agent:run"], actor="alice"
     )  # widened
-    store.assign("bob", "viewer", actor="alice")
+    authz.role_store.assign("bob", "viewer", actor="alice")
 
     # --- a couple of real requests (each is recorded on the decision trail) ---
     agent = Agent(id="research-agent", name="Research Agent", db=InMemoryDb())
-    agent_os = AgentOS(
-        id=OS_ID,
-        agents=[agent],
-        authorization=True,
-        authorization_config=AuthorizationConfig(
-            verification_keys=[SECRET],
-            algorithm="HS256",
-            verify_audience=True,
-            audience=OS_ID,
-            authorization_provider=store.provider,
-            audit=audit,  # <- decision audit on
-        ),
-    )
+    agent_os = AgentOS(id=OS_ID, agents=[agent], authorization=authz)
     client = TestClient(agent_os.get_app())
     client.get(
         "/agents/research-agent", headers=token("bob")
@@ -95,13 +90,13 @@ def main() -> None:
 
     # --- read both trails back ---
     print("\n=== CHANGE TRAIL (authz_audit) — who changed what ===")
-    for e in store.audit_log(limit=20):
+    for e in authz.role_store.audit_log(limit=20):
         print(
             f"  {e['actor'] or 'system':>6}  {e['action']:<16} {e['target']:<10} {e.get('before')} -> {e.get('after')}"
         )
 
     print("\n=== DECISION TRAIL (authz_decisions) — every allow/deny ===")
-    for d in audit.read_decisions(limit=20):
+    for d in authz.audit_sink.read_decisions(limit=20):
         m = d.get("metadata", {})
         print(
             f"  {d['actor'] or '-':>6}  {d['action']:<14} {d['target']:<28} required={m.get('required')}"

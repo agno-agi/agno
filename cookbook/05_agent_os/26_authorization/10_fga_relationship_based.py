@@ -30,8 +30,11 @@ import jwt
 from agno.agent import Agent
 from agno.db.in_memory import InMemoryDb
 from agno.os import AgentOS
-from agno.os.authz import FGAAuthorizationProvider, ScopeAuthorizationProvider
-from agno.os.config import AuthorizationConfig
+from agno.os.authz import (
+    Authorization,
+    FGAAuthorizationProvider,
+    ScopeAuthorizationProvider,
+)
 from fastapi.testclient import TestClient
 
 SECRET = "fga-cookbook-secret-at-least-256-bits-long-padding-xx"
@@ -72,8 +75,7 @@ agent = Agent(id="research-agent", name="Research Agent", db=InMemoryDb())
 agent_os = AgentOS(
     id=OS_ID,
     agents=[agent],
-    authorization=True,
-    authorization_config=AuthorizationConfig(
+    authorization=Authorization(
         verification_keys=[SECRET],
         algorithm="HS256",
         verify_audience=True,
