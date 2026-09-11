@@ -231,3 +231,80 @@ def test_disabled_user_denied_over_async_directory(tmp_path):
         m.return_value = _MockRunOutput()
         r = client.post("/agents/research/runs", headers=_auth("dave"), data={"message": "hi", "stream": "false"})
     assert r.status_code == 403  # disabled -> denied even with a valid token
+
+
+def test_user_management_metrics_async_on_async_db(tmp_path):
+    """The reads behind /users/metrics have async twins that work on an async DB, the
+    served endpoint works on one, and the sync collector on a sync DB agrees with the
+    async one."""
+    from agno.os.authz import Authorization
+    from agno.os.authz.role_router import (
+        acollect_user_management_metrics,
+        collect_user_management_metrics,
+    )
+
+    adb = AsyncSqliteDb(db_file=str(tmp_path / "metrics.db"))
+    roles = ManagedRoleStore(db=adb)
+    users = ManagedUserStore(db=adb)
+
+    async def seed():
+        await roles.aset_role_scopes("admin", ["agent_os:admin"])
+        await roles.aset_role_scopes("viewer", ["agents:*:read"])
+        for user in ("alice", "bob", "carol", "dave"):
+            await users.aupsert(user)
+        await roles.aassign("alice", "admin")
+        await roles.aassign("bob", "viewer")
+        await roles.aassign("carol", "viewer")
+        await users.aset_disabled("dave", True)
+
+        assert await users.acount_by_status() == {"total": 4, "disabled": 1}
+        assert await users.aids() == ["alice", "bob", "carol", "dave"]
+        assert [row["count"] for row in await users.acreated_by_day()] == [4]
+        assert await roles.aroles_of_many(["alice", "bob", "nobody"]) == {
+            "alice": ["admin"],
+            "bob": ["viewer"],
+            "nobody": [],
+        }
+        metrics = await acollect_user_management_metrics(users, roles)
+        assert (metrics.total, metrics.active, metrics.disabled, metrics.without_role) == (4, 3, 1, 1)
+        assert [(r.role, r.count) for r in metrics.by_role] == [("admin", 1), ("viewer", 2)]
+
+    asyncio.run(seed())
+
+    # served end to end on the async DB: the admin gate awaits the role store, and the
+    # handler awaits the collector, so nothing on the path touches the DB synchronously
+    os_ = AgentOS(
+        id=OS_ID,
+        agents=[Agent(id="research", name="R", db=InMemoryDb())],
+        db=adb,
+        authorization=Authorization(
+            verification_keys=[SECRET],
+            algorithm="HS256",
+            verify_audience=True,
+            audience=OS_ID,
+            role_store=roles,
+            user_directory=users,
+        ),
+    )
+    app = os_.get_app()
+    client = TestClient(app)
+    assert client.get("/users/metrics", headers=_auth("bob")).status_code == 403
+    body = client.get("/users/metrics", headers=_auth("alice")).json()
+    assert body["total"] == 4 and body["disabled"] == 1 and body["without_role"] == 1
+    assert body["by_role"] == [{"role": "admin", "count": 1}, {"role": "viewer", "count": 2}]
+
+    # parity: the sync collector on a sync DB produces the same numbers the async one does
+    sdb = SqliteDb(db_file=str(tmp_path / "metrics_sync.db"))
+    sroles, susers = ManagedRoleStore(db=sdb), ManagedUserStore(db=sdb)
+    sroles.set_role_scopes("admin", ["agent_os:admin"])
+    sroles.set_role_scopes("viewer", ["agents:*:read"])
+    for user in ("alice", "bob", "carol", "dave"):
+        susers.upsert(user)
+    sroles.assign("alice", "admin")
+    sroles.assign("bob", "viewer")
+    sroles.assign("carol", "viewer")
+    susers.set_disabled("dave", True)
+    sync_metrics = collect_user_management_metrics(susers, sroles)
+    async_metrics = asyncio.run(acollect_user_management_metrics(susers, sroles))
+    assert sync_metrics.model_dump(exclude={"created_per_day"}) == async_metrics.model_dump(exclude={"created_per_day"})
+    assert [r.count for r in sync_metrics.created_per_day] == [r.count for r in async_metrics.created_per_day] == [4]

@@ -215,3 +215,23 @@ scope was refused (403). After `PATCH /users/bob {"disabled": true}`, bob's next
 request bounced (403) -- the kill-switch is enforced here because auth is on. Route
 inspection confirmed NO `/authz` surface exists (only `/users`, `/users/{user_id}`),
 so a frontend gets a clean users-only API.
+
+---
+
+### 11_user_management_metrics.py
+
+**Status:** PASS
+
+**Test mode:** LIVE (driven via TestClient; no model calls needed)
+
+**Description:** Seeds a six-person directory (three of them backdated) and a role
+store, then reads `GET /users/metrics` through the AgentOS pipeline. Checks that the
+endpoint is admin-only like the rest of `/users`, that the date range bounds only the
+per-day series, and that a delete moves every number on the next read with no
+refresh step.
+
+**Result:** Exit 0. The analyst was refused (403); the admin read the endpoint (200)
+and got total 6, active 5, disabled 1, without_role 2, a three-day series (2, 1, 3)
+and the role breakdown admin 1, analyst 2, viewer 1. `starting_date=today` returned
+only today's point with the total still 6. After deleting carol the total dropped to
+5 and analyst to 1 on the very next read.

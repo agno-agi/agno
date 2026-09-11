@@ -59,11 +59,14 @@ User directory admin API -- get_users_router (default prefix ``/users``):
     GET    /users/{user_id}                      a user
     PATCH  /users/{user_id}                      update profile / disable (the kill-switch)
     DELETE /users/{user_id}                      remove a user (cascades role revocation)
+    GET    /users/metrics                        directory size, users created per day, users per role
 """
 
 import time
+from datetime import date as date_type
+from datetime import datetime, timezone
 from enum import Enum
-from typing import TYPE_CHECKING, Any, List, Optional, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
@@ -231,6 +234,39 @@ class UpdateUserRequest(BaseModel):
     )
 
 
+class UsersCreatedOnDay(BaseModel):
+    date: date_type = Field(..., description="UTC day")
+    count: int = Field(..., description="Users created on that day", ge=0)
+
+
+class UsersByRole(BaseModel):
+    role: str = Field(..., description="Role slug")
+    count: int = Field(..., description="Users in the directory holding this role", ge=0)
+
+
+class UserManagementMetrics(BaseModel):
+    """The directory as it is now plus its registration history. Computed on read;
+    there is no cache and no refresh step."""
+
+    total: int = Field(..., description="Users in the directory, including disabled ones", ge=0)
+    active: int = Field(..., description="Users not disabled", ge=0)
+    disabled: int = Field(..., description="Users switched off by the disabled kill-switch", ge=0)
+    without_role: Optional[int] = Field(
+        None,
+        description=(
+            "Users with no role assigned in the role store (they rely on the default role, if any). "
+            "Null when no role store is configured."
+        ),
+        ge=0,
+    )
+    created_per_day: List[UsersCreatedOnDay] = Field(
+        ..., description="Users created per UTC day, oldest first; days with no registrations are omitted"
+    )
+    by_role: Optional[List[UsersByRole]] = Field(
+        None, description="Users per role, sorted by role. Null when no role store is configured"
+    )
+
+
 def _paginated(data: list, page: int, limit: int, total: int, search_time_ms: float = 0) -> PaginatedResponse:
     """Wrap one already-paged slice in the SDK's PaginatedResponse ({data, meta})."""
     return PaginatedResponse(
@@ -284,16 +320,18 @@ def _make_require_admin(role_store: "Optional[ManagedRoleStore]" = None) -> Any:
     administer despite being denied every resource -- a privilege escalation.
     """
 
-    def require_admin(request: Request) -> str:
+    # Async, and the token plane is checked first: the managed plane is a DB read, and
+    # the role store may be bound to an async database, which its sync methods refuse.
+    async def require_admin(request: Request) -> str:
         if not getattr(request.state, "authenticated", False):
             raise HTTPException(status_code=401, detail="Not authenticated")
         principal_id = getattr(request.state, "user_id", None)
         claims = getattr(request.state, "claims", {}) or {}
         token_scopes = getattr(request.state, "scopes", []) or []
         admin_scope = getattr(request.state, "admin_scope", None) or AgentOSScope.ADMIN.value
-        token_admin = admin_scope in token_scopes and _token_scopes_enforced(request)
-        managed_admin = role_store.can_manage(principal_id, claims) if role_store is not None else False
-        if token_admin or managed_admin:
+        if admin_scope in token_scopes and _token_scopes_enforced(request):
+            return principal_id or ""
+        if role_store is not None and await role_store.acan_manage(principal_id, claims):
             return principal_id or ""
         raise HTTPException(status_code=403, detail="Admin privileges required")
 
@@ -497,6 +535,93 @@ def get_roles_router(
     return router
 
 
+def _day_bounds(starting_date: Optional[date_type], ending_date: Optional[date_type]) -> tuple:
+    """Inclusive start / exclusive end of the requested UTC day range, as epoch seconds."""
+    if starting_date is not None and ending_date is not None and starting_date > ending_date:
+        raise HTTPException(status_code=422, detail="starting_date must be on or before ending_date")
+    starting_at = (
+        int(datetime.combine(starting_date, datetime.min.time(), tzinfo=timezone.utc).timestamp())
+        if starting_date is not None
+        else None
+    )
+    # The exclusive bound is one day after the start of ending_date, added in epoch
+    # seconds rather than as a date so date.max (9999-12-31) cannot overflow.
+    ending_before = (
+        int(datetime.combine(ending_date, datetime.min.time(), tzinfo=timezone.utc).timestamp()) + 24 * 60 * 60
+        if ending_date is not None
+        else None
+    )
+    return starting_at, ending_before
+
+
+def _build_user_management_metrics(
+    status: Dict[str, int],
+    created_rows: List[Dict[str, int]],
+    roles_of: Optional[Dict[str, List[str]]],
+) -> UserManagementMetrics:
+    """Turn the three store reads into the response; shared by the sync and async collectors."""
+    total, disabled = status["total"], status["disabled"]
+    created = [
+        UsersCreatedOnDay(date=datetime.fromtimestamp(row["date"], tz=timezone.utc).date(), count=row["count"])
+        for row in created_rows
+    ]
+    by_role: Optional[List[UsersByRole]] = None
+    without_role: Optional[int] = None
+    if roles_of is not None:
+        counts: Dict[str, int] = {}
+        without_role = 0
+        for roles in roles_of.values():
+            if not roles:
+                without_role += 1
+                continue
+            for role in roles:
+                counts[role] = counts.get(role, 0) + 1
+        by_role = [UsersByRole(role=role, count=count) for role, count in sorted(counts.items())]
+    return UserManagementMetrics(
+        total=total,
+        active=total - disabled,
+        disabled=disabled,
+        without_role=without_role,
+        created_per_day=created,
+        by_role=by_role,
+    )
+
+
+def collect_user_management_metrics(
+    user_store: "ManagedUserStore",
+    role_store: "Optional[ManagedRoleStore]" = None,
+    starting_at: Optional[int] = None,
+    ending_before: Optional[int] = None,
+) -> UserManagementMetrics:
+    """Read the directory metrics live. The date range bounds only the per-day series;
+    the counts always describe the whole directory as it is now.
+
+    The directory is bounded by the product's user limits and its ``created_at`` column
+    is indexed, so a bounded group-by is cheaper than keeping a cache table in step.
+    Roles come from the role store, not the grouping table directly, so a custom policy
+    engine that keeps assignments elsewhere is counted correctly. Disabled users keep
+    their role and stay in the breakdown, matching ``total``.
+    """
+    status = user_store.count_by_status()
+    created_rows = user_store.created_by_day(starting_at=starting_at, ending_before=ending_before)
+    roles_of = role_store.roles_of_many(user_store.ids()) if role_store is not None else None
+    return _build_user_management_metrics(status, created_rows, roles_of)
+
+
+async def acollect_user_management_metrics(
+    user_store: "ManagedUserStore",
+    role_store: "Optional[ManagedRoleStore]" = None,
+    starting_at: Optional[int] = None,
+    ending_before: Optional[int] = None,
+) -> UserManagementMetrics:
+    """Async twin of :func:`collect_user_management_metrics`; works whether the stores are
+    bound to a sync or an async database."""
+    status = await user_store.acount_by_status()
+    created_rows = await user_store.acreated_by_day(starting_at=starting_at, ending_before=ending_before)
+    roles_of = await role_store.aroles_of_many(await user_store.aids()) if role_store is not None else None
+    return _build_user_management_metrics(status, created_rows, roles_of)
+
+
 def get_users_router(
     user_store: "ManagedUserStore",
     role_store: "Optional[ManagedRoleStore]" = None,
@@ -561,6 +686,23 @@ def get_users_router(
     @router.post("", response_model=AuthzUserSchema)
     def create_user(body: CreateUserRequest, actor: str = Depends(require_admin)):
         return _user(user_store.upsert(body.id, email=body.email, name=body.name, actor=actor))
+
+    # Declared before /{user_id} so the path parameter does not swallow it.
+    @router.get("/metrics", response_model=UserManagementMetrics)
+    async def get_user_metrics(
+        starting_date: Optional[date_type] = Query(
+            default=None, description="First UTC day of the series (YYYY-MM-DD)"
+        ),
+        ending_date: Optional[date_type] = Query(default=None, description="Last UTC day of the series (YYYY-MM-DD)"),
+    ):
+        """Directory size (total, active, disabled), users created per UTC day, and, when a
+        role store is configured, users per role and how many hold none. The date range
+        bounds only the per-day series. Served through the async store path so it works
+        whether the directory is bound to a sync or an async database."""
+        starting_at, ending_before = _day_bounds(starting_date, ending_date)
+        return await acollect_user_management_metrics(
+            user_store, role_store, starting_at=starting_at, ending_before=ending_before
+        )
 
     @router.get("/{user_id}", response_model=AuthzUserSchema)
     def get_user(user_id: str):

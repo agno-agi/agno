@@ -34,6 +34,7 @@ it runs offline against a simulated issuer.
 | `08_custom_authorization_provider.py` | Bring your own decision engine in about thirty lines |
 | `09_idp_workos_auth0.py` | Let WorkOS, Auth0, or Okta own identity while you enforce what a role may do |
 | `10_fga_relationship_based.py` | Relationship-based access (ReBAC): "alice may run this because she owns its folder" |
+| `11_user_management_metrics.py` | `GET /users/metrics`: directory size, users created per day, and users per role, computed live for a User Management page |
 | `console.html` | A small browser console for driving the `/authz` admin API by hand |
 
 ## Start Here

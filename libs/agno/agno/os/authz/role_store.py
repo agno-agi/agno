@@ -440,6 +440,11 @@ class ManagedRoleStore:
     def roles_of(self, subject: str) -> List[str]:
         return self._engine.roles_of(subject)
 
+    def roles_of_many(self, subjects: List[str]) -> Dict[str, List[str]]:
+        """Roles of each subject in one call; used where a caller needs the whole
+        directory's roles (metrics) rather than one page of it."""
+        return self._engine.roles_of_many(subjects)
+
     def admin_subjects(self) -> List[str]:
         """Subjects whose STORED role satisfies ``agent_os:admin`` -- everyone who can reach the admin
         API without an admin claim on their token. Empty means the store has locked itself out.
@@ -772,6 +777,10 @@ class ManagedRoleStore:
     async def aroles_of(self, subject: str) -> List[str]:
         """Async twin of :meth:`roles_of`."""
         return await self._engine.aroles_of(subject)
+
+    async def aroles_of_many(self, subjects: List[str]) -> Dict[str, List[str]]:
+        """Async twin of :meth:`roles_of_many`."""
+        return await self._engine.aroles_of_many(subjects)
 
     async def aadmin_subjects(self) -> List[str]:
         """Async twin of :meth:`admin_subjects`."""
