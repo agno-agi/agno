@@ -13,7 +13,7 @@ route gate, the per-resource gate, the WebSocket gates, and the MCP tool gate.
 
 Managed roles need a SQL database; the examples use throwaway SQLite under
 `tmp/`, so nothing external is required. Install the extra with
-`pip install "agno[roles]"`. No `OPENAI_API_KEY` is needed for most files — they
+`pip install "agno[os]"`. No `OPENAI_API_KEY` is needed for most files — they
 decide who is allowed, without calling a model. `10_fga_relationship_based.py` runs
 against an in-memory FGA store; point it at OpenFGA or WorkOS FGA with
 `pip install "agno[fga]"`. `09_idp_workos_auth0.py` mints its own throwaway keys, so
@@ -23,7 +23,7 @@ it runs offline against a simulated issuer.
 
 | File | Lesson |
 |---|---|
-| `00_quickstart_authorization.py` | Start here. The whole setup in one `Authorization` object: verification, roles, users, audit, and the admin API, borrowing the OS db |
+| `00_quickstart_authorization.py` | Start here. Verification, roles, audit and the admin API on one `Authorization` object, the user directory on `AgentOS(user_directory=True)`, all on the OS db |
 | `01_managed_roles.py` | Roles only: define what each role may do and hand people roles through `authz.role_store`, no directory |
 | `02_managed_users.py` | The credential-less user directory and the disabled-user kill switch that outlives a valid token |
 | `03_directory_without_auth.py` | `AgentOS(db=db, user_isolation=True, user_directory=True)` with NO auth: a roster + per-user isolation that key off the run's user_id (advisory without auth) |

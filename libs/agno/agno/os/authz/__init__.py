@@ -16,28 +16,30 @@ third-party policy engine in the default path.
 """
 
 from agno.os.authz.audit import AuditEvent, AuditSink, DbAuditSink, LoggingAuditSink
+from agno.os.authz.authorization import Authorization
 from agno.os.authz.engine import EngineAuthorizationProvider, PolicyEngine, ScopeEntry
-from agno.os.authz.facade import Authorization
 from agno.os.authz.fga import FGAAuthorizationProvider, FGAClient
 from agno.os.authz.native_engine import NativePolicyEngine
 from agno.os.authz.provider import AuthorizationContext, AuthorizationProvider
-from agno.os.authz.role_store import ManagedRoleStore
+from agno.os.authz.role_store import RoleStore
 from agno.os.authz.scope_provider import ScopeAuthorizationProvider
-from agno.os.authz.user_store import ManagedUserStore
+from agno.os.authz.user_directory import UserDirectory
+from agno.os.authz.user_store import UserStore
 
 __all__ = [
-    # One-object facade: verification + roles + users + audit + admin API, wired into AgentOS.
+    # The Authorization object: verification + roles + users + audit + admin API, wired into AgentOS.
     "Authorization",
     "AuthorizationContext",
     "AuthorizationProvider",
     "ScopeAuthorizationProvider",
     # Managed roles: the product surface + swappable backend (port, generic
-    # provider, native default engine). get_roles_router lives in role_router and
+    # provider, native default engine). get_roles_router lives in admin_router and
     # is imported directly to keep this package import FastAPI-free.
-    "ManagedRoleStore",
+    "RoleStore",
     # The credential-less user directory (the no-IdP tier). Dependency-free like
-    # ManagedRoleStore, so it belongs on the same package seam.
-    "ManagedUserStore",
+    # RoleStore, so it belongs on the same package seam.
+    "UserStore",
+    "UserDirectory",
     "PolicyEngine",
     "ScopeEntry",
     "EngineAuthorizationProvider",

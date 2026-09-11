@@ -26,7 +26,7 @@ What you do NOT get without auth (read this):
   AgentOS(authorization=True) with a verification key. See 02_managed_users.py.
 
 Run it:
-    pip install "agno[roles]"
+    pip install "agno[os]"
     export OPENAI_API_KEY=...   # this file makes a real (tiny) run per user
     python 03_directory_without_auth.py
 """

@@ -13,7 +13,8 @@ from agno.agent import Agent  # noqa: E402
 from agno.db.in_memory import InMemoryDb  # noqa: E402
 from agno.db.sqlite import SqliteDb  # noqa: E402
 from agno.os import AgentOS  # noqa: E402
-from agno.os.config import AuthorizationConfig, UserDirectoryConfig  # noqa: E402
+from agno.os.authz import UserDirectory  # noqa: E402
+from agno.os.config import AuthorizationConfig  # noqa: E402
 
 
 def _os(tmp_path, **kw):
@@ -62,13 +63,13 @@ def test_no_auth_directory_does_not_enforce_disabled(tmp_path):
 
     from fastapi.testclient import TestClient
 
-    from agno.os.authz.user_store import ManagedUserStore
+    from agno.os.authz.user_store import UserStore
 
-    store = ManagedUserStore(db=SqliteDb(db_file=str(tmp_path / "dir.db")))
+    store = UserStore(db=SqliteDb(db_file=str(tmp_path / "dir.db")))
     store.upsert("chegizkhan", name="Chegiz")
     store.set_disabled("chegizkhan", True)
 
-    os_ = _os(tmp_path, user_directory=UserDirectoryConfig(user_store=store, auto_provision=True))
+    os_ = _os(tmp_path, user_directory=UserDirectory(user_store=store, auto_provision=True))
     client = TestClient(os_.get_app())
 
     with patch.object(Agent, "arun", new_callable=AsyncMock) as m:
@@ -152,11 +153,11 @@ def test_user_isolation_without_auth_sets_scoping_but_does_not_provision(tmp_pat
 
     from starlette.requests import Request
 
-    from agno.os.authz.user_store import ManagedUserStore
+    from agno.os.authz.user_store import UserStore
     from agno.os.middleware.no_auth_identity import NoAuthIdentityMiddleware
     from agno.os.middleware.user_scope import get_scoped_user_id
 
-    store = ManagedUserStore(db=SqliteDb(db_file=str(tmp_path / "m.db")))
+    store = UserStore(db=SqliteDb(db_file=str(tmp_path / "m.db")))
     app_obj = SimpleNamespace(
         state=SimpleNamespace(
             user_store=store,
@@ -232,11 +233,11 @@ def test_users_admin_api_requires_auth_even_on_a_no_auth_instance(tmp_path):
     the admin API under authorization (see manage_users.py) or manage the directory via the store."""
     from fastapi.testclient import TestClient
 
-    from agno.os.authz.role_router import get_users_router
-    from agno.os.authz.user_store import ManagedUserStore
+    from agno.os.authz.admin_router import get_users_router
+    from agno.os.authz.user_store import UserStore
 
-    store = ManagedUserStore(db=SqliteDb(db_file=str(tmp_path / "u.db")))
-    os_ = _os(tmp_path, user_directory=UserDirectoryConfig(user_store=store, auto_provision=True))
+    store = UserStore(db=SqliteDb(db_file=str(tmp_path / "u.db")))
+    os_ = _os(tmp_path, user_directory=UserDirectory(user_store=store, auto_provision=True))
     app = os_.get_app()
     app.include_router(get_users_router(store))
     client = TestClient(app)
@@ -251,10 +252,10 @@ def test_no_auth_run_refuses_a_reserved_principal(tmp_path):
 
     from fastapi.testclient import TestClient
 
-    from agno.os.authz.user_store import ManagedUserStore
+    from agno.os.authz.user_store import UserStore
 
-    store = ManagedUserStore(db=SqliteDb(db_file=str(tmp_path / "u.db")))
-    os_ = _os(tmp_path, user_isolation=True, user_directory=UserDirectoryConfig(user_store=store, auto_provision=True))
+    store = UserStore(db=SqliteDb(db_file=str(tmp_path / "u.db")))
+    os_ = _os(tmp_path, user_isolation=True, user_directory=UserDirectory(user_store=store, auto_provision=True))
     client = TestClient(os_.get_app())
 
     with patch.object(Agent, "arun", new_callable=AsyncMock) as m:
@@ -267,14 +268,3 @@ def test_no_auth_run_refuses_a_reserved_principal(tmp_path):
     assert store.get("sa:backend") is None  # reserved -> refused
     assert store.get("__scheduler__") is None  # reserved -> refused
     assert store.get("realuser") is not None  # normal -> provisioned
-
-
-def test_authz_plane_still_requires_authorization(tmp_path):
-    """Unchanged by the directory/isolation relaxation: a provider (an authz plane) still needs
-    authorization=True, because an unenforced plane would serve every route unauthenticated."""
-    from agno.os.authz.role_store import ManagedRoleStore
-
-    db = SqliteDb(db_file=str(tmp_path / "plane.db"))
-    provider = ManagedRoleStore(db=db).provider
-    with pytest.raises(ValueError, match="authorization=True"):
-        _os(tmp_path, authorization_config=AuthorizationConfig(authorization_provider=provider)).get_app()

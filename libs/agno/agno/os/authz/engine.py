@@ -1,13 +1,13 @@
 """The pluggable policy engine behind managed roles — the swappable backend seam.
 
-:class:`~agno.os.authz.role_store.ManagedRoleStore` is the agno-native product
+:class:`~agno.os.authz.role_store.RoleStore` is the agno-native product
 surface (create roles, set scopes, assign, audit). The *engine* underneath —
 which actually stores policy and answers "is this allowed?" — is a swappable
 adapter behind this narrow port. agno's own
 :class:`~agno.os.authz.native_engine.NativePolicyEngine` is the default (zero
 third-party dependencies); swapping to another backend (OpenFGA, SpiceDB, ...)
 means implementing :class:`PolicyEngine` and passing it as
-``ManagedRoleStore(engine=...)`` — no change to the store's API, the ``/authz``
+``RoleStore(engine=...)`` — no change to the store's API, the ``/authz``
 router, the cookbooks, or anything SDK users see.
 
 The port speaks only agno terms — roles, subjects, scope strings, allow/deny.
@@ -28,7 +28,7 @@ def normalize_roles_claim(claims: Optional[Dict[str, Any]], roles_claim: Optiona
     """A caller's roles from a JWT claim, or None when absent/unusable. Accepts a
     single string (e.g. WorkOS sends one ``role``) or a list. One owner for this
     coercion so the gate (``EngineAuthorizationProvider``) and the admin check
-    (``ManagedRoleStore.can_manage``) can't drift — both are security-relevant."""
+    (``RoleStore.can_manage``) can't drift — both are security-relevant."""
     if not roles_claim or not claims:
         return None
     raw = claims.get(roles_claim)
@@ -224,7 +224,7 @@ class EngineAuthorizationProvider(AuthorizationProvider):
 
     Engine-agnostic: it resolves the caller's identity (subject + optional
     token-carried roles) from the request context and delegates every decision to
-    the engine. This is what ``ManagedRoleStore.provider`` returns, regardless of
+    the engine. This is what ``RoleStore.provider`` returns, regardless of
     which engine is plugged in.
     """
 

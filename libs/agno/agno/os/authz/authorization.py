@@ -1,10 +1,9 @@
-"""One object for AgentOS authorization: verification, roles, users, audit, admin API.
+"""One object for AgentOS authorization: verification, roles, audit, and the ``/authz`` admin API.
 
-Standing up managed roles + a user directory + the admin API by hand means assembling a dozen
-objects (a ``DbAuditSink``, a ``ManagedRoleStore``, a ``ManagedUserStore``, an
-``AuthorizationConfig``, a ``UserDirectoryConfig``, a ``ScopeAuthorizationProvider``, the store's
-provider, two router factories, two ``include_router`` calls) and keeping four of them pointed at
-the same database. :class:`Authorization` owns all of that and wires itself into AgentOS:
+Standing up managed roles by hand means assembling a ``DbAuditSink``, a ``RoleStore``, an
+``AuthorizationConfig``, a ``ScopeAuthorizationProvider``, the store's provider, a router factory
+and an ``include_router`` call, and keeping them pointed at the same database.
+:class:`Authorization` owns all of that and wires itself into AgentOS:
 
     from agno.os.authz import Authorization
 
@@ -21,7 +20,7 @@ the same database. :class:`Authorization` owns all of that and wires itself into
 Roles are opt-in: ``define_role`` puts roles in play, and a verify-only Authorization defines none.
 The user directory is NOT configured here, and Authorization never touches it. It is a top-level
 ``AgentOS(user_directory=...)`` concern, a peer of ``user_isolation``, and it works with or without
-auth. Seed people on the ``ManagedUserStore`` itself (``users.upsert(...)``) and give them roles with
+auth. Seed people on the ``UserStore`` itself (``users.upsert(...)``) and give them roles with
 ``assign(subject, role)`` (bootstrap-safe) or the ``/authz`` admin API. Verification lives here because it
 already lives under authorization today (``authorization=True`` + ``AuthorizationConfig(...)``), and
 plenty of setups verify tokens with no roles (isolation, scope-based access, service accounts). So the
@@ -29,8 +28,8 @@ verify-only case is a one-liner:
 
     Authorization(verification_keys=KEYS, audience=OS_ID)   # no roles, no ceremony
 
-Everything the facade builds is still reachable as a primitive: pass your own ``role_store=`` /
-``engine=`` and the facade uses them instead of building its own. ``authorization_provider=`` is the
+Everything the object builds is still reachable as a primitive: pass your own ``role_store=`` /
+``engine=`` and the object uses them instead of building its own. ``authorization_provider=`` is the
 full override: your provider decides alone, no store, no ``/authz``. Simplicity by default, full
 control when you need it.
 
@@ -48,7 +47,7 @@ if TYPE_CHECKING:
     from agno.os.authz.audit import AuditSink
     from agno.os.authz.engine import PolicyEngine
     from agno.os.authz.provider import AuthorizationProvider
-    from agno.os.authz.role_store import ManagedRoleStore
+    from agno.os.authz.role_store import RoleStore
     from agno.os.config import AuthorizationConfig
 
 # The role name :meth:`Authorization.seed` grants to its ``admin=`` subject. Define a role with
@@ -66,12 +65,12 @@ _NEEDS_DB = (
 _ASYNC_SETUP_MSG = (
     "Authorization.define_role()/seed() write roles at setup time and need a synchronous database, but "
     "the bound database is async ({db_type}). Give AgentOS a sync db for setup, or configure roles "
-    "yourself through the async store API (ManagedRoleStore.aset_role_scopes) and pass it via "
-    "Authorization(role_store=...). A facade with a pre-built store and no define_role()/seed() calls "
+    "yourself through the async store API (RoleStore.aset_role_scopes) and pass it via "
+    "Authorization(role_store=...). An object with a pre-built store and no define_role()/seed() calls "
     "works against an async db."
 )
 
-# A scope entry as accepted by ManagedRoleStore.set_role_scopes.
+# A scope entry as accepted by RoleStore.set_role_scopes.
 ScopeInput = Union[str, Tuple[str, str], Dict[str, str]]
 
 
@@ -104,12 +103,12 @@ class Authorization:
         # --- escape hatches (bring your own) ---
         authorization_provider: Optional[Union["AuthorizationProvider", List["AuthorizationProvider"]]] = None,
         engine: Optional["PolicyEngine"] = None,
-        role_store: Optional["ManagedRoleStore"] = None,
+        role_store: Optional["RoleStore"] = None,
     ):
         """
         Args:
             db / db_url: the SQL database for roles/users/audit. Optional -- when omitted the
-                facade borrows ``AgentOS(db=...)`` at bind time, so you pass a db once.
+                object borrows ``AgentOS(db=...)`` at bind time, so you pass a db once.
             verification_keys, jwks_file, algorithm, verify_audience, audience, issuer,
                 admin_scope, excluded_route_paths: JWT verification settings. Used with or
                 without roles (verify-only / scope-based / isolation deployments set just these).
@@ -125,7 +124,7 @@ class Authorization:
             authorization_provider: full override -- your provider decides alone, no store is built
                 and ``/authz`` is not mounted. Cannot be combined with ``role_store``/``engine``; to
                 keep the admin API on top of your own backend, pass ``engine=`` instead.
-            engine / role_store: primitives. Supply either and the facade uses it instead of
+            engine / role_store: primitives. Supply either and the object uses it instead of
                 building its own. (The user directory is a top-level ``AgentOS(user_directory=...)``
                 concern, a peer of ``user_isolation``, not configured here.)
         """
@@ -137,27 +136,29 @@ class Authorization:
             )
         # Verification settings, splatted into the AuthorizationConfig at build time. Typed Any so
         # the per-key kwarg splat type-checks against AuthorizationConfig's specific field types.
+        # ``issuer`` is handed to AgentOS separately: the released AuthorizationConfig has no such
+        # field and stays frozen at its released shape.
         self._verification: Dict[str, Any] = {
             "verification_keys": verification_keys,
             "jwks_file": jwks_file,
             "algorithm": algorithm,
             "verify_audience": verify_audience,
             "audience": audience,
-            "issuer": issuer,
             "admin_scope": admin_scope,
             "excluded_route_paths": excluded_route_paths,
         }
+        self._issuer = issuer
         self._audit_arg = audit
         self._trust_token_scopes = trust_token_scopes
         self._roles_claim = roles_claim
         self._provider_override = authorization_provider
         self._engine = engine
 
-        self._role_store: Optional["ManagedRoleStore"] = role_store
+        self._role_store: Optional["RoleStore"] = role_store
         self._audit_sink: Optional["AuditSink"] = None
 
         # The user directory is NOT owned here: it is a top-level AgentOS(user_directory=...) concern,
-        # a peer of user_isolation, seeded on the ManagedUserStore itself. Authorization never touches
+        # a peer of user_isolation, seeded on the UserStore itself. Authorization never touches
         # it -- seed() below bootstraps the admin ROLE only.
 
         # Roles are in play if any were defined, or a store/engine was supplied.
@@ -192,7 +193,7 @@ class Authorization:
 
         BOOTSTRAP semantics: an existing role is left untouched, so re-running this on every start
         never overwrites scope changes an admin made at runtime through the ``/authz`` API. To change
-        a role's scopes after first boot, use the admin API (or ``ManagedRoleStore.set_role_scopes``
+        a role's scopes after first boot, use the admin API (or ``RoleStore.set_role_scopes``
         directly for a declarative, code-owns-the-role model). Chainable."""
         self._roles_defined = True
         if self._bound:
@@ -204,7 +205,7 @@ class Authorization:
     def seed(self, *, admin: str, admin_role: str = _ADMIN_ROLE) -> "Authorization":
         """Bootstrap the admin: grant ``admin_role`` (default ``"admin"`` -- define it first) to
         ``admin`` if no subject already holds an admin role. A role concern only. The user directory
-        is separate: seed people on the ``ManagedUserStore`` (``users.upsert(...)``) and give them
+        is separate: seed people on the ``UserStore`` (``users.upsert(...)``) and give them
         roles with :meth:`assign` or the ``/authz`` admin API.
 
         BOOTSTRAP semantics: an existing admin is left as is, so seeding on every start is safe. A
@@ -235,12 +236,12 @@ class Authorization:
     def _bind(self, os_db: Optional[Any] = None) -> "Authorization":
         """Resolve the database (own, else the OS db), build the requested stores, and flush any
         buffered role/user definitions. Idempotent: a second call (e.g. AgentOS re-binding an
-        already-bound facade) is a no-op."""
+        already-bound object) is a no-op."""
         if self._bound:
             return self
         self._db = self._db or os_db
         # A database is only needed for things that PERSIST and are not already persisted: a role
-        # store or directory the facade has to build (or was handed unbound), or a DbAuditSink from
+        # store or directory the object has to build (or was handed unbound), or a DbAuditSink from
         # audit=True. Verify-only / scope-based / custom-provider setups store nothing, and a store
         # you built with its own db brings its persistence along, so neither needs a db here.
         if self._db is None and self._needs_own_db():
@@ -271,7 +272,7 @@ class Authorization:
         self._assign_calls.clear()
 
     def _needs_own_db(self) -> bool:
-        """Whether binding has to have a database: a role store the facade must build (or was handed
+        """Whether binding has to have a database: a role store the object must build (or was handed
         unbound), or a DbAuditSink from audit=True. The directory is AgentOS's concern, so it does not
         figure here."""
         if self._audit_arg is True:
@@ -290,11 +291,11 @@ class Authorization:
             return DbAuditSink(db=self._db)
         return self._audit_arg  # an AuditSink instance
 
-    def _ensure_role_store(self) -> "ManagedRoleStore":
+    def _ensure_role_store(self) -> "RoleStore":
         if self._role_store is None:
-            from agno.os.authz.role_store import ManagedRoleStore
+            from agno.os.authz.role_store import RoleStore
 
-            self._role_store = ManagedRoleStore(db=self._db, engine=self._engine, roles_claim=self._roles_claim)
+            self._role_store = RoleStore(db=self._db, engine=self._engine, roles_claim=self._roles_claim)
         else:
             self._role_store.attach_db(self._db)
         if self._audit_sink is not None:
@@ -338,7 +339,7 @@ class Authorization:
             role_store.assign(subject, role)
 
     @staticmethod
-    def _restore_bootstrap_admin(role_store: "ManagedRoleStore", admin: str, admin_role: str) -> None:
+    def _restore_bootstrap_admin(role_store: "RoleStore", admin: str, admin_role: str) -> None:
         """Make the bootstrap subject admin only when nobody else can reach the admin API.
 
         Any weaker rule undoes an operator's decision. If another subject already holds admin, then a
@@ -369,7 +370,7 @@ class Authorization:
         role_store.assign(admin, admin_role)
 
     def _require_sync_setup(self) -> None:
-        """Setup writes run synchronously; refuse an async db with a clear, facade-level message rather
+        """Setup writes run synchronously; refuse an async db with a clear, object-level message rather
         than letting a sync store call fail deep in the engine."""
         if self._db_is_async:
             raise ValueError(_ASYNC_SETUP_MSG.format(db_type=type(self._db).__name__))
@@ -389,9 +390,12 @@ class Authorization:
                     "seed(admin_role=<your admin role>)."
                 )
 
-    # ------------------------------------------------------------------ provider
-    def _provider(self) -> Optional[Union["AuthorizationProvider", List["AuthorizationProvider"]]]:
-        """The provider AgentOS should enforce with, or None to fall back to scope RBAC."""
+    # ------------------------------------------------------------------ what AgentOS reads
+    @property
+    def provider(self) -> Optional[Union["AuthorizationProvider", List["AuthorizationProvider"]]]:
+        """The provider AgentOS should enforce with: your override, the role store's provider (with
+        the scope plane alongside under ``trust_token_scopes``), or None so AgentOS falls back to
+        scope RBAC. A list means several planes composed with OR."""
         if self._provider_override is not None:
             return self._provider_override
         store = self.role_store
@@ -404,13 +408,17 @@ class Authorization:
         return store.provider
 
     @property
+    def issuer(self) -> Optional[str]:
+        """The pinned token issuer (the ``iss`` claim), or None when not pinned."""
+        return self._issuer
+
+    @property
     def _uses_roles(self) -> bool:
         return self._roles_defined
 
-    # ------------------------------------------------------------------ what AgentOS reads
     @property
-    def role_store(self) -> Optional["ManagedRoleStore"]:
-        """The role store, or None when the facade is verify-only. Mount the ``/authz`` admin API
+    def role_store(self) -> Optional["RoleStore"]:
+        """The role store, or None when the object is verify-only. Mount the ``/authz`` admin API
         only when this is set. Built on demand once a db is bound."""
         if not self._uses_roles:
             return None
@@ -422,10 +430,11 @@ class Authorization:
         return self._audit_sink
 
     def authorization_config(self) -> "AuthorizationConfig":
-        """The ``AuthorizationConfig`` AgentOS enforces: verification settings plus the composed
-        provider (or none, so AgentOS uses scope RBAC). AgentOS calls this once after all setup, so it
-        is where a seeded admin whose role does not grant admin is finally validated."""
+        """The verification settings as the ``AuthorizationConfig`` the JWT middleware reads (its
+        released field set, nothing more; the provider, issuer and audit sink travel separately).
+        AgentOS calls this once after all setup, so it is where a seeded admin whose role does not
+        grant admin is finally validated."""
         from agno.os.config import AuthorizationConfig
 
         self._check_seeded_admins()
-        return AuthorizationConfig(authorization_provider=self._provider(), **self._verification)
+        return AuthorizationConfig(**self._verification)

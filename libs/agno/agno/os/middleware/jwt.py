@@ -433,8 +433,12 @@ def build_jwt_middleware_kwargs(
     authorization: bool,
     service_account_verifier: Optional[Any] = None,
     excluded_route_paths: Optional[List[str]] = None,
+    issuer: Optional[str] = None,
 ) -> Dict[str, Any]:
     """JWTMiddleware kwargs derived from an ``AuthorizationConfig``, in one place.
+
+    ``issuer`` is passed by the caller (it lives on the ``Authorization`` object, not on the
+    released config), so both surfaces pin the same one.
 
     Both the REST app wiring (``agno.os.app``) and the mounted MCP app
     (``agno.os.mcp.get_mcp_server``) construct their middleware from this builder, so
@@ -449,7 +453,6 @@ def build_jwt_middleware_kwargs(
     jwks_file = None
     verify_audience = False
     audience = None
-    issuer = None
     admin_scope: Optional[str] = None
     user_isolation = False
 
@@ -459,7 +462,6 @@ def build_jwt_middleware_kwargs(
         jwks_file = authorization_config.jwks_file
         verify_audience = authorization_config.verify_audience or False
         audience = authorization_config.audience
-        issuer = authorization_config.issuer
         admin_scope = authorization_config.admin_scope
         user_isolation = authorization_config.user_isolation
 
@@ -977,7 +979,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
         reason: Optional[str] = None,
     ) -> None:
         """Record one authorization decision to the audit sink, if one is configured
-        on ``app.state.authz_audit`` (seeded from ``AuthorizationConfig(audit=...)``).
+        on ``app.state.authz_audit`` (seeded from ``Authorization(audit=...)``).
 
         Captures the principal, route, required scopes, the caller's scopes, and a
         NON-secret token reference (see :meth:`_token_reference`). Never the token
@@ -1420,7 +1422,6 @@ class AuthMiddleware(BaseHTTPMiddleware):
                         provisioned = await aprovision_user_with_default_role(
                             user_store,
                             getattr(request.app.state, "role_store", None),
-                            getattr(request.app.state, "user_default_role", None),
                             user_id,
                             payload,
                             email_claim=getattr(request.app.state, "user_email_claim", "email"),

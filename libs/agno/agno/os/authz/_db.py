@@ -6,7 +6,7 @@ Authorization storage lives on the ``BaseDb`` contract (the ``*_authz_*`` method
 user's ``db=`` / ``db_url=`` argument and that contract:
 
 * :func:`db_from_url` turns a SQLAlchemy URL into the matching agno database, so
-  ``ManagedRoleStore(db_url=...)`` keeps working without the caller having to build a
+  ``RoleStore(db_url=...)`` keeps working without the caller having to build a
   ``SqliteDb`` or ``PostgresDb`` themselves.
 * :func:`supports_authz` asks whether a database implements the contract by CALLING it
   rather than by inspecting it -- a backend that inherits the stubs raises
@@ -25,7 +25,7 @@ from typing import Any, Optional
 # roles must be persisted: an in-memory store can't stay consistent across the multiple
 # workers/replicas an AgentOS deployment runs, so a DB is required.
 NO_DB_MESSAGE = (
-    "ManagedRoleStore requires a SQL database — managed roles must be persisted, "
+    "RoleStore requires a SQL database — managed roles must be persisted, "
     "and an in-memory store cannot stay consistent across multiple workers/replicas. "
     "Pass db=/db_url= to the store, or hand it to AgentOS via "
     "Authorization(role_store=...) together with a SQL db on AgentOS so the "

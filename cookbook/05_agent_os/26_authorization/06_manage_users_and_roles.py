@@ -25,7 +25,7 @@ It seeds a couple of roles and users so the frontend has something to show, and
 makes ONE bootstrap admin (so someone can call the admin API).
 
 Run it:
-    pip install "agno[roles]"
+    pip install "agno[os]"
     python 06_manage_users_and_roles.py
 Then point your frontend at http://localhost:7777 (CORS is open to the usual dev
 ports). The server keeps running until you Ctrl-C.
@@ -64,8 +64,7 @@ from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS
-from agno.os.authz import Authorization, ManagedUserStore
-from agno.os.config import UserDirectoryConfig
+from agno.os.authz import Authorization, UserDirectory, UserStore
 from fastapi import HTTPException, Request
 
 # --- config: supports BOTH planes by default ---------------------------------
@@ -148,7 +147,7 @@ db = SqliteDb(db_file="tmp/console.db")
 
 # The user directory (roster) is its own thing, seeded on the store directly, so a freshly-connected
 # frontend isn't empty. No passwords -- id + optional email/name + the disabled off-switch.
-users = ManagedUserStore(db=db)
+users = UserStore(db=db)
 users.upsert(ADMIN_SUBJECT, name="Bootstrap admin")
 users.upsert("bob", email="bob@co", name="Bob")
 users.upsert("carol", email="carol@co", name="Carol")
@@ -215,7 +214,7 @@ agent_os = AgentOS(
     cors_allowed_origins=CORS_ORIGINS,
     # The directory is a top-level switch (a peer of user_isolation). Pass the store you seeded above;
     # Authorization carries verification + roles, and together they mount /authz + /users.
-    user_directory=UserDirectoryConfig(user_store=users, auto_provision=True),
+    user_directory=UserDirectory(user_store=users, auto_provision=True),
     authorization=authz,
 )
 app = agent_os.get_app()

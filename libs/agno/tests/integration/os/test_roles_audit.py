@@ -17,10 +17,10 @@ pytest.importorskip("sqlalchemy")  # managed roles persist/enforce via the nativ
 from agno.agent import Agent  # noqa: E402
 from agno.db.in_memory import InMemoryDb  # noqa: E402
 from agno.os import AgentOS  # noqa: E402
+from agno.os.authz import Authorization  # noqa: E402
+from agno.os.authz.admin_router import get_roles_router  # noqa: E402
 from agno.os.authz.audit import AuditEvent, AuditSink, DbAuditSink  # noqa: E402
-from agno.os.authz.role_router import get_roles_router  # noqa: E402
-from agno.os.authz.role_store import ManagedRoleStore  # noqa: E402
-from agno.os.config import AuthorizationConfig  # noqa: E402
+from agno.os.authz.role_store import RoleStore  # noqa: E402
 
 SECRET = "managed-roles-audit-secret-at-least-256-bits-long-xxxx"
 OS_ID = "managed-roles-audit-os"
@@ -58,7 +58,7 @@ def _auth(sub: str, jti: str | None = None) -> dict:
 
 def test_store_emits_change_events_with_actor_and_diff():
     sink = _CapturingSink()
-    store = ManagedRoleStore(audit=sink, db_url=_db_url())
+    store = RoleStore(audit=sink, db_url=_db_url())
 
     store.set_role_scopes("member", ["agents:*:read"], actor="alice")
     store.set_role_scopes("member", ["agents:*:read", "agents:*:run"], actor="alice")  # widen
@@ -88,7 +88,7 @@ def test_store_emits_change_events_with_actor_and_diff():
 
 
 def test_no_sink_means_no_overhead_and_no_events():
-    store = ManagedRoleStore(db_url=_db_url())  # no audit
+    store = RoleStore(db_url=_db_url())  # no audit
     # should not raise and should be a no-op for auditing
     store.set_role_scopes("member", ["agents:*:read"], actor="alice")
     store.assign("bob", "member", actor="alice")
@@ -101,7 +101,7 @@ def test_db_audit_sink_is_append_only_table(tmp_path):
     db_file = tmp_path / "audit.db"
     url = f"sqlite:///{db_file}"
     sink = DbAuditSink(db_url=url)
-    store = ManagedRoleStore(audit=sink, db_url=_db_url())
+    store = RoleStore(audit=sink, db_url=_db_url())
 
     store.set_role_scopes("member", ["agents:*:read"], actor="alice")
     store.assign("bob", "member", actor="alice")
@@ -123,7 +123,7 @@ def test_db_audit_sink_is_append_only_table(tmp_path):
 
 def test_http_api_records_actor_from_jwt():
     sink = _CapturingSink()
-    store = ManagedRoleStore(audit=sink, db_url=_db_url())
+    store = RoleStore(audit=sink, db_url=_db_url())
     store.set_role_scopes("admin", ["agent_os:admin"])
     store.assign("alice", "admin")  # bootstrap admin (not audited: no actor route)
 
@@ -131,8 +131,7 @@ def test_http_api_records_actor_from_jwt():
     agent_os = AgentOS(
         id=OS_ID,
         agents=[agent],
-        authorization=True,
-        authorization_config=AuthorizationConfig(
+        authorization=Authorization(
             verification_keys=[SECRET],
             algorithm="HS256",
             verify_audience=True,
@@ -161,7 +160,7 @@ def test_http_api_records_actor_from_jwt():
 def _decision_os(sink):
     """An AgentOS where viewer can read agents but not delete sessions, with the
     given sink wired for decision audit."""
-    store = ManagedRoleStore(db_url=_db_url())
+    store = RoleStore(db_url=_db_url())
     store.set_role_scopes("viewer", ["agents:*:read"])
     store.assign("bob", "viewer")
 
@@ -171,8 +170,7 @@ def _decision_os(sink):
         id=OS_ID,
         agents=[agent],
         db=db,
-        authorization=True,
-        authorization_config=AuthorizationConfig(
+        authorization=Authorization(
             verification_keys=[SECRET],
             algorithm="HS256",
             verify_audience=True,
@@ -264,7 +262,7 @@ def test_decisions_endpoint_returns_trail_for_admin(tmp_path):
     it is separate from /authz/audit (changes)."""
     db_file = tmp_path / "audit.db"
     sink = DbAuditSink(db_url=f"sqlite:///{db_file}")
-    store = ManagedRoleStore(audit=sink, db_url=_db_url())
+    store = RoleStore(audit=sink, db_url=_db_url())
     store.set_role_scopes("admin", ["agent_os:admin"])
     store.assign("alice", "admin")
     store.set_role_scopes("viewer", ["agents:*:read"])
@@ -274,8 +272,7 @@ def test_decisions_endpoint_returns_trail_for_admin(tmp_path):
     agent_os = AgentOS(
         id=OS_ID,
         agents=[agent],
-        authorization=True,
-        authorization_config=AuthorizationConfig(
+        authorization=Authorization(
             verification_keys=[SECRET],
             algorithm="HS256",
             verify_audience=True,
@@ -310,7 +307,7 @@ def test_decisions_endpoint_returns_trail_for_admin(tmp_path):
 def test_audit_endpoint_returns_trail(tmp_path):
     """GET /authz/audit returns the change trail (newest first) for admins only."""
     db_file = tmp_path / "audit.db"
-    store = ManagedRoleStore(audit=DbAuditSink(db_url=f"sqlite:///{db_file}"), db_url=_db_url())
+    store = RoleStore(audit=DbAuditSink(db_url=f"sqlite:///{db_file}"), db_url=_db_url())
     store.set_role_scopes("admin", ["agent_os:admin"])
     store.assign("alice", "admin")
 
@@ -318,8 +315,7 @@ def test_audit_endpoint_returns_trail(tmp_path):
     agent_os = AgentOS(
         id=OS_ID,
         agents=[agent],
-        authorization=True,
-        authorization_config=AuthorizationConfig(
+        authorization=Authorization(
             verification_keys=[SECRET],
             algorithm="HS256",
             verify_audience=True,
@@ -421,8 +417,7 @@ def test_per_resource_deny_is_recorded_when_it_denies_independently():
         id=OS_ID,
         agents=[Agent(id="yours", name="Yours", db=db)],
         db=db,
-        authorization=True,
-        authorization_config=AuthorizationConfig(
+        authorization=Authorization(
             verification_keys=[SECRET],
             algorithm="HS256",
             verify_audience=True,
@@ -449,7 +444,7 @@ def test_audit_sink_is_mirrored_onto_the_mcp_subapp():
     entire MCP transport."""
     pytest.importorskip("fastmcp")
     sink = _CapturingSink()
-    store = ManagedRoleStore(db_url=_db_url())
+    store = RoleStore(db_url=_db_url())
     store.set_role_scopes("viewer", ["agents:*:read"])
 
     db = InMemoryDb()
@@ -457,9 +452,8 @@ def test_audit_sink_is_mirrored_onto_the_mcp_subapp():
         id=OS_ID,
         agents=[Agent(id="research-agent", name="Research Agent", db=db)],
         db=db,
-        authorization=True,
         mcp_server=True,
-        authorization_config=AuthorizationConfig(
+        authorization=Authorization(
             verification_keys=[SECRET],
             algorithm="HS256",
             authorization_provider=store.provider,

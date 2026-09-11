@@ -1,4 +1,4 @@
-"""The swappable-backend seam: ManagedRoleStore works with ANY PolicyEngine.
+"""The swappable-backend seam: RoleStore works with ANY PolicyEngine.
 
 Proves the engine port by backing the store with a tiny in-memory engine (no
 Casbin) and exercising the full agno-native surface + the provider through it.
@@ -8,7 +8,7 @@ from typing import List, Set
 
 from agno.os.authz.engine import PolicyEngine, ScopeEntry
 from agno.os.authz.provider import AuthorizationContext
-from agno.os.authz.role_store import ManagedRoleStore
+from agno.os.authz.role_store import RoleStore
 
 
 def _db_url() -> str:
@@ -83,7 +83,7 @@ class DictPolicyEngine(PolicyEngine):
 
 
 def test_store_runs_on_a_custom_engine_no_casbin():
-    store = ManagedRoleStore(engine=DictPolicyEngine(), db_url=_db_url())  # no casbin involved
+    store = RoleStore(engine=DictPolicyEngine(), db_url=_db_url())  # no casbin involved
 
     # agno-native surface works through the port
     store.set_role_scopes("viewer", ["agents:read"], name="Viewer", description="read only")
@@ -109,7 +109,7 @@ def test_store_runs_on_a_custom_engine_no_casbin():
 
 
 def test_patch_and_remove_through_engine():
-    store = ManagedRoleStore(engine=DictPolicyEngine(), db_url=_db_url())
+    store = RoleStore(engine=DictPolicyEngine(), db_url=_db_url())
     store.create_role("editor", name="Editor")
     store.patch_role_scopes("editor", upsert=["agents:read", "agents:run"])
     store.patch_role_scopes("editor", remove=["agents:run"])

@@ -11,12 +11,12 @@ pytest.importorskip("sqlalchemy")  # managed roles persist/enforce via the nativ
 from agno.agent import Agent  # noqa: E402
 from agno.db.in_memory import InMemoryDb  # noqa: E402
 from agno.os import AgentOS  # noqa: E402
+from agno.os.authz import Authorization  # noqa: E402
 from agno.os.authz._composite import CompositeAuthorizationProvider  # noqa: E402 (internal mechanism)
+from agno.os.authz.admin_router import get_roles_router  # noqa: E402
 from agno.os.authz.provider import AuthorizationContext  # noqa: E402
-from agno.os.authz.role_router import get_roles_router  # noqa: E402
-from agno.os.authz.role_store import ManagedRoleStore  # noqa: E402
+from agno.os.authz.role_store import RoleStore  # noqa: E402
 from agno.os.authz.scope_provider import ScopeAuthorizationProvider  # noqa: E402
-from agno.os.config import AuthorizationConfig  # noqa: E402
 
 SECRET = "composite-secret-at-least-256-bits-long-padding-xxxxxxxx"
 OS_ID = "composite-os"
@@ -39,7 +39,7 @@ def test_empty_providers_rejected():
 
 
 def test_allows_via_either_plane():
-    store = ManagedRoleStore(db_url=_db_url())
+    store = RoleStore(db_url=_db_url())
     store.set_role_scopes("viewer", ["agents:*:read"])
     store.assign("storeuser", "viewer")
     comp = CompositeAuthorizationProvider([ScopeAuthorizationProvider(), store.provider])
@@ -62,7 +62,7 @@ def test_allows_via_either_plane():
 
 
 def test_accessible_ids_union_with_wildcard_winning():
-    store = ManagedRoleStore(db_url=_db_url())
+    store = RoleStore(db_url=_db_url())
     store.set_role_scopes("one", ["agents:a1:read"])
     store.assign("u", "one")
     comp = CompositeAuthorizationProvider([ScopeAuthorizationProvider(), store.provider])
@@ -87,7 +87,7 @@ def _token(sub, scopes):
 def test_both_planes_enforce_on_one_os_end_to_end():
     """One OS: an operator authorized by token scopes AND an end user authorized by
     the store both get in; an unknown caller is denied."""
-    store = ManagedRoleStore(db_url=_db_url())
+    store = RoleStore(db_url=_db_url())
     store.set_role_scopes("viewer", ["agents:*:read"])
     store.assign("enduser", "viewer")  # end user known only to the store
 
@@ -95,8 +95,7 @@ def test_both_planes_enforce_on_one_os_end_to_end():
     agent_os = AgentOS(
         id=OS_ID,
         agents=[agent],
-        authorization=True,
-        authorization_config=AuthorizationConfig(
+        authorization=Authorization(
             verification_keys=[SECRET],
             algorithm="HS256",
             verify_audience=True,
@@ -119,13 +118,12 @@ def test_both_planes_enforce_on_one_os_end_to_end():
 def test_admin_gate_accepts_admin_from_token_scope():
     """An operator whose token carries agent_os:admin can manage roles even though
     they have no admin assignment in the store (the cloud/operator plane)."""
-    store = ManagedRoleStore(db_url=_db_url())  # nobody is admin in the store
+    store = RoleStore(db_url=_db_url())  # nobody is admin in the store
     agent = Agent(id="research-agent", name="R", db=InMemoryDb())
     agent_os = AgentOS(
         id=OS_ID,
         agents=[agent],
-        authorization=True,
-        authorization_config=AuthorizationConfig(
+        authorization=Authorization(
             verification_keys=[SECRET],
             algorithm="HS256",
             verify_audience=True,
@@ -172,8 +170,7 @@ def test_custom_provider_does_not_fail_open_on_non_resource_routes():
     agent_os = AgentOS(
         id=OS_ID,
         agents=[agent],
-        authorization=True,
-        authorization_config=AuthorizationConfig(
+        authorization=Authorization(
             verification_keys=[SECRET],
             algorithm="HS256",
             verify_audience=True,
@@ -193,15 +190,18 @@ def test_custom_provider_does_not_fail_open_on_non_resource_routes():
 
 
 def test_authorization_provider_rejects_a_string():
-    """A list of providers is supported; a string is a mistake. The typed
-    AuthorizationConfig field rejects it at construction (pydantic ValidationError,
-    a ValueError), so it can never be mistaken for an iterable of characters."""
+    """A list of providers is supported; a string is a mistake. AgentOS rejects it when it seeds
+    the provider, so it can never be mistaken for an iterable of characters."""
+    from agno.agent import Agent
+    from agno.db.in_memory import InMemoryDb
+
+    authz = Authorization(
+        verification_keys=[SECRET],
+        algorithm="HS256",
+        authorization_provider="ScopeAuthorizationProvider",  # oops, a string
+    )
     with pytest.raises(ValueError, match="AuthorizationProvider"):
-        AuthorizationConfig(
-            verification_keys=[SECRET],
-            algorithm="HS256",
-            authorization_provider="ScopeAuthorizationProvider",  # oops, a string
-        )
+        AgentOS(id=OS_ID, agents=[Agent(id="a", name="A", db=InMemoryDb())], authorization=authz).get_app()
 
 
 def test_composite_filter_accessible_unions_and_respects_per_plane_deny():
@@ -340,7 +340,7 @@ def test_job_queue_admin_gate_is_provider_aware():
 
     from agno.os.routers.job_queue.router import _require_queue_admin
 
-    store = ManagedRoleStore(db_url=_db_url())
+    store = RoleStore(db_url=_db_url())
     store.set_role_scopes("admin", ["agent_os:admin"])
     store.assign("real-admin", "admin")
 

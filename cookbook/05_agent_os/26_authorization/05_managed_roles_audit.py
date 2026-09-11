@@ -25,7 +25,7 @@ This file makes a few role changes and a couple of real requests, then prints bo
 trails. No server, no OpenAI key needed.
 
 Run it:
-    pip install "agno[roles]"
+    pip install "agno[os]"
     python 05_managed_roles_audit.py
 """
 

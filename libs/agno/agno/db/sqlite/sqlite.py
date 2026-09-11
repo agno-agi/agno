@@ -8,7 +8,6 @@ from uuid import uuid4
 if TYPE_CHECKING:
     from agno.tracing.schemas import Span, Trace
 
-from agno.db import authz_store, mcp_oauth_store
 from agno.db.base import (
     DELETED_CONFIG_STAGE,
     PIN_LINK_KINDS,
@@ -50,6 +49,8 @@ from agno.db.schemas.service_accounts import (
     resolve_service_account_sort_column,
     validate_service_account_update,
 )
+from agno.db.sql import authz as authz_sql
+from agno.db.sql import mcp_oauth as mcp_oauth_sql
 from agno.db.sqlite.schemas import get_table_schema_definition
 from agno.db.sqlite.utils import (
     apply_sorting,
@@ -7255,19 +7256,19 @@ class SqliteDb(BaseDb):
             return 0
 
     # --- Built-in MCP OAuth server store ---
-    # Thin delegations to agno.db.mcp_oauth_store (shared with PostgresDb); each fetches the
+    # Thin delegations to agno.db.sql.mcp_oauth (shared with PostgresDb); each fetches the
     # table via the normal schema-aware _get_table path, so the store is created on first
     # use like every other agno table.
 
     def get_mcp_oauth_client(self, client_id: str) -> Optional[str]:
         table = self._get_table(table_type=MCP_OAUTH_CLIENTS, create_table_if_not_found=True)
-        return mcp_oauth_store.get_client(self.db_engine, table, client_id)
+        return mcp_oauth_sql.get_client(self.db_engine, table, client_id)
 
     def create_mcp_oauth_client(
         self, *, client_id: str, client_metadata: str, now: int, unconsumed_ttl: int, max_clients: int
     ) -> bool:
         table = self._get_table(table_type=MCP_OAUTH_CLIENTS, create_table_if_not_found=True)
-        return mcp_oauth_store.create_client(
+        return mcp_oauth_sql.create_client(
             self.db_engine,
             table,
             client_id=client_id,
@@ -7279,13 +7280,13 @@ class SqliteDb(BaseDb):
 
     def mark_mcp_oauth_client_consumed(self, client_id: str, now: int) -> None:
         table = self._get_table(table_type=MCP_OAUTH_CLIENTS, create_table_if_not_found=True)
-        mcp_oauth_store.mark_client_consumed(self.db_engine, table, client_id, now)
+        mcp_oauth_sql.mark_client_consumed(self.db_engine, table, client_id, now)
 
     def store_mcp_oauth_transaction(
         self, *, txn_id: str, client_id: str, params: str, expires_at: int, now: int, max_pending: int
     ) -> None:
         table = self._get_table(table_type=MCP_OAUTH_TRANSACTIONS, create_table_if_not_found=True)
-        mcp_oauth_store.store_transaction(
+        mcp_oauth_sql.store_transaction(
             self.db_engine,
             table,
             txn_id=txn_id,
@@ -7298,31 +7299,31 @@ class SqliteDb(BaseDb):
 
     def get_mcp_oauth_transaction(self, txn_id: str) -> Optional[tuple]:
         table = self._get_table(table_type=MCP_OAUTH_TRANSACTIONS, create_table_if_not_found=True)
-        return mcp_oauth_store.get_transaction(self.db_engine, table, txn_id)
+        return mcp_oauth_sql.get_transaction(self.db_engine, table, txn_id)
 
     def consume_mcp_oauth_transaction(self, txn_id: str, now: int) -> Optional[tuple]:
         table = self._get_table(table_type=MCP_OAUTH_TRANSACTIONS, create_table_if_not_found=True)
-        return mcp_oauth_store.consume_transaction(self.db_engine, table, txn_id, now)
+        return mcp_oauth_sql.consume_transaction(self.db_engine, table, txn_id, now)
 
     def store_mcp_oauth_code(self, *, code_hash: str, payload: str, expires_at: int, now: int) -> None:
         table = self._get_table(table_type=MCP_OAUTH_CODES, create_table_if_not_found=True)
-        mcp_oauth_store.store_code(
+        mcp_oauth_sql.store_code(
             self.db_engine, table, code_hash=code_hash, payload=payload, expires_at=expires_at, now=now
         )
 
     def get_mcp_oauth_code(self, code_hash: str) -> Optional[tuple]:
         table = self._get_table(table_type=MCP_OAUTH_CODES, create_table_if_not_found=True)
-        return mcp_oauth_store.get_code(self.db_engine, table, code_hash)
+        return mcp_oauth_sql.get_code(self.db_engine, table, code_hash)
 
     def delete_mcp_oauth_code(self, code_hash: str) -> bool:
         table = self._get_table(table_type=MCP_OAUTH_CODES, create_table_if_not_found=True)
-        return mcp_oauth_store.delete_code(self.db_engine, table, code_hash)
+        return mcp_oauth_sql.delete_code(self.db_engine, table, code_hash)
 
     def store_mcp_oauth_refresh(
         self, *, token_hash: str, client_id: str, scopes: str, expires_at: int, now: int, family_id: str
     ) -> None:
         table = self._get_table(table_type=MCP_OAUTH_REFRESH_TOKENS, create_table_if_not_found=True)
-        mcp_oauth_store.store_refresh(
+        mcp_oauth_sql.store_refresh(
             self.db_engine,
             table,
             token_hash=token_hash,
@@ -7335,23 +7336,23 @@ class SqliteDb(BaseDb):
 
     def get_mcp_oauth_refresh(self, token_hash: str) -> Optional[tuple]:
         table = self._get_table(table_type=MCP_OAUTH_REFRESH_TOKENS, create_table_if_not_found=True)
-        return mcp_oauth_store.get_refresh(self.db_engine, table, token_hash)
+        return mcp_oauth_sql.get_refresh(self.db_engine, table, token_hash)
 
     def delete_mcp_oauth_refresh(self, token_hash: str) -> bool:
         table = self._get_table(table_type=MCP_OAUTH_REFRESH_TOKENS, create_table_if_not_found=True)
-        return mcp_oauth_store.delete_refresh(self.db_engine, table, token_hash)
+        return mcp_oauth_sql.delete_refresh(self.db_engine, table, token_hash)
 
     def delete_mcp_oauth_refresh_family(self, family_id: str) -> int:
         table = self._get_table(table_type=MCP_OAUTH_REFRESH_TOKENS, create_table_if_not_found=True)
-        return mcp_oauth_store.delete_refresh_family(self.db_engine, table, family_id)
+        return mcp_oauth_sql.delete_refresh_family(self.db_engine, table, family_id)
 
     def get_mcp_oauth_keys(self) -> List[tuple]:
         table = self._get_table(table_type=MCP_OAUTH_KEYS, create_table_if_not_found=True)
-        return mcp_oauth_store.get_keys(self.db_engine, table)
+        return mcp_oauth_sql.get_keys(self.db_engine, table)
 
     def insert_mcp_oauth_key(self, *, kid: str, secret: str, created_at: int) -> bool:
         table = self._get_table(table_type=MCP_OAUTH_KEYS, create_table_if_not_found=True)
-        return mcp_oauth_store.insert_key(self.db_engine, table, kid=kid, secret=secret, created_at=created_at)
+        return mcp_oauth_sql.insert_key(self.db_engine, table, kid=kid, secret=secret, created_at=created_at)
 
     # --- Auth Tokens ---
 
@@ -7561,86 +7562,86 @@ class SqliteDb(BaseDb):
             return False
 
     # --- Authorization ---
-    # Thin delegations to agno.db.authz_store (shared with the other SQLAlchemy backend);
+    # Thin delegations to agno.db.sql.authz (shared with the other SQLAlchemy backend);
     # each fetches its table via the normal schema-aware _get_table path, so authorization
     # tables are created on first use like every other agno table -- honouring this
     # backend's configured schema and any table-name override.
 
     def get_authz_policies(self, roles: List[str]) -> List[Tuple[str, str, str, str]]:
         table = self._get_table(table_type=AUTHZ_POLICY, create_table_if_not_found=True)
-        return authz_store.get_policies(self.db_engine, table, roles)
+        return authz_sql.get_policies(self.db_engine, table, roles)
 
     def get_authz_role_policies(self, role: str) -> List[Tuple[str, str, str]]:
         table = self._get_table(table_type=AUTHZ_POLICY, create_table_if_not_found=True)
-        return authz_store.get_role_policies(self.db_engine, table, role)
+        return authz_sql.get_role_policies(self.db_engine, table, role)
 
     def set_authz_role_policies(self, role: str, rows: List[Tuple[str, str, str]]) -> None:
         table = self._get_table(table_type=AUTHZ_POLICY, create_table_if_not_found=True)
-        authz_store.set_role_policies(self.db_engine, table, role, rows)
+        authz_sql.set_role_policies(self.db_engine, table, role, rows)
 
     def upsert_authz_policy(self, *, role: str, resource: str, action: str, effect: str) -> None:
         table = self._get_table(table_type=AUTHZ_POLICY, create_table_if_not_found=True)
-        authz_store.upsert_policy(self.db_engine, table, role=role, resource=resource, action=action, effect=effect)
+        authz_sql.upsert_policy(self.db_engine, table, role=role, resource=resource, action=action, effect=effect)
 
     def delete_authz_policy(self, *, role: str, resource: Optional[str] = None, action: Optional[str] = None) -> None:
         table = self._get_table(table_type=AUTHZ_POLICY, create_table_if_not_found=True)
-        authz_store.delete_policy(self.db_engine, table, role=role, resource=resource, action=action)
+        authz_sql.delete_policy(self.db_engine, table, role=role, resource=resource, action=action)
 
     def get_authz_direct_roles(self, subject: str) -> List[str]:
         table = self._get_table(table_type=AUTHZ_GROUPING, create_table_if_not_found=True)
-        return authz_store.get_direct_roles(self.db_engine, table, subject)
+        return authz_sql.get_direct_roles(self.db_engine, table, subject)
 
     def list_authz_role_subjects(self, role: str) -> List[str]:
         table = self._get_table(table_type=AUTHZ_GROUPING, create_table_if_not_found=True)
-        return authz_store.get_role_subjects(self.db_engine, table, role)
+        return authz_sql.get_role_subjects(self.db_engine, table, role)
 
     def authz_name_is_role(self, name: str) -> bool:
         policy = self._get_table(table_type=AUTHZ_POLICY, create_table_if_not_found=True)
         grouping = self._get_table(table_type=AUTHZ_GROUPING, create_table_if_not_found=True)
-        return authz_store.name_is_role(self.db_engine, policy, grouping, name)
+        return authz_sql.name_is_role(self.db_engine, policy, grouping, name)
 
     def assign_authz_role(self, subject: str, role: str) -> None:
         table = self._get_table(table_type=AUTHZ_GROUPING, create_table_if_not_found=True)
-        authz_store.assign_role(self.db_engine, table, subject, role)
+        authz_sql.assign_role(self.db_engine, table, subject, role)
 
     def unassign_authz_role(self, subject: str, role: str) -> None:
         table = self._get_table(table_type=AUTHZ_GROUPING, create_table_if_not_found=True)
-        authz_store.unassign_role(self.db_engine, table, subject, role)
+        authz_sql.unassign_role(self.db_engine, table, subject, role)
 
     def replace_authz_subject_roles(self, subject: str, role: str) -> None:
         table = self._get_table(table_type=AUTHZ_GROUPING, create_table_if_not_found=True)
-        authz_store.replace_subject_roles(self.db_engine, table, subject, role)
+        authz_sql.replace_subject_roles(self.db_engine, table, subject, role)
 
     def list_authz_roles(self) -> List[str]:
         policy = self._get_table(table_type=AUTHZ_POLICY, create_table_if_not_found=True)
         grouping = self._get_table(table_type=AUTHZ_GROUPING, create_table_if_not_found=True)
-        return authz_store.list_roles(self.db_engine, policy, grouping)
+        return authz_sql.list_roles(self.db_engine, policy, grouping)
 
     def delete_authz_role(self, role: str) -> None:
         policy = self._get_table(table_type=AUTHZ_POLICY, create_table_if_not_found=True)
         grouping = self._get_table(table_type=AUTHZ_GROUPING, create_table_if_not_found=True)
         meta = self._get_table(table_type=AUTHZ_ROLES, create_table_if_not_found=True)
-        authz_store.delete_role(self.db_engine, policy, grouping, meta, role)
+        authz_sql.delete_role(self.db_engine, policy, grouping, meta, role)
 
     def get_authz_role_meta(self, slug: str) -> Optional[Dict[str, Any]]:
         table = self._get_table(table_type=AUTHZ_ROLES, create_table_if_not_found=True)
-        return authz_store.get_role_meta(self.db_engine, table, slug)
+        return authz_sql.get_role_meta(self.db_engine, table, slug)
 
     def list_authz_role_meta(self) -> List[Dict[str, Any]]:
         table = self._get_table(table_type=AUTHZ_ROLES, create_table_if_not_found=True)
-        return authz_store.list_role_meta(self.db_engine, table)
+        return authz_sql.list_role_meta(self.db_engine, table)
 
     def upsert_authz_role_meta(self, slug: str, values: Dict[str, Any]) -> None:
         table = self._get_table(table_type=AUTHZ_ROLES, create_table_if_not_found=True)
-        authz_store.upsert_role_meta(self.db_engine, table, slug, values)
+        authz_sql.upsert_role_meta(self.db_engine, table, slug, values)
 
     def delete_authz_role_meta(self, slug: str) -> None:
         table = self._get_table(table_type=AUTHZ_ROLES, create_table_if_not_found=True)
-        authz_store.delete_role_meta(self.db_engine, table, slug)
+        authz_sql.delete_role_meta(self.db_engine, table, slug)
 
     def get_authz_user(self, user_id: str) -> Optional[Dict[str, Any]]:
         table = self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)
-        return authz_store.get_user(self.db_engine, table, user_id)
+        return authz_sql.get_user(self.db_engine, table, user_id)
 
     def list_authz_users(
         self,
@@ -7652,35 +7653,35 @@ class SqliteDb(BaseDb):
         order: str = "desc",
     ) -> List[Dict[str, Any]]:
         table = self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)
-        return authz_store.list_users(self.db_engine, table, limit, offset, include_disabled, search, sort_by, order)
+        return authz_sql.list_users(self.db_engine, table, limit, offset, include_disabled, search, sort_by, order)
 
     def count_authz_users(self, include_disabled: bool = True, search: Optional[str] = None) -> int:
         table = self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)
-        return authz_store.count_users(self.db_engine, table, include_disabled, search)
+        return authz_sql.count_users(self.db_engine, table, include_disabled, search)
 
     def upsert_authz_user(self, user_id: str, values: Dict[str, Any]) -> None:
         table = self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)
-        authz_store.upsert_user(self.db_engine, table, user_id, values)
+        authz_sql.upsert_user(self.db_engine, table, user_id, values)
 
     def set_authz_user_disabled(self, user_id: str, disabled: bool) -> None:
         table = self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)
-        authz_store.set_user_disabled(self.db_engine, table, user_id, disabled)
+        authz_sql.set_user_disabled(self.db_engine, table, user_id, disabled)
 
     def delete_authz_user(self, user_id: str) -> None:
         table = self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)
-        authz_store.delete_user(self.db_engine, table, user_id)
+        authz_sql.delete_user(self.db_engine, table, user_id)
 
     def is_authz_user_disabled(self, user_id: str) -> bool:
         table = self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)
-        return authz_store.is_user_disabled(self.db_engine, table, user_id)
+        return authz_sql.is_user_disabled(self.db_engine, table, user_id)
 
     def record_authz_audit_event(self, values: Dict[str, Any]) -> None:
         table = self._get_table(table_type=AUTHZ_AUDIT, create_table_if_not_found=True)
-        authz_store.record_event(self.db_engine, table, values)
+        authz_sql.record_event(self.db_engine, table, values)
 
     def record_authz_decision(self, values: Dict[str, Any]) -> None:
         table = self._get_table(table_type=AUTHZ_DECISIONS, create_table_if_not_found=True)
-        authz_store.record_event(self.db_engine, table, values)
+        authz_sql.record_event(self.db_engine, table, values)
 
     def read_authz_audit_events(
         self,
@@ -7694,7 +7695,7 @@ class SqliteDb(BaseDb):
         table_type = AUTHZ_DECISIONS if decisions else AUTHZ_AUDIT
         columns = ["actor", "action", "target"]
         table = self._get_table(table_type=table_type, create_table_if_not_found=True)
-        return authz_store.read_events(
+        return authz_sql.read_events(
             self.db_engine, table, limit, offset, search, sort_by, order, search_columns=columns
         )
 
@@ -7702,4 +7703,4 @@ class SqliteDb(BaseDb):
         table_type = AUTHZ_DECISIONS if decisions else AUTHZ_AUDIT
         columns = ["actor", "action", "target"]
         table = self._get_table(table_type=table_type, create_table_if_not_found=True)
-        return authz_store.count_events(self.db_engine, table, search, search_columns=columns)
+        return authz_sql.count_events(self.db_engine, table, search, search_columns=columns)

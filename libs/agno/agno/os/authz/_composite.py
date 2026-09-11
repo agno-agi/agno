@@ -6,15 +6,15 @@ Real deployments often have two populations hitting the same OS:
   control plane mints them a token that already carries scopes, so they're
   authorized straight from the token (a :class:`ScopeAuthorizationProvider`).
 - **End users** — the customer's own users, whose access is managed at runtime in
-  the OS-local :class:`~agno.os.authz.role_store.ManagedRoleStore`. Their token
+  the OS-local :class:`~agno.os.authz.role_store.RoleStore`. Their token
   carries identity; the store decides.
 
 A single provider can't be both "trust the token's scopes" and "ignore the token,
-ask the store." The public way to run several planes is to pass a **list** of
-providers to ``AuthorizationConfig`` / ``AgentOS`` — a request is allowed if any
-of them allows it::
+ask the store." The public way to run several planes is ``Authorization(trust_token_scopes=True)``
+with managed roles, or a **list** of providers on ``Authorization(authorization_provider=[...])``
+for a bring-your-own setup — a request is allowed if any of them allows it::
 
-    AuthorizationConfig(authorization_provider=[
+    Authorization(verification_keys=KEYS, audience=OS_ID, authorization_provider=[
         ScopeAuthorizationProvider(),   # operators: scopes from the token
         roles.provider,                 # end users: the OS-local managed store
     ])

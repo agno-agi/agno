@@ -44,7 +44,6 @@ from agno.os.config import (
     SessionDomainConfig,
     TracesConfig,
     TracesDomainConfig,
-    UserDirectoryConfig,
 )
 from agno.os.event_streams import BaseEventStream, set_event_stream
 from agno.os.interfaces.base import BaseInterface
@@ -97,8 +96,9 @@ if TYPE_CHECKING:
     from fastmcp.server.auth import AuthProvider
 
     from agno.os.authz.audit import AuditSink
-    from agno.os.authz.facade import Authorization
+    from agno.os.authz.authorization import Authorization
     from agno.os.authz.provider import AuthorizationProvider
+    from agno.os.authz.user_directory import UserDirectory
 
 
 @asynccontextmanager
@@ -297,8 +297,7 @@ class AgentOS:
         authorization: Union[bool, "Authorization"] = False,
         authorization_config: Optional[AuthorizationConfig] = None,
         user_isolation: bool = False,
-        user_directory: Optional[Union[bool, UserDirectoryConfig]] = None,
-        audit: Optional["AuditSink"] = None,
+        user_directory: Optional[Union[bool, "UserDirectory"]] = None,
         cors_allowed_origins: Optional[List[str]] = None,
         media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None,
         config: Optional[Union[str, AgentOSConfig]] = None,
@@ -374,12 +373,12 @@ class AgentOS:
                 deployments keep booting; logs a warning once at construction.
             user_isolation: Opt in to per-user data isolation (each caller sees only their own
                 sessions/memories). Enforced under authorization=True; advisory without auth.
-            user_directory: A credential-less user directory (roster + disabled kill switch).
-                ``True`` builds a ManagedUserStore from the OS db with auto-provision on; pass a
-                UserDirectoryConfig for control.
-            audit: One AuditSink for BOTH audit trails -- the change log (who edited roles/users)
-                and the decision log (every allow/deny). Turns audit on for the whole OS. A sink
-                passed to a store or to AuthorizationConfig(audit=...) still wins there.
+            user_directory: A credential-less user directory (roster + disabled kill switch), a
+                peer of authorization that works with or without it. ``True`` builds a UserStore
+                from the OS db with auto-provision on; pass a ``UserDirectory`` (from
+                ``agno.os.authz``) for control. Audit is not configured here: it lives on
+                ``Authorization(audit=...)``, since a change trail without a verified identity has
+                no actor to record.
             cors_allowed_origins: List of allowed CORS origins (will be merged with default Agno domains)
             media_storage: Backend the media routes read stored media from. Defaults to the first
                 one configured on an agent, team or workflow.
@@ -476,13 +475,15 @@ class AgentOS:
         # RBAC. Authentication (verify WHO the caller is) is separable from authorization (decide
         # what they may DO).
         #
-        # The Authorization facade (agno.os.authz.Authorization) is one object owning token
-        # verification + managed roles + the user directory + audit + the admin API. Expand it here
-        # into the (authorization_config, audit, user_directory) the pipeline below already
-        # understands, and record its stores so get_app mounts /authz and /users automatically. It
-        # adopts this OS db so role/user definitions persist alongside agent data.
-        self._facade_role_store: Any = None
-        self._facade_user_store: Any = None
+        # The Authorization object (agno.os.authz.Authorization) owns token verification, managed
+        # roles, audit, and the /authz admin API. Expand it here into the authorization_config the
+        # pipeline below already understands, and record what it hands over: its role store
+        # (provisioning + the /authz API), the provider it composed, the pinned issuer, and its
+        # audit sink. It adopts this OS db so role definitions persist alongside agent data.
+        self._authz_role_store: Any = None
+        self._authz_provider: Any = None
+        self._authz_issuer: Optional[str] = None
+        self._authz_user_store: Any = None
 
         # authorization= takes the switch or the object, never the low-level config: one spelling
         # for the deprecated type is enough, and it is the keyword that already exists.
@@ -499,33 +500,25 @@ class AgentOS:
                 "The config still works with authorization=True for now."
             )
 
-        from agno.os.authz.facade import Authorization as _Authorization
+        from agno.os.authz.authorization import Authorization as _Authorization
 
+        # The audit sink comes only from the Authorization object; a bare switch or no auth has none.
+        audit: Optional["AuditSink"] = None
         if isinstance(authorization, _Authorization):
-            # The facade owns verification, roles, and audit, so accepting those here too would
-            # silently pick one and drop the other (a data-split footgun if the facade points at a
-            # different db). Fail loudly. The user directory is NOT owned by the facade: it stays a
-            # top-level AgentOS(user_directory=...) concern, a peer of user_isolation, so it is left
-            # out of this guard on purpose.
-            conflicts = [
-                name
-                for name, value in (
-                    ("authorization_config", authorization_config),
-                    ("audit", audit),
-                )
-                if value is not None
-            ]
-            if conflicts:
+            # The object owns verification, so a config next to it would silently pick one and
+            # drop the other. Fail loudly. The user directory is NOT owned by the object: it stays
+            # a top-level AgentOS(user_directory=...) concern, a peer of user_isolation.
+            if authorization_config is not None:
                 raise ValueError(
-                    "AgentOS(authorization=Authorization(...)) already owns "
-                    + ", ".join(conflicts)
-                    + f"; configure {'it' if len(conflicts) == 1 else 'them'} on the Authorization "
-                    "object, not on AgentOS."
+                    "AgentOS(authorization=Authorization(...)) already owns authorization_config; "
+                    "configure verification on the Authorization object, not on AgentOS."
                 )
             authorization._bind(self.db)
             authorization_config = authorization.authorization_config()
             audit = authorization.audit_sink
-            self._facade_role_store = authorization.role_store
+            self._authz_role_store = authorization.role_store
+            self._authz_provider = authorization.provider
+            self._authz_issuer = authorization.issuer
             authorization = True
 
         self.authorization = authorization
@@ -535,20 +528,20 @@ class AgentOS:
         # auth it is advisory -- the user_id is self-asserted, so it scopes a run's own writes but
         # is not a boundary. Kept as a peer of the directory: both key off identity, not roles.
         self.user_isolation = user_isolation
-        # One audit switch for BOTH trails: the CHANGE log (who edited roles/users -> authz_audit)
-        # and the DECISION log (every allow/deny -> authz_decisions). Passing AgentOS(audit=sink)
-        # wires the sink to the stores' change trail AND the decision recorder, so "audit on" means
-        # everything is logged and "off" means nothing. A sink passed directly to a store or to
-        # AuthorizationConfig(audit=...) still wins there, for anyone who wants just one trail.
-        self.audit = audit
+        # One audit switch, on the Authorization object, for BOTH trails: the CHANGE log (who
+        # edited roles/users -> authz_audit) and the DECISION log (every allow/deny ->
+        # authz_decisions). It is an authorization concern because a trail is only accountability
+        # under a verified identity; without one there is no actor to record. The sink is also
+        # attached to the directory store below, so "audit on" means everything is logged. A sink
+        # passed directly to a store of your own still wins there.
+        self.audit: Optional["AuditSink"] = audit
         # The credential-less user directory is a PEER of authorization (who the users are +
-        # the disabled kill-switch), configured separately from authorization_config.
-        # ``user_directory=True`` (or ``store=True`` on the config) is a shorthand: AgentOS
-        # builds the ManagedUserStore from its own db, so callers avoid the manual wiring.
+        # the disabled kill-switch). ``user_directory=True`` is a shorthand: AgentOS builds the
+        # UserStore from its own db, so callers avoid the manual wiring.
         self.user_directory = self._resolve_user_directory(user_directory)
         # The /users admin API is served from the directory store, but only under a verified identity
         # (never auto-opened on a no-auth instance). Expose the store for mounting when both hold.
-        self._facade_user_store = (
+        self._authz_user_store = (
             self.user_directory.user_store if (self.authorization and self.user_directory is not None) else None
         )
 
@@ -811,7 +804,7 @@ class AgentOS:
             )
             updated_routers.append(get_approval_router(os_db=self.db, settings=self.settings))
             updated_routers.append(get_service_accounts_router(os_db=self.db, settings=self.settings))
-            updated_routers.extend(self._facade_admin_routers())
+            updated_routers.extend(self._admin_api_routers())
         else:
             for prefix, tag in [
                 ("/components", "Components"),
@@ -1595,7 +1588,7 @@ class AgentOS:
         # catch-all mount added just below: a router included after get_app() returns sits behind
         # that mount and 404s on any OS with mcp_server=True. Independent of the OS db, since the
         # object may carry its own.
-        routers.extend(self._facade_admin_routers())
+        routers.extend(self._admin_api_routers())
 
         for router in routers:
             self._add_router(fastapi_app, router)
@@ -1670,24 +1663,6 @@ class AgentOS:
         # the parent app), so the mounted sub-app carries no auth code of its own.
         security_key = self.settings.os_security_key if self.settings else None
         jwt_env_configured = bool(getenv("JWT_VERIFICATION_KEY") or getenv("JWT_JWKS_FILE"))
-        # An authz plane with the enforcement flag off is the most dangerous shape this
-        # config can take: the provider is seeded but nothing consults it, so an OS the
-        # author believes is governed by roles serves every route to anonymous callers.
-        # Fail at construction rather than shipping a silently open instance.
-        cfg = self.authorization_config
-        # A custom provider only takes effect through the auth middleware, so with authorization
-        # off it is a silently-open instance -- the author believes routes are governed by their
-        # provider, but nothing consults it. That still raises. A user directory is different: it
-        # is a roster, valid without auth (the guard below only warns), because it is data, not an
-        # enforcement point.
-        authz_plane_configured = cfg is not None and getattr(cfg, "authorization_provider", None) is not None
-        if not self.authorization and authz_plane_configured:
-            raise ValueError(
-                "AuthorizationConfig(authorization_provider=...) requires "
-                "AgentOS(authorization=True). Without enforcement the plane is never applied "
-                "(every route is served unauthenticated). Set authorization=True, or drop the "
-                "config if you intended an open instance."
-            )
         if not self.authorization and (self.user_directory is not None or self.user_isolation):
             # A user directory or per-user isolation without authorization is a valid, intentional
             # shape for local/demo use: a run's user_id registers the person (a roster fills in) and
@@ -1896,6 +1871,7 @@ class AgentOS:
             self.authorization_config,
             authorization=self.authorization,
             service_account_verifier=self._get_service_account_verifier(),
+            issuer=self._authz_issuer,
         )
         # The top-level user_isolation flag is the primary spelling; OR it with the legacy
         # AuthorizationConfig(user_isolation=...) so either turns per-user scoping on.
@@ -2030,7 +2006,7 @@ class AgentOS:
 
         fastapi_app.add_middleware(AuthMiddleware, **middleware_kwargs)
 
-    def _facade_admin_routers(self) -> List[Any]:
+    def _admin_api_routers(self) -> List[Any]:
         """The admin-API routers to mount from the Authorization object's stores.
 
         Returns ``/authz`` (roles) when it uses roles and ``/users`` (directory) when it has a
@@ -2038,37 +2014,31 @@ class AgentOS:
         bare switch or provider (no stores, nothing to administer). The routers carry their own
         admin gate, so mounting them is always safe."""
         routers: List[Any] = []
-        if self._facade_role_store is not None or self._facade_user_store is not None:
-            from agno.os.authz.role_router import get_roles_router, get_users_router
+        if self._authz_role_store is not None or self._authz_user_store is not None:
+            from agno.os.authz.admin_router import get_roles_router, get_users_router
 
-            if self._facade_role_store is not None:
-                routers.append(get_roles_router(self._facade_role_store))
-            if self._facade_user_store is not None:
-                routers.append(get_users_router(self._facade_user_store, role_store=self._facade_role_store))
+            if self._authz_role_store is not None:
+                routers.append(get_roles_router(self._authz_role_store))
+            if self._authz_user_store is not None:
+                routers.append(get_users_router(self._authz_user_store, role_store=self._authz_role_store))
         return routers
 
     def _seed_authorization_provider(self, fastapi_app: FastAPI) -> None:
-        """Seed ``app.state.authorization_provider`` (and ``authz_audit``) from the
-        AuthorizationConfig, so the four choke points resolve the right enforcer.
+        """Seed ``app.state.authorization_provider`` (and ``authz_audit``) from the Authorization
+        object, so the four choke points resolve the right enforcer.
 
-        - ``authorization_provider`` set (the Authorization object composes its own from the
-          role store and the scope plane; the primitive path passes one directly): use it.
-        - unset: leave the state unset; the resolver defaults to ScopeAuthorizationProvider
-          (v2.7 behaviour).
+        - the object composed a provider (its role store's, with the scope plane alongside under
+          ``trust_token_scopes``, or the caller's override): use it.
+        - none: leave the state unset; the resolver defaults to ScopeAuthorizationProvider
+          (v2.7 behaviour), which is also what ``authorization=True`` means.
         """
-        config = self.authorization_config
-        # Decision trail: AgentOS(audit=...) is a single switch that also feeds the decision log
-        # (authz_decisions). An explicit AuthorizationConfig(audit=...) wins; else fall back to the
-        # top-level sink. Seeded even without an AuthorizationConfig, since the default scope plane
-        # still records decisions.
-        decision_sink = getattr(config, "audit", None) or self.audit
-        if decision_sink is not None:
-            fastapi_app.state.authz_audit = decision_sink
+        # Decision trail: the audit switch (Authorization(audit=...)) also
+        # feeds the decision log (authz_decisions). Seeded even for plain scope RBAC, since the
+        # default scope plane still records decisions.
+        if self.audit is not None:
+            fastapi_app.state.authz_audit = self.audit
 
-        if config is None:
-            return
-
-        provider = getattr(config, "authorization_provider", None)
+        provider = self._authz_provider
 
         resolved_provider: Optional[AuthorizationProvider] = None
         if provider is not None:
@@ -2096,33 +2066,27 @@ class AgentOS:
         self._mirror_authz_state_to_mcp_app(fastapi_app)
 
     def _resolve_user_directory(
-        self, user_directory: Optional[Union[bool, UserDirectoryConfig]]
-    ) -> Optional[UserDirectoryConfig]:
-        """Normalise the ``user_directory`` shorthand into a ``UserDirectoryConfig``.
+        self, user_directory: Optional[Union[bool, "UserDirectory"]]
+    ) -> Optional["UserDirectory"]:
+        """Normalise the ``user_directory`` shorthand into a bound ``UserDirectory``.
 
-        ``True`` (or ``UserDirectoryConfig(user_store=True)``) means "build the ManagedUserStore from
-        the OS db", so a caller gets a working directory with zero store wiring. ``False`` /
-        ``None`` means no directory. An explicit config with a real store is returned unchanged
-        (its store is adopted onto the OS db later, in ``_seed_user_directory``).
+        ``True`` means "build the UserStore on the OS db with JIT provisioning on", so a caller
+        gets a working directory with zero store wiring. ``False`` / ``None`` means no directory.
+        A ``UserDirectory`` is bound to the OS db (a store of its own is kept; one created without
+        a db adopts the OS db) and refused if it still cannot persist.
         """
         if not user_directory:  # None or False
             return None
-        if user_directory is True:
-            # The bare ``True`` shorthand is the "just give me a working directory" path, so it
-            # defaults auto_provision on: a run's user_id registers the person with zero extra
-            # config. Pass an explicit UserDirectoryConfig to opt out (auto_provision=False).
-            user_directory = UserDirectoryConfig(user_store=True, auto_provision=True)
-        if getattr(user_directory, "user_store", None) is True:
-            if self.db is None:
-                raise ValueError(
-                    "AgentOS(user_directory=True) (or UserDirectoryConfig(user_store=True)) needs AgentOS(db=...): "
-                    "the user directory backs the disabled-user kill switch and must persist. Pass a SQL db, "
-                    "or build the store yourself (UserDirectoryConfig(user_store=ManagedUserStore(db=...)))."
-                )
-            from agno.os.authz.user_store import ManagedUserStore
+        from agno.os.authz.user_directory import UserDirectory
 
-            user_directory = user_directory.model_copy(update={"user_store": ManagedUserStore(db=self.db)})
-        return user_directory
+        if user_directory is True:
+            user_directory = UserDirectory()
+        elif not isinstance(user_directory, UserDirectory):
+            raise TypeError(
+                "AgentOS(user_directory=) takes True/False or a UserDirectory (from agno.os.authz); "
+                f"got {type(user_directory).__name__}."
+            )
+        return user_directory._bind(self.db)
 
     def _seed_user_directory(self, fastapi_app: FastAPI) -> None:
         """Seed the credential-less user directory onto ``app.state`` from
@@ -2137,55 +2101,22 @@ class AgentOS:
         directory = self.user_directory
         user_store = directory.user_store if directory is not None else None
         if user_store is not None:
-            # Adopt the OS db so a directory created without one persists instead of living
-            # in a process-local dict. That matters more than convenience here: the directory
-            # backs the disabled-user kill switch, and an in-memory one silently loses a
-            # revocation on restart and never reaches another replica.
-            attach = getattr(user_store, "attach_db", None)
-            if callable(attach):
-                attach(self.db)
-            # Change trail: adopt the top-level AgentOS(audit=...) sink if the directory store has
+            # Change trail: adopt the Authorization object's audit sink if the directory store has
             # none of its own, so one switch records directory changes too (user.created/disabled).
             attach_audit = getattr(user_store, "attach_audit", None)
             if callable(attach_audit):
                 attach_audit(self.audit)
-            if getattr(user_store, "is_bound", True) is False:
-                # A store that cannot persist is not a working deployment mode: the directory
-                # backs the disabled-user kill switch, so an unpersisted one means a revocation
-                # is lost on restart and never reaches another replica -- the control silently
-                # does nothing. Fail at construction rather than serve an OS whose revocations
-                # do not work.
-                raise ValueError(
-                    "AgentOS(user_directory=...) needs a SQL database: the user directory "
-                    "backs the disabled-user kill switch, and an in-memory one cannot stay "
-                    "consistent across replicas (a revocation would be lost on restart and never "
-                    "seen by other workers). Give the store a db (ManagedUserStore(db_url=...) / "
-                    "db=...) or pass a SQL-capable db to AgentOS(db=...) for it to adopt."
-                )
         fastapi_app.state.user_store = user_store
         fastapi_app.state.user_auto_provision = directory.auto_provision if directory is not None else False
         fastapi_app.state.user_email_claim = directory.email_claim if directory is not None else "email"
         fastapi_app.state.user_name_claim = directory.name_claim if directory is not None else "name"
         fastapi_app.state.user_directory_fail_closed = directory.fail_closed if directory is not None else False
-        # The role store + explicit default role, for granting a role on first auto-provision
-        # (the provisioning choke points read these to call provision_user_with_default_role).
         # The managed role store comes only from the Authorization object (it wires roles as a
         # provider, and hands the store over for provisioning and the /authz API). This is what the
-        # provisioning choke points read to grant a default role on first login, and the signal for
-        # whether managed roles / the /authz API are active.
-        fastapi_app.state.role_store = self._facade_role_store
-        fastapi_app.state.user_default_role = directory.default_role if directory is not None else None
-        if fastapi_app.state.user_default_role and fastapi_app.state.role_store is None:
-            # A default role is granted through the store; with roles passed as a bare
-            # authorization_provider= the OS has only the engine, not the store, so the grant
-            # would silently never happen. Say so at boot rather than leave every new user
-            # mysteriously inert.
-            log_warning(
-                "UserDirectoryConfig(default_role=...) is set but no managed role store is configured. "
-                "Default roles are granted through the role store, so configure managed roles via "
-                "Authorization(...).define_role(...) for it to apply."
-            )
-        elif fastapi_app.state.role_store is None and directory is not None:
+        # provisioning choke points read to grant the default role on first login, and the signal
+        # for whether managed roles / the /authz API are active.
+        fastapi_app.state.role_store = self._authz_role_store
+        if fastapi_app.state.role_store is None and directory is not None:
             # A directory with no role store is valid (a pure roster), but say so once at boot: no
             # roles apply, provisioned users get none, and the /authz roles API is not mounted. This
             # is the signal a UI uses to hide role management for this deployment.
