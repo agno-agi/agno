@@ -131,6 +131,7 @@ def __init__(
     max_tool_calls_from_history: Optional[int] = None,
     skills: Optional[Skills] = None,
     tools: Optional[Union[List[Union[Toolkit, Callable, Function, Dict]], Callable[..., List]]] = None,
+    error_on_tool_name_collision: bool = False,
     tool_call_limit: Optional[int] = None,
     tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
     tool_hooks: Optional[List[Callable]] = None,
@@ -296,6 +297,8 @@ def __init__(
     team.send_media_to_model = send_media_to_model
 
     team.skills = skills
+
+    team.error_on_tool_name_collision = error_on_tool_name_collision
 
     if tools is None:
         team.tools = None
