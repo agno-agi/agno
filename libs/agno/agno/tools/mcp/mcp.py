@@ -420,6 +420,8 @@ class MCPTools(Toolkit):
             self.server_params = StdioServerParameters(command=cmd, args=arguments, env=env)
 
         self._client = client
+        # Track the exact functions discovery owns so refreshes preserve local registrations.
+        self._mcp_functions: dict[str, Function] = {}
 
         self._initialized = False
         self._connection_task = None
@@ -910,7 +912,8 @@ class MCPTools(Toolkit):
             if self.tool_name_prefix is not None:
                 tool_name_prefix = self.tool_name_prefix + "_"
 
-            # Register the tools with the toolkit
+            # Build the new discovery snapshot before replacing previously discovered functions.
+            discovered_functions: dict[str, Function] = {}
             for tool in filtered_tools:
                 try:
                     # Get an entrypoint for the tool
@@ -943,11 +946,17 @@ class MCPTools(Toolkit):
                         cache_ttl=self.cache_ttl,
                     )
 
-                    # Register the Function with the toolkit
-                    self.functions[f.name] = f
+                    discovered_functions[f.name] = f
                     log_debug(f"Function: {f.name} registered with {self.name}")
                 except Exception as e:
                     log_error(f"Failed to register tool {tool.name}: {str(e)}")
+
+            for name, function in self._mcp_functions.items():
+                # A caller may have replaced a discovered function through Toolkit.register().
+                if self.functions.get(name) is function:
+                    del self.functions[name]
+            self.functions.update(discovered_functions)
+            self._mcp_functions = discovered_functions
 
         except Exception:
             log_error(f"Failed to get tools for {str(self)}")
