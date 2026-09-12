@@ -21,7 +21,7 @@ from contextlib import asynccontextmanager  # noqa: E402
 from typing import Any, AsyncIterator, Iterator, Optional  # noqa: E402
 from uuid import uuid4  # noqa: E402
 
-import httpx  # noqa: E402
+import httpx2  # noqa: E402
 from fastmcp import Client, Context  # noqa: E402
 from starlette.middleware import Middleware  # noqa: E402
 from starlette.middleware.base import BaseHTTPMiddleware  # noqa: E402
@@ -749,11 +749,11 @@ async def _mcp_http_client(os: AgentOS):
     """
     app = os.get_app()
     async with app.router.lifespan_context(app):
-        transport = httpx.ASGITransport(app=app)
+        transport = httpx2.ASGITransport(app=app)
         # base_url sets the default Host header. Use localhost so the default-on
         # rebinding protection for open servers allows it; host-gating tests override
         # the Host explicitly to exercise the reject path.
-        async with httpx.AsyncClient(transport=transport, base_url="http://localhost") as client:
+        async with httpx2.AsyncClient(transport=transport, base_url="http://localhost") as client:
             yield client
 
 
@@ -1339,10 +1339,10 @@ def _docs_os(**mcp_kwargs) -> AgentOS:
 
 
 @asynccontextmanager
-async def _mcp_client(app, base_url: str = "http://example.com") -> AsyncIterator[httpx.AsyncClient]:
+async def _mcp_client(app, base_url: str = "http://example.com") -> AsyncIterator[httpx2.AsyncClient]:
     """An HTTP client on the app with its lifespan running, so fastmcp's transport is live."""
     async with app.router.lifespan_context(app):
-        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=base_url) as client:
+        async with httpx2.AsyncClient(transport=httpx2.ASGITransport(app=app), base_url=base_url) as client:
             yield client
 
 

@@ -1,7 +1,7 @@
 from os import getenv
 from typing import Any, Dict, List, Optional
 
-import httpx
+import httpx2
 from pydantic import BaseModel, Field, HttpUrl
 
 from agno.tools import Toolkit
@@ -53,7 +53,7 @@ class JinaReaderTools(Toolkit):
         """Reads a URL and returns the truncated content using Jina Reader API."""
         full_url = f"{self.config.base_url}{url}"
         try:
-            response = httpx.get(full_url, headers=self._get_headers())
+            response = httpx2.get(full_url, headers=self._get_headers())
             response.raise_for_status()
             content = response.json()
             return self._truncate_content(str(content))
@@ -71,7 +71,7 @@ class JinaReaderTools(Toolkit):
 
         body = {"q": query}
         try:
-            response = httpx.post(full_url, headers=headers, json=body)
+            response = httpx2.post(full_url, headers=headers, json=body)
             response.raise_for_status()
             content = response.json()
             return self._truncate_content(str(content))

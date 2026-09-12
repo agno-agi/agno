@@ -1,7 +1,7 @@
 """
 Get an API key at https://gandr.ai
 
-The toolkit uses `httpx`, which installs with agno. No extra dependencies are needed.
+The toolkit uses `httpx2`, which installs with agno. No extra dependencies are needed.
 """
 
 from pathlib import Path

@@ -18,9 +18,9 @@ def bytes_and_mime_from_url(url: str) -> Tuple[Optional[bytes], Optional[str]]:
     rehydrated through ``storage.download()`` instead. The declared type is returned because a
     url whose path carries no extension is otherwise unidentifiable.
     """
-    import httpx
+    import httpx2
 
-    resp = httpx.get(url, follow_redirects=True)
+    resp = httpx2.get(url, follow_redirects=True)
     resp.raise_for_status()
     content_type = resp.headers.get("content-type", "").split(";")[0].strip()
     return resp.content, content_type or None
@@ -28,9 +28,9 @@ def bytes_and_mime_from_url(url: str) -> Tuple[Optional[bytes], Optional[str]]:
 
 async def abytes_and_mime_from_url(url: str) -> Tuple[Optional[bytes], Optional[str]]:
     """Async variant of bytes_and_mime_from_url."""
-    import httpx
+    import httpx2
 
-    async with httpx.AsyncClient(follow_redirects=True) as client:
+    async with httpx2.AsyncClient(follow_redirects=True) as client:
         resp = await client.get(url)
         resp.raise_for_status()
         content_type = resp.headers.get("content-type", "").split(";")[0].strip()

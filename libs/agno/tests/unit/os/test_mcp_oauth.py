@@ -29,7 +29,7 @@ from types import SimpleNamespace  # noqa: E402
 from urllib.parse import parse_qs, urlparse  # noqa: E402
 from uuid import uuid4  # noqa: E402
 
-import httpx  # noqa: E402
+import httpx2  # noqa: E402
 from fastmcp.server.auth import AccessToken  # noqa: E402
 from fastmcp.server.auth.auth import ClientRegistrationOptions  # noqa: E402
 from fastmcp.server.auth.providers.in_memory import InMemoryOAuthProvider  # noqa: E402
@@ -119,12 +119,12 @@ async def _http_client(os: AgentOS):
     """Drive the full AgentOS app so the parent middleware and the mount both run."""
     app = os.get_app()
     async with app.router.lifespan_context(app):
-        transport = httpx.ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://localhost") as client:
+        transport = httpx2.ASGITransport(app=app)
+        async with httpx2.AsyncClient(transport=transport, base_url="http://localhost") as client:
             yield client
 
 
-async def _obtain_oauth_token(client: httpx.AsyncClient, scope: str = "agents:run") -> tuple:
+async def _obtain_oauth_token(client: httpx2.AsyncClient, scope: str = "agents:run") -> tuple:
     """Run the connector dance by hand: DCR -> authorize (PKCE) -> token exchange."""
     registration = await client.post(
         "/register",
@@ -317,8 +317,8 @@ async def test_well_known_survives_router_resync():
     app = os.get_app()
     os._reprovision_routers(app)
     async with app.router.lifespan_context(app):
-        transport = httpx.ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://localhost") as client:
+        transport = httpx2.ASGITransport(app=app)
+        async with httpx2.AsyncClient(transport=transport, base_url="http://localhost") as client:
             response = await client.get("/.well-known/oauth-authorization-server")
     assert response.status_code == 200
 

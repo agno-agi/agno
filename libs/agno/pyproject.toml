@@ -26,11 +26,10 @@ classifiers = [
 dependencies = [
   "agnoctl>=0.2.0",
   "docstring-parser",
-  # Prevent the request-smuggling CVE in h11 < 0.16
+  # Prevent the request-smuggling CVE in h11 < 0.16 (httpcore2, httpx2's transport, parses HTTP/1.1 with h11)
   "h11>=0.16.0",
-  # Floor keeps pre-release resolvers from picking httpx 1.0 dev builds, which drop
-  # HTTPStatusError and break fastmcp 4 (see mcp 2.x migration notes).
-  "httpx[http2]>=0.28.1",
+  # Floor matches openai 3.x's requirement; anthropic>=1.0.0 and mcp>=2.1.0 also ride on httpx2
+  "httpx2[http2]>=2.7.0",
   "packaging",
   "pydantic-settings",
   "pydantic",
@@ -143,10 +142,10 @@ elevenlabs = ["elevenlabs"]
 evm = ["web3"]
 exa = ["exa_py>=2.0.0"]
 fal = ["fal_client"]
-finance = ["yfinance"]  # default FinanceTools provider; financialdatasets.ai needs only httpx (core)
+finance = ["yfinance"]  # default FinanceTools provider; financialdatasets.ai needs only httpx2 (core)
 firecrawl = ["firecrawl-py==3.4.0"]
 github = ["PyGithub"]
-gitlab = ["python-gitlab", "httpx"]
+gitlab = ["python-gitlab", "httpx2"]
 gmail = ["google-api-python-client", "google-auth-httplib2", "google-auth-oauthlib"]
 google-bigquery = ["google-cloud-bigquery"]
 google-slides = ["google-api-python-client", "google-auth-httplib2", "google-auth-oauthlib"]

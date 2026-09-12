@@ -18,7 +18,7 @@ Run: .venvs/demo/bin/python cookbook/06_storage/09_media_storage_delete.py
 
 import os
 
-import httpx
+import httpx2
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.media import Image
@@ -70,7 +70,7 @@ def describe(session_id: str, image_bytes: bytes) -> None:
 # Run the Agent
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    image_bytes = httpx.get(IMAGE_URL, follow_redirects=True).content
+    image_bytes = httpx2.get(IMAGE_URL, follow_redirects=True).content
     describe("keeps-media", image_bytes)
     describe("sweeps-media", image_bytes)
     print("Stored in S3 after two sessions:", len(stored_keys()))

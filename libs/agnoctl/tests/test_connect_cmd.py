@@ -3,7 +3,7 @@
 import json
 from pathlib import Path
 
-import httpx
+import httpx2
 import pytest
 from typer.testing import CliRunner
 
@@ -510,17 +510,17 @@ def _install_two_hosts(monkeypatch, tmp_path):
     remote = FakeAgentOS(auth_mode="none", name="Live Railway")
     local = FakeAgentOS(auth_mode="none", name="Local Dev")
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         key = request.url.host + ":" + str(request.url.port)
         if key == "prodhost:9000":
             return remote.handler(request)
         if key == "localhost:7777":
             return local.handler(request)
-        raise httpx.ConnectError("connection refused", request=request)
+        raise httpx2.ConnectError("connection refused", request=request)
 
     import agnoctl.http as http_module
 
-    monkeypatch.setattr(http_module, "_transport_override", httpx.MockTransport(handler))
+    monkeypatch.setattr(http_module, "_transport_override", httpx2.MockTransport(handler))
     for var in ("AGNO_ADMIN_TOKEN", "OS_SECURITY_KEY", "AGENTOS_URL"):
         monkeypatch.delenv(var, raising=False)
     return remote, local
@@ -595,14 +595,14 @@ def test_connect_json_dead_env_file_target_stays_a_hard_failure(monkeypatch, tmp
     monkeypatch.chdir(tmp_path)
     local = FakeAgentOS(auth_mode="none")
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         if request.url.host + ":" + str(request.url.port) == "localhost:7777":
             return local.handler(request)
-        raise httpx.ConnectError("connection refused", request=request)
+        raise httpx2.ConnectError("connection refused", request=request)
 
     import agnoctl.http as http_module
 
-    monkeypatch.setattr(http_module, "_transport_override", httpx.MockTransport(handler))
+    monkeypatch.setattr(http_module, "_transport_override", httpx2.MockTransport(handler))
     for var in ("AGNO_ADMIN_TOKEN", "OS_SECURITY_KEY", "AGENTOS_URL"):
         monkeypatch.delenv(var, raising=False)
 
@@ -624,14 +624,14 @@ def test_connect_interactive_notes_dead_env_file_url(monkeypatch, tmp_path, fake
     monkeypatch.chdir(tmp_path)
     local = FakeAgentOS(auth_mode="none", name="Local Dev")
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         if request.url.host + ":" + str(request.url.port) == "localhost:7777":
             return local.handler(request)
-        raise httpx.ConnectError("connection refused", request=request)
+        raise httpx2.ConnectError("connection refused", request=request)
 
     import agnoctl.http as http_module
 
-    monkeypatch.setattr(http_module, "_transport_override", httpx.MockTransport(handler))
+    monkeypatch.setattr(http_module, "_transport_override", httpx2.MockTransport(handler))
     for var in ("AGNO_ADMIN_TOKEN", "OS_SECURITY_KEY", "AGENTOS_URL"):
         monkeypatch.delenv(var, raising=False)
     _make_interactive(monkeypatch)

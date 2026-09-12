@@ -2,7 +2,7 @@ from os import getenv
 from typing import Any, Dict, List, Literal, Optional
 from urllib.parse import quote
 
-import httpx
+import httpx2
 
 from agno.tools import Toolkit
 from agno.utils.log import log_error
@@ -48,7 +48,7 @@ class AdanosTools(Toolkit):
         """
         self.api_key = api_key or getenv("ADANOS_API_KEY")
         self.base_url = base_url.rstrip("/")
-        self.timeout = httpx.Timeout(timeout)
+        self.timeout = httpx2.Timeout(timeout)
 
         if not self.api_key:
             log_error("ADANOS_API_KEY not set. Please set the ADANOS_API_KEY environment variable.")
@@ -82,7 +82,7 @@ class AdanosTools(Toolkit):
         return {key: value for key, value in params.items() if value is not None}
 
     @staticmethod
-    def _error(response: httpx.Response) -> Dict[str, Any]:
+    def _error(response: httpx2.Response) -> Dict[str, Any]:
         try:
             detail = response.json().get("detail", response.text)
         except ValueError:
@@ -91,28 +91,28 @@ class AdanosTools(Toolkit):
 
     def _request(self, path: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         try:
-            with httpx.Client(timeout=self.timeout) as client:
+            with httpx2.Client(timeout=self.timeout) as client:
                 response = client.get(f"{self.base_url}/{path}", headers=self._headers(), params=params)
                 response.raise_for_status()
                 return response.json()
         except ValueError as error:
             return {"error": str(error)}
-        except httpx.HTTPStatusError as error:
+        except httpx2.HTTPStatusError as error:
             return self._error(error.response)
-        except httpx.RequestError as error:
+        except httpx2.RequestError as error:
             return {"error": "Adanos API request failed", "detail": str(error)}
 
     async def _arequest(self, path: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
+            async with httpx2.AsyncClient(timeout=self.timeout) as client:
                 response = await client.get(f"{self.base_url}/{path}", headers=self._headers(), params=params)
                 response.raise_for_status()
                 return response.json()
         except ValueError as error:
             return {"error": str(error)}
-        except httpx.HTTPStatusError as error:
+        except httpx2.HTTPStatusError as error:
             return self._error(error.response)
-        except httpx.RequestError as error:
+        except httpx2.RequestError as error:
             return {"error": "Adanos API request failed", "detail": str(error)}
 
     def get_stock_sentiment(

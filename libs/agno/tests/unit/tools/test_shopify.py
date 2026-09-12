@@ -10,8 +10,8 @@ from agno.tools.shopify import ShopifyTools
 
 @pytest.fixture
 def mock_httpx_client():
-    """Create a mock httpx client."""
-    with patch("agno.tools.shopify.httpx.Client") as mock_client:
+    """Create a mock httpx2 client."""
+    with patch("agno.tools.shopify.httpx2.Client") as mock_client:
         mock_instance = MagicMock()
         mock_client.return_value.__enter__ = MagicMock(return_value=mock_instance)
         mock_client.return_value.__exit__ = MagicMock(return_value=False)

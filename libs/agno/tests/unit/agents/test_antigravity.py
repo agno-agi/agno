@@ -1,7 +1,7 @@
 """Unit tests for AntigravityAgent.
 
 These exercise the adapter's request shape, session-keyed state caching,
-and SSE event translation by stubbing httpx with MockTransport. They do
+and SSE event translation by stubbing httpx2 with MockTransport. They do
 not hit the live Gemini Agents API.
 """
 
@@ -11,7 +11,7 @@ import tempfile
 from typing import List, Optional, Tuple
 from unittest.mock import patch
 
-import httpx
+import httpx2
 import pytest
 
 from agno.agents.antigravity import AntigravityAgent
@@ -59,31 +59,31 @@ def _interaction_response(env_id: str = "env-1", interaction_id: str = "int-1", 
 
 
 def _mock_transport(handler):
-    """Build an httpx MockTransport from a request->Response handler."""
-    return httpx.MockTransport(handler)
+    """Build an httpx2 MockTransport from a request->Response handler."""
+    return httpx2.MockTransport(handler)
 
 
 def _patch_async_client(transport):
-    """Patch httpx.AsyncClient to use the given MockTransport.
+    """Patch httpx2.AsyncClient to use the given MockTransport.
 
-    Adapter constructs `httpx.AsyncClient(timeout=...)` directly; we patch
+    Adapter constructs `httpx2.AsyncClient(timeout=...)` directly; we patch
     AsyncClient at the module level inside agno.agents.antigravity.agent.
     """
-    original_init = httpx.AsyncClient.__init__
+    original_init = httpx2.AsyncClient.__init__
 
     def patched_init(self, *args, **kwargs):
         kwargs["transport"] = transport
         original_init(self, *args, **kwargs)
 
-    return patch("httpx.AsyncClient.__init__", patched_init)
+    return patch("httpx2.AsyncClient.__init__", patched_init)
 
 
 def test_first_call_sends_remote_environment_and_caches_env_id(tmp_db):
     captured: List[dict] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         captured.append(json.loads(request.content.decode()))
-        return httpx.Response(200, json=_interaction_response(env_id="env-42", interaction_id="int-7"))
+        return httpx2.Response(200, json=_interaction_response(env_id="env-42", interaction_id="int-7"))
 
     agent = AntigravityAgent(
         name="Test",
@@ -110,9 +110,9 @@ def test_first_call_sends_remote_environment_and_caches_env_id(tmp_db):
 def test_second_call_reuses_cached_env_id_and_previous_interaction(tmp_db):
     captured: List[dict] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         captured.append(json.loads(request.content.decode()))
-        return httpx.Response(200, json=_interaction_response(env_id="env-42", interaction_id="int-9"))
+        return httpx2.Response(200, json=_interaction_response(env_id="env-42", interaction_id="int-9"))
 
     agent = AntigravityAgent(name="Test", api_key="dummy", db=tmp_db)
 
@@ -132,8 +132,8 @@ def test_second_call_reuses_cached_env_id_and_previous_interaction(tmp_db):
 
 
 def test_http_error_surfaces_as_runerror():
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(500, text="boom")
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(500, text="boom")
 
     agent = AntigravityAgent(name="Test", api_key="dummy")
 
@@ -182,8 +182,8 @@ def test_streaming_translates_sse_to_agno_events(tmp_db):
     ]
     body = "\n\n".join(sse_lines).encode()
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(
             200,
             content=body,
             headers={"content-type": "text/event-stream"},
@@ -248,9 +248,9 @@ def test_run_with_custom_agent_sends_agent_name_in_body_and_omits_sources():
     NOT on the /interactions request."""
     captured: List[dict] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         captured.append(json.loads(request.content.decode()))
-        return httpx.Response(200, json=_interaction_response(text="haiku here"))
+        return httpx2.Response(200, json=_interaction_response(text="haiku here"))
 
     agent = AntigravityAgent(
         name="T",
@@ -272,7 +272,7 @@ def test_run_with_custom_agent_sends_agent_name_in_body_and_omits_sources():
 def test_ensure_custom_agent_posts_agent_definition():
     captured: List[dict] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         captured.append(
             {
                 "method": request.method,
@@ -280,7 +280,7 @@ def test_ensure_custom_agent_posts_agent_definition():
                 "body": json.loads(request.content.decode()) if request.content else {},
             }
         )
-        return httpx.Response(200, json={"name": "my-bot"})
+        return httpx2.Response(200, json={"name": "my-bot"})
 
     agent = AntigravityAgent(
         name="T",
@@ -291,18 +291,18 @@ def test_ensure_custom_agent_posts_agent_definition():
         sources=[{"type": "inline", "content": "x", "target": "/a"}],
     )
 
-    # ensure_custom_agent is sync and constructs its own httpx.Client; the same
+    # ensure_custom_agent is sync and constructs its own httpx2.Client; the same
     # patch utility works because it patches both AsyncClient.__init__ behavior
-    # only — patch sync httpx.Client directly here.
+    # only — patch sync httpx2.Client directly here.
     from unittest.mock import patch as _patch
 
-    original_init = httpx.Client.__init__
+    original_init = httpx2.Client.__init__
 
     def patched(self, *args, **kwargs):
         kwargs["transport"] = _mock_transport(handler)
         original_init(self, *args, **kwargs)
 
-    with _patch("httpx.Client.__init__", patched):
+    with _patch("httpx2.Client.__init__", patched):
         result = agent.ensure_custom_agent()
 
     assert result == {"name": "my-bot"}
@@ -320,19 +320,19 @@ def test_ensure_custom_agent_posts_agent_definition():
 
 
 def test_ensure_custom_agent_treats_409_as_already_exists():
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(409, text="conflict: already exists")
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(409, text="conflict: already exists")
 
     agent = AntigravityAgent(name="T", api_key="dummy", custom_agent_name="my-bot")
     from unittest.mock import patch as _patch
 
-    original_init = httpx.Client.__init__
+    original_init = httpx2.Client.__init__
 
     def patched(self, *args, **kwargs):
         kwargs["transport"] = _mock_transport(handler)
         original_init(self, *args, **kwargs)
 
-    with _patch("httpx.Client.__init__", patched):
+    with _patch("httpx2.Client.__init__", patched):
         result = agent.ensure_custom_agent()
 
     assert result == {}
@@ -544,22 +544,22 @@ def test_from_agent_directory_register_true_calls_post_agents():
     """When register=True (default), the classmethod should POST to /agents before returning."""
     captured: List[dict] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         captured.append(
             {"method": request.method, "url": str(request.url), "body": json.loads(request.content.decode())}
         )
-        return httpx.Response(200, json={"name": "my-bot"})
+        return httpx2.Response(200, json={"name": "my-bot"})
 
     with tempfile.TemporaryDirectory() as d:
         _make_agent_dir(Path(d))
 
-        original_init = httpx.Client.__init__
+        original_init = httpx2.Client.__init__
 
         def patched(self, *args, **kwargs):
             kwargs["transport"] = _mock_transport(handler)
             original_init(self, *args, **kwargs)
 
-        with patch("httpx.Client.__init__", patched):
+        with patch("httpx2.Client.__init__", patched):
             AntigravityAgent.from_agent_directory(d, api_key="dummy")  # register=True is the default
 
     assert len(captured) == 1
@@ -576,9 +576,9 @@ def test_from_agent_directory_register_true_calls_post_agents():
 def test_download_environment_snapshot_writes_bytes_and_uses_cached_env_id(tmp_db):
     snapshot_body = b"FAKE_TAR_DATA_" + b"x" * 100
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         assert "/files/environment-env-99:download" in str(request.url)
-        return httpx.Response(200, content=snapshot_body)
+        return httpx2.Response(200, content=snapshot_body)
 
     agent = AntigravityAgent(name="T", api_key="dummy", db=tmp_db)
     # Seed the env id into the persisted session, as a prior turn would have.
@@ -586,7 +586,7 @@ def test_download_environment_snapshot_writes_bytes_and_uses_cached_env_id(tmp_d
     session.session_data = {agent._ENV_KEY: "env-99"}
     agent.upsert_session(session)
 
-    original_init = httpx.Client.__init__
+    original_init = httpx2.Client.__init__
 
     def patched(self, *args, **kwargs):
         kwargs["transport"] = _mock_transport(handler)
@@ -595,7 +595,7 @@ def test_download_environment_snapshot_writes_bytes_and_uses_cached_env_id(tmp_d
     with tempfile.NamedTemporaryFile(suffix=".tar", delete=False) as f:
         out_path = f.name
     try:
-        with patch("httpx.Client.__init__", patched):
+        with patch("httpx2.Client.__init__", patched):
             written = agent.download_environment_snapshot(out_path, session_id="s1")
         assert written == len(snapshot_body)
         with open(out_path, "rb") as fh:
@@ -617,9 +617,9 @@ def test_no_db_degrades_gracefully_no_cross_turn_reuse():
     fresh sandbox ('remote') and never sends previous_interaction_id. Must not error."""
     captured: List[dict] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         captured.append(json.loads(request.content.decode()))
-        return httpx.Response(200, json=_interaction_response(env_id="env-1", interaction_id="int-1"))
+        return httpx2.Response(200, json=_interaction_response(env_id="env-1", interaction_id="int-1"))
 
     agent = AntigravityAgent(name="T", api_key="dummy")  # no db
 

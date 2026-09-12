@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Literal, Optional, Set
 from urllib.parse import urlparse
 
-import httpx
+import httpx2
 
 from agno.knowledge.chunking.semantic import SemanticChunking
 from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyType
@@ -190,11 +190,11 @@ class WebSearchReader(Reader):
         for attempt in range(self.max_retries):
             try:
                 if guard is None:
-                    response = httpx.get(url, headers=headers, timeout=self.request_timeout, follow_redirects=True)
+                    response = httpx2.get(url, headers=headers, timeout=self.request_timeout, follow_redirects=True)
                 else:
                     # Per-redirect host check: follow redirects but validate each hop's
                     # target against the allowlist via the request event hook.
-                    with httpx.Client(timeout=self.request_timeout, event_hooks={"request": [guard]}) as client:
+                    with httpx2.Client(timeout=self.request_timeout, event_hooks={"request": [guard]}) as client:
                         response = client.get(url, headers=headers, follow_redirects=True)
                 response.raise_for_status()
 
@@ -317,7 +317,7 @@ class WebSearchReader(Reader):
                 client_kwargs: Dict[str, Any] = {"timeout": self.request_timeout}
                 if guard is not None:
                     client_kwargs["event_hooks"] = {"request": [guard]}
-                async with httpx.AsyncClient(**client_kwargs) as client:
+                async with httpx2.AsyncClient(**client_kwargs) as client:
                     response = await client.get(url, headers=headers, follow_redirects=True)
                     response.raise_for_status()
 

@@ -1,7 +1,7 @@
 import struct
 from unittest.mock import AsyncMock, patch
 
-import httpx
+import httpx2
 import pytest
 
 from agno.media import Audio, File, Image
@@ -346,9 +346,9 @@ async def test_upload_image_unsupported_format_no_fallback():
 
 
 def _mock_response(json_data=None, content=None, status_code=200):
-    resp = httpx.Response(status_code=status_code, request=httpx.Request("GET", "https://test"))
+    resp = httpx2.Response(status_code=status_code, request=httpx2.Request("GET", "https://test"))
     if json_data is not None:
-        resp._content = httpx._content.json_dumps(json_data).encode() if isinstance(json_data, dict) else json_data
+        resp._content = httpx2._content.json_dumps(json_data).encode() if isinstance(json_data, dict) else json_data
     elif content is not None:
         resp._content = content
     return resp
@@ -357,15 +357,15 @@ def _mock_response(json_data=None, content=None, status_code=200):
 @pytest.mark.asyncio
 async def test_download_event_media_image_success():
     parsed = MessageContent(text="caption", image_id="img_123")
-    metadata_resp = httpx.Response(
+    metadata_resp = httpx2.Response(
         200,
         json={"url": "https://cdn/img", "mime_type": "image/jpeg"},
-        request=httpx.Request("GET", "https://graph.facebook.com/v22.0/img_123"),
+        request=httpx2.Request("GET", "https://graph.facebook.com/v22.0/img_123"),
     )
-    content_resp = httpx.Response(
+    content_resp = httpx2.Response(
         200,
         content=b"\xff\xd8\xff",
-        request=httpx.Request("GET", "https://cdn/img"),
+        request=httpx2.Request("GET", "https://cdn/img"),
     )
 
     async def _mock_get(url, **kwargs):
@@ -373,7 +373,7 @@ async def test_download_event_media_image_success():
             return metadata_resp
         return content_resp
 
-    with patch("httpx.AsyncClient.get", side_effect=_mock_get):
+    with patch("httpx2.AsyncClient.get", side_effect=_mock_get):
         media_kwargs, skipped = await download_event_media_async(parsed, _TEST_CONFIG)
 
     assert skipped == []
@@ -385,7 +385,7 @@ async def test_download_event_media_image_success():
 async def test_download_event_media_failure_returns_skip():
     parsed = MessageContent(text="caption", image_id="img_bad")
 
-    with patch("httpx.AsyncClient.get", side_effect=httpx.HTTPError("404")):
+    with patch("httpx2.AsyncClient.get", side_effect=httpx2.HTTPError("404")):
         media_kwargs, skipped = await download_event_media_async(parsed, _TEST_CONFIG)
 
     assert media_kwargs == {}

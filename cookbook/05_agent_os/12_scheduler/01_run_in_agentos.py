@@ -14,7 +14,7 @@ import os
 import sys
 import time
 
-import httpx
+import httpx2
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.models.openai import OpenAIResponses
@@ -102,7 +102,7 @@ def seed_schedule() -> None:
 
 def watch_natural_run() -> None:
     """Wait for the poller to create a new persisted schedule-run row."""
-    with httpx.Client(base_url=BASE_URL, timeout=30.0) as client:
+    with httpx2.Client(base_url=BASE_URL, timeout=30.0) as client:
         health_response = client.get("/health")
         health_response.raise_for_status()
         config_response = client.get("/config")

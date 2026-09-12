@@ -21,7 +21,7 @@ def test_expand_url_success(web_tools):
     mock_response = Mock()
     mock_response.url = final_url
 
-    with patch("httpx.head", return_value=mock_response) as mock_head:
+    with patch("httpx2.head", return_value=mock_response) as mock_head:
         result = web_tools.expand_url(mock_url)
 
     assert result == final_url

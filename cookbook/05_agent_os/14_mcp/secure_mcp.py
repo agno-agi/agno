@@ -24,7 +24,7 @@ import asyncio
 import os
 from uuid import uuid4
 
-import httpx
+import httpx2
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
@@ -102,7 +102,7 @@ app = agent_os.get_app()
 
 async def run_authenticated_client() -> None:
     account_name = f"{SERVICE_ACCOUNT_PREFIX}{uuid4().hex[:10]}"
-    async with httpx.AsyncClient(base_url=BASE_URL, timeout=30) as http:
+    async with httpx2.AsyncClient(base_url=BASE_URL, timeout=30) as http:
         root_attempt = await http.post(
             "/mcp",
             json=MCP_INITIALIZE,

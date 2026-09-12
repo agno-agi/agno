@@ -4,7 +4,7 @@ from dataclasses import asdict, dataclass
 from os import getenv
 from typing import Any, Callable, Dict, List, Literal, NoReturn, Optional, Type, Union
 
-import httpx
+import httpx2
 from pydantic import BaseModel, ValidationError
 
 from agno.exceptions import ModelProviderError, ModelRateLimitError
@@ -174,7 +174,9 @@ class Claude(Model):
     auth_token: Optional[str] = None
     default_headers: Optional[Dict[str, Any]] = None
     timeout: Optional[float] = None
-    http_client: Optional[Union[httpx.Client, httpx.AsyncClient]] = None
+    # The accepted client flavour follows the installed Anthropic SDK: httpx for
+    # anthropic<1.0, httpx2 for anthropic>=1.0. resolve_http_client checks at runtime.
+    http_client: Optional[Union[httpx2.Client, httpx2.AsyncClient]] = None
     client_params: Optional[Dict[str, Any]] = None
 
     client: Optional[AnthropicClient] = None
@@ -1273,9 +1275,9 @@ class Claude(Model):
                 file_ids: List[str] = []
                 for block in response.message.content:  # type: ignore
                     if block.type == "bash_code_execution_tool_result":
-                        if hasattr(block, "content") and hasattr(block.content, "content"):
-                            if isinstance(block.content.content, list):
-                                for output_block in block.content.content:
+                        if hasattr(block, "content") and hasattr(block.content, "content"):  # type: ignore
+                            if isinstance(block.content.content, list):  # type: ignore
+                                for output_block in block.content.content:  # type: ignore
                                     if hasattr(output_block, "file_id"):
                                         file_ids.append(output_block.file_id)
                 if file_ids:

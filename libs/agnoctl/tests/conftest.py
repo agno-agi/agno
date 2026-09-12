@@ -1,10 +1,10 @@
-"""Test fixtures: an in-memory fake AgentOS served through httpx.MockTransport."""
+"""Test fixtures: an in-memory fake AgentOS served through httpx2.MockTransport."""
 
 import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
-import httpx
+import httpx2
 import pytest
 
 DEFAULT_OAUTH = {
@@ -60,24 +60,24 @@ class FakeAgentOS:
 
     # -- helpers -------------------------------------------------------------------
 
-    def transport(self) -> httpx.MockTransport:
-        return httpx.MockTransport(self.handler)
+    def transport(self) -> httpx2.MockTransport:
+        return httpx2.MockTransport(self.handler)
 
     def active_tokens(self) -> List[str]:
         return [a["token"] for a in self.accounts.values() if not a.get("revoked_at")]
 
-    def _bearer(self, request: httpx.Request) -> Optional[str]:
+    def _bearer(self, request: httpx2.Request) -> Optional[str]:
         value = request.headers.get("Authorization")
         if value and value.lower().startswith("bearer "):
             return value[len("bearer ") :]
         return value
 
-    def _is_admin(self, request: httpx.Request) -> bool:
+    def _is_admin(self, request: httpx2.Request) -> bool:
         if self.auth_mode == "none":
             return True
         return self._bearer(request) == self.security_key
 
-    def _account_for_bearer(self, request: httpx.Request) -> Optional[Dict[str, Any]]:
+    def _account_for_bearer(self, request: httpx2.Request) -> Optional[Dict[str, Any]]:
         token = self._bearer(request)
         for account in self.accounts.values():
             if account["token"] == token and not account.get("revoked_at"):
@@ -124,22 +124,22 @@ class FakeAgentOS:
             "value": "allow",
         }
 
-    def _jsonrpc_response(self, payload: Dict[str, Any], headers: Optional[Dict[str, str]] = None) -> httpx.Response:
+    def _jsonrpc_response(self, payload: Dict[str, Any], headers: Optional[Dict[str, str]] = None) -> httpx2.Response:
         if self.sse_responses:
             body = "event: message\ndata: " + json.dumps(payload) + "\n\n"
-            return httpx.Response(
+            return httpx2.Response(
                 200, content=body.encode(), headers={"content-type": "text/event-stream", **(headers or {})}
             )
-        return httpx.Response(200, json=payload, headers=headers or {})
+        return httpx2.Response(200, json=payload, headers=headers or {})
 
     # -- request handler -----------------------------------------------------------
 
-    def handler(self, request: httpx.Request) -> httpx.Response:
+    def handler(self, request: httpx2.Request) -> httpx2.Response:
         path = request.url.path
         method = request.method
 
         if path == "/health":
-            return httpx.Response(200, json={"status": "ok", "instantiated_at": "2026-07-04T00:00:00Z"})
+            return httpx2.Response(200, json={"status": "ok", "instantiated_at": "2026-07-04T00:00:00Z"})
 
         if path == "/info":
             payload: Dict[str, Any] = {"agno_version": self.agno_version, "agents": 1, "teams": 0, "workflows": 0}
@@ -154,17 +154,17 @@ class FakeAgentOS:
                     payload["name"] = self.name
                 if self.os_id is not None:
                     payload["os_id"] = self.os_id
-            return httpx.Response(200, json=payload)
+            return httpx2.Response(200, json=payload)
 
         if path == "/config":
             if self.auth_mode == "none":
-                return httpx.Response(200, json={"os_id": "fake"})
+                return httpx2.Response(200, json={"os_id": "fake"})
             if self._bearer(request) == self.security_key:
-                return httpx.Response(200, json={"os_id": "fake"})
+                return httpx2.Response(200, json={"os_id": "fake"})
             detail = (
                 "Authorization header required" if self.auth_mode == "security_key" else "Authorization header missing"
             )
-            return httpx.Response(401, json={"detail": detail})
+            return httpx2.Response(401, json={"detail": detail})
 
         if path == "/service-accounts" and method == "POST":
             # An open REST plane ("none") installs no auth middleware, so anonymous
@@ -174,23 +174,23 @@ class FakeAgentOS:
             if self.auth_mode == "none":
                 minter = self._account_for_bearer(request)
                 if minter is None:
-                    return httpx.Response(
+                    return httpx2.Response(
                         401, json={"detail": "JWT authentication is required to mint a service account."}
                     )
                 if not set(minter.get("scopes") or []) & {"admin", "service_accounts:write"}:
-                    return httpx.Response(403, json={"detail": "Missing required scope: service_accounts:write"})
+                    return httpx2.Response(403, json={"detail": "Missing required scope: service_accounts:write"})
             elif not self._is_admin(request):
-                return httpx.Response(401, json={"detail": "Invalid authentication token"})
+                return httpx2.Response(401, json={"detail": "Invalid authentication token"})
             body = json.loads(request.content)
             name = body["name"]
             if name in self.accounts and not self.accounts[name].get("revoked_at"):
-                return httpx.Response(409, json={"detail": "Service account '" + name + "' already exists"})
+                return httpx2.Response(409, json={"detail": "Service account '" + name + "' already exists"})
             self.create_calls += 1
             # Like the real server, the write shape is {scope, effect} objects only;
             # a plain-string scope is a 422. The store keeps raw strings.
             requested_scopes = body.get("scopes")
             if requested_scopes is not None and any(not isinstance(s, dict) for s in requested_scopes):
-                return httpx.Response(422, json={"detail": "scopes must be {scope, effect} objects"})
+                return httpx2.Response(422, json={"detail": "scopes must be {scope, effect} objects"})
             # Realistic length: real tokens are agno_pat_ + 43 base62 chars, so the
             # 16-char display prefix must never contain the whole token.
             token = "agno_pat_" + (name.replace("-", "") + str(self._next_id) + "x" * 40)[:43]
@@ -211,36 +211,36 @@ class FakeAgentOS:
             }
             self._next_id += 1
             self.accounts[name] = account
-            return httpx.Response(201, json=self._account_response(account, include_token=True))
+            return httpx2.Response(201, json=self._account_response(account, include_token=True))
 
         if path == "/service-accounts" and method == "GET":
             if not self._is_admin(request):
-                return httpx.Response(401, json={"detail": "Invalid authentication token"})
+                return httpx2.Response(401, json={"detail": "Invalid authentication token"})
             data = [self._account_response(a) for a in self.accounts.values()]
-            return httpx.Response(
+            return httpx2.Response(
                 200,
                 json={"data": data, "meta": {"page": 1, "limit": 100, "total_pages": 1, "total_count": len(data)}},
             )
 
         if path.startswith("/service-accounts/") and method == "DELETE":
             if not self._is_admin(request):
-                return httpx.Response(401, json={"detail": "Invalid authentication token"})
+                return httpx2.Response(401, json={"detail": "Invalid authentication token"})
             account_id = path.rsplit("/", 1)[1]
             for account in self.accounts.values():
                 if account["id"] == account_id:
                     account["revoked_at"] = 1780000001
-                    return httpx.Response(204)
-            return httpx.Response(404, json={"detail": "Service account not found"})
+                    return httpx2.Response(204)
+            return httpx2.Response(404, json={"detail": "Service account not found"})
 
         if path == "/mcp":
             if not self.mcp_enabled:
-                return httpx.Response(404, json={"detail": "Not Found"})
+                return httpx2.Response(404, json={"detail": "Not Found"})
             if self.oauth is not None:
                 # OAuth-protected /mcp: fastmcp's middleware guards it regardless of the
                 # REST plane -- 401 + the RFC 9728 challenge for anything but a minted
                 # PAT (which the real server accepts via MultiAuth).
                 if self._bearer(request) not in self.active_tokens():
-                    return httpx.Response(
+                    return httpx2.Response(
                         401,
                         json={"detail": "Unauthorized"},
                         headers={
@@ -251,7 +251,7 @@ class FakeAgentOS:
             elif self.mcp_requires_token and self.auth_mode != "none":
                 token = self._bearer(request)
                 if token != self.security_key and token not in self.active_tokens():
-                    return httpx.Response(401, json={"detail": "Invalid authentication token"})
+                    return httpx2.Response(401, json={"detail": "Invalid authentication token"})
             message = json.loads(request.content) if request.content else {}
             rpc_method = message.get("method")
             if rpc_method == "initialize":
@@ -268,7 +268,7 @@ class FakeAgentOS:
                     headers={"mcp-session-id": "fake-session-1"},
                 )
             if rpc_method == "notifications/initialized":
-                return httpx.Response(202)
+                return httpx2.Response(202)
             if rpc_method == "tools/list":
                 return self._jsonrpc_response(
                     {
@@ -281,7 +281,7 @@ class FakeAgentOS:
                 {"jsonrpc": "2.0", "id": message.get("id"), "error": {"code": -32601, "message": "Method not found"}}
             )
 
-        return httpx.Response(404, json={"detail": "Not Found"})
+        return httpx2.Response(404, json={"detail": "Not Found"})
 
 
 @pytest.fixture

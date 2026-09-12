@@ -11,7 +11,7 @@ Run:
 
 from typing import List
 
-import httpx
+import httpx2
 from agno.agent import Agent
 from agno.media import Audio, Image
 from agno.models.google import Gemini
@@ -79,7 +79,7 @@ if __name__ == "__main__":
     artwork_url = "https://agno-public.s3.amazonaws.com/images/krakow_mariacki.jpg"
 
     print("Downloading audio sample...")
-    audio_response = httpx.get(audio_url)
+    audio_response = httpx2.get(audio_url)
 
     print("Analyzing track and artwork...\n")
     result = music_analyst.run(

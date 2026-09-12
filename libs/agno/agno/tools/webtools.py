@@ -1,4 +1,4 @@
-import httpx
+import httpx2
 
 from agno.tools import Toolkit
 from agno.utils.log import logger
@@ -35,7 +35,7 @@ class WebTools(Toolkit):
         timeout = 5
         for attempt in range(1, self.retries + 1):
             try:
-                response = httpx.head(url, follow_redirects=True, timeout=timeout)
+                response = httpx2.head(url, follow_redirects=True, timeout=timeout)
                 final_url = response.url
                 logger.info(f"expand_url: {url} expanded to {final_url} on attempt {attempt}")
                 return str(final_url)

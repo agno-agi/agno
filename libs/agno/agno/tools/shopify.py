@@ -18,7 +18,7 @@ from itertools import combinations
 from os import getenv
 from typing import Any, Dict, List, Optional
 
-import httpx
+import httpx2
 
 from agno.tools import Toolkit
 from agno.utils.log import log_debug
@@ -79,7 +79,7 @@ class ShopifyTools(Toolkit):
         if variables:
             body["variables"] = variables
 
-        with httpx.Client(timeout=self.timeout) as client:
+        with httpx2.Client(timeout=self.timeout) as client:
             response = client.post(
                 self.base_url,
                 headers=headers,

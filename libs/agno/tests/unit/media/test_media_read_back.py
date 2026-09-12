@@ -90,9 +90,9 @@ async def test_a_url_that_cannot_be_fetched_falls_back_to_the_stored_object_asyn
 
 def test_a_failing_url_still_raises_without_a_handle_to_fall_back_to():
     """The handle is what makes a fallback possible; without one the fetch error stands."""
-    import httpx
+    import httpx2
 
-    with pytest.raises(httpx.HTTPError):
+    with pytest.raises(httpx2.HTTPError):
         Image(id="m1", url=DEAD_URL).get_content_bytes()
 
 

@@ -104,7 +104,7 @@ class TestGetTopHackerNewsStories:
                 response.json.return_value = story
             return response
 
-        with patch("agno.tools.hackernews.httpx.get", side_effect=mock_get):
+        with patch("agno.tools.hackernews.httpx2.get", side_effect=mock_get):
             result = hackernews_tools.get_top_hackernews_stories(num_stories=3)
 
         stories = json.loads(result)
@@ -131,7 +131,7 @@ class TestGetTopHackerNewsStories:
                 response.json.return_value = mock_stories.get(story_id, {})
             return response
 
-        with patch("agno.tools.hackernews.httpx.get", side_effect=mock_get):
+        with patch("agno.tools.hackernews.httpx2.get", side_effect=mock_get):
             result = hackernews_tools.get_top_hackernews_stories(num_stories=2)
 
         stories = json.loads(result)
@@ -150,7 +150,7 @@ class TestGetTopHackerNewsStories:
                 response.json.return_value = mock_story
             return response
 
-        with patch("agno.tools.hackernews.httpx.get", side_effect=mock_get):
+        with patch("agno.tools.hackernews.httpx2.get", side_effect=mock_get):
             result = hackernews_tools.get_top_hackernews_stories(num_stories=1)
 
         stories = json.loads(result)
@@ -165,7 +165,7 @@ class TestGetTopHackerNewsStories:
             response.json.return_value = []
             return response
 
-        with patch("agno.tools.hackernews.httpx.get", side_effect=mock_get):
+        with patch("agno.tools.hackernews.httpx2.get", side_effect=mock_get):
             result = hackernews_tools.get_top_hackernews_stories(num_stories=10)
 
         stories = json.loads(result)
@@ -173,7 +173,7 @@ class TestGetTopHackerNewsStories:
 
     def test_get_top_stories_error_handling(self, hackernews_tools):
         """Test error handling when API call fails."""
-        with patch("agno.tools.hackernews.httpx.get", side_effect=Exception("Network error")):
+        with patch("agno.tools.hackernews.httpx2.get", side_effect=Exception("Network error")):
             result = hackernews_tools.get_top_hackernews_stories(num_stories=5)
 
         assert "Error fetching stories" in result
@@ -197,7 +197,7 @@ class TestGetTopHackerNewsStories:
                 response.json.return_value = mock_stories.get(story_id)
             return response
 
-        with patch("agno.tools.hackernews.httpx.get", side_effect=mock_get):
+        with patch("agno.tools.hackernews.httpx2.get", side_effect=mock_get):
             result = hackernews_tools.get_top_hackernews_stories(num_stories=3)
 
         stories = json.loads(result)
@@ -218,7 +218,7 @@ class TestGetTopHackerNewsStories:
                 response.json.return_value = mock_story
             return response
 
-        with patch("agno.tools.hackernews.httpx.get", side_effect=mock_get):
+        with patch("agno.tools.hackernews.httpx2.get", side_effect=mock_get):
             result = hackernews_tools.get_top_hackernews_stories(num_stories=1)
 
         stories = json.loads(result)
@@ -246,7 +246,7 @@ class TestGetTopHackerNewsStories:
                 response.json.return_value = mock_story
             return response
 
-        with patch("agno.tools.hackernews.httpx.get", side_effect=mock_get):
+        with patch("agno.tools.hackernews.httpx2.get", side_effect=mock_get):
             result = hackernews_tools.get_top_hackernews_stories(num_stories=1)
 
         stories = json.loads(result)
@@ -272,7 +272,7 @@ class TestGetUserDetails:
         mock_response = MagicMock()
         mock_response.json.return_value = mock_user
 
-        with patch("agno.tools.hackernews.httpx.get", return_value=mock_response):
+        with patch("agno.tools.hackernews.httpx2.get", return_value=mock_response):
             result = hackernews_tools.get_user_details("testuser")
 
         user_details = json.loads(result)
@@ -293,7 +293,7 @@ class TestGetUserDetails:
         mock_response = MagicMock()
         mock_response.json.return_value = mock_user
 
-        with patch("agno.tools.hackernews.httpx.get", return_value=mock_response):
+        with patch("agno.tools.hackernews.httpx2.get", return_value=mock_response):
             result = hackernews_tools.get_user_details("testuser123")
 
         user_details = json.loads(result)
@@ -311,7 +311,7 @@ class TestGetUserDetails:
         mock_response = MagicMock()
         mock_response.json.return_value = mock_user
 
-        with patch("agno.tools.hackernews.httpx.get", return_value=mock_response):
+        with patch("agno.tools.hackernews.httpx2.get", return_value=mock_response):
             result = hackernews_tools.get_user_details("newuser")
 
         user_details = json.loads(result)
@@ -328,7 +328,7 @@ class TestGetUserDetails:
         mock_response = MagicMock()
         mock_response.json.return_value = mock_user
 
-        with patch("agno.tools.hackernews.httpx.get", return_value=mock_response):
+        with patch("agno.tools.hackernews.httpx2.get", return_value=mock_response):
             result = hackernews_tools.get_user_details("quietuser")
 
         user_details = json.loads(result)
@@ -336,7 +336,7 @@ class TestGetUserDetails:
 
     def test_get_user_details_error_handling(self, hackernews_tools):
         """Test error handling when API call fails."""
-        with patch("agno.tools.hackernews.httpx.get", side_effect=Exception("Network error")):
+        with patch("agno.tools.hackernews.httpx2.get", side_effect=Exception("Network error")):
             result = hackernews_tools.get_user_details("testuser")
 
         assert "Error getting user details" in result
@@ -347,7 +347,7 @@ class TestGetUserDetails:
         mock_response = MagicMock()
         mock_response.json.return_value = None
 
-        with patch("agno.tools.hackernews.httpx.get", return_value=mock_response):
+        with patch("agno.tools.hackernews.httpx2.get", return_value=mock_response):
             result = hackernews_tools.get_user_details("nonexistentuser12345")
 
         # Should handle None gracefully by catching the exception
@@ -390,7 +390,7 @@ class TestEdgeCases:
             response.json.return_value = mock_story_ids
             return response
 
-        with patch("agno.tools.hackernews.httpx.get", side_effect=mock_get):
+        with patch("agno.tools.hackernews.httpx2.get", side_effect=mock_get):
             result = hackernews_tools.get_top_hackernews_stories(num_stories=0)
 
         stories = json.loads(result)
@@ -413,7 +413,7 @@ class TestEdgeCases:
                 response.json.return_value = mock_stories.get(story_id, {})
             return response
 
-        with patch("agno.tools.hackernews.httpx.get", side_effect=mock_get):
+        with patch("agno.tools.hackernews.httpx2.get", side_effect=mock_get):
             result = hackernews_tools.get_top_hackernews_stories(num_stories=100)
 
         stories = json.loads(result)
@@ -431,7 +431,7 @@ class TestEdgeCases:
         mock_response = MagicMock()
         mock_response.json.return_value = mock_user
 
-        with patch("agno.tools.hackernews.httpx.get", return_value=mock_response):
+        with patch("agno.tools.hackernews.httpx2.get", return_value=mock_response):
             result = hackernews_tools.get_user_details("user_with-special.chars")
 
         user_details = json.loads(result)
@@ -455,7 +455,7 @@ class TestEdgeCases:
                 response.json.return_value = mock_story
             return response
 
-        with patch("agno.tools.hackernews.httpx.get", side_effect=mock_get):
+        with patch("agno.tools.hackernews.httpx2.get", side_effect=mock_get):
             result = hackernews_tools.get_top_hackernews_stories(num_stories=1)
 
         stories = json.loads(result)

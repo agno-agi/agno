@@ -15,7 +15,7 @@ import sys
 from datetime import UTC, datetime, timedelta
 from typing import Literal, cast
 
-import httpx
+import httpx2
 import jwt
 from agno.agent import Agent, AgentFactory
 from agno.db.sqlite import SqliteDb
@@ -112,7 +112,7 @@ def run_demo() -> None:
     if (standard_effort, enterprise_effort) != ("low", "high"):
         raise RuntimeError("Trusted tiers resolved to the wrong model policy")
 
-    with httpx.Client(base_url=BASE_URL, timeout=90.0) as client:
+    with httpx2.Client(base_url=BASE_URL, timeout=90.0) as client:
         run_response = client.post(
             f"/agents/{tiered_factory.id}/runs",
             data={

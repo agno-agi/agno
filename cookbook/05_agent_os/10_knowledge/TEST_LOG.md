@@ -25,7 +25,7 @@ The live REST client below used that same server and knowledge instance.
 
 **Test mode:** LIVE
 
-**Description:** Ran the raw-httpx upload, status, list, search, delete, and
+**Description:** Ran the raw-httpx2 upload, status, list, search, delete, and
 follow-up-read lifecycle against `basic.py`.
 
 **Result:** `POST /knowledge/content` returned `202` for content

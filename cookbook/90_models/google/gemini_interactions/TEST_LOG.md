@@ -63,7 +63,7 @@
 
 **Status:** PASS
 
-**Description:** Tests image understanding from URL. Image is downloaded via httpx and sent as base64 data.
+**Description:** Tests image understanding from URL. Image is downloaded via httpx2 and sent as base64 data.
 
 **Result:** Model correctly identified and described a black Labrador puppy on wooden floorboards with detailed analysis of composition, lighting, and mood.
 

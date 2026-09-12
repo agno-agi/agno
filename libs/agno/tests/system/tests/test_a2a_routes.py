@@ -9,7 +9,7 @@ import json
 import uuid
 from typing import Any, Dict, List, Tuple
 
-import httpx
+import httpx2
 import pytest
 
 from .test_utils import generate_jwt_token
@@ -86,12 +86,12 @@ def test_user_id() -> str:
 
 
 @pytest.fixture(scope="module")
-def client(gateway_url: str, test_user_id: str) -> httpx.Client:
+def client(gateway_url: str, test_user_id: str) -> httpx2.Client:
     """Create an HTTP client for the gateway server with authentication.
 
     Note: A2A interface forwards headers to remote agents, so JWT auth is needed.
     """
-    return httpx.Client(
+    return httpx2.Client(
         base_url=gateway_url,
         timeout=REQUEST_TIMEOUT,
         headers={"Authorization": f"Bearer {generate_jwt_token(audience='gateway-os', user_id=test_user_id)}"},
@@ -106,7 +106,7 @@ def client(gateway_url: str, test_user_id: str) -> httpx.Client:
 class TestA2ALocalAgentNonStreaming:
     """Test A2A interface with local agent (non-streaming)."""
 
-    def test_a2a_send_message_local_agent(self, client: httpx.Client, test_context_id: str, test_user_id: str):
+    def test_a2a_send_message_local_agent(self, client: httpx2.Client, test_context_id: str, test_user_id: str):
         """Test A2A send message to local agent."""
         response = client.post(
             "/a2a/agents/gateway-agent/v1/message:send",
@@ -135,7 +135,7 @@ class TestA2ALocalAgentNonStreaming:
         # Check task status
         assert data["result"]["status"]["state"] in ["completed", "working", "failed"]
 
-    def test_a2a_send_message_with_context(self, client: httpx.Client, test_user_id: str):
+    def test_a2a_send_message_with_context(self, client: httpx2.Client, test_user_id: str):
         """Test A2A send message preserves context."""
         context_id = str(uuid.uuid4())
 
@@ -190,7 +190,7 @@ class TestA2ALocalAgentNonStreaming:
 class TestA2ARemoteAgentNonStreaming:
     """Test A2A interface with remote agent (non-streaming)."""
 
-    def test_a2a_send_message_remote_agent(self, client: httpx.Client, test_user_id: str):
+    def test_a2a_send_message_remote_agent(self, client: httpx2.Client, test_user_id: str):
         """Test A2A send message to remote agent."""
         context_id = str(uuid.uuid4())
 
@@ -227,7 +227,7 @@ class TestA2ARemoteAgentNonStreaming:
 class TestA2ATeamNonStreaming:
     """Test A2A interface with team (non-streaming)."""
 
-    def test_a2a_send_message_team(self, client: httpx.Client, test_user_id: str):
+    def test_a2a_send_message_team(self, client: httpx2.Client, test_user_id: str):
         """Test A2A send message to team."""
         context_id = str(uuid.uuid4())
 
@@ -264,7 +264,7 @@ class TestA2ATeamNonStreaming:
 class TestA2AWorkflowNonStreaming:
     """Test A2A interface with workflow (non-streaming)."""
 
-    def test_a2a_send_message_local_workflow(self, client: httpx.Client, test_user_id: str):
+    def test_a2a_send_message_local_workflow(self, client: httpx2.Client, test_user_id: str):
         """Test A2A send message to local workflow."""
         context_id = str(uuid.uuid4())
 
@@ -292,7 +292,7 @@ class TestA2AWorkflowNonStreaming:
         is_valid, error_msg = validate_a2a_response(data)
         assert is_valid, f"Response validation failed: {error_msg}"
 
-    def test_a2a_send_message_remote_workflow(self, client: httpx.Client, test_user_id: str):
+    def test_a2a_send_message_remote_workflow(self, client: httpx2.Client, test_user_id: str):
         """Test A2A send message to remote workflow."""
         context_id = str(uuid.uuid4())
 
@@ -329,7 +329,7 @@ class TestA2AWorkflowNonStreaming:
 class TestA2AStreaming:
     """Test A2A interface streaming functionality."""
 
-    def test_a2a_stream_message_local_agent(self, client: httpx.Client, test_user_id: str):
+    def test_a2a_stream_message_local_agent(self, client: httpx2.Client, test_user_id: str):
         """Test A2A stream message with local agent."""
         context_id = str(uuid.uuid4())
 
@@ -357,7 +357,7 @@ class TestA2AStreaming:
         events = parse_ndjson_events(response.text)
         assert len(events) >= 1, "Should receive at least one event"
 
-    def test_a2a_stream_message_remote_agent(self, client: httpx.Client, test_user_id: str):
+    def test_a2a_stream_message_remote_agent(self, client: httpx2.Client, test_user_id: str):
         """Test A2A stream message with remote agent."""
         context_id = str(uuid.uuid4())
 
@@ -385,7 +385,7 @@ class TestA2AStreaming:
         events = parse_ndjson_events(response.text)
         assert len(events) >= 1, "Should receive at least one event"
 
-    def test_a2a_stream_message_team(self, client: httpx.Client, test_user_id: str):
+    def test_a2a_stream_message_team(self, client: httpx2.Client, test_user_id: str):
         """Test A2A stream message with team."""
         context_id = str(uuid.uuid4())
 
@@ -419,7 +419,7 @@ class TestA2AStreaming:
 class TestA2AAgentCardDiscovery:
     """Test A2A agent card discovery endpoints."""
 
-    def test_get_agent_card(self, client: httpx.Client):
+    def test_get_agent_card(self, client: httpx2.Client):
         """Test retrieving agent card for local agent."""
         response = client.get("/a2a/agents/gateway-agent/.well-known/agent-card.json")
         assert response.status_code == 200
@@ -441,7 +441,7 @@ class TestA2AAgentCardDiscovery:
         assert "message:stream" in card["url"]
         assert "gateway-agent" in card["url"]
 
-    def test_get_team_card(self, client: httpx.Client):
+    def test_get_team_card(self, client: httpx2.Client):
         """Test retrieving agent card for team."""
         response = client.get("/a2a/teams/research-team/.well-known/agent-card.json")
         assert response.status_code == 200
@@ -456,7 +456,7 @@ class TestA2AAgentCardDiscovery:
         assert "teams/research-team" in card["url"]
         assert "message:stream" in card["url"]
 
-    def test_get_workflow_card(self, client: httpx.Client):
+    def test_get_workflow_card(self, client: httpx2.Client):
         """Test retrieving agent card for workflow."""
         response = client.get("/a2a/workflows/gateway-workflow/.well-known/agent-card.json")
         assert response.status_code == 200
@@ -470,21 +470,21 @@ class TestA2AAgentCardDiscovery:
         # Verify URL points to workflow endpoint
         assert "workflows/gateway-workflow" in card["url"]
 
-    def test_get_agent_card_not_found(self, client: httpx.Client):
+    def test_get_agent_card_not_found(self, client: httpx2.Client):
         """Test agent card 404 for non-existent agent."""
         response = client.get("/a2a/agents/non-existent-agent/.well-known/agent-card.json")
         assert response.status_code == 404
         data = response.json()
         assert "detail" in data
 
-    def test_get_team_card_not_found(self, client: httpx.Client):
+    def test_get_team_card_not_found(self, client: httpx2.Client):
         """Test agent card 404 for non-existent team."""
         response = client.get("/a2a/teams/non-existent-team/.well-known/agent-card.json")
         assert response.status_code == 404
         data = response.json()
         assert "detail" in data
 
-    def test_get_workflow_card_not_found(self, client: httpx.Client):
+    def test_get_workflow_card_not_found(self, client: httpx2.Client):
         """Test agent card 404 for non-existent workflow."""
         response = client.get("/a2a/workflows/non-existent-workflow/.well-known/agent-card.json")
         assert response.status_code == 404
@@ -500,7 +500,7 @@ class TestA2AAgentCardDiscovery:
 class TestA2AErrorHandling:
     """Test A2A interface error handling."""
 
-    def test_a2a_agent_not_found(self, client: httpx.Client):
+    def test_a2a_agent_not_found(self, client: httpx2.Client):
         """Test A2A error when agent is not found."""
         response = client.post(
             "/a2a/agents/non-existent-agent/v1/message:send",
@@ -523,7 +523,7 @@ class TestA2AErrorHandling:
         data = response.json()
         assert "detail" in data
 
-    def test_a2a_team_not_found(self, client: httpx.Client):
+    def test_a2a_team_not_found(self, client: httpx2.Client):
         """Test A2A error when team is not found."""
         response = client.post(
             "/a2a/teams/non-existent-team/v1/message:send",
@@ -546,7 +546,7 @@ class TestA2AErrorHandling:
         data = response.json()
         assert "detail" in data
 
-    def test_a2a_workflow_not_found(self, client: httpx.Client):
+    def test_a2a_workflow_not_found(self, client: httpx2.Client):
         """Test A2A error when workflow is not found."""
         response = client.post(
             "/a2a/workflows/non-existent-workflow/v1/message:send",
@@ -576,7 +576,7 @@ class TestA2ARemoteAgentGoogleADK:
     # A2A agent registered in gateway (Google ADK facts agent)
     A2A_AGENT_ID = "facts_agent"
 
-    def test_a2a_agent_listed(self, client: httpx.Client):
+    def test_a2a_agent_listed(self, client: httpx2.Client):
         """Test that the ADK A2A agent is listed in gateway agents."""
         response = client.get("/agents")
         assert response.status_code == 200
@@ -584,14 +584,14 @@ class TestA2ARemoteAgentGoogleADK:
         agent_ids = [a["id"] for a in agents]
         assert self.A2A_AGENT_ID in agent_ids
 
-    def test_a2a_agent_info(self, client: httpx.Client):
+    def test_a2a_agent_info(self, client: httpx2.Client):
         """Test getting ADK A2A agent info."""
         response = client.get(f"/agents/{self.A2A_AGENT_ID}")
         assert response.status_code == 200
         agent = response.json()
         assert agent["id"] == self.A2A_AGENT_ID
 
-    def test_a2a_basic_messaging(self, client: httpx.Client):
+    def test_a2a_basic_messaging(self, client: httpx2.Client):
         """Test basic non-streaming message via A2A protocol to Google ADK."""
         response = client.post(
             f"/agents/{self.A2A_AGENT_ID}/runs",
@@ -606,7 +606,7 @@ class TestA2ARemoteAgentGoogleADK:
         assert "run_id" in result
         assert "session_id" in result
 
-    def test_a2a_multi_turn(self, client: httpx.Client):
+    def test_a2a_multi_turn(self, client: httpx2.Client):
         """Test multi-turn conversation with session_id via A2A protocol."""
         # First turn - establish context
         response1 = client.post(

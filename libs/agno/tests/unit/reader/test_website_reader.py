@@ -1,6 +1,6 @@
 from unittest.mock import patch
 
-import httpx
+import httpx2
 import pytest
 
 from agno.knowledge.chunking.fixed import FixedSizeChunking
@@ -334,7 +334,7 @@ def test_allowed_hosts_rejects_url_with_no_host():
 
 
 def test_allowed_hosts_attaches_redirect_guard():
-    """When an allowlist is configured, the httpx.Client must be created with a
+    """When an allowlist is configured, the httpx2.Client must be created with a
     request event-hook so each redirect target is re-validated."""
     from unittest.mock import MagicMock, patch
 
@@ -348,7 +348,7 @@ def test_allowed_hosts_attaches_redirect_guard():
     mock_client.__enter__.return_value = mock_client
     mock_client.get.return_value = mock_response
 
-    with patch("agno.knowledge.reader.website_reader.httpx.Client", return_value=mock_client) as mock_client_ctor:
+    with patch("agno.knowledge.reader.website_reader.httpx2.Client", return_value=mock_client) as mock_client_ctor:
         reader.crawl("https://example.com")
 
     # Allowlist set → Client must be built with a request event-hook
@@ -362,7 +362,7 @@ def test_allowed_hosts_attaches_redirect_guard():
 
 
 def test_no_allowlist_uses_module_level_httpx_get():
-    """Default behavior (no allowlist) keeps using httpx.get directly — the
+    """Default behavior (no allowlist) keeps using httpx2.get directly — the
     Client-with-event-hooks path is only for the allowlisted case."""
     from unittest.mock import MagicMock, patch
 
@@ -372,7 +372,7 @@ def test_no_allowlist_uses_module_level_httpx_get():
     mock_response.content = b"<html><body><main>ok</main></body></html>"
     mock_response.raise_for_status = MagicMock()
 
-    with patch("agno.knowledge.reader.website_reader.httpx.get", return_value=mock_response) as mock_get:
+    with patch("agno.knowledge.reader.website_reader.httpx2.get", return_value=mock_response) as mock_get:
         reader.crawl("https://example.com")
 
     assert mock_get.called
@@ -383,7 +383,7 @@ def test_no_allowlist_uses_module_level_httpx_get():
 def test_redirect_guard_refuses_cross_host_target():
     """The redirect guard built from allowed_hosts must raise when a redirect
     points at a host outside the allowlist (the actual SSRF case)."""
-    import httpx
+    import httpx2
     import pytest as _pytest
 
     from agno.knowledge.reader.utils.url_validation import make_redirect_guard
@@ -391,13 +391,13 @@ def test_redirect_guard_refuses_cross_host_target():
     guard = make_redirect_guard(["example.com"])
     assert guard is not None
 
-    # Simulate the 302 target httpx would re-issue: a fresh request to localhost
-    bad_request = httpx.Request("GET", "http://127.0.0.1:8080/admin")
-    with _pytest.raises(httpx.RequestError, match="not in allowed_hosts"):
+    # Simulate the 302 target httpx2 would re-issue: a fresh request to localhost
+    bad_request = httpx2.Request("GET", "http://127.0.0.1:8080/admin")
+    with _pytest.raises(httpx2.RequestError, match="not in allowed_hosts"):
         guard(bad_request)
 
     # Same-host redirect target must pass
-    good_request = httpx.Request("GET", "https://example.com/new-path")
+    good_request = httpx2.Request("GET", "https://example.com/new-path")
     guard(good_request)  # no raise
 
 
@@ -445,10 +445,10 @@ def test_crawl_real_network_failure_still_raises():
     reader = WebsiteReader(max_depth=1, max_links=1)
 
     # Simulate a real network failure on the start URL. No allowlist set, so
-    # the reader goes through the module-level httpx.get path.
+    # the reader goes through the module-level httpx2.get path.
     with patch(
-        "agno.knowledge.reader.website_reader.httpx.get",
-        side_effect=httpx.ConnectError("connection refused"),
+        "agno.knowledge.reader.website_reader.httpx2.get",
+        side_effect=httpx2.ConnectError("connection refused"),
     ):
-        with pytest.raises(httpx.RequestError):
+        with pytest.raises(httpx2.RequestError):
             reader.crawl("https://example.com")

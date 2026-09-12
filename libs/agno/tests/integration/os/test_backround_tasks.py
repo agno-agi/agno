@@ -1,7 +1,7 @@
 """Integration tests for background tasks in AgentOS.
 
 Note on Testing Background Tasks:
-When using httpx.AsyncClient with ASGITransport for testing, the ASGI transport
+When using httpx2.AsyncClient with ASGITransport for testing, the ASGI transport
 waits for all background tasks to complete before returning the response. This is
 by design in the ASGI specification to ensure background tasks finish before app
 shutdown. Therefore, we cannot test timing/non-blocking behavior directly.
@@ -20,9 +20,9 @@ import time
 from typing import Dict
 from unittest.mock import patch
 
-import httpx
+import httpx2
 import pytest
-from httpx import ASGITransport
+from httpx2 import ASGITransport
 
 from agno.agent.agent import Agent
 from agno.models.openai import OpenAIChat
@@ -80,7 +80,7 @@ def test_app_with_background(agent_with_hooks):
 async def test_background_hooks_non_streaming(test_app_with_background, agent_with_hooks, execution_tracker):
     """Test that post-hooks run in background for non-streaming responses."""
 
-    async with httpx.AsyncClient(
+    async with httpx2.AsyncClient(
         transport=ASGITransport(app=test_app_with_background), base_url="http://test"
     ) as client:
         response = await client.post(
@@ -114,7 +114,7 @@ async def test_background_hooks_non_streaming(test_app_with_background, agent_wi
 async def test_background_hooks_streaming(test_app_with_background, agent_with_hooks, execution_tracker):
     """Test that post-hooks run in background for streaming responses."""
 
-    async with httpx.AsyncClient(
+    async with httpx2.AsyncClient(
         transport=ASGITransport(app=test_app_with_background), base_url="http://test"
     ) as client:
         async with client.stream(
@@ -184,7 +184,7 @@ async def test_background_hooks_are_added_as_background_tasks(agent_with_hooks):
         agent_os = AgentOS(agents=[agent_with_hooks], run_hooks_in_background=True)
         app = agent_os.get_app()
 
-        async with httpx.AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        async with httpx2.AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.post(
                 f"/agents/{agent_with_hooks.id}/runs",
                 data={"message": "Hello!", "stream": "false"},
@@ -216,7 +216,7 @@ async def test_background_hooks_with_hook_parameters(test_app_with_background, a
 
     agent_with_hooks.post_hooks = [param_checking_hook]
 
-    async with httpx.AsyncClient(
+    async with httpx2.AsyncClient(
         transport=ASGITransport(app=test_app_with_background), base_url="http://test"
     ) as client:
         response = await client.post(
@@ -279,7 +279,7 @@ async def test_agent_without_background_mode(shared_db):
         agent_os = AgentOS(agents=[agent], run_hooks_in_background=False)
         app = agent_os.get_app()
 
-        async with httpx.AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        async with httpx2.AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.post(
                 f"/agents/{agent.id}/runs",
                 data={"message": "Hello!", "stream": "false"},
@@ -317,7 +317,7 @@ async def test_background_hooks_with_multiple_hooks(test_app_with_background, ag
 
     agent_with_hooks.post_hooks = [hook1, hook2, hook3]
 
-    async with httpx.AsyncClient(
+    async with httpx2.AsyncClient(
         transport=ASGITransport(app=test_app_with_background), base_url="http://test"
     ) as client:
         response = await client.post(

@@ -21,7 +21,7 @@ Each server example listens on port 7777. Start only one at a time.
 |---|---|
 | `background_run.py` | Submit a database-backed run for HTTP 202/PENDING and poll its nested run route. |
 | `cancel_run.py` | Cancel an accepted background run and observe its persisted terminal status. |
-| `sse_reconnect.py` | Resume both a new background SSE run and a background continuation with raw `httpx`. |
+| `sse_reconnect.py` | Resume both a new background SSE run and a background continuation with raw `httpx2`. |
 | `checkpoints.py` | List `tool-batch` checkpoints and continue from a selected `message_index`. |
 | `hooks_in_background.py` | Choose AgentOS-wide background hooks or mix blocking and per-hook background work. |
 | `unpack_archives.py` | Replace an uploaded `.zip` with the files inside it from a `pre_hook`. |
@@ -123,7 +123,7 @@ Both clients track the latest `event_index`, disconnect from a
 a confirmation pause and calls the nested `/continue` route in background mode.
 
 `AgentOSClient` does not currently expose a resume method, so this example
-intentionally uses raw `httpx` for both the original SSE response and the
+intentionally uses raw `httpx2` for both the original SSE response and the
 resume request.
 
 ### `checkpoints.py`

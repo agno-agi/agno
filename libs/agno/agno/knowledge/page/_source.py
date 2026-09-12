@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from typing import Dict, Optional
 from urllib.parse import quote, unquote, urljoin, urlsplit, urlunsplit
 
-import httpx
+import httpx2
 
 from agno.fs._paths import normalize_path
 from agno.knowledge.page.types import SyncFailed
@@ -113,7 +113,7 @@ class PageSource:
                     remaining = min(deadline - time.monotonic(), self.budget.remaining())
                     if remaining <= 0:
                         raise TimeoutError()
-                    with httpx.Client(timeout=remaining, trust_env=False, follow_redirects=False) as client:
+                    with httpx2.Client(timeout=remaining, trust_env=False, follow_redirects=False) as client:
                         with client.stream(
                             "GET",
                             pinned,
@@ -134,9 +134,9 @@ class PageSource:
                                 body.extend(chunk)
                             return body.decode("utf-8", errors="strict")
                 raise SyncFailed()
-            except (httpx.TimeoutException, httpx.ConnectError, httpx.ReadError, httpx.HTTPStatusError) as exc:
+            except (httpx2.TimeoutException, httpx2.ConnectError, httpx2.ReadError, httpx2.HTTPStatusError) as exc:
                 if (
-                    isinstance(exc, httpx.HTTPStatusError)
+                    isinstance(exc, httpx2.HTTPStatusError)
                     and exc.response.status_code != 429
                     and exc.response.status_code < 500
                 ):

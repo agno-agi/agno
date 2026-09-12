@@ -1,7 +1,7 @@
 """Unit tests for SitemapReader: URL canonicalization, sitemap discovery, document
 construction, reader statelessness, and factory wiring.
 
-All HTTP goes through httpx.MockTransport — no network. Both the reader's discovery
+All HTTP goes through httpx2.MockTransport — no network. Both the reader's discovery
 clients and HttpxPageFetcher's clients are patched to route through the same transport.
 """
 
@@ -10,7 +10,7 @@ import gzip
 from contextlib import contextmanager
 from unittest.mock import patch
 
-import httpx
+import httpx2
 import pytest
 
 from agno.knowledge.document.base import Document
@@ -24,8 +24,8 @@ from agno.knowledge.reader.utils.urls import (
 )
 from agno.knowledge.types import ContentType
 
-_ORIG_CLIENT = httpx.Client
-_ORIG_ASYNC_CLIENT = httpx.AsyncClient
+_ORIG_CLIENT = httpx2.Client
+_ORIG_ASYNC_CLIENT = httpx2.AsyncClient
 
 SITEMAP_NS = "http://www.sitemaps.org/schemas/sitemap/0.9"
 IMAGE_NS = "http://www.google.com/schemas/sitemap-image/1.1"
@@ -54,24 +54,24 @@ def html_page(title: str, body: str) -> str:
 def mock_site(routes):
     """Serve ``routes`` ({"scheme://host/path": (body, content_type)}) via MockTransport.
 
-    Patches the httpx client constructors used by both the sitemap reader and the page
+    Patches the httpx2 client constructors used by both the sitemap reader and the page
     fetcher so every request in a read hits the mock. Yields the list of requested URLs
     (in request order). Unrouted URLs get a 404.
     """
     requested = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         requested.append(str(request.url))
         key = f"{request.url.scheme}://{request.url.host}{request.url.path}"
         spec = routes.get(key)
         if spec is None:
-            return httpx.Response(404, text="not found")
+            return httpx2.Response(404, text="not found")
         body, content_type = spec
         if isinstance(body, bytes):
-            return httpx.Response(200, content=body, headers={"content-type": content_type})
-        return httpx.Response(200, text=body, headers={"content-type": content_type})
+            return httpx2.Response(200, content=body, headers={"content-type": content_type})
+        return httpx2.Response(200, text=body, headers={"content-type": content_type})
 
-    transport = httpx.MockTransport(handler)
+    transport = httpx2.MockTransport(handler)
 
     def client_factory(**kwargs):
         kwargs.pop("proxy", None)
@@ -82,10 +82,10 @@ def mock_site(routes):
         return _ORIG_ASYNC_CLIENT(transport=transport, **kwargs)
 
     with (
-        patch("agno.knowledge.reader.sitemap_reader.httpx.Client", client_factory),
-        patch("agno.knowledge.reader.sitemap_reader.httpx.AsyncClient", async_client_factory),
-        patch("agno.knowledge.reader.page_fetcher.httpx.Client", client_factory),
-        patch("agno.knowledge.reader.page_fetcher.httpx.AsyncClient", async_client_factory),
+        patch("agno.knowledge.reader.sitemap_reader.httpx2.Client", client_factory),
+        patch("agno.knowledge.reader.sitemap_reader.httpx2.AsyncClient", async_client_factory),
+        patch("agno.knowledge.reader.page_fetcher.httpx2.Client", client_factory),
+        patch("agno.knowledge.reader.page_fetcher.httpx2.AsyncClient", async_client_factory),
     ):
         yield requested
 
@@ -413,9 +413,9 @@ def test_document_metadata_fields():
     assert doc.meta_data["url"] == "https://example.com/a"  # canonical: trailing slash stripped
     assert doc.meta_data["title"] == "Page A Title"
     assert doc.meta_data["host"] == "example.com"
-    assert doc.meta_data["extractor"] == "httpx"
+    assert doc.meta_data["extractor"] == "httpx2"
     assert doc.meta_data["source"] == "sitemap"
-    assert doc.meta_data["attempts"] == [{"extractor": "httpx", "outcome": "ok"}]
+    assert doc.meta_data["attempts"] == [{"extractor": "httpx2", "outcome": "ok"}]
     assert doc.content == "Body of A"
 
 

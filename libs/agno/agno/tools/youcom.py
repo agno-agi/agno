@@ -2,7 +2,7 @@ import json
 from os import getenv
 from typing import Any, Dict, List, Literal, Optional, Union
 
-import httpx
+import httpx2
 
 from agno.tools import Toolkit
 from agno.utils.log import log_error, log_info, logger
@@ -165,12 +165,12 @@ class YouTools(Toolkit):
             if self.search_params:
                 params.update(self.search_params)
 
-            with httpx.Client(timeout=self.timeout) as client:
+            with httpx2.Client(timeout=self.timeout) as client:
                 response = client.get(f"{self.base_url}/v1/search", headers=self._headers(), params=params)
             response.raise_for_status()
             data = response.json()
             return self._format_results(query, data)
-        except httpx.HTTPError as e:
+        except httpx2.HTTPError as e:
             log_error(f"You.com search request failed: {e}")
             return f"Error: {e}"
         except Exception as e:

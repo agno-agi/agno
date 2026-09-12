@@ -11,8 +11,8 @@ import time
 from io import BytesIO
 from typing import Any, Dict, List, Optional, Tuple, cast
 
-import httpx
-from httpx import AsyncClient
+import httpx2
+from httpx2 import AsyncClient
 
 from agno.knowledge.content import Content, ContentStatus
 from agno.knowledge.loaders.base import BaseLoader
@@ -128,14 +128,14 @@ class GitHubLoader(BaseLoader):
             url, jwt_headers = self._build_jwt_and_url(gh_config)
 
             try:
-                with httpx.Client() as client:
+                with httpx2.Client() as client:
                     response = client.post(url, headers=jwt_headers, timeout=30.0)
                     response.raise_for_status()
                     data = response.json()
-            except httpx.HTTPStatusError as e:
+            except httpx2.HTTPStatusError as e:
                 log_error(f"GitHub App token exchange failed: {e.response.status_code} {e.response.text}: {str(e)}")
                 raise
-            except httpx.HTTPError as e:
+            except httpx2.HTTPError as e:
                 log_error(f"GitHub App token exchange request failed: {str(e)}")
                 raise
 
@@ -146,7 +146,7 @@ class GitHubLoader(BaseLoader):
     async def _aget_github_app_token(self, gh_config: GitHubConfig) -> str:
         """Generate or retrieve a cached installation access token for GitHub App auth (async).
 
-        Async variant of ``_get_github_app_token``.  Uses ``httpx.AsyncClient``
+        Async variant of ``_get_github_app_token``.  Uses ``httpx2.AsyncClient``
         so the event loop is not blocked during the token exchange.
 
         Uses double-checked locking: the cache is read without the async lock
@@ -184,10 +184,10 @@ class GitHubLoader(BaseLoader):
                     response = await client.post(url, headers=jwt_headers, timeout=30.0)
                     response.raise_for_status()
                     data = response.json()
-            except httpx.HTTPStatusError as e:
+            except httpx2.HTTPStatusError as e:
                 log_error(f"GitHub App token exchange failed: {e.response.status_code} {e.response.text}: {str(e)}")
                 raise
-            except httpx.HTTPError as e:
+            except httpx2.HTTPError as e:
                 log_error(f"GitHub App token exchange request failed: {str(e)}")
                 raise
 
@@ -292,7 +292,7 @@ class GitHubLoader(BaseLoader):
     def _process_github_file_content(
         self,
         file_data: dict,
-        client: httpx.Client,
+        client: httpx2.Client,
         headers: Dict[str, str],
     ) -> bytes:
         """Process GitHub API response and return file content (sync)."""
@@ -529,7 +529,7 @@ class GitHubLoader(BaseLoader):
 
         files_to_process: List[Dict[str, str]] = []
 
-        with httpx.Client() as client:
+        with httpx2.Client() as client:
             # Helper function to recursively list all files in a folder
             def list_files_recursive(folder: str) -> List[Dict[str, str]]:
                 """Recursively list all files in a GitHub folder."""

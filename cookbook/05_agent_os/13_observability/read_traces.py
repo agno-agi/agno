@@ -14,7 +14,7 @@ Try: Compare the .run and .arun roots and their nested model spans
 import asyncio
 from typing import Any
 
-import httpx
+import httpx2
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
@@ -77,8 +77,8 @@ async def run_trace_readback() -> None:
         user_id="observability-user",
     )
 
-    transport = httpx.ASGITransport(app=app)
-    async with httpx.AsyncClient(
+    transport = httpx2.ASGITransport(app=app)
+    async with httpx2.AsyncClient(
         transport=transport,
         base_url="http://agent-os",
     ) as client:

@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from unittest.mock import MagicMock
 from urllib.parse import parse_qsl
 
-import httpx
+import httpx2
 import pytest
 
 from agno.models.xai.oauth import XAI_DEVICE_CODE_URL, XAI_OAUTH_SCOPE, XAITokenManager
@@ -99,16 +99,16 @@ class AuthEndpoint:
         """Script the next poll response; unscripted polls return the success token."""
         self.queued.append((status_code, body))
 
-    def __call__(self, request: httpx.Request) -> httpx.Response:
+    def __call__(self, request: httpx2.Request) -> httpx2.Response:
         fields = dict(parse_qsl(request.content.decode()))
         if str(request.url) == XAI_DEVICE_CODE_URL:
             self.device_requests.append(fields)
-            return httpx.Response(200, json=self.device_json)
+            return httpx2.Response(200, json=self.device_json)
         self.poll_requests.append(fields)
         if self.queued:
             status_code, body = self.queued.pop(0)
-            return httpx.Response(status_code, json=body)
-        return httpx.Response(200, json=self.token_json)
+            return httpx2.Response(status_code, json=body)
+        return httpx2.Response(200, json=self.token_json)
 
 
 @pytest.fixture
@@ -125,7 +125,7 @@ def sqlite_db(tmp_path):
 
 def _toolkit(endpoint: AuthEndpoint, **manager_kwargs: Any) -> XAIAuth:
     """A toolkit whose manager talks to the mock endpoint."""
-    manager = XAITokenManager(http_client=httpx.Client(transport=httpx.MockTransport(endpoint)), **manager_kwargs)
+    manager = XAITokenManager(http_client=httpx2.Client(transport=httpx2.MockTransport(endpoint)), **manager_kwargs)
     return XAIAuth(token_manager=manager)
 
 
@@ -360,13 +360,13 @@ def test_an_unknown_poll_error_is_reported_as_a_failed_sign_in(endpoint, sqlite_
 
 
 def test_a_failed_device_start_is_reported_as_json(sqlite_db, encryption_key):
-    def failing(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(503, json={"error": "unavailable"})
+    def failing(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(503, json={"error": "unavailable"})
 
     manager = XAITokenManager(
         db=sqlite_db,
         encryption_key=encryption_key,
-        http_client=httpx.Client(transport=httpx.MockTransport(failing)),
+        http_client=httpx2.Client(transport=httpx2.MockTransport(failing)),
     )
     auth = XAIAuth(token_manager=manager)
 
@@ -614,7 +614,7 @@ def test_a_seeded_pending_row_from_another_process_completes_the_login(
 def _async_toolkit(endpoint: AuthEndpoint, **manager_kwargs: Any) -> XAIAuth:
     """A toolkit whose manager reaches the mock endpoint over the async transport."""
     manager = XAITokenManager(
-        async_http_client=httpx.AsyncClient(transport=httpx.MockTransport(endpoint)), **manager_kwargs
+        async_http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(endpoint)), **manager_kwargs
     )
     return XAIAuth(token_manager=manager)
 
@@ -824,10 +824,10 @@ TRANSPORT_FAILED = "Could not reach the sign-in service just now. Your approval 
 class FlakyEndpoint(AuthEndpoint):
     """Device grants succeed; the token endpoint times out."""
 
-    def __call__(self, request: httpx.Request) -> httpx.Response:
+    def __call__(self, request: httpx2.Request) -> httpx2.Response:
         if str(request.url) == XAI_DEVICE_CODE_URL and not getattr(self, "fail_device", False):
             return super().__call__(request)
-        raise httpx.ReadTimeout("simulated network timeout", request=request)
+        raise httpx2.ReadTimeout("simulated network timeout", request=request)
 
 
 @pytest.fixture
@@ -885,14 +885,14 @@ async def test_the_async_device_start_timeout_is_reported_as_json_not_raised(fla
 def test_a_failed_device_start_leaves_the_existing_session_intact(tmp_path, encryption_key):
     """force=True must not wipe a working session before the new login exists."""
 
-    def unreachable(request: httpx.Request) -> httpx.Response:
-        raise httpx.ConnectError("device endpoint unreachable")
+    def unreachable(request: httpx2.Request) -> httpx2.Response:
+        raise httpx2.ConnectError("device endpoint unreachable")
 
     path = tmp_path / "token.json"
     manager = XAITokenManager(
         encrypt_tokens=False,
         token_path=str(path),
-        http_client=httpx.Client(transport=httpx.MockTransport(unreachable)),
+        http_client=httpx2.Client(transport=httpx2.MockTransport(unreachable)),
     )
     manager._save({"access_token": "deployment-token", "expires_at": 9_999_999_999}, user_id="")
     auth = XAIAuth(token_manager=manager)

@@ -7,7 +7,7 @@ Run with: pytest test_knowledge_routes.py -v --tb=short
 import time
 import uuid
 
-import httpx
+import httpx2
 import pytest
 
 from .test_utils import REQUEST_TIMEOUT, generate_jwt_token
@@ -20,9 +20,9 @@ def test_user_id() -> str:
 
 
 @pytest.fixture(scope="module")
-def client(gateway_url: str, test_user_id: str) -> httpx.Client:
+def client(gateway_url: str, test_user_id: str) -> httpx2.Client:
     """Create an HTTP client for the gateway server with authentication."""
-    return httpx.Client(
+    return httpx2.Client(
         base_url=gateway_url,
         timeout=REQUEST_TIMEOUT,
         headers={"Authorization": f"Bearer {generate_jwt_token(audience='gateway-os', user_id=test_user_id)}"},
@@ -34,7 +34,7 @@ def client(gateway_url: str, test_user_id: str) -> httpx.Client:
 # =============================================================================
 
 
-def clear_all_knowledge_content(client: httpx.Client, db_id: str) -> None:
+def clear_all_knowledge_content(client: httpx2.Client, db_id: str) -> None:
     """Clear all knowledge content from the database.
 
     Args:
@@ -53,7 +53,7 @@ class TestLocalKnowledgeRoutes:
     CONTENT_TEXT = "This is local test content about AgentOS framework. It covers system testing, integration patterns, best practices for agent development, and Python programming."
 
     @pytest.fixture(scope="class", autouse=True)
-    def setup_knowledge_content(self, client: httpx.Client) -> dict:
+    def setup_knowledge_content(self, client: httpx2.Client) -> dict:
         """Set up knowledge content before running tests."""
         # Clear existing content first
         clear_all_knowledge_content(client, self.DB_ID)
@@ -79,7 +79,7 @@ class TestLocalKnowledgeRoutes:
             "name": unique_name,
         }
 
-    def test_get_knowledge_config_structure(self, client: httpx.Client, setup_knowledge_content: dict):
+    def test_get_knowledge_config_structure(self, client: httpx2.Client, setup_knowledge_content: dict):
         """Test GET /knowledge/config returns complete configuration."""
         response = client.get(f"/knowledge/config?db_id={self.DB_ID}")
         assert response.status_code == 200
@@ -101,7 +101,7 @@ class TestLocalKnowledgeRoutes:
             assert "key" in chunker
             assert "name" in chunker
 
-    def test_get_knowledge_content_paginated(self, client: httpx.Client, setup_knowledge_content: dict):
+    def test_get_knowledge_content_paginated(self, client: httpx2.Client, setup_knowledge_content: dict):
         """Test GET /knowledge/content returns paginated content list including our uploaded content."""
         response = client.get(f"/knowledge/content?limit=10&page=1&db_id={self.DB_ID}")
         assert response.status_code == 200
@@ -120,7 +120,7 @@ class TestLocalKnowledgeRoutes:
         assert "page" in meta
         assert "limit" in meta
 
-    def test_get_content_by_id(self, client: httpx.Client, setup_knowledge_content: dict):
+    def test_get_content_by_id(self, client: httpx2.Client, setup_knowledge_content: dict):
         """Test GET /knowledge/content/{content_id} returns content details."""
         content_id = setup_knowledge_content["content_id"]
         response = client.get(f"/knowledge/content/{content_id}?db_id={self.DB_ID}")
@@ -132,7 +132,7 @@ class TestLocalKnowledgeRoutes:
         assert "status" in data
         assert "created_at" in data
 
-    def test_get_content_status(self, client: httpx.Client, setup_knowledge_content: dict):
+    def test_get_content_status(self, client: httpx2.Client, setup_knowledge_content: dict):
         """Test GET /knowledge/content/{content_id}/status returns processing status."""
         content_id = setup_knowledge_content["content_id"]
         response = client.get(f"/knowledge/content/{content_id}/status?db_id={self.DB_ID}")
@@ -143,7 +143,7 @@ class TestLocalKnowledgeRoutes:
         # Status should be either processing or completed
         assert data["status"] in ["processing", "completed", "ready"]
 
-    def test_upload_additional_text_content(self, client: httpx.Client, setup_knowledge_content: dict):
+    def test_upload_additional_text_content(self, client: httpx2.Client, setup_knowledge_content: dict):
         """Test POST /knowledge/content returns content ID for additional content."""
         unique_name = f"Additional Local Document {uuid.uuid4().hex[:8]}"
         response = client.post(
@@ -161,7 +161,7 @@ class TestLocalKnowledgeRoutes:
         assert data["name"] == unique_name
         assert data["status"] == "processing"
 
-    def test_search_knowledge_returns_results(self, client: httpx.Client, setup_knowledge_content: dict):
+    def test_search_knowledge_returns_results(self, client: httpx2.Client, setup_knowledge_content: dict):
         """Test POST /knowledge/search returns structured results matching our content."""
         response = client.post(
             "/knowledge/search",
@@ -180,7 +180,7 @@ class TestLocalKnowledgeRoutes:
         # Should find our uploaded content
         assert len(data["data"]) >= 1
 
-    def test_search_knowledge_with_specific_query(self, client: httpx.Client, setup_knowledge_content: dict):
+    def test_search_knowledge_with_specific_query(self, client: httpx2.Client, setup_knowledge_content: dict):
         """Test POST /knowledge/search with specific query terms."""
         response = client.post(
             "/knowledge/search",
@@ -196,7 +196,7 @@ class TestLocalKnowledgeRoutes:
         assert "data" in data
         assert isinstance(data["data"], list)
 
-    def test_update_content_metadata(self, client: httpx.Client, setup_knowledge_content: dict):
+    def test_update_content_metadata(self, client: httpx2.Client, setup_knowledge_content: dict):
         """Test PATCH /knowledge/content/{content_id} updates content metadata."""
         content_id = setup_knowledge_content["content_id"]
         new_name = f"Updated Local Document {uuid.uuid4().hex[:8]}"
@@ -213,7 +213,7 @@ class TestLocalKnowledgeRoutes:
 
         assert data["name"] == new_name
 
-    def test_delete_content(self, client: httpx.Client, setup_knowledge_content: dict):
+    def test_delete_content(self, client: httpx2.Client, setup_knowledge_content: dict):
         """Test DELETE /knowledge/content/{content_id} removes specific content."""
         # Create a new content to delete
         unique_name = f"Content To Delete {uuid.uuid4().hex[:8]}"
@@ -245,7 +245,7 @@ class TestRemoteKnowledgeRoutes:
     CONTENT_TEXT = "This is remote test content about distributed systems. It covers microservices, API design, cloud architecture, and scalable applications."
 
     @pytest.fixture(scope="class", autouse=True)
-    def setup_knowledge_content(self, client: httpx.Client) -> dict:
+    def setup_knowledge_content(self, client: httpx2.Client) -> dict:
         """Set up knowledge content before running tests."""
         # Clear existing content first
         clear_all_knowledge_content(client, self.DB_ID)
@@ -271,7 +271,7 @@ class TestRemoteKnowledgeRoutes:
             "name": unique_name,
         }
 
-    def test_get_knowledge_config_structure(self, client: httpx.Client, setup_knowledge_content: dict):
+    def test_get_knowledge_config_structure(self, client: httpx2.Client, setup_knowledge_content: dict):
         """Test GET /knowledge/config returns complete configuration for remote db."""
         response = client.get(f"/knowledge/config?db_id={self.DB_ID}")
         assert response.status_code == 200
@@ -281,7 +281,7 @@ class TestRemoteKnowledgeRoutes:
         assert "chunkers" in data
         assert "readersForType" in data
 
-    def test_get_knowledge_content_paginated(self, client: httpx.Client, setup_knowledge_content: dict):
+    def test_get_knowledge_content_paginated(self, client: httpx2.Client, setup_knowledge_content: dict):
         """Test GET /knowledge/content returns paginated content list for remote db."""
         response = client.get(f"/knowledge/content?limit=10&page=1&db_id={self.DB_ID}")
         assert response.status_code == 200
@@ -296,7 +296,7 @@ class TestRemoteKnowledgeRoutes:
         content_ids = [c["id"] for c in data["data"]]
         assert setup_knowledge_content["content_id"] in content_ids
 
-    def test_get_content_by_id(self, client: httpx.Client, setup_knowledge_content: dict):
+    def test_get_content_by_id(self, client: httpx2.Client, setup_knowledge_content: dict):
         """Test GET /knowledge/content/{content_id} returns content details for remote db."""
         content_id = setup_knowledge_content["content_id"]
         response = client.get(f"/knowledge/content/{content_id}?db_id={self.DB_ID}")
@@ -306,7 +306,7 @@ class TestRemoteKnowledgeRoutes:
         assert data["id"] == content_id
         assert data["name"] == setup_knowledge_content["name"]
 
-    def test_get_content_status(self, client: httpx.Client, setup_knowledge_content: dict):
+    def test_get_content_status(self, client: httpx2.Client, setup_knowledge_content: dict):
         """Test GET /knowledge/content/{content_id}/status returns processing status for remote db."""
         content_id = setup_knowledge_content["content_id"]
         response = client.get(f"/knowledge/content/{content_id}/status?db_id={self.DB_ID}")
@@ -315,7 +315,7 @@ class TestRemoteKnowledgeRoutes:
 
         assert "status" in data
 
-    def test_upload_additional_text_content(self, client: httpx.Client, setup_knowledge_content: dict):
+    def test_upload_additional_text_content(self, client: httpx2.Client, setup_knowledge_content: dict):
         """Test POST /knowledge/content uploads additional content for remote db."""
         unique_name = f"Additional Remote Document {uuid.uuid4().hex[:8]}"
         response = client.post(
@@ -333,7 +333,7 @@ class TestRemoteKnowledgeRoutes:
         assert data["name"] == unique_name
         assert data["status"] == "processing"
 
-    def test_search_knowledge_returns_results(self, client: httpx.Client, setup_knowledge_content: dict):
+    def test_search_knowledge_returns_results(self, client: httpx2.Client, setup_knowledge_content: dict):
         """Test POST /knowledge/search returns results for remote db."""
         response = client.post(
             "/knowledge/search",
@@ -352,7 +352,7 @@ class TestRemoteKnowledgeRoutes:
         # Should find our uploaded content
         assert len(data["data"]) >= 1
 
-    def test_search_knowledge_with_specific_query(self, client: httpx.Client, setup_knowledge_content: dict):
+    def test_search_knowledge_with_specific_query(self, client: httpx2.Client, setup_knowledge_content: dict):
         """Test POST /knowledge/search with specific query terms for remote db."""
         response = client.post(
             "/knowledge/search",
@@ -368,7 +368,7 @@ class TestRemoteKnowledgeRoutes:
         assert "data" in data
         assert isinstance(data["data"], list)
 
-    def test_update_content_metadata(self, client: httpx.Client, setup_knowledge_content: dict):
+    def test_update_content_metadata(self, client: httpx2.Client, setup_knowledge_content: dict):
         """Test PATCH /knowledge/content/{content_id} updates content metadata for remote db."""
         content_id = setup_knowledge_content["content_id"]
         new_name = f"Updated Remote Document {uuid.uuid4().hex[:8]}"
@@ -385,7 +385,7 @@ class TestRemoteKnowledgeRoutes:
 
         assert data["name"] == new_name
 
-    def test_delete_content(self, client: httpx.Client, setup_knowledge_content: dict):
+    def test_delete_content(self, client: httpx2.Client, setup_knowledge_content: dict):
         """Test DELETE /knowledge/content/{content_id} removes specific content for remote db."""
         # Create a new content to delete
         unique_name = f"Remote Content To Delete {uuid.uuid4().hex[:8]}"
@@ -424,7 +424,7 @@ class TestRemoteContentEndpoint:
 
     DB_ID = "gateway-db"
 
-    def test_config_includes_remote_content_sources_field(self, client: httpx.Client):
+    def test_config_includes_remote_content_sources_field(self, client: httpx2.Client):
         """Test GET /knowledge/config includes remote_content_sources in response."""
         response = client.get(f"/knowledge/config?db_id={self.DB_ID}")
         assert response.status_code == 200
@@ -433,7 +433,7 @@ class TestRemoteContentEndpoint:
         # Verify the field exists (may be None or empty list if no sources configured)
         assert "remote_content_sources" in data
 
-    def test_remote_content_endpoint_requires_config_id(self, client: httpx.Client):
+    def test_remote_content_endpoint_requires_config_id(self, client: httpx2.Client):
         """Test POST /knowledge/remote-content requires config_id parameter."""
         response = client.post(
             f"/knowledge/remote-content?db_id={self.DB_ID}",
@@ -444,7 +444,7 @@ class TestRemoteContentEndpoint:
         # Should return 422 for missing required field
         assert response.status_code == 422
 
-    def test_remote_content_endpoint_requires_path(self, client: httpx.Client):
+    def test_remote_content_endpoint_requires_path(self, client: httpx2.Client):
         """Test POST /knowledge/remote-content requires path parameter."""
         response = client.post(
             f"/knowledge/remote-content?db_id={self.DB_ID}",
@@ -455,7 +455,7 @@ class TestRemoteContentEndpoint:
         # Should return 422 for missing required field
         assert response.status_code == 422
 
-    def test_remote_content_endpoint_rejects_unknown_config(self, client: httpx.Client):
+    def test_remote_content_endpoint_rejects_unknown_config(self, client: httpx2.Client):
         """Test POST /knowledge/remote-content returns 400 for unknown config_id."""
         response = client.post(
             f"/knowledge/remote-content?db_id={self.DB_ID}",
@@ -468,7 +468,7 @@ class TestRemoteContentEndpoint:
         assert response.status_code == 400
         assert "Unknown content source" in response.json()["detail"]
 
-    def test_remote_content_endpoint_accepts_optional_fields(self, client: httpx.Client):
+    def test_remote_content_endpoint_accepts_optional_fields(self, client: httpx2.Client):
         """Test POST /knowledge/remote-content accepts optional metadata fields."""
         # This will still fail with 400 (unknown config) but validates
         # that the endpoint accepts the optional fields without 422

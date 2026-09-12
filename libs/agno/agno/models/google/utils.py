@@ -71,10 +71,10 @@ def media_to_content_item(
             return item
         # For regular HTTP URLs, download and base64 encode
         try:
-            import httpx
+            import httpx2
 
             headers = {"User-Agent": "Mozilla/5.0 (compatible; agno/1.0)"}
-            response = httpx.get(url, follow_redirects=True, headers=headers)
+            response = httpx2.get(url, follow_redirects=True, headers=headers)
             response.raise_for_status()
             item["data"] = base64.b64encode(response.content).decode("utf-8")
             return item

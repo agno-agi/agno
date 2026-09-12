@@ -15,7 +15,7 @@ import asyncio
 import time
 from typing import Any
 
-import httpx
+import httpx2
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
@@ -51,7 +51,7 @@ app = agent_os.get_app()
 
 
 async def poll_run(
-    client: httpx.AsyncClient,
+    client: httpx2.AsyncClient,
     run_id: str,
     session_id: str,
     timeout_seconds: float = 120.0,
@@ -79,7 +79,7 @@ async def poll_run(
 
 async def run_demo() -> None:
     """Start, cancel, and poll a database-backed run."""
-    async with httpx.AsyncClient(base_url=BASE_URL, timeout=120.0) as client:
+    async with httpx2.AsyncClient(base_url=BASE_URL, timeout=120.0) as client:
         response = await client.post(
             f"/agents/{AGENT_ID}/runs",
             data={

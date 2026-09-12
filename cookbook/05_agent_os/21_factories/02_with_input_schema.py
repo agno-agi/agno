@@ -15,7 +15,7 @@ import os
 import sys
 from typing import Literal, cast
 
-import httpx
+import httpx2
 from agno.agent import Agent, AgentFactory
 from agno.db.sqlite import SqliteDb
 from agno.factory import RequestContext
@@ -72,7 +72,7 @@ app = agent_os.get_app()
 
 def run_demo() -> None:
     """Run valid input, then prove invalid input returns HTTP 400."""
-    with httpx.Client(base_url=BASE_URL, timeout=90.0) as client:
+    with httpx2.Client(base_url=BASE_URL, timeout=90.0) as client:
         health = client.get("/health")
         health.raise_for_status()
 
