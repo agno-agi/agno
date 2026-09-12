@@ -8,7 +8,6 @@ appended content and ``check_lines`` inputs so exact-line dedupe cannot drift.
 import re
 import unicodedata
 from typing import List, Sequence, Tuple
-from urllib.parse import quote
 
 from agno.fs.errors import InvalidPathError
 
@@ -98,11 +97,9 @@ NAMESPACE_SAFE = "abcdefghijklmnopqrstuvwxyz0123456789.-_/@+"
 
 def _quote_namespace_value(value: str) -> str:
     """Percent-encode a namespace value without changing its identity."""
-    # Uppercase ASCII is intentionally not safe: quote it as %41 rather than
-    # folding it to ``a``. Lowercasing the result only canonicalizes hex digits
-    # in escapes; it cannot change the decoded value because every uppercase
-    # input character was escaped above.
-    return quote(value, safe=NAMESPACE_SAFE).lower()
+    # urllib.parse.quote always preserves ASCII letters, even with safe="".
+    # Encode UTF-8 bytes explicitly so uppercase identity characters stay distinct.
+    return "".join(chr(byte) if chr(byte) in NAMESPACE_SAFE else f"%{byte:02x}" for byte in value.encode("utf-8"))
 
 
 def sanitize_namespace_segment(value: str) -> str:

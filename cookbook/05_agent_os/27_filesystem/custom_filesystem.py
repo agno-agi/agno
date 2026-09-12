@@ -7,7 +7,7 @@ namespace or custom limits instead of the managed ``filesystem=True`` defaults.
 
 Prerequisites: OPENAI_API_KEY is needed only for agent runs
 Run: .venvs/demo/bin/python cookbook/05_agent_os/27_filesystem/custom_filesystem.py
-Try: Open http://localhost:7777/filesystem in Agno OS
+Try: Connect Agno OS to http://localhost:7777 and open File System
 """
 
 from agno.agent import Agent

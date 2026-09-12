@@ -7,7 +7,7 @@ are scoped to the agent. AgentOS adds user scope only when user isolation is on.
 
 Prerequisites: OPENAI_API_KEY is needed only for agent runs
 Run: .venvs/demo/bin/python cookbook/05_agent_os/27_filesystem/basic.py
-Try: Open http://localhost:7777/filesystem in Agno OS
+Try: Connect Agno OS to http://localhost:7777 and open File System
 """
 
 from agno.agent import Agent
@@ -23,11 +23,11 @@ db = SqliteDb(
 filesystem_agent = Agent(
     id="filesystem-agent",
     name="File System Agent",
-    model=OpenAIResponses(id="gpt-5.5"),
+    model=OpenAIResponses(id="gpt-5.6-luna"),
     db=db,
     filesystem=True,
     instructions="Keep durable working notes in your filesystem.",
-    markdown=True
+    markdown=True,
 )
 
 agent_os = AgentOS(

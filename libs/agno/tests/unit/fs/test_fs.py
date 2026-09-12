@@ -466,7 +466,13 @@ class TestNamespaceCharset:
         assert fs.resolve(user_id="Alice+Tag@X.com").namespace == "radar/%41lice+%54ag@%58.com"
 
     @pytest.mark.parametrize(
-        "raw,encoded", [("Ünal", "radar/%c3%9cnal"), ("a b", "radar/a%20b"), ("100%", "radar/100%25")]
+        "raw,encoded",
+        [
+            ("Ünal", "radar/%c3%9cnal"),
+            ("a b", "radar/a%20b"),
+            ("100%", "radar/100%25"),
+            ("A~Z", "radar/%41%7e%5a"),
+        ],
     )
     def test_template_values_are_encoded_not_rejected(self, local_backend, raw, encoded):
         fs = FileSystem(local_backend, namespace="radar/{user_id}")

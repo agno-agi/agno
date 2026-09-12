@@ -265,7 +265,7 @@ def set_filesystem(agent: Agent) -> None:
             raise ValueError("filesystem=True currently requires a synchronous database")
         if not agent.id:
             raise ValueError("filesystem=True requires the agent to have a stable id")
-        namespace = "users/{user_id}/agents/{agent_id}" if agent._filesystem_user_isolation else "agents/{agent_id}"
+        namespace = "users/{user_id}/{agent_id}" if agent._filesystem_user_isolation else "{agent_id}"
         agent._filesystem = FileSystem(agent.db, namespace=namespace).resolve(agent_id=agent.id)
     else:
         raise TypeError("filesystem must be True, False, None, or a FileSystem instance")

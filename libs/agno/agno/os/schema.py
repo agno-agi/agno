@@ -194,18 +194,34 @@ class FileSystemSummary(BaseModel):
     db_id: Optional[str] = Field(None, description="Database identifier for a database-backed filesystem")
     db_schema: Optional[str] = Field(None, description="Database schema containing filesystem rows")
     table_name: Optional[str] = Field(None, description="Database table containing filesystem rows")
-    namespace_template: str = Field(..., description="Namespace or namespace template used by the agent")
+    namespace: str = Field(
+        ...,
+        description="Canonical namespace resolved for the caller; placeholders remain when identity is unavailable",
+    )
     user_isolation: bool = Field(..., description="Whether the namespace is partitioned by user identity")
     max_file_bytes: int = Field(..., description="Maximum UTF-8 bytes per file")
     max_namespace_bytes: int = Field(..., description="Maximum bytes across the namespace")
 
 
-def _extract_filesystem(agent: Any) -> Optional[FileSystemSummary]:
+class FileSystemInstance(FileSystemSummary):
+    agents: List[str] = Field(..., description="IDs of agents using this filesystem instance")
+
+
+class FileSystemConfig(BaseModel):
+    instances: List[FileSystemInstance] = Field(
+        default_factory=list,
+        description="Filesystem instances discovered from configured agents",
+    )
+
+
+def _extract_filesystem(agent: Any, user_id: Optional[str] = None) -> Optional[FileSystemSummary]:
     if not getattr(agent, "filesystem", False):
         return None
     filesystem = getattr(agent, "filesystem_instance", None)
     if filesystem is None:
         return None
+    user_isolation = "user_id" in filesystem._placeholders
+    filesystem = filesystem.resolve(user_id=user_id, agent_id=agent.id)
     backend = filesystem.backend
     backend_db = getattr(backend, "db", None)
     if backend_db is not None or hasattr(backend, "db_engine"):
@@ -219,8 +235,8 @@ def _extract_filesystem(agent: Any) -> Optional[FileSystemSummary]:
         db_id=getattr(backend_db, "id", None),
         db_schema=getattr(backend, "db_schema", None),
         table_name=getattr(backend, "table_name", None),
-        namespace_template=getattr(filesystem, "_raw_namespace", filesystem.namespace),
-        user_isolation="user_id" in filesystem._placeholders,
+        namespace=filesystem.namespace,
+        user_isolation=user_isolation,
         max_file_bytes=filesystem.max_file_bytes,
         max_namespace_bytes=filesystem.max_namespace_bytes,
     )
@@ -231,7 +247,6 @@ class AgentSummaryResponse(BaseModel):
     name: Optional[str] = Field(None, description="Name of the agent")
     description: Optional[str] = Field(None, description="Description of the agent")
     db_id: Optional[str] = Field(None, description="Database identifier")
-    filesystem: Optional[FileSystemSummary] = Field(None, description="Durable filesystem configuration")
     model: Optional[Model] = Field(None, description="Model used by the agent")
     metadata: Optional[Dict[str, Any]] = Field(None, description="Additional metadata")
 
@@ -253,7 +268,6 @@ class AgentSummaryResponse(BaseModel):
             name=agent.name,
             description=getattr(agent, "description", None),
             db_id=agent_db.id if agent_db else None,
-            filesystem=_extract_filesystem(agent),
             model=_extract_model(agent),
             metadata=metadata,
         )
@@ -394,6 +408,7 @@ class ConfigResponse(BaseModel):
     metrics: Optional[MetricsConfig] = Field(None, description="Metrics configuration")
     memory: Optional[MemoryConfig] = Field(None, description="Memory configuration")
     learning: Optional[LearningConfig] = Field(None, description="Learning configuration")
+    filesystem: Optional[FileSystemConfig] = Field(None, description="Filesystem configuration")
     knowledge: Optional[KnowledgeConfig] = Field(None, description="Knowledge configuration")
     evals: Optional[EvalsConfig] = Field(None, description="Evaluations configuration")
     traces: Optional[TracesConfig] = Field(None, description="Traces configuration")

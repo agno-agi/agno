@@ -31,7 +31,7 @@ def test_filesystem_true_adds_one_isolated_toolkit(tmp_path):
     agent.initialize_agent()
 
     assert agent.filesystem_instance is not None
-    assert agent.filesystem_instance.namespace == "agents/research-agent"
+    assert agent.filesystem_instance.namespace == "research-agent"
     assert len(_filesystem_tools(agent)) == 1
 
 
@@ -143,6 +143,23 @@ def test_filesystem_namespace_isolated_by_user_id(tmp_path):
     assert bob_files.read("notes/state.md") is None
 
 
+def test_managed_filesystem_preserves_agent_id_case(tmp_path):
+    db = SqliteDb(db_file=str(tmp_path / "agents.db"))
+    upper = Agent(id="Research", db=db, filesystem=True)
+    lower = Agent(id="research", db=db, filesystem=True)
+    upper.initialize_agent()
+    lower.initialize_agent()
+    upper_filesystem = upper.filesystem_instance
+    lower_filesystem = lower.filesystem_instance
+    assert upper_filesystem is not None
+    assert lower_filesystem is not None
+
+    upper_filesystem.write("state.md", "upper")
+
+    assert upper_filesystem.namespace == "%52esearch"
+    assert lower_filesystem.read("state.md") is None
+
+
 def test_managed_filesystem_toolkit_is_not_serialized_as_user_tool(tmp_path):
     agent = Agent(
         id="research-agent",
@@ -195,7 +212,7 @@ def test_deep_copy_rebuilds_managed_filesystem_toolkit(tmp_path):
     copied.initialize_agent()
 
     assert copied.filesystem_instance is not agent.filesystem_instance
-    assert copied.filesystem_instance.namespace == "users/{user_id}/agents/research-agent"  # type: ignore[union-attr]
+    assert copied.filesystem_instance.namespace == "users/{user_id}/research-agent"  # type: ignore[union-attr]
     assert len(_filesystem_tools(copied)) == 1
 
 
@@ -210,5 +227,5 @@ def test_stored_filesystem_agent_rehydrates_namespace_and_toolkit(tmp_path):
 
     assert loaded is not None
     assert loaded.filesystem_instance is not None
-    assert loaded.filesystem_instance.namespace == "agents/research-agent"
+    assert loaded.filesystem_instance.namespace == "research-agent"
     assert len(_filesystem_tools(loaded)) == 1

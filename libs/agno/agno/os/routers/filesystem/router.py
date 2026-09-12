@@ -1,12 +1,18 @@
 import asyncio
-from typing import TYPE_CHECKING, Dict
+from typing import TYPE_CHECKING, Dict, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from agno.agent import Agent
 from agno.fs import FileSystem, InvalidPathError
 from agno.fs._paths import normalize_directory, normalize_path, path_sort_key
-from agno.os.auth import get_authentication_dependency, require_resource_access
+from agno.os.auth import (
+    build_insufficient_permissions_detail,
+    check_resource_access,
+    get_accessible_resources,
+    get_authentication_dependency,
+    require_resource_access,
+)
 from agno.os.middleware.user_scope import get_scoped_user_id
 from agno.os.routers.filesystem.schema import (
     FileSystemContentResponse,
@@ -14,8 +20,11 @@ from agno.os.routers.filesystem.schema import (
     FileSystemListResponse,
     FileSystemSearchEntry,
     FileSystemSearchResponse,
+    FileSystemTableEntry,
+    FileSystemTableResponse,
     FileSystemUsage,
 )
+from agno.os.routers.filesystem.utils import _filesystem_backend_key
 from agno.os.schema import (
     BadRequestResponse,
     InternalServerErrorResponse,
@@ -33,6 +42,7 @@ if TYPE_CHECKING:
 
 
 _MAX_PREVIEW_CHARS = 100_000
+_MAX_CONCURRENT_FILESYSTEM_READS = 8
 
 
 async def _get_agent_filesystem(os: "AgentOS", agent_id: str, request: Request) -> FileSystem:
@@ -80,7 +90,6 @@ async def _get_agent_filesystem(os: "AgentOS", agent_id: str, request: Request) 
             agent=agent,
             user_id=effective_user_id,
             agent_id=agent.id,
-            team_id=agent.team_id,
         )
     except InvalidPathError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -125,6 +134,128 @@ def _list_entries(filesystem: FileSystem, directory: str) -> list[FileSystemEntr
     )
 
 
+async def _get_global_filesystem_agent_ids(
+    os: "AgentOS", request: Request, requested_agent_id: Optional[str]
+) -> list[str]:
+    scopes_are_authoritative = bool(getattr(request.state, "authorization_enabled", False))
+    if requested_agent_id:
+        if scopes_are_authoritative and not check_resource_access(request, requested_agent_id, "agents", "read"):
+            raise HTTPException(status_code=403, detail=build_insufficient_permissions_detail(["agents:read"]))
+        return [requested_agent_id]
+
+    accessible_ids = get_accessible_resources(request, "agents") if scopes_are_authoritative else {"*"}
+    if not accessible_ids:
+        raise HTTPException(status_code=403, detail=build_insufficient_permissions_detail(["agents:read"]))
+
+    agent_ids = {
+        agent_id
+        for entry in os.agents or []
+        if isinstance((agent_id := getattr(entry, "id", None)), str) and agent_id
+    }
+
+    if os.db is not None:
+        from agno.agent.agent import get_agents
+        from agno.db.base import BaseDb
+
+        if isinstance(os.db, BaseDb):
+            stored_agents = await asyncio.to_thread(
+                get_agents,
+                db=os.db,
+                registry=os.registry,
+                exclude_component_ids=agent_ids or None,
+                user_id=get_scoped_user_id(request),
+            )
+            agent_ids.update(
+                agent_id
+                for agent in stored_agents or []
+                if isinstance((agent_id := getattr(agent, "id", None)), str) and agent_id
+            )
+
+    if "*" not in accessible_ids:
+        agent_ids.intersection_update(accessible_ids)
+
+    return sorted(agent_ids)
+
+
+async def _get_global_files(
+    os: "AgentOS",
+    request: Request,
+    agent_ids: list[str],
+    *,
+    namespace: Optional[str],
+    query: Optional[str],
+    strict: bool,
+) -> list[FileSystemTableEntry]:
+    filesystems: dict[tuple, tuple[FileSystem, list[str]]] = {}
+    for agent_id in agent_ids:
+        try:
+            filesystem = await _get_agent_filesystem(os, agent_id, request)
+        except HTTPException as e:
+            if not strict and e.status_code in (400, 404, 501):
+                continue
+            raise
+
+        if namespace is not None and filesystem.namespace != namespace:
+            continue
+
+        key = (_filesystem_backend_key(filesystem), filesystem.namespace)
+        existing = filesystems.get(key)
+        if existing is None:
+            filesystems[key] = (filesystem, [agent_id])
+        else:
+            existing[1].append(agent_id)
+
+    async def _read_files(filesystem: FileSystem, linked_agent_ids: list[str]) -> list[FileSystemTableEntry]:
+        metadata = await filesystem.alist()
+        if not query:
+            return [
+                FileSystemTableEntry(
+                    namespace=filesystem.namespace,
+                    path=item.path,
+                    agent_ids=linked_agent_ids,
+                    size_bytes=item.size_bytes,
+                    version=item.version,
+                    updated_at=item.updated_at,
+                )
+                for item in metadata
+            ]
+
+        metadata_by_path = {item.path: item for item in metadata}
+        matches = await filesystem.asearch(query, limit=max(len(metadata), 1))
+        entries: list[FileSystemTableEntry] = []
+        for match in matches:
+            meta = metadata_by_path.get(match.path)
+            entries.append(
+                FileSystemTableEntry(
+                    namespace=filesystem.namespace,
+                    path=match.path,
+                    agent_ids=linked_agent_ids,
+                    size_bytes=match.size_bytes,
+                    version=meta.version if meta else None,
+                    updated_at=meta.updated_at if meta else None,
+                    snippet=match.snippet,
+                    line=match.line,
+                    match_count=match.match_count,
+                )
+            )
+        return entries
+
+    entries: list[FileSystemTableEntry] = []
+    sources = list(filesystems.values())
+    for start in range(0, len(sources), _MAX_CONCURRENT_FILESYSTEM_READS):
+        batch = sources[start : start + _MAX_CONCURRENT_FILESYSTEM_READS]
+        results = await asyncio.gather(
+            *(_read_files(filesystem, linked_agent_ids) for filesystem, linked_agent_ids in batch)
+        )
+        for result in results:
+            entries.extend(result)
+
+    return sorted(
+        entries,
+        key=lambda entry: (entry.namespace.casefold(), path_sort_key(entry.path), entry.agent_ids),
+    )
+
+
 def get_filesystem_router(
     os: "AgentOS",
     settings: AgnoAPISettings = AgnoAPISettings(),
@@ -139,6 +270,47 @@ def get_filesystem_router(
             500: {"description": "Internal Server Error", "model": InternalServerErrorResponse},
         },
     )
+
+    @router.get(
+        "/files",
+        response_model=FileSystemTableResponse,
+        tags=["FileSystem"],
+        operation_id="list_files",
+        summary="List Files",
+        description=(
+            "List files across the configured agent filesystems visible to the caller. "
+            "Use agent_id or namespace to narrow the result, and query to search file contents."
+        ),
+    )
+    async def list_files(
+        request: Request,
+        agent_id: Optional[str] = Query(None, description="Filter by agent ID"),
+        namespace: Optional[str] = Query(None, description="Filter by resolved namespace"),
+        query: Optional[str] = Query(None, min_length=1, max_length=200, description="Search file contents"),
+        page: int = Query(1, ge=1, description="1-indexed page number"),
+        limit: int = Query(50, ge=1, le=100, description="Page size"),
+    ) -> FileSystemTableResponse:
+        agent_ids = await _get_global_filesystem_agent_ids(os, request, agent_id)
+        entries = await _get_global_files(
+            os,
+            request,
+            agent_ids,
+            namespace=namespace,
+            query=query.strip() if query else None,
+            strict=agent_id is not None,
+        )
+        total_count = len(entries)
+        total_pages = (total_count + limit - 1) // limit if total_count else 0
+        start = (page - 1) * limit
+        return FileSystemTableResponse(
+            entries=entries[start : start + limit],
+            meta=PaginationInfo(
+                page=page,
+                limit=limit,
+                total_pages=total_pages,
+                total_count=total_count,
+            ),
+        )
 
     @router.get(
         "/agents/{agent_id}/files",

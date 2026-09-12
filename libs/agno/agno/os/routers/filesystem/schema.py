@@ -55,3 +55,20 @@ class FileSystemSearchResponse(BaseModel):
     directory: str
     entries: List[FileSystemSearchEntry]
     meta: PaginationInfo
+
+
+class FileSystemTableEntry(BaseModel):
+    namespace: str
+    path: str
+    agent_ids: List[str]
+    size_bytes: int
+    version: Optional[int] = None
+    updated_at: Optional[int] = None
+    snippet: Optional[str] = None
+    line: Optional[int] = None
+    match_count: Optional[int] = None
+
+
+class FileSystemTableResponse(BaseModel):
+    entries: List[FileSystemTableEntry]
+    meta: PaginationInfo

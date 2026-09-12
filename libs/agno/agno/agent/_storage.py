@@ -974,15 +974,14 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
     # Registry.rehydrate_function). Mirrors the parse_tools walk: tools are
     # processed in declaration order and the first one to claim a name wins.
     _owning_toolkit: Dict[str, str] = {}
-    tools_to_serialize = agent.tools
-    if agent.model is not None and tools_to_serialize and isinstance(tools_to_serialize, list):
+    if agent.model is not None and agent.tools and isinstance(agent.tools, list):
         _tools = parse_tools(
             agent,
             model=agent.model,
-            tools=tools_to_serialize,
+            tools=agent.tools,
         )
         _claimed_names: Set[str] = set()
-        for _tool in tools_to_serialize:
+        for _tool in agent.tools:
             if isinstance(_tool, Toolkit):
                 # get_functions() is what parse_tools serializes. Names are claimed
                 # by Function.name, which is what the serialized dict carries.

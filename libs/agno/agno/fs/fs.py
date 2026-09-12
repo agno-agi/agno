@@ -345,11 +345,6 @@ class FileSystem:
         namespace = self._require_resolved()
         return self.backend.read_with_meta(namespace, normalize_path(path))
 
-    def stat(self, path: str) -> Optional[FileMeta]:
-        """Return metadata for one file, or ``None`` if it does not exist."""
-        namespace = self._require_resolved()
-        return self.backend._stat(namespace, normalize_path(path))
-
     def write(
         self,
         path: str,
@@ -529,10 +524,6 @@ class FileSystem:
         """Async variant of ``read_with_meta``."""
         namespace = self._require_resolved()
         return await self.backend.aread_with_meta(namespace, normalize_path(path))
-
-    async def astat(self, path: str) -> Optional[FileMeta]:
-        """Async variant of ``stat``."""
-        return await asyncio.to_thread(self.stat, path)
 
     async def awrite(
         self,

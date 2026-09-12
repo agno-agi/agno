@@ -92,6 +92,8 @@ from agno.utils.string import generate_id, generate_id_from_name
 from agno.workflow import RemoteWorkflow, Workflow, WorkflowFactory
 
 if TYPE_CHECKING:
+    from agno.os.schema import FileSystemConfig
+
     # Typed for static checkers only -- fastmcp is an optional extra, so importing it at
     # runtime here would break `import agno.os` when the extra is not installed.
     from fastmcp.server.auth import AuthProvider
@@ -2287,6 +2289,44 @@ class AgentOS:
                 )
 
         return learning_config
+
+    def _get_filesystem_config(self, user_id: Optional[str] = None) -> "FileSystemConfig":
+        from agno.os.routers.filesystem.utils import _filesystem_backend_key
+        from agno.os.schema import FileSystemConfig, FileSystemInstance, _extract_filesystem
+
+        instances: Dict[tuple, FileSystemInstance] = {}
+        for entry in self.agents or []:
+            if not isinstance(entry, Agent) or not entry.id:
+                continue
+
+            summary = _extract_filesystem(entry, user_id=user_id)
+            filesystem = entry.filesystem_instance
+            if summary is None or filesystem is None:
+                continue
+
+            key = (
+                _filesystem_backend_key(filesystem),
+                summary.namespace,
+                summary.max_file_bytes,
+                summary.max_namespace_bytes,
+            )
+            existing = instances.get(key)
+            if existing is None:
+                instances[key] = FileSystemInstance(**summary.model_dump(), agents=[entry.id])
+            else:
+                existing.agents = sorted(set(existing.agents + [entry.id]))
+
+        return FileSystemConfig(
+            instances=sorted(
+                instances.values(),
+                key=lambda instance: (
+                    instance.backend_type,
+                    instance.db_id or "",
+                    instance.namespace,
+                    instance.agents,
+                ),
+            )
+        )
 
     def _get_knowledge_config(self) -> KnowledgeConfig:
         knowledge_config = self.config.knowledge if self.config and self.config.knowledge else KnowledgeConfig()

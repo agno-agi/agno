@@ -24,7 +24,7 @@ agent = Agent(
     markdown=True,
 )
 
-# Managed files use users/{verified_user_id}/agents/personal-assistant.
+# Managed files use users/{verified_user_id}/personal-assistant.
 agent_os = AgentOS(
     id="isolated-files-os",
     db=db,
