@@ -595,6 +595,80 @@ def test_convert_schema_enum_with_title():
     assert result.enum == ["active", "inactive", "pending"]
 
 
+def test_convert_schema_enum_with_integer_values():
+    """Integer enums (an IntEnum or Literal[1, 2, 3] parameter) must not raise.
+
+    Gemini's Schema.enum is typed List[str], so the non-string members are
+    stringified rather than crashing with a pydantic ValidationError.
+    """
+    schema_dict = {
+        "type": "integer",
+        "enum": [1, 2, 3],
+        "description": "Priority level",
+    }
+
+    result = convert_schema(schema_dict)
+
+    assert result is not None
+    assert result.type == "STRING"
+    assert result.enum == ["1", "2", "3"]
+
+
+def test_convert_schema_enum_with_integer_values_and_default():
+    """A default naming an enum member is stringified with the members.
+
+    Left alone it stays an integer against a stringified enum, so it matches
+    none of the values it was chosen from.
+    """
+    schema_dict = {
+        "type": "integer",
+        "enum": [1, 2, 3],
+        "default": 2,
+    }
+
+    result = convert_schema(schema_dict)
+
+    assert result is not None
+    assert result.enum == ["1", "2", "3"]
+    assert result.default == "2"
+
+
+def test_convert_schema_enum_default_is_stringified_from_the_matched_member():
+    """The default carries the matched member's spelling, not its own.
+
+    ``False == 0`` and ``1.0 == 1``, so both name an enum member while their
+    own ``str()`` names nothing in the stringified enum.
+    """
+    assert convert_schema({"type": "integer", "enum": [0, 1], "default": False}).default == "0"
+    assert convert_schema({"type": "integer", "enum": [1, 2, 3], "default": 1.0}).default == "1"
+
+
+def test_convert_schema_enum_default_matches_by_value_not_by_string():
+    """Members are matched by equality, so a shared ``str()`` is not a match.
+
+    ``1`` names nothing in ``["1", 2]``, and is left as it was rather than
+    being pulled onto the string member that happens to print the same.
+    """
+    result = convert_schema({"type": "string", "enum": ["1", 2], "default": 1})
+
+    assert result is not None
+    assert result.default == 1
+    assert not isinstance(result.default, str)
+
+
+def test_convert_schema_enum_default_outside_the_enum_is_left_alone():
+    schema_dict = {
+        "type": "integer",
+        "enum": [1, 2, 3],
+        "default": 9,
+    }
+
+    result = convert_schema(schema_dict)
+
+    assert result is not None
+    assert result.default == 9
+
+
 def test_convert_schema_array_with_title():
     """Test converting an array schema with title"""
     schema_dict = {
