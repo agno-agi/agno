@@ -1,11 +1,53 @@
 import json
-from io import BytesIO
+from io import BytesIO, StringIO
 from pathlib import Path
 
 import pytest
 
 from agno.knowledge.document.base import Document
 from agno.knowledge.reader.json_reader import JSONReader
+
+
+@pytest.fixture(
+    params=[
+        ("latin-1", "latin-1", "café"),
+        ("cp1251", "cp1251", "Привет"),
+        ("utf-8", None, "值"),
+        ("utf-16", None, "值"),
+        ("utf-32", None, "值"),
+        (None, "latin-1", "值"),
+    ],
+    ids=["latin-1", "cp1251", "auto-utf-8", "auto-utf-16", "auto-utf-32", "text-stream"],
+)
+def encoded_json_stream(request):
+    source_encoding, reader_encoding, value = request.param
+    data = {"key": value}
+    content = json.dumps(data, ensure_ascii=False)
+    stream = BytesIO(content.encode(source_encoding)) if source_encoding else StringIO(content)
+    stream.seek(0, 2)
+    with stream:
+        yield stream, reader_encoding, data
+
+
+def test_read_json_stream_encoding(encoded_json_stream):
+    stream, encoding, data = encoded_json_stream
+    documents = JSONReader(chunk=False, encoding=encoding).read(stream, name="upload")
+
+    assert len(documents) == 1
+    assert documents[0].name == "upload"
+    assert json.loads(documents[0].content) == data
+    assert not stream.closed
+
+
+@pytest.mark.asyncio
+async def test_async_read_json_stream_encoding(encoded_json_stream):
+    stream, encoding, data = encoded_json_stream
+    documents = await JSONReader(chunk=False, encoding=encoding).async_read(stream, name="upload")
+
+    assert len(documents) == 1
+    assert documents[0].name == "upload"
+    assert json.loads(documents[0].content) == data
+    assert not stream.closed
 
 
 @pytest.fixture
