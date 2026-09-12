@@ -1,6 +1,6 @@
 # Azure AI Foundry Claude
 
-[Anthropic on Azure AI Foundry](https://docs.anthropic.com/en/docs/partner-models/azure-ai)
+[Anthropic in Microsoft Foundry](https://platform.claude.com/docs/en/build-with-claude/claude-in-microsoft-foundry)
 
 > Note: Fork and clone this repository if needed
 

@@ -19,7 +19,7 @@ def read_pyproject_agno(pyproject_file: Path) -> Optional[Dict]:
         except ImportError:
             import tomli  # type: ignore
 
-            pyproject_dict = tomli.loads(pyproject_file.read_text())
+            pyproject_dict = tomli.loads(pyproject_file.read_text(encoding="utf-8"))
 
         agno_conf = pyproject_dict.get("tool", {}).get("agno", None)
         if agno_conf is not None and isinstance(agno_conf, dict):
