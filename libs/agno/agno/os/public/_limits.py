@@ -73,6 +73,9 @@ class PublicLimiter:
                 text("CREATE INDEX IF NOT EXISTS agno_public_limits_updated ON public.agno_public_limits(updated_at)")
             )
             self._cleanup(conn)
+            from agno.os.public._execution import _RunBindings
+
+            _RunBindings._prepare(conn)
         self.ready = True
 
     async def _aprepare(self) -> None:

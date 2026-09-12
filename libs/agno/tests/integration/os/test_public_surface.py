@@ -297,5 +297,5 @@ def test_selected_agents_and_teams_share_run_and_cancel_limits(engine):
         assert client.post("/agents/same/runs", data={"message": "hi", "user_id": "spoof"}).status_code == 429
         run_id = str(uuid4())
         response = client.post(f"/teams/same/runs/{run_id}/cancel")
-        assert response.status_code in (200, 404), response.text
+        assert response.status_code == 400, response.text
         assert client.post(f"/agents/same/runs/{run_id}/cancel").status_code == 429

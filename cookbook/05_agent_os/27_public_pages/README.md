@@ -131,7 +131,7 @@ configuration accepts no arbitrary SQL or deadline overrides.
 
 Only the selected Agent, native MCP and protected sync Workflow are exposed. Sessions, configuration and unselected components are closed. Workflow trigger/status require verified bearer credentials even while chat is anonymous. Scoped service accounts require the workflow run/read permissions and cannot use internal-service exemptions. `PAGE_DEMO_SYNC_TOKEN` configures the existing internal-service principal for a trusted deployment hook; keep it out of browsers and MCP clients.
 
-For custom functions such as this example's MCP tools, use `MCPConfig(tools=[...], default_tools=False, stateless=True)`. No lifecycle flag is needed. If you expose agents, teams or workflows as MCP tools, also set `lifecycle_tools=False` or `exclude_tags={"lifecycle"}`: the public surface does not allow the automatically added `continue_run` and `cancel_run` tools.
+For custom functions such as this example's MCP tools, use `MCPConfig(tools=[...], default_tools=False, stateless=True)`. No lifecycle flag is needed. Exposing agents, teams or workflows as MCP tools automatically includes `continue_run` and `cancel_run`, limited to those exposed components. Set `lifecycle_tools=False` or `exclude_tags={"lifecycle"}` only when deliberately omitting MCP lifecycle operations.
 
 Public chat defaults to 10 requests/client/minute, 50 globally/minute, 80/client/day and 3,000 globally/day. Cancel and MCP use separate shared buckets. PostgreSQL counters use the stable AgentOS ID across replicas. Default identity ignores arbitrary forwarded headers; customize `PublicSurface.client_id` only for an edge-overwritten trusted header. Request bodies, output, duration and concurrency are bounded; uploads are disabled here. CORS includes admission failures and readiness checks table preparation.
 
@@ -277,3 +277,44 @@ normalizer that leaves code unchanged; run it without a database or provider key
 
 Component-specific MDX transformations, prompt rendering, citations and query
 alternatives remain application-owned.
+
+## Public human approval
+
+`public_approval.py` demonstrates a public agent that pauses before a tool executes,
+then accepts approval or rejection through native MCP. Create the PostgreSQL database
+named in `PAGE_DEMO_DB_URL` and provide `OPENAI_API_KEY`, then run:
+
+```bash
+.venvs/demo/bin/python cookbook/05_agent_os/27_public_pages/public_approval.py serve
+# In another terminal:
+.venvs/demo/bin/python cookbook/05_agent_os/27_public_pages/public_approval.py demo
+```
+
+Public REST continuation uses `POST /agents/{id}/runs/{run_id}/continue` with
+`session_id`, `stream`, and `tools` (a JSON list of resolved tool executions from the
+paused response). Teams use `requirements` with the complete run requirements;
+workflows use `step_requirements`. The run must be paused. Forking, regeneration,
+background continuation and arbitrary execution overrides are not exposed here.
+Both transports preserve stored requirement identity and accept resolution values;
+clients cannot replace tool names, arguments, member targets or step policies.
+
+Cancellation uses the native `POST /{kind}/{id}/runs/{run_id}/cancel?session_id=...`
+route or MCP `cancel_run`. REST also accepts a form `session_id` for compatibility;
+supplying it twice is rejected. Unknown or mismatched handles fail before applying
+cancellation intent. A temporary PostgreSQL binding makes an active streamed run
+verifiable before its final run row exists. Cancellation delivery still uses the
+configured Agno cancellation manager; select a shared manager when running multiple
+replicas. Shared ownership records alone do not deliver cancellation across processes.
+
+For anonymous conversations, the unguessable session and run IDs are bearer
+capabilities: keep them private. They are not a login identity, and IP-based quota
+identity does not grant access to runs. A session belonging to an authenticated
+principal requires that same principal. Required administrator approvals remain
+protected even when general AgentOS authorization is disabled.
+
+REST and MCP starts/continuations share the `run` quota and each server instance's
+`max_active_runs` allowance and honor `max_run_seconds`. MCP additionally retains its
+protocol-request quota. Cancellation has an independent quota and does not consume
+run slots. Workflow execution and continuation require verified credentials on both
+transports. Only explicitly selected REST components and explicitly published MCP
+components are reachable; publishing a Team does not publish its member routes.

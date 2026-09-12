@@ -1170,8 +1170,13 @@ def get_agent_router(
         factory = find_factory_by_id(agent_id, os.agents)
         if factory:
             from agno.agent._run import acancel_run
+            from agno.os.public._execution import _lifecycle_verified
 
-            scoped_user_id = get_scoped_user_id(request)
+            scoped_user_id = (
+                None
+                if _lifecycle_verified(request, "agents", agent_id, session_id, run_id)
+                else get_scoped_user_id(request)
+            )
             if scoped_user_id is not None:
                 if not session_id:
                     raise HTTPException(status_code=400, detail=SESSION_ID_REQUIRED)
@@ -1218,7 +1223,13 @@ def get_agent_router(
 
         # Ownership check: non-admin JWT callers must supply a session_id and the
         # run must live in a session they own. Admins / unauthenticated bypass.
-        scoped_user_id = get_scoped_user_id(request)
+        from agno.os.public._execution import _lifecycle_verified
+
+        scoped_user_id = (
+            None
+            if _lifecycle_verified(request, "agents", agent_id, session_id, run_id)
+            else get_scoped_user_id(request)
+        )
         if scoped_user_id is not None:
             if not session_id:
                 raise HTTPException(status_code=400, detail=SESSION_ID_REQUIRED)

@@ -1358,6 +1358,10 @@ def _make_run_ownership_verifier(os: "AgentOS"):
     ):
         if component is None:
             raise Exception(f"Component {component_id} not found")
+        from agno.os.public._execution import _lifecycle_verified
+
+        if _lifecycle_verified(_http_request_or_none(), component_type, component_id, session_id, run_id):
+            return
         scoped_user_id = _scoped_caller_user_id()
         if isinstance(component, BaseRemote):
             # Remote components keep their sessions on the remote OS: there is no local
@@ -1784,7 +1788,9 @@ def _make_exposed_run_tool(
         )
         return build_run_tool_result(run_output, result_mode, continue_run_available=continue_run_available)
 
-    return run_exposed
+    from agno.os.public._execution import _public_mcp_tool
+
+    return _public_mcp_tool(os, kind, component_id)(run_exposed)
 
 
 def _make_exposed_workflow_tool(
@@ -1830,7 +1836,9 @@ def _make_exposed_workflow_tool(
             run_output = await _consume_workflow_stream(ctx, workflow, stream, total_steps, resolved_user_id)
         return build_run_tool_result(run_output, result_mode, continue_run_available=continue_run_available)
 
-    return run_exposed_workflow
+    from agno.os.public._execution import _public_mcp_tool
+
+    return _public_mcp_tool(os, "workflows", component_id)(run_exposed_workflow)
 
 
 def _register_exposed_components(
@@ -2186,6 +2194,8 @@ def build_mcp_server(
     Split out from :func:`get_mcp_server` so the tool surface can be exercised directly
     by an in-memory MCP client in tests, without the HTTP/JWT layer.
     """
+    from agno.os.public._execution import _public_mcp_tool
+
     mcp_config: "Optional[MCPConfig]" = getattr(os, "mcp_config", None)
 
     # Create an MCP server. With AgentOS(mcp_auth=...) set, the resolved fastmcp provider
@@ -2473,6 +2483,7 @@ def build_mcp_server(
         tags={"core", "lifecycle"},
         annotations={"readOnlyHint": False, "destructiveHint": True, "openWorldHint": True},
     )  # type: ignore
+    @_public_mcp_tool(os, action="continue")
     async def continue_run(
         run_id: str,
         ctx: Context,
@@ -2545,6 +2556,7 @@ def build_mcp_server(
         tags={"core", "lifecycle"},
         annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": True, "openWorldHint": True},
     )  # type: ignore
+    @_public_mcp_tool(os, action="cancel")
     async def cancel_run(
         run_id: str,
         session_id: Optional[str] = None,

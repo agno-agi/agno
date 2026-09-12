@@ -58,6 +58,14 @@ class LocalAdmission:
         return Admission(True)
 
 
+class LocalBindings:
+    async def _claim(self, *args):
+        return "test-lease"
+
+    async def _release(self, *args):
+        pass
+
+
 def application(*, bounded=True, model=None, team_mode=False, gzip_inner=False, expose_agent=False):
     agent = Agent(id="docs-agent", model=model or ShortAnswerModel(), db=InMemoryDb(), telemetry=False)
     from fastapi import FastAPI
@@ -72,6 +80,7 @@ def application(*, bounded=True, model=None, team_mode=False, gzip_inner=False, 
         max_active_runs=1,
         uploads=FileUploadLimits(max_files=12, allowed_types=((".txt", "text/plain"),)),
     )
+    surface._bindings = LocalBindings()
     surface._limiter = LocalAdmission()  # type: ignore[assignment]
     base_app = FastAPI()
     if gzip_inner:
