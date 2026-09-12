@@ -2267,6 +2267,34 @@ def test_union_of_two_identity_types_falls_through_to_the_one_available():
     assert FunctionCall(function=func, arguments={"task": "x"}).execute().result == "Agent"
 
 
+def test_reserved_agent_name_falls_through_to_an_available_team():
+    """A reserved-name bind with no Agent must not mask the Team arm of the
+    annotation. Toolkits commonly spell their owner ``agent: Union[Agent, Team]``
+    even when the tool is registered on a Team."""
+    from typing import Union as Un
+
+    from agno.agent.agent import Agent
+    from agno.team.team import Team
+
+    def identify(agent: Un[Agent, Team]) -> str:
+        return type(agent).__name__
+
+    func = Function.from_callable(identify)
+    func._team = Team(id="t", name="T", members=[Agent(id="m", name="M")])
+
+    result = FunctionCall(function=func).execute()
+
+    assert result.status == "success"
+    assert result.result == "Team"
+
+    def identify_agent_only(agent: Agent) -> str:
+        return type(agent).__name__
+
+    agent_only = Function.from_callable(identify_agent_only)
+    agent_only._team = func._team
+    assert FunctionCall(function=agent_only).execute().result == "NoneType"
+
+
 @pytest.mark.skipif(sys.version_info < (3, 12), reason="PEP 695 type alias syntax needs 3.12")
 @pytest.mark.parametrize("annotation", ["Two", "Three", "MaybeTwo"])
 def test_chained_type_aliases_are_unwrapped_to_the_end(annotation):
