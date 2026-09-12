@@ -110,7 +110,7 @@ class TextReader(Reader):
         async def process_chunk(chunk_doc: Document) -> Document:
             return chunk_doc
 
-        chunked_documents = self.chunk_document(document)
+        chunked_documents = await self.achunk_document(document)
 
         if not chunked_documents:
             return []

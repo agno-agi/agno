@@ -184,7 +184,7 @@ async def test_async_chunking():
 
     reader = TextReader()
     reader.chunk = True
-    reader.chunk_document = lambda doc: [
+    reader.chunking_strategy.chunk = lambda doc: [
         Document(name=f"{doc.name}_chunk_{i}", id=f"{doc.id}_chunk_{i}", content=f"chunk_{i}", meta_data={"chunk": i})
         for i in range(2)
     ]
