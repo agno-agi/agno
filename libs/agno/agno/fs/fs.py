@@ -30,10 +30,11 @@ from agno.fs._paths import (
     normalize_template_value,
     parse_namespace_template,
     path_sort_key,
+    validate_normalized_namespace,
 )
 from agno.fs.base import BaseFS
 from agno.fs.errors import InvalidPathError, QuotaExceededError
-from agno.fs.types import ContainsResult, FileMeta, NamespaceUsage, SearchMatch
+from agno.fs.types import ContainsResult, FileData, FileMeta, NamespaceUsage, SearchMatch
 
 if TYPE_CHECKING:
     from agno.db.base import BaseDb
@@ -116,9 +117,9 @@ class FileSystem:
     store within it, defaulting to ``"default"`` when you do not need more than
     one. Same ``backend`` + same ``namespace`` = same files; different
     ``namespace`` = full isolation. Sharing is explicit, by name. Isolation is per
-    NORMALIZED name: namespaces are lowercased and URL-safe, so ``BANK`` and ``bank``
-    address one store. If your identity system treats ``Alice`` and ``alice`` as two
-    users, normalize the id before it reaches a templated namespace.
+    NORMALIZED name: literal namespace text is lowercased and URL-safe, so ``BANK``
+    and ``bank`` address one store. Values bound to template placeholders preserve
+    identity casing, so users ``Alice`` and ``alice`` remain isolated.
 
     ``namespace`` may embed the template placeholders ``{user_id}``,
     ``{agent_id}`` and ``{team_id}`` (e.g. ``"radar/{user_id}"``), resolved per
@@ -149,10 +150,113 @@ class FileSystem:
 
             backend = DbFileSystem(db=db)
         self.backend: BaseFS = _as_backend(backend)
+        self._raw_namespace = namespace
+        self._namespace_is_normalized = False
         self.namespace = normalize_namespace(namespace)
         self.max_file_bytes = max_file_bytes
         self.max_namespace_bytes = max_namespace_bytes
         self._placeholders: Tuple[str, ...] = parse_namespace_template(self.namespace)
+
+    @classmethod
+    def _from_normalized(
+        cls,
+        *,
+        backend: Any,
+        namespace: str,
+        max_file_bytes: int,
+        max_namespace_bytes: int,
+    ) -> "FileSystem":
+        """Build a derived instance whose namespace is already canonical."""
+        instance = cls.__new__(cls)
+        instance.backend = _as_backend(backend)
+        instance._raw_namespace = namespace
+        instance._namespace_is_normalized = True
+        instance.namespace = validate_normalized_namespace(namespace)
+        instance.max_file_bytes = max_file_bytes
+        instance.max_namespace_bytes = max_namespace_bytes
+        instance._placeholders = parse_namespace_template(namespace)
+        return instance
+
+    def to_dict(self) -> dict:
+        """Serialize built-in backend settings without serializing live connections."""
+        from agno.fs.db import DbFileSystem
+        from agno.fs.local import LocalFileSystem
+
+        if isinstance(self.backend, DbFileSystem):
+            db_id = getattr(getattr(self.backend, "db", None), "id", None)
+            if not isinstance(db_id, str) or not db_id:
+                raise TypeError(
+                    "Cannot serialize a database-backed filesystem without an Agno database id; "
+                    "construct DbFileSystem with db=SqliteDb/PostgresDb and register that database."
+                )
+            backend = {
+                "type": "db",
+                "db_id": db_id,
+                "table_name": self.backend.table_name,
+                "db_schema": self.backend.db_schema,
+            }
+        elif isinstance(self.backend, LocalFileSystem):
+            backend = {"type": "local", "root": str(self.backend.root)}
+        else:
+            raise TypeError(
+                f"Cannot serialize filesystem backend {type(self.backend).__name__}; "
+                "configure this filesystem from application code."
+            )
+        config = {
+            "backend": backend,
+            # The constructor input is required here. Serializing the canonical
+            # percent-encoded value and normalizing it again changes %20 to %2520.
+            "namespace": self._raw_namespace,
+            "max_file_bytes": self.max_file_bytes,
+            "max_namespace_bytes": self.max_namespace_bytes,
+        }
+        if self._namespace_is_normalized:
+            config["namespace_is_normalized"] = True
+        return config
+
+    @classmethod
+    def from_dict(cls, data: dict, *, db: Any = None) -> "FileSystem":
+        """Rebuild a filesystem config, reusing the owning Agent database when needed."""
+        backend_config = data.get("backend") or {}
+        backend_type = backend_config.get("type")
+        if backend_type == "db":
+            if db is None:
+                raise ValueError("A database is required to restore a database-backed filesystem")
+            db_id = backend_config.get("db_id")
+            if db_id is not None and getattr(db, "id", None) != db_id:
+                raise ValueError(f"filesystem requires database {db_id!r}, got {getattr(db, 'id', None)!r}")
+            from agno.fs.db import DbFileSystem
+
+            backend: BaseFS = DbFileSystem(
+                db=db,
+                table_name=backend_config.get("table_name", "agno_fs"),
+                db_schema=backend_config.get("db_schema", "fs"),
+            )
+        elif backend_type == "local":
+            from agno.fs.local import LocalFileSystem
+
+            root = backend_config.get("root")
+            if not isinstance(root, str) or not root:
+                raise ValueError("A root path is required to restore a local filesystem")
+            backend = LocalFileSystem(root=root)
+        else:
+            raise ValueError(f"Unsupported filesystem backend type: {backend_type!r}")
+        namespace = data.get("namespace", DEFAULT_NAMESPACE)
+        max_file_bytes = data.get("max_file_bytes", 1_000_000)
+        max_namespace_bytes = data.get("max_namespace_bytes", 20_000_000)
+        if data.get("namespace_is_normalized") is True:
+            return cls._from_normalized(
+                backend=backend,
+                namespace=namespace,
+                max_file_bytes=max_file_bytes,
+                max_namespace_bytes=max_namespace_bytes,
+            )
+        return cls(
+            backend=backend,
+            namespace=namespace,
+            max_file_bytes=max_file_bytes,
+            max_namespace_bytes=max_namespace_bytes,
+        )
 
     # ------------------------------------------------------------------
     # Templated namespaces
@@ -193,14 +297,23 @@ class FileSystem:
             if value is None:
                 continue
             name = name.replace("{" + placeholder + "}", normalize_template_value(placeholder, value))
-        return FileSystem(
+        return FileSystem._from_normalized(
             backend=self.backend,
             namespace=name,
             max_file_bytes=self.max_file_bytes,
             max_namespace_bytes=self.max_namespace_bytes,
         )
 
-    def _resolve_from_context(self, run_context: Any = None, agent: Any = None, team: Any = None) -> "FileSystem":
+    def _resolve_from_context(
+        self,
+        run_context: Any = None,
+        agent: Any = None,
+        team: Any = None,
+        *,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+    ) -> "FileSystem":
         """Resolve template placeholders from framework-injected context. Fails closed.
 
         ``{user_id}`` reads ``run_context.user_id``; ``{agent_id}`` reads the
@@ -211,9 +324,9 @@ class FileSystem:
         if not self._placeholders:
             return self
         resolved = self.resolve(
-            user_id=getattr(run_context, "user_id", None) if run_context is not None else None,
-            agent_id=getattr(agent, "id", None) if agent is not None else None,
-            team_id=getattr(team, "id", None) if team is not None else None,
+            user_id=user_id if user_id is not None else getattr(run_context, "user_id", None),
+            agent_id=agent_id if agent_id is not None else getattr(agent, "id", None),
+            team_id=team_id if team_id is not None else getattr(team, "id", None),
         )
         resolved._require_resolved()
         return resolved
@@ -226,6 +339,11 @@ class FileSystem:
         """Return the file's content, or ``None`` if it does not exist."""
         namespace = self._require_resolved()
         return self.backend.read(namespace, normalize_path(path))
+
+    def read_with_meta(self, path: str) -> Optional[FileData]:
+        """Return content and metadata from one consistent backend read."""
+        namespace = self._require_resolved()
+        return self.backend.read_with_meta(namespace, normalize_path(path))
 
     def write(
         self,
@@ -401,6 +519,11 @@ class FileSystem:
     async def aread(self, path: str) -> Optional[str]:
         """Async variant of ``read``."""
         return await asyncio.to_thread(self.read, path)
+
+    async def aread_with_meta(self, path: str) -> Optional[FileData]:
+        """Async variant of ``read_with_meta``."""
+        namespace = self._require_resolved()
+        return await self.backend.aread_with_meta(namespace, normalize_path(path))
 
     async def awrite(
         self,

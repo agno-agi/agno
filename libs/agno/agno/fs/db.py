@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, List, Optional, Sequence, Set
 from agno.fs._paths import build_chunk, path_sort_key
 from agno.fs.base import BaseFS, _build_match
 from agno.fs.errors import QuotaExceededError, VersionConflictError
-from agno.fs.types import FileMeta, NamespaceUsage, SearchMatch
+from agno.fs.types import FileData, FileMeta, NamespaceUsage, SearchMatch
 from agno.utils.log import log_debug, log_warning
 
 try:
@@ -76,6 +76,7 @@ class DbFileSystem(BaseFS):
         provided = [source for source in (db, db_url, db_engine) if source is not None]
         if len(provided) != 1:
             raise ValueError("Provide exactly one of db, db_url, or db_engine")
+        self.db = db
         if db is not None:
             # Reuse the engine of an agno db the caller already configured, so the
             # agent's files live beside its sessions and memory with one connection
@@ -311,6 +312,22 @@ class DbFileSystem(BaseFS):
     # ------------------------------------------------------------------
     # Native implementations
     # ------------------------------------------------------------------
+
+    def read_with_meta(self, namespace: str, path: str) -> Optional[FileData]:
+        self._ensure_table()
+        t = self.table
+        with self.db_engine.begin() as conn:
+            row = conn.execute(
+                select(t.c.content, t.c.size_bytes, t.c.version, t.c.updated_at).where(
+                    and_(t.c.namespace == namespace, t.c.path == path)
+                )
+            ).first()
+        if row is None:
+            return None
+        return FileData(
+            content=row[0],
+            meta=FileMeta(path=path, size_bytes=row[1], version=row[2], updated_at=row[3]),
+        )
 
     def _stat(self, namespace: str, path: str) -> Optional[FileMeta]:
         self._ensure_table()

@@ -873,6 +873,15 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
     if agent.add_dependencies_to_context:
         config["add_dependencies_to_context"] = agent.add_dependencies_to_context
 
+    if agent.filesystem is True:
+        config["filesystem"] = True
+    elif agent.filesystem:
+        from agno.fs import FileSystem
+
+        if not isinstance(agent.filesystem, FileSystem):
+            raise TypeError("filesystem must be True, False, None, or a FileSystem instance")
+        config["filesystem"] = agent.filesystem.to_dict()
+
     # --- Agentic Memory settings ---
     # Stored as a registry reference by id, like knowledge: the manager holds
     # a model and callables, so the config names it and the registry supplies
@@ -1281,6 +1290,34 @@ def from_dict(
             log_warning(f"{component_label} has a serialized db config that could not be resolved.")
             del config["db"]
 
+    # --- Handle FileSystem reconstruction ---
+    if "filesystem" in config and isinstance(config["filesystem"], dict):
+        from agno.fs import FileSystem
+
+        try:
+            filesystem_config = config["filesystem"]
+            filesystem_db_id = (filesystem_config.get("backend") or {}).get("db_id")
+            agent_db = config.get("db")
+            filesystem_db = None
+            if filesystem_db_id is None:
+                # Backward compatibility for configs saved before filesystem db
+                # identity was serialized: these always borrowed the agent db.
+                filesystem_db = agent_db
+            elif getattr(agent_db, "id", None) == filesystem_db_id:
+                filesystem_db = agent_db
+            elif registry is not None:
+                filesystem_db = registry.get_db(filesystem_db_id)
+            if filesystem_db_id is not None and filesystem_db is None:
+                raise ValueError(
+                    f"database {filesystem_db_id!r} was not found on the agent or in the registry"
+                )
+            config["filesystem"] = FileSystem.from_dict(filesystem_config, db=filesystem_db)
+        except (TypeError, ValueError) as e:
+            if strict:
+                raise ComponentRehydrationError(f"{component_label} filesystem could not be restored: {e}") from e
+            log_warning(f"{component_label} filesystem could not be restored: {e}")
+            del config["filesystem"]
+
     # --- Handle Schema reconstruction ---
     if "input_schema" in config and isinstance(config["input_schema"], str):
         schema_cls = registry.get_schema(config["input_schema"]) if registry else None
@@ -1389,6 +1426,7 @@ def from_dict(
         # --- Dependencies ---
         dependencies=config.get("dependencies"),
         add_dependencies_to_context=config.get("add_dependencies_to_context", False),
+        filesystem=config.get("filesystem", False),
         # --- Agentic Memory settings ---
         memory_manager=config.get("memory_manager"),
         enable_agentic_memory=config.get("enable_agentic_memory", False),
