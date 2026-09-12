@@ -537,6 +537,34 @@ async def test_invalid_jwt_rejected_with_mcp_auth():
     assert response.status_code == 401
 
 
+async def test_issuer_pin_is_enforced_on_mcp(monkeypatch):
+    """Issuer-drift regression (TOK-1). When AuthorizationConfig pins an issuer, the /mcp
+    JWT verifier must enforce it too -- not just REST. Before the fix the issuer kwarg was
+    dropped when building the MCP verifier (audience was threaded, issuer was not), so a
+    token from an untrusted issuer that REST rejects still verified on /mcp."""
+    from agno.os.config import AuthorizationConfig
+
+    os = AgentOS(
+        agents=[_agent()],
+        mcp_auth=_oauth_provider(),
+        authorization=True,
+        authorization_config=AuthorizationConfig(
+            verification_keys=["test-jwt-secret"], algorithm="HS256", issuer="https://trusted.example"
+        ),
+        mcp_server=MCPServerConfig(tools=[_ok_tool], enable_builtin_tools=False),
+    )
+    async with _http_client(os) as client:
+        # right issuer -> accepted
+        good = await client.post("/mcp", json=_MCP_INIT_BODY, headers=_bearer(_mint_jwt(iss="https://trusted.example")))
+        assert good.status_code == 200
+        # wrong issuer -> rejected on /mcp, as it is on REST
+        bad = await client.post("/mcp", json=_MCP_INIT_BODY, headers=_bearer(_mint_jwt(iss="https://evil.example")))
+        assert bad.status_code == 401
+        # no issuer claim at all -> also rejected when a pin is configured
+        none = await client.post("/mcp", json=_MCP_INIT_BODY, headers=_bearer(_mint_jwt()))
+        assert none.status_code == 401
+
+
 async def test_jwt_cannot_smuggle_trust_markers():
     """A signature-valid deployment JWT that carries agno's internal trust markers
     (agno_service_account / agno_mcp_internal_issuer / agno_authorization_enabled) must not
@@ -682,7 +710,7 @@ def _fake_http_request(state: dict, mcp_auth_enabled: bool):
     return SimpleNamespace(state=SimpleNamespace(**state), app=SimpleNamespace(state=app_state))
 
 
-def test_scope_gate_fails_closed_when_bridge_absent(monkeypatch):
+async def test_scope_gate_fails_closed_when_bridge_absent(monkeypatch):
     """Under mcp_auth, a provider-verified request with no bridged identity means the
     bridge did not run (an ordering regression): the gate must deny, not skip."""
     import fastmcp.server.dependencies as deps
@@ -691,17 +719,17 @@ def test_scope_gate_fails_closed_when_bridge_absent(monkeypatch):
 
     monkeypatch.setattr(deps, "get_http_request", lambda: _fake_http_request({}, mcp_auth_enabled=True))
     with pytest.raises(Exception, match="identity bridge did not"):
-        mcp_mod._require_tool_scopes("GET", "/config")
+        await mcp_mod._require_tool_scopes("GET", "/config")
 
 
-def test_scope_gate_stays_open_without_mcp_auth(monkeypatch):
+async def test_scope_gate_stays_open_without_mcp_auth(monkeypatch):
     """Without mcp_auth the skip is the intended open/security-key behavior."""
     import fastmcp.server.dependencies as deps
 
     from agno.os import mcp as mcp_mod
 
     monkeypatch.setattr(deps, "get_http_request", lambda: _fake_http_request({}, mcp_auth_enabled=False))
-    mcp_mod._require_tool_scopes("GET", "/config")
+    await mcp_mod._require_tool_scopes("GET", "/config")
 
 
 async def test_continue_run_gate_fails_closed_when_bridge_absent(monkeypatch):
@@ -735,7 +763,7 @@ async def test_continue_run_gate_allows_authenticated_rbac_off(monkeypatch):
     await mcp_mod._enforce_run_continuation_allowed(db=None, run_id="run-1")
 
 
-def test_scope_gate_enforces_bridged_identity(monkeypatch):
+async def test_scope_gate_enforces_bridged_identity(monkeypatch):
     """A bridged identity with insufficient scopes is denied, sufficient passes."""
     import fastmcp.server.dependencies as deps
 
@@ -744,14 +772,14 @@ def test_scope_gate_enforces_bridged_identity(monkeypatch):
     insufficient = {"user_id": "u", "scopes": ["sessions:read"], "authorization_enabled": True}
     monkeypatch.setattr(deps, "get_http_request", lambda: _fake_http_request(insufficient, mcp_auth_enabled=True))
     with pytest.raises(Exception, match="[Ii]nsufficient"):
-        mcp_mod._require_tool_scopes("POST", "/agents/demo-agent/runs")
+        await mcp_mod._require_tool_scopes("POST", "/agents/demo-agent/runs")
 
     sufficient = {"user_id": "u", "scopes": ["agents:run"], "authorization_enabled": True}
     monkeypatch.setattr(deps, "get_http_request", lambda: _fake_http_request(sufficient, mcp_auth_enabled=True))
-    mcp_mod._require_tool_scopes("POST", "/agents/demo-agent/runs")
+    await mcp_mod._require_tool_scopes("POST", "/agents/demo-agent/runs")
 
 
-def test_scope_gate_allows_authenticated_rbac_off_caller(monkeypatch):
+async def test_scope_gate_allows_authenticated_rbac_off_caller(monkeypatch):
     """A caller the bridge DID authenticate but whose token carries no RBAC (an RBAC-off
     agno JWT, or an external Tier-2 token) is a legitimate unenforced caller -- the
     fail-closed gate must NOT deny it (that only fires when the bridge did not run)."""
@@ -762,7 +790,7 @@ def test_scope_gate_allows_authenticated_rbac_off_caller(monkeypatch):
     rbac_off = {"authenticated": True, "user_id": "alice", "scopes": ["agents:run"], "authorization_enabled": False}
     monkeypatch.setattr(deps, "get_http_request", lambda: _fake_http_request(rbac_off, mcp_auth_enabled=True))
     # No exception: enforcement is skipped exactly as on a non-mcp_auth RBAC-off deploy.
-    mcp_mod._require_tool_scopes("POST", "/agents/demo-agent/runs")
+    await mcp_mod._require_tool_scopes("POST", "/agents/demo-agent/runs")
 
 
 async def test_rbac_off_jwt_bearer_runs_tools_under_mcp_auth(tmp_path):

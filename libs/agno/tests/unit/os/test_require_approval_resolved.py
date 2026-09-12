@@ -207,3 +207,50 @@ class TestMcpContinueRunApprovalGate:
         db = MagicMock()
         await mcp_module._enforce_run_continuation_allowed(db, "run-1")  # no raise
         db.get_approvals.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_approval_admin_bypass_is_provider_aware():
+    """Issue-4 regression: run_continuation_blocked_reason's approvals:write admin bypass
+    must be provider-aware. Under a managed-roles plane a raw token scope must NOT grant
+    the bypass, and a genuine approver-role holder (whose token carries no scopes) must
+    NOT be blocked."""
+    import os
+    import tempfile
+    from types import SimpleNamespace
+
+    from agno.os.authz.role_store import ManagedRoleStore
+
+    fd, path = tempfile.mkstemp(suffix=".db")
+    os.close(fd)
+    store = ManagedRoleStore(db_url=f"sqlite:///{path}")
+    store.set_role_scopes("approver", ["approvals:write"])
+    store.assign("val", "approver")
+    provider = store.provider
+
+    db = MagicMock()
+    db.get_approvals = AsyncMock(return_value=([{"id": "a1", "status": "pending"}], 1))
+
+    def _req(user_id, scopes):
+        return SimpleNamespace(
+            state=SimpleNamespace(
+                user_id=user_id, scopes=scopes, claims={}, admin_scope=None, authorization_enabled=True
+            ),
+            app=SimpleNamespace(state=SimpleNamespace(authorization_provider=provider)),
+        )
+
+    # a token merely CARRYING approvals:write, but no approver role -> bypass refused
+    blocked = await run_continuation_blocked_reason(
+        db,
+        "r1",
+        authorization_enabled=True,
+        user_scopes=["approvals:write"],
+        request=_req("mallory", ["approvals:write"]),
+    )
+    assert blocked is not None, "raw token scope must not grant the approval-admin bypass off-plane"
+
+    # the genuine approver role, empty token scopes -> bypass via provider -> not blocked
+    allowed = await run_continuation_blocked_reason(
+        db, "r1", authorization_enabled=True, user_scopes=[], request=_req("val", [])
+    )
+    assert allowed is None, "an approver-role holder must be able to resolve approvals"

@@ -872,8 +872,12 @@ _MISSING_BRIDGE_DETAIL = (
 )
 
 
-def _require_tool_scopes(method: str, path: str) -> None:
+async def _require_tool_scopes(method: str, path: str) -> None:
     """Enforce the caller's scopes against the REST route this tool call is equivalent to.
+
+    Awaits the provider's async decision and audit write (mirroring the REST/WS gates) so a
+    managed-role/ReBAC gate does its DB or network I/O off the event loop and works against
+    an async database.
 
     The MCP tools are an alternate transport for the REST surface, so authorization
     reuses the REST mechanism verbatim: map the tool call onto its REST route and run
@@ -889,8 +893,13 @@ def _require_tool_scopes(method: str, path: str) -> None:
     """
     from fastmcp.server.dependencies import get_http_request
 
-    from agno.os.auth import build_insufficient_permissions_detail
-    from agno.os.scopes import check_route_scopes
+    from agno.os.auth import (
+        _default_authorization_provider,
+        build_insufficient_permissions_detail,
+        resolve_authorization_provider,
+    )
+    from agno.os.authz.provider import AuthorizationContext
+    from agno.os.scopes import get_required_scopes_for_route, get_resource_context_from_path
 
     try:
         request = get_http_request()
@@ -911,16 +920,73 @@ def _require_tool_scopes(method: str, path: str) -> None:
             raise Exception(_MISSING_BRIDGE_DETAIL)
         return
 
+    required_scopes = get_required_scopes_for_route(_tool_scope_mappings(), method, path)
+    if not required_scopes:
+        return
+
     admin_scope_raw = getattr(state, "admin_scope", None)
     admin_scope = admin_scope_raw if isinstance(admin_scope_raw, str) else None
-    scope_check = check_route_scopes(
-        list(getattr(state, "scopes", None) or []),
-        _tool_scope_mappings(),
-        method,
-        path,
+
+    # Derive the resource context from the SYNTHETIC REST path the tool maps onto
+    # (e.g. "/agents/<id>/runs" -> agents/<id>), preserving v2.7's per-resource
+    # subtlety: the provider decides on the specific resource, not just the family.
+    resource_type, resource_id = get_resource_context_from_path(path)
+    actions = {s.rsplit(":", 1)[1] for s in required_scopes if ":" in s}
+    action = next(iter(actions)) if len(actions) == 1 else None
+
+    # Resolve the provider from the in-flight request's app.state — with none configured
+    # this is the default ScopeAuthorizationProvider, whose authorize_route delegates to
+    # has_required_scopes, so the tool gate stays byte-identical to v2.7's
+    # check_route_scopes. (The MCP tools have no GET-listing escape hatch: an
+    # unauthorised call is a hard denial, matching the prior behaviour.)
+    # A service-account PAT carries its own scopes as its ACL and has no subject/role in
+    # a managed store, so it is evaluated by the scope provider here too -- mirroring the
+    # REST per-resource gate. Routing PATs through a configured provider would deny every
+    # MCP tool call for a caller the transport already authenticated on scope math.
+    provider = _default_authorization_provider() if is_service_account else resolve_authorization_provider(request)
+    ctx = AuthorizationContext(
+        principal_id=getattr(state, "user_id", None),
+        scopes=list(getattr(state, "scopes", None) or []),
+        claims=getattr(state, "claims", None) or {},
+        resource_type=resource_type,
+        resource_id=resource_id,
+        action=action,
         admin_scope=admin_scope,
     )
-    if not scope_check.allowed:
+    # The provider decides — default ScopeAuthorizationProvider is byte-identical to
+    # v2.7's check_route_scopes; a managed-role/custom provider enforces its own model
+    # on the OAuth-authenticated caller here too.
+    from agno.os.authz.audit import arecord_decision
+
+    allowed = await provider.aauthorize_route(ctx, required_scopes)
+    # Record the decision on the SAME trail the REST gate writes to, so an access audit
+    # covers the MCP transport too (the tools are an alternate front door to the same
+    # surface). The sink is mirrored onto this sub-app's state; no sink -> no-op.
+    # Same non-secret token reference the REST gate captures (jti, else a short hash),
+    # so an MCP row correlates to the issuer's logs exactly like a REST row does.
+    # Best-effort ONLY: this is audit metadata, so it must never break enforcement --
+    # not every caller hands us a full Request (the fastmcp in-memory transport passes a
+    # minimal stand-in with no headers). Falling back to None just means the row is
+    # keyed by the token's jti, or carries no token reference at all.
+    bearer: Optional[str] = None
+    try:
+        raw = request.headers.get("Authorization") or ""
+        if raw[:7].lower() == "bearer ":
+            bearer = raw[7:]
+    except Exception:  # pragma: no cover - defensive: audit must not break the gate
+        bearer = None
+    await arecord_decision(
+        request,
+        allowed=allowed,
+        target=f"{method} {path}",
+        principal=ctx.principal_id,
+        required_scopes=required_scopes,
+        scopes=ctx.scopes,
+        claims=ctx.claims,
+        token=bearer,
+        reason=None if allowed else "mcp_tool_scope_denied",
+    )
+    if not allowed:
         # Under mcp_auth, a scope denial is most often an external-AS misconfiguration
         # (the token carries non-agno scopes), which the client-facing 403 can't point at.
         # Log the presented-vs-required scopes and the AS-config hint so the deployer can
@@ -930,11 +996,11 @@ def _require_tool_scopes(method: str, path: str) -> None:
 
             log_warning(
                 f"MCP tool scope check failed for {method} {path}: caller presented "
-                f"{list(getattr(state, 'scopes', None) or [])}, required {scope_check.required_scopes}. "
+                f"{list(getattr(state, 'scopes', None) or [])}, required {required_scopes}. "
                 "If this is a Tier-2 (external authorization server) deployment, configure your AS to emit "
                 "agno-format scopes in the token 'scope' claim."
             )
-        raise Exception(build_insufficient_permissions_detail(scope_check.required_scopes))
+        raise Exception(build_insufficient_permissions_detail(required_scopes))
 
 
 async def _enforce_run_continuation_allowed(db: Any, run_id: str) -> None:
@@ -972,6 +1038,7 @@ async def _enforce_run_continuation_allowed(db: Any, run_id: str) -> None:
         run_id,
         authorization_enabled=bool(getattr(state, "authorization_enabled", False)),
         user_scopes=list(getattr(state, "scopes", None) or []),
+        request=request,
     )
     if reason:
         raise Exception(reason)
@@ -1762,7 +1829,7 @@ def _make_exposed_run_tool(
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
     ) -> ToolResult:
-        _require_tool_scopes("POST", f"/{kind}/{component_id}/runs")
+        await _require_tool_scopes("POST", f"/{kind}/{component_id}/runs")
         resolved_user_id = _resolve_user_id(user_id)
         component = await _resolve_run_component(
             os, kind, component_id, user_id=resolved_user_id, session_id=session_id
@@ -1803,7 +1870,7 @@ def _make_exposed_workflow_tool(
     ) -> ToolResult:
         from agno.workflow.remote import RemoteWorkflow
 
-        _require_tool_scopes("POST", f"/workflows/{component_id}/runs")
+        await _require_tool_scopes("POST", f"/workflows/{component_id}/runs")
         resolved_user_id = _resolve_user_id(user_id)
         workflow = await _resolve_run_component(
             os, "workflows", component_id, user_id=resolved_user_id, session_id=session_id
@@ -2275,7 +2342,7 @@ def build_mcp_server(
         annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
     )  # type: ignore
     async def config() -> Dict[str, Any]:
-        _require_tool_scopes("GET", "/config")
+        await _require_tool_scopes("GET", "/config")
         from agno.db.base import BaseDb
 
         request = _http_request_or_none()
@@ -2374,7 +2441,7 @@ def build_mcp_server(
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
     ) -> ToolResult:
-        _require_tool_scopes("POST", f"/agents/{agent_id}/runs")
+        await _require_tool_scopes("POST", f"/agents/{agent_id}/runs")
         user_id = _resolve_user_id(user_id)
         agent = await _resolve_run_component(os, "agents", agent_id, user_id=user_id, session_id=session_id)
         # Mint a fresh session per call when omitted (matches REST), never the sticky default.
@@ -2402,7 +2469,7 @@ def build_mcp_server(
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
     ) -> ToolResult:
-        _require_tool_scopes("POST", f"/teams/{team_id}/runs")
+        await _require_tool_scopes("POST", f"/teams/{team_id}/runs")
         user_id = _resolve_user_id(user_id)
         team = await _resolve_run_component(os, "teams", team_id, user_id=user_id, session_id=session_id)
         # Mint a fresh session per call when omitted (matches REST), never the sticky default.
@@ -2433,7 +2500,7 @@ def build_mcp_server(
     ) -> ToolResult:
         from agno.workflow.remote import RemoteWorkflow
 
-        _require_tool_scopes("POST", f"/workflows/{workflow_id}/runs")
+        await _require_tool_scopes("POST", f"/workflows/{workflow_id}/runs")
         user_id = _resolve_user_id(user_id)
         workflow = await _resolve_run_component(os, "workflows", workflow_id, user_id=user_id, session_id=session_id)
         # Mint a fresh session per call when omitted (matches REST), never the sticky default.
@@ -2485,7 +2552,7 @@ def build_mcp_server(
     ) -> ToolResult:
         component_type, component_id = _classify_lifecycle_target(agent_id, team_id, workflow_id)
         _require_published_component("continue_run", component_type, component_id)
-        _require_tool_scopes("POST", f"/{component_type}/{component_id}/runs/{run_id}/continue")
+        await _require_tool_scopes("POST", f"/{component_type}/{component_id}/runs/{run_id}/continue")
         user_id = _resolve_user_id(user_id)
         # published_only=False, like the REST /continue routes: the run may live
         # on a draft-only preview component that has no published version.
@@ -2554,7 +2621,7 @@ def build_mcp_server(
     ) -> str:
         component_type, component_id = _classify_lifecycle_target(agent_id, team_id, workflow_id)
         _require_published_component("cancel_run", component_type, component_id)
-        _require_tool_scopes("POST", f"/{component_type}/{component_id}/runs/{run_id}/cancel")
+        await _require_tool_scopes("POST", f"/{component_type}/{component_id}/runs/{run_id}/cancel")
         # Factory components cancel STATICALLY (mirrors the REST factory-cancel routes):
         # cancellation is a run_id-keyed global intent, so building the factory is both
         # unnecessary and harmful -- generic resolution invokes it, which 400s a
@@ -2606,7 +2673,7 @@ def build_mcp_server(
         sort_order: Literal["asc", "desc"] = "desc",
         db_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        _require_tool_scopes("GET", "/sessions")
+        await _require_tool_scopes("GET", "/sessions")
         user_id = _scoped_read_user_id(user_id)
         db = await get_db(os.dbs, db_id)
         session_type_enum = SessionType(session_type)
@@ -2665,7 +2732,7 @@ def build_mcp_server(
         user_id: Optional[str] = None,
         db_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        _require_tool_scopes("GET", f"/sessions/{session_id}/runs")
+        await _require_tool_scopes("GET", f"/sessions/{session_id}/runs")
         user_id = _scoped_read_user_id(user_id)
         db = await get_db(os.dbs, db_id)
         session_type_enum = SessionType(session_type) if session_type else None
@@ -2767,7 +2834,26 @@ def _identity_bridge_kwargs(os: "AgentOS") -> Dict[str, Any]:
     config = getattr(os, "authorization_config", None)
     admin_scope = getattr(config, "admin_scope", None) if config is not None else None
     user_isolation = bool(getattr(config, "user_isolation", False)) if config is not None else False
-    return {"admin_scope": admin_scope or AgentOSScope.ADMIN.value, "user_isolation": user_isolation}
+    # User directory: mcp_auth exempts /mcp from the parent AuthMiddleware, so the bridge
+    # must re-apply the disabled-user kill-switch itself. The directory is a peer of authz
+    # (AgentOS(user_directory=...)), so read it from there, not authorization_config.
+    directory = getattr(os, "user_directory", None)
+    return {
+        "admin_scope": admin_scope or AgentOSScope.ADMIN.value,
+        "user_isolation": user_isolation,
+        "user_store": directory.user_store if directory is not None else None,
+        "user_auto_provision": bool(directory.auto_provision) if directory is not None else False,
+        "user_email_claim": directory.email_claim if directory is not None else "email",
+        "user_name_claim": directory.name_claim if directory is not None else "name",
+        "user_directory_fail_closed": bool(directory.fail_closed) if directory is not None else False,
+        # Role store + explicit default role so a first-time auto-provision on the MCP path
+        # grants the same default role it would on the HTTP/WebSocket paths. The store lives on
+        # the Authorization object (AuthorizationConfig no longer carries one), same as the HTTP
+        # path reads it via app.state.role_store; without this the MCP path provisions a user but
+        # never grants their default role.
+        "role_store": getattr(os, "_facade_role_store", None),
+        "default_role": directory.default_role if directory is not None else None,
+    }
 
 
 # Localhost defaults so a desktop / local MCP server is protected with zero extra config.

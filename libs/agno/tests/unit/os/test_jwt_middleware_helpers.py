@@ -850,3 +850,109 @@ async def test_dispatch_sets_private_marker_on_success():
     await mw.dispatch(request, call_next)
 
     assert getattr(request.state, _AUTH_COMPLETE_ATTR, False) is True
+
+
+class TestIssuerPinning:
+    """``AuthorizationConfig(issuer=...)`` must actually reject foreign issuers.
+
+    A valid signature says the token was minted by SOMEONE holding a trusted key, not
+    by the issuer you meant to trust: a deployment verifying several keys (multi-IdP,
+    or a JWKS with more than one signer) accepts tokens from any of them. Pinning the
+    ``iss`` claim is what makes that a rejection -- and it was previously accepted
+    silently as an unknown kwarg and never enforced.
+    """
+
+    GOOD = "https://acme.example-idp.com/"
+    EVIL = "https://evil.example/"
+
+    def _validator(self, issuer=None):
+        from agno.os.middleware.jwt import JWTValidator
+
+        return JWTValidator(verification_keys=[JWT_SECRET], algorithm="HS256", issuer=issuer)
+
+    def _token(self, **claims):
+        from datetime import UTC, datetime, timedelta
+
+        import jwt as pyjwt
+
+        payload = {"sub": "u", "exp": datetime.now(UTC) + timedelta(hours=1), **claims}
+        return pyjwt.encode(payload, JWT_SECRET, algorithm="HS256")
+
+    def test_matching_issuer_is_accepted(self):
+        payload = self._validator(issuer=self.GOOD).validate_token(self._token(iss=self.GOOD))
+        assert payload["sub"] == "u"
+
+    def test_foreign_issuer_is_rejected(self):
+        import jwt as pyjwt
+
+        with pytest.raises(pyjwt.InvalidIssuerError):
+            self._validator(issuer=self.GOOD).validate_token(self._token(iss=self.EVIL))
+
+    def test_missing_issuer_claim_is_rejected_when_pinned(self):
+        import jwt as pyjwt
+
+        with pytest.raises(pyjwt.InvalidTokenError):
+            self._validator(issuer=self.GOOD).validate_token(self._token())
+
+    def test_issuer_is_not_checked_when_unpinned(self):
+        """Default stays permissive so existing deployments are unaffected."""
+        payload = self._validator().validate_token(self._token(iss=self.EVIL))
+        assert payload["sub"] == "u"
+
+    def test_config_issuer_reaches_middleware_kwargs(self):
+        """Regression: the field must EXIST on AuthorizationConfig -- pydantic silently
+        dropped the kwarg before, so the whole feature was a no-op from config."""
+        from agno.os.config import AuthorizationConfig
+        from agno.os.middleware.jwt import build_jwt_middleware_kwargs
+
+        config = AuthorizationConfig(verification_keys=[JWT_SECRET], algorithm="HS256", issuer=self.GOOD)
+        assert config.issuer == self.GOOD
+        assert build_jwt_middleware_kwargs(config, authorization=True)["issuer"] == self.GOOD
+
+
+class TestCreateDevToken:
+    """``create_dev_token`` mints a signed JWT the real validator accepts, carrying the claims
+    ``auto_provision`` needs -- the honest local path (same pipeline as production, dev key)."""
+
+    def test_the_real_validator_accepts_it_with_its_claims(self):
+        from agno.os.auth import create_dev_token
+        from agno.os.middleware.jwt import JWTValidator
+
+        tok = create_dev_token("alice", secret=JWT_SECRET, email="a@co", name="Alice", scopes=["agents:read"])
+        payload = JWTValidator(verification_keys=[JWT_SECRET], algorithm="HS256").validate_token(tok)
+        assert payload["sub"] == "alice"
+        assert payload["email"] == "a@co" and payload["name"] == "Alice"
+        assert "agents:read" in payload["scopes"]
+
+    def test_audience_and_standard_claims_are_stamped(self):
+        import jwt as pyjwt
+
+        from agno.os.auth import create_dev_token
+
+        tok = create_dev_token("alice", secret=JWT_SECRET, audience="os-1")
+        payload = pyjwt.decode(tok, JWT_SECRET, algorithms=["HS256"], audience="os-1")
+        assert payload["aud"] == "os-1" and payload["sub"] == "alice"
+        assert "exp" in payload and "iat" in payload and "jti" in payload
+
+    def test_a_wrong_key_does_not_verify(self):
+        import jwt as pyjwt
+
+        from agno.os.auth import create_dev_token
+
+        tok = create_dev_token("alice", secret=JWT_SECRET)
+        with pytest.raises(pyjwt.InvalidSignatureError):
+            pyjwt.decode(tok, "a-completely-different-secret-key-padding-xxxx", algorithms=["HS256"])
+
+    def test_expired_token_is_rejected(self):
+        import jwt as pyjwt
+
+        from agno.os.auth import create_dev_token
+
+        tok = create_dev_token("alice", secret=JWT_SECRET, expires_in=-10)
+        with pytest.raises(pyjwt.ExpiredSignatureError):
+            pyjwt.decode(tok, JWT_SECRET, algorithms=["HS256"])
+
+    def test_exported_from_agno_os(self):
+        from agno.os import create_dev_token as exported
+
+        assert callable(exported)

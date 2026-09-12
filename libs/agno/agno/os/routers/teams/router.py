@@ -55,6 +55,7 @@ from agno.os.middleware.user_scope import (
     caller_is_admin,
     get_scoped_user_id,
     run_matches_component,
+    sync_directory_from_request,
     verify_run_in_session,
     verify_run_in_session_via_db,
 )
@@ -655,6 +656,9 @@ def get_team_router(
             if user_id and user_id != state_user_id:
                 log_warning("User ID parameter passed in both request state and kwargs, using request state")
             user_id = state_user_id
+        # No-auth roster: an unauthenticated run's user_id still registers the person in the
+        # directory (no-op when auth is on -- the middleware already provisioned/enforced).
+        sync_directory_from_request(request, user_id)
         if hasattr(request.state, "session_id") and request.state.session_id is not None:
             if session_id and session_id != request.state.session_id:
                 log_warning("Session ID parameter passed in both request state and kwargs, using request state")
@@ -1840,13 +1844,13 @@ def get_team_router(
         # Filter teams based on user's scopes (only if authorization is enabled)
         if getattr(request.state, "authorization_enabled", False):
             from agno.os.auth import (
+                afilter_resources_by_access,
+                aget_accessible_resources,
                 build_insufficient_permissions_detail,
-                filter_resources_by_access,
-                get_accessible_resources,
             )
 
             # Check if user has any team scopes at all
-            accessible_ids = get_accessible_resources(request, "teams")
+            accessible_ids = await aget_accessible_resources(request, "teams")
             if not accessible_ids:
                 required_scopes = getattr(request.state, "required_scopes", None)
                 raise HTTPException(
@@ -1854,7 +1858,7 @@ def get_team_router(
                     detail=build_insufficient_permissions_detail(required_scopes),
                 )
 
-            accessible_teams = filter_resources_by_access(request, os.teams or [], "teams")
+            accessible_teams = await afilter_resources_by_access(request, os.teams or [], "teams")
         else:
             accessible_teams = os.teams or []
 
@@ -1887,7 +1891,7 @@ def get_team_router(
                 # it, a caller whose scope excludes a team still saw its
                 # config here (the agents endpoint already filters)
                 if getattr(request.state, "authorization_enabled", False):
-                    db_teams = filter_resources_by_access(request, db_teams, "teams")
+                    db_teams = await afilter_resources_by_access(request, db_teams, "teams")
                 for db_team in db_teams:
                     team_response = await TeamResponse.from_team(team=db_team, is_component=True)
                     teams.append(team_response)
