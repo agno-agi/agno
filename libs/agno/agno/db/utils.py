@@ -50,6 +50,28 @@ DB_TABLE_NAME_KEYS: frozenset = frozenset(
 )
 
 
+def is_foreign_key_violation(exc: Exception) -> bool:
+    """Whether ``exc`` is a DB foreign-key violation specifically.
+
+    ``IntegrityError`` covers NOT NULL and CHECK failures too, and a run
+    insert that maps every one of them to "the session row is missing" would
+    send the caller to create a session and retry a write that fails the same
+    way. The SQLSTATE is authoritative where the driver exposes one (23503);
+    SQLite has none, so its fixed wording is the fallback. Only ``orig`` is
+    inspected, never ``str(exc)``, which folds bound parameters in.
+    """
+    orig = getattr(exc, "orig", None)
+    if orig is None:
+        return False
+    sqlstate = getattr(orig, "sqlstate", None) or getattr(orig, "pgcode", None)
+    if sqlstate is not None and str(sqlstate) == "23503":
+        return True
+    # Not the standard code, which does not mean "not a foreign key": MySQL
+    # reports 23000 for the whole integrity-constraint family, and SQLite
+    # exposes no SQLSTATE at all. The wording is the fallback for both.
+    return "foreign key" in str(orig).lower()
+
+
 def is_unique_violation(exc: Exception) -> bool:
     """Whether ``exc`` is a DB unique-constraint / duplicate-key violation.
 
@@ -351,7 +373,10 @@ def build_single_run_row(
     Args:
         run: The run object (RunOutput, TeamRunOutput, WorkflowRunOutput) or dict.
         session_id: The session ID this run belongs to.
-        user_id: Optional user ID to associate with the run.
+        user_id: Optional user ID to associate with the run. When it is None
+            the run's own ``user_id`` is used, so the row is stored under the
+            same owner the scoped update later matches on. See
+            ``resolve_run_scope``.
         run_index: Explicit index within the session. Callers **must** supply
             this for INSERTS (any first-time save of a ``run_id``). For UPDATES
             to an existing row it may be ``None``; every adapter's
@@ -382,7 +407,8 @@ def build_single_run_row(
         "agent_id": run_data.get("agent_id"),
         "team_id": run_data.get("team_id"),
         "workflow_id": run_data.get("workflow_id"),
-        "user_id": user_id,
+        # One derivation for every writer; see resolve_run_scope
+        "user_id": resolve_run_scope(run_data, session_id, user_id)["user_id"],
         "parent_run_id": run_data.get("parent_run_id"),
         "status": run_data.get("status"),
         "run_index": effective_run_index,
@@ -390,6 +416,87 @@ def build_single_run_row(
         "created_at": run_data.get("created_at") or current_time,
         "updated_at": current_time,
     }
+
+
+# The ownership facts a run write is scoped by, and where each one comes from.
+# ``session_id`` is always the caller's argument; the rest are read off the run
+# when the caller did not resolve them, because the framework reaches the save
+# path from several places that know different amounts (the route's user, the
+# session's, the run's own).
+_RUN_SCOPE_COMPONENTS = ("agent_id", "team_id", "workflow_id")
+
+
+def resolve_run_scope(run_data: Dict[str, Any], session_id: str, user_id: Optional[str]) -> Dict[str, Optional[str]]:
+    """The identity a write presents for scoping.
+
+    One derivation for every writer. A value of None means "this writer does
+    not know", never "this value is empty" -- that distinction is what
+    ``run_scope_clause`` and ``InMemoryDb._scope_matches`` both act on.
+    """
+    scope: Dict[str, Optional[str]] = {
+        "session_id": session_id,
+        "user_id": user_id if user_id is not None else run_data.get("user_id"),
+    }
+    for field in _RUN_SCOPE_COMPONENTS:
+        scope[field] = run_data.get(field)
+    return scope
+
+
+def run_scope_allows(stored: Dict[str, Optional[str]], incoming: Dict[str, Optional[str]]) -> bool:
+    """Whether a write presenting ``incoming`` may reach a row owned by ``stored``.
+
+    The one rule, in Python. ``run_scope_clause`` is the same rule in SQL, and
+    a caller that needs it outside a query, such as the in-memory adapter,
+    goes through here rather than writing its own. Two statements of a rule
+    can drift; three is how one backend ends up with a hole the others do not.
+    """
+    if stored["session_id"] != incoming["session_id"]:
+        return False
+    # Component identity is one fact spread over three columns, so it is
+    # compared as a whole. A row that names a component belongs to that
+    # component and to no other; a row that names none is unattributed, and
+    # the first write that knows a component adopts it.
+    stored_component = tuple(stored[field] for field in _RUN_SCOPE_COMPONENTS)
+    incoming_component = tuple(incoming[field] for field in _RUN_SCOPE_COMPONENTS)
+    if any(stored_component) and any(incoming_component) and stored_component != incoming_component:
+        return False
+    if incoming["user_id"] is None:
+        return True
+    return stored["user_id"] is None or stored["user_id"] == incoming["user_id"]
+
+
+def run_scope_clause(runs_table: Any, row: Dict[str, Any]) -> Any:
+    """WHERE terms confining a run write to the row its own run created.
+
+    Three rules, one per kind of fact:
+
+    * ``session_id`` is always known and compared exactly.
+    * Component identity is compared as a whole, across all three columns. A
+      row that names a component belongs to it and to no other, so a team's
+      write never reaches an agent's row. A row that names none is not yet
+      attributed, and the first write that knows a component adopts it. Rows
+      like that are real: a cancellation rebuilds a run from its id alone,
+      and a v3 migration brings rows across without one, and refusing them
+      locked those runs out of their own later saves.
+    * The user follows the same adopt-if-unattributed rule, per column.
+
+    A fact the writer does not know constrains nothing. The framework rebuilds
+    a run from its id alone on some paths (a cancellation caught with no run
+    object in hand), and requiring those unknowns to be NULL would refuse the
+    run's own final write.
+    """
+    from sqlalchemy import and_, or_
+
+    terms = [runs_table.c.session_id == row["session_id"]]
+    named = [runs_table.c[field] == row[field] for field in _RUN_SCOPE_COMPONENTS if row[field] is not None]
+    if named:
+        # Either the row is unattributed, or it names exactly what this write
+        # names. See run_scope_allows: the three columns are one fact.
+        unattributed = and_(*[runs_table.c[field].is_(None) for field in _RUN_SCOPE_COMPONENTS])
+        terms.append(or_(unattributed, and_(*named)))
+    if row["user_id"] is not None:
+        terms.append(or_(runs_table.c.user_id.is_(None), runs_table.c.user_id == row["user_id"]))
+    return and_(*terms)
 
 
 # Run statuses (as stored string values) excluded from context/history reads.
@@ -402,7 +509,7 @@ HISTORY_SKIP_STATUSES: List[str] = [status.value for status in _RUN_HISTORY_SKIP
 def filter_context_runs(runs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Keep only top-level, context-relevant runs from a list of run dicts.
 
-    Drops member sub-runs (``parent_run_id`` set) and terminal-skip statuses,
+    Drops member sub-runs (``parent_run_id`` set) and history-skip statuses,
     mirroring the pre-slice filtering in ``get_messages``. Used on the
     un-migrated / legacy-blob read path so slicing to "most recent N" yields the
     same window as the fully-migrated (SQL-filtered) path.
