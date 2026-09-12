@@ -8,6 +8,11 @@ class FixedSizeChunking(ChunkingStrategy):
     """Chunking strategy that splits text into fixed-size chunks with optional overlap"""
 
     def __init__(self, chunk_size: int = 5000, overlap: int = 0):
+        if chunk_size <= 0:
+            raise ValueError(f"Invalid parameters: chunk size ({chunk_size}) must be greater than zero.")
+        if overlap < 0:
+            raise ValueError(f"Invalid parameters: overlap ({overlap}) must be non-negative.")
+
         # overlap must be less than chunk size
         if overlap >= chunk_size:
             raise ValueError(f"Invalid parameters: overlap ({overlap}) must be less than chunk size ({chunk_size}).")
