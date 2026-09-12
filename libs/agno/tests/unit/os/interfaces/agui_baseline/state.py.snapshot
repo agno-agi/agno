@@ -141,15 +141,6 @@ class StreamState:
     run_id: str = ""
     run_state: Optional[Dict[str, Any]] = None
 
-    # Interrupts. ``emit_interrupt_outcome`` off is the pre-interrupt stream: a
-    # pause ends in the plain terminal it has always ended in.
-    # ``suspended_lane_interrupts`` is written by the pause terminal, once the
-    # lanes it prompts for are settled, and read by the drain that closes them:
-    # a lane in it closes as suspended, carrying the interrupts it owns, rather
-    # than as work that finished.
-    emit_interrupt_outcome: bool = False
-    suspended_lane_interrupts: Dict[str, List[str]] = field(default_factory=dict)
-
     # Lineage
     subagent_visibility: str = SUBAGENT_VISIBILITY_INLINE
     lanes: Dict[Optional[str], Lane] = field(default_factory=dict)
