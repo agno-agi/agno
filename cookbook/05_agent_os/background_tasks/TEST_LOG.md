@@ -102,3 +102,13 @@ ticket. Captured concise startup logs and clean worker shutdown.
 scenario, or live streaming exercise was performed in this smoke check.
 
 ---
+
+### queue_per_session.py
+
+**Status:** PASS (boot and ordering verified over HTTP against real Postgres, 2026-09-08; live model call not exercised: no OPENAI_API_KEY in the test environment, the agent's model was swapped for a slow offline fake in a scratch harness)
+
+**Description:** AgentOS with QueueConfig(durable=True, queue_per_session=True). Booted with lifespan: /config reported queue {durable: true, queue_per_session: true} and the worker started with the gate on. Submitted two background runs to one session back to back: both answered 202 PENDING; the first flipped to RUNNING within the poll tick while the second stayed PENDING for the whole of the first run; a run submitted to a different session while the first was still running was claimed and RUNNING alongside it; both same-session runs then reached COMPLETED with the second never RUNNING before the first completed.
+
+**Result:** PASS. Head-of-line ordering per session, concurrency across sessions, and capability discovery on /config all behave as the docstring describes.
+
+---

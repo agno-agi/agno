@@ -154,6 +154,13 @@ class QueueConfig:
     # is not keyword-only, so inserting mid-list would silently reinterpret
     # positional constructions of the fields behind it.
     stop_timeout_seconds: Optional[int] = None
+    # At most one live job per session, in submission order: a job is claimed
+    # only while it is the oldest non-terminal job of its session and no
+    # sibling is running. A PAUSED run (awaiting HITL approval) holds the
+    # line until it is continued or cancelled. Enforced at durable-queue
+    # claim time only; the non-durable in-process path is not session-gated.
+    # False restores fully concurrent claiming. (Appended last, see above.)
+    queue_per_session: bool = True
 
     def __post_init__(self) -> None:
         if self.db is not None and not self.durable:

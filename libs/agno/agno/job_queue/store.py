@@ -26,6 +26,8 @@ class InMemoryQueueStore:
     def __init__(self) -> None:
         self._jobs: Dict[str, Dict[str, Any]] = {}
         self._lock = asyncio.Lock()
+        # Store-assigned enqueue sequence: orders same-second siblings FIFO
+        self._seq = 0
 
     async def enqueue_job(self, job: Dict[str, Any], max_depth: int = 0) -> Dict[str, Any]:
         async with self._lock:
@@ -53,23 +55,57 @@ class InMemoryQueueStore:
             # fenced out.
             if job["id"] in self._jobs:
                 raise RuntimeError(f"enqueue_job: job {job['id']} already exists; ids are never reused")
+            self._seq += 1
+            job = {**job, "seq": self._seq}
             self._jobs[job["id"]] = dict(job)
             return {"accepted": True, "reason": None, "job": dict(job)}
 
     async def claim_job(
-        self, worker_id: str, lock_grace_seconds: int = 60, deployment_id: Optional[str] = None
+        self,
+        worker_id: str,
+        lock_grace_seconds: int = 60,
+        deployment_id: Optional[str] = None,
+        queue_per_session: bool = False,
     ) -> Optional[Dict[str, Any]]:
         # Affinity filters BOTH branches - fresh claims and stale reclaims -
         # because a reclaim executes too. deployment_id=None degenerates to
         # claiming only unstamped jobs (mixed fleets safe by construction).
+        # queue_per_session restricts claims to each session's HEAD: the
+        # non-terminal (queued/running/paused) job with the smallest seq, the
+        # store-assigned enqueue sequence. created_at is the submitter's
+        # clock and is not consulted. The additional running-sibling check
+        # covers legacy pairs that predate the gate.
         async with self._lock:
             now = int(time.time())
             stale = now - lock_grace_seconds
+            session_heads: Dict[str, str] = {}
+            session_running: Dict[str, str] = {}
+            if queue_per_session:
+                for j in self._jobs.values():
+                    session_id = j.get("session_id")
+                    if session_id is None or j["status"] not in ("queued", "running", "paused"):
+                        continue
+                    if j["status"] == "running":
+                        session_running[session_id] = j["id"]
+                    head = session_heads.get(session_id)
+                    if head is None or (j.get("seq") or 0, j["created_at"]) < (
+                        self._jobs[head].get("seq") or 0,
+                        self._jobs[head]["created_at"],
+                    ):
+                        session_heads[session_id] = j["id"]
             candidates = [
                 j
                 for j in self._jobs.values()
                 if j["available_at"] <= now
                 and (j.get("deployment_id") is None or j.get("deployment_id") == deployment_id)
+                and (
+                    not queue_per_session
+                    or j.get("session_id") is None
+                    or (
+                        session_heads.get(j["session_id"]) == j["id"]
+                        and session_running.get(j["session_id"], j["id"]) == j["id"]
+                    )
+                )
                 and (
                     j["status"] == "queued"
                     or (
@@ -82,7 +118,7 @@ class InMemoryQueueStore:
             ]
             if not candidates:
                 return None
-            job = min(candidates, key=lambda j: j["created_at"])
+            job = min(candidates, key=lambda j: (j.get("seq") or 0, j["created_at"]))
             job.update(
                 status="running",
                 locked_by=worker_id,
