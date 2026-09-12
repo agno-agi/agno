@@ -198,3 +198,54 @@ async def test_ashould_compress_count_based_above_limit():
 
     assert sync_result == async_result
     assert sync_result is True
+
+
+def test_compress_empty_string_is_success_and_not_retried():
+    """An empty compression result is success, not a failure that retries forever."""
+    from agno.compression.manager import CompressionManager
+
+    msg = Message(role="tool", content="Result 1", tool_name="test")
+    messages = [msg]
+    cm = CompressionManager(compress_tool_results=True)
+    call_count = {"n": 0}
+
+    def fake_compress(tool_result, run_metrics=None):
+        call_count["n"] += 1
+        return ""
+
+    cm._compress_tool_result = fake_compress  # type: ignore[method-assign]
+    cm.compress(messages)
+
+    assert msg.compressed_content == ""
+    assert msg.get_content(use_compressed_content=True) == "Result 1"
+    assert call_count["n"] == 1
+
+    cm.compress(messages)
+    assert call_count["n"] == 1
+    assert msg.get_content(use_compressed_content=True) == "Result 1"
+
+
+@pytest.mark.asyncio
+async def test_acompress_empty_string_is_success_and_not_retried():
+    """Async path: empty compression result is success and is not retried."""
+    from agno.compression.manager import CompressionManager
+
+    msg = Message(role="tool", content="Result 1", tool_name="test")
+    messages = [msg]
+    cm = CompressionManager(compress_tool_results=True)
+    call_count = {"n": 0}
+
+    async def fake_acompress(tool_result, run_metrics=None):
+        call_count["n"] += 1
+        return ""
+
+    cm._acompress_tool_result = fake_acompress  # type: ignore[method-assign]
+    await cm.acompress(messages)
+
+    assert msg.compressed_content == ""
+    assert msg.get_content(use_compressed_content=True) == "Result 1"
+    assert call_count["n"] == 1
+
+    await cm.acompress(messages)
+    assert call_count["n"] == 1
+    assert msg.get_content(use_compressed_content=True) == "Result 1"
