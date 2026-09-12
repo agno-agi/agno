@@ -1,12 +1,19 @@
-"""The OS helpers must not degrade ComponentRehydrationError to None/404."""
+"""The component loaders must not degrade reconstruction failures to None/404."""
+
+from types import SimpleNamespace
 
 import pytest
 
 from agno.agent.agent import Agent
+from agno.agent.agent import get_agent_by_id as get_agent_by_id_from_db
 from agno.db.sqlite import SqliteDb
 from agno.exceptions import ComponentRehydrationError
 from agno.models.openai import OpenAIChat
 from agno.os.utils import get_agent_by_id
+from agno.team.team import Team
+from agno.team.team import get_team_by_id as get_team_by_id_from_db
+from agno.workflow.workflow import Workflow
+from agno.workflow.workflow import get_workflow_by_id as get_workflow_by_id_from_db
 
 
 def _save_agent_with_tools(db):
@@ -61,3 +68,29 @@ def test_resolve_agent_strict_false_returns_a_degraded_component(tmp_path):
 
     assert agent is not None
     assert agent.id == "broken-agent"
+
+
+@pytest.mark.parametrize(
+    ("component_name", "component_type", "loader"),
+    [
+        ("agent", Agent, get_agent_by_id_from_db),
+        ("team", Team, get_team_by_id_from_db),
+        ("workflow", Workflow, get_workflow_by_id_from_db),
+    ],
+)
+def test_db_loaders_wrap_unexpected_reconstruction_errors(monkeypatch, component_name, component_type, loader):
+    original_error = ImportError("the stored model provider is no longer installed")
+
+    def fail_to_reconstruct(*args, **kwargs):
+        raise original_error
+
+    monkeypatch.setattr(component_type, "from_dict", fail_to_reconstruct)
+    db = SimpleNamespace(get_config=lambda **kwargs: {"config": {}})
+
+    with pytest.raises(
+        ComponentRehydrationError,
+        match=rf"Failed to reconstruct {component_name} 'broken-{component_name}'.*ImportError",
+    ) as exc_info:
+        loader(db=db, id=f"broken-{component_name}", strict=False, published_only=False)
+
+    assert exc_info.value.__cause__ is original_error
