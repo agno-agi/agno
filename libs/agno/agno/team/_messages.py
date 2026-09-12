@@ -204,9 +204,12 @@ def _get_mode_instructions(team: "Team", has_sub_team: bool = False) -> str:
         )
     elif team.mode == TeamMode.route:
         content += (
-            "You work in route mode: you hand the request to exactly one member with "
+            "You work in route mode. When the request needs a member's expertise or tools, "
+            "hand the request to exactly one member with "
             "`delegate_task_to_member`, and its reply is returned to the user as written and ends the "
-            "run.\n\n"
+            "run. For requests that do not need member expertise or tools, such as greetings or "
+            "questions about the team's capabilities, answer directly without delegating.\n\n"
+            "When routing to a member:\n"
             f"- Pick the member whose {selector} are the closest match; if none is a clear fit, pick the "
             "closest and carry the shortfall into the task.\n"
             "- Pass the request whole. Do not reinterpret, narrow, or summarize what the user asked.\n"
