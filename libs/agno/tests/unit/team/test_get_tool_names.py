@@ -8,8 +8,9 @@ Regression test for: https://github.com/agno-agi/agno/issues/7039
 """
 
 from types import SimpleNamespace
-import pytest
 from unittest.mock import MagicMock
+
+import pytest
 
 from agno.agent import Agent
 from agno.registry import Registry

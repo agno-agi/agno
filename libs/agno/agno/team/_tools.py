@@ -512,8 +512,7 @@ def _determine_tools_for_model(
 def _handle_tool_name_collision(team: "Team", name: str) -> None:
     if team.error_on_tool_name_collision:
         raise ValueError(
-            f"Duplicate tool name '{name}' already registered on team; set "
-            "error_on_tool_name_collision=False to keep skip-by-default behavior."
+            f"Duplicate tool name '{name}' already registered on team; rename or remove the conflicting tool."
         )
     log_warning(f"Duplicate tool name '{name}' already registered on team; skipping the duplicate.")
 
