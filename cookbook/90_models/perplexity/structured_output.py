@@ -5,10 +5,10 @@ Perplexity Structured Output
 Cookbook example for `perplexity/structured_output.py`.
 """
 
-from typing import List
+import os
 
 from agno.agent import Agent, RunOutput  # noqa
-from agno.models.perplexity import Perplexity
+from agno.models.openai import OpenAIResponses
 from pydantic import BaseModel, Field
 
 # ---------------------------------------------------------------------------
@@ -29,7 +29,7 @@ class MovieScript(BaseModel):
         description="Genre of the movie. If not available, select action, thriller or romantic comedy.",
     )
     name: str = Field(..., description="Give a name to this movie")
-    characters: List[str] = Field(..., description="Name of characters for this movie.")
+    characters: list[str] = Field(..., description="Name of characters for this movie.")
     storyline: str = Field(
         ..., description="3 sentence storyline for the movie. Make it exciting!"
     )
@@ -37,7 +37,11 @@ class MovieScript(BaseModel):
 
 # Agent that uses JSON mode
 json_mode_agent = Agent(
-    model=Perplexity(id="sonar-pro"),
+    model=OpenAIResponses(
+        id="openai/gpt-5.6-luna",
+        base_url="https://api.perplexity.ai/v1",
+        api_key=os.environ["PERPLEXITY_API_KEY"],
+    ),
     description="You write movie scripts.",
     output_schema=MovieScript,
     markdown=True,
