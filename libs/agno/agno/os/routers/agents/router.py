@@ -269,6 +269,7 @@ async def agent_continue_response_streamer(
     background_tasks: Optional[BackgroundTasks] = None,
     auth_token: Optional[str] = None,
     queue_worker: Optional[Any] = None,
+    take_over_in_place: Optional[bool] = None,
     **kwargs: Any,
 ) -> AsyncGenerator:
     """Default SSE generator for continue_run. Agent runs inline — client disconnect cancels agent."""
@@ -306,17 +307,37 @@ async def agent_continue_response_streamer(
         # status would stay PAUSED forever. Skipped for remote agents (the
         # remote OS owns that run's stream) and for fork/regenerate (they
         # mint a NEW run_id; publishing under the original would corrupt it).
-        _sync_stream = not isinstance(agent, RemoteAgent) and not fork and not regenerate
-        if _sync_stream:
+        # An auto-fork (continuing a COMPLETED run) is invisible to this gate. The
+        # route decides from the stored row (take_over_in_place, as the background
+        # streamer does); with no row read, the opening chunk's run_id decides.
+        _sync_stream = (
+            not isinstance(agent, RemoteAgent) and not fork and not regenerate and take_over_in_place is not False
+        )
+        _stream_opened = False
+        if _sync_stream and take_over_in_place:
             await amark_continue_stream_running(run_id, component=agent, session_id=session_id, user_id=user_id)
+            _stream_opened = True
+        _first_chunk_seen = False
         try:
             async for run_response_chunk in continue_response:
+                if _sync_stream and not _first_chunk_seen:
+                    _first_chunk_seen = True
+                    _executing_run_id = getattr(run_response_chunk, "run_id", None)
+                    if _executing_run_id and _executing_run_id != run_id:
+                        # The leg executes under another id, so its events must not
+                        # land under the source key.
+                        _sync_stream = False
+                    elif not _stream_opened:
+                        await amark_continue_stream_running(
+                            run_id, component=agent, session_id=session_id, user_id=user_id
+                        )
+                        _stream_opened = True
                 if _sync_stream and not isinstance(run_response_chunk, RunOutput):
                     with contextlib.suppress(Exception):
                         await get_event_stream().add_event(run_id, run_response_chunk)
                 yield format_sse_event(run_response_chunk)  # type: ignore
         finally:
-            if _sync_stream:
+            if _stream_opened:
                 # Stream close + paused-ticket settle as one cancellation-
                 # proof unit: a client disconnect cancels this generator,
                 # and an interrupted finalizer abandoned the stream view as
@@ -1434,8 +1455,17 @@ def get_agent_router(
         # THAT version, not whatever is published/current now. No stamp
         # (legacy or unpinned runs) keeps today's resolution. Factories build
         # per-request and remote agents resolve remotely, so both are exempt.
+        take_over_in_place: Optional[bool] = None
         if not factory and not isinstance(agent, RemoteAgent):
             stamped_run = await agent.aget_run_output(run_id, session_id=session_id, user_id=user_id)  # type: ignore[union-attr]
+            # The background streamer's predicate, from the same row: a COMPLETED
+            # run auto-forks and a CANCELLED run is refused, so neither owns its id.
+            # A missing row is left undecided so the streamer never registers a key
+            # the dispatch is about to refuse.
+            if stamped_run is not None:
+                take_over_in_place = (
+                    not fork and not regenerate and stamped_run.status not in (RunStatus.completed, RunStatus.cancelled)
+                )
             stamped_version = stamped_component_version(stamped_run)
             if stamped_version is not None:
                 # Re-run the run-start preview gate before trusting the stamp:
@@ -1641,6 +1671,7 @@ def get_agent_router(
                     background_tasks=background_tasks,
                     auth_token=auth_token,
                     queue_worker=getattr(request.app.state, "queue_worker", None),
+                    take_over_in_place=take_over_in_place,
                     **kwargs,
                 ),
                 media_type="text/event-stream",
