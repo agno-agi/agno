@@ -467,7 +467,7 @@ class WebsiteReader(Reader):
                         meta_data={"url": str(crawled_url)},
                         content=crawled_content,
                     )
-                    chunks = self.chunk_document(doc)
+                    chunks = await self.achunk_document(doc)
                     return chunks
                 else:
                     return [
