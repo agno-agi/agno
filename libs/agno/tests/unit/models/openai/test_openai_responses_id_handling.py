@@ -1,5 +1,7 @@
 from typing import Any, Dict, List, Optional
 
+from openai.types.responses import ResponseReasoningItem
+
 from agno.models.message import Message
 from agno.models.openai.responses import OpenAIResponses
 from agno.models.response import ModelResponse
@@ -188,3 +190,60 @@ def test_reasoning_previous_response_skips_prior_function_call_items(monkeypatch
 
     # Expect no re-sent function_call when previous_response_id is present for reasoning models
     assert all(x.get("type") != "function_call" for x in fm)
+
+
+def test_parse_provider_response_keeps_reasoning_output_with_default_storage():
+    model = OpenAIResponses(id="gpt-5")
+    reasoning_item = ResponseReasoningItem.construct(id="rs_123", type="reasoning", summary=[])
+    fake_resp = _FakeResponse(_id="resp_1", output=[reasoning_item])
+
+    model_response = model._parse_provider_response(fake_resp)  # type: ignore[arg-type]
+
+    assert model_response.provider_data is not None
+    assert model_response.provider_data["reasoning_output"]["id"] == "rs_123"
+
+
+def test_parse_completed_stream_keeps_reasoning_output_with_default_storage():
+    model = OpenAIResponses(id="gpt-5")
+    assistant_message = Message(role="assistant")
+    reasoning_item = ResponseReasoningItem.construct(id="rs_123", type="reasoning", summary=[])
+    completed = _FakeStreamEvent(
+        type="response.completed",
+        response=_FakeResponse(_id="resp_1", output=[reasoning_item]),
+    )
+
+    model_response, _ = model._parse_provider_response_delta(completed, assistant_message, {})  # type: ignore[arg-type]
+
+    assert model_response.provider_data is not None
+    assert model_response.provider_data["reasoning_output"]["id"] == "rs_123"
+
+
+def test_reasoning_item_precedes_replayed_function_call_without_previous_response_id():
+    model = OpenAIResponses(id="gpt-5")
+    reasoning_item = ResponseReasoningItem.construct(id="rs_123", type="reasoning", summary=[])
+    assistant_with_tool_call = Message(
+        role="assistant",
+        tool_calls=[
+            {
+                "id": "fc_abc123",
+                "call_id": "call_def456",
+                "type": "function",
+                "function": {"name": "execute_shell_command", "arguments": "{}"},
+            }
+        ],
+        provider_data={"reasoning_output": reasoning_item.model_dump(exclude_none=True)},
+    )
+
+    formatted = model._format_messages(
+        messages=[
+            Message(role="user", content="u"),
+            assistant_with_tool_call,
+            Message(role="tool", tool_call_id="fc_abc123", content="ok"),
+        ]
+    )
+
+    reasoning_index = next(index for index, item in enumerate(formatted) if getattr(item, "type", None) == "reasoning")
+    function_call_index = next(
+        index for index, item in enumerate(formatted) if isinstance(item, dict) and item.get("type") == "function_call"
+    )
+    assert reasoning_index + 1 == function_call_index
