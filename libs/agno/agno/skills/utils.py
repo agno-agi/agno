@@ -10,7 +10,34 @@ from pathlib import Path
 from typing import List, Optional
 
 from agno.exceptions import PathSecurityError
+from agno.skills.skill import Skill
 from agno.utils.path_safety import safe_join_relative_path
+
+
+def create_skill_files(skill: Skill, root: Path) -> None:
+    """Write a content-carrying skill's files under ``root``, laid out like a skill folder.
+
+    Scripts land in ``root/scripts`` and references in ``root/references``, so a script finds a
+    sibling at the same relative path it would use in a path-backed skill. A subdirectory is
+    created only when it has content, matching what a skill folder on disk looks like.
+
+    Args:
+        skill: The content-carrying skill whose contents to write.
+        root: An existing directory to write into.
+
+    Raises:
+        PathSecurityError: If a content key resolves outside its subdirectory.
+        OSError: If a file cannot be written.
+    """
+    for subdir, contents in (("scripts", skill.script_contents), ("references", skill.reference_contents)):
+        if not contents:
+            continue
+        base = root / subdir
+        base.mkdir(exist_ok=True)
+        for filename, text in contents.items():
+            target = safe_join_relative_path(base, filename)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(text, encoding="utf-8")
 
 
 def is_safe_path(base_dir: Path, requested_path: str) -> bool:
