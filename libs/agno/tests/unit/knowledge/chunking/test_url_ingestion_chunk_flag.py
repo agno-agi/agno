@@ -16,6 +16,10 @@ class FakeUrlReader(Reader):
     Advertises ContentType.URL so the ingestion path skips network download and
     calls the reader with the URL directly."""
 
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.sources = []
+
     @classmethod
     def get_supported_chunking_strategies(cls):
         from agno.knowledge.chunking.strategy import ChunkingStrategyType
@@ -35,14 +39,16 @@ class FakeUrlReader(Reader):
         return [document]
 
     def read(self, obj, name=None, password=None) -> List[Document]:
+        self.sources.append(obj)
         return self._build_documents(name)
 
     async def async_read(self, obj, name=None, password=None) -> List[Document]:
+        self.sources.append(obj)
         return self._build_documents(name)
 
 
-def _make_content(reader: Reader) -> Content:
-    return Content(url="https://example.com/page", reader=reader)
+def _make_content(reader: Optional[Reader] = None, url: str = "https://example.com/page") -> Content:
+    return Content(url=url, reader=reader)
 
 
 def test_sync_url_ingestion_respects_chunk_false(knowledge, vector_db):
@@ -61,6 +67,41 @@ async def test_async_url_ingestion_respects_chunk_false(knowledge, vector_db):
 
     await knowledge._aload_from_url(_make_content(reader), upsert=False, skip_if_exists=False)
 
+    assert len(vector_db.inserted_documents) == 1
+
+
+def test_sync_html_url_uses_default_website_reader_without_download(monkeypatch, knowledge, vector_db):
+    """HTML URLs are web pages, so the default URL reader should receive the URL string."""
+
+    def fail_fetch(*args, **kwargs):
+        raise AssertionError("HTML URL ingestion should not pre-download bytes")
+
+    monkeypatch.setattr("agno.utils.http.fetch_with_retry", fail_fetch)
+    reader = FakeUrlReader(chunk=False)
+    knowledge.readers["website"] = reader
+
+    knowledge._load_from_url(_make_content(url="https://example.com/page.html"), upsert=False, skip_if_exists=False)
+
+    assert reader.sources == ["https://example.com/page.html"]
+    assert len(vector_db.inserted_documents) == 1
+
+
+@pytest.mark.asyncio
+async def test_async_html_url_uses_default_website_reader_without_download(monkeypatch, knowledge, vector_db):
+    """Async HTML URL ingestion also keeps the original URL for the website reader."""
+
+    async def fail_fetch(*args, **kwargs):
+        raise AssertionError("HTML URL ingestion should not pre-download bytes")
+
+    monkeypatch.setattr("agno.knowledge.knowledge.async_fetch_with_retry", fail_fetch)
+    reader = FakeUrlReader(chunk=False)
+    knowledge.readers["website"] = reader
+
+    await knowledge._aload_from_url(
+        _make_content(url="https://example.com/page.html"), upsert=False, skip_if_exists=False
+    )
+
+    assert reader.sources == ["https://example.com/page.html"]
     assert len(vector_db.inserted_documents) == 1
 
 
