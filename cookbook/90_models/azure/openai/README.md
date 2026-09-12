@@ -57,3 +57,17 @@ python cookbook/90_models/azure/openai/db.py
 ```shell
 python cookbook/90_models/azure/openai/knowledge.py
 ```
+
+### 9. Run Agent using the Responses API
+
+The Responses API example uses `AzureOpenAIResponses` and reads these environment variables:
+
+```shell
+export AZURE_OPENAI_API_KEY=***
+export AZURE_OPENAI_ENDPOINT="https://<your-resource-name>.openai.azure.com"  # resource root, no path
+export OPENAI_API_VERSION="2025-04-01-preview"  # Optional, this is the default
+```
+
+```shell
+python cookbook/90_models/azure/openai/responses.py
+```

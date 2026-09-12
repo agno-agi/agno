@@ -107,7 +107,10 @@ class FieldLabeledCSVReader(Reader):
                 log_debug(f"Reading retrieved file: {getattr(file, 'name', 'BytesIO')}")
                 csv_name = name or getattr(file, "name", "csv_file").split(".")[0]
                 file.seek(0)
-                file_content = io.StringIO(file.read().decode(self.encoding or "utf-8"))
+                content = file.read()
+                if isinstance(content, bytes):
+                    content = content.decode(self.encoding or "utf-8")
+                file_content = io.StringIO(content)
 
             documents = []
 
@@ -187,7 +190,10 @@ class FieldLabeledCSVReader(Reader):
                 log_debug(f"Reading retrieved file async: {getattr(file, 'name', 'BytesIO')}")
                 csv_name = name or getattr(file, "name", "csv_file").split(".")[0]
                 file.seek(0)
-                file_content_io = io.StringIO(file.read().decode(self.encoding or "utf-8"))
+                content = file.read()
+                if isinstance(content, bytes):
+                    content = content.decode(self.encoding or "utf-8")
+                file_content_io = io.StringIO(content)
 
             file_content_io.seek(0)
             csv_reader = csv.reader(file_content_io, delimiter=delimiter, quotechar=quotechar)
