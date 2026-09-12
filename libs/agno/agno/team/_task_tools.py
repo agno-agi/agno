@@ -516,6 +516,7 @@ def _get_task_management_tools(
         use_agent_logger()
         member_session_state_copy = deepcopy(run_context.session_state)
         member_run_response: Optional[Union[TeamRunOutput, RunOutput]] = None
+        _orig_send_media_tt = member_agent.send_media_to_model
 
         try:
             member_task_description = task.description or task.title
@@ -617,6 +618,10 @@ def _get_task_management_tools(
             use_team_logger()
             yield f"Task [{task.id}] failed due to member execution error: {e}"
             return
+        finally:
+            # Restore the member's original send_media_to_model so the team's
+            # setting does not permanently mutate the member agent.
+            member_agent.send_media_to_model = _orig_send_media_tt
 
         # Check HITL pause
         if member_run_response is not None and member_run_response.is_paused:
@@ -699,6 +704,7 @@ def _get_task_management_tools(
         use_agent_logger()
         member_session_state_copy = deepcopy(run_context.session_state)
         member_run_response: Optional[Union[TeamRunOutput, RunOutput]] = None
+        _orig_send_media_tt = member_agent.send_media_to_model
 
         try:
             member_task_description = task.description or task.title
@@ -897,6 +903,7 @@ def _get_task_management_tools(
         def _run_single_task(task_obj, member_agent):
             """Run a single task in a thread. Returns (task_id, member_run_response, session_state_copy, error)."""
             member_task_description = task_obj.description or task_obj.title
+            _orig_send_media_par = member_agent.send_media_to_model
             member_agent_task, history = _setup_member_for_task(member_agent, member_task_description)
 
             use_agent_logger()
@@ -937,6 +944,8 @@ def _get_task_management_tools(
                 raise
             except Exception as e:
                 return (task_obj.id, None, member_session_state_copy, member_task_description, e)
+            finally:
+                member_agent.send_media_to_model = _orig_send_media_par
 
         results_text: List[str] = []
         modified_states: List[Dict[str, Any]] = []
@@ -1142,6 +1151,8 @@ def _get_task_management_tools(
                 raise
             except Exception as e:
                 return (task_obj.id, None, member_session_state_copy, member_task_description, e)
+            finally:
+                member_agent.send_media_to_model = _orig_send_media_par
 
         # Run all tasks concurrently
         gather_results = await asyncio.gather(
