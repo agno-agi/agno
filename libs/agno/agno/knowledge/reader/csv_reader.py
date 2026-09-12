@@ -69,7 +69,7 @@ class CSVReader(Reader):
         """Read a CSV file and return a list of documents.
 
         Args:
-            file: Path to CSV file, file path string, or file-like object.
+            file: Path to CSV file, file path string, or binary/text file-like object.
             delimiter: CSV field delimiter. Default is comma.
             quotechar: CSV quote character. Default is double quote.
             name: Optional name override for the document.
@@ -94,7 +94,10 @@ class CSVReader(Reader):
                 log_debug(f"Reading retrieved file: {getattr(file, 'name', 'BytesIO')}")
                 csv_name = name or getattr(file, "name", "csv_file").split(".")[0]
                 file.seek(0)
-                file_content = io.StringIO(file.read().decode(self.encoding or "utf-8"))
+                content = file.read()
+                if isinstance(content, bytes):
+                    content = content.decode(self.encoding or "utf-8")
+                file_content = io.StringIO(content)
 
             csv_lines: List[str] = []
             with file_content as csvfile:
@@ -138,7 +141,7 @@ class CSVReader(Reader):
         """Read a CSV file asynchronously, processing batches of rows concurrently.
 
         Args:
-            file: Path to CSV file, file path string, or file-like object.
+            file: Path to CSV file, file path string, or binary/text file-like object.
             delimiter: CSV field delimiter. Default is comma.
             quotechar: CSV quote character. Default is double quote.
             page_size: Number of rows per page for large files.
@@ -165,7 +168,10 @@ class CSVReader(Reader):
             else:
                 log_debug(f"Reading retrieved file async: {getattr(file, 'name', 'BytesIO')}")
                 file.seek(0)
-                file_content_io = io.StringIO(file.read().decode(self.encoding or "utf-8"))
+                content = file.read()
+                if isinstance(content, bytes):
+                    content = content.decode(self.encoding or "utf-8")
+                file_content_io = io.StringIO(content)
                 csv_name = name or getattr(file, "name", "csv_file").split(".")[0]
 
             file_content_io.seek(0)

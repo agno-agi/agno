@@ -47,6 +47,44 @@ def csv_reader():
     return CSVReader()
 
 
+@pytest.fixture(params=["stringio", "text_file"])
+def csv_text_stream(request, tmp_path):
+    if request.param == "stringio":
+        stream = io.StringIO(LATIN1_CSV)
+    else:
+        path = tmp_path / "unicode.csv"
+        path.write_text(LATIN1_CSV, encoding="utf-8")
+        stream = path.open(encoding="utf-8", newline="")
+    with stream:
+        stream.seek(0, io.SEEK_END)
+        yield stream
+
+
+@pytest.mark.parametrize("chunk", [False, True])
+def test_read_text_stream(csv_text_stream, chunk):
+    reader = CSVReader(chunk=chunk)
+
+    documents = reader.read(csv_text_stream, name="upload")
+
+    expected_rows = ["name, city", "José, São Paulo", "François, Montréal"]
+    assert [doc.content for doc in documents] == (expected_rows if chunk else ["\n".join(expected_rows)])
+    assert all(doc.name == "upload" for doc in documents)
+    assert not csv_text_stream.closed
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("chunk", [False, True])
+async def test_async_read_text_stream(csv_text_stream, chunk):
+    reader = CSVReader(chunk=chunk)
+
+    documents = await reader.async_read(csv_text_stream, name="upload")
+
+    expected_rows = ["name, city", "José, São Paulo", "François, Montréal"]
+    assert [doc.content for doc in documents] == (expected_rows if chunk else ["\n".join(expected_rows)])
+    assert all(doc.name == "upload" for doc in documents)
+    assert not csv_text_stream.closed
+
+
 def test_read_path(csv_reader, csv_file):
     documents = csv_reader.read(csv_file)
 
