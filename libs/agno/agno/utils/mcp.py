@@ -8,7 +8,7 @@ from agno.utils.log import log_debug, log_error, log_exception
 
 try:
     from mcp.shared.exceptions import MCPError
-    from mcp.types import AudioContent, CallToolResult, EmbeddedResource, ImageContent, TextContent
+    from mcp.types import AudioContent, CallToolResult, EmbeddedResource, ImageContent, ResourceLink, TextContent
     from mcp.types import Tool as MCPTool
 except ModuleNotFoundError:
     raise ImportError("`mcp` not installed. Please install using `pip install 'mcp>=2.1.0,<3.0.0'`")
@@ -265,6 +265,10 @@ def get_entrypoint_for_tool(
                     )
                     images.append(img_artifact)
                     response_str += "Image has been generated and added to the response.\n"
+                elif isinstance(content_item, ResourceLink):
+                    # Describe the link without fetching it; keep its _meta in metadata only.
+                    link_json = content_item.model_dump_json(by_alias=True, exclude_none=True, exclude={"meta"})
+                    response_str += f"[Resource link: {link_json}]\n"
                 elif isinstance(content_item, AudioContent):
                     # Handle standard MCP AudioContent
                     audio_data = getattr(content_item, "data", None)
@@ -351,7 +355,8 @@ def _build_mcp_metadata(result: "CallToolResult") -> Optional[Dict[str, Any]]:
     `meta` and `structured_content` rather than as separate ToolResult fields, so future MCP
     additions become new keys here instead of new attributes. `getattr` guards both: older MCP
     servers (mcp < 1.10.0) expose no `structuredContent`, so the key is simply omitted. Returns
-    None when there is nothing to preserve.
+    None when there is nothing to preserve. Resource links are retained as JSON-compatible
+    dictionaries under `resource_links`, including their annotations and `_meta`.
     """
     metadata: Dict[str, Any] = {}
     if getattr(result, "meta", None) is not None:
@@ -359,6 +364,13 @@ def _build_mcp_metadata(result: "CallToolResult") -> Optional[Dict[str, Any]]:
     structured_content = getattr(result, "structured_content", None)
     if structured_content is not None:
         metadata["structured_content"] = structured_content
+    resource_links = [
+        item.model_dump(mode="json", by_alias=True, exclude_none=True)
+        for item in result.content
+        if isinstance(item, ResourceLink)
+    ]
+    if resource_links:
+        metadata["resource_links"] = resource_links
     return metadata or None
 
 
