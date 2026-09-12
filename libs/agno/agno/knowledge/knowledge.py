@@ -9,7 +9,7 @@ from enum import Enum
 from io import BytesIO
 from os.path import basename
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union, cast, overload
+from typing import Any, Callable, Dict, List, Literal, Optional, Set, Tuple, Union, cast, overload
 
 from httpx import AsyncClient
 
@@ -5099,6 +5099,11 @@ Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUC
         async_mode: bool = False,
         enable_agentic_filters: bool = False,
         agent: Optional[Any] = None,
+        page_results: bool = False,
+        tool_name: str = "search_pages",
+        tool_description: Optional[str] = None,
+        transport: Literal["chat", "mcp"] = "chat",
+        max_output_bytes: int = 32000,
         **kwargs,
     ) -> List[Any]:
         """Get tools to expose to the Agent or Team.
@@ -5112,6 +5117,11 @@ Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUC
             async_mode: Whether to return async tools.
             enable_agentic_filters: Whether to enable filter parameter on tool.
             agent: The Agent or Team instance (for document conversion with references_format).
+            page_results: Opt into typed page search results rather than document conversion.
+            tool_name: Page search tool name when page_results is enabled.
+            tool_description: Optional product description for the page search tool.
+            transport: chat returns JSON text; mcp exposes SearchResult schema and execution errors.
+            max_output_bytes: Final page-search JSON bound (1024 through 32000 UTF-8 bytes).
             **kwargs: Additional context.
 
         Returns:
@@ -5119,6 +5129,22 @@ Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUC
         """
         if self.page_store is not None and (knowledge_filters or enable_agentic_filters):
             raise ValueError("Page knowledge does not support filters")
+        if page_results:
+            if self.page_store is None:
+                raise ValueError("page_results requires a page_store")
+            from agno.knowledge.page.tools import page_search_tool
+
+            return [
+                page_search_tool(
+                    self,
+                    async_mode=async_mode,
+                    transport=transport,
+                    tool_name=tool_name,
+                    description=tool_description,
+                    max_output_bytes=max_output_bytes,
+                    run_response=run_response,
+                )
+            ]
         if enable_agentic_filters:
             tool = self._create_search_tool_with_filters(
                 run_response=run_response,

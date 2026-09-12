@@ -147,3 +147,11 @@ neither shared environment was modified. Live database/provider modes were not
 run. The focused public-configuration and MCP suites passed all 204 tests.
 
 ---
+
+
+## 2026-09-09 typed page-tool outcomes
+
+- PASS: 267 composed command/filesystem/lazy-read/tool/MCP cases, including 66 archived command outputs unchanged, literal-grep completeness, typed grammar/missing-path/storage errors, no false error from page prose, Unicode JSON bounds, MCP schemas/isError, search parity and run reference tracking.
+- PASS: `page_tool_results.py --check` with demo Python, without storage/provider calls.
+- PASS: full format and validation scripts.
+- Existing chat command tools retain their character-bound text contract. Direct typed/MCP command results additionally bound the complete result JSON; MCP envelope overhead remains under the transport's own limits. No product feedback or score-interpretation policy moved upstream.
