@@ -4,6 +4,7 @@ from typing import Any, List, Optional
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from openai.types.responses import Response, ResponseCompletedEvent
 
 from agno.exceptions import ModelProviderError
 from agno.models.message import Message
@@ -302,7 +303,15 @@ def test_invoke_stream_strips_background_flag():
     model = OpenAIResponses(id="gpt-4.1-mini", background=True)
 
     fake_client = _make_fake_client()
-    fake_client.responses.create.return_value = iter([])
+    fake_client.responses.create.return_value = iter(
+        [
+            ResponseCompletedEvent(
+                type="response.completed",
+                sequence_number=0,
+                response=Response.model_construct(id="resp_test", status="completed", output=[], usage=None),
+            )
+        ]
+    )
     model.client = fake_client
 
     assistant = _make_assistant_message()

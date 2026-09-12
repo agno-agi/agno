@@ -998,6 +998,7 @@ class OpenAIResponses(Model):
         """
         Send a streaming request to the OpenAI Responses API.
         """
+        completed = False
         try:
             request_params = self.get_request_params(
                 messages=messages,
@@ -1019,6 +1020,8 @@ class OpenAIResponses(Model):
                 stream=True,
                 **request_params,
             ):
+                if chunk.type == "response.completed":  # type: ignore[union-attr]
+                    completed = True
                 model_response, tool_use = self._parse_provider_response_delta(
                     stream_event=chunk,  # type: ignore
                     assistant_message=assistant_message,
@@ -1078,6 +1081,13 @@ class OpenAIResponses(Model):
             log_error(f"Error from OpenAI API: {exc}")
             raise ModelProviderError(message=str(exc), model_name=self.name, model_id=self.id) from exc
 
+        if not completed:
+            raise ModelProviderError(
+                message="OpenAI Responses stream ended without response.completed",
+                model_name=self.name,
+                model_id=self.id,
+            )
+
     async def ainvoke_stream(
         self,
         messages: List[Message],
@@ -1091,6 +1101,7 @@ class OpenAIResponses(Model):
         """
         Sends an asynchronous streaming request to the OpenAI Responses API.
         """
+        completed = False
         try:
             request_params = self.get_request_params(
                 messages=messages,
@@ -1113,6 +1124,8 @@ class OpenAIResponses(Model):
                 **request_params,
             )
             async for chunk in async_stream:  # type: ignore
+                if chunk.type == "response.completed":
+                    completed = True
                 model_response, tool_use = self._parse_provider_response_delta(chunk, assistant_message, tool_use)  # type: ignore
                 yield model_response
 
@@ -1167,6 +1180,13 @@ class OpenAIResponses(Model):
         except Exception as exc:
             log_error(f"Error from OpenAI API: {exc}")
             raise ModelProviderError(message=str(exc), model_name=self.name, model_id=self.id) from exc
+
+        if not completed:
+            raise ModelProviderError(
+                message="OpenAI Responses stream ended without response.completed",
+                model_name=self.name,
+                model_id=self.id,
+            )
 
     def format_function_call_results(
         self,
@@ -1295,12 +1315,8 @@ class OpenAIResponses(Model):
         """
         model_response = ModelResponse()
 
-        # 1. Add response ID
+        # 1. Record time to first token
         if stream_event.type == "response.created":
-            if stream_event.response.id:
-                if model_response.provider_data is None:
-                    model_response.provider_data = {}
-                model_response.provider_data["response_id"] = stream_event.response.id
             if assistant_message.metrics is not None and not assistant_message.metrics.time_to_first_token:
                 assistant_message.metrics.set_time_to_first_token()
 
@@ -1369,9 +1385,13 @@ class OpenAIResponses(Model):
             model_response.extra.setdefault("tool_call_ids", []).append(tool_use["call_id"])
             tool_use = {}
 
-        # 5. Add metrics
+        # 5. Add completed response metadata and metrics
         elif stream_event.type == "response.completed":
             model_response = ModelResponse()
+
+            # Only completed responses can safely anchor subsequent requests.
+            if stream_event.response.id:
+                model_response.provider_data = {"response_id": stream_event.response.id}
 
             # Handle reasoning output items for ZDR mode (store=False)
             if self.store is False:
