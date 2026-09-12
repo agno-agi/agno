@@ -20,9 +20,13 @@ if TYPE_CHECKING:
 try:
     from mcp import ClientSession, StdioServerParameters
     from mcp.client.stdio import get_default_environment
+    from mcp.types import ListToolsResult, PaginatedRequestParams
 except ModuleNotFoundError:
     raise ImportError("`mcp` not installed. Please install using `pip install 'mcp>=2.1.0,<3.0.0'`")
 
+
+# Match the default bound on automatic discovery through fastmcp's Client.
+_MCP_TOOL_PAGINATION_MAX_PAGES = 250
 
 _FASTMCP_INSTALL_HINT = (
     "`fastmcp` not installed. MCPTools builds its connections with it. "
@@ -889,7 +893,17 @@ class MCPTools(Toolkit):
             listed = await self.session.list_tools()
             # fastmcp's Client yields a plain list; a user-supplied ClientSession
             # yields a ListToolsResult carrying .tools.
-            available_tools = listed if isinstance(listed, list) else listed.tools
+            available_tools = list(listed if isinstance(listed, list) else listed.tools)
+            if isinstance(listed, ListToolsResult):
+                # Collect all pages before validating filters or changing the registry.
+                page_count = 1
+                while listed.next_cursor is not None:
+                    if page_count >= _MCP_TOOL_PAGINATION_MAX_PAGES:
+                        raise RuntimeError(f"MCP tools/list reached the page limit ({_MCP_TOOL_PAGINATION_MAX_PAGES})")
+                    # Cursors are opaque: empty or repeated values may still advance the listing.
+                    listed = await self.session.list_tools(params=PaginatedRequestParams(cursor=listed.next_cursor))
+                    available_tools.extend(listed.tools)
+                    page_count += 1
 
             self._check_tools_filters(
                 available_tools=[tool.name for tool in available_tools],
