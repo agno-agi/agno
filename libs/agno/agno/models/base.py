@@ -463,6 +463,8 @@ class Model(ABC):
             "response_format": kwargs.get("response_format"),
             "stream": stream,
         }
+        if has_tools:
+            cache_data["tools"] = self._format_tools(kwargs["tools"])
 
         def _cache_default(obj: Any) -> Any:
             if isinstance(obj, type):
