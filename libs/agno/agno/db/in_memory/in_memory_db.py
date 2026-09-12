@@ -572,6 +572,11 @@ class InMemoryDb(BaseDb):
                 log_debug(f"upsert_run: session {session_id} not found; skipping")
                 return
 
+            existing_uid = session.get("user_id")
+            if user_id is not None and existing_uid is not None and existing_uid != user_id:
+                log_warning(f"upsert_run: user {user_id} does not own session {session_id}; skipping")
+                return
+
             # The stored row holds "runs": None until the first run lands
             runs = session.get("runs") or []
             session["runs"] = runs
