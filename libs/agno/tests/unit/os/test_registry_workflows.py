@@ -200,7 +200,7 @@ class TestListingDedup:
         os_app = self._os_with_code_and_stored(db)
         client = TestClient(os_app.get_app())
 
-        ids = [w["id"] for w in client.get("/workflows").json()]
+        ids = [w["id"] for w in client.get("/workflows").json()["data"]]
         assert ids.count("wf-shared") == 1
         assert ids.count("wf-stored") == 1
 
@@ -678,7 +678,7 @@ class TestListingsExcludeWhatTheyRender:
         agent_os = AgentOS(agents=[Agent(id="a", name="A", model=_model())], db=db, registry=registry)
         client = TestClient(agent_os.get_app())
 
-        listed = client.get("/workflows").json()
+        listed = client.get("/workflows").json()["data"]
 
         assert [w.get("id") for w in listed] == ["shadow"]
 
@@ -695,7 +695,7 @@ class TestListingsExcludeWhatTheyRender:
         agent_os = AgentOS(workflows=[workflow], db=db)
         client = TestClient(agent_os.get_app())
 
-        listed = client.get("/workflows").json()
+        listed = client.get("/workflows").json()["data"]
 
         assert [w.get("id") for w in listed] == ["served"]
 

@@ -66,7 +66,9 @@ def harness(tmp_path, monkeypatch):
 
 def ids_of(response):
     assert response.status_code == 200, response.text[:300]
-    return {item.get("id") or item.get("workflow_id") for item in response.json()}
+    body = response.json()
+    resources = body["data"] if isinstance(body, dict) else body
+    return {item.get("id") or item.get("workflow_id") for item in resources}
 
 
 class TestDbLoadedComponentsAreScoped:

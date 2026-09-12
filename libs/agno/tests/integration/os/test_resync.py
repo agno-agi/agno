@@ -137,7 +137,7 @@ class TestResyncPreservesEndpoints:
             # Verify agents endpoint works before resync
             response = client.get("/agents")
             assert response.status_code == 200
-            agents_before = response.json()
+            agents_before = response.json()["data"]
             assert len(agents_before) == 1
 
             # Perform resync
@@ -146,7 +146,7 @@ class TestResyncPreservesEndpoints:
             # Verify agents endpoint still works after resync
             response = client.get("/agents")
             assert response.status_code == 200
-            agents_after = response.json()
+            agents_after = response.json()["data"]
             assert len(agents_after) == 1
 
     def test_resync_preserves_teams_endpoint(self, test_agent: Agent, test_team: Team):
@@ -158,7 +158,7 @@ class TestResyncPreservesEndpoints:
             # Verify teams endpoint works before resync
             response = client.get("/teams")
             assert response.status_code == 200
-            teams_before = response.json()
+            teams_before = response.json()["data"]
             assert len(teams_before) == 1
 
             # Perform resync
@@ -167,7 +167,7 @@ class TestResyncPreservesEndpoints:
             # Verify teams endpoint still works after resync
             response = client.get("/teams")
             assert response.status_code == 200
-            teams_after = response.json()
+            teams_after = response.json()["data"]
             assert len(teams_after) == 1
 
     def test_resync_preserves_workflows_endpoint(self, test_agent: Agent, test_workflow: Workflow):
@@ -179,7 +179,7 @@ class TestResyncPreservesEndpoints:
             # Verify workflows endpoint works before resync
             response = client.get("/workflows")
             assert response.status_code == 200
-            workflows_before = response.json()
+            workflows_before = response.json()["data"]
             assert len(workflows_before) == 1
 
             # Perform resync
@@ -188,7 +188,7 @@ class TestResyncPreservesEndpoints:
             # Verify workflows endpoint still works after resync
             response = client.get("/workflows")
             assert response.status_code == 200
-            workflows_after = response.json()
+            workflows_after = response.json()["data"]
             assert len(workflows_after) == 1
 
     def test_resync_preserves_all_core_endpoints(self, test_agent: Agent, test_team: Team, test_workflow: Workflow):
@@ -252,7 +252,7 @@ class TestResyncWithLifespanAdditions:
             # Verify both agents are now available
             response = client.get("/agents")
             assert response.status_code == 200
-            agents = response.json()
+            agents = response.json()["data"]
             assert len(agents) == 2
 
             agent_ids = [agent["id"] for agent in agents]
@@ -286,7 +286,7 @@ class TestResyncWithLifespanAdditions:
             # Verify both teams are now available
             response = client.get("/teams")
             assert response.status_code == 200
-            teams = response.json()
+            teams = response.json()["data"]
             assert len(teams) == 2
 
             team_ids = [team["id"] for team in teams]
@@ -322,7 +322,7 @@ class TestResyncWithLifespanAdditions:
             # Verify both workflows are now available
             response = client.get("/workflows")
             assert response.status_code == 200
-            workflows = response.json()
+            workflows = response.json()["data"]
             assert len(workflows) == 2
 
             workflow_ids = [workflow["id"] for workflow in workflows]
@@ -371,19 +371,19 @@ class TestResyncWithLifespanAdditions:
             # Verify all agents are available
             response = client.get("/agents")
             assert response.status_code == 200
-            agents = response.json()
+            agents = response.json()["data"]
             assert len(agents) == 2
 
             # Verify all teams are available
             response = client.get("/teams")
             assert response.status_code == 200
-            teams = response.json()
+            teams = response.json()["data"]
             assert len(teams) == 2
 
             # Verify all workflows are available
             response = client.get("/workflows")
             assert response.status_code == 200
-            workflows = response.json()
+            workflows = response.json()["data"]
             assert len(workflows) == 2
 
     def test_info_endpoint_works_after_lifespan_resync(self, test_agent: Agent, second_agent: Agent):
