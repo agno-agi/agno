@@ -2104,8 +2104,10 @@ def _register_server_card(
     card_url: Optional[str] = None,
     allowed_hosts: Optional[List[str]] = None,
 ) -> None:
+    import json
+
     from starlette.requests import Request
-    from starlette.responses import JSONResponse, Response
+    from starlette.responses import Response
 
     # The body varies with the request host unless a URL was configured, so a shared cache must
     # key on the headers that shape it -- otherwise one caller's card is served to everyone.
@@ -2113,8 +2115,15 @@ def _register_server_card(
 
     @mcp.custom_route(MCP_SERVER_CARD_PATH, methods=["GET"], include_in_schema=False)
     async def server_card(request: Request) -> Response:
-        return JSONResponse(
-            await _server_card(mcp, os, request, version, card_url, allowed_hosts),
+        # Discovery should be readable directly in a browser without a JSON formatter.
+        return Response(
+            json.dumps(
+                await _server_card(mcp, os, request, version, card_url, allowed_hosts),
+                ensure_ascii=False,
+                allow_nan=False,
+                indent=2,
+            )
+            + "\n",
             media_type=SERVER_CARD_MEDIA_TYPE,
             headers={
                 "Cache-Control": "public, max-age=300",
