@@ -40,14 +40,15 @@ fs = FileSystem(SqliteDb(db_file=DB_FILE))
 agent = Agent(
     model=OpenAIResponses(id="gpt-5.5"),
     tools=[fs.tools()],
-    instructions=(
+    instructions=[
         "You run a data migration with these steps:\n" + "\n".join(STEPS) + "\n"
         "Each session you have time for exactly TWO steps. Read state/checkpoint.md "
         "first (it may not exist on the first run) to see what is already done. "
         "Perform the next two pending steps (performing = describing the work as "
         "done), then overwrite state/checkpoint.md with the full list of completed "
-        "steps using write_file. Reply with which steps you completed this session."
-    ),
+        "steps using write_file. Reply with which steps you completed this session.",
+        fs.instructions(),
+    ],
 )
 
 # ---------------------------------------------------------------------------

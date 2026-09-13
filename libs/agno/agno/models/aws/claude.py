@@ -2,12 +2,11 @@ from dataclasses import dataclass
 from os import getenv
 from typing import Any, Dict, List, Optional, Type, Union
 
-import httpx
 from pydantic import BaseModel
 
 from agno.models.anthropic import Claude as AnthropicClaude
 from agno.utils.log import log_debug, log_warning
-from agno.utils.models.claude import format_tools_for_model
+from agno.utils.models.claude import format_tools_for_model, resolve_http_client, route_sampling_params_to_extra_body
 
 try:
     from anthropic import AnthropicBedrock, AsyncAnthropicBedrock
@@ -116,11 +115,9 @@ class Claude(AnthropicClaude):
 
         client_params = self._get_client_params()
 
-        if self.http_client:
-            if isinstance(self.http_client, httpx.Client):
-                client_params["http_client"] = self.http_client
-            else:
-                log_warning("http_client is not an instance of httpx.Client. Ignoring and using SDK default.")
+        http_client = resolve_http_client(self.http_client)
+        if http_client is not None:
+            client_params["http_client"] = http_client
         # When no custom http_client is provided, let the SDK use its own default client.
         # Each model instance gets its own connection, preventing HTTP/2 stream saturation
         # when multiple models (main agent, MemoryManager, etc.) run concurrently.
@@ -153,11 +150,9 @@ class Claude(AnthropicClaude):
 
         client_params = self._get_client_params()
 
-        if self.http_client:
-            if isinstance(self.http_client, httpx.AsyncClient):
-                client_params["http_client"] = self.http_client
-            else:
-                log_warning("http_client is not an instance of httpx.AsyncClient. Ignoring and using SDK default.")
+        http_client = resolve_http_client(self.http_client, is_async=True)
+        if http_client is not None:
+            client_params["http_client"] = http_client
         # When no custom http_client is provided, let the SDK use its own default client.
         # Each model instance gets its own connection, preventing HTTP/2 stream saturation
         # when multiple models (main agent, MemoryManager, etc.) run concurrently.
@@ -218,6 +213,8 @@ class Claude(AnthropicClaude):
 
         if self.request_params:
             _request_params.update(self.request_params)
+
+        route_sampling_params_to_extra_body(_request_params)
 
         if _request_params:
             log_debug(f"Calling {self.provider} with request parameters: {_request_params}", log_level=2)

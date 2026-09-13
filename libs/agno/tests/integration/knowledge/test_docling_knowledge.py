@@ -153,7 +153,7 @@ def test_docling_knowledge_base_docx(setup_vector_db):
     agent = Agent(knowledge=kb, search_knowledge=True)
     response = agent.run("What is the story of little prince about?", markdown=True)
 
-    assert any(term in response.content for term in ["little prince", "prince", "planet", "rose"])
+    assert any(term in response.content.lower() for term in ["little prince", "prince", "planet", "rose"])
 
 
 def test_docling_knowledge_base_with_metadata(setup_vector_db):

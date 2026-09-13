@@ -59,7 +59,7 @@ async def run_gibsonai_agent(message: str):
 
     agent = Agent(
         name="GibsonAIAgent",
-        model=OpenAIChat(id="gpt-4o"),
+        model=OpenAIChat(id="gpt-5.6-luna"),
         tools=[mcp_tools],
         description="Agent for managing database projects and schemas",
         instructions=dedent("""\

@@ -1,17 +1,18 @@
+import asyncio
 import json
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, cast
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from fastapi import (
     APIRouter,
     Depends,
     HTTPException,
     Request,
+    Response,
     WebSocket,
 )
 
 from agno import __version__ as agno_version
 from agno.agent.factory import AgentFactory
-from agno.agent.protocol import AgentProtocol
 from agno.exceptions import RemoteServerUnavailableError
 from agno.os.auth import (
     get_authentication_dependency,
@@ -20,7 +21,7 @@ from agno.os.auth import (
     verify_websocket_service_account,
 )
 from agno.os.managers import websocket_manager
-from agno.os.middleware.jwt import JWTValidator, is_reserved_principal, resolve_expected_audience
+from agno.os.middleware.jwt import _VERIFIED_API_JWT, JWTValidator, is_reserved_principal, resolve_expected_audience
 from agno.os.middleware.user_scope import (
     INSUFFICIENT_PERMISSIONS_WS_RECONNECT,
     WORKFLOW_ID_REQUIRED_RECONNECT,
@@ -45,6 +46,7 @@ from agno.os.schema import (
     UnauthenticatedResponse,
     ValidationErrorResponse,
     WorkflowSummaryResponse,
+    _extract_model,
 )
 from agno.os.scopes import (
     AgentOSScope,
@@ -71,7 +73,7 @@ def get_base_router(
     Create the base FastAPI router with comprehensive OpenAPI documentation.
 
     This router provides endpoints for:
-    - Core system operations (health, config, models)
+    - Core system operations (config)
     - Agent management and execution
     - Team collaboration and coordination
     - Workflow automation and orchestration
@@ -112,7 +114,10 @@ def get_base_router(
                         "example": {
                             "id": "demo",
                             "description": "Example AgentOS configuration",
-                            "available_models": [],
+                            "available_models": [
+                                {"id": "gpt-4", "provider": "openai"},
+                                {"id": "claude-3-sonnet", "provider": "anthropic"},
+                            ],
                             "databases": ["9c884dc4-9066-448c-9074-ef49ec7eb73c"],
                             "session": {
                                 "dbs": [
@@ -186,7 +191,7 @@ def get_base_router(
         return ConfigResponse(
             os_id=os.id or "Unnamed OS",
             description=os.description,
-            available_models=os.config.available_models if os.config else [],
+            available_models=_collect_unique_models(os),
             os_database=os.db.id if os.db else None,
             databases=list({db.id for db_id, dbs in os.dbs.items() for db in dbs}),
             chat=os.config.chat if os.config else None,
@@ -207,62 +212,25 @@ def get_base_router(
             ],
         )
 
-    @router.get(
-        "/models",
-        response_model=List[Model],
-        response_model_exclude_none=True,
-        tags=["Core"],
-        operation_id="get_models",
-        summary="Get Available Models",
-        description=(
-            "Retrieve a list of all unique models currently used by agents and teams in this OS instance. "
-            "This includes the model ID and provider information for each model."
-        ),
-        responses={
-            200: {
-                "description": "List of models retrieved successfully",
-                "content": {
-                    "application/json": {
-                        "example": [
-                            {"id": "gpt-4", "provider": "openai"},
-                            {"id": "claude-3-sonnet", "provider": "anthropic"},
-                        ]
-                    }
-                },
-            }
-        },
-    )
-    async def get_models() -> List[Model]:
-        """Return the list of all models used by agents and teams in the contextual OS"""
-        unique_models = {}
-
-        # Collect models from local agents
-        if os.agents:
-            for agent in os.agents:
-                if isinstance(agent, AgentFactory):
-                    continue
-                if isinstance(agent, AgentProtocol):
-                    continue
-                model = cast(Model, agent.model)
-                if model and model.id is not None and model.provider is not None:
-                    key = (model.id, model.provider)
-                    if key not in unique_models:
-                        unique_models[key] = Model(id=model.id, provider=model.provider)
-
-        # Collect models from local teams
-        if os.teams:
-            for team in os.teams:
-                if isinstance(team, TeamFactory):
-                    continue
-                model = cast(Model, team.model)
-                if model and model.id is not None and model.provider is not None:
-                    key = (model.id, model.provider)
-                    if key not in unique_models:
-                        unique_models[key] = Model(id=model.id, provider=model.provider)
-
-        return list(unique_models.values())
-
     return router
+
+
+def _collect_unique_models(os: "AgentOS") -> List[Model]:
+    """Return unique (id, provider) models in use across agents and teams."""
+    unique_models: dict = {}
+    for agent in os.agents or []:
+        if isinstance(agent, AgentFactory):
+            continue
+        model = _extract_model(agent)
+        if model and model.id is not None and model.provider is not None:
+            unique_models.setdefault((model.id, model.provider), model)
+    for team in os.teams or []:
+        if isinstance(team, TeamFactory):
+            continue
+        model = _extract_model(team)
+        if model and model.id is not None and model.provider is not None:
+            unique_models.setdefault((model.id, model.provider), model)
+    return list(unique_models.values())
 
 
 def get_info_router(os: "AgentOS") -> APIRouter:
@@ -278,8 +246,17 @@ def get_info_router(os: "AgentOS") -> APIRouter:
         description="Return lightweight, unauthenticated metadata about this AgentOS instance.",
         response_model=InfoResponse,
     )
-    async def get_info(request: Request) -> InfoResponse:
-        mcp_enabled = bool(os.mcp_server)
+    async def get_info(request: Request, response: Response) -> InfoResponse:
+        policy = getattr(request.app.state, "public_route_policy", None)
+        public_selection = None
+        if (
+            policy is not None
+            and policy.authenticated_api
+            and getattr(request.state, "_agno_verified_api_jwt", None) is not _VERIFIED_API_JWT
+        ):
+            public_selection = policy.selected
+            response.headers["Vary"] = "Authorization"
+        mcp_enabled = bool(os.mcp)
         mcp_oauth = None
         if mcp_enabled and getattr(os, "mcp_auth", None) is not None:
             from agno.os.mcp_auth import describe_mcp_auth
@@ -291,10 +268,11 @@ def get_info_router(os: "AgentOS") -> APIRouter:
         return InfoResponse(
             os_id=os.id or "Unnamed OS",
             name=os.name,
+            os_version=os.version or "1.0.0",
             agno_version=agno_version,
-            agent_count=len(os.agents or []),
-            team_count=len(os.teams or []),
-            workflow_count=len(os.workflows or []),
+            agent_count=len(public_selection["agents"] if public_selection is not None else os.agents or []),
+            team_count=len(public_selection["teams"] if public_selection is not None else os.teams or []),
+            workflow_count=len(public_selection["workflows"] if public_selection is not None else os.workflows or []),
             mcp=McpInfo(enabled=mcp_enabled, path="/mcp" if mcp_enabled else None, oauth=mcp_oauth),
             auth_mode=get_effective_auth_mode(
                 settings=os.settings,
@@ -304,6 +282,10 @@ def get_info_router(os: "AgentOS") -> APIRouter:
         )
 
     return router
+
+
+PUBLIC_WS_AUTH_TIMEOUT = 10.0
+PUBLIC_WS_MAX_AUTH_ATTEMPTS = 5
 
 
 def get_websocket_router(
@@ -354,6 +336,10 @@ def get_websocket_router(
 
         await websocket_manager.connect(websocket, requires_auth=requires_auth)
 
+        public_authenticated = websocket.scope.get("_agno_public_ws_authenticated")
+        auth_deadline = asyncio.get_running_loop().time() + PUBLIC_WS_AUTH_TIMEOUT
+        auth_attempts = 0
+
         # Store user context from the authenticated identity (JWT or service account)
         websocket_user_context: Dict[str, Any] = {}
 
@@ -366,12 +352,32 @@ def get_websocket_router(
 
         try:
             while True:
-                data = await websocket.receive_text()
+                if public_authenticated is not None and requires_auth:
+                    if websocket_manager.is_authenticated(websocket):
+                        public_authenticated()
+                        public_authenticated = None
+                        data = await websocket.receive_text()
+                    else:
+                        if auth_attempts >= PUBLIC_WS_MAX_AUTH_ATTEMPTS:
+                            await websocket.close(code=1008)
+                            return
+                        # A fixed deadline prevents ping/auth messages from extending
+                        # the lifetime of an unauthenticated public connection.
+                        remaining = auth_deadline - asyncio.get_running_loop().time()
+                        try:
+                            data = await asyncio.wait_for(websocket.receive_text(), timeout=remaining)
+                        except asyncio.TimeoutError:
+                            await websocket.close(code=1008)
+                            return
+                else:
+                    data = await websocket.receive_text()
                 message = json.loads(data)
                 action = message.get("action")
 
                 # Handle authentication first
                 if action == "authenticate":
+                    if public_authenticated is not None:
+                        auth_attempts += 1
                     token = message.get("token")
                     if not token:
                         await websocket.send_text(json.dumps({"event": "auth_error", "error": "Token is required"}))
@@ -528,26 +534,39 @@ def get_websocket_router(
                     # client cannot attribute a run to another user by spoofing
                     # the field.
                     auth_user_id = websocket_user_context.get("user_id")
-                    if auth_user_id:
-                        is_admin = ws_admin_scope in websocket_user_context.get("scopes", [])
-                        if is_admin:
+                    is_admin = ws_admin_scope in websocket_user_context.get("scopes", [])
+                    if is_admin:
+                        if auth_user_id:
                             message.setdefault("user_id", auth_user_id)
-                        else:
-                            message["user_id"] = auth_user_id
-                    await handle_workflow_via_websocket(websocket, message, os, ws_user_context=websocket_user_context)
+                    elif auth_user_id or ws_user_isolation_enabled:
+                        # Under isolation the client's own value is never an identity, so overwrite it
+                        # even when the token carries no subject: get_scoped_user_id_for_ws then
+                        # scopes on nothing rather than on a caller-chosen value.
+                        message["user_id"] = auth_user_id
+
+                    ws_auth = WebSocketAuthContext(
+                        jwt_enabled=scope_enforcement_active(),
+                        is_admin=is_admin,
+                        user_isolation_enabled=ws_user_isolation_enabled,
+                    )
+                    await handle_workflow_via_websocket(
+                        websocket, message, os, ws_user_context=websocket_user_context, ws_auth=ws_auth
+                    )
 
                 elif action == "reconnect":
                     # Force user_id from the authenticated identity for non-admins
                     # so reconnecting cannot read another user's run events by
                     # swapping user_id.
                     auth_user_id = websocket_user_context.get("user_id")
-                    is_admin = False
-                    if auth_user_id:
-                        is_admin = ws_admin_scope in websocket_user_context.get("scopes", [])
-                        if is_admin:
+                    is_admin = ws_admin_scope in websocket_user_context.get("scopes", [])
+                    if is_admin:
+                        if auth_user_id:
                             message.setdefault("user_id", auth_user_id)
-                        else:
-                            message["user_id"] = auth_user_id
+                    elif auth_user_id or ws_user_isolation_enabled:
+                        # Under isolation the client's own value is never an identity, so overwrite it
+                        # even when the token carries no subject: get_scoped_user_id_for_ws then
+                        # scopes on nothing rather than on a caller-chosen value.
+                        message["user_id"] = auth_user_id
 
                     # Enforce workflow-level RBAC at reconnect just like
                     # start-workflow does. RBAC fires whenever JWT auth is on
@@ -620,20 +639,24 @@ def get_websocket_router(
                     # callers so the client cannot continue another user's paused
                     # run by spoofing the field.
                     auth_user_id = websocket_user_context.get("user_id")
-                    is_admin = False
-                    if auth_user_id:
-                        is_admin = ws_admin_scope in websocket_user_context.get("scopes", [])
-                        if is_admin:
+                    is_admin = ws_admin_scope in websocket_user_context.get("scopes", [])
+                    if is_admin:
+                        if auth_user_id:
                             message.setdefault("user_id", auth_user_id)
-                        else:
-                            message["user_id"] = auth_user_id
+                    elif auth_user_id or ws_user_isolation_enabled:
+                        # Under isolation the client's own value is never an identity, so overwrite it
+                        # even when the token carries no subject: get_scoped_user_id_for_ws then
+                        # scopes on nothing rather than on a caller-chosen value.
+                        message["user_id"] = auth_user_id
 
                     ws_auth = WebSocketAuthContext(
                         jwt_enabled=scope_enforcement_active(),
                         is_admin=is_admin,
                         user_isolation_enabled=ws_user_isolation_enabled,
                     )
-                    await handle_workflow_continue_via_websocket(websocket, message, os, ws_auth=ws_auth)
+                    await handle_workflow_continue_via_websocket(
+                        websocket, message, os, ws_user_context=websocket_user_context, ws_auth=ws_auth
+                    )
 
                 else:
                     await websocket.send_text(json.dumps({"event": "error", "error": f"Unknown action: {action}"}))
@@ -642,7 +665,11 @@ def get_websocket_router(
             if "1012" not in str(e) and "1001" not in str(e):
                 logger.exception("WebSocket error")
         finally:
-            # Clean up the websocket connection
+            # Clean up the websocket connection and any live tail pump
+            from agno.os.routers.workflows.router import cancel_subscription_pump
+
+            await cancel_subscription_pump(websocket)
             await websocket_manager.disconnect_websocket(websocket)
 
+    setattr(workflow_websocket_endpoint, "_agno_authenticated_workflow_socket", True)
     return ws_router

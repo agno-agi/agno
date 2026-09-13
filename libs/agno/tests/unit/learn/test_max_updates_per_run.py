@@ -10,7 +10,6 @@ from agno.learn.config import (
     UserMemoryConfig,
     UserProfileConfig,
 )
-from agno.learn.stores.entity_memory import EntityMemoryStore
 from agno.learn.stores.learned_knowledge import LearnedKnowledgeStore
 from agno.learn.stores.session_context import SessionContextStore
 from agno.learn.stores.user_memory import UserMemoryStore
@@ -162,14 +161,6 @@ def _build_user_memory_store(model: Any, **config_kwargs: Any) -> tuple[Any, dic
     return store, {"user_id": "user-1"}
 
 
-def _build_entity_memory_store(model: Any, **config_kwargs: Any) -> tuple[Any, dict[str, str]]:
-    config_kwargs.setdefault("max_updates_per_run", DEFAULT_MAX_UPDATES)
-    store = EntityMemoryStore(
-        config=EntityMemoryConfig(db=_RecordingLearningDb(), model=model, **config_kwargs)  # type: ignore[arg-type]
-    )
-    return store, {"user_id": "user-1"}
-
-
 def _build_learned_knowledge_store(model: Any, **config_kwargs: Any) -> tuple[Any, dict[str, str]]:
     config_kwargs.setdefault("max_updates_per_run", DEFAULT_MAX_UPDATES)
     store = LearnedKnowledgeStore(
@@ -178,11 +169,11 @@ def _build_learned_knowledge_store(model: Any, **config_kwargs: Any) -> tuple[An
     return store, {"user_id": "user-1"}
 
 
+# Entity memory is AGENTIC-only (no extraction pass), so it does not appear here.
 STORE_BUILDERS = [
     pytest.param(_build_session_context_store, id="session_context"),
     pytest.param(_build_user_profile_store, id="user_profile"),
     pytest.param(_build_user_memory_store, id="user_memory"),
-    pytest.param(_build_entity_memory_store, id="entity_memory"),
     pytest.param(_build_learned_knowledge_store, id="learned_knowledge"),
 ]
 

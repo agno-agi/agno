@@ -15,7 +15,6 @@ max_updates_per_run caps tool executions:
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.learn import (
-    EntityMemoryConfig,
     LearningMachine,
     LearningMode,
     UserMemoryConfig,
@@ -32,7 +31,6 @@ db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 # Global max_updates_per_run=5 applies to all stores unless overridden.
 # user_profile: inherits 5 from LearningMachine
 # user_memory: explicit override to 3
-# entity_memory: explicit override to 15 (dense entity info needs more)
 agent = Agent(
     model=OpenAIResponses(id="gpt-5.5"),
     db=db,
@@ -40,9 +38,6 @@ agent = Agent(
         max_updates_per_run=5,
         user_profile=UserProfileConfig(mode=LearningMode.ALWAYS),
         user_memory=UserMemoryConfig(mode=LearningMode.ALWAYS, max_updates_per_run=3),
-        entity_memory=EntityMemoryConfig(
-            mode=LearningMode.ALWAYS, max_updates_per_run=15
-        ),
     ),
     markdown=True,
     debug_mode=True,  # Shows "Tool call limit reached" logs
@@ -91,16 +86,3 @@ if __name__ == "__main__":
 
     print("\n--- User Memory (limit: 3) ---")
     lm.user_memory_store.print(user_id=user_id)
-
-    print("\n--- Entity Memory (limit: 15) ---")
-    from rich.pretty import pprint
-
-    entities = lm.entity_memory_store.search(query="techcorp", limit=20)
-    if entities:
-        pprint(entities)
-    else:
-        print("No entities found")
-
-    print("\n" + "=" * 70)
-    print("Check debug logs above for 'Tool call limit reached' messages")
-    print("=" * 70)

@@ -22,7 +22,7 @@ Start with [`01_getting_started/basic.py`](01_getting_started/basic.py) and run 
 ````
 cookbook/13_filesystem/
 ├── README.md
-├── 01_getting_started/         # attach with one line; durability across processes
+├── 01_getting_started/         # attach the tools; durability across processes
 │   ├── README.md
 │   ├── basic.py                # run twice: write in run 1, recall in run 2
 │   ├── standalone.py           # the programmatic API, with no Agent and no model
@@ -36,7 +36,7 @@ cookbook/13_filesystem/
 
 ## Workflows
 
-- [`01_getting_started/`](01_getting_started/): attach FileSystem to an agent with one line, see that the files outlive the process, use FileSystem standalone, and swap the storage backend.
+- [`01_getting_started/`](01_getting_started/): attach FileSystem to an agent, see that the files outlive the process, use FileSystem standalone, and swap the storage backend.
 - [`02_durable_records/`](02_durable_records/): never repeat work, using exact-line dedupe with `check_lines` and `append_file`. Ends with a scheduled news agent that briefs only what is new.
 - [`03_working_state/`](03_working_state/): progress checkpoints and a last-seen monitor, for work that runs longer than one session.
 - [`04_namespaces/`](04_namespaces/): everything else uses the default store. Name a namespace when you need more than one: per-user file stores via `namespace="assistant/{user_id}"`, a callable tool factory for arbitrary policy, and two agents sharing one namespace with a read-only consumer.

@@ -182,11 +182,11 @@ class UserProfileStore(LearningStore):
         )
 
     def build_context(self, data: Any) -> str:
-        """Build context for the agent.
+        """Build the DATA context for the agent.
 
         Formats user profile data for injection into the agent's system prompt.
-        Designed to enable natural, personalized responses without meta-commentary
-        about memory systems.
+        Data only - the how-to-use guidance lives in instructions(); the
+        automatic path concatenates the two at the injection site.
 
         Args:
             data: User profile data from recall().
@@ -194,22 +194,13 @@ class UserProfileStore(LearningStore):
         Returns:
             Context string to inject into the agent's system prompt.
         """
-        # Build tool documentation based on what's enabled
-        tool_docs = self._build_tool_documentation()
+        empty_block = dedent("""\
+            <user_profile>
+            No profile information saved about this user yet.
+            </user_profile>""")
 
         if not data:
-            if self._should_expose_tools:
-                return (
-                    dedent("""\
-                    <user_profile>
-                    No profile information saved about this user yet.
-
-                    """)
-                    + tool_docs
-                    + dedent("""
-                    </user_profile>""")
-                )
-            return ""
+            return empty_block if self._should_expose_tools else ""
 
         # Build profile fields section
         profile_parts = []
@@ -220,18 +211,7 @@ class UserProfileStore(LearningStore):
                 profile_parts.append(f"{field_name.replace('_', ' ').title()}: {value}")
 
         if not profile_parts:
-            if self._should_expose_tools:
-                return (
-                    dedent("""\
-                    <user_profile>
-                    No profile information saved about this user yet.
-
-                    """)
-                    + tool_docs
-                    + dedent("""
-                    </user_profile>""")
-                )
-            return ""
+            return empty_block if self._should_expose_tools else ""
 
         context = "<user_profile>\n"
         context += "\n".join(profile_parts) + "\n"
@@ -246,20 +226,22 @@ class UserProfileStore(LearningStore):
             - Current conversation always takes precedence over stored profile data
             </profile_application_guidelines>""")
 
-        if self._should_expose_tools:
-            context += (
-                dedent("""
-
-            <profile_updates>
-            """)
-                + tool_docs
-                + dedent("""
-            </profile_updates>""")
-            )
-
         context += "\n</user_profile>"
 
         return context
+
+    def instructions(self) -> str:
+        """Agent-facing guidance for this store: when to update the profile.
+
+        Guidance only - the recalled data lives in build_context(). Empty when
+        no tools are exposed (ALWAYS mode captures without agent involvement).
+        """
+        if not self._should_expose_tools:
+            return ""
+        tool_docs = self._build_tool_documentation()
+        if not tool_docs:
+            return ""
+        return f"<user_profile_instructions>\n{tool_docs}\n</user_profile_instructions>"
 
     def _build_tool_documentation(self) -> str:
         """Build documentation for available profile tools.

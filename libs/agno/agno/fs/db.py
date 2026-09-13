@@ -208,6 +208,35 @@ class DbFileSystem(BaseFS):
     # Required core
     # ------------------------------------------------------------------
 
+    def _write_on(self, conn, namespace: str, path: str, content: str) -> FileMeta:
+        """Write through a caller-owned transaction after trusted table setup."""
+        t = self.table
+        now = int(time.time())
+        stmt = self._insert()(t).values(
+            namespace=namespace,
+            path=path,
+            content=content,
+            size_bytes=len(content.encode("utf-8")),
+            version=1,
+            created_at=now,
+            updated_at=now,
+        )
+        stmt = stmt.on_conflict_do_update(
+            index_elements=[t.c.namespace, t.c.path],
+            set_={
+                "content": stmt.excluded.content,
+                "size_bytes": stmt.excluded.size_bytes,
+                "version": t.c.version + 1,
+                "updated_at": now,
+            },
+        ).returning(t.c.version, t.c.size_bytes)
+        row = conn.execute(stmt).one()
+        return FileMeta(path=path, version=row[0], size_bytes=row[1], updated_at=now)
+
+    def _delete_on(self, conn, namespace: str, path: str) -> None:
+        """Delete through a caller-owned transaction without committing it."""
+        conn.execute(delete(self.table).where(self.table.c.namespace == namespace, self.table.c.path == path))
+
     def read(self, namespace: str, path: str) -> Optional[str]:
         self._ensure_table()
         t = self.table
@@ -446,16 +475,21 @@ class DbFileSystem(BaseFS):
         return found
 
     def search(self, namespace: str, query: str, directory: str = "", limit: int = 10) -> List[SearchMatch]:
-        """Case-insensitive substring search. Correctness is owned by Python; on
-        Postgres ILIKE prefilters candidate rows, on SQLite every in-scope row is
-        scanned (SQLite's LIKE folds ASCII only, which would miss non-ASCII case
-        variants)."""
+        """Case-insensitive substring search. Correctness is owned by Python; the
+        SQL predicate only prefilters candidate rows. On Postgres ILIKE folds
+        every query; on SQLite, LIKE folds ASCII only, so the prefilter applies
+        to pure-ASCII queries and a non-ASCII query still scans every in-scope
+        row. One known gap remains on SQLite: content containing a non-ASCII
+        uppercase form whose lowercase is ASCII (the Kelvin sign, U+212A) is
+        excluded by the ASCII prefilter for the matching ASCII query."""
         self._ensure_table()
         if not query:
             return []
         t = self.table
         conditions = [t.c.namespace == namespace, self._directory_predicate(directory)]
         if self.dialect == "postgresql":
+            conditions.append(t.c.content.icontains(query, autoescape=True))
+        elif query.isascii():
             conditions.append(t.c.content.icontains(query, autoescape=True))
         stmt = select(t.c.path, t.c.size_bytes, t.c.content).where(and_(*conditions))
         with self.db_engine.begin() as conn:

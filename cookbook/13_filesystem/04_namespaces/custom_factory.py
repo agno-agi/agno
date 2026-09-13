@@ -48,7 +48,12 @@ def fs_for_user(run_context: RunContext) -> List:
 agent = Agent(
     model=OpenAIResponses(id="gpt-5.5"),
     tools=fs_for_user,
-    instructions="You are a support assistant. Keep your case notes in your files.",
+    # The factory builds a FileSystem per user, so the instructions come off the
+    # class: they describe the tools, and never a namespace.
+    instructions=[
+        "You are a support assistant. Keep your case notes in your files.",
+        FileSystem.instructions(),
+    ],
 )
 
 # ---------------------------------------------------------------------------

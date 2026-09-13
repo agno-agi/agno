@@ -45,14 +45,15 @@ fs = FileSystem(SqliteDb(db_file=DB_FILE))
 agent = Agent(
     model=OpenAIResponses(id="gpt-5.5"),
     tools=[fs.tools()],
-    instructions=(
+    instructions=[
         "You are a latency monitor that runs on a schedule. Each run you receive "
         "current p95 readings. Read state/last-run.md (it may not exist on the "
         "first run), then report which services changed by more than 20 percent "
         "since last run, or say that this is the baseline run. Finally overwrite "
         "state/last-run.md with the current readings using write_file, one "
-        "'service: value' per line."
-    ),
+        "'service: value' per line.",
+        fs.instructions(),
+    ],
 )
 
 

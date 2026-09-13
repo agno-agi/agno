@@ -34,7 +34,7 @@ tools = [get_weather]
 # ---------------------------------------------------------------------------
 def instantiate_agent():
     return Agent(
-        llm="gpt-4o",
+        llm="gpt-5.6-luna",
         role="Test Agent",
         goal="Be concise, reply with one sentence.",
         tools=tools,

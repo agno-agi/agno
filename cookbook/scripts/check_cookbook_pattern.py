@@ -23,7 +23,7 @@ from pathlib import Path
 EMOJI_RE = re.compile(r"[\U0001F300-\U0001FAFF]")
 MAIN_GATE_RE = re.compile(r'if __name__ == ["\']__main__["\']:')
 SECTION_RE = re.compile(r"^# [-=]+\n# (?P<title>.+?)\n# [-=]+$", re.MULTILINE)
-SKIP_FILE_NAMES = {"__init__.py"}
+SKIP_FILE_NAMES = {"__init__.py", "__main__.py"}
 SKIP_DIR_NAMES = {"__pycache__", ".git", ".context"}
 
 

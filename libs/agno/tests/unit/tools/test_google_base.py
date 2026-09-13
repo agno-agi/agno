@@ -53,6 +53,9 @@ def mock_valid_creds():
 def clean_google_env(monkeypatch):
     monkeypatch.delenv("GOOGLE_API_TIMEOUT", raising=False)
     monkeypatch.delenv("GOOGLE_CLOUD_QUOTA_PROJECT_ID", raising=False)
+    monkeypatch.delenv("GOOGLE_OAUTH_NONINTERACTIVE", raising=False)
+    monkeypatch.delenv("GOOGLE_SERVICE_ACCOUNT_FILE", raising=False)
+    monkeypatch.delenv("GOOGLE_DELEGATED_USER", raising=False)
 
 
 # ============================================================================
@@ -822,6 +825,119 @@ def test_resolve_creds_service_account_with_delegated_user():
 
     base_creds.with_subject.assert_called_once_with("admin@example.com")
     assert result is delegated_creds
+
+
+# ============================================================================
+# _resolve_creds INTERACTIVE FLAG TESTS
+# ============================================================================
+
+
+def test_resolve_creds_interactive_false_raises_before_flow():
+    auth = AuthConfig(interactive=False)
+    auth.service_account_path = None
+    toolkit = _make_toolkit(auth=auth, scopes=["scope1"])
+
+    with (
+        patch("agno.tools.google.base.Path") as mock_path,
+        patch("google_auth_oauthlib.flow.InstalledAppFlow") as mock_flow,
+    ):
+        mock_path.return_value.exists.return_value = False
+        with pytest.raises(RuntimeError, match="interactive login is disabled"):
+            toolkit._resolve_creds()
+
+    mock_flow.from_client_config.assert_not_called()
+    mock_flow.from_client_secrets_file.assert_not_called()
+
+
+def test_resolve_creds_interactive_false_dead_token_raises():
+    # Expired file token with a failing refresh must not fall through to the flow
+    auth = AuthConfig(interactive=False)
+    auth.service_account_path = None
+    toolkit = _make_toolkit(auth=auth, scopes=["scope1"])
+    file_creds = _make_creds(valid=False, expired=True, scopes=["scope1"])
+    file_creds.refresh.side_effect = Exception("invalid_grant")
+
+    with (
+        patch("agno.tools.google.base.Path") as mock_path,
+        patch("google.oauth2.credentials.Credentials.from_authorized_user_file", return_value=file_creds),
+        patch("google_auth_oauthlib.flow.InstalledAppFlow") as mock_flow,
+    ):
+        token_path = MagicMock()
+        token_path.exists.return_value = True
+        creds_path = MagicMock()
+        creds_path.exists.return_value = False
+        mock_path.side_effect = [token_path, creds_path]
+        with pytest.raises(RuntimeError, match="interactive login is disabled"):
+            toolkit._resolve_creds()
+
+    file_creds.refresh.assert_called_once()
+    mock_flow.from_client_config.assert_not_called()
+    mock_flow.from_client_secrets_file.assert_not_called()
+
+
+def test_resolve_creds_interactive_true_control_reaches_flow():
+    toolkit = _make_toolkit(scopes=["scope1"])
+
+    with (
+        patch("agno.tools.google.base.Path") as mock_path,
+        patch("google_auth_oauthlib.flow.InstalledAppFlow") as mock_flow,
+    ):
+        mock_path.return_value.exists.return_value = False
+        mock_flow.from_client_config.return_value.run_local_server.return_value = None
+        toolkit._resolve_creds()
+
+    mock_flow.from_client_config.return_value.run_local_server.assert_called_once()
+
+
+def test_resolve_creds_interactive_false_valid_file_token_ok():
+    # interactive=False only gates step 6: a valid file token resolves without the flow
+    auth = AuthConfig(interactive=False)
+    auth.service_account_path = None
+    toolkit = _make_toolkit(auth=auth, scopes=["scope1"])
+    file_creds = _make_creds(valid=True, scopes=["scope1"])
+
+    with (
+        patch("agno.tools.google.base.Path") as mock_path,
+        patch("google.oauth2.credentials.Credentials.from_authorized_user_file", return_value=file_creds),
+    ):
+        mock_path.return_value.exists.return_value = True
+        result = toolkit._resolve_creds()
+
+    assert result is file_creds
+
+
+def test_resolve_creds_interactive_false_service_account_ok():
+    auth = AuthConfig(service_account_path="/path/to/sa.json", interactive=False)
+    toolkit = _make_toolkit(auth=auth, scopes=["scope1"])
+    sa_creds = _make_creds(valid=True, scopes=["scope1"])
+
+    with patch("google.oauth2.service_account.Credentials.from_service_account_file", return_value=sa_creds):
+        result = toolkit._resolve_creds()
+
+    assert result is sa_creds
+
+
+def test_sheets_duplicate_interactive_false_surfaces_error_string():
+    # create_duplicate_sheet calls _resolve_creds directly inside try/except:
+    # the non-interactive raise surfaces as the method's error string
+    auth = AuthConfig(interactive=False)
+    auth.service_account_path = None
+    tools = GoogleSheetsTools(auth=auth)
+    tools.creds = _make_creds(valid=True, scopes=["https://www.googleapis.com/auth/spreadsheets"])
+    tools.scopes = ["https://www.googleapis.com/auth/spreadsheets"]
+    tools._service = MagicMock()
+
+    with (
+        patch("agno.tools.google.base.Path") as mock_path,
+        patch("agno.tools.google.base.log_warning"),
+        patch("google_auth_oauthlib.flow.InstalledAppFlow") as mock_flow,
+    ):
+        mock_path.return_value.exists.return_value = False
+        result = tools.create_duplicate_sheet("source-id")
+
+    mock_flow.from_client_config.assert_not_called()
+    assert result.startswith("Error duplicating spreadsheet via Drive API")
+    assert "interactive login is disabled" in result
 
 
 # ============================================================================

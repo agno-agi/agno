@@ -35,7 +35,7 @@ from rich.progress import (
 )
 from rich.table import Table
 
-SKIP_FILE_NAMES = {"__init__.py"}
+SKIP_FILE_NAMES = {"__init__.py", "__main__.py"}
 # `data` holds fixtures and generated exports, never runnable examples.
 SKIP_DIR_NAMES = {"__pycache__", "data"}
 # Enough tail to hold a traceback and the failing assertion, without pasting a

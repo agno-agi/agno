@@ -105,3 +105,32 @@ equivalent patch.
   exercised directly. Model-backed application runs are outside this stateless
   framework test correction.
 - Verdict: local correction verified; upstream acceptance awaits CI and review.
+
+## Current upstream integration
+
+After pushing coverage commit `fa0394545`, GitHub recomputed mergeability and
+reported a conflict with current main. Fetched upstream
+`44219f8532e2fe6ce936850455f4b9a2567e4194` and merged it without rewriting PR
+history. The only conflict was the test file's imports: preserve upstream's
+`sys` and `Union` alongside the new `inspect` imports. The source fix merged
+unchanged and still differs from current main by the original 12-line patch.
+Upstream now has additional caching and function tests, so the earlier counts
+remain evidence for the original base; the merged candidate is revalidated
+with upstream's declared development dependencies before a second push.
+
+- Merged environment: Agno 3.0.9, agnoctl 0.2.0, MCP 2.2.0, FastMCP 4.0.3;
+  Python, pytest, Ruff, mypy, and Pydantic versions are unchanged from the
+  clean environment recorded above.
+- Same affected-suite command: 273 passed in 4.17 seconds, without warnings.
+  The function file now contains 202 tests because upstream expanded it.
+- Current-main differential control at `44219f853`: 13 failed, 189 passed in
+  4.72 seconds with the final test file. The same original regression and 12
+  new cases detect the unresolved-continuation defect on current upstream.
+- Format script passed. It also reformatted one unrelated upstream lambda in
+  `tests/unit/vectordb/test_elasticsearch.py`; that formatting-only change was
+  restored to upstream so the PR retains its three-file scope.
+- Validation script passed: Ruff checks, mypy on 1,053 Agno and 21 agnoctl
+  source files, and all 13 cookbook pattern checks. `git diff --check` passed.
+- The first coverage push had no CI run because the PR conflicted with current
+  main. This second delivery resolves that merge conflict; no runtime defect
+  or failed CI assertion was introduced during this repair.

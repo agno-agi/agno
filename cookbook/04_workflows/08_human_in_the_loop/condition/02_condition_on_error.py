@@ -17,7 +17,7 @@ Three modes:
 from agno.db.sqlite import SqliteDb
 from agno.workflow import Condition, OnError
 from agno.workflow.step import Step
-from agno.workflow.types import StepInput, StepOutput
+from agno.workflow.types import HumanReview, StepInput, StepOutput
 from agno.workflow.workflow import Workflow
 
 
@@ -63,7 +63,7 @@ def run_skip_example():
                 name="validate_if_needed",
                 evaluator=should_validate,
                 steps=[validate_data, enrich_data],
-                on_error=OnError.skip,
+                human_review=HumanReview(on_error=OnError.skip),
             ),
             Step(name="save", executor=save_data),
         ],
@@ -96,7 +96,7 @@ def run_fail_example():
                 name="validate_if_needed",
                 evaluator=should_validate,
                 steps=[validate_data, enrich_data],
-                on_error=OnError.fail,
+                human_review=HumanReview(on_error=OnError.fail),
             ),
             Step(name="save", executor=save_data),
         ],
@@ -125,7 +125,7 @@ def run_pause_example():
                 name="validate_if_needed",
                 evaluator=should_validate,
                 steps=[validate_data, enrich_data],
-                on_error=OnError.pause,
+                human_review=HumanReview(on_error=OnError.pause),
             ),
             Step(name="save", executor=save_data),
         ],

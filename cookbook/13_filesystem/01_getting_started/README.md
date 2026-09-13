@@ -1,6 +1,6 @@
 # Getting Started
 
-Attach a durable, private filesystem to an agent with one line: `Agent(tools=[fs.tools()])`. Take an ordinary agent, add that line, and its files now survive every future run, session, and process. The toolkit carries its own instructions.
+Attach a durable, private filesystem to an agent: `Agent(tools=[fs.tools()], instructions=[..., fs.instructions()])`. Take an ordinary agent, hand it those tools and pass `fs.instructions()` along with your own, and its files now survive every future run, session, and process. The instructions stay yours to edit, reorder, or replace.
 
 ## Files
 

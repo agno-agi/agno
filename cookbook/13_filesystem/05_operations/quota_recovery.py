@@ -3,8 +3,9 @@ Operations - Quota Recovery
 ===========================
 FileSystem caps the size of every file and every namespace, and nothing is
 ever evicted silently. This example hits both caps on purpose, shows the
-guidance the agent gets back, and then recovers the way that guidance
-suggests, by starting a new partition and deleting old ones.
+guidance the agent gets back, and then recovers programmatically: starting
+a new partition and deleting old ones through the Python API (the delete
+tool itself is opt-in via tools(allow_delete=True)).
 
 The caps are set very small here so the numbers stay readable. No model, no
 API keys.
