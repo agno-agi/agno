@@ -84,7 +84,7 @@ agent = Agent(
 # ---------------------------------------------------------------------------
 def main() -> None:
     knowledge_cohere.insert(
-        name="Agno Docs", url="https://docs.agno.com/introduction.md"
+        name="Agno Docs", url="https://docs.agno.com/introduction"
     )
     _ = knowledge_convenience
     _ = knowledge_amazon
