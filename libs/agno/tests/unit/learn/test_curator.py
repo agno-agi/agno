@@ -33,3 +33,17 @@ def test_curator_nonexistent_store_returns_zero():
     curator = Curator(machine=SimpleNamespace(stores={}))
     assert curator.deduplicate(user_id="bob", store_key="unknown") == 0
     assert curator.prune(user_id="bob", store_key="unknown") == 0
+
+
+def test_curator_handles_object_memories():
+    obj1 = SimpleNamespace(content="Prefers dark mode", created_at="2024-01-01T00:00:00Z")
+    obj2 = SimpleNamespace(content="prefers dark mode", created_at="2024-01-02T00:00:00Z")
+    entity = SimpleNamespace(memories=[obj1, obj2])
+
+    mem_store = SimpleNamespace(get=lambda user_id: entity, save=lambda user_id, ent: None)
+    curator = Curator(machine=SimpleNamespace(stores={"user_memory": mem_store}))
+
+    removed = curator.deduplicate(user_id="charlie", store_key="user_memory")
+    assert removed == 1
+    assert len(entity.memories) == 1
+

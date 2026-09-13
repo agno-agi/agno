@@ -126,21 +126,26 @@ class Curator:
     # Helpers
     # =========================================================================
 
+    def _get_field(self, m: Any, field_name: str, default: Any = None) -> Any:
+        if isinstance(m, dict):
+            return m.get(field_name, default)
+        return getattr(m, field_name, default)
+
     def _filter_by_age(
         self,
-        memories: List[dict],
+        memories: List[Any],
         cutoff: datetime,
-    ) -> List[dict]:
+    ) -> List[Any]:
         """Keep memories newer than cutoff."""
         result = []
         for m in memories:
-            created_at = m.get("created_at")
+            created_at = self._get_field(m, "created_at")
             if not created_at:
                 result.append(m)  # Keep if no timestamp
                 continue
 
             try:
-                created = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+                created = datetime.fromisoformat(str(created_at).replace("Z", "+00:00"))
                 if created >= cutoff:
                     result.append(m)
             except (ValueError, TypeError):
@@ -150,28 +155,28 @@ class Curator:
 
     def _keep_newest(
         self,
-        memories: List[dict],
+        memories: List[Any],
         count: int,
-    ) -> List[dict]:
+    ) -> List[Any]:
         """Keep the N newest memories."""
         sorted_memories = sorted(
             memories,
-            key=lambda m: m.get("created_at", ""),
+            key=lambda m: str(self._get_field(m, "created_at", "") or ""),
             reverse=True,
         )
         return sorted_memories[:count]
 
     def _remove_duplicates(
         self,
-        memories: List[dict],
-    ) -> List[dict]:
+        memories: List[Any],
+    ) -> List[Any]:
         """Remove exact and near-exact duplicate memories."""
         seen = set()
         unique = []
 
         for m in memories:
-            content = m.get("content", "")
-            normalized = self._normalize(content)
+            content = self._get_field(m, "content", "") or ""
+            normalized = self._normalize(str(content))
 
             if normalized not in seen:
                 seen.add(normalized)
