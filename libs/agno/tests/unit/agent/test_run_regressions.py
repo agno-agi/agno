@@ -47,7 +47,9 @@ def _patch_sync_dispatch_dependencies(
     monkeypatch.setattr(
         _storage,
         "read_or_create_session",
-        lambda agent, session_id=None, user_id=None: AgentSession(session_id=session_id, user_id=user_id, runs=runs),
+        lambda agent, session_id=None, user_id=None, *, persist_introduction=True: AgentSession(
+            session_id=session_id, user_id=user_id, runs=runs
+        ),
     )
 
 
@@ -117,7 +119,9 @@ def test_continue_run_dispatch_handles_none_session_runs(monkeypatch: pytest.Mon
     monkeypatch.setattr(
         _storage,
         "read_or_create_session",
-        lambda agent, session_id=None, user_id=None: AgentSession(session_id=session_id, user_id=user_id, runs=None),
+        lambda agent, session_id=None, user_id=None, *, persist_introduction=True: AgentSession(
+            session_id=session_id, user_id=user_id, runs=None
+        ),
     )
 
     with pytest.raises(RuntimeError, match="No runs found for run ID missing-run"):
@@ -372,7 +376,9 @@ def _patch_continue_dispatch_dependencies(agent: Agent, monkeypatch: pytest.Monk
     monkeypatch.setattr(
         _storage,
         "read_or_create_session",
-        lambda agent, session_id=None, user_id=None: AgentSession(session_id=session_id, user_id=user_id, runs=[]),
+        lambda agent, session_id=None, user_id=None, *, persist_introduction=True: AgentSession(
+            session_id=session_id, user_id=user_id, runs=[]
+        ),
     )
     monkeypatch.setattr(_init, "set_default_model", lambda agent: None)
     monkeypatch.setattr(_response, "get_response_format", lambda agent, run_context=None: None)

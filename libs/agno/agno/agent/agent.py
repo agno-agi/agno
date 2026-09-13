@@ -1423,6 +1423,16 @@ class Agent:
         debug_mode: Optional[bool] = None,
         **kwargs: Any,
     ) -> PreparedAgentModelRequest:
+        """Inspect the initial model request without generating a response.
+
+        Uses normal input validation, session loading, dependencies, pre-hooks,
+        tools, and message construction. These steps can perform I/O and mutate
+        in-memory state; this is not a side-effect-free snapshot. No reasoning,
+        model generation, background memory/learning, or run persistence occurs.
+        Connected tools are released before returning. Returned objects are for
+        inspection, not a resumable run or a provider-specific HTTP payload.
+        Passing a background_tasks collector is not supported; pre-hooks run inline.
+        """
         return _run.prepare_model_request(
             self,
             input=input,
@@ -1443,7 +1453,7 @@ class Agent:
             metadata=metadata,
             output_schema=output_schema,
             debug_mode=debug_mode,
-            **kwargs,
+            kwargs=kwargs,
         )
 
     async def aprepare_model_request(
@@ -1469,6 +1479,16 @@ class Agent:
         debug_mode: Optional[bool] = None,
         **kwargs: Any,
     ) -> PreparedAgentModelRequest:
+        """Inspect the initial model request without generating a response.
+
+        Uses normal input validation, session loading, dependencies, pre-hooks,
+        tools, and message construction. These steps can perform I/O and mutate
+        in-memory state; this is not a side-effect-free snapshot. No reasoning,
+        model generation, background memory/learning, or run persistence occurs.
+        Connected tools are released before returning. Returned objects are for
+        inspection, not a resumable run or a provider-specific HTTP payload.
+        Passing a background_tasks collector is not supported; pre-hooks run inline.
+        """
         return await _run.aprepare_model_request(
             self,
             input=input,
@@ -1489,7 +1509,7 @@ class Agent:
             metadata=metadata,
             output_schema=output_schema,
             debug_mode=debug_mode,
-            **kwargs,
+            kwargs=kwargs,
         )
 
     @overload
