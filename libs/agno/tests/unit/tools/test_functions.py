@@ -1,3 +1,4 @@
+from inspect import isasyncgen, isawaitable
 from typing import Any, Callable, Dict, List, Optional
 
 import pytest
@@ -695,6 +696,197 @@ async def test_function_call_async_awaits_coroutine_returned_by_sync_tool_hook()
     assert result.status == "success"
     assert result.result == "processed-value1"
     assert hook_calls == ["test_func"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("async_hook", [False, True], ids=["sync-hook", "async-hook"])
+async def test_function_call_async_sync_tool_with_hook_runs_twice(async_hook):
+    """Reusing a FunctionCall executes fresh hooks and a fresh sync tool call."""
+    hook_calls = []
+    tool_calls = []
+
+    def sync_hook(function_name: str, function_call: Callable, arguments: Dict[str, Any]):
+        hook_calls.append(function_name)
+        return function_call(**arguments)
+
+    async def awaited_hook(function_name: str, function_call: Callable, arguments: Dict[str, Any]):
+        hook_calls.append(function_name)
+        return await function_call(**arguments)
+
+    @tool(tool_hooks=[awaited_hook if async_hook else sync_hook])
+    def test_func(param1: str) -> str:
+        tool_calls.append(param1)
+        return f"processed-{param1}-{len(tool_calls)}"
+
+    test_func.process_entrypoint()
+    call = FunctionCall(function=test_func, arguments={"param1": "value1"})
+
+    for invocation in (1, 2):
+        result = await call.aexecute()
+        assert result.status == "success"
+        assert result.error is None
+        assert result.result == f"processed-value1-{invocation}"
+        assert call.result == result.result
+
+    assert hook_calls == ["test_func", "test_func"]
+    assert tool_calls == ["value1", "value1"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("async_tool", [False, True], ids=["sync-tool", "async-tool"])
+@pytest.mark.parametrize(
+    "hook_order, expected_events",
+    [
+        (("async", "sync"), ["async-before", "sync", "tool", "async-after"]),
+        (("sync", "async"), ["sync", "async-before", "tool", "async-after"]),
+        (("sync", "sync", "sync"), ["sync", "sync", "sync", "tool"]),
+    ],
+    ids=["async-sync", "sync-async", "sync-sync-sync"],
+)
+async def test_function_call_async_awaits_nested_hook_continuations(async_tool, hook_order, expected_events):
+    """Every hook layer resolves its continuation in the declared order."""
+    events = []
+
+    def sync_hook(function_name: str, function_call: Callable, arguments: Dict[str, Any]):
+        events.append("sync")
+        return function_call(**arguments)
+
+    async def async_hook(function_name: str, function_call: Callable, arguments: Dict[str, Any]):
+        events.append("async-before")
+        result = await function_call(**arguments)
+        assert result == "processed-value1"
+        events.append("async-after")
+        return result
+
+    def sync_entrypoint(param1: str) -> str:
+        events.append("tool")
+        return f"processed-{param1}"
+
+    async def async_entrypoint(param1: str) -> str:
+        events.append("tool")
+        return f"processed-{param1}"
+
+    hooks = [async_hook if kind == "async" else sync_hook for kind in hook_order]
+    test_func = tool(tool_hooks=hooks)(async_entrypoint if async_tool else sync_entrypoint)
+    test_func.process_entrypoint()
+    call = FunctionCall(function=test_func, arguments={"param1": "value1"})
+
+    for invocation in (1, 2):
+        result = await call.aexecute()
+        assert result.status == "success"
+        assert result.error is None
+        assert result.result == "processed-value1"
+        assert events == expected_events * invocation
+
+
+@pytest.mark.asyncio
+async def test_function_call_async_generator_behind_sync_hook():
+    """Await the continuation without consuming or awaiting its async generator."""
+    yielded = []
+
+    def sync_hook(function_name: str, function_call: Callable, arguments: Dict[str, Any]):
+        return function_call(**arguments)
+
+    @tool(tool_hooks=[sync_hook])
+    async def test_func(count: int):
+        for value in range(count):
+            yielded.append(value)
+            yield f"chunk-{value}"
+
+    test_func.process_entrypoint()
+    result = await FunctionCall(function=test_func, arguments={"count": 2}).aexecute()
+
+    assert result.status == "success"
+    assert result.error is None
+    assert isasyncgen(result.result)
+    assert not isawaitable(result.result)
+    assert yielded == []
+    assert [chunk async for chunk in result.result] == ["chunk-0", "chunk-1"]
+    assert yielded == [0, 1]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("async_tool", [False, True], ids=["sync-tool", "async-tool"])
+async def test_function_call_async_reports_tool_error_behind_sync_hook(async_tool):
+    """A deferred tool exception must not be hidden by a successful coroutine result."""
+    tool_calls = []
+
+    def sync_hook(function_name: str, function_call: Callable, arguments: Dict[str, Any]):
+        return function_call(**arguments)
+
+    def sync_entrypoint(param1: str) -> str:
+        tool_calls.append(param1)
+        raise ValueError("tool failed behind sync hook")
+
+    async def async_entrypoint(param1: str) -> str:
+        tool_calls.append(param1)
+        raise ValueError("tool failed behind sync hook")
+
+    test_func = tool(tool_hooks=[sync_hook])(async_entrypoint if async_tool else sync_entrypoint)
+    test_func.process_entrypoint()
+    result = await FunctionCall(function=test_func, arguments={"param1": "value1"}).aexecute()
+
+    assert result.status == "failure"
+    assert result.error is not None
+    assert "tool failed behind sync hook" in result.error
+    assert result.result is None
+    assert tool_calls == ["value1"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("async_tool", [False, True], ids=["sync-tool", "async-tool"])
+async def test_function_call_async_awaits_continuation_returned_by_async_hook(async_tool):
+    """An async hook may return its continuation without awaiting it itself."""
+    tool_calls = []
+
+    async def async_hook(function_name: str, function_call: Callable, arguments: Dict[str, Any]):
+        return function_call(**arguments)
+
+    def sync_entrypoint(param1: str) -> str:
+        tool_calls.append(param1)
+        return f"processed-{param1}"
+
+    async def async_entrypoint(param1: str) -> str:
+        tool_calls.append(param1)
+        return f"processed-{param1}"
+
+    test_func = tool(tool_hooks=[async_hook])(async_entrypoint if async_tool else sync_entrypoint)
+    test_func.process_entrypoint()
+    result = await FunctionCall(function=test_func, arguments={"param1": "value1"}).aexecute()
+
+    assert result.status == "success"
+    assert result.error is None
+    assert result.result == "processed-value1"
+    assert tool_calls == ["value1"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("async_tool", [False, True], ids=["sync-tool", "async-tool"])
+async def test_function_call_async_preserves_sync_hook_short_circuit_dict(async_tool):
+    """A hook's non-awaitable result passes through unchanged and skips the tool."""
+    hook_result = {"blocked": True, "reason": "short circuit"}
+    tool_calls = []
+
+    def sync_hook(function_name: str, function_call: Callable, arguments: Dict[str, Any]):
+        return hook_result
+
+    def sync_entrypoint(param1: str) -> str:
+        tool_calls.append(param1)
+        return f"processed-{param1}"
+
+    async def async_entrypoint(param1: str) -> str:
+        tool_calls.append(param1)
+        return f"processed-{param1}"
+
+    test_func = tool(tool_hooks=[sync_hook])(async_entrypoint if async_tool else sync_entrypoint)
+    test_func.process_entrypoint()
+    result = await FunctionCall(function=test_func, arguments={"param1": "value1"}).aexecute()
+
+    assert result.status == "success"
+    assert result.error is None
+    assert result.result is hook_result
+    assert hook_result == {"blocked": True, "reason": "short circuit"}
+    assert tool_calls == []
 
 
 @pytest.mark.asyncio
