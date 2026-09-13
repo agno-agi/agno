@@ -1,3 +1,5 @@
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from threading import Thread
 from unittest.mock import patch
 
 import httpx
@@ -35,6 +37,93 @@ def mock_html_content_with_article():
         </body>
     </html>
     """
+
+
+@pytest.fixture
+def redirected_website():
+    requests = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            requests.append(self.path)
+            if self.path in ("/docs", "/cross-host"):
+                target = "/docs/" if self.path == "/docs" else f"http://localhost:{server.server_port}/outside/"
+                self.send_response(301)
+                self.send_header("Location", target)
+                self.end_headers()
+                return
+
+            pages = {
+                "/docs/": (
+                    '<main>Documentation index</main><a href="guide">Guide</a>'
+                    '<a href="guide">Duplicate guide</a><a href="/root-guide">Root guide</a>'
+                    f'<a href="{base_url}/absolute-guide">Absolute guide</a>'
+                    '<a href="http://outside.invalid/guide">External guide</a>'
+                ),
+                "/docs/guide": "<main>Deployment guide</main>",
+                "/root-guide": "<main>Root guide</main>",
+                "/absolute-guide": "<main>Absolute guide</main>",
+                "/outside/": '<main>Redirected outside the starting domain</main><a href="guide">Guide</a>',
+            }
+            if self.path not in pages:
+                self.send_error(404)
+                return
+            content = pages[self.path].encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(content)))
+            self.end_headers()
+            self.wfile.write(content)
+
+        def log_message(self, format, *args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    base_url = f"http://127.0.0.1:{server.server_port}"
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield base_url, requests
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("use_async", [False, True], ids=["sync", "async"])
+@pytest.mark.parametrize("allowed_hosts", [None, ["127.0.0.1"]], ids=["no-allowlist", "allowlist"])
+@pytest.mark.parametrize("start_path", ["/docs", "/docs/"], ids=["redirect", "direct"])
+async def test_read_resolves_links_against_response_url(redirected_website, use_async, allowed_hosts, start_path):
+    base_url, requests = redirected_website
+    reader = WebsiteReader(max_depth=2, max_links=10, chunk=False, allowed_hosts=allowed_hosts)
+    start_url = base_url + start_path
+
+    with patch.object(reader, "delay"), patch.object(reader, "async_delay"):
+        documents = await reader.async_read(start_url) if use_async else reader.read(start_url)
+
+    assert {doc.meta_data["url"]: doc.content for doc in documents} == {
+        start_url: "Documentation index",
+        base_url + "/docs/guide": "Deployment guide",
+        base_url + "/root-guide": "Root guide",
+        base_url + "/absolute-guide": "Absolute guide",
+    }
+    expected_requests = ["/docs"] if start_path == "/docs" else []
+    assert requests == expected_requests + ["/docs/", "/docs/guide", "/root-guide", "/absolute-guide"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("use_async", [False, True], ids=["sync", "async"])
+async def test_redirected_relative_links_respect_starting_domain(redirected_website, use_async):
+    base_url, requests = redirected_website
+    reader = WebsiteReader(max_depth=2, max_links=10, chunk=False)
+    start_url = base_url + "/cross-host"
+
+    with patch.object(reader, "delay"), patch.object(reader, "async_delay"):
+        documents = await reader.async_read(start_url) if use_async else reader.read(start_url)
+
+    assert [doc.meta_data["url"] for doc in documents] == [start_url]
+    assert requests == ["/cross-host", "/outside/"]
 
 
 def test_delay():
