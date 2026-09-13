@@ -79,4 +79,4 @@ class YouTubeReader(Reader):
             return []
 
     async def async_read(self, url: str) -> List[Document]:
-        return await asyncio.get_event_loop().run_in_executor(None, self.read, url)
+        return await asyncio.get_running_loop().run_in_executor(None, self.read, url)

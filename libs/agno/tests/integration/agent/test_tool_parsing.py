@@ -1,6 +1,4 @@
-from typing import List, Optional
-
-from git import Union
+from typing import List, Optional, Union
 
 from agno.agent import Agent, RunOutput  # noqa
 from agno.models.openai import OpenAIChat

@@ -1,7 +1,15 @@
+import hashlib
+
 from agno.knowledge.chunking.document import DocumentChunking
 from agno.knowledge.chunking.fixed import FixedSizeChunking
 from agno.knowledge.chunking.row import RowChunking
 from agno.knowledge.document.base import Document
+
+
+def _expected_hash_id(content: str, chunk_number: int) -> str:
+    content_hash = hashlib.md5(content.encode("utf-8")).hexdigest()[:12]
+    return f"chunk_{content_hash}_{chunk_number}"
+
 
 # --- Fallback chain tests ---
 
@@ -136,3 +144,18 @@ def test_document_chunking_uses_fallback():
     for chunk in chunks:
         assert chunk.id is not None
         assert chunk.id.startswith("chunk_")
+
+
+# --- Overlap keeps hash-based ids in sync with content ---
+
+
+def test_document_chunking_overlap_hash_matches_final_content():
+    """With overlap, the hash-based id must match the final content."""
+    doc = Document(content="First paragraph is long.\n\nSecond paragraph is long.\n\nThird paragraph is long.")
+    chunks = DocumentChunking(chunk_size=30, overlap=8).chunk(doc)
+
+    # More than one chunk so overlap is actually applied
+    assert len(chunks) >= 2
+    for chunk in chunks:
+        assert chunk.id == _expected_hash_id(chunk.content, chunk.meta_data["chunk"])
+        assert chunk.meta_data["chunk_size"] == len(chunk.content)

@@ -4,7 +4,7 @@ Build Agno agents with Google Gemini, progressively adding capabilities at each 
 
 This guide walks through the basics of building Agents, the easy way. Follow along to learn how to build agents with tools, storage, memory, knowledge, state, guardrails, and human in the loop. We'll also build multi-agent teams and step-based agentic workflows.
 
-Each example can be run independently and contains detailed comments + example prompts to help you understand what's happening behind the scenes. We'll use **Gemini 3 Flash** — fast, affordable, and excellent at tool calling but you can swap in any model with a one line change. We use either **Gemini 3 Flash** or **Gemini 3.1 Pro** as the model, depending on the example.
+Each example can be run independently and contains detailed comments + example prompts to help you understand what's happening behind the scenes. We'll use **Gemini 3.5 Flash** — fast, affordable, and excellent at tool calling but you can swap in any model with a one line change. We use either **Gemini 3.5 Flash** or **Gemini 3.1 Pro** as the model, depending on the example.
 
 ## Fast Path
 
@@ -125,7 +125,7 @@ Then visit [os.agno.com](https://os.agno.com/?utm_source=github&utm_medium=cookb
 | `GOOGLE_API_KEY not set` | `export GOOGLE_API_KEY=your-key` |
 | `ModuleNotFoundError` | `uv pip install -r cookbook/gemini_3/requirements.txt` |
 | `429 Rate limit exceeded` | Wait a minute, or use a different model ID |
-| `Model not found` | Check model ID spelling -- use `gemini-3-flash-preview` or `gemini-3.1-pro-preview` |
+| `Model not found` | Check model ID spelling -- use `gemini-3.5-flash` or `gemini-3.1-pro-preview` |
 
 ## Learn More
 

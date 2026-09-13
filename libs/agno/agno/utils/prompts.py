@@ -20,11 +20,11 @@ def get_json_output_prompt(output_schema: Union[str, list, dict, BaseModel]) -> 
             json_output_prompt += "\n</json_fields>"
         elif isinstance(output_schema, list):
             json_output_prompt += "\n<json_fields>"
-            json_output_prompt += f"\n{json.dumps(output_schema)}"
+            json_output_prompt += f"\n{json.dumps(output_schema, ensure_ascii=False)}"
             json_output_prompt += "\n</json_fields>"
         elif isinstance(output_schema, dict):
             json_output_prompt += "\n<json_fields>"
-            json_output_prompt += f"\n{json.dumps(output_schema)}"
+            json_output_prompt += f"\n{json.dumps(output_schema, ensure_ascii=False)}"
             json_output_prompt += "\n</json_fields>"
         elif (isinstance(output_schema, type) and issubclass(output_schema, BaseModel)) or isinstance(
             output_schema, BaseModel
@@ -78,13 +78,11 @@ def get_json_output_prompt(output_schema: Union[str, list, dict, BaseModel]) -> 
 
                 if len(response_model_properties) > 0:
                     json_output_prompt += "\n<json_fields>"
-                    json_output_prompt += (
-                        f"\n{json.dumps([key for key in response_model_properties.keys() if key != '$defs'])}"
-                    )
+                    json_output_prompt += f"\n{json.dumps([key for key in response_model_properties.keys() if key != '$defs'], ensure_ascii=False)}"
                     json_output_prompt += "\n</json_fields>"
                     json_output_prompt += "\n\nHere are the properties for each field:"
                     json_output_prompt += "\n<json_field_properties>"
-                    json_output_prompt += f"\n{json.dumps(response_model_properties, indent=2)}"
+                    json_output_prompt += f"\n{json.dumps(response_model_properties, indent=2, ensure_ascii=False)}"
                     json_output_prompt += "\n</json_field_properties>"
         else:
             log_warning(f"Could not build json schema for {output_schema}")

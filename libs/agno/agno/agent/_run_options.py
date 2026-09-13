@@ -19,8 +19,9 @@ class ResolvedRunOptions:
     """Immutable snapshot of resolved run options.
 
     All values are fully resolved (call-site > agent default > fallback)
-    at construction time, except metadata where agent-level values take
-    precedence on conflicting keys.
+    at construction time. Two fields merge instead of replacing: ``metadata``
+    (agent < session < call-site, later layers win on conflicting keys) and
+    ``dependencies`` (call-site values win on conflicting keys).
     """
 
     stream: bool
@@ -41,9 +42,17 @@ class ResolvedRunOptions:
         dependencies_provided: bool = False,
         knowledge_filters_provided: bool = False,
         metadata_provided: bool = False,
+        user_id: Optional[str] = None,
     ) -> None:
         """Apply resolved options to run_context with precedence:
-        explicit args > existing run_context > resolved defaults."""
+        explicit args > existing run_context > resolved defaults.
+
+        ``user_id`` inverts this: an owner already on the run_context wins, so a nested
+        executor cannot re-own a run that arrived scoped to someone else.
+        """
+        if user_id is not None and run_context.user_id is None:
+            run_context.user_id = user_id
+
         if dependencies_provided:
             run_context.dependencies = self.dependencies
         elif run_context.dependencies is None:
@@ -79,12 +88,19 @@ def resolve_run_options(
     dependencies: Optional[Dict[str, Any]] = None,
     knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
     metadata: Optional[Dict[str, Any]] = None,
+    session_metadata: Optional[Dict[str, Any]] = None,
     output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
 ) -> ResolvedRunOptions:
     """Resolve all run options from call-site values and agent defaults.
 
     Reads from ``agent`` but does not mutate it.
+
+    ``session_metadata`` is the session-stored metadata read by the dispatch
+    function; it sits between agent defaults and call-site values in the
+    metadata merge (agent < session < call-site).
     """
+    from copy import deepcopy
+
     from agno.agent._utils import get_effective_filters
     from agno.utils.merge_dict import merge_dictionaries
 
@@ -123,9 +139,14 @@ def resolve_run_options(
         add_session_state_to_context if add_session_state_to_context is not None else agent.add_session_state_to_context
     )
 
-    # dependencies: call-site > agent.dependencies
-    # Defensive copy to prevent dependency resolution from mutating agent defaults
-    if dependencies is not None:
+    # dependencies: merge call-site over agent.dependencies (call-site keys win on conflict).
+    # Runtime context (e.g. Slack/WhatsApp channel ids) overrides static config, but agent-level
+    # template vars and resolver callables are preserved instead of being wholesale-clobbered.
+    # Defensive copy to prevent dependency resolution from mutating agent defaults.
+    resolved_deps: Optional[Dict[str, Any]]
+    if dependencies is not None and agent.dependencies is not None:
+        resolved_deps = {**agent.dependencies, **dependencies}
+    elif dependencies is not None:
         resolved_deps = dependencies.copy()
     elif agent.dependencies is not None:
         resolved_deps = agent.dependencies.copy()
@@ -137,15 +158,16 @@ def resolve_run_options(
     if agent.knowledge_filters or knowledge_filters:
         resolved_filters = get_effective_filters(agent, knowledge_filters=knowledge_filters)
 
-    # metadata: merge call-site + agent.metadata (agent values take precedence)
+    # metadata: layered merge, call-site wins (agent < session < call-site),
+    # matching how dependencies resolve. Each layer is deep-copied before it is
+    # merged, so no nested dict in the result aliases a source dict
+    # (merge_dictionaries recurses in place).
     resolved_metadata: Optional[Dict[str, Any]] = None
-    if metadata is not None and agent.metadata is not None:
-        resolved_metadata = metadata.copy()
-        merge_dictionaries(resolved_metadata, agent.metadata)
-    elif metadata is not None:
-        resolved_metadata = metadata.copy()
-    elif agent.metadata is not None:
-        resolved_metadata = agent.metadata.copy()
+    for layer in (agent.metadata, session_metadata, metadata):
+        if layer is not None:
+            if resolved_metadata is None:
+                resolved_metadata = {}
+            merge_dictionaries(resolved_metadata, deepcopy(layer))
 
     # output_schema: call-site > agent.output_schema
     resolved_output_schema = output_schema if output_schema is not None else agent.output_schema

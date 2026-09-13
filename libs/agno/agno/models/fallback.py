@@ -7,6 +7,7 @@ from typing import Any, AsyncIterator, Callable, Iterator, List, Optional, Union
 
 from agno.exceptions import ContextWindowExceededError, ModelProviderError, ModelRateLimitError
 from agno.models.base import Model
+from agno.models.message import Message
 from agno.models.response import ModelResponse, ModelResponseEvent
 from agno.run.agent import RunOutputEvent
 from agno.run.team import TeamRunOutputEvent
@@ -128,6 +129,32 @@ def _clean_kwargs_for_fallback(kwargs: dict) -> dict:
     return cleaned
 
 
+def _copy_kwargs_with_fresh_messages(kwargs: dict) -> dict:
+    """Copy kwargs, duplicating the messages list so each attempt gets its own.
+
+    Each fallback attempt runs on its own copy so a failed attempt cannot pollute
+    the messages the next attempt (or the caller's list) sees.
+    """
+    attempt = dict(kwargs)
+    if "messages" in attempt:
+        attempt["messages"] = list(attempt["messages"])
+    return attempt
+
+
+def _sync_appended_messages(
+    original_messages: Optional[List[Message]], attempt_messages: Optional[List[Message]], seed_len: int
+) -> None:
+    """Append the messages the fallback model added back onto the caller's list.
+
+    The fallback runs on a copy of the (temporary-stripped) seed, so anything past
+    seed_len is what it appended this turn — the assistant message and any tool
+    messages. Extending keeps them in the caller's run_messages.messages so they
+    are persisted in session history.
+    """
+    if original_messages is not None and attempt_messages is not None:
+        original_messages.extend(attempt_messages[seed_len:])
+
+
 def call_model_with_fallback(
     model: Model,
     fallback_config: Optional[FallbackConfig],
@@ -145,7 +172,13 @@ def call_model_with_fallback(
             raise
         log_warning(f"Primary model '{model.id}' failed. Trying fallback models...: {primary_error}")
         return _try_fallback_models(
-            fallbacks, primary_error, "response", _clean_kwargs_for_fallback(kwargs), model.id, fallback_config
+            fallbacks,
+            primary_error,
+            "response",
+            _clean_kwargs_for_fallback(kwargs),
+            model.id,
+            fallback_config,
+            original_messages=kwargs.get("messages"),
         )
 
 
@@ -163,7 +196,13 @@ async def acall_model_with_fallback(
             raise
         log_warning(f"Primary model '{model.id}' failed. Trying fallback models...: {primary_error}")
         return await _atry_fallback_models(
-            fallbacks, primary_error, "aresponse", _clean_kwargs_for_fallback(kwargs), model.id, fallback_config
+            fallbacks,
+            primary_error,
+            "aresponse",
+            _clean_kwargs_for_fallback(kwargs),
+            model.id,
+            fallback_config,
+            original_messages=kwargs.get("messages"),
         )
 
 
@@ -187,7 +226,12 @@ def call_model_stream_with_fallback(
         log_warning(f"Primary model '{model.id}' failed. Trying fallback models...: {primary_error}")
         yield ModelResponse(event=ModelResponseEvent.fallback_model_activated.value)
         yield from _try_fallback_models_stream(
-            fallbacks, primary_error, _clean_kwargs_for_fallback(kwargs), model.id, fallback_config
+            fallbacks,
+            primary_error,
+            _clean_kwargs_for_fallback(kwargs),
+            model.id,
+            fallback_config,
+            original_messages=kwargs.get("messages"),
         )
 
 
@@ -207,7 +251,12 @@ async def acall_model_stream_with_fallback(
         log_warning(f"Primary model '{model.id}' failed. Trying fallback models...: {primary_error}")
         yield ModelResponse(event=ModelResponseEvent.fallback_model_activated.value)
         async for event in _atry_fallback_models_stream(
-            fallbacks, primary_error, _clean_kwargs_for_fallback(kwargs), model.id, fallback_config
+            fallbacks,
+            primary_error,
+            _clean_kwargs_for_fallback(kwargs),
+            model.id,
+            fallback_config,
+            original_messages=kwargs.get("messages"),
         ):
             yield event
 
@@ -238,12 +287,20 @@ def _try_fallback_models(
     kwargs: dict,
     primary_model_id: str = "",
     fallback_config: Optional[FallbackConfig] = None,
+    original_messages: Optional[List[Message]] = None,
 ) -> ModelResponse:
-    """Try each fallback model in order. Raises the primary error if all fail."""
+    """Try each fallback model in order. Raises the primary error if all fail.
+
+    Messages the successful fallback appends are synced back into original_messages
+    so the fallback's response is persisted in session history.
+    """
+    seed_len = len(kwargs["messages"]) if "messages" in kwargs else 0
     for i, fallback in enumerate(fallback_models):
         try:
             log_warning(f"Trying fallback model {i + 1}/{len(fallback_models)}: {fallback.id}")
-            result = getattr(fallback, method_name)(**kwargs)
+            attempt_kwargs = _copy_kwargs_with_fresh_messages(kwargs)
+            result = getattr(fallback, method_name)(**attempt_kwargs)
+            _sync_appended_messages(original_messages, attempt_kwargs.get("messages"), seed_len)
             _notify_fallback(fallback_config, primary_model_id, fallback.id, primary_error)
             return result
         except ModelProviderError as e:
@@ -259,12 +316,20 @@ async def _atry_fallback_models(
     kwargs: dict,
     primary_model_id: str = "",
     fallback_config: Optional[FallbackConfig] = None,
+    original_messages: Optional[List[Message]] = None,
 ) -> ModelResponse:
-    """Async: try each fallback model in order. Raises the primary error if all fail."""
+    """Async: try each fallback model in order. Raises the primary error if all fail.
+
+    Messages the successful fallback appends are synced back into original_messages
+    so the fallback's response is persisted in session history.
+    """
+    seed_len = len(kwargs["messages"]) if "messages" in kwargs else 0
     for i, fallback in enumerate(fallback_models):
         try:
             log_warning(f"Trying fallback model {i + 1}/{len(fallback_models)}: {fallback.id}")
-            result = await getattr(fallback, method_name)(**kwargs)
+            attempt_kwargs = _copy_kwargs_with_fresh_messages(kwargs)
+            result = await getattr(fallback, method_name)(**attempt_kwargs)
+            _sync_appended_messages(original_messages, attempt_kwargs.get("messages"), seed_len)
             _notify_fallback(fallback_config, primary_model_id, fallback.id, primary_error)
             return result
         except ModelProviderError as e:
@@ -279,12 +344,20 @@ def _try_fallback_models_stream(
     kwargs: dict,
     primary_model_id: str = "",
     fallback_config: Optional[FallbackConfig] = None,
+    original_messages: Optional[List[Message]] = None,
 ) -> Iterator[StreamEvent]:
-    """Try each fallback model stream in order. Raises the primary error if all fail."""
+    """Try each fallback model stream in order. Raises the primary error if all fail.
+
+    Messages the successful fallback appends are synced back into original_messages
+    so the fallback's response is persisted in session history.
+    """
+    seed_len = len(kwargs["messages"]) if "messages" in kwargs else 0
     for i, fallback in enumerate(fallback_models):
         try:
             log_warning(f"Trying fallback model {i + 1}/{len(fallback_models)}: {fallback.id}")
-            yield from fallback.response_stream(**kwargs)
+            attempt_kwargs = _copy_kwargs_with_fresh_messages(kwargs)
+            yield from fallback.response_stream(**attempt_kwargs)
+            _sync_appended_messages(original_messages, attempt_kwargs.get("messages"), seed_len)
             _notify_fallback(fallback_config, primary_model_id, fallback.id, primary_error)
             return
         except ModelProviderError as e:
@@ -299,13 +372,21 @@ async def _atry_fallback_models_stream(
     kwargs: dict,
     primary_model_id: str = "",
     fallback_config: Optional[FallbackConfig] = None,
+    original_messages: Optional[List[Message]] = None,
 ) -> AsyncIterator[StreamEvent]:
-    """Async: try each fallback model stream in order. Raises the primary error if all fail."""
+    """Async: try each fallback model stream in order. Raises the primary error if all fail.
+
+    Messages the successful fallback appends are synced back into original_messages
+    so the fallback's response is persisted in session history.
+    """
+    seed_len = len(kwargs["messages"]) if "messages" in kwargs else 0
     for i, fallback in enumerate(fallback_models):
         try:
             log_warning(f"Trying fallback model {i + 1}/{len(fallback_models)}: {fallback.id}")
-            async for event in fallback.aresponse_stream(**kwargs):
+            attempt_kwargs = _copy_kwargs_with_fresh_messages(kwargs)
+            async for event in fallback.aresponse_stream(**attempt_kwargs):
                 yield event
+            _sync_appended_messages(original_messages, attempt_kwargs.get("messages"), seed_len)
             _notify_fallback(fallback_config, primary_model_id, fallback.id, primary_error)
             return
         except ModelProviderError as e:

@@ -3,11 +3,11 @@ Please first install litellm[proxy] by running: uv pip install 'litellm[proxy]'
 
 Before running this script, you need to start the LiteLLM server:
 
-litellm --model gpt-4o-audio-preview --host 127.0.0.1 --port 4000
+litellm --model gpt-audio --host 127.0.0.1 --port 4000
 """
 
 import requests
-from agno.agent import Agent, RunResponse  # noqa
+from agno.agent import Agent, RunOutput  # noqa
 from agno.media import Audio
 from agno.models.litellm import LiteLLMOpenAI
 
@@ -22,9 +22,9 @@ response.raise_for_status()
 mp3_data = response.content
 
 # Provide the agent with the audio file and get result as text
-# Note: Audio input requires specific audio-enabled models like gpt-4o-audio-preview
+# Note: Audio input requires specific audio-enabled models like gpt-audio
 agent = Agent(
-    model=LiteLLMOpenAI(id="gpt-4o-audio-preview"),
+    model=LiteLLMOpenAI(id="gpt-audio"),
     markdown=True,
 )
 agent.print_response(

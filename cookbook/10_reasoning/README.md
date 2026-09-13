@@ -30,9 +30,19 @@ See the [examples](./tools/).
 
 Reasoning Agents are a new type of multi-agent system developed by Agno that combines chain of thought reasoning with tool use.
 
-You can enable reasoning on any Agent by setting reasoning=True.
+You can enable reasoning on any Agent by providing a `reasoning_model`:
 
-When an Agent with reasoning=True is given a task, a separate “Reasoning Agent” first solves the problem using chain-of-thought. At each step, it calls tools to gather information, validate results, and iterate until it reaches a final answer. Once the Reasoning Agent has a final answer, it hands the results back to the original Agent to validate and provide a response.
+```python
+from agno.agent import Agent
+from agno.models.openai import OpenAIChat
+
+agent = Agent(
+    model=OpenAIChat(id=”gpt-4o”),
+    reasoning_model=OpenAIChat(id=”gpt-4o”),
+)
+```
+
+When an Agent with a `reasoning_model` is given a task, the reasoning model first solves the problem using chain-of-thought. At each step, it calls tools to gather information, validate results, and iterate until it reaches a final answer. Once complete, the results are handed back to the main model to validate and provide a response.
 
 See the [examples](./agents/).
 

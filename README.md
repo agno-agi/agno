@@ -9,206 +9,79 @@
 </div>
 
 <p align="center">
-  Agno turns agents into production software.<br/>
-  Build agents in any framework. Run as a service. Ship to real users.
+  Build, run, and manage agent platforms.<br/>
 </p>
 
-<div align="center">
-  <a href="https://docs.agno.com">Docs</a>
-  &nbsp;•&nbsp;
-  <a href="https://github.com/agno-agi/agno/tree/main/cookbook">Cookbook</a>
-  &nbsp;•&nbsp;
-  <a href="https://docs.agno.com/first-agent">Quickstart</a>
-</div>
+## Introduction
 
-## What is Agno
+Agno is a framework and runtime for agent platforms. Build agents, run them as a service, manage your platform using a web UI.
 
-Agno is the runtime for agentic software. Use it to run agents as a production service.
+- Build your agent platform using the Agno SDK.
+- Run your agent platform using the AgentOS runtime.
+- Manage everything using the AgentOS UI.
 
-Build agents using any framework. Run them as production services with sessions, tracing, scheduling, and RBAC. Manage them from a single control plane.
+Agno allows you to own your agent stack. Maintain control of your data, memory, and security posture (JWT-based RBAC), and turn your agent platform into a learning loop with simulations and usage data.
 
-| Layer | What it does |
-|-------|--------------|
-| **SDK** | Build agents, teams, and workflows with memory, knowledge, guardrails, and 100+ integrations. |
-| **Runtime** | Serve agents in production via a stateless, session-scoped FastAPI backend. |
-| **Control Plane** | Test, monitor, and manage your system from the [AgentOS UI](https://os.agno.com). |
-
-## Quick Start
-
-Wrap a coding agent and serve it as a production API. Same shape across every framework.
-
-### With the Agno SDK
-
-Save as `workbench.py`:
-
-```python
-from agno.agent import Agent
-from agno.db.sqlite import SqliteDb
-from agno.os import AgentOS
-from agno.tools.workspace import Workspace
-
-workbench = Agent(
-    name="Workbench",
-    model="openai:gpt-5.4",
-    tools=[Workspace(".",
-        allowed=["read", "list", "search"],
-        confirm=["write", "edit", "delete", "shell"],
-    )],
-    enable_agentic_memory=True,
-    add_history_to_context=True,
-    num_history_runs=3,
-)
-
-# Serve via AgentOS → streaming, auth, session isolation, API endpoints
-agent_os = AgentOS(agents=[workbench], tracing=True, db=SqliteDb(db_file="agno.db"))
-app = agent_os.get_app()
-```
-
-`Workspace(".")` scopes the agent to the current directory. `read`, `list`, and `search` run freely; `write`, `edit`, `move`, `delete`, and `shell` require human approval.
-
-### With the Claude Agent SDK
-
-```python
-from agno.agents.claude import ClaudeAgent
-from agno.db.sqlite import SqliteDb
-from agno.os import AgentOS
-
-agent = ClaudeAgent(
-    name="Claude Agent",
-    model="claude-opus-4-7",
-    allowed_tools=["Read", "Bash"],
-    permission_mode="acceptEdits",
-)
-
-agent_os = AgentOS(agents=[agent], db=SqliteDb(db_file="agno.db"), tracing=True)
-app = agent_os.get_app()
-```
-
-The same wrapping pattern works for [LangGraph](#) and [DSPy](#).
-
-<details>
-<summary><strong>LangGraph</strong></summary>
-
-```python
-from agno.agents.langgraph import LangGraphAgent
-from agno.db.sqlite import SqliteDb
-from agno.os import AgentOS
-from langchain_openai import ChatOpenAI
-from langgraph.graph import MessagesState, StateGraph
-
-def chatbot(state: MessagesState):
-    return {"messages": [ChatOpenAI(model="gpt-5.4").invoke(state["messages"])]}
-
-graph = StateGraph(MessagesState)
-graph.add_node("chatbot", chatbot)
-graph.set_entry_point("chatbot")
-
-agent = LangGraphAgent(name="LangGraph Chatbot", graph=graph.compile())
-agent_os = AgentOS(agents=[agent], db=SqliteDb(db_file="agno.db"), tracing=True)
-app = agent_os.get_app()
-```
-
-</details>
-
-<details>
-<summary><strong>DSPy</strong></summary>
-
-```python
-import dspy
-from agno.agents.dspy import DSPyAgent
-from agno.db.sqlite import SqliteDb
-from agno.os import AgentOS
-
-dspy.configure(lm=dspy.LM("openai/gpt-5.4"))
-
-agent = DSPyAgent(
-    name="DSPy Assistant",
-    program=dspy.ChainOfThought("question -> answer"),
-)
-
-agent_os = AgentOS(agents=[agent], db=SqliteDb(db_file="agno.db"), tracing=True)
-app = agent_os.get_app()
-```
-
-</details>
-
-### Run it
-
-```bash
-uv pip install -U 'agno[os]' openai
-
-export OPENAI_API_KEY=sk-***
-
-fastapi dev workbench.py
-```
-
-In ~20 lines, you get:
-
-- A FastAPI backend with 50+ endpoints
-- Streaming responses, persistent sessions, per-user isolation
-- Native OpenTelemetry tracing
-- Cron scheduling, human approval flows, and RBAC ready to enable
-
-API at `http://localhost:8000`. OpenAPI spec at `http://localhost:8000/docs`.
-
-## Connect to the AgentOS UI
-
-The [AgentOS UI](https://os.agno.com) is your control plane. Use it to chat with your agents, inspect runs, view traces, manage sessions, and operate the system.
-
-1. Open [os.agno.com](https://os.agno.com) and sign in.
-2. Click **"Connect OS"**
-3. Select **"Local"** to connect to a local AgentOS.
-4. Enter your endpoint URL (default: `http://localhost:8000`).
-5. Name it "Local AgentOS" and click **"Connect"**.
-
-Open Chat, select your agent, and ask:
-
-> Tell me more about the project and the key files
-
-The agent reads your workspace and answers grounded in what it actually finds. Try a follow-up like "create a NOTES.md with three key takeaways". The run pauses for your approval before the file is written, since `write_file` is a confirm-required tool by default.
-
-https://github.com/user-attachments/assets/adb38f55-1d9d-463e-8ca9-966bb6bdc37a
-
-## What AgentOS gives you
-
-- [**Production API**](https://docs.agno.com/runtime/serve-as-api). 50+ endpoints with SSE and websockets to build your product on.
-- [**Storage**](https://docs.agno.com/runtime/storage). Sessions, memory, knowledge, and traces in your own database.
-- [**Context**](https://docs.agno.com/runtime/context). Live context across Slack, Drive, wikis, MCP, and custom sources.
-- [**Human approval**](https://docs.agno.com/runtime/human-approval). Pause runs for user confirmation, admin approval, or external execution.
-- [**Observability**](https://docs.agno.com/runtime/observability). OpenTelemetry tracing, run history, and audit logs out of the box.
-- [**Security & auth**](https://docs.agno.com/runtime/security-and-auth). JWT-based RBAC and multi-user, multi-tenant isolation.
-- [**Interfaces**](https://docs.agno.com/runtime/interfaces). Slack, Telegram, WhatsApp, Discord, AG-UI, A2A, or roll your own.
-- [**Scheduling**](https://docs.agno.com/runtime/scheduling). Cron-based scheduling and background jobs with no external infrastructure.
-- [**Deploy**](https://docs.agno.com/runtime/deploy). Docker, Railway, AWS, GCP. Any container host works.
-
-## What you can build
-
-Three reference agents, all open source, all built on the same primitives:
-
-- [**Coda →**](https://github.com/agno-agi/coda) A Slack-native coding agent that ships PRs from your team chat.
-- [**Dash →**](https://github.com/agno-agi/dash) A self-learning data agent grounded in six layers of context.
-- [**Scout →**](https://github.com/agno-agi/scout) A self-learning context agent that manages enterprise knowledge.
+<img width="3192" height="2038" alt="demo-os" src="https://github.com/user-attachments/assets/6d21e6bc-111f-4b81-ba29-6550fead89b2" />
 
 ## Get started
 
-1. [Read the docs](https://docs.agno.com)
-2. [Build your first agent](https://docs.agno.com/first-agent)
-3. Explore the [cookbook](https://github.com/agno-agi/agno/tree/main/cookbook)
+Hand this prompt to your coding agent (Claude Code, Cursor, Codex):
 
-## IDE integration
+```text
+Help me set up my agent platform.
 
-Add Agno docs as a source in your coding tools:
+Clone https://github.com/agno-agi/agentos-railway into a folder called
+agent-platform, cd in, read the README, and follow the get started guide.
+```
 
-**Cursor:** Settings → Indexing & Docs → Add `https://docs.agno.com/llms-full.txt`
+Your coding agent will set up your agent platform and run it locally using Docker, giving you a REST API for serving your agents, a Postgres database for storing your data and traces, an MCP server, and a control plane.
 
-Also works with VSCode, Windsurf, and similar tools.
+Deploying somewhere else? Use the same prompt but point it to a different repo. The starter templates are identical except for the deploy scripts: swap [agentos-railway](https://github.com/agno-agi/agentos-railway) for [agentos-docker](https://github.com/agno-agi/agentos-docker), [agentos-aws](https://github.com/agno-agi/agentos-aws), [agentos-gcp](https://github.com/agno-agi/agentos-gcp), [agentos-azure](https://github.com/agno-agi/agentos-azure), [agentos-fly](https://github.com/agno-agi/agentos-fly), [agentos-render](https://github.com/agno-agi/agentos-render), [agentos-modal](https://github.com/agno-agi/agentos-modal), or [agentos-helm](https://github.com/agno-agi/agentos-helm).
+
+### Prefer to code by hand?
+
+- [Build your first agent in 20 lines of code.](https://docs.agno.com/first-agent)
+- [Build your own agent platform.](https://docs.agno.com/agent-platform/overview)
+- [Read the docs.](https://docs.agno.com)
+
+## Features
+
+- [Production API](https://docs.agno.com/runtime/serve-as-api). 50+ endpoints with SSE and websockets to build a product on top.
+- [Storage](https://docs.agno.com/runtime/storage). Store sessions, memory, knowledge, and traces in your own database.
+- [100+ integrations](https://docs.agno.com/tools/toolkits/overview). Connect to GitHub, Slack, Postgres, and more using pre-built toolkits.
+- [Context Providers](https://docs.agno.com/runtime/context). Access live data from Slack, Drive, wikis, MCP, and custom sources.
+- [Human approval](https://docs.agno.com/runtime/human-approval). Pause runs for user confirmation. Block tools that require admin approval.
+- [Observability](https://docs.agno.com/runtime/observability). Monitor with OpenTelemetry tracing, run history, and audit logs.
+- [Security](https://docs.agno.com/runtime/security-and-auth). Get JWT-based RBAC and multi-user, multi-tenant isolation out of the box.
+- [Interfaces](https://docs.agno.com/runtime/interfaces). Expose your agents via Slack, Telegram, WhatsApp, Discord, AG-UI, A2A.
+- [Scheduling](https://docs.agno.com/runtime/scheduling). Cron-based scheduling and background jobs with no external infrastructure.
+- [Deploy anywhere](https://docs.agno.com/runtime/deploy). Run on any cloud platform that runs containers. Docker, Railway, AWS, GCP.
+
+## Use Agno with your coding agent
+
+Two options:
+
+1. Recommended: Add Agno docs as an MCP server. Add [docs.agno.com/mcp](https://docs.agno.com/mcp) to your favourite coding agent.
+2. Add Agno docs as an indexed source. In Cursor: Settings → Indexing & Docs → Add `https://docs.agno.com/llms-full.txt`. Also works in VSCode, Windsurf, and similar tools.
+
+Read the full guide [here](https://docs.agno.com/coding-agents).
+
+## Community
+
+- [X](https://x.com/AgnoAgi): follow for releases and demos
+- [Newsletter](https://www.agno.com/the-agno-loop-newsletter): monthly updates on what's shipping
 
 ## Contributing
 
 See the [contributing guide](https://github.com/agno-agi/agno/blob/main/CONTRIBUTING.md).
 
+## License
+
+Agno is distributed under the [Apache-2.0 license](LICENSE).
+
 ## Telemetry
 
-Agno logs which model providers are used to prioritize updates. Disable with `AGNO_TELEMETRY=false`.
+Agno sends a telemetry event per agent run so we know which model providers to prioritize. Prompts, messages, and outputs are never sent. Disable by setting `AGNO_TELEMETRY=false`.
 
 <p align="right"><a href="#top">↑ Back to top</a></p>

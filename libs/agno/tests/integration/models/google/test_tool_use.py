@@ -43,7 +43,9 @@ def test_tool_use_stream():
         telemetry=False,
     )
 
-    response_stream = agent.run("What is the weather in Tokyo?", stream=True, stream_events=True)
+    response_stream = agent.run(
+        "Use the get_weather tool to check the weather in Tokyo.", stream=True, stream_events=True
+    )
 
     responses = []
     tool_call_seen = False
@@ -96,7 +98,9 @@ async def test_async_tool_use_stream():
         telemetry=False,
     )
 
-    response_stream = agent.arun("What is the weather in Tokyo?", stream=True, stream_events=True)
+    response_stream = agent.arun(
+        "Use the get_weather tool to check the weather in Tokyo.", stream=True, stream_events=True
+    )
 
     responses = []
     tool_call_seen = False
@@ -158,6 +162,10 @@ def test_tool_use_tool_choice_auto():
     assert response.content is not None
 
 
+# Known Gemini issue: the model can answer a native-structured-output request with a
+# function_call part and the run then never completes. Bound the test so a hang fails
+# in 2 minutes instead of stalling the CI job into its 30-minute timeout.
+@pytest.mark.timeout(120)
 def test_tool_use_with_native_structured_outputs():
     class StockPrice(BaseModel):
         price: float = Field(..., description="The price of the stock")

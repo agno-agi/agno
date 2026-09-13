@@ -27,6 +27,7 @@ Requires:
 
     Optional:
     SLACK_TOKEN         (falls back here if SLACK_BOT_TOKEN isn't set)
+    SLACK_USER_TOKEN    (user token; xoxp-...) for search_messages API
     SLACK_WRITE_CHANNEL (e.g. `#agno-test`) — opt in to the write demo
 """
 
@@ -41,7 +42,7 @@ from agno.models.openai import OpenAIResponses
 # ---------------------------------------------------------------------------
 # Create the provider (token read from SLACK_BOT_TOKEN / SLACK_TOKEN)
 # ---------------------------------------------------------------------------
-slack = SlackContextProvider(model=OpenAIResponses(id="gpt-5.4-mini"))
+slack = SlackContextProvider(model=OpenAIResponses(id="gpt-5.6-luna"))
 
 # ---------------------------------------------------------------------------
 # Create the Agent

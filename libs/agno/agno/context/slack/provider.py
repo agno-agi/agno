@@ -39,30 +39,61 @@ if TYPE_CHECKING:
 
 
 class SlackContextProvider(ContextProvider):
-    """Read + write access to a Slack workspace via two tools."""
+    """Read + write access to a Slack workspace via two tools.
+
+    ``write_tools`` swaps the write sub-agent's toolset (default: a
+    posting-scoped ``SlackTools``). The default ``write_instructions``
+    name the default tools, so a custom ``write_tools`` usually needs a
+    matching ``write_instructions`` override. ``mode=ContextMode.tools``
+    is a read-only surface and deliberately ignores ``write_tools``.
+    """
 
     def __init__(
         self,
         *,
         token: str | None = None,
+        user_token: str | None = None,
         id: str = "slack",
         name: str = "Slack",
         read_instructions: str | None = None,
         write_instructions: str | None = None,
+        write_tools: list | None = None,
         enable_media_tools: bool = False,
         mode: ContextMode = ContextMode.default,
         model: Model | None = None,
+        query_timeout: float | None = None,
         read: bool = True,
         write: bool = True,
+        stream_sub_agent_events: bool = True,
     ) -> None:
-        super().__init__(id=id, name=name, mode=mode, model=model, read=read, write=write)
+        super().__init__(
+            id=id,
+            name=name,
+            mode=mode,
+            model=model,
+            query_timeout=query_timeout,
+            read=read,
+            write=write,
+            stream_sub_agent_events=stream_sub_agent_events,
+        )
         self.token = token or getenv("SLACK_BOT_TOKEN") or getenv("SLACK_TOKEN")
         if not self.token:
             raise ValueError("SlackContextProvider: SLACK_BOT_TOKEN (or SLACK_TOKEN) is required")
+
+        # Resolve user token from param, env, or primary token (backward compat)
+        _user_token = user_token or getenv("SLACK_USER_TOKEN")
+        if not _user_token and ("xoxp-" in self.token):
+            # Handles both xoxp-... and rotated xoxe.xoxp-... formats
+            _user_token = self.token
+        self._user_token = _user_token
+        self._enable_search_messages = self._user_token is not None
         self.read_instructions_text = read_instructions
         self.write_instructions_text = (
             write_instructions if write_instructions is not None else DEFAULT_SLACK_WRITE_INSTRUCTIONS
         )
+        # Injected write toolset (distinct from _write_tools, the lazy
+        # SlackTools cache the default path builds).
+        self.write_tools = write_tools
         self.enable_media_tools = enable_media_tools
         self._bot_read_tools: SlackTools | None = None
         self._assisted_read_tools: SlackTools | None = None
@@ -160,6 +191,12 @@ class SlackContextProvider(ContextProvider):
     def _has_action_token(run_context: RunContext | None) -> bool:
         return bool(run_context and run_context.metadata and run_context.metadata.get("action_token"))
 
+    async def _aget_query_agent(self, run_context):
+        return self._select_read_agent(run_context)
+
+    async def _aget_update_agent(self, run_context):
+        return self._ensure_write_agent()
+
     def _select_read_agent(self, run_context: RunContext | None) -> Agent:
         if self._has_action_token(run_context):
             return self._ensure_assisted_read_agent()
@@ -176,13 +213,14 @@ class SlackContextProvider(ContextProvider):
         if self._bot_read_tools is None:
             self._bot_read_tools = SlackTools(
                 token=self.token,
+                user_token=self._user_token,
                 enable_send_message=False,
                 enable_send_message_thread=False,
                 enable_upload_file=False,
                 enable_download_file=self.enable_media_tools,
                 enable_list_channels=True,
                 enable_get_channel_history=True,
-                enable_search_messages=True,
+                enable_search_messages=self._enable_search_messages,
                 enable_search_workspace=False,
                 enable_get_thread=True,
                 enable_list_users=True,
@@ -195,13 +233,14 @@ class SlackContextProvider(ContextProvider):
         if self._assisted_read_tools is None:
             self._assisted_read_tools = SlackTools(
                 token=self.token,
+                user_token=self._user_token,
                 enable_send_message=False,
                 enable_send_message_thread=False,
                 enable_upload_file=False,
                 enable_download_file=self.enable_media_tools,
                 enable_list_channels=True,
                 enable_get_channel_history=True,
-                enable_search_messages=True,
+                enable_search_messages=self._enable_search_messages,
                 enable_search_workspace=True,
                 enable_get_thread=True,
                 enable_list_users=True,
@@ -256,12 +295,13 @@ class SlackContextProvider(ContextProvider):
 
     def _ensure_write_agent(self) -> Agent:
         if self._write_agent is None:
+            tools = self.write_tools if self.write_tools is not None else [self._ensure_write_tools()]
             self._write_agent = Agent(
                 id=f"{self.id}-write",
                 name=f"{self.name} Write",
                 model=self.model,
                 instructions=self.write_instructions_text,
-                tools=[self._ensure_write_tools()],
+                tools=tools,
                 markdown=True,
             )
         return self._write_agent

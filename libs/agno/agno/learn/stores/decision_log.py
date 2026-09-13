@@ -17,13 +17,12 @@ Scope:
 - Can be queried by agent_id, session_id, or time range
 
 Supported Modes:
-- ALWAYS: Automatic extraction of decisions from tool calls
-- AGENTIC: Agent explicitly logs decisions via tools
+- AGENTIC: the agent logs decisions via tools.
 """
 
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from os import getenv
 from textwrap import dedent
 from typing import Any, Callable, List, Optional, Union
@@ -31,7 +30,7 @@ from typing import Any, Callable, List, Optional, Union
 from agno.learn.config import DecisionLogConfig, LearningMode
 from agno.learn.schemas import DecisionLog
 from agno.learn.stores.protocol import LearningStore
-from agno.learn.utils import from_dict_safe, to_dict_safe
+from agno.learn.utils import from_dict_safe, to_dict_safe, values_match_query
 from agno.utils.log import (
     log_debug,
     log_warning,
@@ -41,7 +40,6 @@ from agno.utils.log import (
 
 try:
     from agno.db.base import AsyncBaseDb, BaseDb
-    from agno.models.message import Message
 except ImportError:
     pass
 
@@ -64,9 +62,13 @@ class DecisionLogStore(LearningStore):
     # State tracking (internal)
     decisions_updated: bool = field(default=False, init=False)
     _schema: Any = field(default=None, init=False)
+    _degraded_search_logged: bool = field(default=False, init=False)
 
     def __post_init__(self):
         self._schema = self.config.schema or DecisionLog
+
+        if self.config.mode != LearningMode.AGENTIC:
+            log_warning("DecisionLogStore is AGENTIC-only: the agent logs decisions via tools. Proceeding as AGENTIC.")
 
     # =========================================================================
     # LearningStore Protocol Implementation
@@ -93,9 +95,15 @@ class DecisionLogStore(LearningStore):
     ) -> Optional[List[DecisionLog]]:
         """Retrieve recent decisions.
 
+        A decision log is worth having because it crosses sessions: the run's
+        session_id is accepted and deliberately NOT used as a filter, or the
+        injected block would say "No recent decisions logged" to every new
+        session while the store is full. Explicit callers scope with
+        search(session_id=...).
+
         Args:
             agent_id: Filter by agent (optional).
-            session_id: Filter by session (optional).
+            session_id: Accepted for the store protocol; not used as a filter.
             decision_type: Filter by decision type (optional).
             limit: Maximum number of decisions to return.
             days: Only return decisions from last N days.
@@ -106,7 +114,6 @@ class DecisionLogStore(LearningStore):
         """
         return self.search(
             agent_id=agent_id,
-            session_id=session_id,
             decision_type=decision_type,
             limit=limit,
             days=days,
@@ -124,78 +131,25 @@ class DecisionLogStore(LearningStore):
         """Async version of recall."""
         return await self.asearch(
             agent_id=agent_id,
-            session_id=session_id,
             decision_type=decision_type,
             limit=limit,
             days=days,
         )
 
-    def process(
-        self,
-        messages: List[Any],
-        agent_id: Optional[str] = None,
-        session_id: Optional[str] = None,
-        user_id: Optional[str] = None,
-        team_id: Optional[str] = None,
-        **kwargs,
-    ) -> None:
-        """Extract decisions from messages (tool calls, etc).
+    def process(self, messages: List[Any], **kwargs) -> None:
+        """No-op: decision logging is AGENTIC-only, capture happens through the tools."""
+        return
 
-        In ALWAYS mode, this extracts decisions from tool calls and
-        significant response choices. In AGENTIC mode, this is a no-op
-        as decisions are logged explicitly via tools.
-
-        Args:
-            messages: Conversation messages to analyze.
-            agent_id: Agent context.
-            session_id: Session context.
-            user_id: User context.
-            team_id: Team context.
-            **kwargs: Additional context (ignored).
-        """
-        if self.config.mode != LearningMode.ALWAYS:
-            return
-
-        if not messages:
-            return
-
-        # Extract decisions from tool calls in messages
-        self._extract_decisions_from_messages(
-            messages=messages,
-            agent_id=agent_id,
-            session_id=session_id,
-            user_id=user_id,
-            team_id=team_id,
-        )
-
-    async def aprocess(
-        self,
-        messages: List[Any],
-        agent_id: Optional[str] = None,
-        session_id: Optional[str] = None,
-        user_id: Optional[str] = None,
-        team_id: Optional[str] = None,
-        **kwargs,
-    ) -> None:
-        """Async version of process."""
-        if self.config.mode != LearningMode.ALWAYS:
-            return
-
-        if not messages:
-            return
-
-        await self._aextract_decisions_from_messages(
-            messages=messages,
-            agent_id=agent_id,
-            session_id=session_id,
-            user_id=user_id,
-            team_id=team_id,
-        )
+    async def aprocess(self, messages: List[Any], **kwargs) -> None:
+        """Async version of process (no-op)."""
+        return
 
     def build_context(self, data: Any) -> str:
-        """Build context for the agent.
+        """Build the DATA context for the agent.
 
         Formats recent decisions for injection into the agent's system prompt.
+        Data only - the how-to-use guidance lives in instructions(); the
+        automatic path concatenates the two at the injection site.
 
         Args:
             data: List of decisions from recall().
@@ -208,9 +162,6 @@ class DecisionLogStore(LearningStore):
                 return dedent("""\
                     <decision_log>
                     No recent decisions logged.
-
-                    Use `log_decision` to record significant decisions with reasoning.
-                    Use `search_decisions` to find past decisions.
                     </decision_log>""")
             return ""
 
@@ -235,16 +186,23 @@ class DecisionLogStore(LearningStore):
                     context += f"  Outcome: {decision['outcome']}\n"
                 context += "\n"
 
-        if self._should_expose_tools:
-            context += dedent("""
-                Use `log_decision` to record new decisions.
-                Use `search_decisions` to find past decisions.
-                Use `record_outcome` to update a decision with its outcome.
-            """)
-
         context += "</decision_log>"
 
         return context
+
+    def instructions(self) -> str:
+        """Agent-facing guidance for this store: when to log and search decisions.
+
+        Guidance only - the recalled decisions live in build_context().
+        """
+        if not self._should_expose_tools:
+            return ""
+        return dedent("""\
+            <decision_log_instructions>
+            Use `log_decision` to record significant decisions with reasoning.
+            Use `search_decisions` to find past decisions.
+            Use `record_outcome` to update a decision with its outcome.
+            </decision_log_instructions>""")
 
     def get_tools(
         self,
@@ -460,7 +418,7 @@ class DecisionLogStore(LearningStore):
                     user_id=user_id,
                     agent_id=agent_id,
                     team_id=team_id,
-                    created_at=datetime.utcnow().isoformat(),
+                    created_at=datetime.now(timezone.utc).isoformat(),
                 )
 
                 store.save(decision=decision_obj)
@@ -508,7 +466,7 @@ class DecisionLogStore(LearningStore):
                     user_id=user_id,
                     agent_id=agent_id,
                     team_id=team_id,
-                    created_at=datetime.utcnow().isoformat(),
+                    created_at=datetime.now(timezone.utc).isoformat(),
                 )
 
                 await store.asave(decision=decision_obj)
@@ -710,6 +668,10 @@ class DecisionLogStore(LearningStore):
     ) -> List[DecisionLog]:
         """Search decisions with filters.
 
+        Text queries route through the db's server-side search_learnings; the
+        client-side scan is only the fallback for backends without it.
+        decision_type and days filters are applied client-side either way.
+
         Args:
             query: Text to search for.
             agent_id: Filter by agent.
@@ -728,59 +690,35 @@ class DecisionLogStore(LearningStore):
         if not isinstance(self.db, BaseDb):
             return []
 
-        try:
-            # Get all matching records
-            results = self.db.get_learnings(
-                learning_type=self.learning_type,
-                agent_id=agent_id,
-                limit=limit * 3,  # Over-fetch for filtering
-            )
+        # Headroom for the client-side verification and decision_type/days filters.
+        fetch_limit = limit * 3 if (query or decision_type or days) else limit
 
-            if not results:
-                return []
+        if query:
+            if not callable(getattr(self.db, "search_learnings", None)):
+                self._log_degraded_search_once()
+                results = self._fetch_recent_rows(agent_id=agent_id, session_id=session_id, limit=limit * 3)
+            else:
+                try:
+                    results = self.db.search_learnings(
+                        query=query,
+                        learning_type=self.learning_type,
+                        agent_id=agent_id,
+                        session_id=session_id,
+                        limit=fetch_limit,
+                    )
+                except NotImplementedError:
+                    self._log_degraded_search_once()
+                    results = self._fetch_recent_rows(agent_id=agent_id, session_id=session_id, limit=limit * 3)
+        else:
+            results = self._fetch_recent_rows(agent_id=agent_id, session_id=session_id, limit=fetch_limit)
 
-            decisions = []
-            cutoff_date = None
-            if days:
-                cutoff_date = datetime.utcnow() - timedelta(days=days)
-
-            for record in results:
-                content = record.get("content") if isinstance(record, dict) else None
-                if not content:
-                    continue
-
-                decision = from_dict_safe(DecisionLog, content)
-                if not decision:
-                    continue
-
-                # Apply filters
-                if decision_type and decision.decision_type != decision_type:
-                    continue
-
-                if cutoff_date and decision.created_at:
-                    try:
-                        created = datetime.fromisoformat(decision.created_at.replace("Z", "+00:00"))
-                        if created < cutoff_date:
-                            continue
-                    except (ValueError, AttributeError):
-                        pass
-
-                if query:
-                    query_lower = query.lower()
-                    text = decision.to_text().lower()
-                    if query_lower not in text:
-                        continue
-
-                decisions.append(decision)
-
-                if len(decisions) >= limit:
-                    break
-
-            return decisions
-
-        except Exception as e:
-            log_debug(f"DecisionLogStore.search failed: {e}")
-            return []
+        return self._filter_decisions(
+            results or [],
+            query=query,
+            decision_type=decision_type,
+            days=days,
+            limit=limit,
+        )
 
     async def asearch(
         self,
@@ -795,64 +733,143 @@ class DecisionLogStore(LearningStore):
         if not self.db:
             return []
 
+        fetch_limit = limit * 3 if (query or decision_type or days) else limit
+
+        if query:
+            if not callable(getattr(self.db, "search_learnings", None)):
+                self._log_degraded_search_once()
+                results = await self._afetch_recent_rows(agent_id=agent_id, session_id=session_id, limit=limit * 3)
+            else:
+                try:
+                    if isinstance(self.db, AsyncBaseDb):
+                        results = await self.db.search_learnings(
+                            query=query,
+                            learning_type=self.learning_type,
+                            agent_id=agent_id,
+                            session_id=session_id,
+                            limit=fetch_limit,
+                        )
+                    else:
+                        results = self.db.search_learnings(
+                            query=query,
+                            learning_type=self.learning_type,
+                            agent_id=agent_id,
+                            session_id=session_id,
+                            limit=fetch_limit,
+                        )
+                except NotImplementedError:
+                    self._log_degraded_search_once()
+                    results = await self._afetch_recent_rows(agent_id=agent_id, session_id=session_id, limit=limit * 3)
+        else:
+            results = await self._afetch_recent_rows(agent_id=agent_id, session_id=session_id, limit=fetch_limit)
+
+        return self._filter_decisions(
+            results or [],
+            query=query,
+            decision_type=decision_type,
+            days=days,
+            limit=limit,
+        )
+
+    def _log_degraded_search_once(self) -> None:
+        if not self._degraded_search_logged:
+            self._degraded_search_logged = True
+            log_warning(
+                "DecisionLogStore: this db backend has no search_learnings implementation; "
+                "falling back to a client-side scan over the most recently updated rows. "
+                "Search quality degrades as the store grows."
+            )
+
+    def _fetch_recent_rows(self, agent_id: Optional[str], limit: int, session_id: Optional[str] = None) -> List[Any]:
+        # Callers guard isinstance(self.db, BaseDb), so the call is sync here.
+        if not isinstance(self.db, BaseDb):
+            return []
+        try:
+            return (
+                self.db.get_learnings(
+                    learning_type=self.learning_type,
+                    agent_id=agent_id,
+                    session_id=session_id,
+                    limit=limit,
+                )
+                or []
+            )
+        except Exception as e:
+            log_debug(f"DecisionLogStore._fetch_recent_rows failed: {e}")
+            return []
+
+    async def _afetch_recent_rows(
+        self, agent_id: Optional[str], limit: int, session_id: Optional[str] = None
+    ) -> List[Any]:
         try:
             if isinstance(self.db, AsyncBaseDb):
-                results = await self.db.get_learnings(
+                rows = await self.db.get_learnings(
                     learning_type=self.learning_type,
                     agent_id=agent_id,
-                    limit=limit * 3,
+                    session_id=session_id,
+                    limit=limit,
                 )
             else:
-                results = self.db.get_learnings(
+                rows = self.db.get_learnings(  # type: ignore[union-attr]
                     learning_type=self.learning_type,
                     agent_id=agent_id,
-                    limit=limit * 3,
+                    session_id=session_id,
+                    limit=limit,
                 )
-
-            if not results:
-                return []
-
-            decisions = []
-            cutoff_date = None
-            if days:
-                cutoff_date = datetime.utcnow() - timedelta(days=days)
-
-            for record in results:
-                content = record.get("content") if isinstance(record, dict) else None
-                if not content:
-                    continue
-
-                decision = from_dict_safe(DecisionLog, content)
-                if not decision:
-                    continue
-
-                if decision_type and decision.decision_type != decision_type:
-                    continue
-
-                if cutoff_date and decision.created_at:
-                    try:
-                        created = datetime.fromisoformat(decision.created_at.replace("Z", "+00:00"))
-                        if created < cutoff_date:
-                            continue
-                    except (ValueError, AttributeError):
-                        pass
-
-                if query:
-                    query_lower = query.lower()
-                    text = decision.to_text().lower()
-                    if query_lower not in text:
-                        continue
-
-                decisions.append(decision)
-
-                if len(decisions) >= limit:
-                    break
-
-            return decisions
-
+            return rows or []
         except Exception as e:
-            log_debug(f"DecisionLogStore.asearch failed: {e}")
+            log_debug(f"DecisionLogStore._afetch_recent_rows failed: {e}")
             return []
+
+    def _filter_decisions(
+        self,
+        records: List[Any],
+        query: Optional[str],
+        decision_type: Optional[str],
+        days: Optional[int],
+        limit: int,
+    ) -> List[DecisionLog]:
+        decisions: List[DecisionLog] = []
+        cutoff_date = None
+        if days:
+            cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
+
+        for record in records:
+            content = record.get("content") if isinstance(record, dict) else None
+            if not content:
+                continue
+
+            decision = from_dict_safe(DecisionLog, content)
+            if not decision:
+                continue
+
+            if decision_type and decision.decision_type != decision_type:
+                continue
+
+            if cutoff_date and decision.created_at:
+                try:
+                    created = datetime.fromisoformat(decision.created_at.replace("Z", "+00:00"))
+                    # A stored timestamp without a zone is UTC.
+                    if created.tzinfo is None:
+                        created = created.replace(tzinfo=timezone.utc)
+                    if created < cutoff_date:
+                        continue
+                except (ValueError, AttributeError):
+                    pass
+
+            if query:
+                # Value-scoped verification: the db-side ILIKE matched the whole
+                # serialized document (keys included); this check keeps the match
+                # surface at the record's values, across every field.
+                if not values_match_query(content, query):
+                    continue
+
+            decisions.append(decision)
+
+            if len(decisions) >= limit:
+                break
+
+        return decisions
 
     def get(self, decision_id: str) -> Optional[DecisionLog]:
         """Get a specific decision by ID."""
@@ -996,7 +1013,7 @@ class DecisionLogStore(LearningStore):
 
         decision.outcome = outcome
         decision.outcome_quality = outcome_quality
-        decision.updated_at = datetime.utcnow().isoformat()
+        decision.updated_at = datetime.now(timezone.utc).isoformat()
 
         self.save(decision=decision)
         return True
@@ -1014,86 +1031,10 @@ class DecisionLogStore(LearningStore):
 
         decision.outcome = outcome
         decision.outcome_quality = outcome_quality
-        decision.updated_at = datetime.utcnow().isoformat()
+        decision.updated_at = datetime.now(timezone.utc).isoformat()
 
         await self.asave(decision=decision)
         return True
-
-    # =========================================================================
-    # Extraction (ALWAYS mode)
-    # =========================================================================
-
-    def _extract_decisions_from_messages(
-        self,
-        messages: List["Message"],
-        agent_id: Optional[str] = None,
-        session_id: Optional[str] = None,
-        user_id: Optional[str] = None,
-        team_id: Optional[str] = None,
-    ) -> None:
-        """Extract decisions from tool calls in messages."""
-        for msg in messages:
-            if not hasattr(msg, "tool_calls") or not msg.tool_calls:
-                continue
-
-            for tool_call in msg.tool_calls:
-                tool_name = getattr(tool_call, "name", None) or getattr(
-                    getattr(tool_call, "function", None), "name", None
-                )
-
-                if not tool_name:
-                    continue
-
-                decision_id = f"dec_{uuid.uuid4().hex[:8]}"
-                decision = DecisionLog(
-                    id=decision_id,
-                    decision=f"Called tool: {tool_name}",
-                    decision_type="tool_selection",
-                    context="During conversation with user",
-                    session_id=session_id,
-                    user_id=user_id,
-                    agent_id=agent_id,
-                    team_id=team_id,
-                    created_at=datetime.utcnow().isoformat(),
-                )
-
-                self.save(decision=decision)
-
-    async def _aextract_decisions_from_messages(
-        self,
-        messages: List["Message"],
-        agent_id: Optional[str] = None,
-        session_id: Optional[str] = None,
-        user_id: Optional[str] = None,
-        team_id: Optional[str] = None,
-    ) -> None:
-        """Async version of _extract_decisions_from_messages."""
-        for msg in messages:
-            if not hasattr(msg, "tool_calls") or not msg.tool_calls:
-                continue
-
-            for tool_call in msg.tool_calls:
-                tool_name = getattr(tool_call, "name", None) or getattr(
-                    getattr(tool_call, "function", None), "name", None
-                )
-
-                if not tool_name:
-                    continue
-
-                decision_id = f"dec_{uuid.uuid4().hex[:8]}"
-                decision = DecisionLog(
-                    id=decision_id,
-                    decision=f"Called tool: {tool_name}",
-                    decision_type="tool_selection",
-                    context="During conversation with user",
-                    session_id=session_id,
-                    user_id=user_id,
-                    agent_id=agent_id,
-                    team_id=team_id,
-                    created_at=datetime.utcnow().isoformat(),
-                )
-
-                await self.asave(decision=decision)
 
     # =========================================================================
     # Representation

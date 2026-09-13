@@ -14,7 +14,7 @@ from agno.models.openai.responses import OpenAIResponses
 # ---------------------------------------------------------------------------
 def run_example() -> None:
     agent = Agent(
-        model=OpenAIResponses(id="gpt-4o-mini"),
+        model=OpenAIResponses(id="gpt-5.6-luna"),
         reasoning_model=OpenAIResponses(id="gpt-4.1"),
     )
     agent.print_response(

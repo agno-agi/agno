@@ -1,7 +1,7 @@
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from os import getenv
-from typing import Any, Dict, Iterator, List, Literal, Optional, Type, Union
+from typing import Any, Dict, Iterator, List, Optional, Type, Union
 from uuid import uuid4
 
 import httpx
@@ -9,9 +9,10 @@ from pydantic import BaseModel
 
 from agno.exceptions import ContextWindowExceededError, ModelAuthenticationError, ModelProviderError
 from agno.media import Audio
+from agno.metrics import MessageMetrics
 from agno.models.base import Model
-from agno.models.message import Message
-from agno.models.metrics import MessageMetrics
+from agno.models.message import Citations, Message, UrlCitation
+from agno.models.openai.types import ReasoningEffort, ServiceTier, Verbosity
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 from agno.run.team import TeamRunOutput
@@ -47,8 +48,8 @@ class OpenAIChat(Model):
 
     # Request parameters
     store: Optional[bool] = None
-    reasoning_effort: Optional[str] = None
-    verbosity: Optional[Literal["low", "medium", "high"]] = None
+    reasoning_effort: Optional[ReasoningEffort] = None
+    verbosity: Optional[Verbosity] = None
     metadata: Optional[Dict[str, Any]] = None
     frequency_penalty: Optional[float] = None
     logit_bias: Optional[Any] = None
@@ -66,7 +67,7 @@ class OpenAIChat(Model):
     temperature: Optional[float] = None
     user: Optional[str] = None
     top_p: Optional[float] = None
-    service_tier: Optional[str] = None  # "auto" | "default" | "flex" | "priority", defaults to "auto" when not set
+    service_tier: Optional[ServiceTier] = None  # Defaults to "auto" when not set
     strict_output: bool = True  # When True, guarantees schema adherence for structured outputs. When False, attempts to follow schema as a guide but may occasionally deviate
     extra_headers: Optional[Any] = None
     extra_query: Optional[Any] = None
@@ -248,7 +249,7 @@ class OpenAIChat(Model):
         # Add tools
         if tools is not None and len(tools) > 0:
             # Remove unsupported fields for OpenAILike models
-            if self.provider in ["AIMLAPI", "Fireworks", "Nvidia", "VLLM"]:
+            if self.provider in ["AIMLAPI", "Cloudflare", "Fireworks", "MiniMax", "Nvidia", "VLLM"]:
                 for tool in tools:
                     if tool.get("type") == "function":
                         for _internal_key in ("requires_confirmation", "external_execution", "approval_type"):
@@ -840,6 +841,21 @@ class OpenAIChat(Model):
             except Exception as e:
                 log_warning(f"Error processing tool calls: {str(e)}")
 
+        # Add citations
+        annotations = getattr(response_message, "annotations", None)
+        if annotations:
+            citations = Citations()
+            citations.raw = [annotation.model_dump() for annotation in annotations]
+            for annotation in annotations:
+                if annotation.type == "url_citation" and annotation.url_citation is not None:
+                    if citations.urls is None:
+                        citations.urls = []
+                    citations.urls.append(
+                        UrlCitation(url=annotation.url_citation.url, title=annotation.url_citation.title)
+                    )
+            if citations.urls or citations.documents:
+                model_response.citations = citations
+
         # Add audio transcript to content if available
         response_audio: Optional[ChatCompletionAudio] = response_message.audio
         if response_audio and response_audio.transcript and not model_response.content:
@@ -919,6 +935,22 @@ class OpenAIChat(Model):
                 # Add tool calls
                 if choice_delta.tool_calls is not None:
                     model_response.tool_calls = choice_delta.tool_calls  # type: ignore
+
+                # Add citations (streaming deltas surface annotations as dicts via model_extra)
+                annotations = getattr(choice_delta, "annotations", None)
+                if annotations:
+                    citations = Citations()
+                    citations.raw = list(annotations)
+                    for annotation in annotations:
+                        url_citation = annotation.get("url_citation") if isinstance(annotation, dict) else None
+                        if url_citation is not None:
+                            if citations.urls is None:
+                                citations.urls = []
+                            citations.urls.append(
+                                UrlCitation(url=url_citation.get("url"), title=url_citation.get("title"))
+                            )
+                    if citations.urls or citations.documents:
+                        model_response.citations = citations
 
                 if hasattr(choice_delta, "reasoning_content") and choice_delta.reasoning_content is not None:
                     model_response.reasoning_content = choice_delta.reasoning_content

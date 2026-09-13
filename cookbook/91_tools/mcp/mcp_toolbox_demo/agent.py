@@ -84,7 +84,6 @@ async def run_agent_manual_loading(message: str) -> None:
             ),
             markdown=True,
             add_history_to_context=True,
-            debug_mode=True,
         )
 
         await agent.acli_app(input=message, stream=True)

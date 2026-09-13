@@ -160,11 +160,29 @@ def test_get_table_name_from_path_special_characters(duckdb_tools_instance):
         ("/path/to/file with spaces.json", "file_with_spaces"),
         ("/path/to/complex-file.name.data.csv", "complex_file_name_data"),
         ("s3://bucket/sub/folder/test-data.parquet", "test_data"),
+        ("/path/to/2024-report.csv", "_2024_report"),
+        ("/path/to/weird#name.csv", "weird_name"),
+        ("/path/to/team's-data.csv", "team_s_data"),
+        ("/path/to/2024 team's-data.csv", "_2024_team_s_data"),
+        ("/path/to/###.csv", "tbl"),  # nothing valid left -> non-reserved fallback
     ]
 
     for path, expected_table_name in test_cases:
         result = duckdb_tools_instance.get_table_name_from_path(path)
         assert result == expected_table_name, f"Failed for path: {path}"
+
+
+def test_get_table_name_from_path_suffixes_reserved_keywords():
+    """Reserved keywords are suffixed with _ so the bare name stays a valid unquoted identifier.
+
+    Uses a real DuckDB connection so the reserved list comes from duckdb_keywords().
+    """
+    tools = DuckDbTools()
+    assert tools.get_table_name_from_path("/path/to/select.csv") == "select_"
+    assert tools.get_table_name_from_path("/path/to/order.csv") == "order_"
+    assert tools.get_table_name_from_path("/path/to/table.csv") == "table_"
+    # a non-reserved name is left unchanged
+    assert tools.get_table_name_from_path("/path/to/report.csv") == "report"
 
 
 # --- Test Cases for Query Execution ---
@@ -344,3 +362,65 @@ def test_custom_table_name_with_special_chars(duckdb_tools_instance, mock_duckdb
     assert result == custom_table
     call_args = mock_duckdb_connection.sql.call_args[0][0]
     assert f"CREATE TABLE IF NOT EXISTS {custom_table} AS" in call_args
+
+
+def test_create_table_from_path_escapes_single_quote_in_path(duckdb_tools_instance, mock_duckdb_connection):
+    """Test that a single quote in the path is escaped so it can't break the SQL string literal."""
+    path = "/path/to/team's-data.csv"
+
+    result = duckdb_tools_instance.create_table_from_path(path, replace=True)
+
+    # The derived table name is sanitized to a valid identifier
+    assert result == "team_s_data"
+    call_args = mock_duckdb_connection.sql.call_args[0][0]
+    # The apostrophe in the path is doubled inside the SQL string literal
+    assert "read_csv('/path/to/team''s-data.csv', ignore_errors=false, auto_detect=true)" in call_args
+
+
+def test_load_local_csv_to_table_escapes_single_quote_in_path(duckdb_tools_instance, mock_duckdb_connection):
+    """Test that a single quote in the path is escaped in the generated load statement."""
+    path = "/local/path/team's-data.csv"
+
+    table_name, sql_statement = duckdb_tools_instance.load_local_csv_to_table(path)
+
+    assert table_name == "team_s_data"
+    # The apostrophe in the path is doubled inside the SQL string literal
+    assert "read_csv('/local/path/team''s-data.csv'" in sql_statement
+
+
+def test_export_table_to_path_escapes_single_quote_in_path(duckdb_tools_instance, mock_duckdb_connection):
+    """Test that a single quote in the export path is escaped in the COPY statement."""
+    duckdb_tools_instance.export_table_to_path(table="my_table", format="CSV", path="/tmp/o'brien")
+
+    call_args = mock_duckdb_connection.sql.call_args[0][0]
+    # path becomes /tmp/o'brien/my_table.CSV, with the apostrophe doubled in the literal
+    assert "TO '/tmp/o''brien/my_table.CSV'" in call_args
+
+
+def test_create_fts_index_passes_columns_as_separate_literals(duckdb_tools_instance, mock_duckdb_connection):
+    """Test that each indexed column is a separate PRAGMA argument, not one list literal."""
+    duckdb_tools_instance.create_fts_index("docs", "id", ["body"])
+
+    pragma_calls = [c[0][0] for c in mock_duckdb_connection.sql.call_args_list if "create_fts_index" in c[0][0]]
+    assert pragma_calls
+    statement = pragma_calls[-1]
+    assert "PRAGMA create_fts_index('docs', 'id', 'body')" in statement
+    assert "['body']" not in statement  # the old broken list literal
+
+
+def test_full_text_search_uses_table_specific_fts_schema(duckdb_tools_instance, mock_duckdb_connection):
+    """Test that search uses fts_main_<table>, not the hardcoded fts_main_corpus."""
+    duckdb_tools_instance.full_text_search("docs", "id", "butter")
+
+    call_args = mock_duckdb_connection.sql.call_args[0][0]
+    assert "\"fts_main_docs\".match_bm25(id, 'butter')" in call_args
+    assert "fts_main_corpus" not in call_args
+
+
+def test_full_text_search_uses_schema_for_qualified_table(duckdb_tools_instance, mock_duckdb_connection):
+    """Test that a schema-qualified table resolves to fts_<schema>_<table>, matching DuckDB's naming."""
+    duckdb_tools_instance.full_text_search("myschema.docs", "id", "butter")
+
+    call_args = mock_duckdb_connection.sql.call_args[0][0]
+    assert "\"fts_myschema_docs\".match_bm25(id, 'butter')" in call_args
+    assert "fts_main_docs" not in call_args

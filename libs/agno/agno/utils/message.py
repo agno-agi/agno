@@ -7,6 +7,68 @@ from agno.models.message import Message
 from agno.utils.log import log_debug
 
 
+def copy_history_message(msg: Message) -> Message:
+    """Copy a history message and tag the copy with from_history=True.
+
+    Messages take a shallow copy: downstream consumers (tool-call filtering,
+    compression, scrubbing, provider formatting) rebind attributes on the
+    copy rather than mutating nested state, so the session's cached messages
+    stay untouched. Deep-copying every message costs ~11us per message per
+    turn, which compounds quadratically over a conversation.
+
+    Two shapes keep the deep copy because their nested state can be written
+    in place downstream: media-carrying messages (the media-offload refresh
+    writes fresh URLs and downloaded bytes into the media objects), and
+    messages whose content is a list of provider blocks (provider request
+    builders may alias the same list).
+    """
+    if msg.images or msg.videos or msg.audio or msg.files or msg.audio_output or isinstance(msg.content, list):
+        copied = deepcopy(msg)
+        copied.from_history = True
+        return copied
+    return msg.model_copy(update={"from_history": True})
+
+
+def safe_truncation_index(messages: Sequence[Message], requested_index: int) -> int:
+    """Snap a requested truncation boundary DOWN to the nearest pair-safe index.
+
+    A transcript records tool use as a batch: an ``assistant`` message that owns
+    ``tool_calls=[{id: ...}, ...]`` followed by one ``tool``-role message per
+    call, each carrying the matching ``tool_call_id``. Cutting ``messages[:k]``
+    in the middle of such a batch leaves an assistant tool_call with no result,
+    which most providers (OpenAI, Anthropic) reject with a 400.
+
+    Returns the largest index ``b <= requested_index`` such that every assistant
+    tool_call kept in ``messages[:b]`` has its result message also in
+    ``messages[:b]``. When the requested boundary would split a batch, ``b`` is
+    the index of the first offending assistant message, dropping that whole
+    incomplete exchange. Boundaries produced by ``regenerate`` / ``last_user`` /
+    ``end`` never land mid-batch, so this is a no-op for them.
+    """
+    if requested_index <= 0 or requested_index >= len(messages):
+        return requested_index
+
+    # Map each tool_call_id to the index of the tool-role message that answers it.
+    result_at: Dict[str, int] = {}
+    for idx, message in enumerate(messages):
+        tool_call_id = getattr(message, "tool_call_id", None)
+        if tool_call_id:
+            result_at[tool_call_id] = idx
+
+    # Find the earliest assistant within messages[:requested_index] whose
+    # tool_calls are not all answered within messages[:requested_index].
+    for idx in range(requested_index):
+        for tool_call in getattr(messages[idx], "tool_calls", None) or []:
+            call_id = tool_call.get("id") if isinstance(tool_call, dict) else getattr(tool_call, "id", None)
+            if not call_id:
+                continue
+            result_index = result_at.get(call_id)
+            if result_index is None or result_index >= requested_index:
+                # Drop this incomplete exchange (and everything after it).
+                return idx
+    return requested_index
+
+
 def normalize_tool_messages(messages: List[Message]) -> List[Message]:
     """
     Split combined tool result messages into individual canonical messages.
@@ -158,7 +220,7 @@ def reformat_tool_call_ids(messages: List[Message], provider: str) -> List[Messa
     if config is None:
         return messages
 
-    prefix = config.get("prefix")
+    prefix: Optional[str] = config.get("prefix")  # type: ignore[assignment]
     if prefix is None:
         # Provider accepts any ID format — no reformatting needed
         return messages
@@ -285,7 +347,7 @@ def get_text_from_message(message: Union[List, Dict, str, Message, BaseModel]) -
         if "content" in message:
             return get_text_from_message(message["content"])
         else:
-            return json.dumps(message, indent=2)
+            return json.dumps(message, indent=2, ensure_ascii=False)
     if isinstance(message, Message) and message.content is not None:
         return get_text_from_message(message.content)
     return ""
@@ -308,3 +370,23 @@ def get_conversation_text(messages: Sequence[Message]) -> str:
             if content and content.strip():
                 parts.append(f"Assistant: {content}")
     return "\n".join(parts)
+
+
+def render_instructions(instructions: List[str]) -> str:
+    """Render an instruction list into the body of a system message section.
+
+    A multi-line instruction cannot be a list item: its own column-0 bullets and
+    paragraph breaks would render as siblings of the item wrapping it rather than as
+    its content. Multi-line entries are joined as blocks and only single-line entries
+    are bulleted, so a long authored instruction survives sitting next to short ones.
+    """
+    if len(instructions) == 1:
+        return instructions[0]
+
+    def _is_block(instruction: str) -> bool:
+        # Strip first: a trailing newline does not make a one-line instruction a block.
+        return "\n" in instruction.strip()
+
+    if not any(_is_block(_upi) for _upi in instructions):
+        return "\n".join(f"- {_upi.strip()}" for _upi in instructions)
+    return "\n\n".join(_upi if _is_block(_upi) else f"- {_upi.strip()}" for _upi in instructions)

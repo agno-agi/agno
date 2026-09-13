@@ -1,6 +1,10 @@
 """Tests for the ScheduleManager Pythonic API."""
 
+import concurrent.futures
+import gc
+import sys
 import time
+from copy import deepcopy
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -8,6 +12,7 @@ import pytest
 pytest.importorskip("croniter", reason="croniter not installed")
 pytest.importorskip("pytz", reason="pytz not installed")
 
+from agno.db.sqlite import SqliteDb  # noqa: E402
 from agno.scheduler.manager import ScheduleManager  # noqa: E402
 
 # =============================================================================
@@ -58,6 +63,81 @@ def mgr(mock_db):
     return ScheduleManager(mock_db)
 
 
+class TestManagerCleanup:
+    """`__del__` calls `close()`, so `close()` must hold up on an object whose
+    `__init__` never ran. A failed `deepcopy` of a manager leaves exactly that
+    behind: `__new__` allocates the object, the copy aborts before the instance
+    dict is filled, and the collector still calls `__del__` on the result."""
+
+    def test_close_on_manager_that_never_ran_init(self):
+        """A missing `_pool` means no pool was ever created, not an error."""
+        manager = ScheduleManager.__new__(ScheduleManager)
+
+        manager.close()
+
+        assert getattr(manager, "_pool", None) is None
+
+    def test_close_is_idempotent_on_partial_manager(self):
+        """`__del__` can follow an explicit `close()`, so the second call has
+        to stay quiet too."""
+        manager = ScheduleManager.__new__(ScheduleManager)
+
+        manager.close()
+        manager.close()
+
+        assert getattr(manager, "_pool", None) is None
+
+    def test_collecting_a_partial_manager_reports_nothing(self):
+        """The collector swallows whatever `__del__` raises and routes it to
+        `sys.unraisablehook`, so a raising `close()` never fails a test by
+        itself. Capture the hook to see the failure the issue reported."""
+        unraisable = []
+        original = sys.unraisablehook
+        sys.unraisablehook = unraisable.append
+        try:
+            ScheduleManager.__new__(ScheduleManager)
+            gc.collect()
+        finally:
+            sys.unraisablehook = original
+
+        assert unraisable == []
+
+    def test_failed_deepcopy_leaves_nothing_that_raises_on_collection(self):
+        """The reported trigger end to end: copying a manager whose db refuses
+        to be copied, then collecting the debris the failed copy left."""
+
+        class Uncopyable:
+            def __deepcopy__(self, memo):
+                raise TypeError("cannot copy this db handle")
+
+        manager = ScheduleManager(MagicMock())
+        manager.db = Uncopyable()
+
+        unraisable = []
+        original = sys.unraisablehook
+        sys.unraisablehook = unraisable.append
+        try:
+            with pytest.raises(TypeError, match="cannot copy"):
+                deepcopy(manager)
+            gc.collect()
+        finally:
+            sys.unraisablehook = original
+
+        assert unraisable == []
+
+    def test_close_still_shuts_down_a_real_pool(self):
+        """Tolerating a missing pool must not stop a fully built manager from
+        shutting its pool down and clearing the attribute."""
+        manager = ScheduleManager(MagicMock())
+        pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        manager._pool = pool
+
+        manager.close()
+
+        assert manager._pool is None
+        assert pool._shutdown
+
+
 # =============================================================================
 # Sync API Tests
 # =============================================================================
@@ -103,22 +183,162 @@ class TestManagerCreate:
             mgr.create(name="fail", cron="0 9 * * *", endpoint="/test")
 
 
+class TestManagerCreateNameScope:
+    """Name lookups for ``if_exists`` are owner-scoped. Needs a real db -- ``MagicMock`` ignores ``user_id``."""
+
+    @pytest.fixture
+    def db_mgr(self, tmp_path):
+        return ScheduleManager(SqliteDb(db_file=str(tmp_path / "schedules.db")))
+
+    def test_another_owners_name_does_not_block_a_create(self, db_mgr):
+        bob = db_mgr.create(name="nightly", cron="0 9 * * *", endpoint="/bob", user_id="bob")
+        alice = db_mgr.create(name="nightly", cron="0 9 * * *", endpoint="/alice", user_id="alice")
+
+        assert alice.id != bob.id
+        assert alice.user_id == "alice"
+
+    def test_skip_does_not_hand_back_another_owners_schedule(self, db_mgr):
+        bob = db_mgr.create(name="nightly", cron="0 9 * * *", endpoint="/bob", user_id="bob")
+        alice = db_mgr.create(name="nightly", cron="0 9 * * *", endpoint="/alice", if_exists="skip", user_id="alice")
+
+        assert alice.id != bob.id
+        assert alice.endpoint == "/alice"
+
+    def test_skip_returns_the_owners_own_schedule(self, db_mgr):
+        first = db_mgr.create(name="nightly", cron="0 9 * * *", endpoint="/first", user_id="alice")
+        second = db_mgr.create(name="nightly", cron="0 9 * * *", endpoint="/second", if_exists="skip", user_id="alice")
+
+        assert second.id == first.id
+        assert second.endpoint == "/first"
+
+    def test_update_leaves_another_owners_schedule_alone(self, db_mgr):
+        bob = db_mgr.create(name="nightly", cron="0 9 * * *", endpoint="/bob", user_id="bob")
+        alice = db_mgr.create(name="nightly", cron="0 10 * * *", endpoint="/alice", if_exists="update", user_id="alice")
+
+        # An unscoped lookup would resolve to bob's row and hand alice his schedule back
+        assert alice.id != bob.id
+        assert alice.user_id == "alice"
+        assert db_mgr.get(bob.id).endpoint == "/bob"
+
+    def test_update_overwrites_the_owners_own_schedule(self, db_mgr):
+        first = db_mgr.create(name="nightly", cron="0 9 * * *", endpoint="/first", user_id="alice")
+        updated = db_mgr.create(
+            name="nightly", cron="0 10 * * *", endpoint="/second", if_exists="update", user_id="alice"
+        )
+
+        assert updated.id == first.id
+        assert updated.endpoint == "/second"
+
+    def test_duplicate_name_within_one_owner_still_raises(self, db_mgr):
+        db_mgr.create(name="nightly", cron="0 9 * * *", endpoint="/test", user_id="alice")
+        with pytest.raises(ValueError, match="already exists"):
+            db_mgr.create(name="nightly", cron="0 9 * * *", endpoint="/test", user_id="alice")
+
+    @pytest.mark.asyncio
+    async def test_acreate_scopes_the_name_lookup_to_the_owner(self, db_mgr):
+        bob = await db_mgr.acreate(name="nightly", cron="0 9 * * *", endpoint="/bob", user_id="bob")
+        alice = await db_mgr.acreate(
+            name="nightly", cron="0 9 * * *", endpoint="/alice", if_exists="skip", user_id="alice"
+        )
+
+        assert alice.id != bob.id
+        assert alice.endpoint == "/alice"
+
+    @pytest.mark.asyncio
+    async def test_acreate_update_leaves_another_owners_schedule_alone(self, db_mgr):
+        bob = await db_mgr.acreate(name="nightly", cron="0 9 * * *", endpoint="/bob", user_id="bob")
+        alice = await db_mgr.acreate(
+            name="nightly", cron="0 10 * * *", endpoint="/alice", if_exists="update", user_id="alice"
+        )
+
+        assert alice.id != bob.id
+        assert (await db_mgr.aget(bob.id)).endpoint == "/bob"
+
+
 class TestManagerList:
-    def test_list_all(self, mgr, mock_db):
+    def test_list_returns_first_page(self, mgr, mock_db):
         result = mgr.list()
         assert len(result) == 1
-        mock_db.get_schedules.assert_called_once_with(enabled=None, limit=100, page=1)
+        mock_db.get_schedules.assert_called_once_with(enabled=None, limit=100, page=1, user_id=None)
 
     def test_list_with_filters(self, mgr, mock_db):
         mgr.list(enabled=True, limit=10, page=2)
-        mock_db.get_schedules.assert_called_once_with(enabled=True, limit=10, page=2)
+        mock_db.get_schedules.assert_called_once_with(enabled=True, limit=10, page=2, user_id=None)
+
+
+def _make_paged_get_schedules(schedules):
+    """Build a get_schedules side effect serving pages from the given rows."""
+
+    def _get_schedules(enabled=None, limit=100, page=1, user_id=None, raise_on_error=False):
+        offset = (page - 1) * limit
+        return schedules[offset : offset + limit], len(schedules)
+
+    return _get_schedules
+
+
+class TestManagerListAll:
+    def test_list_all_pages_past_first_page(self, mgr, mock_db):
+        schedules = [_make_schedule(id=f"sched-{i}", name=f"schedule-{i}") for i in range(150)]
+        mock_db.get_schedules = MagicMock(side_effect=_make_paged_get_schedules(schedules))
+
+        result = mgr.list_all()
+
+        assert len(result) == 150
+        assert {s.id for s in result} == {f"sched-{i}" for i in range(150)}
+        assert mock_db.get_schedules.call_count == 2
+        mock_db.get_schedules.assert_called_with(enabled=None, limit=100, page=2, user_id=None, raise_on_error=True)
+
+    def test_list_all_exact_page_multiple(self, mgr, mock_db):
+        schedules = [_make_schedule(id=f"sched-{i}", name=f"schedule-{i}") for i in range(200)]
+        mock_db.get_schedules = MagicMock(side_effect=_make_paged_get_schedules(schedules))
+
+        result = mgr.list_all()
+
+        assert len(result) == 200
+        # A trailing empty page marks the end of the sweep
+        assert mock_db.get_schedules.call_count == 3
+
+    def test_list_all_propagates_db_error(self, mgr, mock_db):
+        mock_db.get_schedules = MagicMock(side_effect=RuntimeError("schedules table unavailable"))
+        with pytest.raises(RuntimeError, match="schedules table unavailable"):
+            mgr.list_all()
+
+    def test_list_all_empty_table_returns_empty_list(self, mgr, mock_db):
+        mock_db.get_schedules = MagicMock(return_value=([], 0))
+        assert mgr.list_all() == []
+        mock_db.get_schedules.assert_called_once_with(
+            enabled=None, limit=100, page=1, user_id=None, raise_on_error=True
+        )
+
+    def test_list_all_forwards_flags(self, mgr, mock_db):
+        mock_db.get_schedules = MagicMock(return_value=([], 0))
+        mgr.list_all(enabled=True, raise_on_error=False)
+        mock_db.get_schedules.assert_called_once_with(
+            enabled=True, limit=100, page=1, user_id=None, raise_on_error=False
+        )
+
+    def test_list_all_tolerates_bare_list_result(self, mgr, mock_db):
+        # Legacy third-party Dbs may return a bare list instead of (rows, total)
+        schedules = [_make_schedule(id=f"sched-{i}", name=f"schedule-{i}") for i in range(3)]
+        mock_db.get_schedules = MagicMock(return_value=schedules)
+
+        result = mgr.list_all()
+
+        assert len(result) == 3
+
+    def test_list_all_tolerates_none_rows_result(self, mgr, mock_db):
+        # A (None, 0) result must be treated as an empty page, not crash on len(None);
+        # list() tolerates the same shape, so list_all(raise_on_error=False) must too.
+        mock_db.get_schedules = MagicMock(return_value=(None, 0))
+        assert mgr.list_all(raise_on_error=False) == []
+        assert mock_db.get_schedules.call_count == 1
 
 
 class TestManagerGet:
     def test_get_found(self, mgr, mock_db):
         result = mgr.get("sched-1")
         assert result.id == "sched-1"
-        mock_db.get_schedule.assert_called_once_with("sched-1")
+        mock_db.get_schedule.assert_called_once_with("sched-1", user_id=None)
 
     def test_get_not_found(self, mgr, mock_db):
         mock_db.get_schedule = MagicMock(return_value=None)
@@ -129,13 +349,13 @@ class TestManagerUpdate:
     def test_update(self, mgr, mock_db):
         result = mgr.update("sched-1", description="Updated")
         assert result is not None
-        mock_db.update_schedule.assert_called_once_with("sched-1", description="Updated")
+        mock_db.update_schedule.assert_called_once_with("sched-1", user_id=None, description="Updated")
 
 
 class TestManagerDelete:
     def test_delete(self, mgr, mock_db):
         assert mgr.delete("sched-1") is True
-        mock_db.delete_schedule.assert_called_once_with("sched-1")
+        mock_db.delete_schedule.assert_called_once_with("sched-1", user_id=None)
 
 
 class TestManagerEnable:
@@ -157,7 +377,7 @@ class TestManagerDisable:
     def test_disable(self, mgr, mock_db):
         result = mgr.disable("sched-1")
         assert result is not None
-        mock_db.update_schedule.assert_called_once_with("sched-1", enabled=False)
+        mock_db.update_schedule.assert_called_once_with("sched-1", user_id=None, enabled=False)
 
 
 class TestManagerTrigger:
@@ -170,7 +390,7 @@ class TestManagerGetRuns:
     def test_get_runs(self, mgr, mock_db):
         result = mgr.get_runs("sched-1", limit=5, page=2)
         assert result == []
-        mock_db.get_schedule_runs.assert_called_once_with("sched-1", limit=5, page=2)
+        mock_db.get_schedule_runs.assert_called_once_with("sched-1", limit=5, page=2, user_id=None)
 
 
 class TestManagerCallMissingMethod:
@@ -231,6 +451,72 @@ class TestAsyncList:
     async def test_alist(self, async_mgr, mock_async_db):
         result = await async_mgr.alist()
         assert len(result) == 1
+
+
+class TestAsyncListAll:
+    @pytest.mark.asyncio
+    async def test_alist_all_pages_past_first_page(self, async_mgr, mock_async_db):
+        schedules = [_make_schedule(id=f"sched-{i}", name=f"schedule-{i}") for i in range(150)]
+        mock_async_db.get_schedules = AsyncMock(side_effect=_make_paged_get_schedules(schedules))
+
+        result = await async_mgr.alist_all()
+
+        assert len(result) == 150
+        assert {s.id for s in result} == {f"sched-{i}" for i in range(150)}
+        assert mock_async_db.get_schedules.call_count == 2
+        mock_async_db.get_schedules.assert_called_with(
+            enabled=None, limit=100, page=2, user_id=None, raise_on_error=True
+        )
+
+    @pytest.mark.asyncio
+    async def test_alist_all_propagates_db_error(self, async_mgr, mock_async_db):
+        mock_async_db.get_schedules = AsyncMock(side_effect=RuntimeError("schedules table unavailable"))
+        with pytest.raises(RuntimeError, match="schedules table unavailable"):
+            await async_mgr.alist_all()
+
+    @pytest.mark.asyncio
+    async def test_alist_all_empty_table_returns_empty_list(self, async_mgr, mock_async_db):
+        mock_async_db.get_schedules = AsyncMock(return_value=([], 0))
+        assert await async_mgr.alist_all() == []
+        mock_async_db.get_schedules.assert_called_once_with(
+            enabled=None, limit=100, page=1, user_id=None, raise_on_error=True
+        )
+
+    @pytest.mark.asyncio
+    async def test_alist_all_tolerates_bare_list_result(self, async_mgr, mock_async_db):
+        # Legacy third-party Dbs may return a bare list instead of (rows, total)
+        schedules = [_make_schedule(id=f"sched-{i}", name=f"schedule-{i}") for i in range(3)]
+        mock_async_db.get_schedules = AsyncMock(return_value=schedules)
+
+        result = await async_mgr.alist_all()
+
+        assert len(result) == 3
+        assert mock_async_db.get_schedules.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_alist_all_exact_page_multiple(self, async_mgr, mock_async_db):
+        schedules = [_make_schedule(id=f"sched-{i}", name=f"schedule-{i}") for i in range(200)]
+        mock_async_db.get_schedules = AsyncMock(side_effect=_make_paged_get_schedules(schedules))
+
+        result = await async_mgr.alist_all()
+
+        assert len(result) == 200
+        # A trailing empty page marks the end of the sweep
+        assert mock_async_db.get_schedules.call_count == 3
+
+    @pytest.mark.asyncio
+    async def test_alist_all_forwards_flags(self, async_mgr, mock_async_db):
+        mock_async_db.get_schedules = AsyncMock(return_value=([], 0))
+        await async_mgr.alist_all(enabled=True, raise_on_error=False)
+        mock_async_db.get_schedules.assert_called_once_with(
+            enabled=True, limit=100, page=1, user_id=None, raise_on_error=False
+        )
+
+    @pytest.mark.asyncio
+    async def test_alist_all_tolerates_none_rows_result(self, async_mgr, mock_async_db):
+        # A (None, 0) result must be treated as an empty page, not crash on len(None)
+        mock_async_db.get_schedules = AsyncMock(return_value=(None, 0))
+        assert await async_mgr.alist_all(raise_on_error=False) == []
 
 
 class TestAsyncGet:

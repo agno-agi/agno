@@ -28,9 +28,7 @@ agent_specific = Agent(
 )
 
 # Example 3: High-quality custom DALL-E generator
-custom_dalle = DalleTools(
-    all=True, model="dall-e-3", size="1792x1024", quality="hd", style="natural"
-)
+custom_dalle = DalleTools(all=True, model="dall-e-3", size="1792x1024", quality="hd")
 
 agent_custom = Agent(
     tools=[custom_dalle],

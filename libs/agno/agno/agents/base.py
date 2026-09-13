@@ -2,7 +2,7 @@ import asyncio
 import json
 from dataclasses import dataclass
 from time import time
-from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Sequence, Union
+from typing import TYPE_CHECKING, Any, AsyncIterator, Dict, Iterator, List, Optional, Sequence, Union
 from uuid import uuid4
 
 from agno.db.base import AsyncBaseDb, BaseDb, SessionType
@@ -23,7 +23,11 @@ from agno.run.agent import (
 )
 from agno.run.base import RunStatus
 from agno.session.agent import AgentSession
+from agno.utils.events import error_type_of
 from agno.utils.log import log_exception, log_warning
+
+if TYPE_CHECKING:
+    from agno.tools.component import ComponentTool
 
 
 @dataclass
@@ -62,6 +66,28 @@ class BaseExternalAgent:
     def get_id(self) -> str:
         """Return the agent ID, guaranteed non-None after __post_init__."""
         return self.id or ""
+
+    def as_tool(
+        self,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        title: Optional[str] = None,
+        annotations: Optional[Dict[str, Any]] = None,
+    ) -> "ComponentTool":
+        """Publish this external-framework agent as a tool with its own model-facing
+        name, description, title, and behaviour annotations, for surfaces that turn
+        components into tools -- today the AgentOS MCP server: ``MCPConfig(tools=[adapter.as_tool(name=...,
+        description=...)])``. Every override is optional; the adapter ``id`` remains
+        the run/scope handle.
+
+        ``title`` is the human-facing display name; ``annotations`` are MCP behaviour
+        hints (``readOnlyHint``, ``destructiveHint``, ``idempotentHint``,
+        ``openWorldHint``) merged over the publishing surface's defaults -- see
+        :mod:`agno.tools.annotations`.
+        """
+        from agno.tools.component import ComponentTool
+
+        return ComponentTool(component=self, name=name, description=description, title=title, annotations=annotations)
 
     # ---------------------------------------------------------------------------
     # Public async API (satisfies AgentProtocol protocol)
@@ -435,15 +461,43 @@ class BaseExternalAgent:
         elif isinstance(self.db, BaseDb):
             self.db.upsert_session(session)
 
+    async def _apersist_run_in_session(self, session: AgentSession, run_output: RunOutput) -> None:
+        """Append the run to the session and persist both (v3 denormalized storage).
+
+        upsert_session writes only the session row — runs live in their own
+        table and must be written via upsert_run, or history is silently lost.
+        Swallows DB failures so the caller still receives the RunOutput.
+        """
+        if session.runs is None:
+            session.runs = []
+        session.runs.append(run_output)
+        try:
+            await self.aupsert_session(session)
+            if self.db is not None:
+                run_index = len(session.runs) - 1
+                user_id = run_output.user_id or session.user_id
+                try:
+                    if isinstance(self.db, AsyncBaseDb):
+                        await self.db.upsert_run(
+                            run=run_output, session_id=session.session_id, user_id=user_id, run_index=run_index
+                        )
+                    elif isinstance(self.db, BaseDb):
+                        self.db.upsert_run(
+                            run=run_output, session_id=session.session_id, user_id=user_id, run_index=run_index
+                        )
+                except NotImplementedError:
+                    # Adapter not ported to v3 storage; runs persist inline via upsert_session
+                    pass
+        except Exception as upsert_err:
+            log_warning(f"Failed to persist run for {self.framework} agent '{self.id}': {upsert_err}")
+
     # Run inspection (used by AgentOS /agents/{id}/runs/{run_id} for external agents)
 
     @staticmethod
     def _find_run_in_session(session: AgentSession, run_id: str) -> Optional[RunOutput]:
         """Find a persisted run by id within the given session."""
-        for run in session.runs or []:
-            if isinstance(run, RunOutput) and run.run_id == run_id:
-                return run
-        return None
+        run = session.get_run(run_id)
+        return run if isinstance(run, RunOutput) else None
 
     def get_run_output(self, run_id: str, session_id: Optional[str] = None) -> Optional[RunOutput]:
         """Get a persisted RunOutput for this adapter."""
@@ -581,7 +635,7 @@ class BaseExternalAgent:
             history = self._get_history_from_session(session)
 
         try:
-            content = await self._arun_adapter(input, history=history, run_id=run_id, **kwargs)
+            content = await self._arun_adapter(input, history=history, run_id=run_id, session=session, **kwargs)
             run_output = self._build_run_output(
                 run_id=run_id,
                 session_id=session_id,
@@ -601,16 +655,9 @@ class BaseExternalAgent:
                 status=RunStatus.error,
             )
 
-        # Persist the run to the session. Swallow DB failures so the caller still
-        # receives the RunOutput — matching agent/_storage.aupsert_session semantics.
+        # Persist the session row and the run row (v3 denormalized storage)
         if session is not None:
-            if session.runs is None:
-                session.runs = []
-            session.runs.append(run_output)
-            try:
-                await self.aupsert_session(session)
-            except Exception as upsert_err:
-                log_warning(f"Failed to persist run for {self.framework} agent '{self.id}': {upsert_err}")
+            await self._apersist_run_in_session(session, run_output)
 
         return run_output
 
@@ -645,7 +692,9 @@ class BaseExternalAgent:
             # Map tool_call_id -> ToolExecution for merging started+completed
             tool_map: Dict[str, ToolExecution] = {}
 
-            async for event in self._arun_adapter_stream(input, history=history, run_id=run_id, **kwargs):
+            async for event in self._arun_adapter_stream(
+                input, history=history, run_id=run_id, session=session, **kwargs
+            ):
                 if isinstance(event, RunContentEvent):
                     accumulated_content += event.content or ""
                 elif isinstance(event, ToolCallStartedEvent) and event.tool:
@@ -680,13 +729,7 @@ class BaseExternalAgent:
                 status=RunStatus.error if run_error is not None else RunStatus.completed,
                 tools=accumulated_tools if accumulated_tools else None,
             )
-            if session.runs is None:
-                session.runs = []
-            session.runs.append(run_output)
-            try:
-                await self.aupsert_session(session)
-            except Exception as upsert_err:
-                log_warning(f"Failed to persist run for {self.framework} agent '{self.id}': {upsert_err}")
+            await self._apersist_run_in_session(session, run_output)
 
         if run_error is not None:
             yield RunErrorEvent(
@@ -695,6 +738,7 @@ class BaseExternalAgent:
                 agent_name=self.name or "",
                 session_id=session_id,
                 content=str(run_error),
+                error_type=error_type_of(run_error),
             )
         else:
             yield RunCompletedEvent(
@@ -746,7 +790,13 @@ class BaseExternalAgent:
     # ---------------------------------------------------------------------------
 
     async def _arun_adapter(self, input: Any, *, history: Optional[List[Dict[str, Any]]] = None, **kwargs: Any) -> Any:
-        """Non-streaming execution. Return the response content."""
+        """Non-streaming execution. Return the response content.
+
+        kwargs includes `session` (the loaded AgentSession, or None if no db).
+        Mutate `session.session_data` in place to persist adapter-specific
+        per-session state — the base class upserts the session after this
+        returns, so no separate DB write is needed.
+        """
         raise NotImplementedError(f"{self.__class__.__name__} must implement _arun_adapter")
 
     async def _arun_adapter_stream(

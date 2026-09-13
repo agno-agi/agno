@@ -91,7 +91,7 @@ def knowledge_retriever(
 
 agent = Agent(
     name="KnowledgeAgent",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     knowledge=knowledge,
     knowledge_retriever=knowledge_retriever,
     search_knowledge=True,

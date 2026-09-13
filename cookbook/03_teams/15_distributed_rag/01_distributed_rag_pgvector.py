@@ -138,7 +138,7 @@ async def async_pgvector_rag_demo() -> None:
     except Exception as e:
         print(f"Error: {e}")
         print("Make sure PostgreSQL with pgvector is running!")
-        print("   Run: ./cookbook/run_pgvector.sh")
+        print("   Run: ./cookbook/scripts/run_pgvector.sh")
 
 
 def sync_pgvector_rag_demo() -> None:
@@ -159,7 +159,7 @@ def sync_pgvector_rag_demo() -> None:
     except Exception as e:
         print(f"Error: {e}")
         print("Make sure PostgreSQL with pgvector is running!")
-        print("   Run: ./cookbook/run_pgvector.sh")
+        print("   Run: ./cookbook/scripts/run_pgvector.sh")
 
 
 def complex_query_demo() -> None:
@@ -186,7 +186,7 @@ def complex_query_demo() -> None:
     except Exception as e:
         print(f"Error: {e}")
         print("Make sure PostgreSQL with pgvector is running!")
-        print("   Run: ./cookbook/run_pgvector.sh")
+        print("   Run: ./cookbook/scripts/run_pgvector.sh")
 
 
 if __name__ == "__main__":

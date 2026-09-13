@@ -11,6 +11,8 @@ from typing import (
     TYPE_CHECKING,
     Any,
     AsyncIterator,
+    Awaitable,
+    Callable,
     Dict,
     Iterator,
     List,
@@ -20,11 +22,11 @@ from typing import (
     Tuple,
     Type,
     Union,
-    get_args,
 )
 
 if TYPE_CHECKING:
     from agno.compression.manager import CompressionManager
+    from agno.offload.store import ResultStore
 from uuid import uuid4
 
 from pydantic import BaseModel
@@ -34,16 +36,17 @@ from agno.exceptions import (
     ContextWindowExceededError,
     ModelProviderError,
     RetryableModelProviderError,
+    RunCancelledException,
 )
 from agno.media import Audio, File, Image, Video
 from agno.metrics import MessageMetrics, ModelType, ToolCallMetrics
 from agno.models.message import Citations, Message
 from agno.models.response import ModelResponse, ModelResponseEvent, ToolExecution
-from agno.run.agent import CustomEvent, RunContentEvent, RunOutput, RunOutputEvent
+from agno.run.agent import RUN_OUTPUT_EVENT_TYPES, CustomEvent, RunContentEvent, RunOutput, RunOutputEvent
 from agno.run.requirement import RunRequirement
+from agno.run.team import TEAM_RUN_OUTPUT_EVENT_TYPES, TeamRunOutput, TeamRunOutputEvent
 from agno.run.team import RunContentEvent as TeamRunContentEvent
-from agno.run.team import TeamRunOutput, TeamRunOutputEvent
-from agno.run.workflow import WorkflowRunOutputEvent
+from agno.run.workflow import WORKFLOW_RUN_OUTPUT_EVENT_TYPES
 from agno.tools.function import (
     Function,
     FunctionCall,
@@ -55,6 +58,10 @@ from agno.tools.function import (
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.timer import Timer
 from agno.utils.tools import get_function_call_for_tool_call, get_function_call_for_tool_execution
+
+# Every run-event type a tool-result generator can bubble up, cached once:
+# these isinstance checks run per streamed item on the hot path.
+_ALL_RUN_OUTPUT_EVENT_TYPES = RUN_OUTPUT_EVENT_TYPES + TEAM_RUN_OUTPUT_EVENT_TYPES + WORKFLOW_RUN_OUTPUT_EVENT_TYPES
 
 
 @dataclass
@@ -189,19 +196,11 @@ class Model(ABC):
             return self.delay_between_retries * (2**attempt)
         return self.delay_between_retries
 
-    @staticmethod
-    def classify_error(error: ModelProviderError) -> ModelProviderError:
-        """Re-classify a generic ModelProviderError into a specific subclass.
-
-        Delegates to ModelProviderError.classify(). Kept for backwards compatibility.
-        """
-        return ModelProviderError.classify(error)
-
     def _is_retryable_error(self, error: ModelProviderError) -> bool:
         """Determine if an error is worth retrying.
 
         Non-retryable errors include:
-        - ContextWindowExceededError (fast path after classify_error)
+        - ContextWindowExceededError (fast path after ModelProviderError.classify)
         - Client errors (400, 401, 403, 404, 413, 422) that won't change on retry
         - Context window/token limit patterns in error message (defense-in-depth)
 
@@ -210,7 +209,7 @@ class Model(ABC):
         - Server errors (500, 502, 503, 504)
         - Anything else not explicitly non-retryable
         """
-        # Fast path: already classified by classify_error()
+        # Fast path: already classified by ModelProviderError.classify()
         if isinstance(error, ContextWindowExceededError):
             return False
 
@@ -233,13 +232,13 @@ class Model(ABC):
         with optional exponential backoff.
         """
         last_exception: Optional[ModelProviderError] = None
+        retries_with_guidance_count = kwargs.pop("retries_with_guidance_count", 0)
 
         for attempt in range(self.retries + 1):
             try:
-                retries_with_guidance_count = kwargs.pop("retries_with_guidance_count", 0)
                 return self.invoke(**kwargs)
             except ModelProviderError as e:
-                last_exception = self.classify_error(e)
+                last_exception = ModelProviderError.classify(e)
                 # Check if error is non-retryable
                 if not self._is_retryable_error(last_exception):
                     log_error(f"Non-retryable model provider error: {str(e)}")
@@ -281,13 +280,13 @@ class Model(ABC):
         with optional exponential backoff.
         """
         last_exception: Optional[ModelProviderError] = None
+        retries_with_guidance_count = kwargs.pop("retries_with_guidance_count", 0)
 
         for attempt in range(self.retries + 1):
             try:
-                retries_with_guidance_count = kwargs.pop("retries_with_guidance_count", 0)
                 return await self.ainvoke(**kwargs)
             except ModelProviderError as e:
-                last_exception = self.classify_error(e)
+                last_exception = ModelProviderError.classify(e)
                 # Check if error is non-retryable
                 if not self._is_retryable_error(last_exception):
                     log_error(f"Non-retryable model provider error: {str(e)}")
@@ -330,14 +329,14 @@ class Model(ABC):
         with optional exponential backoff. Note that retries restart the entire stream.
         """
         last_exception: Optional[ModelProviderError] = None
+        retries_with_guidance_count = kwargs.pop("retries_with_guidance_count", 0)
 
         for attempt in range(self.retries + 1):
             try:
-                retries_with_guidance_count = kwargs.pop("retries_with_guidance_count", 0)
                 yield from self.invoke_stream(**kwargs)
                 return  # Success, exit the retry loop
             except ModelProviderError as e:
-                last_exception = self.classify_error(e)
+                last_exception = ModelProviderError.classify(e)
                 # Check if error is non-retryable (e.g., context window exceeded, auth errors)
                 if not self._is_retryable_error(last_exception):
                     log_error(f"Non-retryable model provider error: {str(e)}")
@@ -382,15 +381,15 @@ class Model(ABC):
         with optional exponential backoff. Note that retries restart the entire stream.
         """
         last_exception: Optional[ModelProviderError] = None
+        retries_with_guidance_count = kwargs.pop("retries_with_guidance_count", 0)
 
         for attempt in range(self.retries + 1):
             try:
-                retries_with_guidance_count = kwargs.pop("retries_with_guidance_count", 0)
                 async for response in self.ainvoke_stream(**kwargs):
                     yield response
                 return  # Success, exit the retry loop
             except ModelProviderError as e:
-                last_exception = self.classify_error(e)
+                last_exception = ModelProviderError.classify(e)
                 # Check if error is non-retryable
                 if not self._is_retryable_error(last_exception):
                     log_error(f"Non-retryable model provider error: {str(e)}")
@@ -493,7 +492,7 @@ class Model(ABC):
             return None
 
         try:
-            with open(cache_file, "r") as f:
+            with open(cache_file, "r", encoding="utf-8") as f:
                 cached_data = json.load(f)
 
             # Check TTL if set (None means no expiration)
@@ -515,7 +514,7 @@ class Model(ABC):
                 "is_streaming": is_streaming,
                 "result": result.to_dict(),
             }
-            with open(cache_file, "w") as f:
+            with open(cache_file, "w", encoding="utf-8") as f:
                 json.dump(cache_data, f)
         except Exception:
             pass
@@ -531,7 +530,7 @@ class Model(ABC):
         }
 
         try:
-            with open(cache_file, "w") as f:
+            with open(cache_file, "w", encoding="utf-8") as f:
                 json.dump(cache_data, f)
         except Exception:
             pass
@@ -654,6 +653,8 @@ class Model(ABC):
         run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
         send_media_to_model: bool = True,
         compression_manager: Optional["CompressionManager"] = None,
+        result_store: Optional["ResultStore"] = None,
+        after_tool_results: Optional[Callable[["ModelResponse"], None]] = None,
     ) -> ModelResponse:
         """
         Generate a response from the model.
@@ -666,212 +667,212 @@ class Model(ABC):
             tool_call_limit: Tool call limit
             run_response: Run response to use
             send_media_to_model: Whether to send media to the model
+            after_tool_results: Optional callback invoked once per tool batch, after tool result
+                messages are appended to ``messages`` and before the next model call (or break).
+                Receives the current ``ModelResponse`` (with accumulated ``tool_executions``)
+                as its single argument. Used by Agent-level checkpointing
+                (``checkpoint="tool-batch"``) to persist mid-run state. Exceptions are caught and
+                logged — a failed callback must not kill the run.
         """
-        try:
-            # Check cache if enabled
-            if self.cache_response:
-                cache_key = self._get_model_cache_key(
-                    messages, stream=False, response_format=response_format, tools=tools
+        # Check cache if enabled
+        if self.cache_response:
+            cache_key = self._get_model_cache_key(messages, stream=False, response_format=response_format, tools=tools)
+            cached_data = self._get_cached_model_response(cache_key)
+
+            if cached_data:
+                log_info("Cache hit for model response")
+                return self._model_response_from_cache(cached_data)
+
+        log_debug(f"{self.get_provider()} Response Start", center=True, symbol="-")
+        log_debug(f"Model: {self.id}", center=True, symbol="-")
+
+        _log_messages(messages)
+        model_response = ModelResponse()
+
+        function_call_count = 0
+
+        _tool_dicts = self._format_tools(tools) if tools is not None else []
+        _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)} if tools is not None else {}
+
+        _compress_tool_results = compression_manager is not None and compression_manager.compress_tool_results
+        _compression_manager = compression_manager if _compress_tool_results else None
+
+        while True:
+            # Compress tool results if compression is enabled and threshold is met
+            if _compression_manager is not None and _compression_manager.should_compress(
+                messages, tools, model=self, response_format=response_format
+            ):
+                _compression_manager.compress(
+                    messages, run_metrics=run_response.metrics if run_response is not None else None
                 )
-                cached_data = self._get_cached_model_response(cache_key)
 
-                if cached_data:
-                    log_info("Cache hit for model response")
-                    return self._model_response_from_cache(cached_data)
+            # Get response from model
+            assistant_message = Message(role=self.assistant_message_role)
+            # Initialize message metrics and start timer before model call
+            self._ensure_message_metrics_initialized(assistant_message)
+            self._process_model_response(
+                messages=messages,
+                assistant_message=assistant_message,
+                model_response=model_response,
+                response_format=response_format,
+                tools=_tool_dicts,
+                tool_choice=tool_choice or self._tool_choice,
+                run_response=run_response,
+                compress_tool_results=_compress_tool_results,
+            )
 
-            log_debug(f"{self.get_provider()} Response Start", center=True, symbol="-")
-            log_debug(f"Model: {self.id}", center=True, symbol="-")
+            # Accumulate metrics for non-stream responses
+            if run_response is not None and model_response.response_usage is not None:
+                from agno.metrics import accumulate_model_metrics
 
-            _log_messages(messages)
-            model_response = ModelResponse()
+                accumulate_model_metrics(model_response, self, self.model_type, run_response.metrics)
 
-            function_call_count = 0
+            # Add assistant message to messages
+            messages.append(assistant_message)
 
-            _tool_dicts = self._format_tools(tools) if tools is not None else []
-            _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)} if tools is not None else {}
+            # Log response and metrics
+            assistant_message.log(metrics=True, use_compressed_content=_compress_tool_results)
 
-            _compress_tool_results = compression_manager is not None and compression_manager.compress_tool_results
-            _compression_manager = compression_manager if _compress_tool_results else None
-
-            while True:
-                # Compress tool results if compression is enabled and threshold is met
-                if _compression_manager is not None and _compression_manager.should_compress(
-                    messages, tools, model=self, response_format=response_format
-                ):
-                    _compression_manager.compress(
-                        messages, run_metrics=run_response.metrics if run_response is not None else None
-                    )
-
-                # Get response from model
-                assistant_message = Message(role=self.assistant_message_role)
-                # Initialize message metrics and start timer before model call
-                self._ensure_message_metrics_initialized(assistant_message)
-                self._process_model_response(
-                    messages=messages,
+            # Handle tool calls if present
+            if assistant_message.tool_calls:
+                # Prepare function calls
+                function_calls_to_run = self._prepare_function_calls(
                     assistant_message=assistant_message,
+                    messages=messages,
                     model_response=model_response,
-                    response_format=response_format,
-                    tools=_tool_dicts,
-                    tool_choice=tool_choice or self._tool_choice,
-                    run_response=run_response,
+                    functions=_functions,
+                )
+                function_call_results: List[Message] = []
+
+                # Execute function calls
+                for function_call_response in self.run_function_calls(
+                    function_calls=function_calls_to_run,
+                    function_call_results=function_call_results,
+                    current_function_call_count=function_call_count,
+                    function_call_limit=tool_call_limit,
+                    result_store=result_store,
+                ):
+                    if isinstance(function_call_response, ModelResponse):
+                        # The session state is updated by the function call
+                        if function_call_response.updated_session_state is not None:
+                            model_response.updated_session_state = function_call_response.updated_session_state
+
+                        # Media artifacts are generated by the function call
+                        if function_call_response.images is not None:
+                            if model_response.images is None:
+                                model_response.images = []
+                            model_response.images.extend(function_call_response.images)
+
+                        if function_call_response.audios is not None:
+                            if model_response.audios is None:
+                                model_response.audios = []
+                            model_response.audios.extend(function_call_response.audios)
+
+                        if function_call_response.videos is not None:
+                            if model_response.videos is None:
+                                model_response.videos = []
+                            model_response.videos.extend(function_call_response.videos)
+
+                        if function_call_response.files is not None:
+                            if model_response.files is None:
+                                model_response.files = []
+                            model_response.files.extend(function_call_response.files)
+
+                        if (
+                            function_call_response.event
+                            in [
+                                ModelResponseEvent.tool_call_completed.value,
+                                ModelResponseEvent.tool_call_paused.value,
+                            ]
+                            and function_call_response.tool_executions is not None
+                        ):
+                            # Record the tool execution in the model response
+                            if model_response.tool_executions is None:
+                                model_response.tool_executions = []
+                            model_response.tool_executions.extend(function_call_response.tool_executions)
+
+                            # If the tool is currently paused (HITL flow), add the requirement to the run response
+                            if (
+                                function_call_response.event == ModelResponseEvent.tool_call_paused.value
+                                and run_response is not None
+                            ):
+                                current_tool_execution = function_call_response.tool_executions[-1]
+                                if run_response.requirements is None:
+                                    run_response.requirements = []
+                                run_response.requirements.append(RunRequirement(tool_execution=current_tool_execution))
+
+                        elif function_call_response.event not in [
+                            ModelResponseEvent.tool_call_started.value,
+                            ModelResponseEvent.tool_call_completed.value,
+                        ]:
+                            if function_call_response.content:
+                                model_response.content += function_call_response.content  # type: ignore
+
+                # Add a function call for each successful execution
+                function_call_count += self._limit_charge_for(function_call_results, result_store)
+
+                # Format and add results to messages
+                self.format_function_call_results(
+                    messages=messages,
+                    function_call_results=function_call_results,
                     compress_tool_results=_compress_tool_results,
+                    **model_response.extra or {},
                 )
 
-                # Accumulate metrics for non-stream responses
-                if run_response is not None and model_response.response_usage is not None:
-                    from agno.metrics import accumulate_model_metrics
-
-                    accumulate_model_metrics(model_response, self, self.model_type, run_response.metrics)
-
-                # Add assistant message to messages
-                messages.append(assistant_message)
-
-                # Log response and metrics
-                assistant_message.log(metrics=True, use_compressed_content=_compress_tool_results)
-
-                # Handle tool calls if present
-                if assistant_message.tool_calls:
-                    # Prepare function calls
-                    function_calls_to_run = self._prepare_function_calls(
-                        assistant_message=assistant_message,
-                        messages=messages,
-                        model_response=model_response,
-                        functions=_functions,
-                    )
-                    function_call_results: List[Message] = []
-
-                    # Execute function calls
-                    for function_call_response in self.run_function_calls(
-                        function_calls=function_calls_to_run,
-                        function_call_results=function_call_results,
-                        current_function_call_count=function_call_count,
-                        function_call_limit=tool_call_limit,
-                    ):
-                        if isinstance(function_call_response, ModelResponse):
-                            # The session state is updated by the function call
-                            if function_call_response.updated_session_state is not None:
-                                model_response.updated_session_state = function_call_response.updated_session_state
-
-                            # Media artifacts are generated by the function call
-                            if function_call_response.images is not None:
-                                if model_response.images is None:
-                                    model_response.images = []
-                                model_response.images.extend(function_call_response.images)
-
-                            if function_call_response.audios is not None:
-                                if model_response.audios is None:
-                                    model_response.audios = []
-                                model_response.audios.extend(function_call_response.audios)
-
-                            if function_call_response.videos is not None:
-                                if model_response.videos is None:
-                                    model_response.videos = []
-                                model_response.videos.extend(function_call_response.videos)
-
-                            if function_call_response.files is not None:
-                                if model_response.files is None:
-                                    model_response.files = []
-                                model_response.files.extend(function_call_response.files)
-
-                            if (
-                                function_call_response.event
-                                in [
-                                    ModelResponseEvent.tool_call_completed.value,
-                                    ModelResponseEvent.tool_call_paused.value,
-                                ]
-                                and function_call_response.tool_executions is not None
-                            ):
-                                # Record the tool execution in the model response
-                                if model_response.tool_executions is None:
-                                    model_response.tool_executions = []
-                                model_response.tool_executions.extend(function_call_response.tool_executions)
-
-                                # If the tool is currently paused (HITL flow), add the requirement to the run response
-                                if (
-                                    function_call_response.event == ModelResponseEvent.tool_call_paused.value
-                                    and run_response is not None
-                                ):
-                                    current_tool_execution = function_call_response.tool_executions[-1]
-                                    if run_response.requirements is None:
-                                        run_response.requirements = []
-                                    run_response.requirements.append(
-                                        RunRequirement(tool_execution=current_tool_execution)
-                                    )
-
-                            elif function_call_response.event not in [
-                                ModelResponseEvent.tool_call_started.value,
-                                ModelResponseEvent.tool_call_completed.value,
-                            ]:
-                                if function_call_response.content:
-                                    model_response.content += function_call_response.content  # type: ignore
-
-                    # Add a function call for each successful execution
-                    function_call_count += len(function_call_results)
-
-                    # Format and add results to messages
-                    self.format_function_call_results(
+                if any(msg.images or msg.videos or msg.audio or msg.files for msg in function_call_results):
+                    # Handle function call media
+                    self._handle_function_call_media(
                         messages=messages,
                         function_call_results=function_call_results,
-                        compress_tool_results=_compress_tool_results,
-                        **model_response.extra or {},
+                        send_media_to_model=send_media_to_model,
                     )
 
-                    if any(msg.images or msg.videos or msg.audio or msg.files for msg in function_call_results):
-                        # Handle function call media
-                        self._handle_function_call_media(
-                            messages=messages,
-                            function_call_results=function_call_results,
-                            send_media_to_model=send_media_to_model,
-                        )
+                for function_call_result in function_call_results:
+                    function_call_result.log(metrics=True, use_compressed_content=_compress_tool_results)
 
-                    for function_call_result in function_call_results:
-                        function_call_result.log(metrics=True, use_compressed_content=_compress_tool_results)
+                # Check if we should stop after tool calls
+                if any(m.stop_after_tool_call for m in function_call_results):
+                    break
 
-                    # Check if we should stop after tool calls
-                    if any(m.stop_after_tool_call for m in function_call_results):
+                # Per-turn checkpoint hook: post-gather barrier. Tool results have been
+                # appended to messages; fire the hook before deciding whether to loop or break.
+                # Failure to checkpoint must not kill a working run — log and continue.
+                if after_tool_results is not None:
+                    try:
+                        after_tool_results(model_response)
+                    except Exception as e:
+                        log_error(f"after_tool_results callback failed: {e}")
+
+                # If we have any tool calls that require confirmation, break the loop
+                if any(tc.requires_confirmation for tc in model_response.tool_executions or []):
+                    break
+
+                # If we have any tool calls that require external execution, break the loop
+                if any(tc.external_execution_required for tc in model_response.tool_executions or []):
+                    break
+
+                # If we have any tool calls that require user input, break the loop
+                if any(tc.requires_user_input for tc in model_response.tool_executions or []):
+                    break
+
+                # Check if run_response has requirements (e.g., from member agent HITL)
+                # This handles cases where a tool (like delegate_task_to_member) propagates
+                # HITL requirements from a member agent to the team's run_response
+                if run_response is not None and run_response.requirements:
+                    if any(not req.is_resolved() for req in run_response.requirements):
                         break
 
-                    # If we have any tool calls that require confirmation, break the loop
-                    if any(tc.requires_confirmation for tc in model_response.tool_executions or []):
-                        break
+                # Continue loop to get next response
+                continue
 
-                    # If we have any tool calls that require external execution, break the loop
-                    if any(tc.external_execution_required for tc in model_response.tool_executions or []):
-                        break
+            # No tool calls or finished processing them
+            break
 
-                    # If we have any tool calls that require user input, break the loop
-                    if any(tc.requires_user_input for tc in model_response.tool_executions or []):
-                        break
+        log_debug(f"{self.get_provider()} Response End", center=True, symbol="-")
 
-                    # Check if run_response has requirements (e.g., from member agent HITL)
-                    # This handles cases where a tool (like delegate_task_to_member) propagates
-                    # HITL requirements from a member agent to the team's run_response
-                    if run_response is not None and run_response.requirements:
-                        if any(not req.is_resolved() for req in run_response.requirements):
-                            break
-
-                    # Continue loop to get next response
-                    continue
-
-                # No tool calls or finished processing them
-                break
-
-            log_debug(f"{self.get_provider()} Response End", center=True, symbol="-")
-
-            # Save to cache if enabled
-            if self.cache_response:
-                self._save_model_response_to_cache(cache_key, model_response, is_streaming=False)
-        finally:
-            # Close the Gemini client
-            if self.__class__.__name__ == "Gemini" and self.client is not None:  # type: ignore
-                try:
-                    self.client.close()  # type: ignore
-                    self.client = None
-                except AttributeError as e:
-                    log_warning(
-                        f"Your Gemini client is outdated. For Agno to properly handle the lifecycle of the client,: {e}"
-                        f" please upgrade Gemini to the latest version: pip install -U google-genai: {e}",
-                    )
+        # Save to cache if enabled
+        if self.cache_response:
+            self._save_model_response_to_cache(cache_key, model_response, is_streaming=False)
 
         return model_response
 
@@ -885,214 +886,216 @@ class Model(ABC):
         run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
         send_media_to_model: bool = True,
         compression_manager: Optional["CompressionManager"] = None,
+        result_store: Optional["ResultStore"] = None,
+        after_tool_results: Optional[Callable[["ModelResponse"], Awaitable[None]]] = None,
     ) -> ModelResponse:
         """
         Generate an asynchronous response from the model.
+
+        ``after_tool_results``: optional async callback invoked once per tool batch, after tool
+        result messages are appended to ``messages`` and before the next model call (or break).
+        Receives the current ``ModelResponse`` (with accumulated ``tool_executions``) as its
+        single argument. Used by Agent-level checkpointing (``checkpoint="tool-batch"``) to persist
+        mid-run state. Exceptions are caught and logged — a failed callback must not kill the run.
         """
 
-        try:
-            # Check cache if enabled
-            if self.cache_response:
-                cache_key = self._get_model_cache_key(
-                    messages, stream=False, response_format=response_format, tools=tools
+        # Check cache if enabled
+        if self.cache_response:
+            cache_key = self._get_model_cache_key(messages, stream=False, response_format=response_format, tools=tools)
+            cached_data = self._get_cached_model_response(cache_key)
+
+            if cached_data:
+                log_info("Cache hit for model response")
+                return self._model_response_from_cache(cached_data)
+
+        log_debug(f"{self.get_provider()} Async Response Start", center=True, symbol="-")
+        log_debug(f"Model: {self.id}", center=True, symbol="-")
+        _log_messages(messages)
+        model_response = ModelResponse()
+
+        _tool_dicts = self._format_tools(tools) if tools is not None else []
+        _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)} if tools is not None else {}
+
+        _compress_tool_results = compression_manager is not None and compression_manager.compress_tool_results
+        _compression_manager = compression_manager if _compress_tool_results else None
+
+        function_call_count = 0
+
+        while True:
+            # Compress existing tool results BEFORE making API call to avoid context overflow
+            if _compression_manager is not None and await _compression_manager.ashould_compress(
+                messages, tools, model=self, response_format=response_format
+            ):
+                await _compression_manager.acompress(
+                    messages, run_metrics=run_response.metrics if run_response is not None else None
                 )
-                cached_data = self._get_cached_model_response(cache_key)
 
-                if cached_data:
-                    log_info("Cache hit for model response")
-                    return self._model_response_from_cache(cached_data)
+            # Get response from model
+            assistant_message = Message(role=self.assistant_message_role)
+            # Initialize message metrics and start timer before model call
+            self._ensure_message_metrics_initialized(assistant_message)
+            await self._aprocess_model_response(
+                messages=messages,
+                assistant_message=assistant_message,
+                model_response=model_response,
+                response_format=response_format,
+                tools=_tool_dicts,
+                tool_choice=tool_choice or self._tool_choice,
+                run_response=run_response,
+                compress_tool_results=_compress_tool_results,
+            )
 
-            log_debug(f"{self.get_provider()} Async Response Start", center=True, symbol="-")
-            log_debug(f"Model: {self.id}", center=True, symbol="-")
-            _log_messages(messages)
-            model_response = ModelResponse()
+            # Accumulate metrics for non-stream responses
+            if run_response is not None and model_response.response_usage is not None:
+                from agno.metrics import accumulate_model_metrics
 
-            _tool_dicts = self._format_tools(tools) if tools is not None else []
-            _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)} if tools is not None else {}
+                accumulate_model_metrics(model_response, self, self.model_type, run_response.metrics)
 
-            _compress_tool_results = compression_manager is not None and compression_manager.compress_tool_results
-            _compression_manager = compression_manager if _compress_tool_results else None
+            # Add assistant message to messages
+            messages.append(assistant_message)
 
-            function_call_count = 0
+            # Log response and metrics
+            assistant_message.log(metrics=True)
 
-            while True:
-                # Compress existing tool results BEFORE making API call to avoid context overflow
-                if _compression_manager is not None and await _compression_manager.ashould_compress(
-                    messages, tools, model=self, response_format=response_format
-                ):
-                    await _compression_manager.acompress(
-                        messages, run_metrics=run_response.metrics if run_response is not None else None
-                    )
-
-                # Get response from model
-                assistant_message = Message(role=self.assistant_message_role)
-                # Initialize message metrics and start timer before model call
-                self._ensure_message_metrics_initialized(assistant_message)
-                await self._aprocess_model_response(
-                    messages=messages,
+            # Handle tool calls if present
+            if assistant_message.tool_calls:
+                # Prepare function calls
+                function_calls_to_run = self._prepare_function_calls(
                     assistant_message=assistant_message,
+                    messages=messages,
                     model_response=model_response,
-                    response_format=response_format,
-                    tools=_tool_dicts,
-                    tool_choice=tool_choice or self._tool_choice,
-                    run_response=run_response,
+                    functions=_functions,
+                )
+                function_call_results: List[Message] = []
+
+                # Execute function calls
+                async for function_call_response in self.arun_function_calls(
+                    function_calls=function_calls_to_run,
+                    function_call_results=function_call_results,
+                    current_function_call_count=function_call_count,
+                    function_call_limit=tool_call_limit,
+                    result_store=result_store,
+                ):
+                    if isinstance(function_call_response, ModelResponse):
+                        # The session state is updated by the function call
+                        if function_call_response.updated_session_state is not None:
+                            model_response.updated_session_state = function_call_response.updated_session_state
+
+                        # Media artifacts are generated by the function call
+                        if function_call_response.images is not None:
+                            if model_response.images is None:
+                                model_response.images = []
+                            model_response.images.extend(function_call_response.images)
+
+                        if function_call_response.audios is not None:
+                            if model_response.audios is None:
+                                model_response.audios = []
+                            model_response.audios.extend(function_call_response.audios)
+
+                        if function_call_response.videos is not None:
+                            if model_response.videos is None:
+                                model_response.videos = []
+                            model_response.videos.extend(function_call_response.videos)
+
+                        if function_call_response.files is not None:
+                            if model_response.files is None:
+                                model_response.files = []
+                            model_response.files.extend(function_call_response.files)
+
+                        if (
+                            function_call_response.event
+                            in [
+                                ModelResponseEvent.tool_call_completed.value,
+                                ModelResponseEvent.tool_call_paused.value,
+                            ]
+                            and function_call_response.tool_executions is not None
+                        ):
+                            if model_response.tool_executions is None:
+                                model_response.tool_executions = []
+                            model_response.tool_executions.extend(function_call_response.tool_executions)
+
+                            # If the tool is currently paused (HITL flow), add the requirement to the run response
+                            if (
+                                function_call_response.event == ModelResponseEvent.tool_call_paused.value
+                                and run_response is not None
+                            ):
+                                current_tool_execution = function_call_response.tool_executions[-1]
+                                if run_response.requirements is None:
+                                    run_response.requirements = []
+                                run_response.requirements.append(RunRequirement(tool_execution=current_tool_execution))
+
+                        elif function_call_response.event not in [
+                            ModelResponseEvent.tool_call_started.value,
+                            ModelResponseEvent.tool_call_completed.value,
+                        ]:
+                            if function_call_response.content:
+                                model_response.content += function_call_response.content  # type: ignore
+
+                # Add a function call for each successful execution
+                function_call_count += self._limit_charge_for(function_call_results, result_store)
+
+                # Format and add results to messages
+                self.format_function_call_results(
+                    messages=messages,
+                    function_call_results=function_call_results,
                     compress_tool_results=_compress_tool_results,
+                    **model_response.extra or {},
                 )
 
-                # Accumulate metrics for non-stream responses
-                if run_response is not None and model_response.response_usage is not None:
-                    from agno.metrics import accumulate_model_metrics
-
-                    accumulate_model_metrics(model_response, self, self.model_type, run_response.metrics)
-
-                # Add assistant message to messages
-                messages.append(assistant_message)
-
-                # Log response and metrics
-                assistant_message.log(metrics=True)
-
-                # Handle tool calls if present
-                if assistant_message.tool_calls:
-                    # Prepare function calls
-                    function_calls_to_run = self._prepare_function_calls(
-                        assistant_message=assistant_message,
-                        messages=messages,
-                        model_response=model_response,
-                        functions=_functions,
-                    )
-                    function_call_results: List[Message] = []
-
-                    # Execute function calls
-                    async for function_call_response in self.arun_function_calls(
-                        function_calls=function_calls_to_run,
-                        function_call_results=function_call_results,
-                        current_function_call_count=function_call_count,
-                        function_call_limit=tool_call_limit,
-                    ):
-                        if isinstance(function_call_response, ModelResponse):
-                            # The session state is updated by the function call
-                            if function_call_response.updated_session_state is not None:
-                                model_response.updated_session_state = function_call_response.updated_session_state
-
-                            # Media artifacts are generated by the function call
-                            if function_call_response.images is not None:
-                                if model_response.images is None:
-                                    model_response.images = []
-                                model_response.images.extend(function_call_response.images)
-
-                            if function_call_response.audios is not None:
-                                if model_response.audios is None:
-                                    model_response.audios = []
-                                model_response.audios.extend(function_call_response.audios)
-
-                            if function_call_response.videos is not None:
-                                if model_response.videos is None:
-                                    model_response.videos = []
-                                model_response.videos.extend(function_call_response.videos)
-
-                            if function_call_response.files is not None:
-                                if model_response.files is None:
-                                    model_response.files = []
-                                model_response.files.extend(function_call_response.files)
-
-                            if (
-                                function_call_response.event
-                                in [
-                                    ModelResponseEvent.tool_call_completed.value,
-                                    ModelResponseEvent.tool_call_paused.value,
-                                ]
-                                and function_call_response.tool_executions is not None
-                            ):
-                                if model_response.tool_executions is None:
-                                    model_response.tool_executions = []
-                                model_response.tool_executions.extend(function_call_response.tool_executions)
-
-                                # If the tool is currently paused (HITL flow), add the requirement to the run response
-                                if (
-                                    function_call_response.event == ModelResponseEvent.tool_call_paused.value
-                                    and run_response is not None
-                                ):
-                                    current_tool_execution = function_call_response.tool_executions[-1]
-                                    if run_response.requirements is None:
-                                        run_response.requirements = []
-                                    run_response.requirements.append(
-                                        RunRequirement(tool_execution=current_tool_execution)
-                                    )
-
-                            elif function_call_response.event not in [
-                                ModelResponseEvent.tool_call_started.value,
-                                ModelResponseEvent.tool_call_completed.value,
-                            ]:
-                                if function_call_response.content:
-                                    model_response.content += function_call_response.content  # type: ignore
-
-                    # Add a function call for each successful execution
-                    function_call_count += len(function_call_results)
-
-                    # Format and add results to messages
-                    self.format_function_call_results(
+                if any(msg.images or msg.videos or msg.audio or msg.files for msg in function_call_results):
+                    # Handle function call media
+                    self._handle_function_call_media(
                         messages=messages,
                         function_call_results=function_call_results,
-                        compress_tool_results=_compress_tool_results,
-                        **model_response.extra or {},
+                        send_media_to_model=send_media_to_model,
                     )
 
-                    if any(msg.images or msg.videos or msg.audio or msg.files for msg in function_call_results):
-                        # Handle function call media
-                        self._handle_function_call_media(
-                            messages=messages,
-                            function_call_results=function_call_results,
-                            send_media_to_model=send_media_to_model,
-                        )
+                for function_call_result in function_call_results:
+                    function_call_result.log(metrics=True, use_compressed_content=_compress_tool_results)
 
-                    for function_call_result in function_call_results:
-                        function_call_result.log(metrics=True, use_compressed_content=_compress_tool_results)
+                # Check if we should stop after tool calls
+                if any(m.stop_after_tool_call for m in function_call_results):
+                    break
 
-                    # Check if we should stop after tool calls
-                    if any(m.stop_after_tool_call for m in function_call_results):
+                # Per-turn checkpoint hook: post-gather barrier. Tool results have been
+                # appended to messages; fire the hook before deciding whether to loop or break.
+                # Failure to checkpoint must not kill a working run — log and continue.
+                if after_tool_results is not None:
+                    try:
+                        await after_tool_results(model_response)
+                    except Exception as e:
+                        log_error(f"after_tool_results callback failed: {e}")
+
+                # If we have any tool calls that require confirmation, break the loop
+                if any(tc.requires_confirmation for tc in model_response.tool_executions or []):
+                    break
+
+                # If we have any tool calls that require external execution, break the loop
+                if any(tc.external_execution_required for tc in model_response.tool_executions or []):
+                    break
+
+                # If we have any tool calls that require user input, break the loop
+                if any(tc.requires_user_input for tc in model_response.tool_executions or []):
+                    break
+
+                # Check if run_response has requirements (e.g., from member agent HITL)
+                # This handles cases where a tool (like delegate_task_to_member) propagates
+                # HITL requirements from a member agent to the team's run_response
+                if run_response is not None and run_response.requirements:
+                    if any(not req.is_resolved() for req in run_response.requirements):
                         break
 
-                    # If we have any tool calls that require confirmation, break the loop
-                    if any(tc.requires_confirmation for tc in model_response.tool_executions or []):
-                        break
+                # Continue loop to get next response
+                continue
 
-                    # If we have any tool calls that require external execution, break the loop
-                    if any(tc.external_execution_required for tc in model_response.tool_executions or []):
-                        break
+            # No tool calls or finished processing them
+            break
 
-                    # If we have any tool calls that require user input, break the loop
-                    if any(tc.requires_user_input for tc in model_response.tool_executions or []):
-                        break
+        log_debug(f"{self.get_provider()} Async Response End", center=True, symbol="-")
 
-                    # Check if run_response has requirements (e.g., from member agent HITL)
-                    # This handles cases where a tool (like delegate_task_to_member) propagates
-                    # HITL requirements from a member agent to the team's run_response
-                    if run_response is not None and run_response.requirements:
-                        if any(not req.is_resolved() for req in run_response.requirements):
-                            break
-
-                    # Continue loop to get next response
-                    continue
-
-                # No tool calls or finished processing them
-                break
-
-            log_debug(f"{self.get_provider()} Async Response End", center=True, symbol="-")
-
-            # Save to cache if enabled
-            if self.cache_response:
-                self._save_model_response_to_cache(cache_key, model_response, is_streaming=False)
-        finally:
-            # Close the Gemini client
-            if self.__class__.__name__ == "Gemini" and self.client is not None:
-                try:
-                    await self.client.aio.aclose()  # type: ignore
-                    self.client = None
-                except AttributeError as e:
-                    log_warning(
-                        f"Your Gemini client is outdated. For Agno to properly handle the lifecycle of the client,: {e}"
-                        f" please upgrade Gemini to the latest version: pip install -U google-genai: {e}",
-                    )
+        # Save to cache if enabled
+        if self.cache_response:
+            self._save_model_response_to_cache(cache_key, model_response, is_streaming=False)
 
         return model_response
 
@@ -1158,6 +1161,13 @@ class Model(ABC):
             model_response.provider_data = provider_response.provider_data
         if provider_response.response_usage is not None:
             model_response.response_usage = provider_response.response_usage
+        # Providers (e.g. GeminiInteractions on the agent path) can produce
+        # already-executed ToolExecution records server-side; carry them
+        # through so run_response.tools / AgentOS UI sees the audit.
+        if provider_response.tool_executions:
+            if model_response.tool_executions is None:
+                model_response.tool_executions = []
+            model_response.tool_executions.extend(provider_response.tool_executions)
 
     async def _aprocess_model_response(
         self,
@@ -1221,6 +1231,13 @@ class Model(ABC):
             model_response.provider_data = provider_response.provider_data
         if provider_response.response_usage is not None:
             model_response.response_usage = provider_response.response_usage
+        # Providers (e.g. GeminiInteractions on the agent path) can produce
+        # already-executed ToolExecution records server-side; carry them
+        # through so run_response.tools / AgentOS UI sees the audit.
+        if provider_response.tool_executions:
+            if model_response.tool_executions is None:
+                model_response.tool_executions = []
+            model_response.tool_executions.extend(provider_response.tool_executions)
 
     def _populate_assistant_message(
         self,
@@ -1353,74 +1370,80 @@ class Model(ABC):
         run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
         send_media_to_model: bool = True,
         compression_manager: Optional["CompressionManager"] = None,
+        result_store: Optional["ResultStore"] = None,
+        after_tool_results: Optional[Callable[["ModelResponse"], None]] = None,
     ) -> Iterator[Union[ModelResponse, RunOutputEvent, TeamRunOutputEvent]]:
         """
         Generate a streaming response from the model.
+
+        ``after_tool_results``: optional callback invoked once per tool batch, after tool result
+        messages are appended to ``messages`` and before the next model call (or break). Receives
+        the current ``ModelResponse`` (with accumulated ``tool_executions``) as its single
+        argument. Used by Agent-level checkpointing (``checkpoint="tool-batch"``) to persist mid-run
+        state. Exceptions are caught and logged — a failed callback must not kill the run.
         """
-        try:
-            # Check cache if enabled - capture key BEFORE streaming to avoid mismatch
-            cache_key = None
-            if self.cache_response:
-                cache_key = self._get_model_cache_key(
-                    messages, stream=True, response_format=response_format, tools=tools
+        # Check cache if enabled - capture key BEFORE streaming to avoid mismatch
+        cache_key = None
+        if self.cache_response:
+            cache_key = self._get_model_cache_key(messages, stream=True, response_format=response_format, tools=tools)
+            cached_data = self._get_cached_model_response(cache_key)
+
+            if cached_data:
+                log_info("Cache hit for streaming model response")
+                # Yield cached responses
+                for response in self._streaming_responses_from_cache(cached_data["streaming_responses"]):
+                    yield response
+                return
+
+            log_info("Cache miss for streaming model response")
+
+        # Track streaming responses for caching
+        streaming_responses: List[ModelResponse] = []
+
+        log_debug(f"{self.get_provider()} Response Stream Start", center=True, symbol="-")
+        log_debug(f"Model: {self.id}", center=True, symbol="-")
+        _log_messages(messages)
+
+        _tool_dicts = self._format_tools(tools) if tools is not None else []
+        _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)} if tools is not None else {}
+
+        _compress_tool_results = compression_manager is not None and compression_manager.compress_tool_results
+        _compression_manager = compression_manager if _compress_tool_results else None
+
+        function_call_count = 0
+
+        while True:
+            # Compress existing tool results BEFORE invoke
+            if _compression_manager is not None and _compression_manager.should_compress(
+                messages, tools, model=self, response_format=response_format
+            ):
+                # Emit compression started event
+                yield ModelResponse(event=ModelResponseEvent.compression_started.value)
+                _compression_manager.compress(
+                    messages, run_metrics=run_response.metrics if run_response is not None else None
                 )
-                cached_data = self._get_cached_model_response(cache_key)
+                # Emit compression completed event with stats
+                yield ModelResponse(
+                    event=ModelResponseEvent.compression_completed.value,
+                    compression_stats=_compression_manager.stats.copy(),
+                )
 
-                if cached_data:
-                    log_info("Cache hit for streaming model response")
-                    # Yield cached responses
-                    for response in self._streaming_responses_from_cache(cached_data["streaming_responses"]):
-                        yield response
-                    return
+            assistant_message = Message(role=self.assistant_message_role)
+            # Create assistant message and stream data
+            stream_data = MessageData()
+            model_response = ModelResponse()
 
-                log_info("Cache miss for streaming model response")
+            # Emit LLM request started event
+            yield ModelResponse(event=ModelResponseEvent.model_request_started.value)
 
-            # Track streaming responses for caching
-            streaming_responses: List[ModelResponse] = []
-
-            log_debug(f"{self.get_provider()} Response Stream Start", center=True, symbol="-")
-            log_debug(f"Model: {self.id}", center=True, symbol="-")
-            _log_messages(messages)
-
-            _tool_dicts = self._format_tools(tools) if tools is not None else []
-            _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)} if tools is not None else {}
-
-            _compress_tool_results = compression_manager is not None and compression_manager.compress_tool_results
-            _compression_manager = compression_manager if _compress_tool_results else None
-
-            function_call_count = 0
-
-            while True:
-                # Compress existing tool results BEFORE invoke
-                if _compression_manager is not None and _compression_manager.should_compress(
-                    messages, tools, model=self, response_format=response_format
-                ):
-                    # Emit compression started event
-                    yield ModelResponse(event=ModelResponseEvent.compression_started.value)
-                    _compression_manager.compress(
-                        messages, run_metrics=run_response.metrics if run_response is not None else None
-                    )
-                    # Emit compression completed event with stats
-                    yield ModelResponse(
-                        event=ModelResponseEvent.compression_completed.value,
-                        compression_stats=_compression_manager.stats.copy(),
-                    )
-
-                assistant_message = Message(role=self.assistant_message_role)
-                # Create assistant message and stream data
-                stream_data = MessageData()
-                model_response = ModelResponse()
-
-                # Emit LLM request started event
-                yield ModelResponse(event=ModelResponseEvent.model_request_started.value)
-
-                if stream_model_response:
-                    # Initialize message metrics and start timer before model call
-                    stream_data.response_metrics = MessageMetrics()
-                    stream_data.response_metrics.start_timer()
-                    # Initialize assistant_message.metrics for provider invoke_stream calls
-                    self._ensure_message_metrics_initialized(assistant_message)
-                    # Generate response
+            if stream_model_response:
+                # Initialize message metrics and start timer before model call
+                stream_data.response_metrics = MessageMetrics()
+                stream_data.response_metrics.start_timer()
+                # Initialize assistant_message.metrics for provider invoke_stream calls
+                self._ensure_message_metrics_initialized(assistant_message)
+                # Generate response
+                try:
                     for response in self.process_response_stream(
                         messages=messages,
                         assistant_message=assistant_message,
@@ -1434,8 +1457,8 @@ class Model(ABC):
                         if self.cache_response and isinstance(response, ModelResponse):
                             streaming_responses.append(response)
                         yield response
-
-                    # Accumulate metrics for this streamed iteration
+                finally:
+                    # Accumulate metrics for this streamed iteration (also on cancel)
                     if run_response is not None and assistant_message.metrics is not None:
                         from agno.metrics import accumulate_model_metrics
 
@@ -1443,145 +1466,144 @@ class Model(ABC):
                         _stream_model_response.response_usage = assistant_message.metrics
                         accumulate_model_metrics(_stream_model_response, self, self.model_type, run_response.metrics)
 
-                else:
-                    # Initialize message metrics and start timer before model call
-                    self._ensure_message_metrics_initialized(assistant_message)
-                    self._process_model_response(
+            else:
+                # Initialize message metrics and start timer before model call
+                self._ensure_message_metrics_initialized(assistant_message)
+                self._process_model_response(
+                    messages=messages,
+                    assistant_message=assistant_message,
+                    model_response=model_response,
+                    response_format=response_format,
+                    tools=_tool_dicts,
+                    tool_choice=tool_choice or self._tool_choice,
+                    run_response=run_response,
+                    compress_tool_results=_compress_tool_results,
+                )
+                # Accumulate metrics for non-streamed response within stream
+                if run_response is not None and model_response.response_usage is not None:
+                    from agno.metrics import accumulate_model_metrics
+
+                    accumulate_model_metrics(model_response, self, self.model_type, run_response.metrics)
+                if self.cache_response:
+                    streaming_responses.append(model_response)
+                yield model_response
+
+            # Add assistant message to messages
+            messages.append(assistant_message)
+            assistant_message.log(metrics=True)
+
+            # Emit LLM request completed event with metrics
+            llm_metrics = assistant_message.metrics
+            yield ModelResponse(
+                event=ModelResponseEvent.model_request_completed.value,
+                input_tokens=llm_metrics.input_tokens if llm_metrics else None,
+                output_tokens=llm_metrics.output_tokens if llm_metrics else None,
+                total_tokens=llm_metrics.total_tokens if llm_metrics else None,
+                time_to_first_token=llm_metrics.time_to_first_token if llm_metrics else None,
+                reasoning_tokens=llm_metrics.reasoning_tokens if llm_metrics else None,
+                cache_read_tokens=llm_metrics.cache_read_tokens if llm_metrics else None,
+                cache_write_tokens=llm_metrics.cache_write_tokens if llm_metrics else None,
+            )
+
+            # Handle tool calls if present
+            if assistant_message.tool_calls is not None:
+                # Prepare function calls
+                function_calls_to_run: List[FunctionCall] = self.get_function_calls_to_run(
+                    assistant_message=assistant_message, messages=messages, functions=_functions
+                )
+                function_call_results: List[Message] = []
+
+                # Execute function calls
+                for function_call_response in self.run_function_calls(
+                    function_calls=function_calls_to_run,
+                    function_call_results=function_call_results,
+                    current_function_call_count=function_call_count,
+                    function_call_limit=tool_call_limit,
+                    result_store=result_store,
+                ):
+                    if self.cache_response and isinstance(function_call_response, ModelResponse):
+                        streaming_responses.append(function_call_response)
+                    yield function_call_response
+
+                # Add a function call for each successful execution
+                function_call_count += self._limit_charge_for(function_call_results, result_store)
+
+                # Format and add results to messages
+                if stream_data and stream_data.extra is not None:
+                    self.format_function_call_results(
                         messages=messages,
-                        assistant_message=assistant_message,
-                        model_response=model_response,
-                        response_format=response_format,
-                        tools=_tool_dicts,
-                        tool_choice=tool_choice or self._tool_choice,
-                        run_response=run_response,
+                        function_call_results=function_call_results,
+                        compress_tool_results=_compress_tool_results,
+                        **stream_data.extra,
+                    )
+                elif model_response and model_response.extra is not None:
+                    self.format_function_call_results(
+                        messages=messages,
+                        function_call_results=function_call_results,
+                        compress_tool_results=_compress_tool_results,
+                        **model_response.extra,
+                    )
+                else:
+                    self.format_function_call_results(
+                        messages=messages,
+                        function_call_results=function_call_results,
                         compress_tool_results=_compress_tool_results,
                     )
-                    # Accumulate metrics for non-streamed response within stream
-                    if run_response is not None and model_response.response_usage is not None:
-                        from agno.metrics import accumulate_model_metrics
 
-                        accumulate_model_metrics(model_response, self, self.model_type, run_response.metrics)
-                    if self.cache_response:
-                        streaming_responses.append(model_response)
-                    yield model_response
-
-                # Add assistant message to messages
-                messages.append(assistant_message)
-                assistant_message.log(metrics=True)
-
-                # Emit LLM request completed event with metrics
-                llm_metrics = assistant_message.metrics
-                yield ModelResponse(
-                    event=ModelResponseEvent.model_request_completed.value,
-                    input_tokens=llm_metrics.input_tokens if llm_metrics else None,
-                    output_tokens=llm_metrics.output_tokens if llm_metrics else None,
-                    total_tokens=llm_metrics.total_tokens if llm_metrics else None,
-                    time_to_first_token=llm_metrics.time_to_first_token if llm_metrics else None,
-                    reasoning_tokens=llm_metrics.reasoning_tokens if llm_metrics else None,
-                    cache_read_tokens=llm_metrics.cache_read_tokens if llm_metrics else None,
-                    cache_write_tokens=llm_metrics.cache_write_tokens if llm_metrics else None,
-                )
-
-                # Handle tool calls if present
-                if assistant_message.tool_calls is not None:
-                    # Prepare function calls
-                    function_calls_to_run: List[FunctionCall] = self.get_function_calls_to_run(
-                        assistant_message=assistant_message, messages=messages, functions=_functions
-                    )
-                    function_call_results: List[Message] = []
-
-                    # Execute function calls
-                    for function_call_response in self.run_function_calls(
-                        function_calls=function_calls_to_run,
+                # Handle function call media
+                if any(msg.images or msg.videos or msg.audio or msg.files for msg in function_call_results):
+                    self._handle_function_call_media(
+                        messages=messages,
                         function_call_results=function_call_results,
-                        current_function_call_count=function_call_count,
-                        function_call_limit=tool_call_limit,
-                    ):
-                        if self.cache_response and isinstance(function_call_response, ModelResponse):
-                            streaming_responses.append(function_call_response)
-                        yield function_call_response
-
-                    # Add a function call for each successful execution
-                    function_call_count += len(function_call_results)
-
-                    # Format and add results to messages
-                    if stream_data and stream_data.extra is not None:
-                        self.format_function_call_results(
-                            messages=messages,
-                            function_call_results=function_call_results,
-                            compress_tool_results=_compress_tool_results,
-                            **stream_data.extra,
-                        )
-                    elif model_response and model_response.extra is not None:
-                        self.format_function_call_results(
-                            messages=messages,
-                            function_call_results=function_call_results,
-                            compress_tool_results=_compress_tool_results,
-                            **model_response.extra,
-                        )
-                    else:
-                        self.format_function_call_results(
-                            messages=messages,
-                            function_call_results=function_call_results,
-                            compress_tool_results=_compress_tool_results,
-                        )
-
-                    # Handle function call media
-                    if any(msg.images or msg.videos or msg.audio or msg.files for msg in function_call_results):
-                        self._handle_function_call_media(
-                            messages=messages,
-                            function_call_results=function_call_results,
-                            send_media_to_model=send_media_to_model,
-                        )
-
-                    for function_call_result in function_call_results:
-                        function_call_result.log(metrics=True, use_compressed_content=_compress_tool_results)
-
-                    # Check if we should stop after tool calls
-                    if any(m.stop_after_tool_call for m in function_call_results):
-                        break
-
-                    # If we have any tool calls that require confirmation, break the loop
-                    if any(fc.function.requires_confirmation for fc in function_calls_to_run):
-                        break
-
-                    # If we have any tool calls that require external execution, break the loop
-                    if any(fc.function.external_execution for fc in function_calls_to_run):
-                        break
-
-                    # If we have any tool calls that require user input, break the loop
-                    if any(fc.function.requires_user_input for fc in function_calls_to_run):
-                        break
-
-                    # Check if run_response has requirements (e.g., from member agent HITL)
-                    # This handles cases where a tool (like delegate_task_to_member) propagates
-                    # HITL requirements from a member agent to the team's run_response
-                    if run_response is not None and run_response.requirements:
-                        if any(not req.is_resolved() for req in run_response.requirements):
-                            break
-
-                    # Continue loop to get next response
-                    continue
-
-                # No tool calls or finished processing them
-                break
-
-            log_debug(f"{self.get_provider()} Response Stream End", center=True, symbol="-")
-
-            # Save streaming responses to cache if enabled
-            if self.cache_response and cache_key and streaming_responses:
-                self._save_streaming_responses_to_cache(cache_key, streaming_responses)
-        finally:
-            # Close the Gemini client
-            if self.__class__.__name__ == "Gemini" and self.client is not None:
-                try:
-                    self.client.close()  # type: ignore
-                    self.client = None
-                except AttributeError as e:
-                    log_warning(
-                        f"Your Gemini client is outdated. For Agno to properly handle the lifecycle of the client,: {e}"
-                        f" please upgrade Gemini to the latest version: pip install -U google-genai: {e}",
+                        send_media_to_model=send_media_to_model,
                     )
+
+                for function_call_result in function_call_results:
+                    function_call_result.log(metrics=True, use_compressed_content=_compress_tool_results)
+
+                # Check if we should stop after tool calls
+                if any(m.stop_after_tool_call for m in function_call_results):
+                    break
+
+                # Per-turn checkpoint hook: post-gather barrier. Tool results have been
+                # appended to messages; fire the hook before deciding whether to loop or break.
+                # Failure to checkpoint must not kill a working run — log and continue.
+                if after_tool_results is not None:
+                    try:
+                        after_tool_results(model_response)
+                    except Exception as e:
+                        log_error(f"after_tool_results callback failed: {e}")
+
+                # If we have any tool calls that require confirmation, break the loop
+                if any(fc.function.requires_confirmation for fc in function_calls_to_run):
+                    break
+
+                # If we have any tool calls that require external execution, break the loop
+                if any(fc.function.external_execution for fc in function_calls_to_run):
+                    break
+
+                # If we have any tool calls that require user input, break the loop
+                if any(fc.function.requires_user_input for fc in function_calls_to_run):
+                    break
+
+                # Check if run_response has requirements (e.g., from member agent HITL)
+                # This handles cases where a tool (like delegate_task_to_member) propagates
+                # HITL requirements from a member agent to the team's run_response
+                if run_response is not None and run_response.requirements:
+                    if any(not req.is_resolved() for req in run_response.requirements):
+                        break
+
+                # Continue loop to get next response
+                continue
+
+            # No tool calls or finished processing them
+            break
+
+        log_debug(f"{self.get_provider()} Response Stream End", center=True, symbol="-")
+
+        # Save streaming responses to cache if enabled
+        if self.cache_response and cache_key and streaming_responses:
+            self._save_streaming_responses_to_cache(cache_key, streaming_responses)
 
     async def aprocess_response_stream(
         self,
@@ -1629,74 +1651,80 @@ class Model(ABC):
         run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
         send_media_to_model: bool = True,
         compression_manager: Optional["CompressionManager"] = None,
+        result_store: Optional["ResultStore"] = None,
+        after_tool_results: Optional[Callable[["ModelResponse"], Awaitable[None]]] = None,
     ) -> AsyncIterator[Union[ModelResponse, RunOutputEvent, TeamRunOutputEvent]]:
         """
         Generate an asynchronous streaming response from the model.
+
+        ``after_tool_results``: optional async callback invoked once per tool batch, after tool
+        result messages are appended to ``messages`` and before the next model call (or break).
+        Receives the current ``ModelResponse`` (with accumulated ``tool_executions``) as its
+        single argument. Used by Agent-level checkpointing (``checkpoint="tool-batch"``) to persist
+        mid-run state. Exceptions are caught and logged — a failed callback must not kill the run.
         """
-        try:
-            # Check cache if enabled - capture key BEFORE streaming to avoid mismatch
-            cache_key = None
-            if self.cache_response:
-                cache_key = self._get_model_cache_key(
-                    messages, stream=True, response_format=response_format, tools=tools
+        # Check cache if enabled - capture key BEFORE streaming to avoid mismatch
+        cache_key = None
+        if self.cache_response:
+            cache_key = self._get_model_cache_key(messages, stream=True, response_format=response_format, tools=tools)
+            cached_data = self._get_cached_model_response(cache_key)
+
+            if cached_data:
+                log_info("Cache hit for async streaming model response")
+                # Yield cached responses
+                for response in self._streaming_responses_from_cache(cached_data["streaming_responses"]):
+                    yield response
+                return
+
+            log_info("Cache miss for async streaming model response")
+
+        # Track streaming responses for caching
+        streaming_responses: List[ModelResponse] = []
+
+        log_debug(f"{self.get_provider()} Async Response Stream Start", center=True, symbol="-")
+        log_debug(f"Model: {self.id}", center=True, symbol="-")
+        _log_messages(messages)
+
+        _tool_dicts = self._format_tools(tools) if tools is not None else []
+        _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)} if tools is not None else {}
+
+        _compress_tool_results = compression_manager is not None and compression_manager.compress_tool_results
+        _compression_manager = compression_manager if _compress_tool_results else None
+
+        function_call_count = 0
+
+        while True:
+            # Compress existing tool results BEFORE making API call to avoid context overflow
+            if _compression_manager is not None and await _compression_manager.ashould_compress(
+                messages, tools, model=self, response_format=response_format
+            ):
+                # Emit compression started event
+                yield ModelResponse(event=ModelResponseEvent.compression_started.value)
+                await _compression_manager.acompress(
+                    messages, run_metrics=run_response.metrics if run_response is not None else None
                 )
-                cached_data = self._get_cached_model_response(cache_key)
+                # Emit compression completed event with stats
+                yield ModelResponse(
+                    event=ModelResponseEvent.compression_completed.value,
+                    compression_stats=_compression_manager.stats.copy(),
+                )
 
-                if cached_data:
-                    log_info("Cache hit for async streaming model response")
-                    # Yield cached responses
-                    for response in self._streaming_responses_from_cache(cached_data["streaming_responses"]):
-                        yield response
-                    return
+            # Create assistant message and stream data
+            assistant_message = Message(role=self.assistant_message_role)
+            stream_data = MessageData()
+            model_response = ModelResponse()
 
-                log_info("Cache miss for async streaming model response")
+            # Emit LLM request started event
+            yield ModelResponse(event=ModelResponseEvent.model_request_started.value)
 
-            # Track streaming responses for caching
-            streaming_responses: List[ModelResponse] = []
-
-            log_debug(f"{self.get_provider()} Async Response Stream Start", center=True, symbol="-")
-            log_debug(f"Model: {self.id}", center=True, symbol="-")
-            _log_messages(messages)
-
-            _tool_dicts = self._format_tools(tools) if tools is not None else []
-            _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)} if tools is not None else {}
-
-            _compress_tool_results = compression_manager is not None and compression_manager.compress_tool_results
-            _compression_manager = compression_manager if _compress_tool_results else None
-
-            function_call_count = 0
-
-            while True:
-                # Compress existing tool results BEFORE making API call to avoid context overflow
-                if _compression_manager is not None and await _compression_manager.ashould_compress(
-                    messages, tools, model=self, response_format=response_format
-                ):
-                    # Emit compression started event
-                    yield ModelResponse(event=ModelResponseEvent.compression_started.value)
-                    await _compression_manager.acompress(
-                        messages, run_metrics=run_response.metrics if run_response is not None else None
-                    )
-                    # Emit compression completed event with stats
-                    yield ModelResponse(
-                        event=ModelResponseEvent.compression_completed.value,
-                        compression_stats=_compression_manager.stats.copy(),
-                    )
-
-                # Create assistant message and stream data
-                assistant_message = Message(role=self.assistant_message_role)
-                stream_data = MessageData()
-                model_response = ModelResponse()
-
-                # Emit LLM request started event
-                yield ModelResponse(event=ModelResponseEvent.model_request_started.value)
-
-                if stream_model_response:
-                    # Initialize message metrics and start timer before model call
-                    stream_data.response_metrics = MessageMetrics()
-                    stream_data.response_metrics.start_timer()
-                    # Initialize assistant_message.metrics for provider ainvoke_stream calls
-                    self._ensure_message_metrics_initialized(assistant_message)
-                    # Generate response
+            if stream_model_response:
+                # Initialize message metrics and start timer before model call
+                stream_data.response_metrics = MessageMetrics()
+                stream_data.response_metrics.start_timer()
+                # Initialize assistant_message.metrics for provider ainvoke_stream calls
+                self._ensure_message_metrics_initialized(assistant_message)
+                # Generate response
+                try:
                     async for model_response_delta in self.aprocess_response_stream(
                         messages=messages,
                         assistant_message=assistant_message,
@@ -1710,8 +1738,8 @@ class Model(ABC):
                         if self.cache_response and isinstance(model_response_delta, ModelResponse):
                             streaming_responses.append(model_response_delta)
                         yield model_response_delta
-
-                    # Accumulate metrics for this streamed iteration
+                finally:
+                    # Accumulate metrics for this streamed iteration (also on cancel)
                     if run_response is not None and assistant_message.metrics is not None:
                         from agno.metrics import accumulate_model_metrics
 
@@ -1719,146 +1747,144 @@ class Model(ABC):
                         _stream_model_response.response_usage = assistant_message.metrics
                         accumulate_model_metrics(_stream_model_response, self, self.model_type, run_response.metrics)
 
-                else:
-                    # Initialize message metrics and start timer before model call
-                    self._ensure_message_metrics_initialized(assistant_message)
-                    await self._aprocess_model_response(
+            else:
+                # Initialize message metrics and start timer before model call
+                self._ensure_message_metrics_initialized(assistant_message)
+                await self._aprocess_model_response(
+                    messages=messages,
+                    assistant_message=assistant_message,
+                    model_response=model_response,
+                    response_format=response_format,
+                    tools=_tool_dicts,
+                    tool_choice=tool_choice or self._tool_choice,
+                    run_response=run_response,
+                    compress_tool_results=_compress_tool_results,
+                )
+                # Accumulate metrics for non-streamed response within stream
+                if run_response is not None and model_response.response_usage is not None:
+                    from agno.metrics import accumulate_model_metrics
+
+                    accumulate_model_metrics(model_response, self, self.model_type, run_response.metrics)
+                if self.cache_response:
+                    streaming_responses.append(model_response)
+                yield model_response
+
+            # Add assistant message to messages
+            messages.append(assistant_message)
+            assistant_message.log(metrics=True)
+
+            # Emit LLM request completed event with metrics
+            llm_metrics = assistant_message.metrics
+            yield ModelResponse(
+                event=ModelResponseEvent.model_request_completed.value,
+                input_tokens=llm_metrics.input_tokens if llm_metrics else None,
+                output_tokens=llm_metrics.output_tokens if llm_metrics else None,
+                total_tokens=llm_metrics.total_tokens if llm_metrics else None,
+                time_to_first_token=llm_metrics.time_to_first_token if llm_metrics else None,
+                reasoning_tokens=llm_metrics.reasoning_tokens if llm_metrics else None,
+                cache_read_tokens=llm_metrics.cache_read_tokens if llm_metrics else None,
+                cache_write_tokens=llm_metrics.cache_write_tokens if llm_metrics else None,
+            )
+
+            # Handle tool calls if present
+            if assistant_message.tool_calls is not None:
+                # Prepare function calls
+                function_calls_to_run: List[FunctionCall] = self.get_function_calls_to_run(
+                    assistant_message=assistant_message, messages=messages, functions=_functions
+                )
+                function_call_results: List[Message] = []
+
+                # Execute function calls
+                async for function_call_response in self.arun_function_calls(
+                    function_calls=function_calls_to_run,
+                    function_call_results=function_call_results,
+                    current_function_call_count=function_call_count,
+                    function_call_limit=tool_call_limit,
+                    result_store=result_store,
+                ):
+                    if self.cache_response and isinstance(function_call_response, ModelResponse):
+                        streaming_responses.append(function_call_response)
+                    yield function_call_response
+
+                # Add a function call for each successful execution
+                function_call_count += self._limit_charge_for(function_call_results, result_store)
+
+                # Format and add results to messages
+                if stream_data and stream_data.extra is not None:
+                    self.format_function_call_results(
                         messages=messages,
-                        assistant_message=assistant_message,
-                        model_response=model_response,
-                        response_format=response_format,
-                        tools=_tool_dicts,
-                        tool_choice=tool_choice or self._tool_choice,
-                        run_response=run_response,
+                        function_call_results=function_call_results,
+                        compress_tool_results=_compress_tool_results,
+                        **stream_data.extra,
+                    )
+                elif model_response and model_response.extra is not None:
+                    self.format_function_call_results(
+                        messages=messages,
+                        function_call_results=function_call_results,
+                        compress_tool_results=_compress_tool_results,
+                        **model_response.extra or {},
+                    )
+                else:
+                    self.format_function_call_results(
+                        messages=messages,
+                        function_call_results=function_call_results,
                         compress_tool_results=_compress_tool_results,
                     )
-                    # Accumulate metrics for non-streamed response within stream
-                    if run_response is not None and model_response.response_usage is not None:
-                        from agno.metrics import accumulate_model_metrics
 
-                        accumulate_model_metrics(model_response, self, self.model_type, run_response.metrics)
-                    if self.cache_response:
-                        streaming_responses.append(model_response)
-                    yield model_response
-
-                # Add assistant message to messages
-                messages.append(assistant_message)
-                assistant_message.log(metrics=True)
-
-                # Emit LLM request completed event with metrics
-                llm_metrics = assistant_message.metrics
-                yield ModelResponse(
-                    event=ModelResponseEvent.model_request_completed.value,
-                    input_tokens=llm_metrics.input_tokens if llm_metrics else None,
-                    output_tokens=llm_metrics.output_tokens if llm_metrics else None,
-                    total_tokens=llm_metrics.total_tokens if llm_metrics else None,
-                    time_to_first_token=llm_metrics.time_to_first_token if llm_metrics else None,
-                    reasoning_tokens=llm_metrics.reasoning_tokens if llm_metrics else None,
-                    cache_read_tokens=llm_metrics.cache_read_tokens if llm_metrics else None,
-                    cache_write_tokens=llm_metrics.cache_write_tokens if llm_metrics else None,
-                )
-
-                # Handle tool calls if present
-                if assistant_message.tool_calls is not None:
-                    # Prepare function calls
-                    function_calls_to_run: List[FunctionCall] = self.get_function_calls_to_run(
-                        assistant_message=assistant_message, messages=messages, functions=_functions
-                    )
-                    function_call_results: List[Message] = []
-
-                    # Execute function calls
-                    async for function_call_response in self.arun_function_calls(
-                        function_calls=function_calls_to_run,
+                # Handle function call media
+                if any(msg.images or msg.videos or msg.audio or msg.files for msg in function_call_results):
+                    self._handle_function_call_media(
+                        messages=messages,
                         function_call_results=function_call_results,
-                        current_function_call_count=function_call_count,
-                        function_call_limit=tool_call_limit,
-                    ):
-                        if self.cache_response and isinstance(function_call_response, ModelResponse):
-                            streaming_responses.append(function_call_response)
-                        yield function_call_response
-
-                    # Add a function call for each successful execution
-                    function_call_count += len(function_call_results)
-
-                    # Format and add results to messages
-                    if stream_data and stream_data.extra is not None:
-                        self.format_function_call_results(
-                            messages=messages,
-                            function_call_results=function_call_results,
-                            compress_tool_results=_compress_tool_results,
-                            **stream_data.extra,
-                        )
-                    elif model_response and model_response.extra is not None:
-                        self.format_function_call_results(
-                            messages=messages,
-                            function_call_results=function_call_results,
-                            compress_tool_results=_compress_tool_results,
-                            **model_response.extra or {},
-                        )
-                    else:
-                        self.format_function_call_results(
-                            messages=messages,
-                            function_call_results=function_call_results,
-                            compress_tool_results=_compress_tool_results,
-                        )
-
-                    # Handle function call media
-                    if any(msg.images or msg.videos or msg.audio or msg.files for msg in function_call_results):
-                        self._handle_function_call_media(
-                            messages=messages,
-                            function_call_results=function_call_results,
-                            send_media_to_model=send_media_to_model,
-                        )
-
-                    for function_call_result in function_call_results:
-                        function_call_result.log(metrics=True, use_compressed_content=_compress_tool_results)
-
-                    # Check if we should stop after tool calls
-                    if any(m.stop_after_tool_call for m in function_call_results):
-                        break
-
-                    # If we have any tool calls that require confirmation, break the loop
-                    if any(fc.function.requires_confirmation for fc in function_calls_to_run):
-                        break
-
-                    # If we have any tool calls that require external execution, break the loop
-                    if any(fc.function.external_execution for fc in function_calls_to_run):
-                        break
-
-                    # If we have any tool calls that require user input, break the loop
-                    if any(fc.function.requires_user_input for fc in function_calls_to_run):
-                        break
-
-                    # Check if run_response has requirements (e.g., from member agent HITL)
-                    # This handles cases where a tool (like delegate_task_to_member) propagates
-                    # HITL requirements from a member agent to the team's run_response
-                    if run_response is not None and run_response.requirements:
-                        if any(not req.is_resolved() for req in run_response.requirements):
-                            break
-
-                    # Continue loop to get next response
-                    continue
-
-                # No tool calls or finished processing them
-                break
-
-            log_debug(f"{self.get_provider()} Async Response Stream End", center=True, symbol="-")
-
-            # Save streaming responses to cache if enabled
-            if self.cache_response and cache_key and streaming_responses:
-                self._save_streaming_responses_to_cache(cache_key, streaming_responses)
-
-        finally:
-            # Close the Gemini client
-            if self.__class__.__name__ == "Gemini" and self.client is not None:
-                try:
-                    await self.client.aio.aclose()  # type: ignore
-                    self.client = None
-                except AttributeError as e:
-                    log_warning(
-                        f"Your Gemini client is outdated. For Agno to properly handle the lifecycle of the client,: {e}"
-                        f" please upgrade Gemini to the latest version: pip install -U google-genai: {e}",
+                        send_media_to_model=send_media_to_model,
                     )
+
+                for function_call_result in function_call_results:
+                    function_call_result.log(metrics=True, use_compressed_content=_compress_tool_results)
+
+                # Check if we should stop after tool calls
+                if any(m.stop_after_tool_call for m in function_call_results):
+                    break
+
+                # Per-turn checkpoint hook: post-gather barrier. Tool results have been
+                # appended to messages; fire the hook before deciding whether to loop or break.
+                # Failure to checkpoint must not kill a working run — log and continue.
+                if after_tool_results is not None:
+                    try:
+                        await after_tool_results(model_response)
+                    except Exception as e:
+                        log_error(f"after_tool_results callback failed: {e}")
+
+                # If we have any tool calls that require confirmation, break the loop
+                if any(fc.function.requires_confirmation for fc in function_calls_to_run):
+                    break
+
+                # If we have any tool calls that require external execution, break the loop
+                if any(fc.function.external_execution for fc in function_calls_to_run):
+                    break
+
+                # If we have any tool calls that require user input, break the loop
+                if any(fc.function.requires_user_input for fc in function_calls_to_run):
+                    break
+
+                # Check if run_response has requirements (e.g., from member agent HITL)
+                # This handles cases where a tool (like delegate_task_to_member) propagates
+                # HITL requirements from a member agent to the team's run_response
+                if run_response is not None and run_response.requirements:
+                    if any(not req.is_resolved() for req in run_response.requirements):
+                        break
+
+                # Continue loop to get next response
+                continue
+
+            # No tool calls or finished processing them
+            break
+
+        log_debug(f"{self.get_provider()} Async Response Stream End", center=True, symbol="-")
+
+        # Save streaming responses to cache if enabled
+        if self.cache_response and cache_key and streaming_responses:
+            self._save_streaming_responses_to_cache(cache_key, streaming_responses)
 
     def _populate_assistant_message_from_stream_data(
         self, assistant_message: Message, stream_data: MessageData
@@ -2058,6 +2084,81 @@ class Model(ABC):
                 function_calls_to_run.append(_function_call)
         return function_calls_to_run
 
+    @staticmethod
+    def _offload_candidate(
+        result_store: "ResultStore",
+        function_call: FunctionCall,
+        success: bool,
+        output: str,
+    ) -> Optional[str]:
+        """The output as text when it qualifies for offloading, else None.
+
+        Never offloaded: failed calls (the model needs the error text
+        verbatim), empty results, sub-threshold results, the read-back tools'
+        own output, and any result that ends the run. A result that ends the
+        run is the answer the caller receives, so a pointer in its place would
+        replace the answer with a reference to it. Only the message content is
+        ever replaced - media on the FunctionExecutionResult is untouched.
+        """
+        if not success or not output:
+            return None
+        if function_call.function.stop_after_tool_call:
+            return None
+        text = output
+        if not result_store.should_offload(function_call.function.name, text):
+            return None
+        if function_call.function._run_context is None:
+            return None
+        return text
+
+    def _substitute_tool_result(
+        self,
+        result_store: "ResultStore",
+        function_call: FunctionCall,
+        success: bool,
+        output: str,
+    ) -> str:
+        """Replace an oversized successful tool result with its envelope."""
+        text = self._offload_candidate(result_store, function_call, success, output)
+        if text is None:
+            return output
+        run_context = function_call.function._run_context
+        assert run_context is not None
+        return result_store.offload_for_model(
+            session_id=run_context.session_id,
+            run_id=run_context.run_id,
+            tool_call_id=function_call.call_id or function_call.function.name,
+            tool_name=function_call.function.name,
+            tool_args=function_call.arguments,
+            output=text,
+            user_id=run_context.user_id,
+            shared=function_call.function._team is not None,
+        )
+
+    async def _asubstitute_tool_result(
+        self,
+        result_store: "ResultStore",
+        function_call: FunctionCall,
+        success: bool,
+        output: str,
+    ) -> str:
+        """Async variant of ``_substitute_tool_result``."""
+        text = self._offload_candidate(result_store, function_call, success, output)
+        if text is None:
+            return output
+        run_context = function_call.function._run_context
+        assert run_context is not None
+        return await result_store.aoffload_for_model(
+            session_id=run_context.session_id,
+            run_id=run_context.run_id,
+            tool_call_id=function_call.call_id or function_call.function.name,
+            tool_name=function_call.function.name,
+            tool_args=function_call.arguments,
+            output=text,
+            user_id=run_context.user_id,
+            shared=function_call.function._team is not None,
+        )
+
     def create_function_call_result(
         self,
         function_call: FunctionCall,
@@ -2098,6 +2199,21 @@ class Model(ABC):
             **kwargs,  # type: ignore
         )
 
+    @staticmethod
+    def _limit_charge_for(function_call_results: List[Message], result_store: Optional["ResultStore"]) -> int:
+        """How many of this batch's results spend the tool call limit.
+
+        With offloading on, the read-back tools are exempt: they exist only
+        because a result was replaced with a pointer the model was told to
+        follow, so the running total charges the same calls the per-batch
+        check charges.
+        """
+        if result_store is None:
+            return len(function_call_results)
+        from agno.offload.types import NEVER_OFFLOADED_TOOLS
+
+        return sum(1 for m in function_call_results if m.tool_name not in NEVER_OFFLOADED_TOOLS)
+
     def create_tool_call_limit_error_result(self, function_call: FunctionCall) -> Message:
         return Message(
             role=self.tool_message_role,
@@ -2113,6 +2229,7 @@ class Model(ABC):
         function_call: FunctionCall,
         function_call_results: List[Message],
         additional_input: Optional[List[Message]] = None,
+        result_store: Optional["ResultStore"] = None,
     ) -> Iterator[Union[ModelResponse, RunOutputEvent, TeamRunOutputEvent]]:
         # Start function call
         function_call_timer = Timer()
@@ -2142,6 +2259,8 @@ class Model(ABC):
             if a_exc.stop_execution:
                 stop_after_tool_call_from_exception = True
             # Set function call success to False if an exception occurred
+        except RunCancelledException:
+            raise
         except Exception as e:
             log_error(f"Error executing function {function_call.function.name}: {str(e)}")
             raise e
@@ -2158,11 +2277,7 @@ class Model(ABC):
             try:
                 for item in function_execution_result.result:
                     # This function yields agent/team/workflow run events
-                    if (
-                        isinstance(item, tuple(get_args(RunOutputEvent)))
-                        or isinstance(item, tuple(get_args(TeamRunOutputEvent)))
-                        or isinstance(item, tuple(get_args(WorkflowRunOutputEvent)))
-                    ):
+                    if isinstance(item, _ALL_RUN_OUTPUT_EVENT_TYPES):
                         # We only capture content events for output accumulation
                         if isinstance(item, RunContentEvent) or isinstance(item, TeamRunContentEvent):
                             if item.content is not None and isinstance(item.content, BaseModel):
@@ -2188,13 +2303,17 @@ class Model(ABC):
                                 else:
                                     function_call_output += str(item.content)
 
-                        # Yield the event itself to bubble it up
-                        yield item
+                        # Yield the event itself to bubble it up. The isinstance guards
+                        # above narrow item at runtime, but mypy cannot see through
+                        # the cached union-member tuple.
+                        yield item  # type: ignore[misc]
 
                     else:
                         function_call_output += str(item)
                         if function_call.function.show_result and item is not None:
                             yield ModelResponse(content=str(item))
+            except RunCancelledException:
+                raise
             except Exception as e:
                 log_error(
                     f"Error while iterating function result generator for {function_call.function.name}: {str(e)}"
@@ -2246,6 +2365,13 @@ class Model(ABC):
             tool_metrics.end_time = current_time
             tool_metrics.start_time = current_time - function_call_timer.elapsed
 
+        # Replace an oversized successful result with its stored envelope
+        # BEFORE the tool message (and the ToolExecution derived from it) is
+        # built. With no result_store this is a no-op passthrough.
+        if result_store is not None:
+            function_call_output = self._substitute_tool_result(
+                result_store, function_call, function_call_success, function_call_output
+            )
         # Create and yield function call result
         function_call_result = self.create_function_call_result(
             function_call,
@@ -2289,16 +2415,27 @@ class Model(ABC):
         additional_input: Optional[List[Message]] = None,
         current_function_call_count: int = 0,
         function_call_limit: Optional[int] = None,
+        result_store: Optional["ResultStore"] = None,
     ) -> Iterator[Union[ModelResponse, RunOutputEvent, TeamRunOutputEvent]]:
+        from agno.offload.types import NEVER_OFFLOADED_TOOLS
+
         # Additional messages from function calls that will be added to the function call results
         if additional_input is None:
             additional_input = []
 
         for fc in function_calls:
-            if function_call_limit is not None:
+            # The read-back tools exist only because offloading replaced a result
+            # the model was told to go and read. Counting them against the limit
+            # can refuse the very read the run needs to answer.
+            counts_against_limit = result_store is None or fc.function.name not in NEVER_OFFLOADED_TOOLS
+            if function_call_limit is not None and counts_against_limit:
                 current_function_call_count += 1
                 # We have reached the function call limit, so we add an error result to the function call results
                 if current_function_call_count > function_call_limit:
+                    log_debug(
+                        f"Tool call limit ({function_call_limit}) reached. "
+                        f"Skipping: {fc.function.name} (call #{current_function_call_count})"
+                    )
                     function_call_results.append(self.create_tool_call_limit_error_result(fc))
                     continue
 
@@ -2426,7 +2563,10 @@ class Model(ABC):
                 continue
 
             yield from self.run_function_call(
-                function_call=fc, function_call_results=function_call_results, additional_input=additional_input
+                function_call=fc,
+                function_call_results=function_call_results,
+                additional_input=additional_input,
+                result_store=result_store,
             )
 
         # Add any additional messages at the end
@@ -2465,6 +2605,8 @@ class Model(ABC):
                 success = result.status == "success"
         except AgentRunException as e:
             success = e
+        except RunCancelledException:
+            raise
         except Exception as e:
             log_error(f"Error executing function {function_call.function.name}: {str(e)}")
             success = False
@@ -2481,17 +2623,28 @@ class Model(ABC):
         current_function_call_count: int = 0,
         function_call_limit: Optional[int] = None,
         skip_pause_check: bool = False,
+        result_store: Optional["ResultStore"] = None,
     ) -> AsyncIterator[Union[ModelResponse, RunOutputEvent, TeamRunOutputEvent]]:
         # Additional messages from function calls that will be added to the function call results
         if additional_input is None:
             additional_input = []
 
+        from agno.offload.types import NEVER_OFFLOADED_TOOLS
+
         function_calls_to_run = []
         for fc in function_calls:
-            if function_call_limit is not None:
+            # The read-back tools exist only because offloading replaced a result
+            # the model was told to go and read. Counting them against the limit
+            # can refuse the very read the run needs to answer.
+            counts_against_limit = result_store is None or fc.function.name not in NEVER_OFFLOADED_TOOLS
+            if function_call_limit is not None and counts_against_limit:
                 current_function_call_count += 1
                 # We have reached the function call limit, so we add an error result to the function call results
                 if current_function_call_count > function_call_limit:
+                    log_debug(
+                        f"Tool call limit ({function_call_limit}) reached. "
+                        f"Skipping: {fc.function.name} (call #{current_function_call_count})"
+                    )
                     function_call_results.append(self.create_tool_call_limit_error_result(fc))
                     # Skip this function call
                     continue
@@ -2655,6 +2808,11 @@ class Model(ABC):
                 )
             ]
 
+        # gather even for a single call: its cancel bookkeeping re-raises
+        # caller cancellation even when a tool swallows the CancelledError
+        # thrown into it, and its task wrapper isolates the tool's contextvars.
+        # A bare await loses both; replicating them needs Task.cancelling(),
+        # which requires Python 3.11.
         results = await asyncio.gather(
             *(self.arun_function_call(fc) for fc in function_calls_to_run), return_exceptions=True
         )
@@ -2689,12 +2847,7 @@ class Model(ABC):
             try:
                 async for item in function_call.result:
                     # This function yields agent/team/workflow run events
-                    if isinstance(
-                        item,
-                        tuple(get_args(RunOutputEvent))
-                        + tuple(get_args(TeamRunOutputEvent))
-                        + tuple(get_args(WorkflowRunOutputEvent)),
-                    ):
+                    if isinstance(item, _ALL_RUN_OUTPUT_EVENT_TYPES):
                         # We only capture content events
                         if isinstance(item, RunContentEvent) or isinstance(item, TeamRunContentEvent):
                             if item.content is not None and isinstance(item.content, BaseModel):
@@ -2768,6 +2921,9 @@ class Model(ABC):
         for i, original_result in enumerate(results):
             # If result is an exception, skip processing it
             if isinstance(original_result, BaseException):
+                # Cancellation is intentional, not an error — re-raise without logging
+                if isinstance(original_result, RunCancelledException):
+                    raise original_result
                 log_error(f"Error during function call: {original_result}")
                 raise original_result
 
@@ -2787,6 +2943,9 @@ class Model(ABC):
                                 if async_gen_index in async_generator_outputs:
                                     _, async_function_call_output, error = async_generator_outputs[async_gen_index]
                                     if error:
+                                        # Re-raise cancellation — it is not an error
+                                        if isinstance(error, RunCancelledException):
+                                            raise error
                                         # Handle async generator exceptions gracefully like sync generators
                                         log_error(
                                             f"Error while iterating async generator for {function_call.function.name}: {error}"
@@ -2821,12 +2980,7 @@ class Model(ABC):
                 try:
                     for item in function_call.result:
                         # This function yields agent/team/workflow run events
-                        if isinstance(
-                            item,
-                            tuple(get_args(RunOutputEvent))
-                            + tuple(get_args(TeamRunOutputEvent))
-                            + tuple(get_args(WorkflowRunOutputEvent)),
-                        ):
+                        if isinstance(item, _ALL_RUN_OUTPUT_EVENT_TYPES):
                             # We only capture content events
                             if isinstance(item, RunContentEvent) or isinstance(item, TeamRunContentEvent):
                                 if item.content is not None and isinstance(item.content, BaseModel):
@@ -2849,6 +3003,8 @@ class Model(ABC):
                             function_call_output += str(item)
                             if function_call.function.show_result and item is not None:
                                 yield ModelResponse(content=str(item))
+                except RunCancelledException:
+                    raise
                 except Exception as e:
                     log_error(
                         f"Error while iterating function result generator for {function_call.function.name}: {str(e)}"
@@ -2909,6 +3065,13 @@ class Model(ABC):
                 tool_metrics.end_time = current_time
                 tool_metrics.start_time = current_time - function_call_timer.elapsed
 
+            # Replace an oversized successful result with its stored envelope
+            # BEFORE the tool message (and the ToolExecution derived from it)
+            # is built. Async parity: the a-prefixed store methods do the I/O.
+            if result_store is not None:
+                function_call_output = await self._asubstitute_tool_result(
+                    result_store, function_call, function_call_success, function_call_output
+                )
             # Create and yield function call result
             function_call_result = self.create_function_call_result(
                 function_call,
@@ -3020,7 +3183,7 @@ class Model(ABC):
             # message with the media artifacts which throws error for some models
             media_message = Message(
                 role="user",
-                content="Take note of the following content",
+                content="The tool call above generated the attached media.",
                 images=all_images if all_images else None,
                 videos=all_videos if all_videos else None,
                 audio=all_audio if all_audio else None,

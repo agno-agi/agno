@@ -11,6 +11,7 @@ Requirements:
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
+from agno.run import RunContext
 from agno.workflow import (
     CEL_AVAILABLE,
     Condition,
@@ -31,19 +32,19 @@ if not CEL_AVAILABLE:
 # ---------------------------------------------------------------------------
 # Define Helpers
 # ---------------------------------------------------------------------------
-def increment_retry_count(step_input: StepInput, session_state: dict) -> StepOutput:
+def increment_retry_count(step_input: StepInput, run_context: RunContext) -> StepOutput:
     """Increment retry count in session state."""
-    current_count = session_state.get("retry_count", 0)
-    session_state["retry_count"] = current_count + 1
+    current_count = run_context.session_state.get("retry_count", 0)
+    run_context.session_state["retry_count"] = current_count + 1
     return StepOutput(
-        content=f"Retry count incremented to {session_state['retry_count']}",
+        content=f"Retry count incremented to {run_context.session_state['retry_count']}",
         success=True,
     )
 
 
-def reset_retry_count(step_input: StepInput, session_state: dict) -> StepOutput:
+def reset_retry_count(step_input: StepInput, run_context: RunContext) -> StepOutput:
     """Reset retry count in session state."""
-    session_state["retry_count"] = 0
+    run_context.session_state["retry_count"] = 0
     return StepOutput(content="Retry count reset to 0", success=True)
 
 
@@ -52,14 +53,14 @@ def reset_retry_count(step_input: StepInput, session_state: dict) -> StepOutput:
 # ---------------------------------------------------------------------------
 retry_agent = Agent(
     name="Retry Handler",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     instructions="You are handling a retry attempt. Acknowledge this is a retry and try a different approach.",
     markdown=True,
 )
 
 max_retries_agent = Agent(
     name="Max Retries Handler",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     instructions="Maximum retries reached. Provide a helpful fallback response and suggest alternatives.",
     markdown=True,
 )

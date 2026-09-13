@@ -31,7 +31,6 @@ content_team = Team(
     members=[researcher, writer],
     model=OpenAIResponses(id="gpt-5.2", cache_response=True),
     markdown=True,
-    debug_mode=True,
 )
 
 # ---------------------------------------------------------------------------

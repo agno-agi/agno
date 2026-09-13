@@ -1,5 +1,6 @@
 """Unit tests for A2AClient."""
 
+from typing import AsyncIterator
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -10,7 +11,9 @@ from agno.client.a2a import (
     StreamEvent,
     TaskResult,
 )
+from agno.client.a2a.utils import map_stream_events_to_run_events
 from agno.exceptions import RemoteServerUnavailableError
+from agno.run.agent import RunCompletedEvent, RunContentEvent, RunStartedEvent
 
 
 class TestA2AClientInit:
@@ -402,6 +405,57 @@ class TestStreamMessage:
             assert len(content_events) == 2
             assert content_events[0].content == "Hello"
             assert content_events[1].content == " World"
+
+    @pytest.mark.asyncio
+    async def test_stream_message_terminal_status_update_carries_metadata(self):
+        """Regression test: out-of-band metadata rides the final=True status-update
+        (the A2A spec's terminal event). map_stream_events_to_run_events must read
+        event.metadata off that terminal event and forward it onto RunCompletedEvent,
+        rather than dropping it."""
+        with patch("agno.client.a2a.client.get_default_async_client") as mock_get_client:
+
+            async def mock_aiter_lines():
+                lines = [
+                    '{"result": {"kind": "status-update", "taskId": "task-123", "status": {"state": "working"}}}',
+                    '{"result": {"kind": "message", "messageId": "m1", "parts": [{"kind": "text", "text": "Hello"}]}}',
+                    (
+                        '{"result": {"kind": "status-update", "taskId": "task-123", '
+                        '"status": {"state": "completed"}, "final": true, '
+                        '"metadata": {"refetch_model": true}}}'
+                    ),
+                ]
+                for line in lines:
+                    yield line
+
+            mock_stream_response = MagicMock()
+            mock_stream_response.status_code = 200
+            mock_stream_response.raise_for_status = MagicMock()
+            mock_stream_response.aiter_lines = mock_aiter_lines
+
+            mock_stream_cm = AsyncMock()
+            mock_stream_cm.__aenter__.return_value = mock_stream_response
+            mock_stream_cm.__aexit__.return_value = None
+
+            mock_http_client = MagicMock()
+            mock_http_client.stream.return_value = mock_stream_cm
+            mock_get_client.return_value = mock_http_client
+
+            client = A2AClient("http://localhost:7777")
+
+            async def raw_stream() -> AsyncIterator[StreamEvent]:
+                async for event in client.stream_message(message="Hello"):
+                    yield event
+
+            run_events = [event async for event in map_stream_events_to_run_events(raw_stream(), agent_id="agent-1")]
+
+            assert [type(e) for e in run_events] == [
+                RunStartedEvent,
+                RunContentEvent,
+                RunCompletedEvent,
+            ]
+            completed = run_events[-1]
+            assert completed.content == "Hello"
+            assert completed.metadata == {"refetch_model": True}
 
 
 class TestSchemas:

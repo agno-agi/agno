@@ -69,7 +69,7 @@ DEBUG *** Team Run Start: fd5ae1a1-13bd-4949-b041-184dc44a5a78 ***
 DEBUG Processing tools for model                                                
 DEBUG Added tool delegate_task_to_member                                        
 DEBUG --------------- Google Response Stream Start ---------------              
-DEBUG -------------- Model: gemini-3-flash-preview ---------------              
+DEBUG -------------- Model: gemini-3.5-flash ---------------              
 DEBUG ========================== system ==========================              
 DEBUG You coordinate a team of specialized AI agents to fulfill the user's      
       request. Delegate to members when their expertise or tools are needed. For

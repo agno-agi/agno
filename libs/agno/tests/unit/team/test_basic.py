@@ -2,12 +2,12 @@ from unittest.mock import MagicMock
 
 import pytest
 
-pytest.importorskip("duckduckgo_search")
+pytest.importorskip("ddgs")
 pytest.importorskip("yfinance")
 
 from agno.agent import Agent
+from agno.metrics import MessageMetrics, RunMetrics
 from agno.models.message import Message
-from agno.models.metrics import RunMetrics
 from agno.models.openai import OpenAIChat
 from agno.run import RunContext
 from agno.run.team import TeamRunOutput
@@ -40,21 +40,24 @@ def team():
 
 
 def test_team_system_message_content(team):
-    """Test basic functionality of a route team."""
+    """The roster renders one <member> element per member, id and name as attributes."""
 
-    # Get the actual content
     members_content = team.get_members_system_message_content()
 
-    # Check for expected content with fuzzy matching
-    assert "Agent 1:" in members_content
-    assert "ID: web-agent" in members_content
-    assert "Name: Web Agent" in members_content
+    assert '<member id="web-agent" name="Web Agent">' in members_content
     assert "Role: Search the web for information" in members_content
 
-    assert "Agent 2:" in members_content
-    assert "ID: finance-agent" in members_content
-    assert "Name: Finance Agent" in members_content
+    assert '<member id="finance-agent" name="Finance Agent">' in members_content
     assert "Role: Get financial data" in members_content
+
+    assert members_content.count("<member ") == 2
+    assert members_content.count("</member>") == 2
+
+    # Tools are listed only when the team opts in, so the prompt never routes on
+    # evidence the roster withheld.
+    assert "Tools:" not in members_content
+    team.add_member_tools_to_context = True
+    assert "Tools: " in team.get_members_system_message_content()
 
 
 def test_delegate_to_wrong_member(team):
@@ -95,12 +98,15 @@ def test_set_id_from_name():
 
 
 def test_set_id_auto_generated():
+    """An unnamed team gets a readable random id, not a raw UUID."""
     team = Team(
         members=[],
     )
     team.set_id()
     assert team.id is not None
-    assert is_valid_uuid(team.id)
+    # generate_id_from_name falls back to a human-readable id when there is no name.
+    assert not is_valid_uuid(team.id)
+    assert team.id.count("-") >= 2 and team.id.islower()
 
 
 def test_team_calculate_metrics_preserves_duration(team):
@@ -110,16 +116,21 @@ def test_team_calculate_metrics_preserves_duration(team):
     initial_metrics.duration = 5.5
     initial_metrics.time_to_first_token = 0.5
 
-    message_metrics = RunMetrics()
+    initial_metrics.input_tokens = 10
+    initial_metrics.output_tokens = 20
+
+    message_metrics = MessageMetrics()
     message_metrics.input_tokens = 10
     message_metrics.output_tokens = 20
-
     messages = [Message(role="assistant", content="Response", metrics=message_metrics)]
 
     # Pass the initial metrics (containing duration) to the calculation
     calculated = team._calculate_metrics(messages, current_run_metrics=initial_metrics)
 
-    # Tokens should be summed (0 from initial + 10/20 from message)
+    # Token counts are accumulated during the model call, so the running total is
+    # carried forward rather than re-summed from the messages — counting both would
+    # double every token on the run.
+    assert calculated is initial_metrics
     assert calculated.input_tokens == 10
     assert calculated.output_tokens == 20
 
@@ -142,9 +153,11 @@ def test_team_update_session_metrics_accumulates(team):
 
     team._update_session_metrics(session, run_response=run1)
 
+    # session_data carries the serialized form, so metrics survive a round-trip to the DB.
+    # SessionMetrics accumulates tokens and cost; duration stays a run-level metric.
     metrics1 = session.session_data["session_metrics"]
-    assert metrics1.duration == 2.0
-    assert metrics1.input_tokens == 100
+    assert metrics1["input_tokens"] == 100
+    assert "duration" not in metrics1
 
     # Second Run
     run2 = TeamRunOutput(content="run 2")
@@ -157,8 +170,7 @@ def test_team_update_session_metrics_accumulates(team):
 
     metrics2 = session.session_data["session_metrics"]
 
-    assert metrics2.duration == 5.0  # 2.0 + 3.0
-    assert metrics2.input_tokens == 150  # 100 + 50
+    assert metrics2["input_tokens"] == 150  # 100 + 50
 
 
 @pytest.mark.asyncio

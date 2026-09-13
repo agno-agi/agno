@@ -8,9 +8,9 @@ import httpx
 from pydantic import BaseModel, ValidationError
 
 from agno.exceptions import ModelProviderError, ModelRateLimitError
+from agno.metrics import MessageMetrics
 from agno.models.base import Model
 from agno.models.message import Citations, DocumentCitation, Message, UrlCitation
-from agno.models.metrics import MessageMetrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 from agno.tools.function import Function
@@ -21,6 +21,9 @@ from agno.utils.models.claude import (
     build_system_blocks,
     format_messages,
     format_tools_for_model,
+    resolve_http_client,
+    route_sampling_params_to_extra_body,
+    serialize_content_blocks,
     supports_prefill,
 )
 from agno.utils.tokens import count_schema_tokens
@@ -188,9 +191,11 @@ class Claude(Model):
         # Set up skills configuration if skills are enabled
         if self.skills:
             self._setup_skills_configuration()
-        # Auto-enable trailing user message for models that don't support prefill
+        # Auto-enable trailing user message for models that don't support prefill. Prefill is also
+        # rejected while thinking is on, on every model: a history ending in an assistant turn (a
+        # resumed run, or a response truncated inside its thinking) must be followed by a user turn.
         if self.append_trailing_user_message is None:
-            self.append_trailing_user_message = not supports_prefill(self.id)
+            self.append_trailing_user_message = not supports_prefill(self.id) or self._thinking_enabled()
 
     def _get_client_params(self) -> Dict[str, Any]:
         client_params: Dict[str, Any] = {}
@@ -262,6 +267,15 @@ class Claude(Model):
                         return True
 
         return False
+
+    def _thinking_enabled(self) -> bool:
+        """Return True when the request will run with thinking on.
+
+        ``request_params`` are applied last in ``get_request_params`` and override the ``thinking``
+        field, so a thinking config supplied there decides.
+        """
+        thinking = (self.request_params or {}).get("thinking", self.thinking)
+        return isinstance(thinking, dict) and thinking.get("type") != "disabled"
 
     def _validate_thinking_support(self) -> None:
         """
@@ -414,11 +428,9 @@ class Claude(Model):
             return self.client
 
         _client_params = self._get_client_params()
-        if self.http_client:
-            if isinstance(self.http_client, httpx.Client):
-                _client_params["http_client"] = self.http_client
-            else:
-                log_warning("http_client is not an instance of httpx.Client. Ignoring and using Anthropic SDK default.")
+        http_client = resolve_http_client(self.http_client)
+        if http_client is not None:
+            _client_params["http_client"] = http_client
         # When no custom http_client is provided, let the Anthropic SDK use its own default client.
         # Each model instance gets its own connection, preventing HTTP/2 stream saturation
         # when multiple models (main agent, MemoryManager, etc.) run concurrently.
@@ -434,13 +446,9 @@ class Claude(Model):
             return self.async_client
 
         _client_params = self._get_client_params()
-        if self.http_client:
-            if isinstance(self.http_client, httpx.AsyncClient):
-                _client_params["http_client"] = self.http_client
-            else:
-                log_warning(
-                    "http_client is not an instance of httpx.AsyncClient. Ignoring and using Anthropic SDK default."
-                )
+        http_client = resolve_http_client(self.http_client, is_async=True)
+        if http_client is not None:
+            _client_params["http_client"] = http_client
         # When no custom http_client is provided, let the Anthropic SDK use its own default client.
         # Each model instance gets its own connection, preventing HTTP/2 stream saturation
         # when multiple models (main agent, MemoryManager, etc.) run concurrently.
@@ -549,13 +557,13 @@ class Claude(Model):
             _request_params["thinking"] = self.thinking
         if self.output_config:
             _request_params["output_config"] = self.output_config
-        if self.temperature:
+        if self.temperature is not None:
             _request_params["temperature"] = self.temperature
         if self.stop_sequences:
             _request_params["stop_sequences"] = self.stop_sequences
-        if self.top_p:
+        if self.top_p is not None:
             _request_params["top_p"] = self.top_p
-        if self.top_k:
+        if self.top_k is not None:
             _request_params["top_k"] = self.top_k
 
         # Build betas list - include existing betas and add new one if needed
@@ -582,7 +590,7 @@ class Claude(Model):
         if self.request_params:
             _request_params.update(self.request_params)
 
-        return _request_params
+        return route_sampling_params_to_extra_body(_request_params)
 
     @staticmethod
     def _extract_container_id_from_messages(messages: List["Message"]) -> Optional[str]:
@@ -689,10 +697,18 @@ class Claude(Model):
 
         self._apply_cache_tools(request_kwargs)
 
-        # Build output_format if response_format is provided
+        # Structured output travels inside output_config. anthropic 1.0.0 dropped the
+        # older output_format parameter from create() on both the stable and the beta
+        # endpoint, where passing it raises TypeError before the request is ever sent.
+        # Merge rather than assign, so a caller who set output_config for effort keeps
+        # it -- and build a new dict, because get_request_params() returns a shallow
+        # copy whose output_config value is still the model's own object.
         output_format = self._build_output_format(response_format)
         if output_format:
-            request_kwargs["output_format"] = output_format
+            request_kwargs["output_config"] = {
+                **(request_kwargs.get("output_config") or {}),
+                "format": output_format,
+            }
 
         if request_kwargs:
             log_debug(f"Calling {self.provider} with request parameters: {request_kwargs}", log_level=2)
@@ -719,7 +735,7 @@ class Claude(Model):
             raise ModelProviderError(
                 message=e.message, status_code=e.status_code, model_name=self.name, model_id=self.id
             ) from e
-        log_error("Unexpected error calling Claude API")
+        log_error(f"Unexpected error calling Claude API: {e}")
         raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     def invoke(
@@ -1021,17 +1037,20 @@ class Claude(Model):
                     model_response.reasoning_content = block.thinking
                     model_response.provider_data = model_response.provider_data or {}
                     model_response.provider_data["signature"] = block.signature
-                elif block.type == "redacted_thinking":
-                    model_response.redacted_reasoning_content = block.data
+                elif block.type in ("redacted_thinking", "redacted_reasoning_content"):
+                    model_response.redacted_reasoning_content = getattr(block, "data", None)
                 elif block.type not in ("tool_use",):
                     # Preserve all non-text/thinking blocks for conversation history reconstruction.
-                    # thinking/redacted_thinking already handled by elif branches above;
-                    # streaming path uses ("thinking", "redacted_thinking", "tool_use") tuple instead.
-                    # tool_use is handled separately below via stop_reason check.
+                    # thinking / redacted variants handled above; tool_use extracted via stop_reason below.
                     if model_response.provider_data is None:
                         model_response.provider_data = {}
                     server_blocks = model_response.provider_data.setdefault("server_tool_blocks", [])
                     server_blocks.append(block.model_dump())
+
+            # Keep the response's content blocks verbatim and in order so history replay can echo
+            # the turn back exactly; the convenience fields above are lossy views of these blocks.
+            model_response.provider_data = model_response.provider_data or {}
+            model_response.provider_data["content_blocks"] = serialize_content_blocks(response.content)
 
         # Extract tool calls from the response
         if response.stop_reason == "tool_use":
@@ -1040,9 +1059,7 @@ class Claude(Model):
                     tool_name = block.name
                     tool_input = block.input
 
-                    function_def = {"name": tool_name}
-                    if tool_input:
-                        function_def["arguments"] = json.dumps(tool_input)
+                    function_def = {"name": tool_name, "arguments": json.dumps(tool_input)}
 
                     model_response.extra = model_response.extra or {}
 
@@ -1119,8 +1136,11 @@ class Claude(Model):
         model_response = ModelResponse()
 
         if isinstance(response, (ContentBlockStartEvent, BetaRawContentBlockStartEvent)):
-            if response.content_block.type == "redacted_reasoning_content":
-                model_response.redacted_reasoning_content = response.content_block.data
+            # The Anthropic SDK emits "redacted_thinking" for these blocks; accept the legacy
+            # "redacted_reasoning_content" spelling too in case it appears via a rehydrated event.
+            block_type = getattr(response.content_block, "type", None)
+            if block_type in ("redacted_thinking", "redacted_reasoning_content"):
+                model_response.redacted_reasoning_content = getattr(response.content_block, "data", None)
 
         if isinstance(response, (ContentBlockDeltaEvent, BetaRawContentBlockDeltaEvent)):
             # Handle text content
@@ -1140,9 +1160,7 @@ class Claude(Model):
                 tool_name = tool_use.name  # type: ignore
                 tool_input = tool_use.input  # type: ignore
 
-                function_def = {"name": tool_name}
-                if tool_input:
-                    function_def["arguments"] = json.dumps(tool_input)
+                function_def = {"name": tool_name, "arguments": json.dumps(tool_input)}
 
                 model_response.extra = model_response.extra or {}
 
@@ -1172,7 +1190,12 @@ class Claude(Model):
                 # Handle text blocks for structured output parsing
                 if block.type == "text":
                     accumulated_text += block.text  # type: ignore
-                elif block.type not in ("thinking", "redacted_thinking", "tool_use"):
+                elif block.type not in (
+                    "thinking",
+                    "redacted_thinking",
+                    "redacted_reasoning_content",
+                    "tool_use",
+                ):
                     # Preserve all non-text/thinking/tool_use blocks for history
                     server_tool_blocks.append(block.model_dump())
 
@@ -1196,6 +1219,14 @@ class Claude(Model):
                 if model_response.provider_data is None:
                     model_response.provider_data = {}
                 model_response.provider_data.setdefault("server_tool_blocks", []).extend(server_tool_blocks)
+
+            # Keep the final content blocks verbatim and in order so history replay can echo the
+            # turn back exactly; the streamed deltas above are lossy views of these blocks.
+            content_blocks = serialize_content_blocks(response.message.content)  # type: ignore
+            if content_blocks:
+                if model_response.provider_data is None:
+                    model_response.provider_data = {}
+                model_response.provider_data["content_blocks"] = content_blocks
 
             # Handle structured outputs (JSON outputs) from accumulated text
             # Note: We parse from accumulated_text but don't set model_response.content to avoid duplication

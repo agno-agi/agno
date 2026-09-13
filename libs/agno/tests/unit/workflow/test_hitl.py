@@ -12,11 +12,14 @@ Tests cover:
 - Serialization/deserialization of HITL requirements
 """
 
+from unittest.mock import AsyncMock, MagicMock
+
 from agno.run.base import RunStatus
 from agno.run.workflow import WorkflowRunOutput
 from agno.workflow.step import Step
 from agno.workflow.types import (
     ErrorRequirement,
+    HumanReview,
     StepInput,
     StepOutput,
     StepRequirement,
@@ -412,12 +415,14 @@ class TestStepHITLConfiguration:
         step = Step(
             name="confirm_step",
             executor=fetch_data,
-            requires_confirmation=True,
-            confirmation_message="Please confirm this step",
+            human_review=HumanReview(
+                requires_confirmation=True,
+                confirmation_message="Please confirm this step",
+            ),
         )
 
-        assert step.requires_confirmation is True
-        assert step.confirmation_message == "Please confirm this step"
+        assert step.human_review.requires_confirmation is True
+        assert step.human_review.confirmation_message == "Please confirm this step"
 
     def test_step_requires_user_input(self):
         """Test Step with requires_user_input."""
@@ -425,80 +430,88 @@ class TestStepHITLConfiguration:
         step = Step(
             name="input_step",
             executor=process_data,
-            requires_user_input=True,
-            user_input_message="Please provide your preference",
-            user_input_schema=[
-                {"name": "preference", "field_type": "str", "description": "Your preference", "required": True},
-            ],
+            human_review=HumanReview(
+                requires_user_input=True,
+                user_input_message="Please provide your preference",
+                user_input_schema=[
+                    {"name": "preference", "field_type": "str", "description": "Your preference", "required": True},
+                ],
+            ),
         )
 
-        assert step.requires_user_input is True
-        assert step.user_input_message == "Please provide your preference"
-        assert len(step.user_input_schema) == 1
+        assert step.human_review.requires_user_input is True
+        assert step.human_review.user_input_message == "Please provide your preference"
+        assert len(step.human_review.user_input_schema) == 1
 
     def test_step_on_reject_cancel(self):
         """Test Step with on_reject=cancel (default)."""
         step = Step(
             name="cancel_step",
             executor=fetch_data,
-            requires_confirmation=True,
-            on_reject="cancel",
+            human_review=HumanReview(
+                requires_confirmation=True,
+                on_reject="cancel",
+            ),
         )
 
-        assert step.on_reject == "cancel"
+        assert step.human_review.on_reject == "cancel"
 
     def test_step_on_reject_skip(self):
         """Test Step with on_reject=skip."""
         step = Step(
             name="skip_step",
             executor=fetch_data,
-            requires_confirmation=True,
-            on_reject="skip",
+            human_review=HumanReview(
+                requires_confirmation=True,
+                on_reject="skip",
+            ),
         )
 
-        assert step.on_reject == "skip"
+        assert step.human_review.on_reject == "skip"
 
     def test_step_on_error_fail(self):
         """Test Step with on_error=fail (default)."""
         step = Step(
             name="fail_step",
             executor=failing_step,
-            on_error="fail",
+            human_review=HumanReview(on_error="fail"),
         )
 
-        assert step.on_error == "fail"
+        assert step.human_review.on_error == "fail"
 
     def test_step_on_error_skip(self):
         """Test Step with on_error=skip."""
         step = Step(
             name="skip_error_step",
             executor=failing_step,
-            on_error="skip",
+            human_review=HumanReview(on_error="skip"),
         )
 
-        assert step.on_error == "skip"
+        assert step.human_review.on_error == "skip"
 
     def test_step_on_error_pause(self):
         """Test Step with on_error=pause."""
         step = Step(
             name="pause_error_step",
             executor=failing_step,
-            on_error="pause",
+            human_review=HumanReview(on_error="pause"),
         )
 
-        assert step.on_error == "pause"
+        assert step.human_review.on_error == "pause"
 
     def test_step_hitl_to_dict(self):
         """Test serializing Step with HITL config to dict."""
         step = Step(
             name="hitl_step",
             executor=fetch_data,
-            requires_confirmation=True,
-            confirmation_message="Confirm?",
-            requires_user_input=True,
-            user_input_message="Input?",
-            on_reject="skip",
-            on_error="pause",
+            human_review=HumanReview(
+                requires_confirmation=True,
+                confirmation_message="Confirm?",
+                requires_user_input=True,
+                user_input_message="Input?",
+                on_reject="skip",
+                on_error="pause",
+            ),
         )
 
         data = step.to_dict()
@@ -805,10 +818,13 @@ class TestConditionOnReject:
             name="test_condition",
             steps=[Step(name="if_step", executor=fetch_data)],
             else_steps=[Step(name="else_step", executor=save_data)],
-            requires_confirmation=True,
+            human_review=HumanReview(
+                requires_confirmation=True,
+                on_reject=OnReject.else_branch,
+            ),
         )
 
-        assert condition.on_reject == OnReject.else_branch
+        assert condition.human_review.on_reject == OnReject.else_branch
 
     def test_condition_on_reject_skip(self):
         """Test Condition with on_reject='skip'."""
@@ -819,11 +835,13 @@ class TestConditionOnReject:
             name="test_condition",
             steps=[Step(name="if_step", executor=fetch_data)],
             else_steps=[Step(name="else_step", executor=save_data)],
-            requires_confirmation=True,
-            on_reject=OnReject.skip,
+            human_review=HumanReview(
+                requires_confirmation=True,
+                on_reject=OnReject.skip,
+            ),
         )
 
-        assert condition.on_reject == OnReject.skip
+        assert condition.human_review.on_reject == OnReject.skip
 
     def test_condition_on_reject_cancel(self):
         """Test Condition with on_reject='cancel'."""
@@ -833,11 +851,13 @@ class TestConditionOnReject:
         condition = Condition(
             name="test_condition",
             steps=[Step(name="if_step", executor=fetch_data)],
-            requires_confirmation=True,
-            on_reject=OnReject.cancel,
+            human_review=HumanReview(
+                requires_confirmation=True,
+                on_reject=OnReject.cancel,
+            ),
         )
 
-        assert condition.on_reject == OnReject.cancel
+        assert condition.human_review.on_reject == OnReject.cancel
 
     def test_condition_create_step_requirement_on_reject_else(self):
         """Test that create_step_requirement includes on_reject='else'."""
@@ -848,8 +868,10 @@ class TestConditionOnReject:
             name="test_condition",
             steps=[Step(name="if_step", executor=fetch_data)],
             else_steps=[Step(name="else_step", executor=save_data)],
-            requires_confirmation=True,
-            on_reject=OnReject.else_branch,
+            human_review=HumanReview(
+                requires_confirmation=True,
+                on_reject=OnReject.else_branch,
+            ),
         )
 
         step_input = StepInput(input="test")
@@ -867,8 +889,10 @@ class TestConditionOnReject:
         condition = Condition(
             name="test_condition",
             steps=[Step(name="if_step", executor=fetch_data)],
-            requires_confirmation=True,
-            on_reject=OnReject.skip,
+            human_review=HumanReview(
+                requires_confirmation=True,
+                on_reject=OnReject.skip,
+            ),
         )
 
         step_input = StepInput(input="test")
@@ -885,8 +909,10 @@ class TestConditionOnReject:
         condition = Condition(
             name="test_condition",
             steps=[Step(name="if_step", executor=fetch_data)],
-            requires_confirmation=True,
-            on_reject=OnReject.cancel,
+            human_review=HumanReview(
+                requires_confirmation=True,
+                on_reject=OnReject.cancel,
+            ),
         )
 
         step_input = StepInput(input="test")
@@ -903,7 +929,7 @@ class TestConditionOnReject:
         condition = Condition(
             name="test_condition",
             steps=[Step(name="if_step", executor=fetch_data)],
-            requires_confirmation=True,
+            human_review=HumanReview(requires_confirmation=True),
         )
 
         assert condition.evaluator is True
@@ -1005,8 +1031,10 @@ class TestConditionOnReject:
         condition = Condition(
             name="test_condition",
             steps=[Step(name="if_step", executor=fetch_data)],
-            requires_confirmation=True,
-            on_reject=OnReject.else_branch,
+            human_review=HumanReview(
+                requires_confirmation=True,
+                on_reject=OnReject.else_branch,
+            ),
         )
 
         data = condition.to_dict()
@@ -1026,13 +1054,12 @@ class TestConditionOnReject:
             "evaluator_type": "bool",
             "steps": [],
             "else_steps": [],
-            "requires_confirmation": True,
-            "on_reject": "skip",
+            "human_review": {"requires_confirmation": True, "on_reject": "skip"},
         }
 
         condition = Condition.from_dict(data)
 
-        assert condition.on_reject == "skip" or condition.on_reject == OnReject.skip
+        assert condition.human_review.on_reject in ("skip", OnReject.skip)
 
     def test_step_requirement_on_reject_else_only_for_condition(self):
         """Test that on_reject='else' is validated for Condition step type."""
@@ -1075,8 +1102,10 @@ class TestConditionOnRejectWorkflowIntegration:
             name="user_choice",
             steps=[Step(name="if_step", executor=if_step_func)],
             else_steps=[Step(name="else_step", executor=else_step_func)],
-            requires_confirmation=True,
-            on_reject=OnReject.else_branch,
+            human_review=HumanReview(
+                requires_confirmation=True,
+                on_reject=OnReject.else_branch,
+            ),
         )
 
         workflow = Workflow(
@@ -1131,8 +1160,10 @@ class TestConditionOnRejectWorkflowIntegration:
             name="skippable_condition",
             steps=[Step(name="if_step", executor=if_step_func)],
             else_steps=[Step(name="else_step", executor=else_step_func)],
-            requires_confirmation=True,
-            on_reject=OnReject.skip,
+            human_review=HumanReview(
+                requires_confirmation=True,
+                on_reject=OnReject.skip,
+            ),
         )
 
         workflow = Workflow(
@@ -1182,8 +1213,10 @@ class TestConditionOnRejectWorkflowIntegration:
         condition = Condition(
             name="critical_condition",
             steps=[Step(name="if_step", executor=if_step_func)],
-            requires_confirmation=True,
-            on_reject=OnReject.cancel,
+            human_review=HumanReview(
+                requires_confirmation=True,
+                on_reject=OnReject.cancel,
+            ),
         )
 
         workflow = Workflow(
@@ -1226,8 +1259,10 @@ class TestConditionOnRejectWorkflowIntegration:
             name="user_choice",
             steps=[Step(name="if_step", executor=if_step_func)],
             else_steps=[Step(name="else_step", executor=else_step_func)],
-            requires_confirmation=True,
-            on_reject=OnReject.else_branch,
+            human_review=HumanReview(
+                requires_confirmation=True,
+                on_reject=OnReject.else_branch,
+            ),
         )
 
         workflow = Workflow(
@@ -1271,8 +1306,10 @@ class TestConditionOnRejectWorkflowIntegration:
             name="no_else_condition",
             steps=[Step(name="if_step", executor=if_step_func)],
             # No else_steps!
-            requires_confirmation=True,
-            on_reject=OnReject.else_branch,
+            human_review=HumanReview(
+                requires_confirmation=True,
+                on_reject=OnReject.else_branch,
+            ),
         )
 
         workflow = Workflow(
@@ -1302,3 +1339,71 @@ class TestConditionOnRejectWorkflowIntegration:
 
         # final_step should have executed
         assert "final_step" in step_names or "Final step executed" in str(run_output.content)
+
+
+class TestAsyncContinueCleanup:
+    """Regression tests for #7912: async continue paths must await acleanup_run, not the sync variant.
+
+    A sync cleanup_run cannot handle async-only cancellation managers (e.g. async Redis),
+    so _acontinue_execute and _acontinue_execute_stream must call acleanup_run.
+    """
+
+    @staticmethod
+    def _make_confirmation_workflow(session_id: str):
+        from agno.db.sqlite import SqliteDb
+        from agno.workflow.workflow import Workflow
+
+        def confirm_step(step_input: StepInput) -> StepOutput:
+            return StepOutput(content="confirmed step ran")
+
+        return Workflow(
+            name="test_async_cleanup_workflow",
+            steps=[
+                Step(
+                    name="confirm_step",
+                    executor=confirm_step,
+                    human_review=HumanReview(requires_confirmation=True),
+                )
+            ],
+            db=SqliteDb(db_file=f"tmp/{session_id}.db"),
+        )
+
+    async def test_acontinue_run_awaits_acleanup_run(self, monkeypatch):
+        import agno.workflow.workflow as wf_module
+
+        wf = self._make_confirmation_workflow("async_cleanup_acontinue")
+        run = await wf.arun("test", session_id="async_cleanup_acontinue")
+        assert run.is_paused
+        run.steps_requiring_confirmation[0].confirm()
+
+        acleanup_mock = AsyncMock(return_value=None)
+        cleanup_sync_mock = MagicMock()
+        monkeypatch.setattr(wf_module, "acleanup_run", acleanup_mock)
+        monkeypatch.setattr(wf_module, "cleanup_run", cleanup_sync_mock)
+
+        run = await wf.acontinue_run(run)
+        assert run.status == RunStatus.completed
+        cleanup_sync_mock.assert_not_called()
+        acleanup_mock.assert_awaited()
+
+    async def test_acontinue_run_stream_awaits_acleanup_run(self, monkeypatch):
+        import agno.workflow.workflow as wf_module
+
+        wf = self._make_confirmation_workflow("async_cleanup_acontinue_stream")
+        async for _ in wf.arun("test", session_id="async_cleanup_acontinue_stream", stream=True, stream_events=True):
+            pass
+        session = wf.get_session(session_id="async_cleanup_acontinue_stream")
+        run = session.runs[-1]
+        assert run.is_paused
+        run.steps_requiring_confirmation[0].confirm()
+
+        acleanup_mock = AsyncMock(return_value=None)
+        cleanup_sync_mock = MagicMock()
+        monkeypatch.setattr(wf_module, "acleanup_run", acleanup_mock)
+        monkeypatch.setattr(wf_module, "cleanup_run", cleanup_sync_mock)
+
+        async for _ in await wf.acontinue_run(run, stream=True, stream_events=True):
+            pass
+
+        cleanup_sync_mock.assert_not_called()
+        acleanup_mock.assert_awaited()

@@ -34,7 +34,7 @@ Special cases:
 - All memory examples require a running PostgreSQL instance — ensure `./cookbook/scripts/run_pgvector.sh` is running.
 - `05_multi_user_multi_session_chat.py` and `06_multi_user_multi_session_chat_concurrent.py` simulate multi-user sessions — they may take longer.
 - `memory_manager/` files use the MemoryManager API directly (not through Agent) — they have different patterns from root-level files.
-- `memory_manager/surrealdb/` files are being relocated to `cookbook/92_integrations/surrealdb/` — skip if still present.
+- `memory_manager/surrealdb/` files are being relocated to `cookbook/integrations/surrealdb/` — skip if still present.
 
 Validation commands (must all pass before finishing):
 - `.venvs/demo/bin/python cookbook/scripts/check_cookbook_pattern.py --base-dir cookbook/11_memory`

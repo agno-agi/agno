@@ -86,7 +86,11 @@ def test_confirmation_hook_blocks_add_tool():
 
 
 def test_confirmation_hook_allows_mul_tool():
-    agent = Agent(tools=[mul], tool_hooks=[confirmation_hook])
+    agent = Agent(
+        tools=[mul],
+        tool_hooks=[confirmation_hook],
+        instructions="Always use the mul tool to compute products.",
+    )
 
     with patch.object(type(logger), "info", wraps=logger.info) as mock_info:
         response: RunOutput = agent.run("Compute 4 * 5")
@@ -112,7 +116,11 @@ def test_logger_hook_invocation_add_tool():
 
 
 def test_logger_hook_invocation_mul_tool():
-    agent = Agent(tools=[mul], tool_hooks=[logger_hook])
+    agent = Agent(
+        tools=[mul],
+        tool_hooks=[logger_hook],
+        instructions="Always use the mul tool to compute products.",
+    )
 
     with patch.object(type(logger), "info", wraps=logger.info) as mock_info:
         response: RunOutput = agent.run("Compute 3 * 3")
@@ -254,7 +262,7 @@ def test_hook_mutation_does_not_affect_run():
         """Return n squared."""
         return n * n
 
-    agent = Agent(tools=[square])
+    agent = Agent(tools=[square], instructions="Always use the square tool to compute squares.")
     response: RunOutput = agent.run("Compute 5 squared")
 
     assert response.content is not None

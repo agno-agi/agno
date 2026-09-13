@@ -21,7 +21,7 @@ from agno.team.team import Team
 video_analyst = Agent(
     name="Video Analyst",
     role="Analyze video clips for visual content, pacing, and mood",
-    model=Gemini(id="gemini-3-flash-preview"),
+    model=Gemini(id="gemini-3.5-flash"),
     instructions="""\
 You are a film analysis expert. Watch video clips and provide detailed breakdowns.
 
@@ -49,7 +49,7 @@ You are a film analysis expert. Watch video clips and provide detailed breakdown
 script_reader = Agent(
     name="Script Reader",
     role="Read film scripts and extract relevant dialogue and directions",
-    model=Gemini(id="gemini-3-flash-preview"),
+    model=Gemini(id="gemini-3.5-flash"),
     instructions="""\
 You are a script supervisor. Read scripts and extract relevant information.
 
@@ -76,7 +76,7 @@ You are a script supervisor. Read scripts and extract relevant information.
 continuity_editor = Agent(
     name="Continuity Editor",
     role="Check consistency between script and footage",
-    model=Gemini(id="gemini-3-flash-preview"),
+    model=Gemini(id="gemini-3.5-flash"),
     instructions="""\
 You are a continuity editor. Compare the script to the footage and flag issues.
 

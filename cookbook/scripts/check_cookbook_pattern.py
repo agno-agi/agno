@@ -6,7 +6,8 @@ examples:
 1. Module docstring at top.
 2. Sectioned layout using banner comments.
 3. A "Create ..." section and a "Run ..." section, in that order.
-4. Main execution gate: if __name__ == "__main__":.
+4. Main execution gate: if __name__ == "__main__": (except underscore-prefixed
+   support modules).
 5. No emoji characters in Python source.
 """
 
@@ -22,7 +23,7 @@ from pathlib import Path
 EMOJI_RE = re.compile(r"[\U0001F300-\U0001FAFF]")
 MAIN_GATE_RE = re.compile(r'if __name__ == ["\']__main__["\']:')
 SECTION_RE = re.compile(r"^# [-=]+\n# (?P<title>.+?)\n# [-=]+$", re.MULTILINE)
-SKIP_FILE_NAMES = {"__init__.py"}
+SKIP_FILE_NAMES = {"__init__.py", "__main__.py"}
 SKIP_DIR_NAMES = {"__pycache__", ".git", ".context"}
 
 
@@ -95,7 +96,7 @@ def validate_file(path: Path) -> list[Violation]:
             )
         )
 
-    if not MAIN_GATE_RE.search(text):
+    if not path.name.startswith("_") and not MAIN_GATE_RE.search(text):
         violations.append(
             Violation(
                 path=path.as_posix(),

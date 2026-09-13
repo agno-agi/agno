@@ -17,7 +17,7 @@ from agno.run.agent import RunEvent
 def _get_reasoning_streaming_agent(**kwargs):
     """Create an agent with Gemini reasoning_model for streaming reasoning tests."""
     default_config = {
-        "model": Gemini(id="gemini-2.0-flash"),
+        "model": Gemini(id="gemini-flash-latest"),
         "reasoning_model": Gemini(
             id="gemini-2.5-flash",
             thinking_budget=1024,
