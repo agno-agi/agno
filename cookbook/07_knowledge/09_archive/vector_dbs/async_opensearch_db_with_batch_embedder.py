@@ -41,9 +41,7 @@ async def main():
     # Add content to the knowledge base using async operations with batch embedding
     # Comment out after first run to avoid re-indexing
     print("Adding content to knowledge base with batch embedding...")
-    await knowledge_base.add_content_async(
-        url="https://docs.agno.com/agents/overview.md"
-    )
+    await knowledge_base.ainsert(url="https://docs.agno.com/agents/overview.md")
     print("Content added successfully!")
 
     # Query the agent

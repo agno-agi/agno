@@ -1,12 +1,16 @@
+import logging
 from unittest.mock import MagicMock
 
 import pytest
 
 pytest.importorskip("ag_ui", reason="ag_ui not installed")
 
+from ag_ui.core import EventType
 from ag_ui.core.types import Tool as AGUITool
 
+from agno.agent.remote import RemoteAgent
 from agno.os.interfaces.agui.router import run_entity
+from agno.team.remote import RemoteTeam
 
 
 class FakeRunInput:
@@ -32,6 +36,17 @@ class CaptureKwargsEntity:
         self.arun_called = True
         return
         yield
+
+
+def capturing_wire_stream(captured: dict):
+    """Stand-in for the AgentOS client's stream methods: records the wire kwargs."""
+
+    async def stream(**kwargs):
+        captured.update(kwargs)
+        return
+        yield
+
+    return stream
 
 
 @pytest.mark.asyncio
@@ -150,3 +165,56 @@ async def test_run_entity_fresh_run_calls_arun():
         pass
 
     assert fake_entity.arun_called is True
+
+
+@pytest.mark.asyncio
+async def test_run_entity_remote_agent_sends_wire_fields_instead_of_run_context():
+    """A RunContext cannot cross the wire: the remote proxy would post it as a stringified form field."""
+    remote_agent = RemoteAgent(base_url="http://fake-host", agent_id="remote-agent")
+    captured: dict = {}
+    remote_agent.agentos_client = MagicMock(run_agent_stream=capturing_wire_stream(captured))
+    context = [MagicMock(description="user_name", value="Alice")]
+    run_input = FakeRunInput(context=context, state={"counter": 1})
+
+    events = [event async for event in run_entity(remote_agent, run_input, user_id="test-user-123")]
+
+    assert "run_context" not in captured
+    assert captured["session_state"] == {"counter": 1}
+    assert captured["dependencies"] == {"user_name": "Alice"}
+    assert captured["add_dependencies_to_context"] is True
+    assert captured["session_id"] == "test-thread"
+    assert captured["user_id"] == "test-user-123"
+    assert captured["run_id"] == "test-run"
+    assert events[-1].type == EventType.RUN_FINISHED
+
+
+@pytest.mark.asyncio
+async def test_run_entity_remote_team_sends_wire_fields_instead_of_run_context():
+    remote_team = RemoteTeam(base_url="http://fake-host", team_id="remote-team")
+    captured: dict = {}
+    remote_team.agentos_client = MagicMock(run_team_stream=capturing_wire_stream(captured))
+    run_input = FakeRunInput(state={"counter": 1})
+
+    events = [event async for event in run_entity(remote_team, run_input)]
+
+    assert "run_context" not in captured
+    assert captured["session_state"] == {"counter": 1}
+    assert captured["session_id"] == "test-thread"
+    assert captured["run_id"] == "test-run"
+    assert events[-1].type == EventType.RUN_FINISHED
+
+
+@pytest.mark.asyncio
+async def test_run_entity_remote_agent_warns_and_drops_client_tools(caplog):
+    """Client tools resolve against this process's session, so a remote run proceeds without them."""
+    remote_agent = RemoteAgent(base_url="http://fake-host", agent_id="remote-agent")
+    captured: dict = {}
+    remote_agent.agentos_client = MagicMock(run_agent_stream=capturing_wire_stream(captured))
+    run_input = FakeRunInput(tools=[AGUITool(name="change_background", description="Change page background color")])
+
+    with caplog.at_level(logging.WARNING, logger="agno"):
+        events = [event async for event in run_entity(remote_agent, run_input)]
+
+    assert "run_context" not in captured
+    assert any("client tools are not forwarded" in record.message for record in caplog.records)
+    assert events[-1].type == EventType.RUN_FINISHED

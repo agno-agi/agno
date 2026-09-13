@@ -18,7 +18,7 @@ knowledge = Knowledge(
 knowledge.insert(url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf")
 
 agent = Agent(
-    model=Groq(id="llama-3.3-70b-versatile"),
+    model=Groq(id="openai/gpt-oss-120b"),
     knowledge=knowledge,
 )
 agent.print_response("How to make Thai curry?", markdown=True)

@@ -16,7 +16,7 @@ agent = Agent(knowledge=knowledge_base)
 
 
 async def main():
-    await knowledge_base.add_content_async(
+    await knowledge_base.ainsert(
         url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
     )
 

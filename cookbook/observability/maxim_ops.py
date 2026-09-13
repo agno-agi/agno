@@ -33,7 +33,7 @@ instrument_agno(Maxim().logger())
 # Web Search Agent: Fetches financial information from the web
 web_search_agent = Agent(
     name="Web Agent",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[WebSearchTools()],
     instructions="Always include sources",
     markdown=True,
@@ -42,7 +42,7 @@ web_search_agent = Agent(
 # Finance Agent: Gets financial data using YFinance tools
 finance_agent = Agent(
     name="Finance Agent",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[YFinanceTools()],
     instructions="Use tables to display data",
     markdown=True,
@@ -51,7 +51,7 @@ finance_agent = Agent(
 # Aggregate both agents into a multi-agent system
 multi_ai_team = Team(
     members=[web_search_agent, finance_agent],
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     instructions="You are a helpful financial assistant. Answer user questions about stocks, companies, and financial data.",
     markdown=True,
 )

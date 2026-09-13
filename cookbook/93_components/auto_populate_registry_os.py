@@ -47,7 +47,7 @@ researcher = Agent(
 writer = Agent(
     id="writer",
     name="Writer",
-    model=OpenAIResponses(id="gpt-5.4-mini"),
+    model=OpenAIResponses(id="gpt-5.6-luna"),
 )
 
 content_team = Team(

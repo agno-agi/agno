@@ -21,6 +21,7 @@ from agno.db.base import SessionType
 from agno.metrics import SessionMetrics
 from agno.models.message import Message
 from agno.run import RunStatus
+from agno.run.agent import RunOutput
 from agno.run.team import TeamRunOutput
 from agno.session import TeamSession, WorkflowSession
 from agno.session.summary import SessionSummary
@@ -66,11 +67,10 @@ def get_session(
     session_id_to_load: str = session_id or team.session_id  # type: ignore[assignment]
 
     # If there is a cached session, return it
-    if team.cache_session and hasattr(team, "_cached_session") and team._cached_session is not None:
-        if team._cached_session.session_id == session_id_to_load and (
-            user_id is None or team._cached_session.user_id == user_id
-        ):
-            return team._cached_session
+    if team.cache_session:
+        cached_session = team._get_cached_session(session_id_to_load, user_id=user_id)
+        if cached_session is not None:
+            return cached_session
 
     if _has_async_db(team):
         raise ValueError("Cannot use sync get_session() with an async database. Use aget_session() instead.")
@@ -95,7 +95,7 @@ def get_session(
 
         # Cache the session if relevant
         if loaded_session is not None and team.cache_session:
-            team._cached_session = loaded_session
+            team._set_cached_session(loaded_session)
 
         return loaded_session  # type: ignore[return-value]
 
@@ -126,11 +126,10 @@ async def aget_session(
     session_id_to_load: str = session_id or team.session_id  # type: ignore[assignment]
 
     # If there is a cached session, return it
-    if team.cache_session and hasattr(team, "_cached_session") and team._cached_session is not None:
-        if team._cached_session.session_id == session_id_to_load and (
-            user_id is None or team._cached_session.user_id == user_id
-        ):
-            return team._cached_session
+    if team.cache_session:
+        cached_session = team._get_cached_session(session_id_to_load, user_id=user_id)
+        if cached_session is not None:
+            return cached_session
 
     # Load and return the session from the database
     if team.db is not None:
@@ -168,7 +167,7 @@ async def aget_session(
 
         # Cache the session if relevant
         if loaded_session is not None and team.cache_session:
-            team._cached_session = loaded_session
+            team._set_cached_session(loaded_session)
 
         return loaded_session  # type: ignore[return-value]
 
@@ -273,12 +272,12 @@ def _storage_view_of_spared_run(
     if member is None:
         member = _resolve_spared_member(team, member_response)
     if member is None:
-        # The owning member cannot be resolved (e.g. callable Team.members).
-        # Store the strictest view: every storage flag treated as off, with the
-        # paused-aware tool scrub so the pending call stays resumable.
+        # The owning member cannot be resolved (e.g. callable Team.members). Store the strictest
+        # view: every storage flag treated as off, with the paused-aware tool scrub so the pending
+        # call stays resumable. References to uploaded objects stay so they remain deletable.
         view = copy(member_response)
         isolate_media_scrub_targets(view)
-        scrub_media_from_run_output(view)
+        scrub_media_from_run_output(view, keep_references=team.media_storage is not None and team.store_media)
         _scrub_tool_results_keeping_unresolved(view)
         scrub_history_messages_from_run_output(view)
         return view
@@ -428,6 +427,57 @@ async def asave_session(team: "Team", session: TeamSession) -> None:
         else:
             _upsert_session(team, session=storage_session)
         log_debug(f"Created or updated TeamSession record: {session.session_id}")
+
+
+def save_run(
+    team: "Team",
+    run: Union[TeamRunOutput, RunOutput],
+    session_id: str,
+    user_id: Optional[str] = None,
+    run_index: Optional[int] = None,
+) -> None:
+    """Persist a single run to the database (O(1) operation).
+
+    Use this instead of save_session() when only a single run has changed.
+    """
+    from agno.team._init import _has_async_db
+    from agno.team._run import _scrub_member_responses
+    from agno.team._storage import _upsert_run
+
+    if _has_async_db(team):
+        raise ValueError("Cannot use sync save_run() with an async database. Use asave_run() instead.")
+
+    if team.db is not None and team.parent_team_id is None and team.workflow_id is None:
+        storage_run = run
+        if hasattr(run, "member_responses"):
+            if not team.store_member_responses:
+                storage_run = _scrub_member_responses_keeping_paused(team, run)
+            else:
+                _scrub_member_responses(team, run.member_responses)  # type: ignore[union-attr]
+        _upsert_run(team, run=storage_run, session_id=session_id, user_id=user_id, run_index=run_index)
+        log_debug(f"Saved run {getattr(run, 'run_id', '?')} to session {session_id}")
+
+
+async def asave_run(
+    team: "Team",
+    run: Union[TeamRunOutput, RunOutput],
+    session_id: str,
+    user_id: Optional[str] = None,
+    run_index: Optional[int] = None,
+) -> None:
+    """Async version of ``save_run``."""
+    from agno.team._run import _scrub_member_responses
+    from agno.team._storage import _aupsert_run
+
+    if team.db is not None and team.parent_team_id is None and team.workflow_id is None:
+        storage_run = run
+        if hasattr(run, "member_responses"):
+            if not team.store_member_responses:
+                storage_run = _scrub_member_responses_keeping_paused(team, run)
+            else:
+                _scrub_member_responses(team, run.member_responses)  # type: ignore[union-attr]
+        await _aupsert_run(team, run=storage_run, session_id=session_id, user_id=user_id, run_index=run_index)
+        log_debug(f"Saved run {getattr(run, 'run_id', '?')} to session {session_id}")
 
 
 # ---------------------------------------------------------------------------
@@ -731,8 +781,11 @@ def _accumulate_member_metrics(
 # ---------------------------------------------------------------------------
 
 
-def delete_session(team: "Team", session_id: str, user_id: Optional[str] = None):
-    """Delete the current session and save to storage"""
+def delete_session(team: "Team", session_id: str, user_id: Optional[str] = None, delete_media: bool = False):
+    """Delete the current session and save to storage.
+
+    ``delete_media`` deletes the session's offloaded objects along with it.
+    """
     from agno.team._init import _has_async_db
 
     if _has_async_db(team):
@@ -741,19 +794,75 @@ def delete_session(team: "Team", session_id: str, user_id: Optional[str] = None)
     if team.db is None:
         return
 
+    keys: List[str] = []
+    storage = team.media_storage
+    if delete_media:
+        from agno.media.storage.base import AsyncMediaStorage
+        from agno.utils.media_offload import session_media_keys
+
+        if storage is None:
+            log_warning("delete_media=True but no media_storage is configured, skipping media deletion")
+        else:
+            # Refused before the row is deleted: afterwards nothing would be left pointing at the object.
+            if isinstance(storage, AsyncMediaStorage):
+                raise ValueError(
+                    "Cannot use sync delete_session() with an AsyncMediaStorage. Use adelete_session() instead."
+                )
+            try:
+                session = team.db.get_session(session_id=session_id, user_id=user_id)
+            except Exception as e:
+                log_warning(f"Could not read session {session_id} for media deletion: {e}")
+                session = None
+            if session is not None:
+                keys = session_media_keys(session, [session_id], storage)
+    elif storage is not None:
+        log_debug("delete_media=False, keeping any offloaded media, pass delete_media=True to delete it too")
+
     team.db.delete_session(session_id=session_id, user_id=user_id)
 
+    if keys and storage is not None:
+        from agno.utils.media_offload import delete_media_keys
 
-async def adelete_session(team: "Team", session_id: str, user_id: Optional[str] = None):
-    """Delete the current session and save to storage"""
+        delete_media_keys(keys, storage)  # type: ignore[arg-type]
+
+
+async def adelete_session(team: "Team", session_id: str, user_id: Optional[str] = None, delete_media: bool = False):
+    """Async variant of :func:`delete_session`."""
     from agno.team._init import _has_async_db
 
     if team.db is None:
         return
+
+    keys: List[str] = []
+    storage = team.media_storage
+    if delete_media:
+        from agno.utils.media_offload import session_media_keys
+
+        if storage is None:
+            log_warning("delete_media=True but no media_storage is configured, skipping media deletion")
+        else:
+            try:
+                if _has_async_db(team):
+                    session = await team.db.get_session(session_id=session_id, user_id=user_id)  # type: ignore
+                else:
+                    session = team.db.get_session(session_id=session_id, user_id=user_id)
+            except Exception as e:
+                log_warning(f"Could not read session {session_id} for media deletion: {e}")
+                session = None
+            if session is not None:
+                keys = session_media_keys(session, [session_id], storage)
+    elif storage is not None:
+        log_debug("delete_media=False, keeping any offloaded media, pass delete_media=True to delete it too")
+
     if _has_async_db(team):
         await team.db.delete_session(session_id=session_id, user_id=user_id)  # type: ignore
     else:
         team.db.delete_session(session_id=session_id, user_id=user_id)
+
+    if keys and storage is not None:
+        from agno.utils.media_offload import adelete_media_keys
+
+        await adelete_media_keys(keys, storage)
 
 
 # ---------------------------------------------------------------------------

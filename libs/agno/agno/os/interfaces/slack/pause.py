@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, List, Optional
 
 from agno.os.interfaces.slack.builders import build_pause_message
-from agno.os.interfaces.slack.helpers import slack_error_code
+from agno.os.interfaces.slack.helpers import slack_delivery_kwargs, slack_error_code
 from agno.os.interfaces.slack.types import block_to_dict, tool_name
 from agno.utils.log import log_error
 
@@ -30,6 +30,9 @@ async def finalize_pause(
     thread_ts: str,
     requirements: List["RunRequirement"],
     log_prefix: str = "",
+    unfurl_links: bool = True,
+    unfurl_media: bool = True,
+    mrkdwn: bool = True,
 ) -> Optional[str]:
     # 1. Stop the stream with accumulated content
     stop_kwargs = {}
@@ -51,7 +54,12 @@ async def finalize_pause(
         return None
 
     try:
-        resp = await client.chat_postMessage(channel=channel, thread_ts=thread_ts, text="\n".join(labels))
+        resp = await client.chat_postMessage(
+            channel=channel,
+            thread_ts=thread_ts,
+            text="\n".join(labels),
+            **slack_delivery_kwargs(unfurl_links, unfurl_media, mrkdwn),
+        )
         return resp.get("ts")
     except Exception as exc:
         log_error(f"[HITL] awaiting indicator failed: {exc}")
@@ -64,6 +72,10 @@ async def post_pause_card(
     channel: str,
     thread_ts: str,
     awaiting_ts: Optional[str] = None,
+    *,
+    unfurl_links: bool = True,
+    unfurl_media: bool = True,
+    mrkdwn: bool = True,
 ) -> Optional[str]:
     run_id = getattr(paused_event, "run_id", None)
     requirements = list(getattr(paused_event, "active_requirements", None) or [])
@@ -71,12 +83,14 @@ async def post_pause_card(
         return None
 
     try:
+        # The card blocks embed untrusted tool-arg text, so unfurl flags must apply here
         blocks = build_pause_message(run_id, requirements, awaiting_ts)
         resp = await client.chat_postMessage(
             channel=channel,
             thread_ts=thread_ts,
             text="Run paused — please resolve below",
             blocks=[block_to_dict(b) for b in blocks],
+            **slack_delivery_kwargs(unfurl_links, unfurl_media, mrkdwn),
         )
         return resp.get("ts")
     except Exception as exc:

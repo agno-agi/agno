@@ -605,8 +605,8 @@ class MemoryManager:
 
         Args:
             query: The search query for agentic search. Required if retrieval_method is "agentic".
-            limit: Maximum number of memories to return. Defaults to self.retrieval_limit if not specified. Optional.
-            retrieval_method: The method to use for retrieving memories. Defaults to self.retrieval if not specified.
+            limit: Maximum number of memories to return. Returns every memory if not specified. Optional.
+            retrieval_method: The method to use for retrieving memories. Defaults to "last_n" if not specified.
                 - "last_n": Return the most recent memories
                 - "first_n": Return the oldest memories
                 - "agentic": Return memories most similar to the query, but using an agentic approach
@@ -627,11 +627,6 @@ class MemoryManager:
 
         if not memories:
             return []
-
-        # Use default retrieval method if not specified
-        retrieval_method = retrieval_method
-        # Use default limit if not specified
-        limit = limit
 
         # Handle different retrieval methods
         if retrieval_method == "agentic":

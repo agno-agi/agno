@@ -9,7 +9,7 @@ from pathlib import Path
 
 from agno.models.google import Gemini
 from agno.models.openai import OpenAIResponses
-from agno.tools.file_generation import FileGenerationTools
+from agno.tools.file import FileGenerationTools
 
 
 def default_model() -> OpenAIResponses:

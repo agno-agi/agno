@@ -236,7 +236,7 @@ class TestStepFromDict:
             step = Step.from_dict(data, registry=registry, db=mock_db, strict=True)
 
             mock_get_agent.assert_called_once_with(
-                db=mock_db, id="db-agent", version=None, registry=registry, strict=True
+                db=mock_db, id="db-agent", version=None, registry=registry, user_id=None, strict=True
             )
             assert step.agent is mock_db_agent
 

@@ -28,6 +28,9 @@ async def wait_until_processed(client: AgentOSClient, content_id: str) -> Conten
         print(f"Content status: {status.status.value}")
         if status.status is ContentStatus.COMPLETED:
             return status.status
+        if status.status is ContentStatus.PARTIAL:
+            print(f"Partial ingestion: {status.status_message}")
+            return status.status
         if status.status is ContentStatus.FAILED:
             raise RuntimeError(status.status_message or "Knowledge processing failed")
         await asyncio.sleep(0.5)

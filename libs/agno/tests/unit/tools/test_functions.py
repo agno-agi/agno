@@ -348,6 +348,23 @@ def test_function_process_schema_for_strict():
     assert "param2" in func.parameters["required"]  # All properties should be required in strict mode
 
 
+def test_process_schema_for_strict_tolerates_a_schema_without_properties():
+    """A tool schema can reach strict processing without a `properties` key.
+
+    An MCP server advertises an argument-free tool as `{"type": "object"}`, and
+    `MCPTools` registers that schema verbatim. Reading the properties map bare used to
+    raise `KeyError: 'properties'` out of every run of the agent, not at registration.
+    """
+    for parameters in ({"type": "object"}, {"type": "object", "properties": None}):
+        func = Function(name="no_args", parameters=dict(parameters))
+
+        func.process_schema_for_strict()
+
+        assert func.parameters["properties"] == {}
+        assert func.parameters["required"] == []
+        assert func.parameters["additionalProperties"] is False
+
+
 def test_function_cache_key_generation():
     """Test generation of cache keys for function calls."""
     func = Function(name="test_func", cache_results=True, cache_dir="/tmp")
@@ -1967,7 +1984,7 @@ def test_optional_agent_param_registers_and_is_excluded():
 # ----------------------------------------------------------------------------
 # Exclusion and injection must name the same annotations.
 #
-# _is_framework_typed decides what to hide from the model; _build_entrypoint_args
+# is_framework_typed decides what to hide from the model; _build_entrypoint_args
 # decides what to fill. An annotation hidden by the first and skipped by the second
 # is filled by nobody: a required parameter raises on every call, and one with a
 # default silently keeps it forever.
@@ -2349,7 +2366,7 @@ def test_the_whole_annotation_graph_decides_identity():
 
     from agno.agent.agent import Agent
     from agno.media import Image
-    from agno.tools.function import _is_framework_typed
+    from agno.utils.schema import is_framework_typed
 
     @dataclass
     class DataclassWrapper:
@@ -2382,8 +2399,8 @@ def test_the_whole_annotation_graph_decides_identity():
         List[Image],
         List[List[List[List[List[List[str]]]]]],
     ]
-    assert [h for h in hidden if not _is_framework_typed(h)] == []
-    assert [h for h in fillable if _is_framework_typed(h)] == []
+    assert [h for h in hidden if not is_framework_typed(h)] == []
+    assert [h for h in fillable if is_framework_typed(h)] == []
 
 
 @pytest.mark.skipif(sys.version_info < (3, 12), reason="PEP 695 type alias syntax needs 3.12")
@@ -2426,14 +2443,14 @@ def test_a_parameter_that_cannot_be_classified_does_not_expose_the_others(monkey
     off an identity parameter, and fail open while doing it."""
     from agno.tools import function as function_module
 
-    real = function_module._is_framework_typed
+    real = function_module.is_framework_typed
 
     def raising(hint):
         if hint is str:
             raise RuntimeError("cannot read this one")
         return real(hint)
 
-    monkeypatch.setattr(function_module, "_is_framework_typed", raising)
+    monkeypatch.setattr(function_module, "is_framework_typed", raising)
 
     def probe(note: str, ctx: RunContext = None) -> str:  # type: ignore[assignment]
         return f"user={getattr(ctx, 'user_id', None)}"
@@ -2486,7 +2503,7 @@ def test_identity_is_found_through_structural_types_and_typevars():
     bound or constraints all carry identity just as a plain field does."""
     from typing import NamedTuple, TypedDict, TypeVar
 
-    from agno.tools.function import _is_framework_typed
+    from agno.utils.schema import is_framework_typed
 
     class Payload(TypedDict):
         ctx: RunContext
@@ -2500,7 +2517,7 @@ def test_identity_is_found_through_structural_types_and_typevars():
     Constrained = TypeVar("Constrained", str, RunContext)
 
     for hint in (Payload, Row, Bound, Constrained):
-        assert _is_framework_typed(hint), hint
+        assert is_framework_typed(hint), hint
 
     # A field whose annotation is a string, which is every annotation in a
     # module using postponed evaluation.
@@ -2509,14 +2526,14 @@ def test_identity_is_found_through_structural_types_and_typevars():
         "from dataclasses import dataclass\n@dataclass\nclass Postponed:\n    ctx: 'RunContext'\n    note: str = ''\n",
         namespace,
     )
-    assert _is_framework_typed(namespace["Postponed"])
+    assert is_framework_typed(namespace["Postponed"])
 
     # An annotation this walk cannot read is not one to hand the model.
     class Unresolvable:
         __annotations__ = {"ctx": "NameThatDoesNotExistAnywhere"}
         __total__ = True
 
-    assert _is_framework_typed(Unresolvable)
+    assert is_framework_typed(Unresolvable)
 
 
 @pytest.mark.parametrize(
@@ -3296,22 +3313,36 @@ def test_cache_files_are_readable_by_their_owner_only(tmp_path):
 
 def test_a_result_that_cannot_be_copied_is_not_cached(tmp_path):
     """The cache keeps a copy of the tool's return because the hooks run after
-    it and may edit it in place. A value too deeply nested to copy leaves
-    nothing safe to keep, so the call is not cached rather than cached with the
-    hook's edit folded in."""
+    it and may edit it in place. A value that cannot be copied leaves nothing
+    safe to keep, so the call is not cached rather than cached with the hook's
+    edit folded in."""
+
+    class Unfoldable(dict):
+        """A value that refuses to be copied.
+
+        Nesting past the recursion limit would refuse a copy too, but that limit
+        is process-wide and any imported library may raise it: py_ecc, which
+        web3 pulls in, sets it to 100000 on import. Depth therefore pins
+        nothing, and refusing outright does."""
+
+        def __deepcopy__(self, memo):
+            raise TypeError("no copy")
 
     def enrich(function_name: str, function_call: Callable, arguments: Dict[str, Any]):
         result = function_call(**arguments)
         result["items"].append("enriched")
         return result
 
-    def nested() -> dict:
-        deep: Any = []
-        for _ in range(600):
-            deep = [deep]
-        return {"items": ["raw"], "deep": deep}
+    def uncopyable() -> dict:
+        return {"items": ["raw"], "handle": Unfoldable(kind="live")}
 
-    func = Function(name="nested", entrypoint=nested, cache_results=True, cache_dir=str(tmp_path), tool_hooks=[enrich])
+    func = Function(
+        name="uncopyable",
+        entrypoint=uncopyable,
+        cache_results=True,
+        cache_dir=str(tmp_path),
+        tool_hooks=[enrich],
+    )
 
     reported = []
     original = function_module.log_exception
