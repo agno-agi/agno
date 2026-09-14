@@ -34,7 +34,12 @@ from agno.metrics import RunMetrics, SessionMetrics
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.utils import resolve_model
-from agno.prompt.prompt import retained_prompt_handle
+from agno.prompt.prompt import (
+    bind_prompt_references,
+    prompt_links_for_save,
+    resolve_prompt_fields,
+    retained_prompt_handle,
+)
 from agno.registry.registry import Registry
 from agno.run.agent import RunOutput
 from agno.run.team import (
@@ -1298,6 +1303,8 @@ def from_dict(
     # the constructor call below.
     resolve_learning_reference(config, registry, strict, component_label)
 
+    bind_prompt_references(config, links)
+
     team = cast(
         "Team",
         cls(
@@ -1425,6 +1432,9 @@ def from_dict(
         ),
     )
 
+    if db is not None:
+        resolve_prompt_fields(team, db=db, strict=strict, host_label=component_label)
+
     return team
 
 
@@ -1458,6 +1468,9 @@ def save(
     if team.id is None:
         team.id = generate_id_from_name(team.name)
 
+    # Every Prompt target is validated, and its link row built, before the first write.
+    prompt_links = prompt_links_for_save(team, db=db_, host_label="Team")
+
     try:
         # Collect all links for members
         all_links: List[Dict[str, Any]] = []
@@ -1480,6 +1493,9 @@ def save(
                     "meta": {"type": "agent" if isinstance(member, Agent) else "team"},
                 }
             )
+
+        # Prompt links sit beside the member links; neither set replaces the other.
+        all_links.extend(prompt_links)
 
         # Create or update component
         db_.upsert_component(
@@ -1554,11 +1570,18 @@ def _hydrate_from_graph(
         if child_config is None:
             continue
 
-        link_meta = child["link"].get("meta", {})
+        # Prompt children are resolved through the team's own fields, not as members.
+        if child["link"].get("link_kind") == "prompt":
+            continue
+
+        link_meta = child["link"].get("meta") or {}
         member_type = link_meta.get("type")
 
         if member_type == "agent":
-            agent = Agent.from_dict(child_config, registry=registry, strict=strict)
+            child_links = [
+                grandchild["link"] for grandchild in child_graph.get("children", []) if grandchild.get("link")
+            ]
+            agent = Agent.from_dict(child_config, registry=registry, strict=strict, db=db, links=child_links)
             agent.id = child_graph["component"]["component_id"]
             if agent.db is None:
                 if strict:

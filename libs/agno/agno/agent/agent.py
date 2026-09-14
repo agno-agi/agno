@@ -1001,8 +1001,15 @@ class Agent:
         return _storage.to_dict(self)
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any], registry: Optional[Registry] = None, strict: bool = False) -> "Agent":
-        return _storage.from_dict(cls, data=data, registry=registry, strict=strict)
+    def from_dict(
+        cls,
+        data: Dict[str, Any],
+        registry: Optional[Registry] = None,
+        strict: bool = False,
+        db: Optional[BaseDb] = None,
+        links: Optional[List[Dict[str, Any]]] = None,
+    ) -> "Agent":
+        return _storage.from_dict(cls, data=data, registry=registry, strict=strict, db=db, links=links)
 
     def save(
         self,
@@ -1854,7 +1861,13 @@ def get_agent_by_id(
         if cfg is None:
             raise ValueError(f"Invalid config found for agent {id}")
 
-        agent = Agent.from_dict(cfg, registry=registry, strict=strict)
+        # Prompt links of this exact version drive Prompt resolution.
+        resolved_version = row.get("version")
+        try:
+            links = db.get_links(component_id=id, version=resolved_version) if isinstance(resolved_version, int) else []
+        except NotImplementedError:
+            links = []
+        agent = Agent.from_dict(cfg, registry=registry, strict=strict, db=db, links=links)
         agent.id = id
         # Only fall back to the caller-provided db if the config didn't
         # reconstruct one, matching Agent.load.

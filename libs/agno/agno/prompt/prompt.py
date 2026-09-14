@@ -3,7 +3,8 @@ from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Literal, Optional, Union
 
 from agno.db.base import BaseDb, ComponentType
-from agno.utils.log import log_error
+from agno.exceptions import ComponentPinError, ComponentRehydrationError
+from agno.utils.log import log_error, log_warning
 
 PromptContent = Union[str, List[str]]
 PromptSelector = Optional[Union[int, Literal["latest"]]]
@@ -285,3 +286,207 @@ def require_resolved_prompts(host: Any, host_label: str) -> None:
                 f"{host_label} `{field_name}` references Prompt '{handle.prompt.id}' but no content was resolved: "
                 f"load the {host_label} from its database or give the Prompt content"
             )
+
+
+# Fixed reasons recorded when lenient loading falls back; tied to the requested selection.
+PINNED_VERSION_MISSING = "pinned_version_missing"
+NO_CURRENT_VERSION = "no_current_version"
+
+
+def is_prompt_reference(value: Any) -> bool:
+    return isinstance(value, dict) and "prompt_id" in value
+
+
+def prompt_from_reference(reference: Dict[str, Any], links: Optional[List[Dict[str, Any]]], field_name: str) -> Prompt:
+    """Rebuild the selector a stored consumer config references for one field.
+
+    The link row for the field is authoritative: an integer child_version is a
+    pin, NULL follows the current published version, and ``meta.fallback`` is
+    the consumer's inline fallback. Without a link row the config's own selector
+    is used, and an omitted one follows the current version.
+    """
+    link = next(
+        (row for row in links or [] if row.get("link_kind") == "prompt" and row.get("link_key") == field_name),
+        None,
+    )
+    if link is not None:
+        prompt_id = link.get("child_component_id") or reference.get("prompt_id")
+        version = link.get("child_version")
+        fallback = (link.get("meta") or {}).get("fallback")
+    else:
+        prompt_id = reference.get("prompt_id")
+        version = reference.get("version")
+        fallback = None
+    return Prompt(
+        id=prompt_id if isinstance(prompt_id, str) else "",
+        version="latest" if version is None else version,
+        fallback=fallback,
+    )
+
+
+def bind_prompt_references(config: Dict[str, Any], links: Optional[List[Dict[str, Any]]]) -> None:
+    """Replace stored identity references in a host config with Prompt selectors, in place."""
+    for field_name in PROMPT_FIELDS:
+        if is_prompt_reference(config.get(field_name)):
+            config[field_name] = prompt_from_reference(config[field_name], links, field_name)
+
+
+def _published_config(db: BaseDb, prompt_id: str, version: int) -> Optional[Dict[str, Any]]:
+    row = db.get_config(component_id=prompt_id, version=version)
+    if row is None or row.get("stage") != "published":
+        return None
+    return row
+
+
+def _content_from_row(row: Dict[str, Any], field_name: str, prompt_id: str) -> PromptContent:
+    content = Prompt.from_dict({**(row.get("config") or {}), "id": prompt_id}).content
+    if content is None:
+        raise ValueError(f"Published Prompt '{prompt_id}' version {row.get('version')} has no content")
+    if field_name == "system_message" and not isinstance(content, str):
+        raise ValueError(f"Prompt '{prompt_id}' holds a list of blocks; `system_message` needs string content")
+    return content
+
+
+def _use_published(handle: PromptHandle, row: Dict[str, Any], version: int, reason: Optional[str]) -> PromptContent:
+    content = _content_from_row(row, handle.field, handle.prompt.id)
+    handle.resolved_version = version
+    handle.source = "published"
+    handle.fallback_reason = reason
+    handle.bound_value = content
+    return content
+
+
+def _use_inline(handle: PromptHandle, reason: str) -> PromptContent:
+    content = handle.prompt.fallback
+    if content is None:
+        raise ValueError("inline fallback requested without fallback text")
+    handle.resolved_version = None
+    handle.source = "inline"
+    handle.fallback_reason = reason
+    handle.bound_value = content
+    return content
+
+
+def resolve_prompt_handle(handle: PromptHandle, *, db: BaseDb, strict: bool, host_label: str) -> PromptContent:
+    """Resolve one retained handle against published Prompt versions.
+
+    Strict loading refuses any miss. Lenient loading degrades in a bounded,
+    recorded way: a missing pin uses the current published version, and a
+    missing current version uses the consumer's inline fallback. Malformed
+    configs and database errors always propagate.
+    """
+    prompt = handle.prompt
+    label = f"{host_label} `{handle.field}`"
+    # The catalog row gates every lookup: a missing, archived, or non-Prompt row has no usable version,
+    # so a config stored under the same id by another component type is never read as Prompt text.
+    component = db.get_component(component_id=prompt.id, component_type=ComponentType.PROMPT)
+    current_version = component.get("current_version") if component is not None else None
+    current_row = _published_config(db, prompt.id, current_version) if current_version is not None else None
+
+    if handle.selection == "pinned":
+        requested = handle.requested_version
+        row = _published_config(db, prompt.id, requested) if component is not None and requested is not None else None
+        if row is not None and requested is not None:
+            return _use_published(handle, row, requested, None)
+        if strict:
+            raise ComponentPinError(
+                f"{label} pins Prompt '{prompt.id}' at version {requested}, which is not published. "
+                f"Restore that version, or re-save the {host_label} to pin the current version."
+            )
+        if current_row is not None and current_version is not None:
+            log_warning(
+                f"{label} pins Prompt '{prompt.id}' at version {requested}, which is not published; "
+                f"using the current published version {current_version} instead."
+            )
+            return _use_published(handle, current_row, current_version, PINNED_VERSION_MISSING)
+        if prompt.fallback is not None:
+            log_warning(
+                f"{label} pins Prompt '{prompt.id}' at version {requested}, which is not published and has no "
+                "current published version; using the inline fallback text."
+            )
+            return _use_inline(handle, PINNED_VERSION_MISSING)
+        raise ComponentRehydrationError(
+            f"{label} pins Prompt '{prompt.id}' at version {requested}; neither that version nor a current "
+            "published version exists and no fallback was given."
+        )
+
+    if current_row is not None and current_version is not None:
+        return _use_published(handle, current_row, current_version, None)
+    if not strict and prompt.fallback is not None:
+        log_warning(
+            f"{label} follows the latest version of Prompt '{prompt.id}', which has no current published "
+            "version; using the inline fallback text."
+        )
+        return _use_inline(handle, NO_CURRENT_VERSION)
+    raise ComponentRehydrationError(
+        f"{label} follows the latest version of Prompt '{prompt.id}', which has no current published version."
+    )
+
+
+def resolve_prompt_fields(host: Any, *, db: BaseDb, strict: bool, host_label: str) -> None:
+    """Resolve every bound field on a loaded host and place the text in its public field."""
+    for field_name in PROMPT_FIELDS:
+        handle = retained_prompt_handle(host, field_name)
+        if handle is not None:
+            setattr(host, field_name, resolve_prompt_handle(handle, db=db, strict=strict, host_label=host_label))
+
+
+def prompt_links_for_save(host: Any, *, db: BaseDb, host_label: str) -> List[Dict[str, Any]]:
+    """Validate every bound Prompt against the catalog and build its link rows.
+
+    Runs before the first host write. An omitted selector is pinned to the
+    current published version now; an explicit pin must be published; "latest"
+    stores NULL. A handle that already fell back keeps its requested selector
+    instead of pinning the substitute. Host saves never publish Prompt text.
+    """
+    links: List[Dict[str, Any]] = []
+    for position, field_name in enumerate(PROMPT_FIELDS):
+        handle = retained_prompt_handle(host, field_name)
+        if handle is None:
+            continue
+        prompt = handle.prompt
+        label = f"{host_label} `{field_name}`"
+        component = db.get_component(component_id=prompt.id, component_type=ComponentType.PROMPT)
+        if component is None:
+            raise ValueError(
+                f"{label} references Prompt '{prompt.id}', which is not an active Prompt component. "
+                "Call Prompt.save() first."
+            )
+        current_version = component.get("current_version")
+        if prompt.version == "latest":
+            target_version = current_version
+            child_version = None
+        else:
+            target_version = prompt.version if prompt.version is not None else current_version
+            child_version = target_version
+        if not handle.fallback:
+            row = _published_config(db, prompt.id, target_version) if target_version is not None else None
+            if row is None:
+                detail = (
+                    f"version {target_version}, which is not published"
+                    if target_version is not None
+                    else "which has no published version"
+                )
+                raise ValueError(
+                    f"{label} references Prompt '{prompt.id}' {detail}. Only published Prompt versions can be "
+                    "linked; call Prompt.save() first."
+                )
+            if prompt.content is not None and prompt.content != (row.get("config") or {}).get("content"):
+                raise ValueError(
+                    f"{label} carries Prompt '{prompt.id}' content that differs from published version "
+                    f"{row.get('version')}. Host saves never publish Prompt text; call Prompt.save() to publish "
+                    "it explicitly."
+                )
+        if prompt.version is None:
+            prompt.version = child_version
+        link: Dict[str, Any] = {
+            "link_kind": "prompt",
+            "link_key": field_name,
+            "child_component_id": prompt.id,
+            "child_version": child_version,
+            "position": position,
+        }
+        if prompt.fallback is not None:
+            link["meta"] = {"fallback": prompt.fallback}
+        links.append(link)
+    return links
