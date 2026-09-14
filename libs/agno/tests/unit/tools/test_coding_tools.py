@@ -808,3 +808,38 @@ def test_instructions_preamble_lists_enabled_tools():
         assert "edit_file" not in first_line
         assert "write_file" not in first_line
         assert "run_shell" not in first_line
+
+
+# --- restricted-mode command-separator hardening ---
+
+
+def test_check_command_blocks_newline_chaining():
+    """A second command chained after a newline must be rejected in restricted mode."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tools = CodingTools(base_dir=Path(tmp_dir))  # restrict_to_base_dir=True, allowlist on
+        # `id` is not in the allowlist; without \n in the blocklist this passed validation.
+        assert tools._check_command("echo ok\nid") is not None
+
+
+def test_check_command_blocks_ampersand_chaining():
+    """A command chained/backgrounded via a bare '&' must be rejected."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tools = CodingTools(base_dir=Path(tmp_dir))
+        assert tools._check_command("echo ok & id") is not None
+
+
+def test_check_command_allows_plain_allowlisted_command():
+    """A plain allowlisted command with no separators still passes."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tools = CodingTools(base_dir=Path(tmp_dir))
+        assert tools._check_command("echo hello") is None
+
+
+def test_run_shell_does_not_execute_command_after_newline():
+    """End-to-end: run_shell must not execute an unlisted command chained via newline."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tools = CodingTools(base_dir=Path(tmp_dir))
+        result = tools.run_shell("echo ok\nid")
+        # Rejected before execution — the chained command never runs.
+        assert "not allowed" in result
+        assert "uid=" not in result
