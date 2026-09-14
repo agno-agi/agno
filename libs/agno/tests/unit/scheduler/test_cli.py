@@ -124,12 +124,12 @@ class TestShowSchedules:
         result = console.show_schedules()
         assert len(result) == 1
         assert result[0].id == "sched-1"
-        mock_manager.list.assert_called_once_with(enabled=None)
+        mock_manager.list.assert_called_once_with(enabled=None, user_id=None, limit=100, page=1)
 
     @patch("rich.console.Console")
     def test_passes_enabled_filter(self, mock_console_cls, console, mock_manager):
         console.show_schedules(enabled=True)
-        mock_manager.list.assert_called_once_with(enabled=True)
+        mock_manager.list.assert_called_once_with(enabled=True, user_id=None, limit=100, page=1)
 
     @patch("rich.console.Console")
     def test_empty_list(self, mock_console_cls, console, mock_manager):

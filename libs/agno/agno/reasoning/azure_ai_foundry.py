@@ -11,11 +11,8 @@ if TYPE_CHECKING:
 
 
 def is_ai_foundry_reasoning_model(reasoning_model: Model) -> bool:
-    return reasoning_model.__class__.__name__ == "AzureAIFoundry" and (
-        ("deepseek" in reasoning_model.id.lower())
-        or ("o1" in reasoning_model.id.lower())
-        or ("o3" in reasoning_model.id.lower())
-        or ("o4" in reasoning_model.id.lower())
+    return reasoning_model.__class__.__name__ == "AzureAIFoundry" and any(
+        s in reasoning_model.id.lower() for s in ("deepseek", "o1", "o3", "o4", "gpt-5", "reasoning")
     )
 
 

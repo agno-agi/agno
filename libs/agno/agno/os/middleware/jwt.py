@@ -12,7 +12,7 @@ from fastapi import Request, Response
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from agno.os.auth import INTERNAL_SERVICE_SCOPES, build_insufficient_permissions_detail
+from agno.os.auth import INTERNAL_SCHEDULER_USER_ID, INTERNAL_SERVICE_SCOPES, build_insufficient_permissions_detail
 from agno.os.scopes import (
     AgentOSScope,
     check_route_scopes,
@@ -29,14 +29,14 @@ if TYPE_CHECKING:
 
     from agno.os.service_accounts import ServiceAccountVerifier
 
-# The user_id the internal scheduler token authenticates as. Reserved: a JWT must never
-# be allowed to claim it (see is_reserved_principal).
-INTERNAL_SCHEDULER_USER_ID = "__scheduler__"
-
 # Private request.state marker set only by this middleware once it has decided a request's
 # auth. The mount short-circuit reads THIS, not the public request.state.authenticated
 # flag, so no other middleware can trip it.
 _AUTH_COMPLETE_ATTR = "_agno_auth_complete"
+
+# Set only after signature verification AND endpoint permission checks. Unlike the
+# completion marker, this is never set by unverified development mode or scheduler/PAT auth.
+_VERIFIED_API_JWT = object()
 
 
 # The built-in MCP OAuth server mints request identities as ``__oauth__:<client_id>``.
@@ -385,12 +385,7 @@ def jwt_kwargs_have_key_source(kwargs: Dict[str, Any]) -> bool:
     WebSocket config resolution) must use this predicate to tell a JWT-validating
     instance from the plain auth layer, so the two checks cannot drift.
     """
-    return bool(
-        kwargs.get("verification_keys")
-        or kwargs.get("jwks_file")
-        or kwargs.get("secret_key")
-        or kwargs.get("validate") is False
-    )
+    return bool(kwargs.get("verification_keys") or kwargs.get("jwks_file") or kwargs.get("validate") is False)
 
 
 def build_jwt_middleware_kwargs(
@@ -536,7 +531,6 @@ class AuthMiddleware(BaseHTTPMiddleware):
         app,
         verification_keys: Optional[List[str]] = None,
         jwks_file: Optional[str] = None,
-        secret_key: Optional[str] = None,  # Deprecated: Use verification_keys instead
         algorithm: str = "RS256",
         validate: bool = True,
         authorization: Optional[bool] = None,
@@ -574,7 +568,6 @@ class AuthMiddleware(BaseHTTPMiddleware):
                       Keys are looked up by the "kid" (key ID) claim in the JWT header.
                       If not provided, will check JWT_JWKS_FILE env var for a file path,
                       or JWT_JWKS env var for inline JWKS JSON content.
-            secret_key: (deprecated) Use verification_keys instead. If provided, will be added to verification_keys.
             algorithm: JWT algorithm (default: RS256). Common options: RS256 (asymmetric), HS256 (symmetric).
             validate: Whether to validate the JWT signature (default: True). If False, tokens are decoded
                      without signature verification and no verification key is required. Useful when
@@ -624,12 +617,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
         """
         super().__init__(app)
 
-        # Handle deprecated secret_key parameter
         all_verification_keys = list(verification_keys) if verification_keys else []
-        if secret_key:
-            log_warning("secret_key is deprecated. Use verification_keys instead.")
-            if secret_key not in all_verification_keys:
-                all_verification_keys.append(secret_key)
 
         # JWT is optional: AgentOS installs this middleware as the single auth layer
         # in every authenticated mode, so security-key / service-account-only
@@ -931,15 +919,30 @@ class AuthMiddleware(BaseHTTPMiddleware):
             request.app.state.admin_scope = self.admin_scope
             request.app.state.user_isolation_enabled = self.user_isolation
 
-        path = request.url.path
+        from starlette._utils import get_route_path
+
+        path = get_route_path(request.scope)
         method = request.method
+        public_policy = getattr(request.app.state, "public_route_policy", None)
+        public_path = path
+        mixed_public = public_policy is not None and public_policy.authenticated_api
+        if mixed_public and len(request.headers.getlist("authorization")) > 1:
+            return self._create_error_response(401, "Ambiguous Authorization header")
 
         # Skip OPTIONS requests (CORS preflight)
         if method == "OPTIONS":
             return await call_next(request)
 
         # Skip excluded routes
-        if self._is_route_excluded(path):
+        if self._is_route_excluded(path) and not (
+            mixed_public
+            and public_policy is not None
+            and (
+                public_policy.allows_anonymous(method, path)
+                or path in ("/docs", "/redoc", "/openapi.json", "/docs/oauth2-redirect")
+            )
+            and not public_policy.is_mcp(path)
+        ):
             return await call_next(request)
 
         # Already authenticated by an OUTER instance of THIS middleware in a manually
@@ -963,6 +966,12 @@ class AuthMiddleware(BaseHTTPMiddleware):
         # or the OS security key -- this middleware is the single auth layer).
         token = self._extract_token(request)
         if not token:
+            if mixed_public and request.headers.getlist("authorization"):
+                return self._create_error_response(401, "Invalid authentication token", origin, cors_allowed_origins)
+            if mixed_public and public_policy is not None and public_policy.allows_anonymous(method, public_path):
+                # This does not mark the caller authenticated or grant scopes. The
+                # public middleware must still validate the selected route and body.
+                return await call_next(request)
             if not self._jwt_configured and not self.security_key:
                 # Open instance with only a service-account verifier: PATs are
                 # verified when presented, anonymous requests pass (mirrors REST).
@@ -1104,6 +1113,9 @@ class AuthMiddleware(BaseHTTPMiddleware):
             request.state.token = token
             request.state.authenticated = True
             setattr(request.state, _AUTH_COMPLETE_ATTR, True)
+
+            if mixed_public and self.authorization and self.validate:
+                request.state._agno_verified_api_jwt = _VERIFIED_API_JWT
 
         except jwt.InvalidAudienceError as e:
             log_warning(f"Invalid token audience - expected: {expected_audience}: {str(e)}")

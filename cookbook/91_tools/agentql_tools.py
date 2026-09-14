@@ -21,7 +21,7 @@ from agno.tools.agentql import AgentQLTools
 
 # Example 1: Enable specific AgentQL functions
 agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[
         AgentQLTools(
             enable_scrape_website=True,
@@ -33,7 +33,7 @@ agent = Agent(
 
 # Example 2: Enable all AgentQL functions
 agent_all = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[AgentQLTools(all=True, agentql_query="your_query_here")],
 )
 
@@ -46,7 +46,7 @@ custom_query = """
 """
 
 custom_agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[
         AgentQLTools(
             enable_scrape_website=True,

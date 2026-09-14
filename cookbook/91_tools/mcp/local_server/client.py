@@ -20,11 +20,11 @@ async def run_agent(message: str) -> None:
     # Initialize the MCP server
     async with (
         MCPTools(
-            "fastmcp run cookbook/90_tools/mcp/local_server/server.py",  # Supply the command to run the MCP server
+            "fastmcp run cookbook/91_tools/mcp/local_server/server.py",  # Supply the command to run the MCP server
         ) as mcp_tools,
     ):
         agent = Agent(
-            model=Groq(id="llama-3.3-70b-versatile"),
+            model=Groq(id="openai/gpt-oss-120b"),
             tools=[mcp_tools],
             markdown=True,
         )

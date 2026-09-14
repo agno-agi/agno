@@ -3,7 +3,12 @@ from dataclasses import dataclass
 from os import getenv
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
-from agno.knowledge.embedder.base import Embedder
+from agno.knowledge.embedder.base import (
+    Embedder,
+    aembed_texts_individually,
+    pad_batch_embeddings,
+    raise_embedding_error,
+)
 from agno.utils.log import log_warning, logger
 
 try:
@@ -114,8 +119,7 @@ class VLLMEmbedder(Embedder):
             outputs = self._get_vllm_client().embed([text])
             return outputs[0] if outputs else None
         except Exception as e:
-            log_warning(f"Error creating local embedding: {str(e)}")
-            return None
+            raise_embedding_error(e, model_id=self.id, provider="vLLM")
 
     def _create_embedding_remote(self, text: str) -> "CreateEmbeddingResponse":
         """Create embedding using remote vLLM server."""
@@ -143,8 +147,7 @@ class VLLMEmbedder(Embedder):
                     return embedding
                 return []
         except Exception as e:
-            log_warning(f"Error extracting embedding: {str(e)}")
-            return []
+            raise_embedding_error(e, model_id=self.id, provider="vLLM")
 
     def get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict]]:
         if self.is_remote:
@@ -156,8 +159,7 @@ class VLLMEmbedder(Embedder):
                     return embedding, usage.model_dump()
                 return embedding, None
             except Exception as e:
-                log_warning(f"Error in remote embedding: {str(e)}")
-                return [], None
+                raise_embedding_error(e, model_id=self.id, provider="vLLM")
         else:
             embedding = self.get_embedding(text=text)
             # Local VLLM doesn't provide usage information
@@ -177,8 +179,7 @@ class VLLMEmbedder(Embedder):
                 response: "CreateEmbeddingResponse" = await self._get_async_remote_client().embeddings.create(**req)
                 return response.data[0].embedding
             except Exception as e:
-                log_warning(f"Error in async remote embedding: {str(e)}")
-                return []
+                raise_embedding_error(e, model_id=self.id, provider="vLLM")
         else:
             # Local mode: use thread executor for CPU-bound operations
             loop = asyncio.get_running_loop()
@@ -199,16 +200,14 @@ class VLLMEmbedder(Embedder):
                 usage = response.usage
                 return embedding, usage.model_dump() if usage else None
             except Exception as e:
-                log_warning(f"Error in async remote embedding: {str(e)}")
-                return [], None
+                raise_embedding_error(e, model_id=self.id, provider="vLLM")
         else:
             # Local mode: use thread executor for CPU-bound operations
             try:
                 loop = asyncio.get_running_loop()
                 return await loop.run_in_executor(None, self.get_embedding_and_usage, text)
             except Exception as e:
-                log_warning(f"Error in async local embedding: {str(e)}")
-                return [], None
+                raise_embedding_error(e, model_id=self.id, provider="vLLM")
 
     async def async_get_embeddings_batch_and_usage(
         self, texts: List[str]
@@ -229,34 +228,37 @@ class VLLMEmbedder(Embedder):
         for i in range(0, len(texts), self.batch_size):
             batch_texts = texts[i : i + self.batch_size]
 
-            try:
-                if self.is_remote:
-                    # Remote mode: use batch API
-                    req: Dict[str, Any] = {
-                        "input": batch_texts,
-                        "model": self.id,
-                    }
-                    if self.request_params:
-                        req.update(self.request_params)
+            if self.is_remote:
+                # Remote mode: use batch API
+                req: Dict[str, Any] = {
+                    "input": batch_texts,
+                    "model": self.id,
+                }
+                if self.request_params:
+                    req.update(self.request_params)
+                try:
                     response: "CreateEmbeddingResponse" = await self._get_async_remote_client().embeddings.create(**req)
-                    batch_embeddings = [data.embedding for data in response.data]
+                    batch_embeddings = pad_batch_embeddings(
+                        [data.embedding for data in response.data], batch_texts, "vLLM"
+                    )
                     all_embeddings.extend(batch_embeddings)
 
                     # For each embedding in the batch, add the same usage information
                     usage_dict = response.usage.model_dump() if response.usage else None
                     all_usage.extend([usage_dict] * len(batch_embeddings))
-                else:
-                    # Local mode: process individually using thread executor
-                    for text in batch_texts:
-                        embedding, usage = await self.async_get_embedding_and_usage(text)
-                        all_embeddings.append(embedding)
-                        all_usage.append(usage)
-
-            except Exception as e:
-                log_warning(f"Error in async batch embedding: {str(e)}")
-                # Fallback: add empty results for failed batch
-                for _ in batch_texts:
-                    all_embeddings.append([])
-                    all_usage.append(None)
+                except Exception as e:
+                    log_warning(f"Error in async batch embedding, falling back to individual calls: {str(e)}")
+                    # Fall back to individual calls: a whole-batch failure is often transient
+                    # (or caused by a single bad text). Successes are kept so one bad chunk
+                    # does not discard the rest of the batch.
+                    batch_embeddings, batch_usage = await aembed_texts_individually(self, batch_texts)
+                    all_embeddings.extend(batch_embeddings)
+                    all_usage.extend(batch_usage)
+            else:
+                # Local mode: process individually. Successes are kept so one bad chunk
+                # does not discard the rest of the batch.
+                batch_embeddings, batch_usage = await aembed_texts_individually(self, batch_texts)
+                all_embeddings.extend(batch_embeddings)
+                all_usage.extend(batch_usage)
 
         return all_embeddings, all_usage
