@@ -393,6 +393,7 @@ def attach_routes(
             return StreamingResponse(
                 stream_a2a_response_with_error_handling(event_stream=event_stream, request_id=request_body["id"]),  # type: ignore[arg-type]
                 media_type="text/event-stream",
+                headers={"X-Accel-Buffering": "no"},
             )
 
         except Exception as e:
@@ -720,6 +721,7 @@ def attach_routes(
             return StreamingResponse(
                 stream_a2a_response_with_error_handling(event_stream=event_stream, request_id=request_body["id"]),  # type: ignore[arg-type]
                 media_type="text/event-stream",
+                headers={"X-Accel-Buffering": "no"},
             )
 
         except Exception as e:
@@ -931,6 +933,7 @@ def attach_routes(
             return StreamingResponse(
                 stream_a2a_response_with_error_handling(event_stream=event_stream, request_id=request_body["id"]),  # type: ignore[arg-type]
                 media_type="text/event-stream",
+                headers={"X-Accel-Buffering": "no"},
             )
 
         except Exception as e:

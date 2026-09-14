@@ -901,7 +901,9 @@ def get_agent_router(
                         # with zero events.
                         if existing.get("status") in ("queued", "running"):
                             return StreamingResponse(
-                                queued_run_tail_streamer(existing["id"]), media_type="text/event-stream"
+                                queued_run_tail_streamer(existing["id"]),
+                                media_type="text/event-stream",
+                                headers={"X-Accel-Buffering": "no"},
                             )
                         return StreamingResponse(
                             _resume_stream_generator(
@@ -912,6 +914,7 @@ def get_agent_router(
                                 user_id,
                             ),
                             media_type="text/event-stream",
+                            headers={"X-Accel-Buffering": "no"},
                         )
                     with contextlib.suppress(Exception):
                         # Fail-open: the queue row is already committed - a Redis blip
@@ -920,7 +923,11 @@ def get_agent_router(
                     await aprepare_accepted_or_abort(
                         queue_worker, agent, "agent", queued_run_id, queued_session_id, user_id, message
                     )
-                    return StreamingResponse(queued_run_tail_streamer(queued_run_id), media_type="text/event-stream")
+                    return StreamingResponse(
+                        queued_run_tail_streamer(queued_run_id),
+                        media_type="text/event-stream",
+                        headers={"X-Accel-Buffering": "no"},
+                    )
                 if queue_worker is not None:
                     log_warning(
                         "Streaming background run bypasses the durable queue (remote/factory/"
@@ -945,6 +952,7 @@ def get_agent_router(
                         **kwargs,
                     ),
                     media_type="text/event-stream",
+                    headers={"X-Accel-Buffering": "no"},
                 )
 
             # background=True, stream=False: return 202 immediately with run
@@ -1104,6 +1112,7 @@ def get_agent_router(
                     **kwargs,
                 ),
                 media_type="text/event-stream",
+                headers={"X-Accel-Buffering": "no"},
             )
         else:
             # Pass auth_token for remote agents
@@ -1572,6 +1581,7 @@ def get_agent_router(
                             return StreamingResponse(
                                 queued_run_tail_streamer(run_id, from_index=continue_outcome.get("tail_from")),
                                 media_type="text/event-stream",
+                                headers={"X-Accel-Buffering": "no"},
                             )
                         return JSONResponse(
                             status_code=202,
@@ -1622,6 +1632,7 @@ def get_agent_router(
                     **kwargs,
                 ),
                 media_type="text/event-stream",
+                headers={"X-Accel-Buffering": "no"},
             )
         elif stream:
             return StreamingResponse(
@@ -1644,6 +1655,7 @@ def get_agent_router(
                     **kwargs,
                 ),
                 media_type="text/event-stream",
+                headers={"X-Accel-Buffering": "no"},
             )
         else:
             if background:
@@ -2315,6 +2327,7 @@ def get_agent_router(
         return StreamingResponse(
             _resume_stream_generator(agent, run_id, last_event_index, session_id, user_id=scoped_user_id),  # type: ignore[arg-type]
             media_type="text/event-stream",
+            headers={"X-Accel-Buffering": "no"},
         )
 
     @router.get(
