@@ -38,6 +38,16 @@ class JSONReader(Reader):
         return [ContentType.JSON]
 
     def read(self, path: Union[Path, IO[Any]], name: Optional[str] = None) -> List[Document]:
+        documents = self._read_documents(path, name)
+        if self.chunk:
+            chunked_documents = []
+            for document in documents:
+                chunked_documents.extend(self.chunk_document(document))
+            return chunked_documents
+        return documents
+
+    def _read_documents(self, path: Union[Path, IO[Any]], name: Optional[str] = None) -> List[Document]:
+        """Read and parse JSON without applying a chunking strategy."""
         try:
             if isinstance(path, Path):
                 if not path.exists():
@@ -65,11 +75,6 @@ class JSONReader(Reader):
                 )
                 for page_number, content in enumerate(json_contents, start=1)
             ]
-            if self.chunk:
-                chunked_documents = []
-                for document in documents:
-                    chunked_documents.extend(self.chunk_document(document))
-                return chunked_documents
             return documents
         except (FileNotFoundError, ValueError, json.JSONDecodeError):
             raise
@@ -78,5 +83,8 @@ class JSONReader(Reader):
             raise
 
     async def async_read(self, path: Union[Path, IO[Any]], name: Optional[str] = None) -> List[Document]:
-        """Asynchronously read JSON files."""
-        return await asyncio.to_thread(self.read, path, name)
+        """Read JSON off the event loop and await the configured chunking strategy."""
+        documents = await asyncio.to_thread(self._read_documents, path, name)
+        if self.chunk:
+            return await self.chunk_documents_async(documents)
+        return documents
