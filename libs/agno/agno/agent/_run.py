@@ -47,6 +47,7 @@ from agno.models.base import Model
 from agno.models.fallback import acall_model_with_fallback, call_model_with_fallback
 from agno.models.message import Message
 from agno.models.response import ModelResponse
+from agno.prompt.prompt import require_resolved_prompts
 from agno.run import RunContext, RunStatus
 from agno.run.agent import (
     RunCancelledEvent,
@@ -1331,6 +1332,7 @@ def run_dispatch(
     **kwargs: Any,
 ) -> Union[RunOutput, Iterator[Union[RunOutputEvent, RunOutput]]]:
     """Run the Agent and return the response."""
+    require_resolved_prompts(agent, "Agent")
     from agno.agent._init import has_async_db
     from agno.agent._response import get_response_format
     from agno.media.storage.base import AsyncMediaStorage
@@ -2854,6 +2856,7 @@ def arun_dispatch(  # type: ignore
     **kwargs: Any,
 ) -> Union[RunOutput, AsyncIterator[RunOutputEvent]]:
     """Async Run the Agent and return the response."""
+    require_resolved_prompts(agent, "Agent")
 
     # Set the id for the run and register it immediately for cancellation tracking
     from agno.agent._response import get_response_format
@@ -3425,6 +3428,7 @@ def continue_run_dispatch(
         metadata: The metadata to use for the run.
         debug_mode: Whether to enable debug mode.
     """
+    require_resolved_prompts(agent, "Agent")
     from agno.agent._init import has_async_db, set_default_model
     from agno.agent._messages import get_continue_run_messages
     from agno.agent._response import get_response_format
@@ -4332,6 +4336,7 @@ def acontinue_run_dispatch(  # type: ignore
         debug_mode: Whether to enable debug mode.
         yield_run_output: Whether to yield the run response.
     """
+    require_resolved_prompts(agent, "Agent")
     from agno.agent._response import get_response_format
 
     if run_response is None and run_id is None:

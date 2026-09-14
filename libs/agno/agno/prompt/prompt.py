@@ -1,5 +1,6 @@
+import copy
 from dataclasses import dataclass
-from typing import Any, Dict, List, Literal, Optional, Union
+from typing import Any, Dict, Iterable, List, Literal, Optional, Union
 
 from agno.db.base import BaseDb, ComponentType
 from agno.utils.log import log_error
@@ -178,3 +179,109 @@ class Prompt:
             return False
 
         return db.delete_component(component_id=self.id, hard_delete=hard_delete, require_no_dependents=True)
+
+
+# Host fields that may be bound to a Prompt, in attribution order.
+PROMPT_FIELDS = ("system_message", "instructions")
+
+
+@dataclass
+class PromptHandle:
+    """The Prompt relationship one host field retains after binding.
+
+    ``prompt`` is the host's own copy. ``bound_value`` is the text placed in the
+    public field; once the field no longer holds it, the relationship is stale.
+    Resolution state is filled in when the host is loaded from the catalog
+    (``published``) or when text on the Prompt itself is used (``inline``).
+    """
+
+    prompt: Prompt
+    field: str
+    bound_value: Optional[PromptContent] = None
+    resolved_version: Optional[int] = None
+    source: Optional[str] = None
+    fallback_reason: Optional[str] = None
+
+    @property
+    def selection(self) -> str:
+        return "latest" if self.prompt.version == "latest" else "pinned"
+
+    @property
+    def requested_version(self) -> Optional[int]:
+        return self.prompt.version if isinstance(self.prompt.version, int) else None
+
+    @property
+    def fallback(self) -> bool:
+        return self.fallback_reason is not None
+
+    @property
+    def resolved(self) -> bool:
+        return self.source is not None
+
+
+def _prompt_handles(host: Any) -> Dict[str, PromptHandle]:
+    handles = getattr(host, "_prompt_handles", None)
+    if handles is None:
+        handles = {}
+        host._prompt_handles = handles
+    return handles
+
+
+def bind_prompt_field(host: Any, field_name: str, value: Any) -> Any:
+    """Bind a constructor value to ``host.<field_name>``.
+
+    A Prompt is copied into the host's retained handles and its content is
+    returned for the public field, so the message builders keep reading plain
+    text. Any other value is returned unchanged and leaves no handle.
+    """
+    handles = _prompt_handles(host)
+    handles.pop(field_name, None)
+    if not isinstance(value, Prompt):
+        return value
+    if field_name == "system_message":
+        if isinstance(value.content, list):
+            raise ValueError("`system_message` accepts a Prompt with string content, not a list of blocks")
+        if isinstance(value.fallback, list):
+            raise ValueError("`system_message` accepts a Prompt with a string fallback, not a list of blocks")
+    prompt = copy.deepcopy(value)
+    handle = PromptHandle(prompt=prompt, field=field_name, bound_value=prompt.content)
+    if prompt.content is not None:
+        # Text carried by the Prompt itself is usable as is; a catalog load replaces this.
+        handle.source = "inline"
+    handles[field_name] = handle
+    return prompt.content
+
+
+def retained_prompt_handle(host: Any, field_name: str) -> Optional[PromptHandle]:
+    """The handle bound to ``host.<field_name>``, or None once the field was reassigned."""
+    handles = getattr(host, "_prompt_handles", None) or {}
+    handle = handles.get(field_name)
+    if handle is None:
+        return None
+    current = getattr(host, field_name, None)
+    if current is not handle.bound_value and current != handle.bound_value:
+        del handles[field_name]
+        return None
+    return handle
+
+
+def copy_prompt_handles(source: Any, target: Any, *, overridden: Iterable[str]) -> None:
+    """Give ``target`` its own copies of ``source``'s handles, except for overridden fields."""
+    skip = set(overridden)
+    for field_name in PROMPT_FIELDS:
+        if field_name in skip:
+            continue
+        handle = retained_prompt_handle(source, field_name)
+        if handle is not None:
+            _prompt_handles(target)[field_name] = copy.deepcopy(handle)
+
+
+def require_resolved_prompts(host: Any, host_label: str) -> None:
+    """Refuse to run while a bound Prompt has no text; called before registration or any write."""
+    for field_name in PROMPT_FIELDS:
+        handle = retained_prompt_handle(host, field_name)
+        if handle is not None and not handle.resolved:
+            raise ValueError(
+                f"{host_label} `{field_name}` references Prompt '{handle.prompt.id}' but no content was resolved: "
+                f"load the {host_label} from its database or give the Prompt content"
+            )

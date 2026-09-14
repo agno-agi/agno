@@ -41,6 +41,7 @@ from agno.knowledge.protocol import KnowledgeProtocol
 
 if TYPE_CHECKING:
     from agno.learn.machine import LearningMachine
+    from agno.prompt.prompt import Prompt, PromptHandle
     from agno.tools.component import ComponentTool
 
 from agno.media import Audio, File, Image, Video
@@ -50,6 +51,7 @@ from agno.metrics import SessionMetrics
 from agno.models.base import Model
 from agno.models.fallback import FallbackConfig
 from agno.models.message import Message
+from agno.prompt.prompt import bind_prompt_field
 
 if TYPE_CHECKING:
     from agno.offload.store import ResultStore
@@ -236,7 +238,7 @@ class Agent:
 
     # --- System message settings ---
     # Provide the system message as a string or function
-    system_message: Optional[Union[str, Callable, Message]] = None
+    system_message: Optional[Union[str, Callable, Message, Prompt]] = None
     # Role for the system message
     system_message_role: str = "system"
     # Provide the introduction as the first message from the Agent
@@ -248,7 +250,7 @@ class Agent:
     # A description of the Agent that is added to the start of the system message.
     description: Optional[str] = None
     # List of instructions for the agent.
-    instructions: Optional[Union[str, List[str], Callable]] = None
+    instructions: Optional[Union[str, List[str], Callable, Prompt]] = None
     # If True, wrap instructions in <instructions> tags. Default is False.
     use_instruction_tags: bool = False
     # Provide the expected output from the Agent.
@@ -447,12 +449,12 @@ class Agent:
         update_knowledge: bool = False,
         read_tool_call_history: bool = False,
         send_media_to_model: bool = True,
-        system_message: Optional[Union[str, Callable, Message]] = None,
+        system_message: Optional[Union[str, Callable, Message, Prompt]] = None,
         system_message_role: str = "system",
         introduction: Optional[str] = None,
         build_context: bool = True,
         description: Optional[str] = None,
-        instructions: Optional[Union[str, List[str], Callable]] = None,
+        instructions: Optional[Union[str, List[str], Callable, Prompt]] = None,
         use_instruction_tags: bool = False,
         expected_output: Optional[str] = None,
         additional_context: Optional[str] = None,
@@ -617,11 +619,13 @@ class Agent:
         self.update_knowledge = update_knowledge
         self.read_tool_call_history = read_tool_call_history
         self.send_media_to_model = send_media_to_model
-        self.system_message = system_message
+        # A Prompt on either field is copied into a retained handle; the field keeps plain text.
+        self._prompt_handles: Dict[str, PromptHandle] = {}
+        self.system_message = bind_prompt_field(self, "system_message", system_message)
         self.system_message_role = system_message_role
         self.build_context = build_context
         self.description = description
-        self.instructions = instructions
+        self.instructions = bind_prompt_field(self, "instructions", instructions)
         self.use_instruction_tags = use_instruction_tags
         self.expected_output = expected_output
         self.additional_context = additional_context

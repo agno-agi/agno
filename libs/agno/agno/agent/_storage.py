@@ -28,6 +28,7 @@ from agno.exceptions import ComponentRehydrationError
 from agno.metrics import RunMetrics, SessionMetrics
 from agno.models.base import Model
 from agno.models.message import Message
+from agno.prompt.prompt import retained_prompt_handle
 from agno.registry.registry import Registry, _memory_manager_resource_name
 from agno.run.agent import RunOutput
 from agno.session import AgentSession, TeamSession, WorkflowSession
@@ -1037,9 +1038,13 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
         config["store_history_messages"] = agent.store_history_messages
 
     # --- System message settings ---
+    # A Prompt-backed field stores its identity-only reference, never the text.
+    system_prompt = retained_prompt_handle(agent, "system_message")
+    if system_prompt is not None:
+        config["system_message"] = system_prompt.prompt._to_reference()
     # Skip system_message if it's a callable or Message object
     # TODO: Support Message objects
-    if agent.system_message is not None and isinstance(agent.system_message, str):
+    elif agent.system_message is not None and isinstance(agent.system_message, str):
         config["system_message"] = agent.system_message
     if agent.system_message_role != "system":
         config["system_message_role"] = agent.system_message_role
@@ -1050,7 +1055,10 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
     if agent.description is not None:
         config["description"] = agent.description
     # Handle instructions (can be str, list, or callable)
-    if agent.instructions is not None:
+    instructions_prompt = retained_prompt_handle(agent, "instructions")
+    if instructions_prompt is not None:
+        config["instructions"] = instructions_prompt.prompt._to_reference()
+    elif agent.instructions is not None:
         if isinstance(agent.instructions, str):
             config["instructions"] = agent.instructions
         elif isinstance(agent.instructions, list):

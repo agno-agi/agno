@@ -42,6 +42,7 @@ from agno.models.base import Model
 from agno.models.fallback import acall_model_with_fallback, call_model_with_fallback
 from agno.models.message import Message
 from agno.models.response import ModelResponse, ToolExecution
+from agno.prompt.prompt import require_resolved_prompts
 from agno.run import RunContext, RunStatus
 from agno.run.agent import (
     RunCancelledEvent as AgentRunCancelledEvent,
@@ -1924,6 +1925,7 @@ def run_dispatch(
     **kwargs: Any,
 ) -> Union[TeamRunOutput, Iterator[Union[RunOutputEvent, TeamRunOutputEvent]]]:
     """Run the Team and return the response."""
+    require_resolved_prompts(team, "Team")
     from agno.media.storage.base import AsyncMediaStorage
     from agno.team._init import _has_async_db, _initialize_session, _initialize_session_state
     from agno.team._response import get_response_format
@@ -4296,6 +4298,7 @@ def arun_dispatch(  # type: ignore
     **kwargs: Any,
 ) -> Union[TeamRunOutput, AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent]]]:
     """Run the Team asynchronously and return the response."""
+    require_resolved_prompts(team, "Team")
 
     # Set the id for the run and register it immediately for cancellation tracking
     from agno.team._init import _initialize_session
@@ -7531,6 +7534,7 @@ def continue_run_dispatch(
     COMPLETED team run produces a new ``run_id`` with the member rows
     cloned (per ADR — forked teams own their member rows).
     """
+    require_resolved_prompts(team, "Team")
     from agno.media.storage.base import AsyncMediaStorage
     from agno.team._init import _has_async_db, _initialize_session
     from agno.team._response import get_response_format
@@ -9274,6 +9278,7 @@ def acontinue_run_dispatch(  # type: ignore
     ``replace_original``, ``additional_instructions``, ``input``) flow
     through to the inner functions which apply them after loading the run.
     """
+    require_resolved_prompts(team, "Team")
     from agno.team._init import _initialize_session
     from agno.team._response import get_response_format
     from agno.team._run_options import resolve_run_options

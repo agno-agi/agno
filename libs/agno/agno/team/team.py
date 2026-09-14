@@ -32,6 +32,7 @@ from agno.knowledge.protocol import KnowledgeProtocol
 
 if TYPE_CHECKING:
     from agno.learn.machine import LearningMachine
+    from agno.prompt.prompt import Prompt
     from agno.tools.component import ComponentTool
 
 from agno.media import Audio, File, Image, Video
@@ -160,7 +161,7 @@ class Team:
     # A description of the Team that is added to the start of the system message.
     description: Optional[str] = None
     # List of instructions for the team.
-    instructions: Optional[Union[str, List[str], Callable]] = None
+    instructions: Optional[Union[str, List[str], Callable, Prompt]] = None
     # If True, wrap instructions in <instructions> tags. Default is False.
     use_instruction_tags: bool = False
     # Provide the expected output from the Team.
@@ -185,7 +186,7 @@ class Team:
     add_member_tools_to_context: bool = False
 
     # Provide the system message as a string or function
-    system_message: Optional[Union[str, Callable, Message]] = None
+    system_message: Optional[Union[str, Callable, Message, Prompt]] = None
     # Role for the system message
     system_message_role: str = "system"
     # Introduction for the team
@@ -438,6 +439,8 @@ class Team:
     _formatter: Optional[Any] = None
     # Hooks normalised flag
     _hooks_normalised: bool = False
+    # Prompt handles retained per bound field (system_message, instructions)
+    _prompt_handles: Optional[Dict[str, Any]] = None
     # MCP tools initialized on the last run
     _mcp_tools_initialized_on_run: Optional[List[Any]] = None
     # Connectable tools initialized on the last run

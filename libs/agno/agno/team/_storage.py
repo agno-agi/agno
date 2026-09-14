@@ -34,6 +34,7 @@ from agno.metrics import RunMetrics, SessionMetrics
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.utils import resolve_model
+from agno.prompt.prompt import retained_prompt_handle
 from agno.registry.registry import Registry
 from agno.run.agent import RunOutput
 from agno.run.team import (
@@ -591,13 +592,20 @@ def to_dict(team: "Team") -> Dict[str, Any]:
         config["read_chat_history"] = team.read_chat_history
 
     # --- System message settings ---
-    if team.system_message is not None and isinstance(team.system_message, str):
+    # A Prompt-backed field stores its identity-only reference, never the text.
+    system_prompt = retained_prompt_handle(team, "system_message")
+    if system_prompt is not None:
+        config["system_message"] = system_prompt.prompt._to_reference()
+    elif team.system_message is not None and isinstance(team.system_message, str):
         config["system_message"] = team.system_message
     if team.system_message_role != "system":  # default is "system"
         config["system_message_role"] = team.system_message_role
     if team.introduction is not None:
         config["introduction"] = team.introduction
-    if team.instructions is not None and not callable(team.instructions):
+    instructions_prompt = retained_prompt_handle(team, "instructions")
+    if instructions_prompt is not None:
+        config["instructions"] = instructions_prompt.prompt._to_reference()
+    elif team.instructions is not None and not callable(team.instructions):
         config["instructions"] = team.instructions
     if team.expected_output is not None:
         config["expected_output"] = team.expected_output
