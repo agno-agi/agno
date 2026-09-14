@@ -2058,14 +2058,29 @@ class AgentOS:
             # A list/tuple of providers means "run several authz planes at once"
             # (e.g. token scopes for operators + a managed role store for end users):
             # compose them with an OR — a request is allowed if any plane allows it.
-            if isinstance(provider, str):
-                raise ValueError(
-                    "authorization_provider must be an AuthorizationProvider (or a list of them), not a string."
-                )
+            # The provider used to be a typed pydantic field, which rejected anything that was not
+            # an AuthorizationProvider instance at construction. It now travels as a plain
+            # attribute, so check here: a class passed instead of an instance, a string, or a
+            # list with a stray element would otherwise be seeded and fail on the first request.
+            from agno.os.authz.provider import AuthorizationProvider as _Provider
+
+            candidates = list(provider) if isinstance(provider, (list, tuple)) else [provider]
+            for candidate in candidates:
+                if not isinstance(candidate, _Provider):
+                    if isinstance(candidate, type):
+                        shown = f"the class {candidate.__name__} (pass an instance: {candidate.__name__}())"
+                    elif isinstance(candidate, str):
+                        shown = f"the string {candidate!r}"
+                    else:
+                        shown = f"a {type(candidate).__name__}"
+                    raise ValueError(
+                        "authorization_provider must be an AuthorizationProvider instance (or a list of them); "
+                        f"got {shown}."
+                    )
             if isinstance(provider, (list, tuple)):
                 from agno.os.authz._composite import CompositeAuthorizationProvider
 
-                resolved_provider = CompositeAuthorizationProvider(list(provider))
+                resolved_provider = CompositeAuthorizationProvider(candidates)
             else:
                 resolved_provider = provider
 

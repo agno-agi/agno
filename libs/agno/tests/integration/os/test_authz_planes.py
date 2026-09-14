@@ -204,6 +204,25 @@ def test_authorization_provider_rejects_a_string():
         AgentOS(id=OS_ID, agents=[Agent(id="a", name="A", db=InMemoryDb())], authorization=authz).get_app()
 
 
+def test_authorization_provider_rejects_a_class_and_a_stray_list_element():
+    """The provider used to be a typed config field, so a class passed instead of an instance
+    (``MyProvider`` for ``MyProvider()``), or a list with a non-provider in it, failed at
+    construction. Now that it travels on the Authorization object, AgentOS checks every element
+    when it seeds the provider, so the mistake surfaces at boot and not as a 500 on the first
+    request."""
+    from agno.agent import Agent
+    from agno.db.in_memory import InMemoryDb
+
+    def _os(provider):
+        authz = Authorization(verification_keys=[SECRET], algorithm="HS256", authorization_provider=provider)
+        return AgentOS(id=OS_ID, agents=[Agent(id="a", name="A", db=InMemoryDb())], authorization=authz)
+
+    with pytest.raises(ValueError, match=r"the class ScopeAuthorizationProvider \(pass an instance"):
+        _os(ScopeAuthorizationProvider).get_app()  # the class, not an instance
+    with pytest.raises(ValueError, match="AuthorizationProvider instance.*got a NoneType"):
+        _os([ScopeAuthorizationProvider(), None]).get_app()  # one good plane, one stray element
+
+
 def test_composite_filter_accessible_unions_and_respects_per_plane_deny():
     """CompositeProvider.filter_accessible is a union (OR): each plane filters
     deny-aware within itself, and a resource is visible if ANY plane keeps it —
