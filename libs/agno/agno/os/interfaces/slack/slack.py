@@ -44,7 +44,8 @@ class Slack(BaseInterface):
         unfurl_media: bool = True,
         # Answer plain human replies in threads the bot was @mentioned into. Each such
         # reply costs one conversations.replies call, which needs the channels:history,
-        # groups:history and mpim:history bot scopes.
+        # groups:history and mpim:history bot scopes. The replies only arrive if the app
+        # subscribes to the message.channels, message.groups and message.mpim events.
         reply_to_thread_after_mention: bool = False,
     ):
         self.agent = agent
