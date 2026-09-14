@@ -355,14 +355,13 @@ async def test_onboarding_marker_persisted_and_respected():
 
 
 @pytest.mark.asyncio
-async def test_home_tab_delegates_to_publisher():
+async def test_home_tab_open_publishes_the_home_view():
     client = make_async_client_mock()
-    publisher = AsyncMock()
-    handler = _handler(client, _streaming_entity(), home_tab_publisher=publisher)
+    handler = _handler(client, _streaming_entity())
 
     await handler.handle_home_opened({"tab": "home", "user": "U1"})
 
-    publisher.assert_awaited_once_with("U1")
+    assert client.views_publish.await_args.kwargs["user_id"] == "U1"
     client.assistant_threads_setSuggestedPrompts.assert_not_awaited()
 
 

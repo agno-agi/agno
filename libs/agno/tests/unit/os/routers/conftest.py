@@ -80,15 +80,15 @@ async def make_signed_interaction(
 
 
 def build_app(agent_mock: Mock, **kwargs) -> FastAPI:
-    from agno.os.interfaces.slack.router import attach_routes
+    from agno.os.interfaces.slack import Slack
 
     kwargs.setdefault("streaming", False)
     kwargs.setdefault("token", BOT_TOKEN)
     kwargs.setdefault("signing_secret", SIGNING_SECRET)
-    kwargs.setdefault("authorize", stub_authorize)
+    authorize = kwargs.pop("authorize", stub_authorize)
     app = FastAPI()
     router = APIRouter()
-    attach_routes(router, agent=agent_mock, **kwargs)
+    Slack(agent=agent_mock, **kwargs).attach(router, authorize=authorize)
     app.include_router(router)
     return app
 

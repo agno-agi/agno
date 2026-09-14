@@ -193,19 +193,13 @@ async def test_non_streaming_real_agent_store_media_false():
         patch("agno.os.interfaces.slack.event_handler.AsyncWebClient", return_value=mock_client),
         patch("agno.os.interfaces.slack.event_handler.upload_response_media_async") as mock_upload,
     ):
-        from agno.os.interfaces.slack.router import attach_routes
+        from agno.os.interfaces.slack import Slack
 
         app = FastAPI()
         router = APIRouter()
-        attach_routes(
-            router,
-            agent=agent,
-            streaming=False,
-            reply_to_mentions_only=False,
-            token=BOT_TOKEN,
-            signing_secret=SIGNING_SECRET,
-            authorize=stub_authorize,
-        )
+        Slack(
+            agent=agent, streaming=False, reply_to_mentions_only=False, token=BOT_TOKEN, signing_secret=SIGNING_SECRET
+        ).attach(router, authorize=stub_authorize)
         app.include_router(router)
 
         from fastapi.testclient import TestClient
@@ -360,19 +354,13 @@ async def test_streaming_real_agent_store_media_false():
         patch("agno.os.interfaces.slack.event_handler.AsyncWebClient", return_value=mock_client),
         patch("agno.os.interfaces.slack.event_handler.upload_response_media_async") as mock_upload,
     ):
-        from agno.os.interfaces.slack.router import attach_routes
+        from agno.os.interfaces.slack import Slack
 
         app = FastAPI()
         router = APIRouter()
-        attach_routes(
-            router,
-            agent=agent,
-            streaming=True,
-            reply_to_mentions_only=False,
-            token=BOT_TOKEN,
-            signing_secret=SIGNING_SECRET,
-            authorize=stub_authorize,
-        )
+        Slack(
+            agent=agent, streaming=True, reply_to_mentions_only=False, token=BOT_TOKEN, signing_secret=SIGNING_SECRET
+        ).attach(router, authorize=stub_authorize)
         app.include_router(router)
 
         from fastapi.testclient import TestClient

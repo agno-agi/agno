@@ -28,7 +28,6 @@ from agno.os.interfaces.slack.helpers import (
     upload_response_media_async,
 )
 from agno.os.interfaces.slack.pause import PAUSE_LABELS, finalize_pause, post_pause_card
-from agno.os.interfaces.slack.prompts import DEFAULT_PROMPTS, Prompt, normalize_prompts
 from agno.os.interfaces.slack.runs import ActiveRun, ActiveRunRegistry
 from agno.os.interfaces.slack.sessions import SessionApi, SessionStatus, SlackSessions
 from agno.os.interfaces.slack.state import StreamState, TaskStatus
@@ -44,13 +43,50 @@ _STREAM_CARD_LIMIT = 45
 ONBOARDING_LEARNING_TYPE = "slack_onboarding"
 ONBOARDING_NAMESPACE = "slack"
 
-# Invoked with the Slack user id when the Home tab is opened (wired by the Home tab feature)
-HomeTabPublisher = Callable[[str], Awaitable[None]]
+AGNO_OS_URL = "https://os.agno.com"
+
+# Slack shows at most four suggested prompts and truncates long ones
+MAX_PROMPTS = 4
+MAX_PROMPT_CHARS = 300
+DEFAULT_PROMPTS: List[Dict[str, str]] = [
+    {"title": "Help", "message": "What can you help me with?"},
+    {"title": "Search", "message": "Search the web for..."},
+]
+# A prompt is the text to send; a dict adds a separate short title
+Prompt = Union[str, Dict[str, str]]
 
 
 def make_web_client(token: str, ssl: Optional[SSLContext] = None) -> AsyncWebClient:
     """The one Slack Web API client a mounted interface shares across its handlers."""
     return AsyncWebClient(token=token, ssl=ssl)
+
+
+def normalize_prompts(raw: Any) -> List[Dict[str, str]]:
+    """Keep only well-formed ``{title, message}`` entries, capped at Slack's limit."""
+    prompts: List[Dict[str, str]] = []
+    for item in raw or []:
+        if isinstance(item, str):
+            title = message = item
+        elif isinstance(item, dict):
+            message = str(item.get("message") or "").strip()
+            title = str(item.get("title") or message).strip()
+        else:
+            continue
+        if not message:
+            continue
+        prompts.append({"title": title[:MAX_PROMPT_CHARS], "message": message[:MAX_PROMPT_CHARS]})
+        if len(prompts) >= MAX_PROMPTS:
+            break
+    return prompts
+
+
+def build_home_view(entity_name: str, description: Optional[str] = None) -> Dict[str, Any]:
+    """The app's Home tab: who this is and a link to AgentOS."""
+    blocks: List[Dict[str, Any]] = [{"type": "header", "text": {"type": "plain_text", "text": entity_name[:150]}}]
+    if description:
+        blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": description[:3000]}})
+    blocks.append({"type": "context", "elements": [{"type": "mrkdwn", "text": f"Powered by <{AGNO_OS_URL}|AgentOS>"}]})
+    return {"type": "home", "blocks": blocks}
 
 
 @dataclass
@@ -108,7 +144,9 @@ class SlackEventHandler:
     streaming: bool = True
     # Shared client injected when mounted; created per call when absent
     client: Optional[AsyncWebClient] = None
-    # Agent messaging options (see SlackConfig for the meaning of each)
+    # Shown on the Home tab under the entity name
+    entity_description: Optional[str] = None
+    # Agent messaging options (see Slack.__init__ for the meaning of each)
     session_api: SessionApi = "auto"
     stop_message: str = "Stopped."
     onboarding_message: Optional[str] = None
@@ -119,7 +157,6 @@ class SlackEventHandler:
     sessions: Optional[SlackSessions] = None
     active_runs: ActiveRunRegistry = field(default_factory=ActiveRunRegistry)
     thread_context: ThreadContextStore = field(default_factory=ThreadContextStore)
-    home_tab_publisher: Optional[HomeTabPublisher] = None
 
     def __post_init__(self) -> None:
         if self.sessions is None:
@@ -719,11 +756,8 @@ class SlackEventHandler:
         channel_id = event.get("channel") or ""
 
         if tab == "home":
-            if self.home_tab_publisher is not None and user_id:
-                try:
-                    await self.home_tab_publisher(user_id)
-                except Exception as exc:
-                    log_error(f"Failed to publish Slack Home tab for {user_id}: {exc}")
+            if user_id:
+                await self.publish_home(user_id)
             return
 
         if tab != "messages" or not channel_id or self.sessions is None:
@@ -733,6 +767,13 @@ class SlackEventHandler:
         # the channel, so they must be set after anything the app posts
         await self._maybe_onboard(user_id, channel_id)
         await self.sessions.set_suggested_prompts(channel_id, self._prompts())
+
+    async def publish_home(self, slack_user_id: str) -> None:
+        view = build_home_view(self.entity_name, self.entity_description)
+        try:
+            await self._client().views_publish(user_id=slack_user_id, view=view)
+        except Exception as exc:
+            log_error(f"views.publish failed for {slack_user_id}: {exc}")
 
     async def _maybe_onboard(self, user_id: str, channel_id: str) -> None:
         if not self.onboarding_message or not user_id or user_id in self._onboarded:

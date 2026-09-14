@@ -1,4 +1,4 @@
-from agno.os.interfaces.slack.prompts import normalize_prompts
+from agno.os.interfaces.slack.event_handler import normalize_prompts
 
 
 def test_normalize_prompts_accepts_strings_and_dicts():

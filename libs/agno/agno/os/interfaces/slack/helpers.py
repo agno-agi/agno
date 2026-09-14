@@ -166,7 +166,7 @@ async def resolve_slack_bot(async_client: Any, bot_id: str) -> Tuple[str, Option
 class BotNameResolver:
     """Resolves a Slack bot user ID to its display name with per-instance caching.
 
-    Instantiated once per mounted Slack interface inside ``attach_routes`` so
+    Instantiated once per mounted Slack interface so
     each interface keeps its own cache without polluting module-level state.
     Only successful lookups are cached — transient API failures are retried on
     the next message.

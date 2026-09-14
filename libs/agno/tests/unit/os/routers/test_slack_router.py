@@ -501,30 +501,26 @@ class TestNonStreamingRoutes:
 
 class TestRouterWiring:
     def test_explicit_token_reaches_handlers(self):
-        from agno.os.interfaces.slack.app import mount_slack
-        from agno.os.interfaces.slack.config import SlackConfig
+        from agno.os.interfaces.slack import Slack
 
-        agent_mock = make_agent_mock()
-        config = SlackConfig(agent=agent_mock, token="xoxb-explicit-token", signing_secret="my-secret")
-        mount = mount_slack(APIRouter(), config)
+        slack = Slack(agent=make_agent_mock(), token="xoxb-explicit-token", signing_secret="my-secret")
+        slack.attach(APIRouter())
 
-        assert mount.runtime.token == "xoxb-explicit-token"
-        assert mount.runtime.event_handler.token == "xoxb-explicit-token"
-        assert mount.runtime.hitl.token == "xoxb-explicit-token"
+        assert slack.event_handler.token == "xoxb-explicit-token"
+        assert slack.hitl.token == "xoxb-explicit-token"
 
     def test_missing_credentials_fail_fast(self, monkeypatch):
-        from agno.os.interfaces.slack.app import mount_slack
-        from agno.os.interfaces.slack.config import SlackConfig
+        from agno.os.interfaces.slack import Slack
 
         monkeypatch.delenv("SLACK_TOKEN", raising=False)
         monkeypatch.delenv("SLACK_SIGNING_SECRET", raising=False)
         with pytest.raises(ValueError, match="SLACK_TOKEN"):
-            mount_slack(APIRouter(), SlackConfig(agent=make_agent_mock(), signing_secret="s"))
+            Slack(agent=make_agent_mock(), signing_secret="s").attach(APIRouter())
         with pytest.raises(ValueError, match="SLACK_SIGNING_SECRET"):
-            mount_slack(APIRouter(), SlackConfig(agent=make_agent_mock(), token="xoxb-test"))
+            Slack(agent=make_agent_mock(), token="xoxb-test").attach(APIRouter())
 
     def test_operation_id_unique_across_instances(self):
-        from agno.os.interfaces.slack.router import attach_routes
+        from agno.os.interfaces.slack import Slack
 
         agent_a = make_agent_mock()
         agent_a.name = "Research Agent"
@@ -533,9 +529,9 @@ class TestRouterWiring:
 
         app = FastAPI()
         router_a = APIRouter(prefix="/research")
-        attach_routes(router_a, agent=agent_a, token="xoxb-a", signing_secret="a")
+        Slack(agent=agent_a, token="xoxb-a", signing_secret="a").attach(router_a)
         router_b = APIRouter(prefix="/analyst")
-        attach_routes(router_b, agent=agent_b, token="xoxb-b", signing_secret="b")
+        Slack(agent=agent_b, token="xoxb-b", signing_secret="b").attach(router_b)
         app.include_router(router_a)
         app.include_router(router_b)
 
@@ -1093,7 +1089,7 @@ class TestDeliveryFlags:
         from agno.os.interfaces.slack.slack import Slack
 
         agent_mock = make_agent_mock()
-        with patch("agno.os.interfaces.slack.app.SlackEventHandler") as handler_cls:
+        with patch("agno.os.interfaces.slack.slack.SlackEventHandler") as handler_cls:
             Slack(
                 agent=agent_mock,
                 token="xoxb-test",
@@ -1111,7 +1107,7 @@ class TestDeliveryFlags:
         from agno.os.interfaces.slack.slack import Slack
 
         agent_mock = make_agent_mock()
-        with patch("agno.os.interfaces.slack.app.SlackEventHandler") as handler_cls:
+        with patch("agno.os.interfaces.slack.slack.SlackEventHandler") as handler_cls:
             Slack(agent=agent_mock, token="xoxb-test", signing_secret="s").get_router()
         kwargs = handler_cls.call_args.kwargs
         assert kwargs["markdown"] is True
@@ -1279,7 +1275,7 @@ class TestDeliveryFlags:
         from agno.os.interfaces.slack.slack import Slack
 
         agent_mock = make_agent_mock()
-        with patch("agno.os.interfaces.slack.app.HITLHandler") as hitl_cls:
+        with patch("agno.os.interfaces.slack.slack.HITLHandler") as hitl_cls:
             Slack(
                 agent=agent_mock,
                 token="xoxb-test",
