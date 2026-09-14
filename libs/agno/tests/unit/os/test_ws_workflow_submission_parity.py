@@ -142,3 +142,28 @@ async def test_owner_submission_into_own_session_is_queued(ws_env, monkeypatch):
         for ack in _queued_acks(env):
             await env.stream.complete_run(ack["run_id"], RunStatus.completed)
         await env.router.cancel_subscription_pump(env.ws)
+
+
+@pytest.mark.asyncio
+async def test_submission_without_session_id_gets_a_fresh_session(ws_env):
+    """HTTP mints a new session for a submission that names none. The
+    WebSocket door fell back to the workflow's own session_id first, so every
+    client omitting the field on a workflow configured with one pooled into
+    a single session, and under per-session queueing they would all line up
+    behind each other."""
+    from agno.run.base import RunStatus
+
+    env = ws_env
+    env.workflow.session_id = "fixed-on-the-workflow"
+    await env.router.handle_workflow_via_websocket(env.ws, {"workflow_id": "wf1", "message": "one"}, env.os)
+    await env.router.handle_workflow_via_websocket(env.ws, {"workflow_id": "wf1", "message": "two"}, env.os)
+    try:
+        acks = _queued_acks(env)
+        assert len(acks) == 2
+        sessions = {ack["session_id"] for ack in acks}
+        assert "fixed-on-the-workflow" not in sessions, "the workflow's own session_id is not a default for clients"
+        assert len(sessions) == 2, "each submission without a session_id gets its own session, as over HTTP"
+    finally:
+        for ack in _queued_acks(env):
+            await env.stream.complete_run(ack["run_id"], RunStatus.completed)
+        await env.router.cancel_subscription_pump(env.ws)

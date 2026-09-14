@@ -314,13 +314,12 @@ async def handle_workflow_via_websocket(
             await websocket.send_text(json.dumps({"event": "error", "error": str(e.detail)}))
             return
 
-        # Generate session_id if not provided
-        # Use workflow's default session_id if not provided in message
+        # A submission that names no session gets a fresh one, as over HTTP.
+        # The workflow's own session_id is not a default for clients: it
+        # would pool every client that omits the field into one session, and
+        # under per-session queueing they would all line up behind each other.
         if not session_id:
-            if workflow.session_id:
-                session_id = workflow.session_id
-            else:
-                session_id = str(uuid4())
+            session_id = str(uuid4())
 
         # Durable WS submission: the queue row is the acceptance, execution
         # happens on whichever worker claims it, and this socket becomes a
