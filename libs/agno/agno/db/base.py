@@ -1235,7 +1235,8 @@ class BaseDb(ABC):
             label: Optional config label.
             stage: "draft" or "published".
             notes: Optional notes.
-            links: Optional list of links. Each must have child_version set.
+            links: Optional list of links. Each must have child_version set. A "prompt" link may leave it None to
+                follow the child's current published version.
             user_id: Owner to attribute the component to.
 
         Returns:
@@ -1327,7 +1328,8 @@ class BaseDb(ABC):
             label: Optional human-readable label.
             stage: "draft" or "published". Defaults to "draft" for new configs.
             notes: Optional notes.
-            links: Optional list of links. Each link must have child_version set.
+            links: Optional list of links. Each link must have child_version set. A "prompt" link may leave it None to
+                follow the child's current published version.
             expected_latest_version: Optional CAS guard; None skips the check.
             expected_current_version: Optional CAS guard on the live pointer a
                 publish replaces; None skips the check, 0 expects no live

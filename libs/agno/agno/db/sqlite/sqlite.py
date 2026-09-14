@@ -4785,7 +4785,8 @@ class SqliteDb(BaseDb):
             label: Optional config label.
             stage: "draft" or "published".
             notes: Optional notes.
-            links: Optional list of links. Each must have child_version set.
+            links: Optional list of links. Each must have child_version set. A "prompt" link may leave it None to
+                follow the child's current published version.
             user_id: Owner to attribute the component to.
 
         Returns:
@@ -4800,7 +4801,9 @@ class SqliteDb(BaseDb):
         # Validate links have child_version
         if links:
             for link in links:
-                if link.get("child_version") is None:
+                # A "prompt" link may leave child_version NULL to follow the child's current
+                # published version; every other kind pins an exact version.
+                if link.get("child_version") is None and link.get("link_kind") != "prompt":
                     raise ValueError(f"child_version is required for link to {link['child_component_id']}")
 
         try:
@@ -5109,7 +5112,8 @@ class SqliteDb(BaseDb):
             label: Optional human-readable label.
             stage: "draft" or "published". Defaults to "draft" for new configs.
             notes: Optional notes.
-            links: Optional list of links. Each link must have child_version set.
+            links: Optional list of links. Each link must have child_version set. A "prompt" link may leave it None to
+                follow the child's current published version.
             user_id: When set, the write applies only if this user owns the
                 component; checked on the component row inside the write
                 transaction.
@@ -5194,7 +5198,9 @@ class SqliteDb(BaseDb):
                 # Validate links have child_version
                 if links:
                     for link in links:
-                        if link.get("child_version") is None:
+                        # A "prompt" link may leave child_version NULL to follow the child's current
+                        # published version; every other kind pins an exact version.
+                        if link.get("child_version") is None and link.get("link_kind") != "prompt":
                             raise ValueError(f"child_version is required for link to {link['child_component_id']}")
 
                 if version is None:
