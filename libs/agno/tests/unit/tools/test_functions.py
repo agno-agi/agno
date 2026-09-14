@@ -617,6 +617,31 @@ async def test_function_call_async_execution():
 
 
 @pytest.mark.asyncio
+async def test_framework_union_preserves_validation_for_async_callable():
+    """A framework type in a union must not disable async argument validation."""
+    from typing import Union
+
+    from agno.agent.agent import Agent
+
+    class Ticket(BaseModel):
+        title: str
+        priority: int
+
+    async def create_ticket(ticket: Union[Ticket, Agent], count: int) -> tuple[str, str, int]:
+        return type(ticket).__name__, type(count).__name__, ticket.priority
+
+    function = Function(name="create_ticket", entrypoint=create_ticket)
+    function.process_entrypoint()
+    result = await FunctionCall(
+        function=function,
+        arguments={"ticket": {"title": "Login failed", "priority": "2"}, "count": "7"},
+    ).aexecute()
+
+    assert result.status == "success"
+    assert result.result == ("Ticket", "int", 2)
+
+
+@pytest.mark.asyncio
 async def test_function_call_async_execution_with_error():
     """Test async function call execution with error handling."""
 
@@ -972,6 +997,74 @@ def test_tool_decorator_with_agent_team_type_annotations():
     assert not getattr(func_with_team_type.entrypoint, "_wrapped_for_validation", False)
     assert "query" in func_with_team_type.parameters["properties"]
     assert "my_team" not in func_with_team_type.parameters["properties"]
+
+
+@pytest.mark.parametrize("registration_path", ["from_callable", "process_entrypoint"])
+def test_framework_union_preserves_validation_for_other_parameters(registration_path):
+    """A framework type in one union must not disable validation for the callable."""
+    from typing import Union
+
+    from agno.agent.agent import Agent
+
+    class Ticket(BaseModel):
+        title: str
+        priority: int
+
+    def create_ticket(ticket: Union[Ticket, Agent], count: int) -> tuple[str, str, int]:
+        priority = ticket["priority"] if isinstance(ticket, dict) else ticket.priority
+        return type(ticket).__name__, type(count).__name__, priority
+
+    if registration_path == "from_callable":
+        function = Function.from_callable(create_ticket)
+    else:
+        function = Function(name="create_ticket", entrypoint=create_ticket)
+        function.process_entrypoint()
+
+    result = FunctionCall(
+        function=function,
+        arguments={"ticket": {"title": "Login failed", "priority": "2"}, "count": "7"},
+    ).execute()
+
+    assert result.status == "success"
+    assert result.result == ("Ticket", "int", 2)
+
+
+@pytest.mark.parametrize("registration_path", ["from_callable", "process_entrypoint"])
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        {"ticket": {"title": "Login failed", "priority": "not-an-int"}, "count": "7"},
+        {"ticket": {"title": "Login failed", "priority": "2"}, "count": "not-an-int"},
+    ],
+    ids=["invalid-model", "invalid-sibling"],
+)
+def test_framework_union_rejects_invalid_arguments(registration_path, arguments):
+    """A framework type in one union must not let other invalid input through."""
+    from typing import Union
+
+    from agno.agent.agent import Agent
+
+    class Ticket(BaseModel):
+        title: str
+        priority: int
+
+    def create_ticket(ticket: Union[Ticket, Agent], count: int) -> str:
+        return "created"
+
+    if registration_path == "from_callable":
+        function = Function.from_callable(create_ticket)
+    else:
+        function = Function(name="create_ticket", entrypoint=create_ticket)
+        function.process_entrypoint()
+
+    result = FunctionCall(
+        function=function,
+        arguments=arguments,
+    ).execute()
+
+    assert result.status == "failure"
+    assert result.error is not None
+    assert "validation error" in result.error.lower()
 
 
 def test_tool_decorator_with_complex_types():
@@ -2151,7 +2244,7 @@ def test_identity_only_union_is_excluded_and_injected():
 
 def test_run_context_union_is_excluded_even_beside_an_ordinary_type():
     """RunContext is the one identity type pydantic can build from a model dict:
-    validate_call is skipped for Agent/Team parameters but not for this one. An
+    bare framework-owned Agent/Team parameters are skipped, but not this one. An
     exposed `Union[str, RunContext]` would coerce {"user_id": ...} into a live
     RunContext and hand the model the caller's identity."""
     from typing import Union as Un
@@ -2389,8 +2482,8 @@ def test_the_whole_annotation_graph_decides_identity():
     ]
     fillable = [
         # Agent beside an ordinary type is the documented model-fillable shape:
-        # validate_call is skipped for it, so the tool receives a string or a
-        # plain dict, never a live Agent. That holds inside a list too.
+        # The model can fill the ordinary branch, while the validation-only
+        # annotation treats Agent as an existing instance rather than expanding it.
         Union[str, Agent],
         Optional[Union[str, Agent]],
         List[Union[str, Agent]],
