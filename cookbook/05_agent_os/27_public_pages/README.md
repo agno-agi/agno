@@ -309,10 +309,6 @@ chunks before adopting a profile on an existing corpus. Keep the same
 `index_version` only for byte-compatible extraction; bump it for intentional
 normalization changes and rerun retrieval evaluations before release.
 
-<<<<<<< HEAD
-
-=======
->>>>>>> 9f0d33213 (revert)
 ## Dedicated MCP hostname
 
 `mcp_domain.py` configures `MCPConfig(root_host="mcp.example.com", server_card_url=
