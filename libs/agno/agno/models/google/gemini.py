@@ -797,7 +797,13 @@ class Gemini(Model):
             )
             role = message.role
             if role in ["system", "developer"]:
-                system_message = message.content
+                if message.content is not None:
+                    if system_message is None:
+                        system_message = message.content
+                    else:
+                        previous = system_message if isinstance(system_message, list) else [system_message]
+                        current = message.content if isinstance(message.content, list) else [message.content]
+                        system_message = previous + current
                 continue
 
             # Set the role for the message according to Gemini's requirements
