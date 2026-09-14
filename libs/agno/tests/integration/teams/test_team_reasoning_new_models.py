@@ -438,7 +438,7 @@ def test_team_groq_reasoning_non_streaming():
     """Test that Team reasoning works with Groq reasoning models (deepseek variants) in non-streaming mode."""
     # Create a Team with Groq reasoning model
     team = Team(
-        model=Groq(id="llama-3.3-70b-versatile"),
+        model=Groq(id="openai/gpt-oss-120b"),
         reasoning_model=Groq(id="deepseek-r1-distill-llama-70b"),
         members=[],
         instructions=dedent("""\
@@ -469,7 +469,7 @@ def test_team_groq_reasoning_streaming(shared_db):
     """Test that Team reasoning works with Groq reasoning models (deepseek variants) in streaming mode."""
     # Create a Team with Groq reasoning model
     team = Team(
-        model=Groq(id="llama-3.3-70b-versatile"),
+        model=Groq(id="openai/gpt-oss-120b"),
         reasoning_model=Groq(id="deepseek-r1-distill-llama-70b"),
         db=shared_db,
         members=[],
@@ -738,7 +738,7 @@ def test_team_accepts_groq_reasoning_model():
     """Test that Team can be instantiated with Groq reasoning model."""
     try:
         team = Team(
-            model=Groq(id="llama-3.3-70b-versatile"),
+            model=Groq(id="openai/gpt-oss-120b"),
             reasoning_model=Groq(id="deepseek-r1-distill-llama-70b"),
             members=[],
         )

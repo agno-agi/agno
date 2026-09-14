@@ -24,7 +24,7 @@ if not CEL_AVAILABLE:
 # ---------------------------------------------------------------------------
 classifier = Agent(
     name="Classifier",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     instructions=(
         "Classify the request as either TECHNICAL or GENERAL. "
         "Respond with exactly one word: TECHNICAL or GENERAL."
@@ -34,14 +34,14 @@ classifier = Agent(
 
 technical_agent = Agent(
     name="Technical Support",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     instructions="You are a technical support specialist. Provide detailed technical help.",
     markdown=True,
 )
 
 general_agent = Agent(
     name="General Support",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     instructions="You handle general inquiries. Be friendly and helpful.",
     markdown=True,
 )

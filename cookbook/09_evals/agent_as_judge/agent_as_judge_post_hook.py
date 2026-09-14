@@ -27,7 +27,7 @@ sync_agent_as_judge_eval = AgentAsJudgeEval(
 )
 
 sync_agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     instructions="Provide professional and well-reasoned answers.",
     post_hooks=[sync_agent_as_judge_eval],
     db=sync_db,
@@ -48,7 +48,7 @@ async_agent_as_judge_eval = AgentAsJudgeEval(
 )
 
 async_agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     instructions="Provide professional and well-reasoned answers.",
     post_hooks=[async_agent_as_judge_eval],
     db=async_db,
@@ -57,7 +57,7 @@ async_agent = Agent(
 
 def print_latest_result(eval_runs):
     if eval_runs:
-        latest = eval_runs[-1]
+        latest = eval_runs[0]
         if latest.eval_data and "results" in latest.eval_data:
             result = latest.eval_data["results"][0]
             print(f"Score: {result.get('score', 'N/A')}/10")
