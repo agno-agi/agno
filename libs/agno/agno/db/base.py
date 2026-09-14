@@ -30,6 +30,7 @@ class ComponentType(str, Enum):
     AGENT = "agent"
     TEAM = "team"
     WORKFLOW = "workflow"
+    PROMPT = "prompt"
 
 
 # Stage marking a config version as deleted without freeing its number.
@@ -1080,7 +1081,7 @@ class BaseDb(ABC):
 
         Args:
             component_id: The component ID.
-            component_type: Optional filter by type (agent|team|workflow).
+            component_type: Optional filter by type (agent|team|workflow|prompt).
             user_id: If set, only return the component if owned by this user, unowned (shared), or published.
             include_deleted: Also return an archived (soft-deleted) row. Archived
                 ids are reserved, so an existence check must pass True.
@@ -1104,7 +1105,7 @@ class BaseDb(ABC):
 
         Args:
             component_id: Unique identifier.
-            component_type: Type (agent|team|workflow). Required for create, optional for update.
+            component_type: Type (agent|team|workflow|prompt). Required for create, optional for update.
             name: Display name.
             description: Optional description.
             current_version: Optional current version.
@@ -1194,7 +1195,7 @@ class BaseDb(ABC):
         """List components with pagination.
 
         Args:
-            component_type: Filter by type (agent|team|workflow).
+            component_type: Filter by type (agent|team|workflow|prompt).
             include_deleted: Include soft-deleted components.
             limit: Maximum number of items to return.
             offset: Number of items to skip.
@@ -1226,7 +1227,7 @@ class BaseDb(ABC):
 
         Args:
             component_id: Unique identifier.
-            component_type: Type (agent|team|workflow).
+            component_type: Type (agent|team|workflow|prompt).
             name: Display name.
             config: The config data.
             description: Optional description.
