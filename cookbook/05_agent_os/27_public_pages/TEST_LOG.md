@@ -147,3 +147,14 @@ neither shared environment was modified. Live database/provider modes were not
 run. The focused public-configuration and MCP suites passed all 204 tests.
 
 ---
+
+
+## 2026-09-09 documentation Markdown transform
+
+- PASS: `documentation_markdown.py` ran with the demo Python and candidate source. Produces labeled Markdown and one chunk without network/model calls.
+- PASS: 30 normalization and chunking tests, including the existing application fixtures, nested/mismatched fences, serializer escapes, Unicode and callback isolation.
+- PASS: two disposable PostgreSQL publication tests cover sync and async transforms and repeat-sync embedding reuse.
+- PASS: full format and validation scripts.
+- Compatibility comparison: all 3,909 local published pages yield identical old/new transformed bytes and chunks, and are unchanged on repeat normalization. This is a published-text corpus comparison, not a full raw-source crawl.
+- Raw-source sample: 24 of 40 public Markdown pages fetched successfully (18 contained sampled component types); all 24 match old/new bytes and chunks. The other 16 URLs returned HTTP 500 and were excluded from equivalence claims.
+- No index mutation, re-embedding, reader default change or production deployment. Generic repeated entity decoding is not guaranteed idempotent; the documented transform operates on source once.
