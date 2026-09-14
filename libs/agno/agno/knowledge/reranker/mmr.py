@@ -1,6 +1,6 @@
 from dataclasses import replace
 from math import sqrt
-from typing import Any, List, Optional, Sequence, Tuple
+from typing import Any, ClassVar, List, Optional, Sequence, Tuple
 
 from pydantic import Field, field_validator
 
@@ -29,11 +29,15 @@ class MMRReranker(Reranker):
     one another. MMR picks documents one at a time, discounting each candidate by how
     similar it already is to what has been selected.
 
-    Requires an embedding on every candidate document. Verified against live backends:
-    pgvector, Qdrant (vector and hybrid), Chroma and LanceDB return them; Milvus,
-    MongoDB, Redis, Valkey and Qdrant keyword search do not, and MMR raises there rather
-    than returning an unreranked list. Pinecone omits vectors unless the store is built
-    with return_vectors=True.
+    Configure it as the vector db's reranker. MMR can only surface a document that was
+    retrieved, so Knowledge widens the vector db fetch when this reranker is set and
+    trims the selection back to the requested count afterwards.
+
+    Requires an embedding on every candidate document. pgvector, Qdrant (vector and
+    hybrid), Chroma, LanceDB and Elasticsearch return them; Milvus, MongoDB, Redis,
+    Valkey and Qdrant keyword search do not, and MMR raises there rather than returning
+    an unreranked list. Pinecone omits vectors unless the store is built with
+    return_vectors=True.
 
     It also needs an embedder to embed the query. Vector dbs that embed queries
     themselves (Upstash hosted embeddings) expose none, so MMR cannot run there.
@@ -50,11 +54,15 @@ class MMRReranker(Reranker):
     sorting by them discards the diversity ordering.
     """
 
+    # Selection needs more candidates than the caller asked for, so Knowledge widens
+    # the vector db fetch for this reranker.
+    needs_candidate_pool: ClassVar[bool] = True
+
     # Weight between relevance and diversity: 1.0 ranks by relevance alone, 0.0 by
     # difference alone.
     lambda_mult: float = Field(default=0.5, ge=0.0, le=1.0)
-    # Caps how many documents are selected. Leave unset on Knowledge.reranker, which
-    # trims to max_results anyway: a smaller top_n returns fewer documents than asked for.
+    # Caps how many documents are selected. Leave unset in normal use: Knowledge trims
+    # to max_results anyway, and a smaller top_n returns fewer documents than asked for.
     top_n: Optional[int] = Field(default=None, gt=0)
 
     @field_validator("lambda_mult", mode="before")
