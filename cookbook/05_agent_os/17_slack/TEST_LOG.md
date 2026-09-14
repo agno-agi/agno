@@ -215,3 +215,35 @@ asserted.
   `git diff --check` passed.
 - The mapped legacy Slack subtree was removed only after replacement smoke and
   focused unit gates passed.
+
+## 2026-09-14: Bolt transport and agent messaging
+
+Tested on 2026-09-14 on branch `slack-interface-v3` with `slack_sdk 3.44.1`
+and `slack_bolt 1.30.0`. Construction used the `SLACK_TOKEN` and
+`SLACK_SIGNING_SECRET` environment values and a sentinel `OPENAI_API_KEY`.
+Bolt resolves the bot identity lazily, so no Slack API call was made. No
+Slack event delivery, model inference, tool request, interaction resume, or
+outbound message was attempted.
+
+### agent_messaging.py
+
+**Status:** PASS
+
+**Test mode:** CONSTRUCTION_SMOKE
+
+**Description:** Constructed one Agent with suggested prompts, an onboarding
+message, and a custom stop message.
+
+**Result:** `GET /health` returned `ok`; `GET /config` returned OS
+`slack-agent-messaging-os` and interface `/slack`. OpenAPI exposed exactly
+`POST /slack/events` and `POST /slack/interactions`.
+
+---
+
+### Unit suite
+
+`pytest libs/agno/tests/unit/os/routers -k slack` covers the Bolt transport
+(signatures, URL verification, retries and `event_id` dedupe, own-bot
+filtering, unknown actions), session lifecycle with assistant fallback, the
+stop button and its ownership check, onboarding, context and title sync, and
+the Home tab.

@@ -5,7 +5,10 @@ from typing import Any, Dict, List, Optional
 from agno.os.interfaces.slack.ids import (
     ACTION_EXTERNAL_RESULT,
     ACTION_REJECT_REASON,
+    ROW_BUTTON_FIELDS,
+    SUBMIT_BUTTON_FIELDS,
     decode_row_button_value,
+    decode_session_id,
     decode_submit_button_value,
     encode_submit_button_value,
     external_result_block_id,
@@ -156,6 +159,7 @@ def extract_row_action_context(payload: Dict[str, Any]) -> Optional[RowActionCon
         channel=channel,
         card_ts=card_ts,
         blocks=list(message.get("blocks") or []),
+        session_id=decode_session_id(button_value, ROW_BUTTON_FIELDS),
     )
 
 
@@ -187,6 +191,7 @@ def extract_submit_context(payload: Dict[str, Any]) -> Optional[SubmitContext]:
         user_id=(payload.get("user") or {}).get("id", ""),
         team_id=(payload.get("team") or {}).get("id"),
         state_values=(payload.get("state") or {}).get("values") or {},
+        session_id=decode_session_id(button_value, SUBMIT_BUTTON_FIELDS),
     )
 
 
@@ -218,13 +223,14 @@ def synthetic_submit_payload(
     run_id: str,
     awaiting_ts: Optional[str],
     blocks: List[Dict[str, Any]],
+    session_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     synthetic = dict(payload)
     synthetic["actions"] = [
         {
             "action_id": "submit_pause",
             "block_id": f"pause:{run_id}",
-            "value": encode_submit_button_value(run_id, awaiting_ts),
+            "value": encode_submit_button_value(run_id, awaiting_ts, session_id),
         }
     ]
     synthetic["message"] = {**(payload.get("message") or {}), "blocks": blocks}

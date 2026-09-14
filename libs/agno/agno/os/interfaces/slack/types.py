@@ -37,6 +37,8 @@ class RowActionContext:
     channel: str
     card_ts: str
     blocks: List[Dict[str, Any]]
+    # Present only when sessions are keyed per participant (see ids.decode_session_id)
+    session_id: Optional[str] = None
 
 
 @dataclass
@@ -49,6 +51,8 @@ class SubmitContext:
     user_id: str
     team_id: Optional[str]
     state_values: SlackState
+    # Present only when sessions are keyed per participant (see ids.decode_session_id)
+    session_id: Optional[str] = None
 
 
 @dataclass

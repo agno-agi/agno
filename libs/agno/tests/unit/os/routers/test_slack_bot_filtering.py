@@ -7,7 +7,6 @@ from .conftest import (
     make_agent_mock,
     make_async_client_mock,
     make_signed_request,
-    make_slack_mock,
     wait_for_call,
 )
 
@@ -15,11 +14,8 @@ from .conftest import (
 @pytest.mark.asyncio
 async def test_default_drops_all_bot_events():
     agent_mock = make_agent_mock()
-    mock_slack = make_slack_mock(token="xoxb-test")
 
     with (
-        patch("agno.os.interfaces.slack.router.verify_slack_signature", return_value=True),
-        patch("agno.os.interfaces.slack.router.SlackTools", return_value=mock_slack),
         patch("agno.os.interfaces.slack.event_handler.AsyncWebClient", return_value=make_async_client_mock()),
     ):
         app = build_app(agent_mock, reply_to_mentions_only=False)
@@ -37,7 +33,7 @@ async def test_default_drops_all_bot_events():
                 "ts": "1708123456.000100",
             },
         }
-        resp = make_signed_request(client, body)
+        resp = await make_signed_request(client, body)
 
     assert resp.status_code == 200
     agent_mock.arun.assert_not_called()
@@ -46,12 +42,8 @@ async def test_default_drops_all_bot_events():
 @pytest.mark.asyncio
 async def test_opt_in_allows_peer_agent_messages():
     agent_mock = make_agent_mock()
-    mock_slack = make_slack_mock(token="xoxb-test")
-    mock_slack.client.auth_test.return_value = {"bot_id": "B_SELF", "user_id": "U_SELF_BOT"}
 
     with (
-        patch("agno.os.interfaces.slack.router.verify_slack_signature", return_value=True),
-        patch("agno.os.interfaces.slack.router.SlackTools", return_value=mock_slack),
         patch("agno.os.interfaces.slack.event_handler.AsyncWebClient", return_value=make_async_client_mock()),
     ):
         app = build_app(agent_mock, reply_to_mentions_only=False, respond_to_other_apps=True)
@@ -71,7 +63,7 @@ async def test_opt_in_allows_peer_agent_messages():
                 "ts": "1708123456.000100",
             },
         }
-        resp = make_signed_request(client, body)
+        resp = await make_signed_request(client, body)
 
     assert resp.status_code == 200
     await wait_for_call(agent_mock.arun)
@@ -81,12 +73,8 @@ async def test_opt_in_allows_peer_agent_messages():
 @pytest.mark.asyncio
 async def test_opt_in_drops_own_messages_by_bot_id():
     agent_mock = make_agent_mock()
-    mock_slack = make_slack_mock(token="xoxb-test")
-    mock_slack.client.auth_test.return_value = {"bot_id": "B_SELF"}
 
     with (
-        patch("agno.os.interfaces.slack.router.verify_slack_signature", return_value=True),
-        patch("agno.os.interfaces.slack.router.SlackTools", return_value=mock_slack),
         patch("agno.os.interfaces.slack.event_handler.AsyncWebClient", return_value=make_async_client_mock()),
     ):
         app = build_app(agent_mock, reply_to_mentions_only=False, respond_to_other_apps=True)
@@ -107,7 +95,7 @@ async def test_opt_in_drops_own_messages_by_bot_id():
                 "ts": "1708123456.000100",
             },
         }
-        resp = make_signed_request(client, body)
+        resp = await make_signed_request(client, body)
 
     assert resp.status_code == 200
     agent_mock.arun.assert_not_called()
@@ -116,12 +104,8 @@ async def test_opt_in_drops_own_messages_by_bot_id():
 @pytest.mark.asyncio
 async def test_opt_in_drops_own_messages_by_bot_user_id():
     agent_mock = make_agent_mock()
-    mock_slack = make_slack_mock(token="xoxb-test")
-    mock_slack.client.auth_test.return_value = {"user_id": "U_SELF_BOT"}
 
     with (
-        patch("agno.os.interfaces.slack.router.verify_slack_signature", return_value=True),
-        patch("agno.os.interfaces.slack.router.SlackTools", return_value=mock_slack),
         patch("agno.os.interfaces.slack.event_handler.AsyncWebClient", return_value=make_async_client_mock()),
     ):
         app = build_app(agent_mock, reply_to_mentions_only=False, respond_to_other_apps=True)
@@ -140,7 +124,7 @@ async def test_opt_in_drops_own_messages_by_bot_user_id():
                 "ts": "1708123456.000100",
             },
         }
-        resp = make_signed_request(client, body)
+        resp = await make_signed_request(client, body)
 
     assert resp.status_code == 200
     agent_mock.arun.assert_not_called()
@@ -149,12 +133,8 @@ async def test_opt_in_drops_own_messages_by_bot_user_id():
 @pytest.mark.asyncio
 async def test_opt_in_allows_peer_webhook_bot_with_only_bot_id():
     agent_mock = make_agent_mock()
-    mock_slack = make_slack_mock(token="xoxb-test")
-    mock_slack.client.auth_test.return_value = {"bot_id": "B_SELF"}
 
     with (
-        patch("agno.os.interfaces.slack.router.verify_slack_signature", return_value=True),
-        patch("agno.os.interfaces.slack.router.SlackTools", return_value=mock_slack),
         patch("agno.os.interfaces.slack.event_handler.AsyncWebClient", return_value=make_async_client_mock()),
     ):
         app = build_app(agent_mock, reply_to_mentions_only=False, respond_to_other_apps=True)
@@ -175,7 +155,7 @@ async def test_opt_in_allows_peer_webhook_bot_with_only_bot_id():
                 "ts": "1708123456.000100",
             },
         }
-        resp = make_signed_request(client, body)
+        resp = await make_signed_request(client, body)
 
     assert resp.status_code == 200
     await wait_for_call(agent_mock.arun)
@@ -185,12 +165,8 @@ async def test_opt_in_allows_peer_webhook_bot_with_only_bot_id():
 @pytest.mark.asyncio
 async def test_opt_in_allows_peer_by_user_id_mismatch():
     agent_mock = make_agent_mock()
-    mock_slack = make_slack_mock(token="xoxb-test")
-    mock_slack.client.auth_test.return_value = {"bot_id": "B_SELF", "user_id": "U_SELF_BOT"}
 
     with (
-        patch("agno.os.interfaces.slack.router.verify_slack_signature", return_value=True),
-        patch("agno.os.interfaces.slack.router.SlackTools", return_value=mock_slack),
         patch("agno.os.interfaces.slack.event_handler.AsyncWebClient", return_value=make_async_client_mock()),
     ):
         app = build_app(agent_mock, reply_to_mentions_only=False, respond_to_other_apps=True)
@@ -208,7 +184,7 @@ async def test_opt_in_allows_peer_by_user_id_mismatch():
                 "ts": "1708123456.000100",
             },
         }
-        resp = make_signed_request(client, body)
+        resp = await make_signed_request(client, body)
 
     assert resp.status_code == 200
     await wait_for_call(agent_mock.arun)
@@ -218,11 +194,8 @@ async def test_opt_in_allows_peer_by_user_id_mismatch():
 @pytest.mark.asyncio
 async def test_lifecycle_subtypes_still_dropped_with_opt_in():
     agent_mock = make_agent_mock()
-    mock_slack = make_slack_mock(token="xoxb-test")
 
     with (
-        patch("agno.os.interfaces.slack.router.verify_slack_signature", return_value=True),
-        patch("agno.os.interfaces.slack.router.SlackTools", return_value=mock_slack),
         patch("agno.os.interfaces.slack.event_handler.AsyncWebClient", return_value=make_async_client_mock()),
     ):
         app = build_app(agent_mock, reply_to_mentions_only=False, respond_to_other_apps=True)
@@ -242,7 +215,7 @@ async def test_lifecycle_subtypes_still_dropped_with_opt_in():
                 "message": {"text": "edited", "user": "U_OTHER"},
             },
         }
-        resp = make_signed_request(client, body)
+        resp = await make_signed_request(client, body)
 
     assert resp.status_code == 200
     agent_mock.arun.assert_not_called()

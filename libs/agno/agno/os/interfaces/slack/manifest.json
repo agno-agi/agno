@@ -5,7 +5,7 @@
     },
     "features": {
         "app_home": {
-            "home_tab_enabled": false,
+            "home_tab_enabled": true,
             "messages_tab_enabled": true,
             "messages_tab_read_only_enabled": false
         },
@@ -13,8 +13,8 @@
             "display_name": "Slack Agent",
             "always_online": true
         },
-        "assistant_view": {
-            "assistant_description": "Ask me anything.",
+        "agent_view": {
+            "agent_description": "Ask me anything.",
             "suggested_prompts": []
         }
     },
@@ -41,8 +41,11 @@
             "request_url": "https://YOUR-URL/slack/events",
             "bot_events": [
                 "app_mention",
-                "assistant_thread_started",
-                "message.im"
+                "message.im",
+                "app_home_opened",
+                "app_context_changed",
+                "agent_session_stopped",
+                "agent_session_title_changed"
             ]
         },
         "interactivity": {

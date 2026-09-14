@@ -137,22 +137,34 @@ class TestMemory:
 
 class TestTerminalEvents:
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("ev", [RunEvent.run_error.value, RunEvent.run_cancelled.value])
-    async def test_run_terminal_returns_true(self, ev):
+    async def test_run_error_is_terminal(self):
         state = StreamState()
         stream = _stream()
-        chunk = _chunk(ev, content="something went wrong")
-        result = await process_event(ev, chunk, state, stream)
+        chunk = _chunk(RunEvent.run_error.value, content="something went wrong")
+        result = await process_event(RunEvent.run_error.value, chunk, state, stream)
         assert result is True
         assert state.terminal_status == "error"
+        assert state.cancelled is False
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("ev", ["WorkflowError", "WorkflowCancelled"])
-    async def test_workflow_terminal_returns_true(self, ev):
+    @pytest.mark.parametrize("ev", [RunEvent.run_cancelled.value, "WorkflowCancelled"])
+    async def test_cancelled_is_terminal_but_not_an_error(self, ev):
+        # A stop from the user closes open cards as complete, not as failures
         state = StreamState()
         stream = _stream()
-        chunk = _chunk(ev, error="wf failed", content=None)
+        chunk = _chunk(ev, content=None)
         result = await process_event(ev, chunk, state, stream)
+        assert result is True
+        assert state.cancelled is True
+        assert state.terminal_status == "complete"
+        assert state.text_buffer == ""
+
+    @pytest.mark.asyncio
+    async def test_workflow_error_is_terminal(self):
+        state = StreamState()
+        stream = _stream()
+        chunk = _chunk("WorkflowError", error="wf failed", content=None)
+        result = await process_event("WorkflowError", chunk, state, stream)
         assert result is True
         assert state.terminal_status == "error"
 

@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Literal, Optional, Union
 from slack_sdk.web.async_client import AsyncWebClient
 
 from agno.agent import Agent, RemoteAgent
+from agno.exceptions import RunCancelledException
 from agno.os.interfaces.slack.builders import (
     append_submit_if_needed,
     build_admin_approval_status_card,
@@ -17,7 +18,11 @@ from agno.os.interfaces.slack.builders import (
 )
 from agno.os.interfaces.slack.events import process_event
 from agno.os.interfaces.slack.helpers import open_chat_stream, resolve_session_id, slack_error_code
-from agno.os.interfaces.slack.ids import decode_admin_approval_button_value
+from agno.os.interfaces.slack.ids import (
+    ADMIN_BUTTON_FIELDS,
+    decode_admin_approval_button_value,
+    decode_session_id,
+)
 from agno.os.interfaces.slack.interactions import (
     apply_decisions,
     extract_row_action_context,
@@ -25,11 +30,12 @@ from agno.os.interfaces.slack.interactions import (
     parse_submit_payload,
     synthetic_submit_payload,
 )
+from agno.os.interfaces.slack.runs import ActiveRunRegistry
+from agno.os.interfaces.slack.sessions import SlackSessions
 from agno.os.interfaces.slack.state import StreamState, TaskStatus
 from agno.os.interfaces.slack.types import SubmitContext, tool_args, tool_name, truncate
 from agno.run.approval import aresolve_approval
 from agno.team import RemoteTeam, Team
-from agno.tools.slack import SlackTools
 from agno.utils.log import log_error, log_info
 from agno.workflow import RemoteWorkflow, Workflow
 
@@ -38,7 +44,7 @@ _STREAM_CHAR_LIMIT = 3900
 
 @dataclass
 class HITLHandler:
-    slack_tools: SlackTools
+    token: str
     ssl: Optional[SSLContext]
     entity: Union[Agent, RemoteAgent, Team, RemoteTeam, Workflow, RemoteWorkflow]
     entity_id: str
@@ -49,9 +55,27 @@ class HITLHandler:
     unfurl_links: bool = True
     unfurl_media: bool = True
     markdown: bool = True
+    # Shared with the event handler when mounted; created per call otherwise
+    client: Optional[AsyncWebClient] = None
+    # Session lifecycle and stop-button registry, shared with the event handler
+    sessions: Optional[SlackSessions] = None
+    active_runs: Optional[ActiveRunRegistry] = None
+    per_user_thread_sessions: bool = False
 
     def _client(self) -> AsyncWebClient:
-        return AsyncWebClient(token=self.slack_tools.token, ssl=self.ssl)
+        return self.client or AsyncWebClient(token=self.token, ssl=self.ssl)
+
+    async def _session_id(self, ctx: SubmitContext) -> str:
+        # A card written under per-participant sessions carries the exact session id;
+        # otherwise the thread derives it
+        if ctx.session_id:
+            return ctx.session_id
+        user_key = ctx.user_id if self.per_user_thread_sessions else None
+        return await resolve_session_id(self.entity, self.entity_id, ctx.channel, ctx.thread_ts, user_key=user_key)
+
+    async def _set_session(self, channel: str, thread_ts: str, status: Any) -> None:
+        if self.sessions is not None:
+            await self.sessions.set_status(channel, thread_ts, status)
 
     async def update_message(
         self,
@@ -145,7 +169,18 @@ class HITLHandler:
         session_id: str,
         user_id: Optional[str] = None,
     ) -> StreamState:
+        entity: Any = self.entity
         state = StreamState(entity_name=self.entity_name, entity_type=self.entity_type)
+        state.run_id = ctx.run_id
+        # A resumed run is stoppable from Slack like a fresh one
+        # The approver drives the continuation, so they own the stop button for it
+        active = (
+            self.active_runs.start(ctx.channel, ctx.thread_ts, entity, stream, owner=ctx.user_id)
+            if self.active_runs
+            else None
+        )
+        if active is not None and self.active_runs is not None:
+            await self.active_runs.note_run_id(active, ctx.run_id)
         try:
             # Inline-door admission gate: Slack-driven runs are ticketless by
             # construction today (the interface submits inline), but a durable
@@ -158,9 +193,9 @@ class HITLHandler:
                 get_active_queue_worker(),
                 ctx.run_id,
                 component_type=self.entity_type,
-                component_id=getattr(self.entity, "id", None),
+                component_id=getattr(entity, "id", None),
             )
-            response_stream: Any = self.entity.acontinue_run(  # type: ignore[union-attr, call-arg, call-overload]
+            response_stream: Any = entity.acontinue_run(
                 run_id=ctx.run_id,
                 requirements=requirements,
                 session_id=session_id,
@@ -170,6 +205,8 @@ class HITLHandler:
             )
         except Exception as exc:
             log_error(f"[HITL] acontinue_run (stream) failed for run={ctx.run_id}: {exc}")
+            if self.active_runs is not None:
+                self.active_runs.finish(ctx.channel, ctx.thread_ts, active)
             return state
 
         try:
@@ -183,10 +220,16 @@ class HITLHandler:
                     if content and state.stream_chars_sent + len(content) <= _STREAM_CHAR_LIMIT:
                         await stream.append(markdown_text=content)
                         state.stream_chars_sent += len(content)
+        except RunCancelledException:
+            state.cancelled = True
+            state.terminal_status = "complete"
         except Exception as exc:
             log_error(
                 f"[HITL] continuation append failed: run_id={ctx.run_id} slack_error={slack_error_code(exc)!r} | {exc}"
             )
+        finally:
+            if self.active_runs is not None:
+                self.active_runs.finish(ctx.channel, ctx.thread_ts, active)
         # Status-only stream sync (parity with the REST continue doors): a
         # formerly-queued/streamed run's stream view must stop saying PAUSED
         # once the continue settles - otherwise every later /resume replays
@@ -198,7 +241,7 @@ class HITLHandler:
         try:
             from agno.os.utils import acomplete_continue_stream
 
-            await acomplete_continue_stream(self.entity, ctx.run_id, session_id, only_if_tracked=True)
+            await acomplete_continue_stream(entity, ctx.run_id, session_id, only_if_tracked=True)
         except Exception as exc:
             log_error(f"[HITL] continue stream sync failed for run={ctx.run_id}: {exc}")
         return state
@@ -208,6 +251,7 @@ class HITLHandler:
         ctx: SubmitContext,
         stream: Any,
         state: StreamState,
+        session_id: Optional[str] = None,
     ) -> None:
         if state.paused_event is not None:
             requirements = list(getattr(state.paused_event, "active_requirements", None) or [])
@@ -237,12 +281,14 @@ class HITLHandler:
                         unfurl_links=self.unfurl_links,
                         unfurl_media=self.unfurl_media,
                         mrkdwn=self.markdown,
+                        session_id=session_id if self.per_user_thread_sessions else None,
                     )
                 except Exception as exc:
                     log_error(f"[HITL] Failed to post Card block (re-pause): {exc}")
+                await self._set_session(ctx.channel, ctx.thread_ts, "suspended")
                 return
 
-        stop_kwargs: Dict[str, Any] = {}
+        stop_kwargs: Dict[str, Any] = {"session_status": "active"}
         if state.has_content():
             stop_kwargs["markdown_text"] = state.flush()
         if state.task_cards:
@@ -256,6 +302,7 @@ class HITLHandler:
             log_error(
                 f"[HITL] stream.stop after resume failed: run_id={ctx.run_id} slack_error={slack_error_code(exc)!r} | {exc}"
             )
+        await self._set_session(ctx.channel, ctx.thread_ts, "active")
 
     async def handle_row_approve(self, payload: Dict[str, Any]) -> None:
         ctx = extract_row_action_context(payload)
@@ -266,7 +313,9 @@ class HITLHandler:
         await self.update_message(ctx.channel, ctx.card_ts, "Approval pending", result.blocks)
 
         if result.should_auto_submit:
-            await self.handle_submit(synthetic_submit_payload(payload, ctx.run_id, ctx.awaiting_ts, result.blocks))
+            await self.handle_submit(
+                synthetic_submit_payload(payload, ctx.run_id, ctx.awaiting_ts, result.blocks, ctx.session_id)
+            )
 
     async def handle_row_reject(self, payload: Dict[str, Any]) -> None:
         ctx = extract_row_action_context(payload)
@@ -274,12 +323,12 @@ class HITLHandler:
             return
 
         result = select_confirmation_row(ctx, selected="deny", include_reason_input=True)
-        blocks = append_submit_if_needed(result.blocks, ctx.run_id, ctx.awaiting_ts)
+        blocks = append_submit_if_needed(result.blocks, ctx.run_id, ctx.awaiting_ts, ctx.session_id)
         await self.update_message(ctx.channel, ctx.card_ts, "Rejection pending", blocks)
 
-    async def _get_approval_status(self, approval_id: str) -> str:
+    async def _get_approval_status(self, approval_id: str, entity: Any = None) -> str:
         """Query approval status from DB."""
-        db = getattr(self.entity, "db", None)
+        db = getattr(entity if entity is not None else self.entity, "db", None)
         if not db or not approval_id:
             return "pending"
         try:
@@ -315,12 +364,16 @@ class HITLHandler:
         thread_ts: str,
         msg_ts: str,
         awaiting_ts: Optional[str],
+        session_id: Optional[str] = None,
     ) -> None:
         """Resume a paused run after admin approval."""
-        session_id = await resolve_session_id(self.entity, self.entity_id, channel, thread_ts)
+        entity: Any = self.entity
+        if not session_id:
+            user_key = ((payload.get("user") or {}).get("id") or "") if self.per_user_thread_sessions else None
+            session_id = await resolve_session_id(entity, self.entity_id, channel, thread_ts, user_key=user_key)
 
         try:
-            run_output = await self.entity.aget_run_output(run_id=run_id, session_id=session_id)  # type: ignore[union-attr]
+            run_output = await entity.aget_run_output(run_id=run_id, session_id=session_id)
         except Exception as exc:
             log_error(f"[HITL] aget_run_output failed for run={run_id}: {exc}")
             return
@@ -356,7 +409,7 @@ class HITLHandler:
             self.buffer_size,
         )
         state = await self.stream_resumed_run(ctx, stream, requirements, session_id=session_id, user_id=run_user_id)
-        await self.complete_or_repause(ctx, stream, state)
+        await self.complete_or_repause(ctx, stream, state, session_id=session_id)
 
     async def handle_check_status(self, payload: Dict[str, Any]) -> None:
         """Handle 'Check Status' button click for admin approval cards."""
@@ -366,6 +419,7 @@ class HITLHandler:
             return
         button_value = actions[0].get("value") or ""
         approval_id, req_id, run_id, awaiting_ts = decode_admin_approval_button_value(button_value)
+        card_session_id = decode_session_id(button_value, ADMIN_BUTTON_FIELDS)
         if not approval_id or not req_id or not run_id:
             log_error(f"[HITL] Invalid admin approval button value: {button_value!r}")
             return
@@ -396,7 +450,16 @@ class HITLHandler:
         if status == "approved":
             await self.delete_awaiting_indicator(channel, awaiting_ts)
             await self.update_message(channel, msg_ts, "Approved", self._update_card_to_approved(blocks))
-            await self._resume_after_approval(payload, run_id, approval_id, channel, thread_ts, msg_ts, awaiting_ts)
+            await self._resume_after_approval(
+                payload,
+                run_id,
+                approval_id,
+                channel,
+                thread_ts,
+                msg_ts,
+                awaiting_ts,
+                session_id=card_session_id,
+            )
             return
 
         # 6. Still pending/rejected — update card with current status
@@ -408,6 +471,7 @@ class HITLHandler:
             approval_id=approval_id,
             run_id=run_id,
             awaiting_ts=awaiting_ts or thread_ts,
+            session_id=card_session_id,
         )
         new_blocks = []
         for block in blocks:
@@ -422,9 +486,10 @@ class HITLHandler:
         ctx: SubmitContext,
         decisions: List[Any],
         requirements: List[Any],
+        entity: Any = None,
     ) -> None:
         """Resolve DB approval records for tools with approval_type='required'."""
-        db = getattr(self.entity, "db", None)
+        db = getattr(entity if entity is not None else self.entity, "db", None)
         if db is None:
             return
 
@@ -465,13 +530,14 @@ class HITLHandler:
         ctx = extract_submit_context(payload)
         if ctx is None:
             return
-        session_id = await resolve_session_id(self.entity, self.entity_id, ctx.channel, ctx.thread_ts)
+        entity: Any = self.entity
+        session_id = await self._session_id(ctx)
         log_info(f"[HITL] submit received: run_id={ctx.run_id} channel={ctx.channel}")
 
         await self.delete_awaiting_indicator(ctx.channel, ctx.awaiting_ts)
 
         try:
-            run_output = await self.entity.aget_run_output(run_id=ctx.run_id, session_id=session_id)  # type: ignore[union-attr]
+            run_output = await entity.aget_run_output(run_id=ctx.run_id, session_id=session_id)
         except Exception as exc:
             log_error(f"[HITL] aget_run_output failed for run={ctx.run_id}: {exc}")
             run_output = None
@@ -488,7 +554,7 @@ class HITLHandler:
         if decisions is None:
             return
 
-        await self._resolve_required_approvals(ctx, decisions, requirements)
+        await self._resolve_required_approvals(ctx, decisions, requirements, entity)
 
         original_blocks = list((payload.get("message") or {}).get("blocks") or [])
         await self.freeze_form(ctx, original_blocks, requirements)
@@ -505,7 +571,7 @@ class HITLHandler:
 
         await self.post_denial_cards(stream, decisions, requirements, ctx.run_id)
         state = await self.stream_resumed_run(ctx, stream, requirements, session_id=session_id, user_id=run_user_id)
-        await self.complete_or_repause(ctx, stream, state)
+        await self.complete_or_repause(ctx, stream, state, session_id=session_id)
 
     async def post_ephemeral(self, *, channel: str, user: str, text: str) -> None:
         try:

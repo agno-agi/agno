@@ -66,6 +66,11 @@ class StreamState:
     # Stashed by _on_run_paused; router posts Block Kit approval card after stream.stop()
     paused_event: Optional[Union["AgentRunPausedEvent", "TeamRunPausedEvent"]] = None
 
+    # Run id from the first event that carries one; the stop button cancels through it
+    run_id: Optional[str] = None
+    # Set when the run ended because the user pressed stop (or cancel_run was called)
+    cancelled: bool = False
+
     def track_task(self, key: str, title: str, status: TaskStatus = "in_progress") -> None:
         self.task_cards[key] = TaskCard(title=title, status=status)
 

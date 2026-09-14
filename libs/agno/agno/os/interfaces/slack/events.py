@@ -276,6 +276,14 @@ async def _on_run_error(chunk: BaseRunOutputEvent, state: StreamState, stream: A
     return True
 
 
+async def _on_run_cancelled(chunk: BaseRunOutputEvent, state: StreamState, stream: AsyncChatStream) -> bool:
+    # A stop is not a failure: open cards close as complete and the caller posts
+    # a short "stopped" note instead of the error message.
+    state.cancelled = True
+    state.terminal_status = "complete"
+    return True
+
+
 async def _on_run_paused(chunk: BaseRunOutputEvent, state: StreamState, stream: AsyncChatStream) -> bool:
     # For Teams: only stop on TeamRunPausedEvent (has team_id), not member RunPausedEvent.
     # HITL card must carry Team's run_id — aget_run_output(member_run_id) fails at approval.
@@ -417,7 +425,7 @@ HANDLERS: Dict[str, _EventHandler] = {
     RunEvent.memory_update_completed.value: _on_memory_update_completed,
     RunEvent.run_completed.value: _on_run_completed,
     RunEvent.run_error.value: _on_run_error,
-    RunEvent.run_cancelled.value: _on_run_error,  # Treat cancellation as terminal error
+    RunEvent.run_cancelled.value: _on_run_cancelled,
     # HITL pause — router posts approval card separately since appendStream rejects Block Kit
     RunEvent.run_paused.value: _on_run_paused,
     TeamRunEvent.run_paused.value: _on_run_paused,
@@ -428,7 +436,7 @@ HANDLERS: Dict[str, _EventHandler] = {
     WorkflowRunEvent.workflow_started.value: _on_workflow_started,
     WorkflowRunEvent.workflow_completed.value: _on_workflow_completed,
     WorkflowRunEvent.workflow_error.value: _on_workflow_error,
-    WorkflowRunEvent.workflow_cancelled.value: _on_workflow_error,
+    WorkflowRunEvent.workflow_cancelled.value: _on_run_cancelled,
     # -------------------------------------------------------------------------
     # Workflow Step Events
     # -------------------------------------------------------------------------

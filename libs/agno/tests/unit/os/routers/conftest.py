@@ -2,35 +2,90 @@ import hashlib
 import hmac
 import json
 import time
+from typing import Any
 from unittest.mock import AsyncMock, Mock
 
+import httpx
 import pytest
 from fastapi import APIRouter, FastAPI
-from fastapi.testclient import TestClient
+from slack_bolt.authorization import AuthorizeResult
+
+# Bound at import time: some tests patch httpx.AsyncClient to stub file downloads,
+# and the harness must keep talking to the ASGI app while that patch is active.
+_ASGITransport = httpx.ASGITransport
+_AsyncClient = httpx.AsyncClient
 
 SIGNING_SECRET = "test-secret"
+BOT_TOKEN = "xoxb-test"
+# Identity Bolt attributes to this app; events carrying these ids are the bot's own
+OWN_BOT_ID = "B_SELF"
+OWN_BOT_USER_ID = "U_SELF_BOT"
 
 
-def make_signed_request(client: TestClient, body: dict, signing_secret: str = SIGNING_SECRET):
-    body_bytes = json.dumps(body).encode()
+async def stub_authorize(**kwargs: Any) -> AuthorizeResult:
+    """Replaces Bolt's auth.test lookup so tests never touch the network."""
+    return AuthorizeResult(
+        enterprise_id=None,
+        team_id="T123",
+        bot_id=OWN_BOT_ID,
+        bot_user_id=OWN_BOT_USER_ID,
+        bot_token=BOT_TOKEN,
+    )
+
+
+def _asgi_app(client_or_app: Any) -> FastAPI:
+    # Accept a FastAPI app or anything exposing one (e.g. a TestClient)
+    return getattr(client_or_app, "app", client_or_app)
+
+
+def sign_headers(body_bytes: bytes, signing_secret: str = SIGNING_SECRET, **extra: str) -> dict:
     timestamp = str(int(time.time()))
     sig_base = f"v0:{timestamp}:{body_bytes.decode()}"
     signature = "v0=" + hmac.new(signing_secret.encode(), sig_base.encode(), hashlib.sha256).hexdigest()
-    return client.post(
-        "/events",
-        content=body_bytes,
-        headers={
-            "Content-Type": "application/json",
-            "X-Slack-Request-Timestamp": timestamp,
-            "X-Slack-Signature": signature,
-        },
+    headers = {
+        "Content-Type": "application/json",
+        "X-Slack-Request-Timestamp": timestamp,
+        "X-Slack-Signature": signature,
+    }
+    headers.update(extra)
+    return headers
+
+
+async def post_raw(client_or_app: Any, path: str, content: bytes, headers: dict) -> httpx.Response:
+    # Bolt continues the listener as an asyncio task after acknowledging, so the request
+    # must run on the test's own event loop for the follow-up work to be observable.
+    transport = _ASGITransport(app=_asgi_app(client_or_app))
+    async with _AsyncClient(transport=transport, base_url="http://testserver") as client:
+        return await client.post(path, content=content, headers=headers)
+
+
+async def make_signed_request(
+    client_or_app: Any, body: dict, signing_secret: str = SIGNING_SECRET, **extra_headers: str
+) -> httpx.Response:
+    body_bytes = json.dumps(body).encode()
+    return await post_raw(
+        client_or_app, "/events", body_bytes, sign_headers(body_bytes, signing_secret, **extra_headers)
     )
+
+
+async def make_signed_interaction(
+    client_or_app: Any, payload: dict, signing_secret: str = SIGNING_SECRET, **extra_headers: str
+) -> httpx.Response:
+    from urllib.parse import urlencode
+
+    body_bytes = urlencode({"payload": json.dumps(payload)}).encode()
+    headers = sign_headers(body_bytes, signing_secret, **extra_headers)
+    headers["Content-Type"] = "application/x-www-form-urlencoded"
+    return await post_raw(client_or_app, "/interactions", body_bytes, headers)
 
 
 def build_app(agent_mock: Mock, **kwargs) -> FastAPI:
     from agno.os.interfaces.slack.router import attach_routes
 
     kwargs.setdefault("streaming", False)
+    kwargs.setdefault("token", BOT_TOKEN)
+    kwargs.setdefault("signing_secret", SIGNING_SECRET)
+    kwargs.setdefault("authorize", stub_authorize)
     app = FastAPI()
     router = APIRouter()
     attach_routes(router, agent=agent_mock, **kwargs)
@@ -48,18 +103,6 @@ def make_agent_mock():
     # Session lookup returns None by default so resolve_session_id uses the new key format
     agent_mock.aget_session = AsyncMock(return_value=None)
     return agent_mock
-
-
-def make_slack_mock(**kwargs):
-    mock_slack = Mock()
-    mock_slack.send_message = Mock()
-    mock_slack.upload_file = Mock()
-    mock_slack.max_file_size = 1_073_741_824
-    mock_slack.client = Mock()
-    mock_slack.client.auth_test = Mock(return_value={})
-    for k, v in kwargs.items():
-        setattr(mock_slack, k, v)
-    return mock_slack
 
 
 def slack_event_with_files(files: list, event_type: str = "message") -> dict:
@@ -186,18 +229,13 @@ async def wait_for_call(mock_method, timeout: float = 5.0):
 
     elapsed = 0.0
     while not mock_method.called and elapsed < timeout:
-        await asyncio.sleep(0.1)
-        elapsed += 0.1
+        await asyncio.sleep(0.05)
+        elapsed += 0.05
 
 
 @pytest.fixture
 def agent_mock():
     return make_agent_mock()
-
-
-@pytest.fixture
-def slack_mock():
-    return make_slack_mock()
 
 
 @pytest.fixture

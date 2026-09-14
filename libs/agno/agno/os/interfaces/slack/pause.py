@@ -76,6 +76,7 @@ async def post_pause_card(
     unfurl_links: bool = True,
     unfurl_media: bool = True,
     mrkdwn: bool = True,
+    session_id: Optional[str] = None,
 ) -> Optional[str]:
     run_id = getattr(paused_event, "run_id", None)
     requirements = list(getattr(paused_event, "active_requirements", None) or [])
@@ -84,7 +85,7 @@ async def post_pause_card(
 
     try:
         # The card blocks embed untrusted tool-arg text, so unfurl flags must apply here
-        blocks = build_pause_message(run_id, requirements, awaiting_ts)
+        blocks = build_pause_message(run_id, requirements, awaiting_ts, session_id=session_id)
         resp = await client.chat_postMessage(
             channel=channel,
             thread_ts=thread_ts,

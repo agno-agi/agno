@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Dict, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from agno.run.requirement import PauseType
 
@@ -82,47 +82,69 @@ def external_result_block_id(requirement_id: str) -> str:
 
 
 # --- Button value encoders/decoders ---
-# Pipe-delimited because Slack button values are opaque strings, not JSON — simpler to parse
+# Pipe-delimited because Slack button values are opaque strings, not JSON — simpler to parse.
+# Every value may carry one optional trailing field: the session id, needed when sessions are
+# keyed per participant and cannot be derived from the thread. It is only written when set,
+# so default-config cards are byte-identical to older builds.
 
 
-def encode_row_button_value(req_id: str, run_id: str, awaiting_ts: Optional[str]) -> str:
-    return f"{req_id}|{run_id}|{awaiting_ts or ''}"
+def _split(value: str) -> List[str]:
+    return value.split("|") if value else []
+
+
+def _extra(session_id: Optional[str]) -> str:
+    return f"|{session_id}" if session_id else ""
+
+
+def decode_session_id(value: str, base_fields: int) -> Optional[str]:
+    parts = _split(value)
+    return parts[base_fields] if len(parts) > base_fields and parts[base_fields] else None
+
+
+def encode_row_button_value(
+    req_id: str, run_id: str, awaiting_ts: Optional[str], session_id: Optional[str] = None
+) -> str:
+    return f"{req_id}|{run_id}|{awaiting_ts or ''}" + _extra(session_id)
 
 
 def decode_row_button_value(value: str) -> Tuple[str, str, Optional[str]]:
-    # Limit split to 2 so awaiting_ts (which may contain pipes in edge cases) stays intact
-    parts = value.split("|", 2)
-    if len(parts) == 2:
-        return parts[0], parts[1], None
-    if len(parts) == 3:
-        return parts[0], parts[1], parts[2] or None
-    return "", "", None
+    parts = _split(value)
+    if len(parts) < 2:
+        return "", "", None
+    awaiting_ts = parts[2] if len(parts) > 2 and parts[2] else None
+    return parts[0], parts[1], awaiting_ts
 
 
-def encode_submit_button_value(run_id: str, awaiting_ts: Optional[str]) -> str:
-    return f"{run_id}|{awaiting_ts or ''}"
+def encode_submit_button_value(run_id: str, awaiting_ts: Optional[str], session_id: Optional[str] = None) -> str:
+    return f"{run_id}|{awaiting_ts or ''}" + _extra(session_id)
 
 
 def decode_submit_button_value(value: str) -> Tuple[str, Optional[str]]:
-    # Limit split to 1 so awaiting_ts stays intact
-    parts = value.split("|", 1)
-    if len(parts) == 1:
-        return parts[0], None
-    return parts[0], parts[1] or None
+    parts = _split(value)
+    if not parts:
+        return "", None
+    awaiting_ts = parts[1] if len(parts) > 1 and parts[1] else None
+    return parts[0], awaiting_ts
 
 
 # --- Admin approval button value (4 fields: approval_id, req_id, run_id, awaiting_ts) ---
 
 
-def encode_admin_approval_button_value(approval_id: str, req_id: str, run_id: str, awaiting_ts: Optional[str]) -> str:
-    return f"{approval_id}|{req_id}|{run_id}|{awaiting_ts or ''}"
+def encode_admin_approval_button_value(
+    approval_id: str, req_id: str, run_id: str, awaiting_ts: Optional[str], session_id: Optional[str] = None
+) -> str:
+    return f"{approval_id}|{req_id}|{run_id}|{awaiting_ts or ''}" + _extra(session_id)
 
 
 def decode_admin_approval_button_value(value: str) -> Tuple[str, str, str, Optional[str]]:
-    # 4 fields: approval_id, req_id, run_id, awaiting_ts
-    parts = value.split("|", 3)
+    parts = _split(value)
     if len(parts) < 3:
         return "", "", "", None
     approval_id, req_id, run_id = parts[0], parts[1], parts[2]
     awaiting_ts = parts[3] if len(parts) > 3 and parts[3] else None
     return approval_id, req_id, run_id, awaiting_ts
+
+
+ROW_BUTTON_FIELDS = 3
+SUBMIT_BUTTON_FIELDS = 2
+ADMIN_BUTTON_FIELDS = 4

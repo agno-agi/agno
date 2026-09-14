@@ -1,9 +1,18 @@
-from typing import Any, Dict, List, Optional, Tuple
+import asyncio
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import httpx
 
 from agno.media import Audio, File, Image, Video
 from agno.utils.log import log_error, log_warning
+
+
+async def call_db(fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+    # Database adapters come in sync and async flavours with the same method names;
+    # a sync call is moved off the event loop so a slow query cannot stall Slack acks.
+    if asyncio.iscoroutinefunction(fn):
+        return await fn(*args, **kwargs)
+    return await asyncio.to_thread(fn, *args, **kwargs)
 
 
 def slack_error_code(exc: BaseException) -> Optional[str]:
@@ -17,7 +26,13 @@ def slack_error_code(exc: BaseException) -> Optional[str]:
     return None
 
 
-async def resolve_session_id(entity: Any, entity_id: str, channel_id: str, thread_ts: str) -> str:
+async def resolve_session_id(
+    entity: Any, entity_id: str, channel_id: str, thread_ts: str, user_key: Optional[str] = None
+) -> str:
+    # Per-participant sessions: each speaker in a thread keeps their own history strand.
+    # Slack ts values are only unique per channel, so the channel stays in the key.
+    if user_key:
+        return f"{entity_id}:{channel_id}:{user_key}:{thread_ts}"
     # Sessions created before channel-scoped keys used "{entity_id}:{thread_ts}".
     # Probe for existing legacy session so an upgrade doesn't orphan history.
     legacy_id = f"{entity_id}:{thread_ts}"
