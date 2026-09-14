@@ -173,7 +173,9 @@ class PolicyEngine(ABC):
         return await asyncio.to_thread(self.roles_of, subject)
 
     async def aroles_of_many(self, subjects: List[str]) -> Dict[str, List[str]]:
-        return await asyncio.to_thread(self.roles_of_many, subjects)
+        """Resolves through :meth:`aroles_of` rather than the sync bulk read, so an engine
+        that overrides only the async single-subject read is honoured on the async path."""
+        return {subject: await self.aroles_of(subject) for subject in subjects}
 
     async def asubjects_of(self, role: str) -> List[str]:
         return await asyncio.to_thread(self.subjects_of, role)
