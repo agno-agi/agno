@@ -267,6 +267,17 @@ def convert_schema(
         return None
 
     schema_type = schema_dict.get("type", "")
+    if isinstance(schema_type, list) and "null" in schema_type:
+        if not any(value != "null" for value in schema_type):
+            return None
+        return convert_schema(
+            {
+                **{key: value for key, value in schema_dict.items() if key != "type"},
+                "anyOf": [{**schema_dict, "type": value} for value in schema_type],
+            },
+            root_schema,
+            visited_refs,
+        )
     if schema_type is None or schema_type == "null":
         return None
     description = schema_dict.get("description", None)
@@ -283,18 +294,9 @@ def convert_schema(
         if "properties" in schema_dict:
             properties = {}
             for key, prop_def in schema_dict["properties"].items():
-                # Process nullable types
-                prop_type = prop_def.get("type", "")
-                is_nullable = False
-                if isinstance(prop_type, list) and "null" in prop_type:
-                    prop_def["type"] = prop_type[0]
-                    is_nullable = True
-
                 # Process property schema (pass root_schema and visited_refs for $ref resolution)
                 converted_schema = convert_schema(prop_def, root_schema, visited_refs)
                 if converted_schema is not None:
-                    if is_nullable:
-                        converted_schema.nullable = True
                     properties[key] = converted_schema
                 else:
                     properties[key] = Schema(
@@ -425,6 +427,7 @@ def convert_schema(
         else:
             return Schema(
                 any_of=any_of,
+                nullable=is_nullable,
                 description=description,
                 default=default,
                 title=title,
