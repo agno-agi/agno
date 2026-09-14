@@ -106,6 +106,29 @@ def test_rerank_parses_dict_results(mock_litellm):
 
 
 @patch("agno.knowledge.reranker.litellm.litellm")
+def test_rerank_parses_dict_response(mock_litellm):
+    mock_litellm.rerank.return_value = {
+        "results": [{"index": 0, "relevance_score": 0.8}],
+    }
+
+    docs = [Document(content="doc 0")]
+    ranked = LiteLLMReranker().rerank("query", docs)
+
+    assert ranked == docs
+    assert ranked[0].reranking_score == 0.8
+
+
+@patch("agno.knowledge.reranker.litellm.litellm")
+def test_rerank_missing_results_returns_original_documents(mock_litellm):
+    mock_litellm.rerank.return_value = {}
+
+    docs = [Document(content="doc 0")]
+    ranked = LiteLLMReranker().rerank("query", docs)
+
+    assert ranked == docs
+
+
+@patch("agno.knowledge.reranker.litellm.litellm")
 def test_rerank_negative_and_out_of_bounds_index(mock_litellm):
     """Test that negative and out-of-bounds indices are ignored"""
     mock_response = Mock()

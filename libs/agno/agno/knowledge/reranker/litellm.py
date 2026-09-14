@@ -93,12 +93,15 @@ class LiteLLMReranker(Reranker):
                 ranked = ranked[: self.top_n]
             return ranked
         except Exception as e:
-            log_error(f"LiteLLM rerank error: {e}. Returning original documents")
+            log_error(
+                f"LiteLLM rerank failed for model {self.model}: {e}. Returning original documents",
+                exc_info=True,
+            )
             return documents
 
     def rerank(self, query: str, documents: List[Document]) -> List[Document]:
         try:
             return self._rerank(query=query, documents=documents)
         except Exception as e:
-            log_error(f"Unexpected rerank error: {e}. Returning original documents")
+            log_error(f"Unexpected rerank error: {e}. Returning original documents", exc_info=True)
             return documents

@@ -169,7 +169,6 @@ class LiteLLMEmbedder(Embedder):
                 embeddings: List[List[float]] = [[] for _ in batch]
                 response_data = getattr(response, "data", None) or []
                 if response_data:
-                    # LiteLLM reports batch usage once, so duplicate it for each input slot.
                     for item in response_data:
                         index = self._item_index(item)
                         if index is None or index < 0 or index >= len(batch):
@@ -186,6 +185,7 @@ class LiteLLMEmbedder(Embedder):
 
                 usage = self._extract_usage(response)
                 all_embeddings.extend(embeddings)
+                # LiteLLM returns one usage object for the whole batch, so repeat it for every item.
                 all_usage.extend([usage] * len(embeddings))
             except Exception as e:
                 log_warning(f"LiteLLM batch embedding error: {e} - falling back to per item")
