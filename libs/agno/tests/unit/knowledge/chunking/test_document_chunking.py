@@ -4,6 +4,8 @@ Tests for DocumentChunking size enforcement on paragraphs without usable sentenc
 
 import re
 
+import pytest
+
 from agno.knowledge.chunking.document import DocumentChunking
 from agno.knowledge.document.base import Document
 
@@ -84,3 +86,19 @@ class TestDocumentChunkingOversizedSentences:
             "First paragraph.\n\nSecond paragraph.",
             "Third paragraph.",
         ]
+
+    def test_join_separator_is_counted_towards_chunk_size(self):
+        # Pieces whose lengths add up exactly to chunk_size must not exceed it once joined with a space
+        doc = Document(id="doc", name="doc", content="aaaaaa bbbb qqqqqqqqqqq")
+        chunker = DocumentChunking(chunk_size=10, overlap=0)
+
+        chunks = chunker.chunk(doc)
+
+        assert all(len(chunk.content) <= 10 for chunk in chunks)
+        assert " ".join(chunk.content for chunk in chunks).split(" ") == ["aaaaaa", "bbbb", "qqqqqqqqqq", "q"]
+
+    def test_non_positive_chunk_size_is_rejected(self):
+        with pytest.raises(ValueError):
+            DocumentChunking(chunk_size=0)
+        with pytest.raises(ValueError):
+            DocumentChunking(chunk_size=-5)

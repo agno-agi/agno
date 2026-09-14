@@ -8,6 +8,10 @@ class DocumentChunking(ChunkingStrategy):
     """A chunking strategy that splits text based on document structure like paragraphs and sections"""
 
     def __init__(self, chunk_size: int = 5000, overlap: int = 0):
+        # chunk_size must be positive, otherwise splitting oversized text could never advance
+        if chunk_size < 1:
+            raise ValueError(f"Invalid parameters: chunk size ({chunk_size}) must be a positive integer.")
+
         self.chunk_size = chunk_size
         self.overlap = overlap
 
@@ -21,6 +25,11 @@ class DocumentChunking(ChunkingStrategy):
         start = 0
         text_length = len(text)
         while start < text_length:
+            # Skip leading whitespace so a hard cut can use the full chunk_size
+            while start < text_length and text[start].isspace():
+                start += 1
+            if start >= text_length:
+                break
             end = min(start + self.chunk_size, text_length)
             if end < text_length:
                 cut = end
@@ -86,10 +95,12 @@ class DocumentChunking(ChunkingStrategy):
 
                 for sentence in sentences:
                     sentence_size = len(sentence)
+                    # Sentences are joined with a single space, so count it towards the limit
+                    separator_size = 1 if current_chunk else 0
 
-                    if current_size + sentence_size <= self.chunk_size:
+                    if current_size + separator_size + sentence_size <= self.chunk_size:
                         current_chunk.append(sentence)
-                        current_size += sentence_size
+                        current_size += separator_size + sentence_size
                     else:
                         if current_chunk:
                             meta_data = chunk_meta_data.copy()
