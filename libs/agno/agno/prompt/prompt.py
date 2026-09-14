@@ -116,7 +116,8 @@ class Prompt:
 
         Without a version or label this reads the current published pointer and
         never falls back to a draft. An explicit version or label returns that
-        exact stored config.
+        exact stored config. An id that names a component of another type
+        returns None.
 
         Args:
             id: The id of the Prompt to load.
@@ -127,6 +128,10 @@ class Prompt:
         Returns:
             The Prompt loaded from the database or None if not found.
         """
+        # Configs are not typed by themselves; the catalog row is what says this id is a Prompt.
+        if db.get_component(component_id=id, component_type=ComponentType.PROMPT) is None:
+            return None
+
         if version is None and label is None:
             data = db.get_current_config(component_id=id)
         else:
@@ -138,9 +143,8 @@ class Prompt:
         if config is None:
             return None
 
-        prompt = cls.from_dict(config)
-        prompt.id = id
-        return prompt
+        # The requested id wins: a config written through the generic component API need not carry one.
+        return cls.from_dict({**config, "id": id})
 
     def delete(self, *, db: BaseDb, hard_delete: bool = False) -> bool:
         """Delete the Prompt component.

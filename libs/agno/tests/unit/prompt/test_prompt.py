@@ -184,6 +184,7 @@ class TestSave:
         with pytest.raises(ValueError, match="Async databases not yet supported for save"):
             _support_prompt().save(db=db)
 
+    # Two independent databases in one process: version numbers must come from the catalog, never process state.
     @pytest.mark.parametrize("run", [1, 2])
     def test_each_identical_save_publishes_a_new_version(self, db, run):
         prompt = _support_prompt()
@@ -247,6 +248,17 @@ class TestLoad:
 
     def test_returns_none_for_an_unknown_id(self, db):
         assert Prompt.load("missing", db=db) is None
+
+    def test_returns_none_for_a_component_of_another_type(self, db):
+        db.upsert_component(component_id="helper", component_type=DbComponentType.AGENT, name="helper")
+        db.upsert_config(component_id="helper", config={"id": "helper", "instructions": "x"}, stage="published")
+        assert Prompt.load("helper", db=db) is None
+
+    def test_uses_the_requested_id_when_the_stored_config_has_none(self, db):
+        # A config written through the generic component API need not carry the id.
+        db.upsert_component(component_id="support", component_type=DbComponentType.PROMPT, name="support")
+        db.upsert_config(component_id="support", config={"type": "prompt", "content": "Be concise."}, stage="published")
+        assert Prompt.load("support", db=db) == Prompt(id="support", content="Be concise.")
 
     def test_loaded_prompt_carries_no_relationship_state(self, db):
         _support_prompt(version="latest", fallback=["Answer safely."]).save(db=db)
