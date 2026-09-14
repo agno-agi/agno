@@ -188,7 +188,7 @@ class PgVector(VectorDb):
         self._owner_column_exists: Optional[bool] = None
         # Database table
         self.table: Table = self.get_table()
-        log_debug(f"Initialized PgVector with table '{self.schema}.{self.table_name}'")
+        log_debug(f"Initialized PgVector with table '{self.schema}.{self.table_name}'", log_level=2)
 
     def _replace_page_on(self, conn, content_id: str, records: List[Dict[str, Any]]) -> None:
         """Replace already embedded page records using the caller's transaction."""
@@ -251,7 +251,7 @@ class PgVector(VectorDb):
         Returns:
             bool: True if the table exists, False otherwise.
         """
-        log_debug(f"Checking if table '{self.table.fullname}' exists.")
+        log_debug(f"Checking table {self.table.fullname}", log_level=2)
         try:
             return inspect(self.db_engine).has_table(self.table_name, schema=self.schema)
         except Exception as e:
@@ -264,16 +264,16 @@ class PgVector(VectorDb):
         """
         if not self.table_exists():
             with self.Session() as sess, sess.begin():
-                log_debug("Creating extension: vector")
+                log_debug("Ensuring extension vector", log_level=2)
                 sess.execute(text("CREATE EXTENSION IF NOT EXISTS vector;"))
                 if self.create_schema and self.schema is not None:
                     try:
-                        log_debug(f"Creating schema: {self.schema}")
+                        log_debug(f"Ensuring schema {self.schema}", log_level=2)
                         sess.execute(text(f"CREATE SCHEMA IF NOT EXISTS {self.schema};"))
                     except Exception as e:
                         log_warning(f"Could not create schema {self.schema}: {str(e)}")
-            log_debug(f"Creating table: {self.table_name}")
             self.table.create(self.db_engine)
+            log_debug(f"Created table {self.table.fullname}")
             self._owner_column_exists = True
 
     async def async_create(self) -> None:

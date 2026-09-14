@@ -1,5 +1,20 @@
 # Public pages test log
 
+### public_control_plane.py (2026-09-08)
+
+**Status:** PASS
+
+**Description:** Ran `public_control_plane.py --check` with the demo environment,
+this worktree on `PYTHONPATH`, and a locally generated RS256 verification public
+key. No model or database call was needed for the configuration check.
+
+**Result:** Public chat, the explicit MCP tool and JWT API access assembled
+successfully. Composed HTTP/WebSocket coverage is in
+`libs/agno/tests/integration/os/test_public_authorization.py`; a hosted Control
+Plane connection remains a deployment check.
+
+---
+
 ### full_page.py — complete page reads and fence-aware normalization (2026-09-08)
 
 **Status:** PASS
@@ -132,3 +147,27 @@ neither shared environment was modified. Live database/provider modes were not
 run. The focused public-configuration and MCP suites passed all 204 tests.
 
 ---
+
+
+## 2026-09-09 documentation Markdown transform
+
+- PASS: `documentation_markdown.py` ran with the demo Python and candidate source. Produces labeled Markdown and one chunk without network/model calls.
+- PASS: 30 normalization and chunking tests, including the existing application fixtures, nested/mismatched fences, serializer escapes, Unicode and callback isolation.
+- PASS: two disposable PostgreSQL publication tests cover sync and async transforms and repeat-sync embedding reuse.
+- PASS: full format and validation scripts.
+- Compatibility comparison: all 3,909 local published pages yield identical old/new transformed bytes and chunks, and are unchanged on repeat normalization. This is a published-text corpus comparison, not a full raw-source crawl.
+- Raw-source sample: 24 of 40 public Markdown pages fetched successfully (18 contained sampled component types); all 24 match old/new bytes and chunks. The other 16 URLs returned HTTP 500 and were excluded from equivalence claims.
+- No index mutation, re-embedding, reader default change or production deployment. Generic repeated entity decoding is not guaranteed idempotent; the documented transform operates on source once.
+
+## 2026-09-09 native MCP routing
+
+- 282 composed MCP server/OAuth/routing/public-JWT cases passed.
+- 24 routing cases passed after adding included-router-prefix conflict checks;
+  these overlap the composed suite. Covers root, native/legacy/custom paths,
+  actual ASGI submounts, initialize/catalog/quota parity, browser versus SSE GET,
+  JWT REST protection, canonical cards, Host ambiguity/case/ports/forwarding,
+  and startup rejection of unsupported custom OAuth routing.
+- The complete existing native OAuth flow remains supported at /mcp. Custom
+  OAuth routes are deliberately rejected rather than publishing a wrong resource.
+- Cookbook mcp_domain.py --check passed. Full format and validation passed.
+- No DNS, hosting or production application changes were made.

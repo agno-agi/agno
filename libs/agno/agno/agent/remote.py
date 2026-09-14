@@ -152,6 +152,7 @@ class RemoteAgent(BaseRemote):
             return self._agent_config.description
         return ""
 
+    @property
     def role(self) -> Optional[str]:
         if self._agent_config is not None:
             return self._agent_config.role

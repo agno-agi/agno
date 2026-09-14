@@ -88,3 +88,17 @@
 **Result:** PASS end to end.
 
 ---
+
+### durable_queue.py
+
+**Status:** PASS
+
+**Description:** Started the example under FastAPI TestClient using the demo
+virtual environment and a disposable PostgreSQL database. Verified `/health`,
+creation of `ai.agno_jobs` before the first enqueue, and a strict lookup with no
+ticket. Captured concise startup logs and clean worker shutdown.
+
+**Result:** Startup and queue provisioning passed. No model calls, recovery
+scenario, or live streaming exercise was performed in this smoke check.
+
+---

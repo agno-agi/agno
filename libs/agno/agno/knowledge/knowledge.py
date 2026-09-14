@@ -167,13 +167,19 @@ class Knowledge(RemoteKnowledge):
 
     def setup(self) -> None:
         """Prepare and validate coordinated page storage before query traffic."""
-        self._pages().setup()
+        pages = self._pages()
+        log_info(f"Preparing knowledge storage: namespace={pages.namespace}")
+        pages.setup()
+        log_info(f"Knowledge storage ready: namespace={pages.namespace}")
 
     async def asetup(self) -> None:
         """Prepare page storage on bounded workers."""
         from agno.knowledge.page._coordinator import SYNC_WORKERS
 
-        await SYNC_WORKERS.run(self._pages().setup, seconds=60)
+        pages = self._pages()
+        log_info(f"Preparing knowledge storage: namespace={pages.namespace}")
+        await SYNC_WORKERS.run(pages.setup, seconds=60)
+        log_info(f"Knowledge storage ready: namespace={pages.namespace}")
 
     def sync_pages(
         self,
