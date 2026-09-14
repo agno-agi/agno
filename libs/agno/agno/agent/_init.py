@@ -302,7 +302,7 @@ def initialize_agent(agent: Agent, debug_mode: Optional[bool] = None) -> None:
     if agent.learning is not None and agent.learning is not False:
         set_learning_machine(agent)
 
-    log_debug(f"Agent ID: {agent.id}", center=True)
+    log_debug(f"Agent initialized: {agent.id}")
 
     if agent._formatter is None:
         agent._formatter = SafeFormatter()

@@ -1340,6 +1340,10 @@ jobs:
   # so the largest Postgres-backed suite does not stretch that job's wall clock.
   # The pgvector service is on localhost:5532 — the exact host/port/creds the
   # conftest targets — so both the sqlite and postgresql lanes run in CI.
+  #
+  # Run page-storage tests here because the knowledge jobs have no Postgres.
+  # AGNO_PAGE_TEST_DB_URL uses this service to create and drop a temporary
+  # database for the suite. Report skipped tests with -rs.
   test-fs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -1379,9 +1383,11 @@ jobs:
         working-directory: .
         env:
           AGNO_TELEMETRY: false
+          AGNO_PAGE_TEST_DB_URL: postgresql+psycopg://ai:ai@localhost:5532/ai
         run: |
           source .venv/bin/activate
-          python -m pytest ./libs/agno/tests/integration/fs
+          python -m pytest -rs ./libs/agno/tests/integration/fs \
+          ./libs/agno/tests/integration/knowledge/test_page_storage.py
 
   test-dev-setup:
     runs-on: ubuntu-latest
