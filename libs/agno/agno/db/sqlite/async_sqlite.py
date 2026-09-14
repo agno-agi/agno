@@ -5125,6 +5125,10 @@ class AsyncSqliteDb(AsyncBaseDb):
         table = await self._get_table(table_type=AUTHZ_GROUPING, create_table_if_not_found=True)
         return await authz_store.aget_direct_roles(self.db_engine, table, subject)
 
+    async def get_authz_direct_roles_many(self, subjects: List[str]) -> Dict[str, List[str]]:
+        table = await self._get_table(table_type=AUTHZ_GROUPING, create_table_if_not_found=True)
+        return await authz_store.aget_direct_roles_many(self.db_engine, table, subjects)
+
     async def list_authz_role_subjects(self, role: str) -> List[str]:
         table = await self._get_table(table_type=AUTHZ_GROUPING, create_table_if_not_found=True)
         return await authz_store.aget_role_subjects(self.db_engine, table, role)
@@ -5194,6 +5198,20 @@ class AsyncSqliteDb(AsyncBaseDb):
     async def count_authz_users(self, include_disabled: bool = True, search: Optional[str] = None) -> int:
         table = await self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)
         return await authz_store.acount_users(self.db_engine, table, include_disabled, search)
+
+    async def count_authz_users_by_status(self) -> Dict[str, int]:
+        table = await self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)
+        return await authz_store.acount_users_by_status(self.db_engine, table)
+
+    async def list_authz_user_ids(self, include_disabled: bool = True) -> List[str]:
+        table = await self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)
+        return await authz_store.alist_user_ids(self.db_engine, table, include_disabled)
+
+    async def count_authz_users_by_day(
+        self, starting_at: Optional[int] = None, ending_before: Optional[int] = None
+    ) -> List[Dict[str, int]]:
+        table = await self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)
+        return await authz_store.acount_users_by_day(self.db_engine, table, starting_at, ending_before)
 
     async def upsert_authz_user(self, user_id: str, values: Dict[str, Any]) -> None:
         table = await self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)

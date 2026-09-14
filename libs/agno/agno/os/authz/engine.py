@@ -85,6 +85,11 @@ class PolicyEngine(ABC):
     @abstractmethod
     def roles_of(self, subject: str) -> List[str]: ...
 
+    def roles_of_many(self, subjects: List[str]) -> Dict[str, List[str]]:
+        """Roles of each of ``subjects`` (empty list when none). Engines that can read
+        assignments in bulk override this; the default resolves one subject at a time."""
+        return {subject: self.roles_of(subject) for subject in subjects}
+
     def subjects_of(self, role: str) -> List[str]:
         """Names directly assigned ``role``. Optional: the bootstrap's admin-lockout check uses it
         to ask whether anyone still holds an admin role, and skips that check on an engine that
@@ -166,6 +171,11 @@ class PolicyEngine(ABC):
 
     async def aroles_of(self, subject: str) -> List[str]:
         return await asyncio.to_thread(self.roles_of, subject)
+
+    async def aroles_of_many(self, subjects: List[str]) -> Dict[str, List[str]]:
+        """Resolves through :meth:`aroles_of` rather than the sync bulk read, so an engine
+        that overrides only the async single-subject read is honoured on the async path."""
+        return {subject: await self.aroles_of(subject) for subject in subjects}
 
     async def asubjects_of(self, role: str) -> List[str]:
         return await asyncio.to_thread(self.subjects_of, role)
