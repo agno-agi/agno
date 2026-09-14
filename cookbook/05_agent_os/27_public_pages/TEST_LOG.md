@@ -159,7 +159,10 @@ run. The focused public-configuration and MCP suites passed all 204 tests.
 - Raw-source sample: 24 of 40 public Markdown pages fetched successfully (18 contained sampled component types); all 24 match old/new bytes and chunks. The other 16 URLs returned HTTP 500 and were excluded from equivalence claims.
 - No index mutation, re-embedding, reader default change or production deployment. Generic repeated entity decoding is not guaranteed idempotent; the documented transform operates on source once.
 
+<<<<<<< HEAD
 
+=======
+>>>>>>> 9f0d33213 (revert)
 ## 2026-09-09 native MCP routing
 
 - 282 composed MCP server/OAuth/routing/public-JWT cases passed.
