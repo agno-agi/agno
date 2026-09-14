@@ -45,7 +45,9 @@ def test_page_public_imports_preserve_types_without_loading_storage():
                     "PageNotFound", "PageRead", "PageResult", "PageSearchConfig", "SearchHit", "SearchResult",
                     "SearchUnavailable", "SyncFailed", "SyncReport", "encoded_size", "tool_error",
                 }
-                assert set(page.__all__) == expected | {"PageFileSystem"}
+                assert set(page.__all__) == expected | {
+                    "PageFileSystem", "DocumentationMarkdown", "normalize_mdx",
+                }
                 for name in expected:
                     assert getattr(page, name) is getattr(types, name)
                 assert page.SearchResult().model_dump() == {
@@ -53,6 +55,9 @@ def test_page_public_imports_preserve_types_without_loading_storage():
                     "omitted_count": 0, "warnings": (),
                 }
                 assert pickle.loads(b"cagno.knowledge.page\\nSearchResult\\n.") is types.SearchResult
+                # The transform is a pure source callable; it loads no storage either.
+                assert page.DocumentationMarkdown(profile="markdown")("x", path="/x.md") == "x"
+                assert page.normalize_mdx("<Note>hi</Note>\\n") == "**Note:** hi\\n"
                 assert "agno.knowledge.knowledge" not in sys.modules
             """),
         ],

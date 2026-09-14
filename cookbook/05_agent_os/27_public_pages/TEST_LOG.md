@@ -158,3 +158,16 @@ run. The focused public-configuration and MCP suites passed all 204 tests.
 - Compatibility comparison: all 3,909 local published pages yield identical old/new transformed bytes and chunks, and are unchanged on repeat normalization. This is a published-text corpus comparison, not a full raw-source crawl.
 - Raw-source sample: 24 of 40 public Markdown pages fetched successfully (18 contained sampled component types); all 24 match old/new bytes and chunks. The other 16 URLs returned HTTP 500 and were excluded from equivalence claims.
 - No index mutation, re-embedding, reader default change or production deployment. Generic repeated entity decoding is not guaranteed idempotent; the documented transform operates on source once.
+
+## 2026-09-09 native MCP routing
+
+- 282 composed MCP server/OAuth/routing/public-JWT cases passed.
+- 24 routing cases passed after adding included-router-prefix conflict checks;
+  these overlap the composed suite. Covers root, native/legacy/custom paths,
+  actual ASGI submounts, initialize/catalog/quota parity, browser versus SSE GET,
+  JWT REST protection, canonical cards, Host ambiguity/case/ports/forwarding,
+  and startup rejection of unsupported custom OAuth routing.
+- The complete existing native OAuth flow remains supported at /mcp. Custom
+  OAuth routes are deliberately rejected rather than publishing a wrong resource.
+- Cookbook mcp_domain.py --check passed. Full format and validation passed.
+- No DNS, hosting or production application changes were made.
