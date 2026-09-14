@@ -47,7 +47,7 @@ from agno.models.base import Model
 from agno.models.fallback import acall_model_with_fallback, call_model_with_fallback
 from agno.models.message import Message
 from agno.models.response import ModelResponse
-from agno.prompt.prompt import require_resolved_prompts
+from agno.prompt.prompt import require_resolved_prompts, retained_prompt_handle
 from agno.run import RunContext, RunStatus
 from agno.run.agent import (
     RunCancelledEvent,
@@ -1305,6 +1305,27 @@ def _run_stream(
         cleanup_run(run_response.run_id)  # type: ignore
 
 
+def _stamp_prompt_versions(agent: Agent, run_context: RunContext, run_response: RunOutput) -> None:
+    """Record the Prompt-backed fields that shape this run's system message.
+
+    Mirrors get_system_message: a custom system_message replaces everything
+    else, and build_context=False builds no system message, so instructions
+    behind either are omitted as ineffective. The list is assigned fresh and a
+    caller-supplied value under the key is dropped.
+    """
+    from agno.db.schemas.scheduler import assign_prompt_versions, prompt_version_record
+
+    records = []
+    system_handle = retained_prompt_handle(agent, "system_message")
+    if system_handle is not None:
+        records.append(prompt_version_record(system_handle))
+    elif agent.system_message is None and agent.build_context:
+        instructions_handle = retained_prompt_handle(agent, "instructions")
+        if instructions_handle is not None:
+            records.append(prompt_version_record(instructions_handle))
+    run_context.metadata = run_response.metadata = assign_prompt_versions(run_context.metadata, records)
+
+
 def run_dispatch(
     agent: Agent,
     input: Union[str, List, Dict, Message, BaseModel, List[Message]],
@@ -1419,6 +1440,7 @@ def run_dispatch(
     agent.model = cast(Model, agent.model)
 
     # Initialize run context
+    caller_run_context = run_context is not None
     run_context = run_context or RunContext(
         run_id=run_id,
         session_id=session_id,
@@ -1455,6 +1477,8 @@ def run_dispatch(
 
     run_response.model = agent.model.id if agent.model is not None else None
     run_response.model_provider = agent.model.provider if agent.model is not None else None
+    if not caller_run_context:
+        _stamp_prompt_versions(agent, run_context, run_response)
 
     # Start the run metrics timer, to calculate the run duration
     run_response.metrics = RunMetrics()
@@ -2944,6 +2968,7 @@ def arun_dispatch(  # type: ignore
     agent.model = cast(Model, agent.model)
 
     # Initialize run context
+    caller_run_context = run_context is not None
     run_context = run_context or RunContext(
         run_id=run_id,
         session_id=session_id,
@@ -2980,6 +3005,8 @@ def arun_dispatch(  # type: ignore
 
     run_response.model = agent.model.id if agent.model is not None else None
     run_response.model_provider = agent.model.provider if agent.model is not None else None
+    if not caller_run_context:
+        _stamp_prompt_versions(agent, run_context, run_response)
 
     # Start the run metrics timer, to calculate the run duration
     run_response.metrics = RunMetrics()
