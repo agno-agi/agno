@@ -101,7 +101,10 @@ if TYPE_CHECKING:
     from agno.os.app import AgentOS
 
 
-_ws_tail_pumps: "weakref.WeakKeyDictionary[WebSocket, asyncio.Task]" = weakref.WeakKeyDictionary()
+# Live event tail pumps, per socket and per run. A socket may hold several:
+# a chat client submits a second run on its session while the first is
+# still streaming, and the first run's events must keep flowing to it.
+_ws_tail_pumps: "weakref.WeakKeyDictionary[WebSocket, Dict[str, asyncio.Task]]" = weakref.WeakKeyDictionary()
 
 
 def _stream_payload_to_dict(payload: Any, ev_index: int, run_id: str) -> Dict[str, Any]:
@@ -159,11 +162,44 @@ async def _pump_event_stream_to_websocket(websocket: WebSocket, run_id: str, fro
 # the FE parser accepts both, and one pump beats two formats diverging.
 
 
-async def cancel_subscription_pump(websocket: WebSocket) -> None:
-    """Cancel the tail pump attached to this socket, if any (called on
-    disconnect by the WS dispatcher, and on re-subscribe)."""
-    task = _ws_tail_pumps.pop(websocket, None)
-    if task is not None:
+def start_tail_pump(websocket: WebSocket, run_id: str, from_index: Optional[int]) -> asyncio.Task:
+    """Attach a live tail of one run to a socket.
+
+    Pumps are scoped per (socket, run): starting a tail for a new run never
+    touches the tails of runs already streaming to the same socket. A second
+    tail for the SAME run (a re-subscribe) replaces the first, since two
+    pumps on one run would double-deliver every event. A pump unregisters
+    itself when its tail ends, so a long-lived socket does not accumulate
+    finished tasks."""
+    pumps = _ws_tail_pumps.setdefault(websocket, {})
+    previous = pumps.pop(run_id, None)
+    if previous is not None:
+        previous.cancel()
+    task = asyncio.create_task(_pump_event_stream_to_websocket(websocket, run_id, from_index))
+    pumps[run_id] = task
+
+    def _unregister(done: asyncio.Task) -> None:
+        live = _ws_tail_pumps.get(websocket)
+        if live is not None and live.get(run_id) is done:
+            del live[run_id]
+
+    task.add_done_callback(_unregister)
+    return task
+
+
+async def cancel_subscription_pump(websocket: WebSocket, run_id: Optional[str] = None) -> None:
+    """Cancel the tail pumps attached to this socket: all of them on
+    disconnect (the WS dispatcher's finally), or one run's on request."""
+    pumps = _ws_tail_pumps.get(websocket)
+    if not pumps:
+        return
+    if run_id is None:
+        tasks = list(pumps.values())
+        pumps.clear()
+    else:
+        task = pumps.pop(run_id, None)
+        tasks = [task] if task is not None else []
+    for task in tasks:
         task.cancel()
         with contextlib.suppress(asyncio.CancelledError, Exception):
             await task
@@ -374,12 +410,10 @@ async def handle_workflow_via_websocket(
                 json.dumps({"event": "queued", "run_id": queued_run_id, "session_id": session_id})
             )
             # Tail the whole stream from the start (this socket is the primary
-            # view). One pump per socket; the dispatcher cancels it on
-            # disconnect/re-subscribe via the shared registry.
-            await cancel_subscription_pump(websocket)
-            _ws_tail_pumps[websocket] = asyncio.create_task(
-                _pump_event_stream_to_websocket(websocket, queued_run_id, None)
-            )
+            # view). The pump is scoped to this run: earlier runs still
+            # streaming to this socket keep their own tails, and the
+            # dispatcher cancels every pump on disconnect.
+            start_tail_pump(websocket, queued_run_id, None)
             return
         if queue_worker is not None:
             log_warning(
@@ -666,11 +700,9 @@ async def handle_workflow_subscription(
 
         # Live phase: tail() handles the replay/subscribe race internally, so
         # events landing between our replay and the pump start are not lost.
-        # One pump per socket: a re-subscribe replaces the previous pump.
-        await cancel_subscription_pump(websocket)
-        _ws_tail_pumps[websocket] = asyncio.create_task(
-            _pump_event_stream_to_websocket(websocket, run_id, last_replayed_index)
-        )
+        # A re-subscribe replaces this run's pump only; other runs streaming
+        # to the same socket are untouched.
+        start_tail_pump(websocket, run_id, last_replayed_index)
 
         log_debug(f"Client subscribed to workflow run {run_id} (last_event_index: {last_event_index})")
 
@@ -926,9 +958,8 @@ async def handle_workflow_continue_via_websocket(
                 # (captured by the helper before the CAS) - the execute
                 # socket gets post-approval events only, exactly like the
                 # detached continue producer; earlier history belongs to the
-                # subscription/replay surface. One pump per socket, cancelled
-                # on disconnect/re-subscribe by the dispatcher (same registry
-                # the subscription pump uses).
+                # subscription/replay surface. The pump is scoped to this
+                # run; the dispatcher cancels every pump on disconnect.
                 # Also send the "queued" ack here: the continue socket has the
                 # same claim-delay window as a submission, and the FE ignores
                 # unknown frames until it wires this one up
@@ -936,10 +967,7 @@ async def handle_workflow_continue_via_websocket(
                     await websocket.send_text(
                         json.dumps({"event": "queued", "run_id": run_id, "session_id": session_id})
                     )
-                await cancel_subscription_pump(websocket)
-                _ws_tail_pumps[websocket] = asyncio.create_task(
-                    _pump_event_stream_to_websocket(websocket, run_id, continue_outcome.get("tail_from"))
-                )
+                start_tail_pump(websocket, run_id, continue_outcome.get("tail_from"))
                 return
             # DELIBERATE transport asymmetry with the HTTP continue door
             # (which refuses this cell): the socket is itself the live event
