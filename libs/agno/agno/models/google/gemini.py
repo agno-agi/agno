@@ -830,6 +830,8 @@ class Gemini(Model):
                         name=tool_call["function"]["name"],
                         args=args,
                     )
+                    if part.function_call is not None:
+                        part.function_call.id = tool_call.get("id")
                     if "thought_signature" in tool_call:
                         part.thought_signature = base64.b64decode(tool_call["thought_signature"])
                     message_parts.append(part)
@@ -837,13 +839,14 @@ class Gemini(Model):
             elif message.role == "tool" and message.tool_call_id is not None and message.tool_name is not None:
                 tc_content = message.get_content(use_compressed_content=compress_tool_results)
                 media_parts, fallback_media_parts = self._format_tool_result_media(message)
-                message_parts.append(
-                    Part.from_function_response(
-                        name=message.tool_name,
-                        response={"result": tc_content},
-                        parts=media_parts or None,
-                    )
+                part = Part.from_function_response(
+                    name=message.tool_name,
+                    response={"result": tc_content},
+                    parts=media_parts or None,
                 )
+                if part.function_response is not None:
+                    part.function_response.id = message.tool_call_id
+                message_parts.append(part)
                 message_parts.extend(fallback_media_parts)
             # Regular text content
             else:
