@@ -220,7 +220,6 @@ Enable **Agents & AI Apps** and keep `slack_sdk` current for this surface.
 | `suggested_prompts` | A list of strings shown above the composer when the app is opened (use `{"title", "message"}` dicts when a shorter label is wanted). Up to four. |
 | `onboarding_message` | One direct message the first time a user opens the Messages tab. Remembered in the database when one is configured. |
 | `stop_message` | Posted in the thread when the user presses Slack's stop button. The run is cancelled through Agno's cancellation manager. Only the person who sent the message (or approved the paused step) can stop it; anyone else gets an ephemeral note and the reply continues in a fresh streamed message, because Slack closes the original one as soon as stop is pressed. |
-| `session_api` | `"auto"` (default) uses `agents.sessions.*` and falls back to `assistant.threads.*` the first time Slack rejects it; `"agents"` or `"assistant"` pin one. |
 
 Suggested prompts are the only Slack surface that sends a message on the
 user's behalf when clicked, and on the Agent view they live at the top of the

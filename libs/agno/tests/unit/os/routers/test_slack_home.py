@@ -2,29 +2,16 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from agno.os.interfaces.slack.event_handler import AGNO_OS_URL, SlackEventHandler, build_home_view
-from agno.os.interfaces.slack.helpers import BotNameResolver
+from agno.os.interfaces.slack import Slack
+from agno.os.interfaces.slack.handler import AGNO_OS_URL, SlackEventHandler, build_home_view
 
 
 def _handler(client: AsyncMock, description: str = "") -> SlackEventHandler:
-    return SlackEventHandler(
-        token="xoxb-test",
-        ssl=None,
-        entity=AsyncMock(),
-        entity_id="agent-1",
-        entity_name="Bot",
-        entity_type="agent",
-        entity_description=description or None,
-        bot_name_resolver=BotNameResolver(),
-        reply_to_mentions_only=False,
-        resolve_user_identity=False,
-        respond_to_other_apps=False,
-        loading_text="Thinking...",
-        loading_messages=None,
-        task_display_mode="plan",
-        buffer_size=100,
-        client=client,
-    )
+    entity = AsyncMock()
+    entity.id = "agent-1"
+    entity.name = "Bot"
+    entity.description = description or None
+    return SlackEventHandler(Slack(agent=entity, token="xoxb-test", signing_secret="s"), client)
 
 
 def test_home_view_shows_name_description_and_agentos_link():

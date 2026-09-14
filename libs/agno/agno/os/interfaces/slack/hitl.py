@@ -2,80 +2,88 @@ from __future__ import annotations
 
 import asyncio
 import time
-from dataclasses import dataclass
-from ssl import SSLContext
-from typing import Any, Dict, List, Literal, Optional, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional
 
 from slack_sdk.web.async_client import AsyncWebClient
 
-from agno.agent import Agent, RemoteAgent
 from agno.exceptions import RunCancelledException
-from agno.os.interfaces.slack.builders import (
-    append_submit_if_needed,
-    build_admin_approval_status_card,
-    response_blocks,
-    select_confirmation_row,
-)
-from agno.os.interfaces.slack.events import process_event
-from agno.os.interfaces.slack.helpers import open_chat_stream, resolve_session_id, slack_error_code
-from agno.os.interfaces.slack.ids import (
+from agno.os.interfaces.slack.utils import (
     ADMIN_BUTTON_FIELDS,
+    SlackSessions,
+    StreamState,
+    SubmitContext,
+    TaskStatus,
+    Threads,
+    append_submit_if_needed,
+    apply_decisions,
+    build_admin_approval_status_card,
     decode_admin_approval_button_value,
     decode_session_id,
-)
-from agno.os.interfaces.slack.interactions import (
-    apply_decisions,
     extract_row_action_context,
     extract_submit_context,
+    open_chat_stream,
     parse_submit_payload,
+    process_event,
+    resolve_session_id,
+    response_blocks,
+    select_confirmation_row,
+    slack_error_code,
     synthetic_submit_payload,
+    tool_args,
+    tool_name,
+    truncate,
 )
-from agno.os.interfaces.slack.runs import ActiveRunRegistry
-from agno.os.interfaces.slack.sessions import SlackSessions
-from agno.os.interfaces.slack.state import StreamState, TaskStatus
-from agno.os.interfaces.slack.types import SubmitContext, tool_args, tool_name, truncate
 from agno.run.approval import aresolve_approval
-from agno.team import RemoteTeam, Team
 from agno.utils.log import log_error, log_info
-from agno.workflow import RemoteWorkflow, Workflow
+
+if TYPE_CHECKING:
+    from agno.os.interfaces.slack.slack import Slack
 
 _STREAM_CHAR_LIMIT = 3900
 
 
-@dataclass
 class HITLHandler:
-    token: str
-    ssl: Optional[SSLContext]
-    entity: Union[Agent, RemoteAgent, Team, RemoteTeam, Workflow, RemoteWorkflow]
-    entity_id: str
-    entity_name: str
-    entity_type: Literal["agent", "team", "workflow"]
-    task_display_mode: str
-    buffer_size: int
-    unfurl_links: bool = True
-    unfurl_media: bool = True
-    markdown: bool = True
-    # Shared with the event handler when mounted; created per call otherwise
-    client: Optional[AsyncWebClient] = None
-    # Session lifecycle and stop-button registry, shared with the event handler
-    sessions: Optional[SlackSessions] = None
-    active_runs: Optional[ActiveRunRegistry] = None
-    per_user_thread_sessions: bool = False
+    """Resumes paused runs from Slack's approval cards and forms."""
 
-    def _client(self) -> AsyncWebClient:
-        return self.client or AsyncWebClient(token=self.token, ssl=self.ssl)
+    def __init__(
+        self,
+        slack: "Slack",
+        client: AsyncWebClient,
+        *,
+        sessions: Optional[SlackSessions] = None,
+        threads: Optional[Threads] = None,
+    ) -> None:
+        self.slack = slack
+        self.client = client
+        self.sessions = sessions or SlackSessions(client, loading_messages=slack.loading_messages)
+        self.threads = threads or Threads()
+
+    @property
+    def entity(self) -> Any:
+        return self.slack.entity
+
+    @property
+    def entity_id(self) -> str:
+        return self.slack.entity_id
+
+    @property
+    def entity_name(self) -> str:
+        return self.slack.entity_name
+
+    @property
+    def entity_type(self) -> Literal["agent", "team", "workflow"]:
+        return self.slack.entity_type
 
     async def _session_id(self, ctx: SubmitContext) -> str:
         # A card written under per-participant sessions carries the exact session id;
         # otherwise the thread derives it
         if ctx.session_id:
             return ctx.session_id
-        user_key = ctx.user_id if self.per_user_thread_sessions else None
+        user_key = ctx.user_id if self.slack.per_user_thread_sessions else None
         return await resolve_session_id(self.entity, self.entity_id, ctx.channel, ctx.thread_ts, user_key=user_key)
 
     async def _set_session(self, channel: str, thread_ts: str, status: Any) -> None:
-        if self.sessions is not None:
-            await self.sessions.set_status(channel, thread_ts, status)
+        await self.sessions.set_status(channel, thread_ts, status)
 
     async def update_message(
         self,
@@ -85,7 +93,7 @@ class HITLHandler:
         blocks: List[Dict[str, Any]],
     ) -> bool:
         try:
-            await self._client().chat_update(channel=channel, ts=ts, text=text, blocks=blocks)
+            await self.client.chat_update(channel=channel, ts=ts, text=text, blocks=blocks)
             return True
         except Exception as exc:
             log_error(f"[HITL] chat_update failed for ts={ts}: {exc}")
@@ -95,7 +103,7 @@ class HITLHandler:
         if not awaiting_ts:
             return
         try:
-            await self._client().chat_delete(channel=channel, ts=awaiting_ts)
+            await self.client.chat_delete(channel=channel, ts=awaiting_ts)
         except Exception as exc:
             if "message_not_found" not in str(exc):
                 log_error(f"[HITL] chat_delete (awaiting indicator) failed for ts={awaiting_ts}: {exc}")
@@ -110,9 +118,7 @@ class HITLHandler:
 
         readonly_blocks = response_blocks(original_blocks, ctx.state_values, requirements)
         try:
-            await self._client().chat_update(
-                channel=ctx.channel, ts=ctx.msg_ts, text="Submitted", blocks=readonly_blocks
-            )
+            await self.client.chat_update(channel=ctx.channel, ts=ctx.msg_ts, text="Submitted", blocks=readonly_blocks)
         except Exception as exc:
             log_error(f"[HITL] chat_update (submit readonly) failed for {ctx.msg_ts}: {exc}")
 
@@ -172,15 +178,11 @@ class HITLHandler:
         entity: Any = self.entity
         state = StreamState(entity_name=self.entity_name, entity_type=self.entity_type)
         state.run_id = ctx.run_id
-        # A resumed run is stoppable from Slack like a fresh one
-        # The approver drives the continuation, so they own the stop button for it
-        active = (
-            self.active_runs.start(ctx.channel, ctx.thread_ts, entity, stream, owner=ctx.user_id)
-            if self.active_runs
-            else None
-        )
-        if active is not None and self.active_runs is not None:
-            await self.active_runs.note_run_id(active, ctx.run_id)
+        # A resumed run is stoppable from Slack like a fresh one; the approver drives
+        # the continuation, so they own the stop button for it
+        run = self.threads.start_run(ctx.channel, ctx.thread_ts, entity, owner=ctx.user_id)
+        run.stream = stream
+        await self.threads.note_run_id(run, ctx.run_id)
         try:
             # Inline-door admission gate: Slack-driven runs are ticketless by
             # construction today (the interface submits inline), but a durable
@@ -205,8 +207,7 @@ class HITLHandler:
             )
         except Exception as exc:
             log_error(f"[HITL] acontinue_run (stream) failed for run={ctx.run_id}: {exc}")
-            if self.active_runs is not None:
-                self.active_runs.finish(ctx.channel, ctx.thread_ts, active)
+            self.threads.finish_run(ctx.channel, ctx.thread_ts, run)
             return state
 
         try:
@@ -228,8 +229,7 @@ class HITLHandler:
                 f"[HITL] continuation append failed: run_id={ctx.run_id} slack_error={slack_error_code(exc)!r} | {exc}"
             )
         finally:
-            if self.active_runs is not None:
-                self.active_runs.finish(ctx.channel, ctx.thread_ts, active)
+            self.threads.finish_run(ctx.channel, ctx.thread_ts, run)
         # Status-only stream sync (parity with the REST continue doors): a
         # formerly-queued/streamed run's stream view must stop saying PAUSED
         # once the continue settles - otherwise every later /resume replays
@@ -256,10 +256,10 @@ class HITLHandler:
         if state.paused_event is not None:
             requirements = list(getattr(state.paused_event, "active_requirements", None) or [])
             if requirements:
-                from agno.os.interfaces.slack.pause import finalize_pause, post_pause_card
+                from agno.os.interfaces.slack.utils import finalize_pause, post_pause_card
 
                 new_awaiting_ts = await finalize_pause(
-                    client=self._client(),
+                    client=self.client,
                     stream=stream,
                     state=state,
                     run_id=ctx.run_id,
@@ -267,21 +267,21 @@ class HITLHandler:
                     thread_ts=ctx.thread_ts,
                     requirements=requirements,
                     log_prefix="re-",
-                    unfurl_links=self.unfurl_links,
-                    unfurl_media=self.unfurl_media,
-                    mrkdwn=self.markdown,
+                    unfurl_links=self.slack.unfurl_links,
+                    unfurl_media=self.slack.unfurl_media,
+                    mrkdwn=self.slack.markdown,
                 )
                 try:
                     await post_pause_card(
-                        self._client(),
+                        self.client,
                         state.paused_event,
                         ctx.channel,
                         ctx.thread_ts,
                         new_awaiting_ts,
-                        unfurl_links=self.unfurl_links,
-                        unfurl_media=self.unfurl_media,
-                        mrkdwn=self.markdown,
-                        session_id=session_id if self.per_user_thread_sessions else None,
+                        unfurl_links=self.slack.unfurl_links,
+                        unfurl_media=self.slack.unfurl_media,
+                        mrkdwn=self.slack.markdown,
+                        session_id=session_id if self.slack.per_user_thread_sessions else None,
                     )
                 except Exception as exc:
                     log_error(f"[HITL] Failed to post Card block (re-pause): {exc}")
@@ -369,7 +369,7 @@ class HITLHandler:
         """Resume a paused run after admin approval."""
         entity: Any = self.entity
         if not session_id:
-            user_key = ((payload.get("user") or {}).get("id") or "") if self.per_user_thread_sessions else None
+            user_key = ((payload.get("user") or {}).get("id") or "") if self.slack.per_user_thread_sessions else None
             session_id = await resolve_session_id(entity, self.entity_id, channel, thread_ts, user_key=user_key)
 
         try:
@@ -400,13 +400,13 @@ class HITLHandler:
             state_values={},
         )
         stream = await open_chat_stream(
-            self._client(),
+            self.client,
             channel,
             thread_ts,
             ctx.user_id,
             ctx.team_id,
-            self.task_display_mode,
-            self.buffer_size,
+            self.slack.task_display_mode,
+            self.slack.buffer_size,
         )
         state = await self.stream_resumed_run(ctx, stream, requirements, session_id=session_id, user_id=run_user_id)
         await self.complete_or_repause(ctx, stream, state, session_id=session_id)
@@ -560,13 +560,13 @@ class HITLHandler:
         await self.freeze_form(ctx, original_blocks, requirements)
 
         stream = await open_chat_stream(
-            self._client(),
+            self.client,
             ctx.channel,
             ctx.thread_ts,
             ctx.user_id,
             ctx.team_id,
-            self.task_display_mode,
-            self.buffer_size,
+            self.slack.task_display_mode,
+            self.slack.buffer_size,
         )
 
         await self.post_denial_cards(stream, decisions, requirements, ctx.run_id)
@@ -575,6 +575,6 @@ class HITLHandler:
 
     async def post_ephemeral(self, *, channel: str, user: str, text: str) -> None:
         try:
-            await self._client().chat_postEphemeral(channel=channel, user=user, text=text)
+            await self.client.chat_postEphemeral(channel=channel, user=user, text=text)
         except Exception as exc:
             log_error(f"[HITL] chat_postEphemeral failed: {exc}")

@@ -8,17 +8,17 @@ from fastapi import APIRouter, FastAPI
 
 from agno.agent import RunEvent
 from agno.models.response import ToolExecution
-from agno.os.interfaces.slack.event_handler import EventContext, SlackEventHandler
-from agno.os.interfaces.slack.helpers import BotNameResolver
+from agno.os.interfaces.slack import Slack
+from agno.os.interfaces.slack.handler import EventContext, SlackEventHandler
 from agno.os.interfaces.slack.hitl import HITLHandler
-from agno.os.interfaces.slack.ids import (
+from agno.os.interfaces.slack.utils import (
     ACTION_CHECK_STATUS,
     ACTION_SUBMIT,
+    StreamState,
     encode_admin_approval_button_value,
     encode_submit_button_value,
     row_block_id,
 )
-from agno.os.interfaces.slack.state import StreamState
 from agno.run.requirement import RunRequirement
 
 from .conftest import (
@@ -36,26 +36,24 @@ from .conftest import (
 )
 
 
-def _make_event_handler(**overrides: Any) -> SlackEventHandler:
-    defaults: Dict[str, Any] = {
-        "token": "xoxb-test",
-        "ssl": None,
-        "entity": make_agent_mock(),
-        "entity_id": "agent-1",
-        "entity_name": "Test Agent",
-        "entity_type": "agent",
-        "bot_name_resolver": BotNameResolver(),
-        "reply_to_mentions_only": False,
-        "resolve_user_identity": False,
-        "respond_to_other_apps": False,
-        "loading_text": "Thinking...",
-        "loading_messages": None,
-        "task_display_mode": "plan",
-        "buffer_size": 100,
-        "suggested_prompts": None,
-    }
-    defaults.update(overrides)
-    return SlackEventHandler(**defaults)
+def _make_slack(entity: Any = None, entity_type: str = "agent", **options: Any) -> Slack:
+    entity = entity if entity is not None else make_agent_mock()
+    entity.id = options.pop("entity_id", "agent-1")
+    entity.name = options.pop("entity_name", "Test Agent")
+    options.setdefault("token", "xoxb-test")
+    options.setdefault("signing_secret", "s")
+    options.setdefault("reply_to_mentions_only", False)
+    return Slack(**{entity_type: entity}, **options)
+
+
+def _make_event_handler(client: Any = None, **overrides: Any) -> SlackEventHandler:
+    entity = overrides.pop("entity", None)
+    entity_type = overrides.pop("entity_type", "agent")
+    return SlackEventHandler(_make_slack(entity, entity_type, **overrides), client or make_async_client_mock())
+
+
+def _make_hitl_handler(entity: Any, client: Any) -> HITLHandler:
+    return HITLHandler(_make_slack(entity), client)
 
 
 def _make_event_context(**overrides: Any) -> EventContext:
@@ -138,15 +136,15 @@ def _make_check_status_payload(
 class TestEventHandlerHelpers:
     @pytest.mark.asyncio
     async def test_open_chat_stream_delegates_to_shared_helper(self):
-        handler = _make_event_handler(task_display_mode="updates", buffer_size=25)
         client = AsyncMock()
+        handler = _make_event_handler(client, task_display_mode="updates", buffer_size=25)
         ctx = _make_event_context()
         stream = make_stream_mock()
 
         with patch(
-            "agno.os.interfaces.slack.event_handler.open_chat_stream", new=AsyncMock(return_value=stream)
+            "agno.os.interfaces.slack.handler.open_chat_stream", new=AsyncMock(return_value=stream)
         ) as mock_open:
-            opened = await handler._open_chat_stream(client, ctx)
+            opened = await handler._open_chat_stream(ctx)
 
         assert opened is stream
         mock_open.assert_awaited_once_with(client, "C123", "1708123456.000100", "U123", "T123", "updates", 25)
@@ -158,8 +156,8 @@ class TestEventHandlerHelpers:
         ctx = _make_event_context(message_text="x" * 80)
         state = StreamState()
 
-        await handler._set_thread_title(client, ctx, state)
-        await handler._set_thread_title(client, ctx, state)
+        await handler._set_thread_title(ctx, state)
+        await handler._set_thread_title(ctx, state)
 
         client.agents_sessions_rename.assert_awaited_once_with(
             channel_id="C123",
@@ -198,17 +196,16 @@ class TestEventHandlerHelpers:
         handler = _make_event_handler(client=client)
         ctx = _make_event_context(message_text="hello there")
 
-        await handler._set_thread_title(client, ctx, StreamState())
+        await handler._set_thread_title(ctx, StreamState())
 
         client.assistant_threads_setTitle.assert_awaited_once_with(
             channel_id="C123", thread_ts="1708123456.000100", title="hello there"
         )
-        assert handler.sessions is not None and handler.sessions.mode == "assistant"
+        assert handler.sessions.legacy is True
 
     @pytest.mark.asyncio
     async def test_rotate_stream_closes_pending_cards_and_reopens_with_in_progress_cards(self):
         handler = _make_event_handler()
-        client = AsyncMock()
         ctx = _make_event_context()
         state = StreamState()
         state.track_task("search", "Search docs")
@@ -218,13 +215,13 @@ class TestEventHandlerHelpers:
         new_stream = make_stream_mock()
 
         with patch.object(handler, "_open_chat_stream", new=AsyncMock(return_value=new_stream)) as mock_open:
-            rotated = await handler._rotate_stream(client, ctx, state, old_stream, pending_text="partial answer")
+            rotated = await handler._rotate_stream(ctx, state, old_stream, pending_text="partial answer")
 
         assert rotated is new_stream
         old_stream.stop.assert_awaited_once()
         stop_chunks = old_stream.stop.call_args.kwargs["chunks"]
         assert stop_chunks == [{"type": "task_update", "id": "search", "title": "Search docs", "status": "complete"}]
-        mock_open.assert_awaited_once_with(client, ctx)
+        mock_open.assert_awaited_once_with(ctx)
         assert state.stream_chars_sent == len("_(continued)_\npartial answer")
         assert list(state.task_cards) == ["search"]
         assert new_stream.append.await_count == 2
@@ -234,17 +231,14 @@ class TestEventHandlerHelpers:
     @pytest.mark.asyncio
     async def test_finalize_stream_stops_with_buffer_and_uploads_media(self):
         handler = _make_event_handler()
-        client = AsyncMock()
         ctx = _make_event_context()
         state = StreamState()
         state.track_task("tool-1", "Run tool")
         state.append_content("final text")
         stream = make_stream_mock()
 
-        with patch(
-            "agno.os.interfaces.slack.event_handler.upload_response_media_async", new=AsyncMock()
-        ) as mock_upload:
-            await handler._finalize_stream(client, ctx, state, stream)
+        with patch("agno.os.interfaces.slack.handler.upload_response_media_async", new=AsyncMock()) as mock_upload:
+            await handler._finalize_stream(ctx, state, stream)
 
         stream.stop.assert_awaited_once()
         stop_kwargs = stream.stop.call_args.kwargs
@@ -252,7 +246,7 @@ class TestEventHandlerHelpers:
         assert stop_kwargs["chunks"] == [
             {"type": "task_update", "id": "tool-1", "title": "Run tool", "status": "complete"}
         ]
-        mock_upload.assert_awaited_once_with(client, state, "C123", "1708123456.000100")
+        mock_upload.assert_awaited_once_with(handler.client, state, "C123", "1708123456.000100")
 
 
 class TestNonStreamingRoutes:
@@ -263,7 +257,7 @@ class TestNonStreamingRoutes:
         agent_mock.id = "researcher"
 
         with (
-            patch("agno.os.interfaces.slack.event_handler.AsyncWebClient", return_value=make_async_client_mock()),
+            patch("agno.os.interfaces.slack.handler.AsyncWebClient", return_value=make_async_client_mock()),
         ):
             app = build_app(agent_mock, reply_to_mentions_only=False)
             from fastapi.testclient import TestClient
@@ -299,7 +293,7 @@ class TestNonStreamingRoutes:
         agent_mock.aget_session = AsyncMock(return_value={"session_id": f"researcher:{thread_ts}"})
 
         with (
-            patch("agno.os.interfaces.slack.event_handler.AsyncWebClient", return_value=make_async_client_mock()),
+            patch("agno.os.interfaces.slack.handler.AsyncWebClient", return_value=make_async_client_mock()),
         ):
             app = build_app(agent_mock, reply_to_mentions_only=False)
             from fastapi.testclient import TestClient
@@ -329,7 +323,7 @@ class TestNonStreamingRoutes:
         agent_mock = make_agent_mock()
 
         with (
-            patch("agno.os.interfaces.slack.event_handler.AsyncWebClient", return_value=make_async_client_mock()),
+            patch("agno.os.interfaces.slack.handler.AsyncWebClient", return_value=make_async_client_mock()),
         ):
             app = build_app(agent_mock, reply_to_mentions_only=False)
             from fastapi.testclient import TestClient
@@ -357,7 +351,7 @@ class TestNonStreamingRoutes:
         agent_mock = make_agent_mock()
 
         with (
-            patch("agno.os.interfaces.slack.event_handler.AsyncWebClient", return_value=make_async_client_mock()),
+            patch("agno.os.interfaces.slack.handler.AsyncWebClient", return_value=make_async_client_mock()),
         ):
             app = build_app(agent_mock, reply_to_mentions_only=False, resolve_user_identity=True)
             from fastapi.testclient import TestClient
@@ -389,7 +383,7 @@ class TestNonStreamingRoutes:
         agent_mock = make_agent_mock()
 
         with (
-            patch("agno.os.interfaces.slack.event_handler.AsyncWebClient", return_value=make_async_client_mock()),
+            patch("agno.os.interfaces.slack.handler.AsyncWebClient", return_value=make_async_client_mock()),
         ):
             app = build_app(agent_mock, reply_to_mentions_only=False)
             from fastapi.testclient import TestClient
@@ -421,8 +415,8 @@ class TestNonStreamingRoutes:
         mock_httpx = make_httpx_mock([b"csv-data", b"img-data", b"zip-data"])
 
         with (
-            patch("agno.os.interfaces.slack.event_handler.AsyncWebClient", return_value=make_async_client_mock()),
-            patch("agno.os.interfaces.slack.helpers.httpx.AsyncClient", return_value=mock_httpx),
+            patch("agno.os.interfaces.slack.handler.AsyncWebClient", return_value=make_async_client_mock()),
+            patch("agno.os.interfaces.slack.utils.httpx.AsyncClient", return_value=mock_httpx),
         ):
             app = build_app(agent_mock)
             from fastapi.testclient import TestClient
@@ -453,8 +447,8 @@ class TestNonStreamingRoutes:
         mock_httpx = make_httpx_mock(b"zipdata")
 
         with (
-            patch("agno.os.interfaces.slack.event_handler.AsyncWebClient", return_value=make_async_client_mock()),
-            patch("agno.os.interfaces.slack.helpers.httpx.AsyncClient", return_value=mock_httpx),
+            patch("agno.os.interfaces.slack.handler.AsyncWebClient", return_value=make_async_client_mock()),
+            patch("agno.os.interfaces.slack.utils.httpx.AsyncClient", return_value=mock_httpx),
         ):
             app = build_app(agent_mock)
             from fastapi.testclient import TestClient
@@ -475,7 +469,7 @@ class TestNonStreamingRoutes:
         mock_client = make_async_client_mock()
 
         with (
-            patch("agno.os.interfaces.slack.event_handler.AsyncWebClient", return_value=mock_client),
+            patch("agno.os.interfaces.slack.handler.AsyncWebClient", return_value=mock_client),
         ):
             app = build_app(agent_mock, reply_to_mentions_only=False)
             from fastapi.testclient import TestClient
@@ -506,8 +500,8 @@ class TestRouterWiring:
         slack = Slack(agent=make_agent_mock(), token="xoxb-explicit-token", signing_secret="my-secret")
         slack.attach(APIRouter())
 
-        assert slack.event_handler.token == "xoxb-explicit-token"
-        assert slack.hitl.token == "xoxb-explicit-token"
+        assert slack.event_handler.client.token == "xoxb-explicit-token"
+        assert slack.hitl.client is slack.event_handler.client
 
     def test_missing_credentials_fail_fast(self, monkeypatch):
         from agno.os.interfaces.slack import Slack
@@ -567,8 +561,8 @@ class TestRouterWiring:
         agent_mock = make_agent_mock()
 
         with (
-            patch("agno.os.interfaces.slack.event_handler.AsyncWebClient", return_value=make_async_client_mock()),
-            patch("agno.os.interfaces.slack.helpers.httpx.AsyncClient", return_value=make_httpx_mock(b"file-data")),
+            patch("agno.os.interfaces.slack.handler.AsyncWebClient", return_value=make_async_client_mock()),
+            patch("agno.os.interfaces.slack.utils.httpx.AsyncClient", return_value=make_httpx_mock(b"file-data")),
         ):
             app = build_app(agent_mock, reply_to_mentions_only=False)
             body = {
@@ -629,7 +623,7 @@ class TestStreamingRoutes:
         mock_client = make_async_client_mock(stream_mock=mock_stream)
 
         with (
-            patch("agno.os.interfaces.slack.event_handler.AsyncWebClient", return_value=mock_client),
+            patch("agno.os.interfaces.slack.handler.AsyncWebClient", return_value=mock_client),
         ):
             app = build_app(agent, streaming=True, reply_to_mentions_only=False)
             from fastapi.testclient import TestClient
@@ -649,7 +643,7 @@ class TestStreamingRoutes:
         mock_client = make_async_client_mock(stream_mock=mock_stream)
 
         with (
-            patch("agno.os.interfaces.slack.event_handler.AsyncWebClient", return_value=mock_client),
+            patch("agno.os.interfaces.slack.handler.AsyncWebClient", return_value=mock_client),
         ):
             app = build_app(agent, streaming=True, reply_to_mentions_only=False)
             from fastapi.testclient import TestClient
@@ -670,7 +664,7 @@ class TestStreamingRoutes:
         mock_client = make_async_client_mock(stream_mock=mock_stream)
 
         with (
-            patch("agno.os.interfaces.slack.event_handler.AsyncWebClient", return_value=mock_client),
+            patch("agno.os.interfaces.slack.handler.AsyncWebClient", return_value=mock_client),
         ):
             app = build_app(agent, streaming=True, reply_to_mentions_only=False)
             from fastapi.testclient import TestClient
@@ -699,7 +693,7 @@ class TestStreamingRoutes:
         mock_client = make_async_client_mock(stream_mock=mock_stream)
 
         with (
-            patch("agno.os.interfaces.slack.event_handler.AsyncWebClient", return_value=mock_client),
+            patch("agno.os.interfaces.slack.handler.AsyncWebClient", return_value=mock_client),
         ):
             app = build_app(agent, streaming=True, reply_to_mentions_only=False, resolve_user_identity=True)
             from fastapi.testclient import TestClient
@@ -733,7 +727,7 @@ class TestStreamingRoutes:
         mock_client = make_async_client_mock(stream_mock=mock_stream)
 
         with (
-            patch("agno.os.interfaces.slack.event_handler.AsyncWebClient", return_value=mock_client),
+            patch("agno.os.interfaces.slack.handler.AsyncWebClient", return_value=mock_client),
         ):
             app = build_app(agent, streaming=True, reply_to_mentions_only=False)
             from fastapi.testclient import TestClient
@@ -756,7 +750,7 @@ class TestThreadStarted:
         mock_client = make_async_client_mock()
 
         with (
-            patch("agno.os.interfaces.slack.event_handler.AsyncWebClient", return_value=mock_client),
+            patch("agno.os.interfaces.slack.handler.AsyncWebClient", return_value=mock_client),
         ):
             app = build_app(agent, streaming=True, reply_to_mentions_only=False)
             from fastapi.testclient import TestClient
@@ -786,7 +780,7 @@ class TestThreadStarted:
         custom = [{"title": "Custom", "message": "Do X"}]
 
         with (
-            patch("agno.os.interfaces.slack.event_handler.AsyncWebClient", return_value=mock_client),
+            patch("agno.os.interfaces.slack.handler.AsyncWebClient", return_value=mock_client),
         ):
             app = build_app(agent, streaming=True, reply_to_mentions_only=False, suggested_prompts=custom)
             from fastapi.testclient import TestClient
@@ -811,7 +805,7 @@ class TestThreadStarted:
         mock_client = make_async_client_mock()
 
         with (
-            patch("agno.os.interfaces.slack.event_handler.AsyncWebClient", return_value=mock_client),
+            patch("agno.os.interfaces.slack.handler.AsyncWebClient", return_value=mock_client),
         ):
             app = build_app(agent, streaming=True, reply_to_mentions_only=False)
             from fastapi.testclient import TestClient
@@ -847,17 +841,8 @@ class TestHITLFlow:
             )
 
         entity.acontinue_run = _continue_run
-        handler = HITLHandler(
-            token="xoxb-test",
-            ssl=None,
-            entity=entity,
-            entity_id="agent-1",
-            entity_name="Test Agent",
-            entity_type="agent",
-            task_display_mode="plan",
-            buffer_size=100,
-        )
         mock_client = make_async_client_mock()
+        handler = _make_hitl_handler(entity, mock_client)
         mock_client.chat_delete = AsyncMock()
         stream = make_stream_mock()
         payload = _make_submit_payload(
@@ -865,7 +850,6 @@ class TestHITLFlow:
         )
 
         with (
-            patch("agno.os.interfaces.slack.hitl.AsyncWebClient", return_value=mock_client),
             patch("agno.os.interfaces.slack.hitl.open_chat_stream", new=AsyncMock(return_value=stream)) as mock_open,
         ):
             await handler.handle_submit(payload)
@@ -903,17 +887,8 @@ class TestHITLFlow:
             )
 
         entity.acontinue_run = _continue_run
-        handler = HITLHandler(
-            token="xoxb-test",
-            ssl=None,
-            entity=entity,
-            entity_id="agent-1",
-            entity_name="Test Agent",
-            entity_type="agent",
-            task_display_mode="plan",
-            buffer_size=100,
-        )
         mock_client = make_async_client_mock()
+        handler = _make_hitl_handler(entity, mock_client)
         mock_client.chat_delete = AsyncMock()
         stream = make_stream_mock()
         payload = _make_submit_payload(
@@ -921,7 +896,6 @@ class TestHITLFlow:
         )
 
         with (
-            patch("agno.os.interfaces.slack.hitl.AsyncWebClient", return_value=mock_client),
             patch("agno.os.interfaces.slack.hitl.open_chat_stream", new=AsyncMock(return_value=stream)),
         ):
             await handler.handle_submit(payload)
@@ -943,21 +917,11 @@ class TestAdminApprovalFlow:
         db.get_approval = Mock(return_value={"id": "appr-1", "status": "pending"})
         entity.db = db
 
-        handler = HITLHandler(
-            token="xoxb-test",
-            ssl=None,
-            entity=entity,
-            entity_id="agent-1",
-            entity_name="Test Agent",
-            entity_type="agent",
-            task_display_mode="plan",
-            buffer_size=100,
-        )
         mock_client = make_async_client_mock()
+        handler = _make_hitl_handler(entity, mock_client)
         payload = _make_check_status_payload()
 
-        with patch("agno.os.interfaces.slack.hitl.AsyncWebClient", return_value=mock_client):
-            await handler.handle_check_status(payload)
+        await handler.handle_check_status(payload)
 
         db.get_approval.assert_called_once_with("appr-1")
         mock_client.chat_update.assert_awaited_once()
@@ -993,23 +957,13 @@ class TestAdminApprovalFlow:
             )
 
         entity.acontinue_run = _continue_run
-        handler = HITLHandler(
-            token="xoxb-test",
-            ssl=None,
-            entity=entity,
-            entity_id="agent-1",
-            entity_name="Test Agent",
-            entity_type="agent",
-            task_display_mode="plan",
-            buffer_size=100,
-        )
         mock_client = make_async_client_mock()
+        handler = _make_hitl_handler(entity, mock_client)
         mock_client.chat_delete = AsyncMock()
         stream = make_stream_mock()
         payload = _make_check_status_payload()
 
         with (
-            patch("agno.os.interfaces.slack.hitl.AsyncWebClient", return_value=mock_client),
             patch("agno.os.interfaces.slack.hitl.open_chat_stream", new=AsyncMock(return_value=stream)),
         ):
             await handler.handle_check_status(payload)
@@ -1036,21 +990,11 @@ class TestAdminApprovalFlow:
         db.get_approval = Mock(return_value={"id": "appr-1", "status": "rejected"})
         entity.db = db
 
-        handler = HITLHandler(
-            token="xoxb-test",
-            ssl=None,
-            entity=entity,
-            entity_id="agent-1",
-            entity_name="Test Agent",
-            entity_type="agent",
-            task_display_mode="plan",
-            buffer_size=100,
-        )
         mock_client = make_async_client_mock()
+        handler = _make_hitl_handler(entity, mock_client)
         payload = _make_check_status_payload()
 
-        with patch("agno.os.interfaces.slack.hitl.AsyncWebClient", return_value=mock_client):
-            await handler.handle_check_status(payload)
+        await handler.handle_check_status(payload)
 
         db.get_approval.assert_called_once_with("appr-1")
         mock_client.chat_update.assert_awaited_once()
@@ -1063,21 +1007,11 @@ class TestAdminApprovalFlow:
         entity = AsyncMock()
         entity.db = None
 
-        handler = HITLHandler(
-            token="xoxb-test",
-            ssl=None,
-            entity=entity,
-            entity_id="agent-1",
-            entity_name="Test Agent",
-            entity_type="agent",
-            task_display_mode="plan",
-            buffer_size=100,
-        )
         mock_client = make_async_client_mock()
+        handler = _make_hitl_handler(entity, mock_client)
         payload = _make_check_status_payload()
 
-        with patch("agno.os.interfaces.slack.hitl.AsyncWebClient", return_value=mock_client):
-            await handler.handle_check_status(payload)
+        await handler.handle_check_status(payload)
 
         mock_client.chat_update.assert_awaited_once()
         call = mock_client.chat_update.call_args
@@ -1086,40 +1020,23 @@ class TestAdminApprovalFlow:
 
 class TestDeliveryFlags:
     def test_slack_interface_flags_reach_event_handler(self):
-        from agno.os.interfaces.slack.slack import Slack
-
-        agent_mock = make_agent_mock()
-        with patch("agno.os.interfaces.slack.slack.SlackEventHandler") as handler_cls:
-            Slack(
-                agent=agent_mock,
-                token="xoxb-test",
-                signing_secret="s",
-                markdown=False,
-                unfurl_links=False,
-                unfurl_media=False,
-            ).get_router()
-        kwargs = handler_cls.call_args.kwargs
-        assert kwargs["markdown"] is False
-        assert kwargs["unfurl_links"] is False
-        assert kwargs["unfurl_media"] is False
+        slack = _make_slack(markdown=False, unfurl_links=False, unfurl_media=False)
+        handler = SlackEventHandler(slack, make_async_client_mock())
+        assert handler.slack.markdown is False
+        assert handler.slack.unfurl_links is False
+        assert handler.slack.unfurl_media is False
 
     def test_slack_interface_flags_default_true(self):
-        from agno.os.interfaces.slack.slack import Slack
-
-        agent_mock = make_agent_mock()
-        with patch("agno.os.interfaces.slack.slack.SlackEventHandler") as handler_cls:
-            Slack(agent=agent_mock, token="xoxb-test", signing_secret="s").get_router()
-        kwargs = handler_cls.call_args.kwargs
-        assert kwargs["markdown"] is True
-        assert kwargs["unfurl_links"] is True
-        assert kwargs["unfurl_media"] is True
+        handler = _make_event_handler()
+        assert handler.slack.markdown is True
+        assert handler.slack.unfurl_links is True
+        assert handler.slack.unfurl_media is True
 
     @pytest.mark.asyncio
     async def test_send_error_forwards_delivery_flags(self):
-        handler = _make_event_handler(markdown=False, unfurl_links=False, unfurl_media=False)
         mock_client = make_async_client_mock()
-        with patch("agno.os.interfaces.slack.event_handler.AsyncWebClient", return_value=mock_client):
-            await handler.send_error(_make_event_context(), "boom")
+        handler = _make_event_handler(mock_client, markdown=False, unfurl_links=False, unfurl_media=False)
+        await handler.send_error(_make_event_context(), "boom")
         kwargs = mock_client.chat_postMessage.call_args.kwargs
         assert kwargs["unfurl_links"] is False
         assert kwargs["unfurl_media"] is False
@@ -1129,10 +1046,9 @@ class TestDeliveryFlags:
 
     @pytest.mark.asyncio
     async def test_send_error_defaults_keep_markdown_delivery(self):
-        handler = _make_event_handler()
         mock_client = make_async_client_mock()
-        with patch("agno.os.interfaces.slack.event_handler.AsyncWebClient", return_value=mock_client):
-            await handler.send_error(_make_event_context(), "boom")
+        handler = _make_event_handler(mock_client)
+        await handler.send_error(_make_event_context(), "boom")
         kwargs = mock_client.chat_postMessage.call_args.kwargs
         assert kwargs["unfurl_links"] is True
         assert kwargs["unfurl_media"] is True
@@ -1157,7 +1073,7 @@ class TestDeliveryFlags:
         mock_client = make_async_client_mock()
 
         with (
-            patch("agno.os.interfaces.slack.event_handler.AsyncWebClient", return_value=mock_client),
+            patch("agno.os.interfaces.slack.handler.AsyncWebClient", return_value=mock_client),
         ):
             app = build_app(
                 agent_mock, reply_to_mentions_only=False, markdown=False, unfurl_links=False, unfurl_media=False
@@ -1191,13 +1107,12 @@ class TestDeliveryFlags:
 
     @pytest.mark.asyncio
     async def test_paused_non_streaming_honors_flags(self):
-        handler = _make_event_handler(markdown=False, unfurl_links=False, unfurl_media=False)
         mock_client = make_async_client_mock()
         mock_client.chat_postMessage = AsyncMock(return_value={"ts": "123.456"})
+        handler = _make_event_handler(mock_client, markdown=False, unfurl_links=False, unfurl_media=False)
         response = Mock(content="pausing", active_requirements=[_make_requirement()], run_id="run-1")
 
-        with patch("agno.os.interfaces.slack.event_handler.AsyncWebClient", return_value=mock_client):
-            handled = await handler._handle_paused_non_streaming(_make_event_context(), response)
+        handled = await handler._handle_paused_non_streaming(_make_event_context(), response)
 
         assert handled is True
         # Content, awaiting labels, and pause card: three posts, all carrying the flags
@@ -1209,7 +1124,7 @@ class TestDeliveryFlags:
 
     @pytest.mark.asyncio
     async def test_finalize_pause_forwards_flags(self):
-        from agno.os.interfaces.slack.pause import finalize_pause
+        from agno.os.interfaces.slack.utils import finalize_pause
 
         client = make_async_client_mock()
         client.chat_postMessage = AsyncMock(return_value={"ts": "123.456"})
@@ -1240,7 +1155,7 @@ class TestDeliveryFlags:
 
     @pytest.mark.asyncio
     async def test_post_pause_card_forwards_flags(self):
-        from agno.os.interfaces.slack.pause import post_pause_card
+        from agno.os.interfaces.slack.utils import post_pause_card
 
         client = make_async_client_mock()
         client.chat_postMessage = AsyncMock(return_value={"ts": "123.456"})
@@ -1256,7 +1171,7 @@ class TestDeliveryFlags:
 
     @pytest.mark.asyncio
     async def test_post_pause_card_defaults_keep_current_behavior(self):
-        from agno.os.interfaces.slack.pause import post_pause_card
+        from agno.os.interfaces.slack.utils import post_pause_card
 
         client = make_async_client_mock()
         client.chat_postMessage = AsyncMock(return_value={"ts": "123.456"})
@@ -1272,22 +1187,11 @@ class TestDeliveryFlags:
         assert "link_names" not in kwargs
 
     def test_slack_interface_flags_reach_hitl_handler(self):
-        from agno.os.interfaces.slack.slack import Slack
-
-        agent_mock = make_agent_mock()
-        with patch("agno.os.interfaces.slack.slack.HITLHandler") as hitl_cls:
-            Slack(
-                agent=agent_mock,
-                token="xoxb-test",
-                signing_secret="s",
-                markdown=False,
-                unfurl_links=False,
-                unfurl_media=False,
-            ).get_router()
-        kwargs = hitl_cls.call_args.kwargs
-        assert kwargs["markdown"] is False
-        assert kwargs["unfurl_links"] is False
-        assert kwargs["unfurl_media"] is False
+        slack = _make_slack(AsyncMock(), markdown=False, unfurl_links=False, unfurl_media=False)
+        handler = HITLHandler(slack, make_async_client_mock())
+        assert handler.slack.markdown is False
+        assert handler.slack.unfurl_links is False
+        assert handler.slack.unfurl_media is False
 
     @pytest.mark.asyncio
     async def test_repause_honors_delivery_flags(self):
@@ -1295,24 +1199,13 @@ class TestDeliveryFlags:
         # the second pause card through complete_or_repause; both must carry the
         # operator's disabled markdown/unfurl flags (chat_postMessage sites, not
         # the scope-outed chat_stream continuation).
-        from agno.os.interfaces.slack.state import StreamState
-        from agno.os.interfaces.slack.types import SubmitContext
+        from agno.os.interfaces.slack.utils import StreamState, SubmitContext
 
-        handler = HITLHandler(
-            token="xoxb-test",
-            ssl=None,
-            entity=AsyncMock(),
-            entity_id="agent-1",
-            entity_name="Test Agent",
-            entity_type="agent",
-            task_display_mode="plan",
-            buffer_size=100,
-            markdown=False,
-            unfurl_links=False,
-            unfurl_media=False,
-        )
         mock_client = make_async_client_mock()
         mock_client.chat_postMessage = AsyncMock(return_value={"ts": "await-2"})
+        handler = HITLHandler(
+            _make_slack(AsyncMock(), markdown=False, unfurl_links=False, unfurl_media=False), mock_client
+        )
         state = StreamState()
         state.paused_event = Mock(run_id="run-1", active_requirements=[_make_requirement()])
         ctx = SubmitContext(
@@ -1326,8 +1219,7 @@ class TestDeliveryFlags:
             state_values={},
         )
 
-        with patch("agno.os.interfaces.slack.hitl.AsyncWebClient", return_value=mock_client):
-            await handler.complete_or_repause(ctx, make_stream_mock(), state)
+        await handler.complete_or_repause(ctx, make_stream_mock(), state)
 
         # Awaiting indicator + pause card, both carrying the disabled flags.
         assert mock_client.chat_postMessage.call_count == 2

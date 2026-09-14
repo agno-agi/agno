@@ -98,7 +98,7 @@ async def test_ssl_check_is_acknowledged():
 @pytest.mark.asyncio
 async def test_same_event_id_runs_once():
     agent_mock = make_agent_mock()
-    with patch("agno.os.interfaces.slack.event_handler.AsyncWebClient", return_value=make_async_client_mock()):
+    with patch("agno.os.interfaces.slack.handler.AsyncWebClient", return_value=make_async_client_mock()):
         app = build_app(agent_mock, reply_to_mentions_only=False)
         first = await make_signed_request(app, _dm_event("Ev-dup"))
         retry = await make_signed_request(app, _dm_event("Ev-dup"), **{"X-Slack-Retry-Num": "1"})
@@ -114,7 +114,7 @@ async def test_same_event_id_runs_once():
 async def test_unseen_retry_is_processed():
     """A retry whose original delivery never arrived must still run."""
     agent_mock = make_agent_mock()
-    with patch("agno.os.interfaces.slack.event_handler.AsyncWebClient", return_value=make_async_client_mock()):
+    with patch("agno.os.interfaces.slack.handler.AsyncWebClient", return_value=make_async_client_mock()):
         app = build_app(agent_mock, reply_to_mentions_only=False)
         resp = await make_signed_request(app, _dm_event("Ev-late"), **{"X-Slack-Retry-Num": "2"})
         await wait_for_call(agent_mock.arun)
@@ -126,7 +126,7 @@ async def test_unseen_retry_is_processed():
 @pytest.mark.asyncio
 async def test_distinct_event_ids_both_run():
     agent_mock = make_agent_mock()
-    with patch("agno.os.interfaces.slack.event_handler.AsyncWebClient", return_value=make_async_client_mock()):
+    with patch("agno.os.interfaces.slack.handler.AsyncWebClient", return_value=make_async_client_mock()):
         app = build_app(agent_mock, reply_to_mentions_only=False)
         await make_signed_request(app, _dm_event("Ev-a"))
         await make_signed_request(app, _dm_event("Ev-b"))
@@ -187,7 +187,7 @@ async def test_unknown_action_is_acknowledged():
 
 @pytest.mark.asyncio
 async def test_interaction_retry_is_dropped():
-    from agno.os.interfaces.slack.ids import ACTION_SUBMIT
+    from agno.os.interfaces.slack.utils import ACTION_SUBMIT
 
     app = build_app(make_agent_mock())
     payload = {
@@ -209,7 +209,7 @@ async def test_interaction_retry_is_dropped():
 
 @pytest.mark.asyncio
 async def test_interaction_dispatches_to_hitl_handler():
-    from agno.os.interfaces.slack.ids import ACTION_SUBMIT
+    from agno.os.interfaces.slack.utils import ACTION_SUBMIT
 
     app = build_app(make_agent_mock())
     payload = {

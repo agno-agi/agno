@@ -1,4 +1,4 @@
-"""Stop button, feedback, follow-ups, onboarding, and context wiring in the event handler."""
+"""Stop button, onboarding, and context wiring in the event handler."""
 
 from typing import Any, Dict
 from unittest.mock import AsyncMock, Mock, patch
@@ -7,38 +7,26 @@ import pytest
 
 from agno.agent import RunEvent
 from agno.exceptions import RunCancelledException
-from agno.os.interfaces.slack.event_handler import SlackEventHandler
-from agno.os.interfaces.slack.helpers import BotNameResolver
-from agno.os.interfaces.slack.runs import ActiveRunRegistry
+from agno.os.interfaces.slack import Slack
+from agno.os.interfaces.slack.handler import SlackEventHandler
+from agno.os.interfaces.slack.utils import Threads
 
 from .conftest import content_chunk, make_async_client_mock, make_stream_mock, make_streaming_body
 
 
 def _handler(client: Any, entity: Any, **overrides: Any) -> SlackEventHandler:
-    defaults: Dict[str, Any] = {
-        "token": "xoxb-test",
-        "ssl": None,
-        "entity": entity,
-        "entity_id": "agent-1",
-        "entity_name": "Test Agent",
-        "entity_type": "agent",
-        "bot_name_resolver": BotNameResolver(),
-        "reply_to_mentions_only": False,
-        "resolve_user_identity": False,
-        "respond_to_other_apps": False,
-        "loading_text": "Thinking...",
-        "loading_messages": None,
-        "task_display_mode": "plan",
-        "buffer_size": 100,
-        "client": client,
-    }
-    defaults.update(overrides)
-    return SlackEventHandler(**defaults)
+    entity.id = "agent-1"
+    entity.name = "Test Agent"
+    entity_type = overrides.pop("entity_type", "agent")
+    options: Dict[str, Any] = {"token": "xoxb-test", "signing_secret": "s", "reply_to_mentions_only": False}
+    options.update(overrides)
+    return SlackEventHandler(Slack(**{entity_type: entity}, **options), client)
 
 
 def _streaming_entity(chunks=None, raise_cancel: bool = False):
     entity = AsyncMock()
     entity.name = "Test Agent"
+    entity.db = None
     entity.aget_session = AsyncMock(return_value=None)
 
     async def _arun(*args, **kwargs):
@@ -58,56 +46,60 @@ def _event(ev: str, **attrs: Any) -> Mock:
 
 
 # ---------------------------------------------------------------------------
-# ActiveRunRegistry
+# Threads: the run in flight per thread
 # ---------------------------------------------------------------------------
 
 
+def _run_of(threads: Threads, channel: str, thread_ts: str):
+    thread = threads.get(channel, thread_ts)
+    return thread.run if thread else None
+
+
 @pytest.mark.asyncio
-async def test_registry_lifecycle_and_deferred_cancel():
-    registry = ActiveRunRegistry(max_entries=2)
+async def test_threads_lifecycle_and_deferred_cancel():
+    threads = Threads(max_entries=2)
     entity = Mock()
 
     with patch("agno.os.services.runs.cancel_component_run", new=AsyncMock()) as cancel:
-        run = registry.start("C1", "1.1", entity)
-        assert registry.get("C1", "1.1") is run
+        run = threads.start_run("C1", "1.1", entity)
+        assert _run_of(threads, "C1", "1.1") is run
 
         # Stop pressed before the run id is known: nothing to cancel yet
-        assert await registry.request_stop("C1", "1.1") == (run, True)
+        assert await threads.request_stop("C1", "1.1") == (run, True)
         cancel.assert_not_awaited()
 
         # The id arrives later and the deferred stop is applied
-        await registry.note_run_id(run, "run-1")
+        await threads.note_run_id(run, "run-1")
         cancel.assert_awaited_once_with(entity, "run-1")
 
         # Known id cancels immediately
-        run2 = registry.start("C1", "2.2", entity)
-        await registry.note_run_id(run2, "run-2")
-        await registry.request_stop("C1", "2.2")
+        run2 = threads.start_run("C1", "2.2", entity)
+        await threads.note_run_id(run2, "run-2")
+        await threads.request_stop("C1", "2.2")
         assert cancel.await_args.args == (entity, "run-2")
 
         # Capacity evicts the oldest thread
-        registry.start("C1", "3.3", entity)
-        assert registry.get("C1", "1.1") is None
-        assert len(registry) == 2
+        threads.start_run("C1", "3.3", entity)
+        assert threads.get("C1", "1.1") is None
 
-        # Only the owning run clears its entry
-        stale = registry.start("C1", "4.4", entity)
-        newer = registry.start("C1", "4.4", entity)
-        registry.finish("C1", "4.4", stale)
-        assert registry.get("C1", "4.4") is newer
-        registry.finish("C1", "4.4", newer)
-        assert registry.get("C1", "4.4") is None
+        # Only the owning run clears its slot
+        stale = threads.start_run("C1", "4.4", entity)
+        newer = threads.start_run("C1", "4.4", entity)
+        threads.finish_run("C1", "4.4", stale)
+        assert _run_of(threads, "C1", "4.4") is newer
+        threads.finish_run("C1", "4.4", newer)
+        assert _run_of(threads, "C1", "4.4") is None
 
-    assert await registry.request_stop("C9", "9.9") == (None, False)
+    assert await threads.request_stop("C9", "9.9") == (None, False)
 
 
 @pytest.mark.asyncio
 async def test_cancel_failure_is_logged_not_raised():
-    registry = ActiveRunRegistry()
-    run = registry.start("C1", "1.1", Mock())
+    threads = Threads()
+    run = threads.start_run("C1", "1.1", Mock())
     with patch("agno.os.services.runs.cancel_component_run", new=AsyncMock(side_effect=RuntimeError("no"))):
-        await registry.note_run_id(run, "run-1")
-        await registry.request_stop("C1", "1.1")
+        await threads.note_run_id(run, "run-1")
+        await threads.request_stop("C1", "1.1")
 
 
 # ---------------------------------------------------------------------------
@@ -147,7 +139,7 @@ async def test_run_cancelled_event_closes_stream_and_posts_stop_message():
     assert "Stopped by you." in posted
     assert "never sent" not in " ".join(posted)
     assert client.agents_sessions_setStatus.await_args_list[-1].kwargs["status"] == "active"
-    assert len(handler.active_runs) == 0
+    assert all(t.run is None for t in handler.threads._threads.values())
 
 
 @pytest.mark.asyncio
@@ -172,13 +164,13 @@ async def test_run_id_is_registered_from_first_event():
     handler = _handler(client, entity)
     seen = {}
 
-    original_note = handler.active_runs.note_run_id
+    original_note = handler.threads.note_run_id
 
     async def spy(run, run_id):
         seen["run_id"] = run_id
         await original_note(run, run_id)
 
-    handler.active_runs.note_run_id = spy  # type: ignore[method-assign]
+    handler.threads.note_run_id = spy  # type: ignore[method-assign]
     await handler.handle_streaming(make_streaming_body())
 
     assert seen["run_id"] == "run-42"
@@ -209,18 +201,18 @@ async def test_streaming_sets_processing_then_active_and_stops_with_status():
 
 
 @pytest.mark.asyncio
-async def test_registry_refuses_stop_from_someone_else():
-    registry = ActiveRunRegistry()
-    run = registry.start("C1", "1.1", Mock(), owner="U_OWNER")
+async def test_threads_refuse_stop_from_someone_else():
+    threads = Threads()
+    run = threads.start_run("C1", "1.1", Mock(), owner="U_OWNER")
     with patch("agno.os.services.runs.cancel_component_run", new=AsyncMock()) as cancel:
-        await registry.note_run_id(run, "run-1")
+        await threads.note_run_id(run, "run-1")
 
-        refused, allowed = await registry.request_stop("C1", "1.1", requested_by="U_OTHER")
+        refused, allowed = await threads.request_stop("C1", "1.1", requested_by="U_OTHER")
         assert refused is run and allowed is False
         assert run.stream_halted is True
         cancel.assert_not_awaited()
 
-        accepted, allowed = await registry.request_stop("C1", "1.1", requested_by="U_OWNER")
+        accepted, allowed = await threads.request_stop("C1", "1.1", requested_by="U_OWNER")
         assert accepted is run and allowed is True
         cancel.assert_awaited_once_with(run.entity, "run-1")
 
@@ -231,7 +223,7 @@ async def test_run_records_the_sender_as_owner():
     seen = {}
 
     async def _arun(*args, **kwargs):
-        seen["owner"] = handler.active_runs.get("C123", kwargs["session_id"].split(":")[-1]).owner
+        seen["owner"] = handler.threads.get("C123", kwargs["session_id"].split(":")[-1]).run.owner
         yield content_chunk("x")
 
     entity = AsyncMock()
@@ -408,7 +400,7 @@ async def test_legacy_context_shape_is_accepted():
     await handler.handle_context_changed(
         {"assistant_thread": {"channel_id": "D1", "thread_ts": "1.1", "context": {"channel_id": "C5"}}}
     )
-    assert handler.thread_context.entities_for("D1", "1.1") == [{"type": "slack#/types/channel_id", "value": "C5"}]
+    assert handler.threads.entities_for("D1", "1.1") == [{"type": "slack#/types/channel_id", "value": "C5"}]
 
 
 @pytest.mark.asyncio

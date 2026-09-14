@@ -1,19 +1,19 @@
 from typing import Any, Dict
 
 from agno.models.response import ToolExecution
-from agno.os.interfaces.slack.builders import build_pause_message
-from agno.os.interfaces.slack.ids import (
+from agno.os.interfaces.slack.utils import (
     ACTION_EXTERNAL_RESULT,
     ACTION_FEEDBACK_SELECT,
     ACTION_INPUT_FIELD_PREFIX,
     ACTION_ROW_APPROVE,
     ACTION_ROW_REJECT,
     ACTION_SUBMIT,
+    build_pause_message,
     parse_row_block_id,
+    parse_submit_payload,
     pause_block_id,
     row_block_id,
 )
-from agno.os.interfaces.slack.interactions import parse_submit_payload
 from agno.run.requirement import RunRequirement, UserFeedbackQuestion
 from agno.tools.function import UserFeedbackOption, UserInputField
 
@@ -418,7 +418,7 @@ class TestParseSubmitPayload:
 
 class TestBuildConfirmationToggleCard:
     def test_approve_selected_has_primary_style(self):
-        from agno.os.interfaces.slack.builders import build_confirmation_toggle_card
+        from agno.os.interfaces.slack.utils import build_confirmation_toggle_card
 
         card = build_confirmation_toggle_card(
             req_id="r1",
@@ -434,7 +434,7 @@ class TestBuildConfirmationToggleCard:
         assert approve_btn.style == "primary"
 
     def test_deny_selected_has_danger_style(self):
-        from agno.os.interfaces.slack.builders import build_confirmation_toggle_card
+        from agno.os.interfaces.slack.utils import build_confirmation_toggle_card
 
         card = build_confirmation_toggle_card(
             req_id="r1",
@@ -450,7 +450,7 @@ class TestBuildConfirmationToggleCard:
         assert deny_btn.style == "danger"
 
     def test_preserves_tool_name_and_body(self):
-        from agno.os.interfaces.slack.builders import build_confirmation_toggle_card
+        from agno.os.interfaces.slack.utils import build_confirmation_toggle_card
 
         card = build_confirmation_toggle_card(
             req_id="r1",
@@ -464,7 +464,7 @@ class TestBuildConfirmationToggleCard:
         assert card.body.text == "• customer_id: `C-42`"
 
     def test_long_body_truncated_to_200_chars(self):
-        from agno.os.interfaces.slack.builders import build_confirmation_toggle_card
+        from agno.os.interfaces.slack.utils import build_confirmation_toggle_card
 
         long_body = "• body: `" + "x" * 300 + "`"
         card = build_confirmation_toggle_card(
@@ -484,14 +484,14 @@ class TestBuildConfirmationToggleCard:
 
 class TestResponseBlocks:
     def test_strips_actions_from_cards(self):
-        from agno.os.interfaces.slack.builders import response_blocks
+        from agno.os.interfaces.slack.utils import response_blocks
 
         original = [{"type": "card", "block_id": "rowact:r1:confirmation", "actions": [{"type": "button"}]}]
         result = response_blocks(original, {}, [])
         assert "actions" not in result[0]
 
     def test_converts_selected_approve_to_approved_title(self):
-        from agno.os.interfaces.slack.builders import response_blocks
+        from agno.os.interfaces.slack.utils import response_blocks
 
         original = [
             {
@@ -505,7 +505,7 @@ class TestResponseBlocks:
         assert result[0]["title"]["text"] == "*Approved:* delete_file"
 
     def test_converts_selected_deny_to_denied_title(self):
-        from agno.os.interfaces.slack.builders import response_blocks
+        from agno.os.interfaces.slack.utils import response_blocks
 
         original = [
             {
@@ -519,7 +519,7 @@ class TestResponseBlocks:
         assert result[0]["title"]["text"] == "*Denied:* delete_file"
 
     def test_skips_actions_blocks(self):
-        from agno.os.interfaces.slack.builders import response_blocks
+        from agno.os.interfaces.slack.utils import response_blocks
 
         original = [
             {"type": "card", "block_id": "x", "actions": []},
@@ -530,7 +530,7 @@ class TestResponseBlocks:
         assert result[0]["type"] == "card"
 
     def test_skips_reject_reason_inputs(self):
-        from agno.os.interfaces.slack.builders import response_blocks
+        from agno.os.interfaces.slack.utils import response_blocks
 
         original = [
             {"type": "input", "block_id": "reject_reason:r1"},
@@ -541,7 +541,7 @@ class TestResponseBlocks:
         assert result[0]["type"] == "card"
 
     def test_builds_submitted_card_from_input_values(self):
-        from agno.os.interfaces.slack.builders import response_blocks
+        from agno.os.interfaces.slack.utils import response_blocks
 
         original = [
             {
@@ -564,7 +564,7 @@ class TestResponseBlocks:
         assert "test@example.com" in submitted_card["body"]["text"]
 
     def test_truncates_body_over_200_chars(self):
-        from agno.os.interfaces.slack.builders import response_blocks
+        from agno.os.interfaces.slack.utils import response_blocks
 
         original = [
             {
@@ -588,14 +588,14 @@ class TestResponseBlocks:
 
 class TestRenderArgValueInerting:
     def test_backtick_replaced_with_lookalike(self):
-        from agno.os.interfaces.slack.builders import render_arg_value
+        from agno.os.interfaces.slack.utils import render_arg_value
 
         result = render_arg_value("x ` breakout `code`")
         assert "`" not in result
         assert "ˋ" in result
 
     def test_angle_brackets_replaced_with_lookalikes(self):
-        from agno.os.interfaces.slack.builders import render_arg_value
+        from agno.os.interfaces.slack.utils import render_arg_value
 
         result = render_arg_value("<!channel> and <@U123>")
         assert "<" not in result
@@ -604,7 +604,7 @@ class TestRenderArgValueInerting:
         assert "›" in result
 
     def test_newlines_neutralized(self):
-        from agno.os.interfaces.slack.builders import render_arg_value
+        from agno.os.interfaces.slack.utils import render_arg_value
 
         result = render_arg_value("line1\nline2\rline3")
         assert "\n" not in result
@@ -613,7 +613,7 @@ class TestRenderArgValueInerting:
         assert "\\r" in result
 
     def test_json_encoded_values_also_inerted(self):
-        from agno.os.interfaces.slack.builders import render_arg_value
+        from agno.os.interfaces.slack.utils import render_arg_value
 
         result = render_arg_value({"cmd": "`rm -rf /`", "note": "<!here>\nping"})
         assert "`" not in result
@@ -622,7 +622,7 @@ class TestRenderArgValueInerting:
         assert "\n" not in result
 
     def test_plain_string_passes_through(self):
-        from agno.os.interfaces.slack.builders import render_arg_value
+        from agno.os.interfaces.slack.utils import render_arg_value
 
         assert render_arg_value("/tmp/demo.txt") == "/tmp/demo.txt"
 
@@ -655,7 +655,7 @@ class TestRenderArgValueInerting:
         assert "\r" not in body
 
     def test_response_blocks_inerts_submitted_labels(self):
-        from agno.os.interfaces.slack.builders import response_blocks
+        from agno.os.interfaces.slack.utils import response_blocks
 
         original = [
             {
@@ -675,7 +675,7 @@ class TestRenderArgValueInerting:
         assert "\n" not in body
 
     def test_response_blocks_inerts_submitted_values(self):
-        from agno.os.interfaces.slack.builders import response_blocks
+        from agno.os.interfaces.slack.utils import response_blocks
 
         original = [
             {

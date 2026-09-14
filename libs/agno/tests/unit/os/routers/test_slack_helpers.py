@@ -2,8 +2,9 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
-from agno.os.interfaces.slack.helpers import (
+from agno.os.interfaces.slack.utils import (
     BotNameResolver,
+    StreamState,
     download_event_files_async,
     extract_event_context,
     member_name,
@@ -15,7 +16,6 @@ from agno.os.interfaces.slack.helpers import (
     task_id,
     upload_response_media_async,
 )
-from agno.os.interfaces.slack.state import StreamState
 
 
 class TestTaskId:
@@ -81,7 +81,7 @@ class TestDownloadEventFilesAsync:
                 {"id": "F1", "name": "clip.mp4", "mimetype": "video/mp4", "url_private": "https://files.slack.com/F1"}
             ]
         }
-        with patch("agno.os.interfaces.slack.helpers.httpx.AsyncClient") as mock_httpx:
+        with patch("agno.os.interfaces.slack.utils.httpx.AsyncClient") as mock_httpx:
             mock_client = AsyncMock()
             mock_client.get = AsyncMock(return_value=mock_response)
             mock_httpx.return_value.__aenter__ = AsyncMock(return_value=mock_client)
@@ -198,7 +198,7 @@ class TestUploadResponseMediaAsync:
             videos=None,
             audio=None,
         )
-        with patch("agno.os.interfaces.slack.helpers.log_error"):
+        with patch("agno.os.interfaces.slack.utils.log_error"):
             await upload_response_media_async(client, response, "C1", "ts1")
 
 

@@ -3,8 +3,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from agno.agent import RunEvent
-from agno.os.interfaces.slack.events import process_event
-from agno.os.interfaces.slack.state import StreamState
+from agno.os.interfaces.slack.utils import StreamState, process_event
 from agno.run.team import TeamRunEvent
 from agno.run.workflow import WorkflowRunEvent
 
