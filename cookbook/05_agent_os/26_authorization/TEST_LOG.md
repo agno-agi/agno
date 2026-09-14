@@ -1,8 +1,16 @@
 # Test Log: 26_authorization
 
-Last updated: 2026-09-10 (migrated 01-10 from AuthorizationConfig/ManagedRoleStore to the
-`Authorization` facade; all re-run clean -- self-testing ones exit 0 with no traceback, 06/07
-reach Uvicorn startup. 08/10 and 09 run db-free; 06/07 serve.)
+Last updated: 2026-09-11 (the user directory is now fully separate from `Authorization`. It is the
+top-level `AgentOS(user_directory=...)` switch, a peer of `user_isolation`, and its roster is seeded
+on the `ManagedUserStore` directly (`users.upsert(...)`). `Authorization` never touches it:
+`seed()` bootstraps the admin ROLE only, and per-user roles are assigned via `role_store.assign(...)`.
+The directory-using cookbooks (00/02/06/07) build the store, seed it, and pass it via
+`UserDirectoryConfig(user_store=...)`. Re-ran 00/02 end to end (pass) and 06/07 to boot with the
+correct `/authz` + `/users` routes. 03 was already top-level; 01/04/05/08/09/10 are roles-only or
+no-directory and unchanged.)
+
+Earlier (2026-09-10): migrated 01-10 from AuthorizationConfig/ManagedRoleStore to the `Authorization`
+facade; all re-run clean.
 
 All examples were run with `.venvs/demo/bin/python` against the branch's library.
 None of the local examples need a database server, a model key, or an external
@@ -16,9 +24,11 @@ throwaway keys.
 
 **Test mode:** LIVE (driven via TestClient; no model calls needed)
 
-**Description:** The one-object `Authorization` facade: verification + roles + user
-directory + audit + the admin API in a single object that borrows the OS db. Defines
-three roles, seeds an admin and two users, and makes real requests.
+**Description:** The `Authorization` facade carries verification + roles + audit + the
+admin API in one object that borrows the OS db; the user directory is separate, a
+`ManagedUserStore` seeded directly and passed as the top-level
+`AgentOS(user_directory=...)`. Defines three roles, bootstraps an admin role, assigns
+two users their roles, and makes real requests.
 
 **Result:** alice (admin) ran vault, carol (runner) ran research, bob (viewer) read
 research -- all ALLOWED; bob running research BLOCKED (viewer is read-only). dave, an

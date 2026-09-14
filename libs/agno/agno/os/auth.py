@@ -137,7 +137,10 @@ def provision_user_with_default_role(
     second query).
     """
     user, created = user_store.provision_from_claims(subject, claims, email_claim=email_claim, name_claim=name_claim)
-    if created and role_store is not None:
+    # is_default is a floor for the role-less, never an override: a subject new to the DIRECTORY may
+    # already hold a role (an admin granted via seed(admin=)/role_store.assign but never added to the
+    # roster), and granting the default here would DEMOTE them on their first request. Guard on it.
+    if created and role_store is not None and not role_store.roles_of(subject):
         role = default_role or _store_default_role(role_store)
         if role:
             try:
@@ -164,6 +167,15 @@ async def _astore_default_role(role_store: Any) -> Optional[str]:
     return await asyncio.to_thread(_store_default_role, role_store)
 
 
+async def _aroles_of(role_store: Any, subject: str) -> List[str]:
+    """The subject's roles via the store's async method when present, else the sync one offloaded.
+    Used to guard the default-role grant so a role-holder new to the directory is not demoted."""
+    afn = getattr(role_store, "aroles_of", None)
+    if callable(afn):
+        return await afn(subject)
+    return await asyncio.to_thread(role_store.roles_of, subject)
+
+
 async def aprovision_user_with_default_role(
     user_store: Any,
     role_store: Any,
@@ -181,7 +193,9 @@ async def aprovision_user_with_default_role(
     user, created = await user_store.aprovision_from_claims(
         subject, claims, email_claim=email_claim, name_claim=name_claim
     )
-    if created and role_store is not None:
+    # Only grant the default to a subject that holds no role yet (see the sync twin): a subject new to
+    # the directory may already be an admin, and the default must not demote them on first request.
+    if created and role_store is not None and not await _aroles_of(role_store, subject):
         role = default_role or await _astore_default_role(role_store)
         if role:
             try:

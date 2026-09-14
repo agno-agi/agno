@@ -9,16 +9,16 @@ directory, computed live on every read (no cache, no refresh step):
     by_role                     users per role, when a role store is configured
 
 It rides on the same router as /users, so it is admin-only and is mounted wherever
-user management is: Authorization(...) mounts /users whenever it has a directory,
-with or without roles (see 07_manage_users.py for the users-only setup). Deleting
-a user moves every number at once.
+user management is: AgentOS mounts /users whenever it has a user directory, with or
+without roles (see 07_manage_users.py for the users-only setup). Deleting a user
+moves every number at once.
 
 This example seeds a directory and a role store, then reads the endpoint through
 the AgentOS pipeline with an admin token and prints the response. No model calls
 and no database server are needed.
 
 Run it:
-    pip install "agno[roles]"
+    pip install "agno[os]"
     python 11_user_management_metrics.py
 """
 
@@ -30,7 +30,8 @@ from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS, create_dev_token
-from agno.os.authz import Authorization
+from agno.os.authz import Authorization, ManagedUserStore
+from agno.os.config import UserDirectoryConfig
 
 OS_ID = "user-management-metrics-os"
 SECRET = "your-secret-key-at-least-256-bits-long"
@@ -39,8 +40,8 @@ os.makedirs("tmp", exist_ok=True)
 if os.path.exists("tmp/user_management_metrics.db"):
     os.remove("tmp/user_management_metrics.db")
 
-# One database, one object: roles and the directory live in it, and AgentOS mounts /authz and
-# /users (with /users/metrics) from it.
+# One database: roles and the directory live in it. AgentOS mounts /authz from the
+# Authorization object and /users (with /users/metrics) from the user directory.
 db = SqliteDb(db_file="tmp/user_management_metrics.db")
 authz = Authorization(
     db=db,
@@ -52,21 +53,20 @@ authz = Authorization(
 authz.define_role("admin", ["agent_os:admin"])
 authz.define_role("analyst", ["agents:*:read"])
 authz.define_role("viewer", ["agents:*:read"])
+authz.seed(admin="alice")
+authz.assign("bob", "analyst")
+authz.assign("carol", "analyst")
+authz.assign("dave", "viewer")
 
-# A small directory: an admin, two analysts, one viewer, one person with no role yet,
-# and one who has been switched off.
-authz.seed(
-    users=[
-        ("alice", {"email": "alice@co", "name": "Alice", "role": "admin"}),
-        ("bob", {"email": "bob@co", "name": "Bob", "role": "analyst"}),
-        ("carol", {"email": "carol@co", "name": "Carol", "role": "analyst"}),
-        ("dave", {"email": "dave@co", "name": "Dave", "role": "viewer"}),
-        ("erin", {"email": "erin@co", "name": "Erin"}),
-        ("frank", {"email": "frank@co", "name": "Frank"}),
-    ]
-)
-users = authz.user_store
-assert users is not None
+# A small directory, seeded on the store itself: an admin, two analysts, one viewer,
+# one person with no role yet, and one who has been switched off.
+users = ManagedUserStore(db=db)
+users.upsert("alice", email="alice@co", name="Alice")
+users.upsert("bob", email="bob@co", name="Bob")
+users.upsert("carol", email="carol@co", name="Carol")
+users.upsert("dave", email="dave@co", name="Dave")
+users.upsert("erin", email="erin@co", name="Erin")
+users.upsert("frank", email="frank@co", name="Frank")
 users.set_disabled("frank", True)
 
 # Backdate three of them so the per-day series has more than one point.
@@ -83,7 +83,7 @@ for user_id, created_at in (
 agent = Agent(
     id="research-agent",
     name="Research Agent",
-    model=OpenAIResponses(id="gpt-5.5"),
+    model=OpenAIResponses(id="gpt-5.6-luna"),
     db=db,
 )
 
@@ -91,7 +91,10 @@ agent_os = AgentOS(
     id=OS_ID,
     db=db,
     agents=[agent],
-    authorization=authz,  # one object; /authz and /users are mounted for you
+    authorization=authz,  # roles -> /authz is mounted for you
+    # the directory is a top-level switch; pass the store seeded above. Provisioning is
+    # off so a caller's first request does not register them and move the counts.
+    user_directory=UserDirectoryConfig(user_store=users, auto_provision=False),
 )
 app = agent_os.get_app()
 

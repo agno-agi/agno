@@ -38,7 +38,8 @@ from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS, create_dev_token
-from agno.os.authz import Authorization
+from agno.os.authz import Authorization, ManagedUserStore
+from agno.os.config import UserDirectoryConfig
 
 OS_ID = os.getenv("OS_ID", "manage-users-os")  # the token audience (your os_id)
 ADMIN_SUBJECT = os.getenv("ADMIN_SUBJECT", "admin@example.com")
@@ -70,9 +71,19 @@ CORS_ORIGINS = [
 
 os.makedirs("tmp", exist_ok=True)
 
-# One database, one object, users-only. No define_role, so there is no role store and no /authz:
-# the default scope plane (the caller's token scopes) governs, and Authorization mounts just /users.
+# One database, users-only. No define_role, so there is no role store and no /authz: the default
+# scope plane (the caller's token scopes) governs. The directory is the top-level user_directory
+# switch on AgentOS below, so only /users is mounted.
 db = SqliteDb(db_file="tmp/manage_users.db")
+
+# The directory (roster) is seeded on the store directly so a freshly-connected frontend isn't empty.
+# No roles here -- admin of /users is the agent_os:admin scope on the caller's token, not a seeded role.
+users = ManagedUserStore(db=db)
+users.upsert(ADMIN_SUBJECT, name="Bootstrap admin")
+users.upsert("bob", email="bob@co", name="Bob")
+users.upsert("carol", email="carol@co", name="Carol")
+
+# Authorization here is verify-only (no roles). It never touches the directory.
 authz = Authorization(
     db=db,
     verification_keys=KEYS,
@@ -82,16 +93,6 @@ authz = Authorization(
     audience=OS_ID,
     issuer=ISSUER,
     audit=True,  # record every access decision
-)
-
-# Seed a couple of people so a freshly-connected frontend isn't empty. No roles here -- admin of
-# /users is the agent_os:admin scope on the caller's token.
-authz.seed(
-    users=[
-        (ADMIN_SUBJECT, {"name": "Bootstrap admin"}),
-        ("bob", {"email": "bob@co", "name": "Bob"}),
-        ("carol", {"email": "carol@co", "name": "Carol"}),
-    ]
 )
 
 research_agent = Agent(
@@ -107,7 +108,9 @@ agent_os = AgentOS(
     db=db,
     agents=[research_agent],
     cors_allowed_origins=CORS_ORIGINS,
-    authorization=authz,  # mounts /users only; no roles means no /authz surface
+    # the directory is a top-level switch; pass the store you seeded above
+    user_directory=UserDirectoryConfig(user_store=users, auto_provision=True),
+    authorization=authz,  # verify-only (no roles) -> mounts /users, no /authz surface
 )
 app = agent_os.get_app()
 # Only /users is mounted (no roles were defined), so there is no /authz roles surface for a frontend

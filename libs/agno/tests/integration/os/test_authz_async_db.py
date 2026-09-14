@@ -273,17 +273,20 @@ def test_user_management_metrics_async_on_async_db(tmp_path):
 
     # served end to end on the async DB: the admin gate awaits the role store, and the
     # handler awaits the collector, so nothing on the path touches the DB synchronously
+    from agno.os.config import UserDirectoryConfig
+
     os_ = AgentOS(
         id=OS_ID,
         agents=[Agent(id="research", name="R", db=InMemoryDb())],
         db=adb,
+        # the directory is a top-level concern (mounts /users); roles stay on Authorization (/authz)
+        user_directory=UserDirectoryConfig(user_store=users, auto_provision=False),
         authorization=Authorization(
             verification_keys=[SECRET],
             algorithm="HS256",
             verify_audience=True,
             audience=OS_ID,
             role_store=roles,
-            user_directory=users,
         ),
     )
     app = os_.get_app()

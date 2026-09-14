@@ -180,14 +180,14 @@ def _os(role_store, user_store, *, auto_provision=False):
     return AgentOS(
         id=OS_ID,
         agents=[agent],
+        # The directory is a top-level concern now (mounts /users); roles stay on Authorization (/authz).
+        user_directory=UserDirectoryConfig(user_store=user_store, auto_provision=auto_provision),
         authorization=Authorization(
             verification_keys=[SECRET],
             algorithm="HS256",
             verify_audience=True,
             audience=OS_ID,
-            role_store=role_store,  # mounts /authz (roles) ...
-            user_directory=user_store,  # ... and /users (directory)
-            auto_provision=auto_provision,
+            role_store=role_store,
         ),
     )
 
@@ -306,13 +306,13 @@ def test_user_metrics_api_without_a_role_store(tmp_path):
         id=OS_ID,
         db=SqliteDb(db_file=str(tmp_path / "os.db")),
         agents=[agent],
+        # provisioning off: the caller below must not register itself and move the counts
+        user_directory=UserDirectoryConfig(user_store=users, auto_provision=False),
         authorization=Authorization(
             verification_keys=[SECRET],
             algorithm="HS256",
             verify_audience=True,
             audience=OS_ID,
-            user_directory=users,
-            auto_provision=False,  # the caller below must not register itself and move the counts
         ),
     ).get_app()
     client = TestClient(app)
@@ -556,9 +556,8 @@ def test_agentos_adopts_its_db_so_the_kill_switch_persists(tmp_path):
         id="user-adopt-os",
         agents=[Agent(id="a1", name="A", db=os_db)],
         db=os_db,
-        authorization=Authorization(
-            verification_keys=["k" * 40], algorithm="HS256", role_store=roles, user_directory=users
-        ),
+        user_directory=UserDirectoryConfig(user_store=users),
+        authorization=Authorization(verification_keys=["k" * 40], algorithm="HS256", role_store=roles),
     ).get_app()
 
     # adopted, and the revocation made before adoption came across
@@ -603,11 +602,11 @@ def test_user_store_without_a_persistable_db_fails_fast():
             id="unpersisted-users-os",
             agents=[Agent(id="a1", name="A", db=non_sql_db)],
             db=non_sql_db,
+            user_directory=UserDirectoryConfig(user_store=ManagedUserStore()),  # bare: nothing to persist into
             authorization=Authorization(
                 verification_keys=["k" * 40],
                 algorithm="HS256",
                 role_store=roles,
-                user_directory=ManagedUserStore(),  # bare: nothing to persist into
             ),
         ).get_app()
 
