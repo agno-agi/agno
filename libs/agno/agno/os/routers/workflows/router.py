@@ -317,6 +317,10 @@ async def handle_workflow_via_websocket(
             queue_worker is not None
             and not is_factory
             and getattr(workflow, "db", None) is not None
+            # The worker resolves the registry instance, so a ticket cannot
+            # carry a version pin: a pinned submission takes the in-process
+            # path below, where the pin is stamped on the run (as over HTTP)
+            and version is None
             and payload_is_queueable(queued_ws_payload)
             and any(
                 getattr(candidate, "id", None) == workflow_id and not isinstance(candidate, WorkflowFactory)
@@ -383,8 +387,8 @@ async def handle_workflow_via_websocket(
             return
         if queue_worker is not None:
             log_warning(
-                "WS workflow submission bypasses the durable queue (factory/off-registry/no-db "
-                "workflows are not queueable): bounded and observable, but NOT durable."
+                "WS workflow submission bypasses the durable queue (factory/off-registry/no-db/"
+                "version-pinned workflows are not queueable): bounded and observable, but NOT durable."
             )
 
         # Version-stable preview: an explicitly pinned version is recorded on
