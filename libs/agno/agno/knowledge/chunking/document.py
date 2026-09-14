@@ -11,6 +11,29 @@ class DocumentChunking(ChunkingStrategy):
         self.chunk_size = chunk_size
         self.overlap = overlap
 
+    def _split_oversized_text(self, text: str) -> List[str]:
+        """Split text that has no usable sentence boundary into pieces no longer than chunk_size.
+
+        Pieces are cut at the last whitespace before the limit so words stay intact. A single
+        token longer than chunk_size is hard-cut, matching FixedSizeChunking.
+        """
+        pieces: List[str] = []
+        start = 0
+        text_length = len(text)
+        while start < text_length:
+            end = min(start + self.chunk_size, text_length)
+            if end < text_length:
+                cut = end
+                while cut > start and not text[cut].isspace():
+                    cut -= 1
+                if cut > start:
+                    end = cut
+            piece = text[start:end].strip()
+            if piece:
+                pieces.append(piece)
+            start = end
+        return pieces
+
     def chunk(self, document: Document) -> List[Document]:
         """Split document into chunks based on document structure"""
         if len(document.content) <= self.chunk_size:
@@ -49,11 +72,19 @@ class DocumentChunking(ChunkingStrategy):
                 # Split oversized paragraph by sentences
                 import re
 
-                sentences = re.split(r"(?<=[.!?])\s+", para)
-                for sentence in sentences:
+                sentences: List[str] = []
+                for sentence in re.split(r"(?<=[.!?])\s+", para):
                     sentence = sentence.strip()
                     if not sentence:
                         continue
+                    # A single sentence (or a paragraph with no sentence boundaries) can still be
+                    # larger than chunk_size, so split it further at word boundaries.
+                    if len(sentence) > self.chunk_size:
+                        sentences.extend(self._split_oversized_text(sentence))
+                    else:
+                        sentences.append(sentence)
+
+                for sentence in sentences:
                     sentence_size = len(sentence)
 
                     if current_size + sentence_size <= self.chunk_size:
