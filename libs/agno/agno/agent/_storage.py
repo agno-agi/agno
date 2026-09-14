@@ -1308,9 +1308,7 @@ def from_dict(
             elif registry is not None:
                 filesystem_db = registry.get_db(filesystem_db_id)
             if filesystem_db_id is not None and filesystem_db is None:
-                raise ValueError(
-                    f"database {filesystem_db_id!r} was not found on the agent or in the registry"
-                )
+                raise ValueError(f"database {filesystem_db_id!r} was not found on the agent or in the registry")
             config["filesystem"] = FileSystem.from_dict(filesystem_config, db=filesystem_db)
         except (TypeError, ValueError) as e:
             if strict:

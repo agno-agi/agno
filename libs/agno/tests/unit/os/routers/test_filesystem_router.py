@@ -230,12 +230,8 @@ def test_managed_isolation_requires_authentication_and_separates_users(tmp_path)
 
     assert client.get("/agents/notes/files").status_code == 401
 
-    upper = client.get(
-        "/agents/notes/files/content", params={"path": "private.md"}, headers=_headers("Alice")
-    )
-    lower = client.get(
-        "/agents/notes/files/content", params={"path": "private.md"}, headers=_headers("alice")
-    )
+    upper = client.get("/agents/notes/files/content", params={"path": "private.md"}, headers=_headers("Alice"))
+    lower = client.get("/agents/notes/files/content", params={"path": "private.md"}, headers=_headers("alice"))
 
     assert upper.status_code == 200
     assert lower.status_code == 200

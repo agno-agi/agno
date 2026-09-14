@@ -67,7 +67,12 @@ agent_os = AgentOS(
     id="filesystem-os",
     description="AgentOS with a durable per-agent filesystem.",
     db=db,
-    agents=[filesystem_agent, filesystem_agent_2, filesystem_agent_3, custom_filesystem_agent],
+    agents=[
+        filesystem_agent,
+        filesystem_agent_2,
+        filesystem_agent_3,
+        custom_filesystem_agent,
+    ],
 )
 app = agent_os.get_app()
 

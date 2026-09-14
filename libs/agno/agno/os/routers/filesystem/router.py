@@ -148,9 +148,7 @@ async def _get_global_filesystem_agent_ids(
         raise HTTPException(status_code=403, detail=build_insufficient_permissions_detail(["agents:read"]))
 
     agent_ids = {
-        agent_id
-        for entry in os.agents or []
-        if isinstance((agent_id := getattr(entry, "id", None)), str) and agent_id
+        agent_id for entry in os.agents or [] if isinstance((agent_id := getattr(entry, "id", None)), str) and agent_id
     }
 
     if os.db is not None:

@@ -92,11 +92,11 @@ from agno.utils.string import generate_id, generate_id_from_name
 from agno.workflow import RemoteWorkflow, Workflow, WorkflowFactory
 
 if TYPE_CHECKING:
-    from agno.os.schema import FileSystemConfig
-
     # Typed for static checkers only -- fastmcp is an optional extra, so importing it at
     # runtime here would break `import agno.os` when the extra is not installed.
     from fastmcp.server.auth import AuthProvider
+
+    from agno.os.schema import FileSystemConfig
 
 
 @asynccontextmanager
