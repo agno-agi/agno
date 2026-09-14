@@ -2104,8 +2104,10 @@ def _register_server_card(
     card_url: Optional[str] = None,
     allowed_hosts: Optional[List[str]] = None,
 ) -> None:
+    import json
+
     from starlette.requests import Request
-    from starlette.responses import JSONResponse, Response
+    from starlette.responses import Response
 
     # The body varies with the request host unless a URL was configured, so a shared cache must
     # key on the headers that shape it -- otherwise one caller's card is served to everyone.
@@ -2113,8 +2115,15 @@ def _register_server_card(
 
     @mcp.custom_route(MCP_SERVER_CARD_PATH, methods=["GET"], include_in_schema=False)
     async def server_card(request: Request) -> Response:
-        return JSONResponse(
-            await _server_card(mcp, os, request, version, card_url, allowed_hosts),
+        # Discovery should be readable directly in a browser without a JSON formatter.
+        return Response(
+            json.dumps(
+                await _server_card(mcp, os, request, version, card_url, allowed_hosts),
+                ensure_ascii=False,
+                allow_nan=False,
+                indent=2,
+            )
+            + "\n",
             media_type=SERVER_CARD_MEDIA_TYPE,
             headers={
                 "Cache-Control": "public, max-age=300",
@@ -2831,15 +2840,22 @@ def _mcp_server_is_open(os: "AgentOS") -> bool:
     which now reports the REST/WS plane only. Otherwise this defers to that shared
     detection: ``AgentOS(authorization=True)``, JWT env vars, a manually installed
     ``JWTMiddleware`` on a ``base_app``, and the security key all count as authenticated.
-    Only the fully-anonymous case (no mcp_auth and REST mode "none") answers requests
-    carrying no bearer token -- the case a rebound web page could drive, so the one that
-    needs default transport security. A service-account verifier alone does NOT close that
-    path (PATs are checked only when presented).
+    A mixed public/JWT deployment also accepts anonymous MCP requests when
+    PublicSurface selects MCP: its route policy bypasses REST authentication for
+    those requests. Both that case and REST mode "none" need default transport
+    security. A service-account verifier alone does NOT close the anonymous path
+    (PATs are checked only when presented).
     """
     from agno.os.auth import get_effective_auth_mode
 
     if getattr(os, "mcp_auth", None) is not None:
         return False
+    # Mirror PublicRoutePolicy's mixed-mode anonymous admission. Merely selecting
+    # public MCP does not bypass a security key or JWT configured without
+    # authorization=True; the parent auth middleware still challenges those.
+    public = getattr(os, "public", None)
+    if bool(getattr(os, "authorization", False)) and public is not None and public.mcp:
+        return True
     return (
         get_effective_auth_mode(
             getattr(os, "settings", None),
@@ -2946,8 +2962,8 @@ def get_mcp_server(
     # Outermost: built-in DNS-rebinding protection (runs first, before auth and tools).
     #
     # A configured ``allowed_hosts`` always applies. On top of that, when the server is OPEN
-    # (no JWT and no security key, so /mcp answers anonymous callers) we default to
-    # localhost-only protection even without ``allowed_hosts`` -- this is the one config a
+    # (including public MCP alongside JWT-protected REST) we default to localhost-only
+    # protection even without ``allowed_hosts`` -- these are the configurations a
     # rebound web page could drive, and it restores the safe default fastmcp's own guard gave
     # before we disabled it. Authenticated deployments rely on the bearer token, which a
     # rebinding attacker cannot supply, so protection there stays opt-in: their real hostname
