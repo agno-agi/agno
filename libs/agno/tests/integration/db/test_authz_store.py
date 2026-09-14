@@ -205,3 +205,70 @@ def test_a_backend_without_the_contract_raises_not_implemented():
 
     with pytest.raises(NotImplementedError):
         InMemoryDb().get_authz_direct_roles("bob")
+
+
+# ---------------------------------------------------------------- directory metrics
+DAY = 24 * 60 * 60
+
+
+def _user_row(created_at: int) -> dict:
+    return {"disabled": False, "created_at": created_at, "updated_at": created_at}
+
+
+def test_users_are_counted_per_utc_day_within_bounds(db):
+    """Two on day 0, one on day 2, one on day 5; the empty days in between are absent,
+    and the bounds are inclusive at the start and exclusive at the end."""
+    db.upsert_authz_user("a", _user_row(10))
+    db.upsert_authz_user("b", _user_row(DAY - 1))
+    db.upsert_authz_user("c", _user_row(2 * DAY + 5))
+    db.upsert_authz_user("d", _user_row(5 * DAY))
+
+    assert db.count_authz_users_by_day() == [
+        {"date": 0, "count": 2},
+        {"date": 2 * DAY, "count": 1},
+        {"date": 5 * DAY, "count": 1},
+    ]
+    assert db.count_authz_users_by_day(starting_at=2 * DAY) == [
+        {"date": 2 * DAY, "count": 1},
+        {"date": 5 * DAY, "count": 1},
+    ]
+    assert db.count_authz_users_by_day(ending_before=5 * DAY) == [
+        {"date": 0, "count": 2},
+        {"date": 2 * DAY, "count": 1},
+    ]
+    assert db.count_authz_users_by_day(starting_at=DAY, ending_before=2 * DAY) == []
+
+    # deleted users drop out of history: this is the directory as it is now
+    db.delete_authz_user("a")
+    assert db.count_authz_users_by_day(ending_before=DAY) == [{"date": 0, "count": 1}]
+
+
+def test_user_ids_are_listed_without_profile_columns(db):
+    db.upsert_authz_user("zed", _user_row(1))
+    db.upsert_authz_user("amy", _user_row(1))
+    db.set_authz_user_disabled("zed", True)
+
+    assert db.list_authz_user_ids() == ["amy", "zed"]
+    assert db.list_authz_user_ids(include_disabled=False) == ["amy"]
+    assert db.count_authz_users_by_status() == {"total": 2, "disabled": 1}
+
+
+def test_status_counts_are_zero_on_an_empty_directory(db):
+    assert db.count_authz_users_by_status() == {"total": 0, "disabled": 0}
+
+
+def test_direct_roles_are_read_in_bulk_across_chunks(db):
+    """Every requested subject is present (unassigned ones with an empty list), and a
+    request larger than one IN-list chunk still comes back complete."""
+    subjects = [f"s{i:04d}" for i in range(1203)]
+    for subject in subjects[::3]:
+        db.assign_authz_role(subject, "viewer")
+    db.assign_authz_role("s0000", "admin")
+
+    roles = db.get_authz_direct_roles_many(subjects)
+    assert set(roles) == set(subjects)
+    assert roles["s0000"] == ["admin", "viewer"]
+    assert roles["s0003"] == ["viewer"]
+    assert roles["s0001"] == []
+    assert sum(1 for r in roles.values() if "viewer" in r) == len(subjects[::3])
+    assert db.get_authz_direct_roles_many([]) == {}

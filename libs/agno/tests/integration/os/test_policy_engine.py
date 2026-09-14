@@ -116,3 +116,37 @@ def test_patch_and_remove_through_engine():
     assert [e["scope"] for e in store.get_role_scope_entries("editor")] == ["agents:read"]
     store.remove_role("editor")
     assert store.get_role("editor") is None
+
+
+def test_bulk_role_defaults_resolve_per_subject():
+    """An engine that implements only the single-subject reads still serves the bulk
+    reads: the sync default loops over roles_of, and the async default goes through
+    aroles_of, so an engine that overrides only the async single read is honoured."""
+    import asyncio
+
+    class AsyncOnlyEngine(DictPolicyEngine):
+        def __init__(self):
+            super().__init__()
+            self.async_reads: List[str] = []
+
+        async def aroles_of(self, subject) -> List[str]:
+            self.async_reads.append(subject)
+            return super().roles_of(subject)
+
+        def roles_of(self, subject) -> List[str]:
+            raise AssertionError("the async path must not fall back to the sync read")
+
+    engine = AsyncOnlyEngine()
+    engine.assign("alice", "admin")
+    engine.assign("bob", "viewer")
+
+    assert asyncio.run(engine.aroles_of_many(["alice", "bob", "nobody"])) == {
+        "alice": ["admin"],
+        "bob": ["viewer"],
+        "nobody": [],
+    }
+    assert engine.async_reads == ["alice", "bob", "nobody"]
+
+    sync_engine = DictPolicyEngine()
+    sync_engine.assign("alice", "admin")
+    assert sync_engine.roles_of_many(["alice", "nobody"]) == {"alice": ["admin"], "nobody": []}

@@ -20,7 +20,7 @@ Two properties this layer must preserve, because the authorization model depends
 import json
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
-from sqlalchemy import delete, func, insert, or_, select
+from sqlalchemy import case, delete, func, insert, or_, select
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 
@@ -139,6 +139,44 @@ def get_direct_roles(engine: Engine, table: Any, subject: str) -> List[str]:
     """Roles directly assigned to ``subject`` (indexed point-lookup on the PK)."""
     with engine.connect() as conn:
         return [r[0] for r in conn.execute(select(table.c.role).where(table.c.subject == subject))]
+
+
+# SQLite caps bound parameters per statement (999 on older builds), so bulk IN-lists are
+# chunked well under that. Postgres has no such limit; chunking is harmless there.
+_IN_CHUNK = 500
+
+
+def _direct_roles_many_stmts(table: Any, subjects: List[str]) -> List[Any]:
+    """One SELECT per chunk of ``subjects``; shared by the sync and async readers."""
+    return [
+        select(table.c.subject, table.c.role).where(table.c.subject.in_(subjects[start : start + _IN_CHUNK]))
+        for start in range(0, len(subjects), _IN_CHUNK)
+    ]
+
+
+def _collect_direct_roles(subjects: List[str], pairs: Any) -> Dict[str, List[str]]:
+    roles: Dict[str, List[str]] = {subject: [] for subject in subjects}
+    for subject, role in pairs:
+        roles[subject].append(role)
+    for assigned in roles.values():
+        assigned.sort()
+    return roles
+
+
+def get_direct_roles_many(engine: Engine, table: Any, subjects: List[str]) -> Dict[str, List[str]]:
+    """Roles directly assigned to each of ``subjects``, in one query per chunk.
+
+    Subjects with no assignment are present with an empty list, so callers can tell
+    "no role" apart from "not asked". Replaces one query per subject when a caller
+    needs roles for a whole directory at once.
+    """
+    if not subjects:
+        return {}
+    pairs: List[Tuple[str, str]] = []
+    with engine.connect() as conn:
+        for stmt in _direct_roles_many_stmts(table, subjects):
+            pairs.extend((subject, role) for subject, role in conn.execute(stmt))
+    return _collect_direct_roles(subjects, pairs)
 
 
 def get_role_subjects(engine: Engine, table: Any, role: str) -> List[str]:
@@ -292,6 +330,66 @@ def count_users(engine: Engine, table: Any, include_disabled: bool = True, searc
     stmt = select(func.count()).select_from(table).where(*_user_filters(table, include_disabled, search))
     with engine.connect() as conn:
         return int(conn.execute(stmt).scalar() or 0)
+
+
+def _users_by_status_stmt(table: Any) -> Any:
+    return select(
+        func.count().label("total"),
+        func.sum(case((table.c.disabled.is_(True), 1), else_=0)).label("disabled"),
+    ).select_from(table)
+
+
+def _user_ids_stmt(table: Any, include_disabled: bool) -> Any:
+    return select(table.c.id).where(*_user_filters(table, include_disabled, None)).order_by(table.c.id.asc())
+
+
+def _users_by_day_stmt(table: Any, starting_at: Optional[int], ending_before: Optional[int]) -> Any:
+    seconds_per_day = 24 * 60 * 60
+    day_start = (table.c.created_at - (table.c.created_at % seconds_per_day)).label("date")
+    filters = []
+    if starting_at is not None:
+        filters.append(table.c.created_at >= starting_at)
+    if ending_before is not None:
+        filters.append(table.c.created_at < ending_before)
+    # The total is labelled ``users_created`` rather than ``count``: a Row already has
+    # a tuple ``count`` method, which would shadow the column.
+    return (
+        select(day_start, func.count().label("users_created"))
+        .where(*filters)
+        .group_by(day_start)
+        .order_by(day_start.asc())
+    )
+
+
+def count_users_by_status(engine: Engine, table: Any) -> Dict[str, int]:
+    """``{"total": n, "disabled": n}`` from one statement, so the two cannot disagree.
+    Two separate counts can interleave with a provisioning burst and leave the derived
+    active count negative."""
+    with engine.connect() as conn:
+        row = conn.execute(_users_by_status_stmt(table)).one()
+    return {"total": int(row.total or 0), "disabled": int(row.disabled or 0)}
+
+
+def list_user_ids(engine: Engine, table: Any, include_disabled: bool = True) -> List[str]:
+    """Every directory id, without the profile columns. Feeds bulk lookups that key on
+    the id (role resolution for the whole directory), where paging through
+    :func:`list_users` would fetch rows nobody reads."""
+    with engine.connect() as conn:
+        return [str(row[0]) for row in conn.execute(_user_ids_stmt(table, include_disabled))]
+
+
+def count_users_by_day(
+    engine: Engine, table: Any, starting_at: Optional[int] = None, ending_before: Optional[int] = None
+) -> List[Dict[str, int]]:
+    """How many users were created on each UTC day, oldest day first.
+
+    Days with no registrations are absent rather than zero. ``starting_at`` and
+    ``ending_before`` are epoch seconds bounding ``created_at`` (inclusive / exclusive);
+    the column is indexed so a bounded read stays cheap as the directory grows.
+    """
+    with engine.connect() as conn:
+        rows = conn.execute(_users_by_day_stmt(table, starting_at, ending_before))
+        return [{"date": int(row.date), "count": int(row.users_created)} for row in rows]
 
 
 def upsert_user(engine: Engine, table: Any, user_id: str, values: Dict[str, Any]) -> None:
@@ -520,6 +618,18 @@ async def aget_direct_roles(engine: "AsyncEngine", table: Any, subject: str) -> 
         return [r[0] for r in rows]
 
 
+async def aget_direct_roles_many(engine: "AsyncEngine", table: Any, subjects: List[str]) -> Dict[str, List[str]]:
+    """Async twin of :func:`get_direct_roles_many`."""
+    if not subjects:
+        return {}
+    pairs: List[Tuple[str, str]] = []
+    async with engine.connect() as conn:
+        for stmt in _direct_roles_many_stmts(table, subjects):
+            result = await conn.execute(stmt)
+            pairs.extend((subject, role) for subject, role in result)
+    return _collect_direct_roles(subjects, pairs)
+
+
 async def aget_role_subjects(engine: "AsyncEngine", table: Any, role: str) -> List[str]:
     async with engine.connect() as conn:
         rows = await conn.execute(select(table.c.subject).where(table.c.role == role))
@@ -638,6 +748,30 @@ async def acount_users(
     async with engine.connect() as conn:
         result = await conn.execute(stmt)
         return int(result.scalar() or 0)
+
+
+async def acount_users_by_status(engine: "AsyncEngine", table: Any) -> Dict[str, int]:
+    """Async twin of :func:`count_users_by_status`."""
+    async with engine.connect() as conn:
+        result = await conn.execute(_users_by_status_stmt(table))
+        row = result.one()
+    return {"total": int(row.total or 0), "disabled": int(row.disabled or 0)}
+
+
+async def alist_user_ids(engine: "AsyncEngine", table: Any, include_disabled: bool = True) -> List[str]:
+    """Async twin of :func:`list_user_ids`."""
+    async with engine.connect() as conn:
+        result = await conn.execute(_user_ids_stmt(table, include_disabled))
+        return [str(row[0]) for row in result]
+
+
+async def acount_users_by_day(
+    engine: "AsyncEngine", table: Any, starting_at: Optional[int] = None, ending_before: Optional[int] = None
+) -> List[Dict[str, int]]:
+    """Async twin of :func:`count_users_by_day`."""
+    async with engine.connect() as conn:
+        result = await conn.execute(_users_by_day_stmt(table, starting_at, ending_before))
+        return [{"date": int(row.date), "count": int(row.users_created)} for row in result]
 
 
 async def aupsert_user(engine: "AsyncEngine", table: Any, user_id: str, values: Dict[str, Any]) -> None:

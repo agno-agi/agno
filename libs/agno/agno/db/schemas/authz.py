@@ -76,7 +76,9 @@ AUTHZ_USERS_TABLE_SCHEMA = {
     "email": {"type": String, "nullable": True},
     "name": {"type": String, "nullable": True},
     "disabled": {"type": Boolean, "nullable": False},
-    "created_at": {"type": BigInteger, "nullable": False},
+    # Indexed: the registrations-per-day read bounds on created_at, and the index is
+    # what keeps a bounded read from scanning the whole directory as it grows.
+    "created_at": {"type": BigInteger, "nullable": False, "index": True},
     "updated_at": {"type": BigInteger, "nullable": False, "index": True},
     "user_metadata": {"type": Text, "nullable": True},
 }
