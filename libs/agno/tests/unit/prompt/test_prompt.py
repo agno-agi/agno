@@ -286,3 +286,79 @@ class TestDelete:
         assert db.get_component("support") is None
         assert db.get_component("support", include_deleted=True) is not None
         assert Prompt.load("support", db=db) is None
+
+
+class TestDeleteTypeSafety:
+    def _published_agent(self, db):
+        db.upsert_component(component_id="shared", component_type=DbComponentType.AGENT, name="Shared agent")
+        db.upsert_config(component_id="shared", config={"id": "shared", "instructions": "x"}, stage="published")
+
+    @pytest.mark.parametrize("hard_delete", [False, True])
+    def test_refuses_a_component_of_another_type(self, db, hard_delete):
+        self._published_agent(db)
+        assert Prompt(id="shared").delete(db=db, hard_delete=hard_delete) is False
+        row = db.get_component("shared")
+        assert row is not None
+        assert row["deleted_at"] is None
+        assert row["current_version"] == 1
+        assert db.get_config("shared", version=1)["config"] == {"id": "shared", "instructions": "x"}
+
+    def test_never_calls_generic_deletion_for_another_type(self):
+        db = MagicMock(spec=BaseDb)
+        db.get_component.return_value = None
+        assert _support_prompt().delete(db=db) is False
+        db.delete_component.assert_not_called()
+
+    def test_still_deletes_a_prompt(self, db):
+        prompt = _support_prompt()
+        prompt.save(db=db)
+        assert prompt.delete(db=db) is True
+        assert db.get_component("support") is None
+
+    def test_hard_deletes_an_archived_prompt(self, db):
+        prompt = _support_prompt()
+        prompt.save(db=db)
+        assert prompt.delete(db=db) is True
+        assert prompt.delete(db=db, hard_delete=True) is True
+        assert db.get_component("support", include_deleted=True) is None
+
+
+class TestSaveNamePreservation:
+    def test_saving_without_a_name_keeps_the_existing_name(self, db):
+        Prompt(id="support", name="Friendly name", content="v1").save(db=db)
+        Prompt(id="support", content="v2").save(db=db)
+        row = db.get_component("support")
+        assert row["name"] == "Friendly name"
+        assert row["current_version"] == 2
+
+    def test_an_explicit_new_name_updates_the_catalog(self, db):
+        Prompt(id="support", name="Friendly name", content="v1").save(db=db)
+        Prompt(id="support", name="Renamed", content="v2").save(db=db)
+        assert db.get_component("support")["name"] == "Renamed"
+
+
+class TestSaveRevalidation:
+    @pytest.mark.parametrize(
+        "field, value, message",
+        [
+            ("content", 42, "`content` must be a string or a list of strings"),
+            ("id", " ", "`id` must be a non-empty string"),
+            ("version", 0, SELECTOR_ERROR),
+            ("fallback", [1], "`fallback` must be a string or a list of strings"),
+        ],
+    )
+    def test_mutated_fields_fail_before_any_write(self, field, value, message):
+        db = MagicMock(spec=BaseDb)
+        prompt = Prompt(id="support", content="valid")
+        setattr(prompt, field, value)
+        with pytest.raises(ValueError, match=re.escape(message)):
+            prompt.save(db=db)
+        db.upsert_component.assert_not_called()
+        db.upsert_config.assert_not_called()
+
+    def test_mutated_content_leaves_the_database_unchanged(self, db):
+        prompt = Prompt(id="support", content="valid")
+        prompt.content = 42
+        with pytest.raises(ValueError):
+            prompt.save(db=db)
+        assert db.get_component("support") is None

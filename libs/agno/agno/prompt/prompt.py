@@ -87,14 +87,18 @@ class Prompt:
         """
         if not isinstance(db, BaseDb):
             raise ValueError("Async databases not yet supported for save(). Use a sync database.")
+        # Fields are plain attributes and may have been reassigned since construction:
+        # re-run the constructor validation before the first write.
+        self.__post_init__()
         if self.content is None:
             raise ValueError("`content` is required to save a Prompt")
 
         try:
+            # name=None leaves an existing catalog name alone; a new row defaults to the id.
             db.upsert_component(
                 component_id=self.id,
                 component_type=ComponentType.PROMPT,
-                name=self.name if self.name is not None else self.id,
+                name=self.name,
                 description=self.description,
             )
             config = db.upsert_config(component_id=self.id, config=self.to_dict(), stage="published")
@@ -164,5 +168,13 @@ class Prompt:
         """
         if not isinstance(db, BaseDb):
             raise ValueError("Async databases not yet supported for delete(). Use a sync database.")
+
+        # Only a row the catalog types as a Prompt may be deleted here; another component
+        # sharing the id is left alone. A hard delete may target an archived Prompt.
+        if (
+            db.get_component(component_id=self.id, component_type=ComponentType.PROMPT, include_deleted=hard_delete)
+            is None
+        ):
+            return False
 
         return db.delete_component(component_id=self.id, hard_delete=hard_delete, require_no_dependents=True)
