@@ -1222,10 +1222,10 @@ def test_managed_role_provider_is_mirrored_onto_mcp_subapp():
 
     from agno.db.sqlite import SqliteDb
     from agno.os.authz import Authorization
-    from agno.os.authz.role_store import ManagedRoleStore
+    from agno.os.authz.role_store import RoleStore
 
     with tempfile.NamedTemporaryFile(suffix=".db") as f:
-        roles = ManagedRoleStore(db=SqliteDb(db_file=f.name))
+        roles = RoleStore(db=SqliteDb(db_file=f.name))
         roles.set_role_scopes("admin", ["agent_os:admin"])
         os = AgentOS(
             id="mcp-authz",
@@ -1254,10 +1254,10 @@ def test_authz_mirror_survives_a_rebuilt_mcp_subapp():
     from agno.db.sqlite import SqliteDb
     from agno.os.authz import Authorization
     from agno.os.authz.audit import LoggingAuditSink
-    from agno.os.authz.role_store import ManagedRoleStore
+    from agno.os.authz.role_store import RoleStore
 
     with tempfile.NamedTemporaryFile(suffix=".db") as f:
-        roles = ManagedRoleStore(db=SqliteDb(db_file=f.name))
+        roles = RoleStore(db=SqliteDb(db_file=f.name))
         roles.set_role_scopes("admin", ["agent_os:admin"])
         sink = LoggingAuditSink()
         os = AgentOS(

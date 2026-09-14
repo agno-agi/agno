@@ -15,11 +15,13 @@ from agno.agent import Agent  # noqa: E402
 from agno.db.in_memory import InMemoryDb  # noqa: E402
 from agno.db.sqlite import SqliteDb  # noqa: E402
 from agno.os import AgentOS  # noqa: E402
-from agno.os.authz import Authorization  # noqa: E402
+from agno.os.authz import (
+    Authorization,  # noqa: E402
+    UserDirectory,  # noqa: E402
+)
 from agno.os.authz.audit import DbAuditSink  # noqa: E402
-from agno.os.authz.role_store import ManagedRoleStore  # noqa: E402
-from agno.os.authz.user_store import ManagedUserStore  # noqa: E402
-from agno.os.config import UserDirectoryConfig  # noqa: E402
+from agno.os.authz.role_store import RoleStore  # noqa: E402
+from agno.os.authz.user_store import UserStore  # noqa: E402
 
 SECRET = "audit-switch-secret-at-least-256-bits-xxxxxxxxxx"
 
@@ -33,7 +35,7 @@ def _os(db, roles, users, audit=False):
         id="audit-os",
         agents=[Agent(id="a", name="R", db=InMemoryDb())],
         db=db,
-        user_directory=UserDirectoryConfig(user_store=users),  # directory is top-level now
+        user_directory=UserDirectory(user_store=users, auto_provision=False),  # directory is top-level now
         authorization=Authorization(verification_keys=[SECRET], algorithm="HS256", role_store=roles, audit=audit),
     )
 
@@ -41,7 +43,7 @@ def _os(db, roles, users, audit=False):
 def test_single_audit_switch_feeds_change_and_decision_trails(tmp_path):
     db = _db(tmp_path)
     sink = DbAuditSink(db=db)
-    roles, users = ManagedRoleStore(db=db), ManagedUserStore(db=db)
+    roles, users = RoleStore(db=db), UserStore(db=db)
     app = _os(db, roles, users, audit=sink).get_app()
 
     assert getattr(app.state, "authz_audit", None) is sink  # decision trail
@@ -52,8 +54,8 @@ def test_single_audit_switch_feeds_change_and_decision_trails(tmp_path):
 def test_explicit_store_sink_wins_over_the_switch(tmp_path):
     db = _db(tmp_path)
     top, explicit = DbAuditSink(db=db), DbAuditSink(db=db)
-    roles = ManagedRoleStore(db=db, audit=explicit)  # explicit on the store
-    users = ManagedUserStore(db=db)  # no explicit -> should adopt the switch
+    roles = RoleStore(db=db, audit=explicit)  # explicit on the store
+    users = UserStore(db=db)  # no explicit -> should adopt the switch
     app = _os(db, roles, users, audit=top).get_app()
 
     assert getattr(app.state, "authz_audit", None) is top  # the switch feeds the decision trail
@@ -63,7 +65,7 @@ def test_explicit_store_sink_wins_over_the_switch(tmp_path):
 
 def test_no_audit_leaves_both_trails_off(tmp_path):
     db = _db(tmp_path)
-    roles, users = ManagedRoleStore(db=db), ManagedUserStore(db=db)
+    roles, users = RoleStore(db=db), UserStore(db=db)
     app = _os(db, roles, users).get_app()
 
     assert getattr(app.state, "authz_audit", None) is None

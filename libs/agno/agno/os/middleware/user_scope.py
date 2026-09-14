@@ -227,7 +227,6 @@ def sync_directory_from_request(request: Request, user_id: Optional[str]) -> Non
         provision_user_with_default_role(
             user_store,
             getattr(state, "role_store", None),
-            getattr(state, "user_default_role", None),
             user_id,
             {},  # no token claims in the no-auth path: register by id alone
             email_claim=getattr(state, "user_email_claim", "email"),

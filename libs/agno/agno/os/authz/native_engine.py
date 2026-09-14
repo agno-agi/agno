@@ -225,7 +225,7 @@ class NativePolicyEngine(PolicyEngine):
     def _default_role(self) -> Optional[str]:
         """The role flagged ``is_default`` -- the fallback for a subject with no assigned role.
 
-        Mirrors :meth:`ManagedRoleStore.default_role`: at most one role carries the flag (the
+        Mirrors :meth:`RoleStore.default_role`: at most one role carries the flag (the
         metadata setters clear the others); the lowest slug wins if legacy data has several, so
         the choice is deterministic. Returns ``None`` when no default is set or the db cannot
         list role metadata (e.g. a third-party backend)."""

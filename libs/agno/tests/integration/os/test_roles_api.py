@@ -1,4 +1,4 @@
-"""Integration tests for the ManagedRoleStore HTTP management API.
+"""Integration tests for the RoleStore HTTP management API.
 
 Exercises the admin-only governance surface end to end: CRUD over roles and
 assignments through HTTP, the admin gate (401/403), and the payoff — a role
@@ -17,8 +17,8 @@ from agno.agent import Agent  # noqa: E402
 from agno.db.in_memory import InMemoryDb  # noqa: E402
 from agno.os import AgentOS  # noqa: E402
 from agno.os.authz import Authorization  # noqa: E402
-from agno.os.authz.role_router import get_roles_router  # noqa: E402
-from agno.os.authz.role_store import ManagedRoleStore  # noqa: E402
+from agno.os.authz.admin_router import get_roles_router  # noqa: E402
+from agno.os.authz.role_store import RoleStore  # noqa: E402
 
 SECRET = "managed-roles-api-test-secret-at-least-256-bits-long-xx"
 OS_ID = "managed-roles-api-test-os"
@@ -49,7 +49,7 @@ def _auth(sub: str) -> dict:
 
 @pytest.fixture
 def client_and_store():
-    store = ManagedRoleStore(db_url=_db_url())  # in-memory
+    store = RoleStore(db_url=_db_url())  # in-memory
     store.set_role_scopes("viewer", ["agents:*:read"])
     store.set_role_scopes("admin", ["agent_os:admin"])
     store.assign("alice", "admin")
@@ -210,7 +210,7 @@ def test_scope_catalog_endpoint(client_and_store):
 
 def test_admin_via_token_claim_can_manage():
     """When roles come from the token (external IdP), an admin role on the token grants management."""
-    store = ManagedRoleStore(roles_claim="roles", db_url=_db_url())
+    store = RoleStore(roles_claim="roles", db_url=_db_url())
     store.set_role_scopes("admin", ["agent_os:admin"])
     store.set_role_scopes("viewer", ["agents:*:read"])
 
@@ -328,9 +328,9 @@ def test_authz_api_is_served_with_the_mcp_server_enabled(tmp_path):
     from agno.db.in_memory import InMemoryDb
     from agno.os import AgentOS
     from agno.os.authz import Authorization
-    from agno.os.authz.role_store import ManagedRoleStore
+    from agno.os.authz.role_store import RoleStore
 
-    store = ManagedRoleStore(db_url=f"sqlite:///{tmp_path / 'roles.db'}")
+    store = RoleStore(db_url=f"sqlite:///{tmp_path / 'roles.db'}")
     store.set_role_scopes("admin", ["agent_os:admin"])
     store.assign("alice", "admin")
 
@@ -384,7 +384,7 @@ def test_patch_role_scopes_deny_wins_on_a_spelling_collision():
     """Issue-2 regression: PATCH upsert must be deny-wins like PUT. `agents:read` and
     `agents:*:read` collapse to one policy key, so upserting an allow must not overwrite a
     deny listed in the same diff -- else PATCH silently converts a denial into a grant."""
-    store = ManagedRoleStore(db_url=_db_url())
+    store = RoleStore(db_url=_db_url())
     store.set_role_scopes("r", ["agents:public:read"])
     store.patch_role_scopes(
         "r",

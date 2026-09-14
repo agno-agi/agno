@@ -6,7 +6,7 @@ Real deployments often have two populations hitting the same OS:
   control plane mints them a token that already carries scopes, so they're
   authorized straight from the token (a :class:`ScopeAuthorizationProvider`).
 - **End users** — the customer's own users, whose access is managed at runtime in
-  the OS-local :class:`~agno.os.authz.role_store.ManagedRoleStore`. Their token
+  the OS-local :class:`~agno.os.authz.role_store.RoleStore`. Their token
   carries identity; the store decides.
 
 A single provider can't be both "trust the token's scopes" and "ignore the token,

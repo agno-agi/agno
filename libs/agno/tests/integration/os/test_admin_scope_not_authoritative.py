@@ -15,7 +15,7 @@ import pytest
 
 pytest.importorskip("sqlalchemy")
 
-from agno.os.authz.role_store import ManagedRoleStore  # noqa: E402
+from agno.os.authz.role_store import RoleStore  # noqa: E402
 from agno.os.authz.scope_provider import ScopeAuthorizationProvider  # noqa: E402
 from agno.os.middleware.user_scope import assert_session_writable, caller_is_admin  # noqa: E402
 
@@ -32,7 +32,7 @@ def test_admin_scope_is_authority_only_under_a_scope_plane(tmp_path):
     assert caller_is_admin(_request(ScopeAuthorizationProvider())) is True
 
     # Managed-roles plane: the token's scopes are inert -> a raw admin scope does NOT confer admin.
-    roles = ManagedRoleStore(db_url=f"sqlite:///{tmp_path}/roles.db")
+    roles = RoleStore(db_url=f"sqlite:///{tmp_path}/roles.db")
     assert caller_is_admin(_request(roles.provider)) is False
 
 
@@ -41,7 +41,7 @@ async def test_cross_user_session_write_is_refused_when_admin_scope_is_inert(tmp
     """End-to-end of the guard: under managed roles, the admin-scope caller resolves to
     is_admin=False, so a run into a session owned by someone else is refused (404) instead of
     skipping the ownership check."""
-    roles = ManagedRoleStore(db_url=f"sqlite:///{tmp_path}/roles.db")
+    roles = RoleStore(db_url=f"sqlite:///{tmp_path}/roles.db")
     attacker_is_admin = caller_is_admin(_request(roles.provider))  # False, per the fix
     assert attacker_is_admin is False
 
