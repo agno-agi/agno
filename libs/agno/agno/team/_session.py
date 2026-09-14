@@ -8,6 +8,7 @@ from typing import (
     Dict,
     List,
     Optional,
+    Set,
     Union,
     cast,
 )
@@ -300,6 +301,7 @@ def _storage_view_of_spared_run(
 def _scrub_member_responses_keeping_paused(
     team: "Team",
     run: Union[TeamRunOutput, "RunOutput"],
+    persisted_member_run_ids: Optional[Set[str]] = None,
 ) -> Union[TeamRunOutput, "RunOutput"]:
     """Return a storage view of the run with member responses removed at every
     nesting level, sparing paused ones: a paused member run is the resume
@@ -316,6 +318,20 @@ def _scrub_member_responses_keeping_paused(
 
     spared = []
     for member_response in getattr(run, "member_responses", None) or []:
+        # A successfully persisted direct sub-team row is the source of truth
+        # for its paused subtree. Do not retain the same subtree in the root
+        # row, but keep the fallback copy when the child write was not
+        # confirmed. Paused agents still need the embedded response because
+        # they are not persisted as separate team-run rows.
+        if (
+            persisted_member_run_ids is not None
+            and getattr(run, "parent_run_id", None) is None
+            and isinstance(member_response, TeamRunOutput)
+            and getattr(member_response, "is_paused", False)
+            and getattr(member_response, "parent_run_id", None) == getattr(run, "run_id", None)
+            and getattr(member_response, "run_id", None) in persisted_member_run_ids
+        ):
+            continue
         if not getattr(member_response, "is_paused", False):
             continue
         # Resolve the owner at THIS level before recursing: the response tree
@@ -326,14 +342,16 @@ def _scrub_member_responses_keeping_paused(
         member_response = _storage_view_of_spared_run(team, member_response, member=member)
         if getattr(member_response, "member_responses", None):
             owning_team = member if isinstance(member, Team) else team
-            member_response = _scrub_member_responses_keeping_paused(owning_team, member_response)
+            member_response = _scrub_member_responses_keeping_paused(
+                owning_team, member_response, persisted_member_run_ids=persisted_member_run_ids
+            )
         spared.append(member_response)
     run = copy(run)
     run.member_responses = spared  # type: ignore[union-attr]
     return run
 
 
-def save_session(team: "Team", session: TeamSession) -> None:
+def save_session(team: "Team", session: TeamSession, _persisted_member_run_ids: Optional[Set[str]] = None) -> None:
     """
     Save the TeamSession to storage
 
@@ -371,7 +389,13 @@ def save_session(team: "Team", session: TeamSession) -> None:
                 # a pending approval on a finished run for good.
                 storage_session = copy(session)
                 storage_session.runs = [
-                    _scrub_member_responses_keeping_paused(team, run) if hasattr(run, "member_responses") else run
+                    (
+                        _scrub_member_responses_keeping_paused(
+                            team, run, persisted_member_run_ids=_persisted_member_run_ids
+                        )
+                        if hasattr(run, "member_responses")
+                        else run
+                    )
                     for run in session.runs
                 ]
             else:
@@ -383,7 +407,9 @@ def save_session(team: "Team", session: TeamSession) -> None:
         log_debug(f"Created or updated TeamSession record: {session.session_id}")
 
 
-async def asave_session(team: "Team", session: TeamSession) -> None:
+async def asave_session(
+    team: "Team", session: TeamSession, _persisted_member_run_ids: Optional[Set[str]] = None
+) -> None:
     """
     Save the TeamSession to storage
 
@@ -413,7 +439,13 @@ async def asave_session(team: "Team", session: TeamSession) -> None:
                 # the scrubbed list live.
                 storage_session = copy(session)
                 storage_session.runs = [
-                    _scrub_member_responses_keeping_paused(team, run) if hasattr(run, "member_responses") else run
+                    (
+                        _scrub_member_responses_keeping_paused(
+                            team, run, persisted_member_run_ids=_persisted_member_run_ids
+                        )
+                        if hasattr(run, "member_responses")
+                        else run
+                    )
                     for run in session.runs
                 ]
             else:
@@ -435,7 +467,8 @@ def save_run(
     session_id: str,
     user_id: Optional[str] = None,
     run_index: Optional[int] = None,
-) -> None:
+    _persisted_member_run_ids: Optional[Set[str]] = None,
+) -> bool:
     """Persist a single run to the database (O(1) operation).
 
     Use this instead of save_session() when only a single run has changed.
@@ -451,11 +484,15 @@ def save_run(
         storage_run = run
         if hasattr(run, "member_responses"):
             if not team.store_member_responses:
-                storage_run = _scrub_member_responses_keeping_paused(team, run)
+                storage_run = _scrub_member_responses_keeping_paused(
+                    team, run, persisted_member_run_ids=_persisted_member_run_ids
+                )
             else:
                 _scrub_member_responses(team, run.member_responses)  # type: ignore[union-attr]
-        _upsert_run(team, run=storage_run, session_id=session_id, user_id=user_id, run_index=run_index)
+        persisted = _upsert_run(team, run=storage_run, session_id=session_id, user_id=user_id, run_index=run_index)
         log_debug(f"Saved run {getattr(run, 'run_id', '?')} to session {session_id}")
+        return persisted
+    return False
 
 
 async def asave_run(
@@ -464,7 +501,8 @@ async def asave_run(
     session_id: str,
     user_id: Optional[str] = None,
     run_index: Optional[int] = None,
-) -> None:
+    _persisted_member_run_ids: Optional[Set[str]] = None,
+) -> bool:
     """Async version of ``save_run``."""
     from agno.team._run import _scrub_member_responses
     from agno.team._storage import _aupsert_run
@@ -473,11 +511,17 @@ async def asave_run(
         storage_run = run
         if hasattr(run, "member_responses"):
             if not team.store_member_responses:
-                storage_run = _scrub_member_responses_keeping_paused(team, run)
+                storage_run = _scrub_member_responses_keeping_paused(
+                    team, run, persisted_member_run_ids=_persisted_member_run_ids
+                )
             else:
                 _scrub_member_responses(team, run.member_responses)  # type: ignore[union-attr]
-        await _aupsert_run(team, run=storage_run, session_id=session_id, user_id=user_id, run_index=run_index)
+        persisted = await _aupsert_run(
+            team, run=storage_run, session_id=session_id, user_id=user_id, run_index=run_index
+        )
         log_debug(f"Saved run {getattr(run, 'run_id', '?')} to session {session_id}")
+        return persisted
+    return False
 
 
 # ---------------------------------------------------------------------------
