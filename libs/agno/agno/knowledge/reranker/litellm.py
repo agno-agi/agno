@@ -52,12 +52,13 @@ class LiteLLMReranker(Reranker):
     @staticmethod
     def _extract_results(response: Any) -> List[Any]:
         """Extract results from LiteLLM rerank response."""
-        try:
-            if hasattr(response, "results"):
-                return response.results
-            return []
-        except Exception:
-            return []
+        if isinstance(response, dict):
+            results = response.get("results")
+        else:
+            results = getattr(response, "results", None)
+        if results is None:
+            raise ValueError("LiteLLM rerank response did not include results")
+        return results
 
     def _rerank(self, query: str, documents: List[Document]) -> List[Document]:
         if not documents:
@@ -75,7 +76,8 @@ class LiteLLMReranker(Reranker):
                     else:
                         idx = getattr(r, "index", None)
                         score = getattr(r, "relevance_score", None)
-                    if idx is None or idx < 0 or idx >= len(documents):
+                    if not isinstance(idx, int) or isinstance(idx, bool) or idx < 0 or idx >= len(documents):
+                        log_warning("LiteLLM returned a rerank result with an invalid input index; ignoring it.")
                         continue
                     doc = documents[idx]
                     doc.reranking_score = score

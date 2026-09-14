@@ -1,7 +1,12 @@
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
-from agno.knowledge.embedder.base import Embedder
+from agno.knowledge.embedder.base import (
+    Embedder,
+    aembed_texts_individually,
+    first_embedding,
+    raise_embedding_error,
+)
 from agno.utils.log import log_info, log_warning
 
 try:
@@ -96,24 +101,18 @@ class LiteLLMEmbedder(Embedder):
     @staticmethod
     def _extract_embedding(response: Any) -> List[float]:
         """Extract first embedding from LiteLLM embedding response."""
-        try:
-            if hasattr(response, "data") and response.data:
-                return LiteLLMEmbedder._item_embedding(response.data[0])
-            return []
-        except Exception as e:
-            log_warning(f"Failed to extract embedding: {e}")
-            return []
+        entry = first_embedding(getattr(response, "data", None), "LiteLLM")
+        return LiteLLMEmbedder._item_embedding(entry) if entry else []
 
     @staticmethod
     def _extract_usage(response: Any) -> Optional[Dict[str, Any]]:
         """Extract usage information from LiteLLM response."""
-        try:
-            if hasattr(response, "usage") and response.usage:
-                return response.usage.model_dump()
+        usage = getattr(response, "usage", None)
+        if not usage:
             return None
-        except Exception as e:
-            log_warning(f"Failed to extract usage: {e}")
-            return None
+        if isinstance(usage, dict):
+            return usage
+        return usage.model_dump()
 
     def get_embedding(self, text: str) -> List[float]:
         try:
@@ -121,8 +120,7 @@ class LiteLLMEmbedder(Embedder):
             response = litellm.embedding(**request)
             return self._extract_embedding(response)
         except Exception as e:
-            log_warning(f"LiteLLM embedding error: {e}")
-            return []
+            raise_embedding_error(e, model_id=self.id, provider="LiteLLM")
 
     def get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict]]:
         try:
@@ -132,8 +130,7 @@ class LiteLLMEmbedder(Embedder):
             usage = self._extract_usage(response)
             return embedding, usage
         except Exception as e:
-            log_warning(f"LiteLLM embedding error: {e}")
-            return [], None
+            raise_embedding_error(e, model_id=self.id, provider="LiteLLM")
 
     async def async_get_embedding(self, text: str) -> List[float]:
         try:
@@ -141,8 +138,7 @@ class LiteLLMEmbedder(Embedder):
             response = await litellm.aembedding(**request)
             return self._extract_embedding(response)
         except Exception as e:
-            log_warning(f"LiteLLM async embedding error: {e}")
-            return []
+            raise_embedding_error(e, model_id=self.id, provider="LiteLLM")
 
     async def async_get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict]]:
         try:
@@ -152,8 +148,7 @@ class LiteLLMEmbedder(Embedder):
             usage = self._extract_usage(response)
             return embedding, usage
         except Exception as e:
-            log_warning(f"LiteLLM async embedding error: {e}")
-            return [], None
+            raise_embedding_error(e, model_id=self.id, provider="LiteLLM")
 
     async def async_get_embeddings_batch_and_usage(
         self, texts: List[str]
@@ -172,8 +167,10 @@ class LiteLLMEmbedder(Embedder):
                 request = self._build_request(batch)
                 response = await litellm.aembedding(**request)
                 embeddings: List[List[float]] = [[] for _ in batch]
-                if hasattr(response, "data") and response.data:
-                    for item in response.data:
+                response_data = getattr(response, "data", None) or []
+                if response_data:
+                    # LiteLLM reports batch usage once, so duplicate it for each input slot.
+                    for item in response_data:
                         index = self._item_index(item)
                         if index is None or index < 0 or index >= len(batch):
                             log_warning("LiteLLM returned an embedding with an invalid input index; ignoring it.")
@@ -192,8 +189,7 @@ class LiteLLMEmbedder(Embedder):
                 all_usage.extend([usage] * len(embeddings))
             except Exception as e:
                 log_warning(f"LiteLLM batch embedding error: {e} - falling back to per item")
-                for t in batch:
-                    emb, usage = await self.async_get_embedding_and_usage(t)
-                    all_embeddings.append(emb)
-                    all_usage.append(usage)
+                batch_embeddings, batch_usage = await aembed_texts_individually(self, batch)
+                all_embeddings.extend(batch_embeddings)
+                all_usage.extend(batch_usage)
         return all_embeddings, all_usage

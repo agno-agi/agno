@@ -31,8 +31,9 @@ from agno.vectordb.pgvector import PgVector
 # Create Knowledge Base
 # ---------------------------------------------------------------------------
 def create_knowledge() -> Knowledge:
-    # dimensions must match the model: LiteLLMEmbedder does not derive it from
-    # the model string, so the base default of 1536 is used unless set here.
+    # dimensions must match the model. LiteLLMEmbedder derives dimensions from
+    # its registry when available, but models missing from that registry use
+    # 1536 unless dimensions is set explicitly.
     # Standard mode
     embedder = LiteLLMEmbedder(id="openai/text-embedding-3-small", dimensions=1536)
 
