@@ -34,7 +34,6 @@ class ReasoningTools(Toolkit):
             self.instructions = instructions
 
         tools: List[Any] = []
-        # Prefer new flags; fallback to legacy ones
         if all or enable_think:
             tools.append(self.think)
         if all or enable_analyze:

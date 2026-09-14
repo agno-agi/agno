@@ -2,12 +2,14 @@
 
 import time
 from unittest.mock import MagicMock
+from uuid import UUID
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from agno.db.base import BaseDb
+from agno.learn.utils import _user_key_segment, build_learning_id
 from agno.os.routers.learnings import get_learnings_router
 from agno.os.settings import AgnoAPISettings
 
@@ -242,6 +244,152 @@ class TestCreateLearning:
     def test_create_missing_learning_type_is_422(self, client):
         resp = client.post("/learnings", json={"content": {}})
         assert resp.status_code == 422
+
+    def test_create_entity_user_namespace_without_user_id_is_422(self, client, mock_db):
+        # The entity key embeds the user under namespace="user"; without a
+        # user_id no id can be derived and the row would be unreachable.
+        resp = client.post(
+            "/learnings",
+            json={
+                "learning_type": "entity_memory",
+                "content": {},
+                "entity_id": "acme",
+                "entity_type": "company",
+                "namespace": "user",
+            },
+        )
+        assert resp.status_code == 422
+        mock_db.upsert_learning.assert_not_called()
+
+    def test_create_entity_user_namespace_422_names_user_id(self, client, mock_db):
+        # The caller supplied both entity fields, so the generic "provide the required
+        # field(s)" wording reads as already satisfied; the message has to say user_id.
+        resp = client.post(
+            "/learnings",
+            json={
+                "learning_type": "entity_memory",
+                "content": {},
+                "entity_id": "acme",
+                "entity_type": "company",
+                "namespace": "user",
+            },
+        )
+        assert resp.status_code == 422
+        detail = resp.json()["detail"]
+        assert "user_id" in detail
+        assert 'namespace="user"' in detail
+
+    def test_create_entity_defaults_stored_namespace_to_global(self, client, mock_db):
+        # The derived key defaults a missing namespace to "global"; the stored
+        # column must agree or the store's namespace-filtered reads never find
+        # the row.
+        created = _make_learning(
+            learning_id="entity_global_company_acme",
+            learning_type="entity_memory",
+            entity_id="acme",
+            entity_type="company",
+        )
+        mock_db.get_learning_by_id = MagicMock(side_effect=[None, created])
+        resp = client.post(
+            "/learnings",
+            json={
+                "learning_type": "entity_memory",
+                "content": {},
+                "entity_id": "acme",
+                "entity_type": "company",
+            },
+        )
+        assert resp.status_code == 201
+        kwargs = mock_db.upsert_learning.call_args[1]
+        assert kwargs["id"] == "entity_global_company_acme"
+        assert kwargs["namespace"] == "global"
+
+    def test_create_entity_empty_namespace_defaults_to_global(self, client, mock_db):
+        # The derived key treats any falsy namespace as "global", so an empty string
+        # must land in the column as "global" too -- storing "" would key the row
+        # global while filtering it under "", which no read ever asks for.
+        created = _make_learning(
+            learning_id="entity_global_company_acme",
+            learning_type="entity_memory",
+            entity_id="acme",
+            entity_type="company",
+        )
+        mock_db.get_learning_by_id = MagicMock(side_effect=[None, created])
+        resp = client.post(
+            "/learnings",
+            json={
+                "learning_type": "entity_memory",
+                "content": {},
+                "entity_id": "acme",
+                "entity_type": "company",
+                "namespace": "",
+            },
+        )
+        assert resp.status_code == 201
+        kwargs = mock_db.upsert_learning.call_args[1]
+        assert kwargs["namespace"] == "global"
+        assert kwargs["id"] == build_learning_id("entity_memory", entity_id="acme", entity_type="company", namespace="")
+
+    def test_create_entity_rejects_digest_shaped_namespace(self, client, mock_db):
+        # "user_<16 hex>" reaches the generic branch of the key builder and
+        # reproduces the victim's namespace="user" key byte for byte.
+        forged_namespace = "user_" + _user_key_segment("victim")
+        assert build_learning_id(
+            "entity_memory", entity_id="acme", entity_type="company", namespace=forged_namespace
+        ) == build_learning_id(
+            "entity_memory", user_id="victim", entity_id="acme", entity_type="company", namespace="user"
+        )
+        resp = client.post(
+            "/learnings",
+            json={
+                "learning_type": "entity_memory",
+                "content": {"stolen": True},
+                "entity_id": "acme",
+                "entity_type": "company",
+                "namespace": forged_namespace,
+            },
+        )
+        assert resp.status_code == 422
+        assert "reserved" in resp.json()["detail"]
+        mock_db.upsert_learning.assert_not_called()
+
+    @pytest.mark.parametrize(
+        "namespace",
+        [
+            "user_team",
+            "user_c6c289e49e9c05",
+            "user_C6C289E49E9C05B2",
+            "user_c6c289e49e9c05b2x",
+            "global",
+            "workspace",
+        ],
+    )
+    def test_create_entity_allows_ordinary_namespaces(self, client, mock_db, namespace):
+        # Only the exact digest shape is reserved; anything else is a custom
+        # namespace and keeps working.
+        expected_id = build_learning_id("entity_memory", entity_id="acme", entity_type="company", namespace=namespace)
+        created = _make_learning(
+            learning_id=expected_id,
+            learning_type="entity_memory",
+            namespace=namespace,
+            entity_id="acme",
+            entity_type="company",
+        )
+        mock_db.get_learning_by_id = MagicMock(side_effect=[None, created])
+        resp = client.post(
+            "/learnings",
+            json={
+                "learning_type": "entity_memory",
+                "content": {},
+                "entity_id": "acme",
+                "entity_type": "company",
+                "namespace": namespace,
+            },
+        )
+        assert resp.status_code == 201
+        kwargs = mock_db.upsert_learning.call_args[1]
+        assert kwargs["id"] == expected_id
+        assert kwargs["namespace"] == namespace
 
     def test_create_failure_when_get_returns_none(self, client, mock_db):
         # identity record absent (None on existence) and readback also None -> 500
@@ -524,6 +672,151 @@ class TestIDORScoping:
         mock_db.delete_user_learnings.assert_not_called()
 
 
+class TestNonStringOwnerScoping:
+    """Owner ids are compared as strings, because only the SQL adapters type the user_id
+    column and coerce on write -- MongoDb, AsyncMongoDb and ValkeyDb store whatever the
+    writer passed, so an agent that ran with a non-string user_id leaves a non-string in
+    that column while the request always carries the JWT subject string.
+
+    An id that is genuinely someone else's is still 404, and None still owns nothing.
+    """
+
+    @pytest.fixture
+    def jwt_client(self, mock_db, settings):
+        # Regular (non-admin) user with user isolation enabled; JWT subject "123".
+        return _scoped_client(mock_db, settings, user_isolation_enabled=True, user_id="123", scopes=[])
+
+    def test_get_own_string_owned_record(self, jwt_client, mock_db):
+        # False-refusal guard: the ordinary string-owned record must stay reachable.
+        mock_db.get_learning_by_id = MagicMock(return_value=_make_learning(user_id="123"))
+        assert jwt_client.get("/learnings/lrn-1").status_code == 200
+
+    def test_get_own_int_owned_record(self, jwt_client, mock_db):
+        mock_db.get_learning_by_id = MagicMock(return_value=_make_learning(user_id=123))
+        resp = jwt_client.get("/learnings/lrn-1")
+        assert resp.status_code == 200
+        assert resp.json()["learning_id"] == "lrn-1"
+
+    def test_patch_own_int_owned_record(self, jwt_client, mock_db):
+        existing = _make_learning(user_id=123)
+        updated = _make_learning(user_id=123, content={"new": True})
+        mock_db.get_learning_by_id = MagicMock(side_effect=[existing, updated])
+        resp = jwt_client.patch("/learnings/lrn-1", json={"content": {"new": True}})
+        assert resp.status_code == 200
+        assert mock_db.update_learning.call_args[1]["content"] == {"new": True}
+
+    def test_delete_own_int_owned_record(self, jwt_client, mock_db):
+        mock_db.get_learning_by_id = MagicMock(return_value=_make_learning(user_id=123))
+        assert jwt_client.delete("/learnings/lrn-1").status_code == 204
+        mock_db.delete_learning.assert_called_once_with("lrn-1")
+
+    def test_get_own_uuid_owned_record(self, mock_db, settings):
+        owner = UUID("2f8a1b7c-0d3e-4f5a-9b6c-7d8e9f0a1b2c")
+        client = _scoped_client(mock_db, settings, user_isolation_enabled=True, user_id=str(owner), scopes=[])
+        mock_db.get_learning_by_id = MagicMock(return_value=_make_learning(user_id=owner))
+        assert client.get("/learnings/lrn-1").status_code == 200
+
+    def test_other_users_int_owned_record_still_404(self, jwt_client, mock_db):
+        mock_db.get_learning_by_id = MagicMock(return_value=_make_learning(user_id=456))
+        assert jwt_client.get("/learnings/lrn-1").status_code == 404
+
+    def test_other_users_int_owned_record_not_mutable(self, jwt_client, mock_db):
+        mock_db.get_learning_by_id = MagicMock(return_value=_make_learning(user_id=456))
+        assert jwt_client.patch("/learnings/lrn-1", json={"content": {"x": 1}}).status_code == 404
+        mock_db.update_learning.assert_not_called()
+
+        mock_db.get_learning_by_id = MagicMock(return_value=_make_learning(user_id=456))
+        assert jwt_client.delete("/learnings/lrn-1").status_code == 404
+        mock_db.delete_learning.assert_not_called()
+
+    def test_prefix_of_the_subject_is_not_the_owner(self, jwt_client, mock_db):
+        # Coercion is str(), not a substring or numeric comparison.
+        mock_db.get_learning_by_id = MagicMock(return_value=_make_learning(user_id=12))
+        assert jwt_client.get("/learnings/lrn-1").status_code == 404
+
+    def test_non_string_subject_reaches_a_string_owned_record(self, mock_db, settings):
+        # The same coercion in the other direction: the subject claim carries the non-string.
+        client = _scoped_client(mock_db, settings, user_isolation_enabled=True, user_id=123, scopes=[])
+        mock_db.get_learning_by_id = MagicMock(return_value=_make_learning(user_id="123"))
+        assert client.get("/learnings/lrn-1").status_code == 200
+
+    def test_non_string_subject_still_404s_on_another_owner(self, mock_db, settings):
+        client = _scoped_client(mock_db, settings, user_isolation_enabled=True, user_id=123, scopes=[])
+        mock_db.get_learning_by_id = MagicMock(return_value=_make_learning(user_id="456"))
+        assert client.get("/learnings/lrn-1").status_code == 404
+
+    def test_null_owner_record_unchanged(self, jwt_client, mock_db):
+        # None is "no owner": readable by any caller, mutable only by an admin.
+        mock_db.get_learning_by_id = MagicMock(return_value=_make_learning(user_id=None))
+        assert jwt_client.get("/learnings/lrn-1").status_code == 200
+
+        mock_db.get_learning_by_id = MagicMock(return_value=_make_learning(user_id=None))
+        assert jwt_client.patch("/learnings/lrn-1", json={"content": {"x": 1}}).status_code == 403
+
+        mock_db.get_learning_by_id = MagicMock(return_value=_make_learning(user_id=None))
+        assert jwt_client.delete("/learnings/lrn-1").status_code == 403
+
+    def test_caller_without_identity_never_matches_a_record(self, mock_db, settings):
+        # Isolation on with no subject fails closed at get_scoped_user_id (403), so a
+        # null-identity caller never reaches a record, matching or not.
+        client = _scoped_client(mock_db, settings, user_isolation_enabled=True, user_id=None, scopes=[])
+        mock_db.get_learning_by_id = MagicMock(return_value=_make_learning(user_id=None))
+        assert client.get("/learnings/lrn-1").status_code == 403
+
+    def test_admin_unchanged_for_int_owned_record(self, mock_db, settings):
+        client = _scoped_client(
+            mock_db, settings, user_isolation_enabled=True, user_id="admin-1", scopes=["agent_os:admin"]
+        )
+        mock_db.get_learning_by_id = MagicMock(return_value=_make_learning(user_id=456))
+        assert client.get("/learnings/lrn-1").status_code == 200
+
+    def test_isolation_off_unchanged_for_int_owned_record(self, mock_db, settings):
+        client = _scoped_client(mock_db, settings, user_isolation_enabled=False, user_id="123", scopes=[])
+        mock_db.get_learning_by_id = MagicMock(return_value=_make_learning(user_id=456))
+        assert client.get("/learnings/lrn-1").status_code == 200
+
+    def test_explicit_user_id_guards_still_reject_a_different_user(self, jwt_client, mock_db):
+        # The collection guards compare two request-supplied values and are untouched.
+        assert jwt_client.get("/learnings?user_id=456").status_code == 403
+        assert jwt_client.get("/learnings/users?user_id=456").status_code == 403
+        assert jwt_client.delete("/learnings/users/456").status_code == 403
+        assert (
+            jwt_client.post(
+                "/learnings", json={"learning_type": "user_profile", "content": {}, "user_id": "456"}
+            ).status_code
+            == 403
+        )
+        mock_db.delete_user_learnings.assert_not_called()
+        mock_db.upsert_learning.assert_not_called()
+
+    def test_create_body_user_id_must_still_be_a_string(self, jwt_client, mock_db):
+        # Request-side strictness is unchanged: the body is validated before the guard runs.
+        resp = jwt_client.post("/learnings", json={"learning_type": "user_profile", "content": {}, "user_id": 123})
+        assert resp.status_code == 422
+        mock_db.upsert_learning.assert_not_called()
+
+    def test_list_renders_an_int_owner(self, mock_db, settings):
+        # A non-string owner in the page must not fail the whole response.
+        client = _scoped_client(
+            mock_db, settings, user_isolation_enabled=True, user_id="admin-1", scopes=["agent_os:admin"]
+        )
+        mock_db.list_learnings = MagicMock(return_value=([_make_learning(user_id=123)], 1))
+        resp = client.get("/learnings")
+        assert resp.status_code == 200
+        assert resp.json()["data"][0]["user_id"] == "123"
+
+    def test_list_users_renders_an_int_owner(self, mock_db, settings):
+        client = _scoped_client(
+            mock_db, settings, user_isolation_enabled=True, user_id="admin-1", scopes=["agent_os:admin"]
+        )
+        mock_db.get_learnings_user_stats = MagicMock(
+            return_value=([{"user_id": 123, "last_learning_updated_at": 5}], 1)
+        )
+        resp = client.get("/learnings/users")
+        assert resp.status_code == 200
+        assert resp.json()["data"][0]["user_id"] == "123"
+
+
 def _scoped_client(mock_db, settings, **state):
     """Build a TestClient whose middleware stamps the given request.state attrs."""
     app = FastAPI()
@@ -606,3 +899,191 @@ class TestAdminAndUnscopedAccess:
         # And a cross-user single record is accessible (no 404).
         mock_db.get_learning_by_id = MagicMock(return_value=_make_learning(user_id="user-B"))
         assert isolation_off_client.get("/learnings/lrn-1").status_code == 200
+
+
+class TestCreateEntityReservedNamespaceSegments:
+    """The reserved namespace shape is the user digest plus any trailing segments, so an
+    entity_memory namespace can never absorb part of another user's key and re-split into it."""
+
+    @pytest.fixture
+    def scoped_client(self, mock_db, settings):
+        app = FastAPI()
+
+        @app.middleware("http")
+        async def add_jwt_user(request, call_next):
+            # Regular (non-admin) user with user isolation enabled.
+            request.state.user_isolation_enabled = True
+            request.state.user_id = "attacker"
+            request.state.scopes = []
+            return await call_next(request)
+
+        router = get_learnings_router(dbs={"default": [mock_db]}, settings=settings)
+        app.include_router(router)
+        return TestClient(app)
+
+    def test_create_entity_rejects_namespace_that_absorbs_the_entity_type_segment(self, client, mock_db):
+        # The key is "entity_<namespace>_<entity_type>_<entity_id>" by plain interpolation and
+        # entity ids are slugs ("Acme Corp" -> "acme_corp"), so an entity id holding an
+        # underscore lets a namespace of "user_<digest>_<entity_type>" move every split one
+        # segment right and land on the victim's namespace="user" key.
+        victim_key = build_learning_id(
+            "entity_memory",
+            user_id="victim",
+            entity_id="acme_corp",
+            entity_type="company",
+            namespace="user",
+        )
+        forged_namespace = "user_" + _user_key_segment("victim") + "_company"
+        assert (
+            build_learning_id("entity_memory", entity_id="corp", entity_type="acme", namespace=forged_namespace)
+            == victim_key
+        )
+        # Seeded so that a create reaching the db would answer 201 with the victim's row.
+        mock_db.get_learning_by_id = MagicMock(
+            side_effect=[None, _make_learning(learning_id=victim_key, learning_type="entity_memory")]
+        )
+        resp = client.post(
+            "/learnings",
+            json={
+                "learning_type": "entity_memory",
+                "content": {"stolen": True},
+                "entity_id": "corp",
+                "entity_type": "acme",
+                "namespace": forged_namespace,
+            },
+        )
+        mock_db.upsert_learning.assert_not_called()
+        assert resp.status_code == 422
+        assert "reserved" in resp.json()["detail"]
+
+    def test_create_entity_rejects_namespace_that_absorbs_several_segments(self, client, mock_db):
+        # A longer victim slug ("Acme Corp Holdings") gives the namespace more segments to
+        # swallow; the shift is bounded only by the underscore count in the entity id.
+        victim_key = build_learning_id(
+            "entity_memory",
+            user_id="victim",
+            entity_id="acme_corp_holdings",
+            entity_type="company",
+            namespace="user",
+        )
+        forged_namespace = "user_" + _user_key_segment("victim") + "_company_acme"
+        assert (
+            build_learning_id("entity_memory", entity_id="holdings", entity_type="corp", namespace=forged_namespace)
+            == victim_key
+        )
+        mock_db.get_learning_by_id = MagicMock(
+            side_effect=[None, _make_learning(learning_id=victim_key, learning_type="entity_memory")]
+        )
+        resp = client.post(
+            "/learnings",
+            json={
+                "learning_type": "entity_memory",
+                "content": {"stolen": True},
+                "entity_id": "holdings",
+                "entity_type": "corp",
+                "namespace": forged_namespace,
+            },
+        )
+        mock_db.upsert_learning.assert_not_called()
+        assert resp.status_code == 422
+        assert "reserved" in resp.json()["detail"]
+
+    def test_create_entity_rejects_bare_digest_and_every_trailing_segment_form(self, client, mock_db):
+        # The bare digest and the digest carrying any suffix are one reserved family: each
+        # interpolates into a key that opens on some user's digest.
+        digest = _user_key_segment("victim")
+        for namespace in (
+            "user_" + digest,
+            "user_" + digest + "_",
+            "user_" + digest + "_company",
+            "user_" + digest + "_company_acme",
+        ):
+            mock_db.upsert_learning.reset_mock()
+            mock_db.get_learning_by_id = MagicMock(
+                side_effect=[None, _make_learning(learning_type="entity_memory", namespace=namespace)]
+            )
+            resp = client.post(
+                "/learnings",
+                json={
+                    "learning_type": "entity_memory",
+                    "content": {},
+                    "entity_id": "corp",
+                    "entity_type": "acme",
+                    "namespace": namespace,
+                },
+            )
+            mock_db.upsert_learning.assert_not_called()
+            assert resp.status_code == 422, namespace
+            assert "reserved" in resp.json()["detail"], namespace
+
+    def test_scoped_caller_cannot_reach_another_users_entity_key_via_namespace(self, scoped_client, mock_db):
+        # body.user_id names the caller, so the ownership check passes; namespace is the only
+        # remaining field that can carry another user's digest into the derived id.
+        victim_key = build_learning_id(
+            "entity_memory",
+            user_id="victim",
+            entity_id="acme_corp",
+            entity_type="company",
+            namespace="user",
+        )
+        forged_namespace = "user_" + _user_key_segment("victim") + "_company"
+        mock_db.get_learning_by_id = MagicMock(
+            side_effect=[None, _make_learning(learning_id=victim_key, learning_type="entity_memory")]
+        )
+        resp = scoped_client.post(
+            "/learnings",
+            json={
+                "learning_type": "entity_memory",
+                "content": {"stolen": True},
+                "user_id": "attacker",
+                "entity_id": "corp",
+                "entity_type": "acme",
+                "namespace": forged_namespace,
+            },
+        )
+        mock_db.upsert_learning.assert_not_called()
+        assert resp.status_code == 422
+        assert "reserved" in resp.json()["detail"]
+
+    @pytest.mark.parametrize(
+        "namespace",
+        [
+            "user_team",
+            "user_team_shared",
+            "user_c6c289e49e9c05",
+            "user_c6c289e49e9c05_company",
+            "user_C6C289E49E9C05B2",
+            "user_C6C289E49E9C05B2_company",
+            "user_c6c289e49e9c05b2x",
+            "user_c6c289e49e9c05b2x_company",
+            "users_c6c289e49e9c05b2",
+            "workspace_c6c289e49e9c05b2_company",
+        ],
+    )
+    def test_create_entity_allows_namespaces_that_only_resemble_the_digest(self, client, mock_db, namespace):
+        # Reserved is 16 lowercase hex directly after "user_", ending at a segment boundary.
+        # A shorter digest, uppercase hex, a longer run, or a different prefix is an ordinary
+        # custom namespace and still creates.
+        expected_id = build_learning_id("entity_memory", entity_id="acme", entity_type="company", namespace=namespace)
+        created = _make_learning(
+            learning_id=expected_id,
+            learning_type="entity_memory",
+            namespace=namespace,
+            entity_id="acme",
+            entity_type="company",
+        )
+        mock_db.get_learning_by_id = MagicMock(side_effect=[None, created])
+        resp = client.post(
+            "/learnings",
+            json={
+                "learning_type": "entity_memory",
+                "content": {},
+                "entity_id": "acme",
+                "entity_type": "company",
+                "namespace": namespace,
+            },
+        )
+        assert resp.status_code == 201
+        kwargs = mock_db.upsert_learning.call_args[1]
+        assert kwargs["id"] == expected_id
+        assert kwargs["namespace"] == namespace

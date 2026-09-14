@@ -47,7 +47,7 @@ def get_weather(city: str) -> str:
 weather_agent = Agent(
     name="Weather Agent",
     role="Get weather information for cities",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[get_weather],
     tool_hooks=[context_aware_hook],
     instructions=["Use the tools to help the user."],
@@ -58,7 +58,7 @@ weather_agent = Agent(
 # ---------------------------------------------------------------------------
 team = Team(
     name="Travel Team",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     members=[weather_agent],
     mode="coordinate",
 )
