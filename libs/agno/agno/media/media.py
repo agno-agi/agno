@@ -1,6 +1,7 @@
 import asyncio
+import re
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
 from uuid import uuid4
 
 from pydantic import BaseModel, field_validator, model_validator
@@ -182,7 +183,90 @@ async def _aurl_from_storage(
     return url or None
 
 
-class Image(BaseModel):
+# --------------------------------------------------------------------------- #
+# Shared media validation / normalization helpers.
+#
+# Single source of truth for MIME-type normalization and filename sanitization
+# used by the media classes AND the AgentOS upload routers
+# (libs/agno/agno/os/utils.py). Keeping the logic here means the routers never
+# hand-roll their own content-type checks.
+# --------------------------------------------------------------------------- #
+
+
+def normalize_mime_type(value: Optional[str]) -> Optional[str]:
+    """Normalize a MIME / content type into a canonical lowercase form.
+
+    - Lowercases the value, so ``IMAGE/PNG`` becomes ``image/png``.
+    - Strips media-type parameters such as ``; charset=utf-8``.
+    - Strips surrounding whitespace.
+
+    Returns ``None`` for ``None`` / empty / whitespace-only input so callers can
+    treat a missing content type uniformly.
+    """
+    if not value:
+        return None
+    base = value.split(";", 1)[0].strip()
+    return base.lower() or None
+
+
+def normalize_filename(filename: Optional[str]) -> Optional[str]:
+    """Normalize a client-supplied filename for safe, consistent storage.
+
+    - Strips surrounding quotes (``"`` / ``'``) and whitespace.
+    - Replaces characters illegal on common filesystems (``<>:"/\\|?*``) and
+      control characters with ``_``.
+    - Collapses runs of whitespace into a single space.
+    - Preserves Unicode characters (unicode filenames are kept intact).
+
+    Returns ``None`` if nothing meaningful remains.
+    """
+    if filename is None:
+        return None
+    cleaned = filename.strip().strip("\"'")
+    illegal = '<>:"/\\|?*'
+    cleaned = "".join(ch if (ch not in illegal and ord(ch) >= 32) else "_" for ch in cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    return cleaned or None
+
+
+def reconstruct_media(data: Any, media_type: str) -> Optional["BaseMedia"]:
+    """Reconstruct a media object (Image, Audio, Video, File) based on media_type."""
+    from agno.utils.media import reconstruct_media as _reconstruct_media
+
+    return _reconstruct_media(data, media_type)
+
+
+class BaseMedia(BaseModel):
+    """Shared base for the media models, providing standardized MIME validation.
+
+    Concrete classes (``Image``, ``Audio``, ``Video``, ``File``) expose
+    ``allowed_mime_types()`` and can validate / normalize a content type with
+    ``normalize_mime_type`` and ``validate_content_type`` (case-insensitive and
+    tolerant of media-type parameters such as ``; charset=utf-8``).
+    """
+
+    @classmethod
+    def normalize_mime_type(cls, value: Optional[str]) -> Optional[str]:
+        return normalize_mime_type(value)
+
+    @classmethod
+    def validate_content_type(cls, value: Optional[str], allowed: Optional[Set[str]] = None) -> Optional[str]:
+        """Return the normalized content type if valid for this class, else ``None``."""
+        allowed = cls.allowed_mime_types() if allowed is None else allowed
+        if allowed is None:
+            return None
+        normalized = normalize_mime_type(value)
+        if normalized in allowed:
+            return normalized
+        return None
+
+    @classmethod
+    def allowed_mime_types(cls) -> Set[str]:
+        """The set of MIME types this media class accepts (canonical lowercase)."""
+        return set()
+
+
+class Image(BaseMedia):
     """Unified Image class for all use cases (input, output, artifacts)"""
 
     # Core content fields (exactly one required)
@@ -238,6 +322,22 @@ class Image(BaseModel):
                 data["id"] = str(uuid4())
 
         return data
+
+    @classmethod
+    def allowed_mime_types(cls) -> Set[str]:
+        return {
+            "image/png",
+            "image/jpeg",
+            "image/jpg",
+            "image/gif",
+            "image/webp",
+            "image/bmp",
+            "image/tiff",
+            "image/tif",
+            "image/avif",
+            "image/heic",
+            "image/heif",
+        }
 
     def get_content_bytes(self, storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None) -> Optional[bytes]:
         """Get image content as raw bytes, loading from URL/file if needed"""
@@ -346,7 +446,7 @@ class Image(BaseModel):
         return {k: v for k, v in result.items() if v is not None}
 
 
-class Audio(BaseModel):
+class Audio(BaseMedia):
     """Unified Audio class for all use cases (input, output, artifacts)"""
 
     # Core content fields (exactly one required)
@@ -399,6 +499,20 @@ class Audio(BaseModel):
                 data["id"] = str(uuid4())
 
         return data
+
+    @classmethod
+    def allowed_mime_types(cls) -> Set[str]:
+        return {
+            "audio/wav",
+            "audio/wave",
+            "audio/mp3",
+            "audio/mpeg",
+            "audio/ogg",
+            "audio/mp4",
+            "audio/m4a",
+            "audio/aac",
+            "audio/flac",
+        }
 
     def get_content_bytes(self, storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None) -> Optional[bytes]:
         """Get audio content as raw bytes"""
@@ -521,7 +635,7 @@ class Audio(BaseModel):
         return {k: v for k, v in result.items() if v is not None}
 
 
-class Video(BaseModel):
+class Video(BaseMedia):
     """Unified Video class for all use cases (input, output, artifacts)"""
 
     # Core content fields (exactly one required)
@@ -576,6 +690,22 @@ class Video(BaseModel):
                 data["id"] = str(uuid4())
 
         return data
+
+    @classmethod
+    def allowed_mime_types(cls) -> Set[str]:
+        return {
+            "video/x-flv",
+            "video/quicktime",
+            "video/mpeg",
+            "video/mpegs",
+            "video/mpgs",
+            "video/mpg",
+            "video/mp4",
+            "video/webm",
+            "video/wmv",
+            "video/3gp",
+            "video/3gpp",
+        }
 
     def get_content_bytes(self, storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None) -> Optional[bytes]:
         """Get video content as raw bytes"""
@@ -687,7 +817,7 @@ class Video(BaseModel):
         return {k: v for k, v in result.items() if v is not None}
 
 
-class File(BaseModel):
+class File(BaseMedia):
     id: Optional[str] = None
     url: Optional[str] = None
     filepath: Optional[Union[Path, str]] = None
@@ -736,10 +866,18 @@ class File(BaseModel):
     @field_validator("mime_type")
     @classmethod
     def validate_mime_type(cls, v):
-        """Validate that the mime_type is one of the allowed types."""
-        if v is not None and v not in cls.valid_mime_types():
+        """Validate that the mime_type is one of the allowed types.
+
+        Case-insensitive and tolerant of media-type parameters:
+        e.g. ``APPLICATION/PDF; charset=utf-8`` is accepted and normalized to
+        ``application/pdf``. Unknown/invalid types raise.
+        """
+        if v is None:
+            return v
+        normalized = normalize_mime_type(v)
+        if normalized not in cls.valid_mime_types():
             raise ValueError(f"Invalid MIME type: {v}. Must be one of: {cls.valid_mime_types()}")
-        return v
+        return normalized
 
     @classmethod
     def valid_mime_types(cls) -> List[str]:
@@ -774,6 +912,11 @@ class File(BaseModel):
             "text/xml",
             "text/rtf",
         ]
+
+    @classmethod
+    def allowed_mime_types(cls) -> Set[str]:
+        """Alias keeping File consistent with Image/Audio/Video."""
+        return set(cls.valid_mime_types())
 
     @classmethod
     def from_base64(
