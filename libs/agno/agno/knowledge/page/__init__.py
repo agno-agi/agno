@@ -20,8 +20,10 @@ from agno.knowledge.page.types import (
     encoded_size,
     tool_error,
 )
+from agno.knowledge.reader.utils.mdx import DocumentationMarkdown, normalize_mdx
 
 __all__ = [
+    "DocumentationMarkdown",
     "GrepMatch",
     "GrepResult",
     "Page",
@@ -39,5 +41,6 @@ __all__ = [
     "SyncFailed",
     "SyncReport",
     "encoded_size",
+    "normalize_mdx",
     "tool_error",
 ]

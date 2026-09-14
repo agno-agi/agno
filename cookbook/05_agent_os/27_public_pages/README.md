@@ -281,10 +281,21 @@ alternatives remain application-owned.
 
 ### Documentation Markdown
 
-Run `python cookbook/05_agent_os/27_public_pages/documentation_markdown.py` for a
-local transform/chunking example with no provider calls. `DocumentationMarkdown`
-is a callable for `Knowledge.sync_pages(..., transform=...)` and
-`async_sync_pages`. Its default `markdown` profile returns text verbatim.
+`DocumentationMarkdown` imports from `agno.knowledge.page` and is a callable for
+`Knowledge.sync_pages(..., transform=...)` and `async_sync_pages`. Its default
+`markdown` profile returns text verbatim. `documentation_markdown.py` defaults to
+the `check` mode, which validates configuration without IO:
+
+```sh
+.venvs/demo/bin/python cookbook/05_agent_os/27_public_pages/documentation_markdown.py
+.venvs/demo/bin/python cookbook/05_agent_os/27_public_pages/documentation_markdown.py sync
+```
+
+`sync` needs only `./cookbook/scripts/run_pgvector.sh` and `OPENAI_API_KEY`; it
+uses the same `ai` database as the other cookbooks. It publishes every page the
+index discovers through the transform, prints one stored page, and embeds each
+chunk. `incomplete_discovery` in the report means nested indexes exceeded the
+discovery bounds, not a failed page.
 
 - `fumadocs` converts whole-line components and the leading Documentation Index
   preamble, then decodes serializer escapes/entities outside fences. This includes
