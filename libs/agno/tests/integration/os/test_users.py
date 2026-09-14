@@ -158,10 +158,7 @@ pytest.importorskip("sqlalchemy")  # managed roles persist/enforce via the nativ
 from agno.agent import Agent  # noqa: E402
 from agno.db.in_memory import InMemoryDb  # noqa: E402
 from agno.os import AgentOS  # noqa: E402
-from agno.os.authz import (
-    Authorization,  # noqa: E402
-    UserDirectory,  # noqa: E402
-)
+from agno.os.authz import Authorization, UserDirectory  # noqa: E402
 from agno.os.authz.role_store import RoleStore  # noqa: E402
 from agno.os.config import AuthorizationConfig  # noqa: E402
 

@@ -2,9 +2,9 @@
 
 When a user is auto-provisioned (JIT) under managed roles, they are granted the default
 role so they land usable rather than inert. Single-role model (a subject holds one role):
-the default is the role flagged ``is_default`` in the role store, or the explicit
-nothing else. If none is flagged the user is left inert
-and a warning is logged, never a silent grant. These exercise the shared choke-point helper
+the default is the role flagged ``is_default`` in the role store (``define_role(...,
+default=True)``), nothing else. If none is flagged the user is left inert and a warning is
+logged, never a silent grant. These exercise the shared choke-point helper
 (``provision_user_with_default_role``) and the role-store plumbing it relies on.
 """
 

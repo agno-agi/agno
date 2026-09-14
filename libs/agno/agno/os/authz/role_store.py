@@ -14,7 +14,7 @@ A DB is **required** — managed roles must be persisted, and an in-memory store
 can't stay consistent across the replicas an AgentOS deployment runs. Give the
 store a DB directly (``db=``/``db_url=``) or let AgentOS lend the OS DB via
 ``Authorization(role_store=...)``; without one, every operation raises.
-Persistence to a DB needs SQLAlchemy: ``pip install "agno[os]"`` (or ``agno[os]``).
+Persistence to a DB needs SQLAlchemy: ``pip install "agno[os]"``.
 
 Example::
 

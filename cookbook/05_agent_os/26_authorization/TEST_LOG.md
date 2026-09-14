@@ -1,13 +1,18 @@
 # Test Log: 26_authorization
 
-Last updated: 2026-09-11 (the user directory is now fully separate from `Authorization`. It is the
+Last updated: 2026-09-14 (after the rename to `RoleStore` / `UserStore` / `UserDirectory` and the
+`GET /users/metrics` endpoint landed on this branch: re-ran 00/01/02/03/04/05/08/09/10/11 end to end,
+all exit 0, and booted 06/07 without serving to confirm they mount `/authz` and `/users` with
+`/users/metrics`. Run with the dev venv and `PYTHONPATH` pointed at the branch's `libs/agno`.)
+
+Earlier (2026-09-11): the user directory is now fully separate from `Authorization`. It is the
 top-level `AgentOS(user_directory=...)` switch, a peer of `user_isolation`, and its roster is seeded
 on the `UserStore` directly (`users.upsert(...)`). `Authorization` never touches it:
 `seed()` bootstraps the admin ROLE only, and per-user roles are assigned via `role_store.assign(...)`.
 The directory-using cookbooks (00/02/06/07) build the store, seed it, and pass it via
 `UserDirectory(user_store=...)`. Re-ran 00/02 end to end (pass) and 06/07 to boot with the
 correct `/authz` + `/users` routes. 03 was already top-level; 01/04/05/08/09/10 are roles-only or
-no-directory and unchanged.)
+no-directory and unchanged.
 
 Earlier (2026-09-10): migrated 01-10 from AuthorizationConfig/RoleStore to the `Authorization`
 object; all re-run clean.
