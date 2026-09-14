@@ -17,12 +17,11 @@ class RowChunking(ChunkingStrategy):
             raise ValueError("Document content must be a string")
 
         rows = document.content.splitlines()
+        start_index = document.meta_data.get("start_row", 1)
 
-        if self.skip_header and rows:
+        if self.skip_header and rows and start_index == 1:
             rows = rows[1:]
-            start_index = 2
-        else:
-            start_index = 1
+            start_index += 1
 
         chunks = []
         for i, row in enumerate(rows):
