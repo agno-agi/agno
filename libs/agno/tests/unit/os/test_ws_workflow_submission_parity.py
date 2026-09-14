@@ -86,3 +86,59 @@ async def test_version_pinned_submission_does_not_ride_the_queue(ws_env):
         for ack in _queued_acks(env):
             await env.stream.complete_run(ack["run_id"], RunStatus.completed)
         await env.router.cancel_subscription_pump(env.ws)
+
+
+def _isolated(ws_router):
+    return ws_router.WebSocketAuthContext(jwt_enabled=True, is_admin=False, user_isolation_enabled=True)
+
+
+@pytest.mark.asyncio
+async def test_submission_into_another_users_session_is_refused(ws_env, monkeypatch):
+    """HTTP refuses a run into a session owned by someone else before any
+    background work: the runs table has no ownership predicate, so an
+    unguarded write lands in the owner's history as their own turn. The
+    WebSocket door pins the caller's identity to the token but let the
+    client choose any session id; it must apply the same guard."""
+    from agno.run.base import RunStatus
+
+    env = ws_env
+    monkeypatch.setattr(env.workflow.db, "get_session", lambda **kwargs: {"session_id": "s1", "user_id": "owner"})
+    await env.router.handle_workflow_via_websocket(
+        env.ws,
+        {"workflow_id": "wf1", "session_id": "s1", "message": "hi"},
+        env.os,
+        ws_user_context={"user_id": "intruder"},
+        ws_auth=_isolated(env.router),
+    )
+    try:
+        assert not _queued_acks(env), "a run into another user's session must not be queued"
+        assert await env.store.count_queued_jobs() == 0
+        assert not env.arun_calls, "nor executed in-process"
+        errors = [f for f in env.ws.sent if f.get("event") == "error"]
+        assert errors, "the caller must be told the submission was refused"
+    finally:
+        for ack in _queued_acks(env):
+            await env.stream.complete_run(ack["run_id"], RunStatus.completed)
+        await env.router.cancel_subscription_pump(env.ws)
+
+
+@pytest.mark.asyncio
+async def test_owner_submission_into_own_session_is_queued(ws_env, monkeypatch):
+    from agno.run.base import RunStatus
+
+    env = ws_env
+    monkeypatch.setattr(env.workflow.db, "get_session", lambda **kwargs: {"session_id": "s1", "user_id": "owner"})
+    await env.router.handle_workflow_via_websocket(
+        env.ws,
+        {"workflow_id": "wf1", "session_id": "s1", "message": "hi"},
+        env.os,
+        ws_user_context={"user_id": "owner"},
+        ws_auth=_isolated(env.router),
+    )
+    try:
+        acks = _queued_acks(env)
+        assert len(acks) == 1, f"the owner's submission must be accepted, got {env.ws.sent}"
+    finally:
+        for ack in _queued_acks(env):
+            await env.stream.complete_run(ack["run_id"], RunStatus.completed)
+        await env.router.cancel_subscription_pump(env.ws)

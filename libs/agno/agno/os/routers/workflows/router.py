@@ -296,6 +296,24 @@ async def handle_workflow_via_websocket(
             )
             return
 
+        # A run must not enter a session owned by someone else: the runs table
+        # has no ownership predicate, so an unguarded write is replayed into
+        # the owner's history as their own turn. Same guard and same effective
+        # identity as the HTTP route: the caller's resolved user_id, else the
+        # workflow's own default, which is what will stamp the session row.
+        effective_user_id = user_id or getattr(workflow, "user_id", None)
+        try:
+            await assert_session_writable(
+                getattr(workflow, "db", None) or os.db,
+                session_id,
+                effective_user_id,
+                session_type=SessionType.WORKFLOW,
+                is_admin=bool(ws_auth and ws_auth.is_admin),
+            )
+        except HTTPException as e:
+            await websocket.send_text(json.dumps({"event": "error", "error": str(e.detail)}))
+            return
+
         # Generate session_id if not provided
         # Use workflow's default session_id if not provided in message
         if not session_id:
