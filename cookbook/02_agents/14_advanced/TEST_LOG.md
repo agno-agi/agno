@@ -185,3 +185,16 @@
 **Observation:** Running the earlier version of this cookbook (all runs sharing the agent's default session) reproduced the known shared-session status-clobbering bug on cue - runs stuck at PENDING forever with free slots (different victims each run: 1 then 2). The transition-site fix ships in the durable run queue PR chain; the cookbook now uses one session per run, which is also the realistic shape.
 
 ---
+
+
+## 2026-09-09 follow-up configuration and boundaries
+
+- 91 unit tests passed: custom instructions, JSON mode, all eight Agent/Team
+  generation paths, model precedence, count bounds and empty-list serialization.
+- Ten gpt-5.6-luna checks covered refusal, greeting, missing API, prompt injection
+  and technical answers with default and domain instructions. No poem was
+  re-offered. Missing-API suggestions asked for sources or documentation; these
+  model-generated questions do not establish that an API exists.
+- Three existing Fumadocs adapter tests plus empty/single-list probes passed.
+  The UI already hides empty suggestions; it was not changed.
+- Full format and validation scripts passed. No production rollout.

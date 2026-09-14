@@ -26,7 +26,7 @@ def test_followup_messages_default_structure():
     assert messages[0].role == "system"
     assert messages[1].role == "user"
     assert "Capital of France?" in messages[1].content
-    assert "Generate exactly 3 follow-up suggestions." in messages[1].content
+    assert "Generate at most 3 follow-up suggestions." in messages[1].content
 
 
 def test_followup_messages_json_object_mode_contains_json():

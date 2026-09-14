@@ -32,6 +32,7 @@ from agno.agent import (
     _tools,
     _utils,
 )
+from agno.agent.followup import FollowupConfig
 from agno.compression.manager import CompressionManager
 from agno.db.base import AsyncBaseDb, BaseDb, ComponentType, UserMemory
 from agno.eval.base import BaseEval
@@ -325,10 +326,12 @@ class Agent:
     # --- Followups ---
     # If True, generate followup prompts after the main response
     followups: bool = False
-    # Number of followup prompts to generate (default 3)
+    # Maximum number of followup prompts to generate (default 3)
     num_followups: int = 3
     # Optional model to use for generating followups (defaults to agent's model)
     followup_model: Optional[Model] = None
+    # Optional config object housing all follow-up generation settings
+    followup_config: Optional[FollowupConfig] = None
 
     # --- Agent Streaming ---
     # Stream the response from the Agent
@@ -484,6 +487,7 @@ class Agent:
         followups: bool = False,
         num_followups: int = 3,
         followup_model: Optional[Union[Model, str]] = None,
+        followup_config: Optional[FollowupConfig] = None,
         stream: Optional[bool] = None,
         stream_events: Optional[bool] = None,
         store_events: bool = False,
@@ -659,6 +663,7 @@ class Agent:
             raise ValueError("num_followups must be at least 1")
         self.num_followups = num_followups
         self.followup_model = followup_model  # type: ignore[assignment]
+        self.followup_config = followup_config
 
         self.stream = stream
         self.stream_events = stream_events
