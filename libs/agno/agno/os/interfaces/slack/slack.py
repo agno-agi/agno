@@ -42,6 +42,10 @@ class Slack(BaseInterface):
         markdown: bool = True,
         unfurl_links: bool = True,
         unfurl_media: bool = True,
+        # Answer plain human replies in threads the bot was @mentioned into. Each such
+        # reply costs one conversations.replies call, which needs the channels:history,
+        # groups:history and mpim:history bot scopes.
+        reply_to_thread_after_mention: bool = False,
     ):
         self.agent = agent
         self.team = team
@@ -64,6 +68,7 @@ class Slack(BaseInterface):
         self.markdown = markdown
         self.unfurl_links = unfurl_links
         self.unfurl_media = unfurl_media
+        self.reply_to_thread_after_mention = reply_to_thread_after_mention
 
         if not (self.agent or self.team or self.workflow):
             raise ValueError("Slack requires an agent, team, or workflow")
@@ -90,6 +95,7 @@ class Slack(BaseInterface):
             markdown=self.markdown,
             unfurl_links=self.unfurl_links,
             unfurl_media=self.unfurl_media,
+            reply_to_thread_after_mention=self.reply_to_thread_after_mention,
         )
 
         return self.router

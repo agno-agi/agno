@@ -1,6 +1,9 @@
+import asyncio
 from typing import Any, Dict, List, Optional, Tuple
 
+import aiohttp
 import httpx
+from slack_sdk.errors import SlackApiError
 
 from agno.media import Audio, File, Image, Video
 from agno.utils.log import log_error, log_warning
@@ -63,6 +66,20 @@ def should_respond(event: dict, reply_to_mentions_only: bool) -> bool:
     if not reply_to_mentions_only and event_type == "app_mention" and not is_dm:
         return False
     return True
+
+
+async def thread_root_mentions_bot(async_client: Any, channel_id: str, thread_ts: str, bot_user_id: str) -> bool:
+    """Return True if the root message of a thread @mentions the bot."""
+    try:
+        resp = await async_client.conversations_replies(channel=channel_id, ts=thread_ts, limit=1)
+    except (SlackApiError, aiohttp.ClientError, asyncio.TimeoutError) as e:
+        # Needs channels:history / groups:history / mpim:history; an API or transport failure skips the reply.
+        # slack_sdk re-raises connection and timeout errors unwrapped, so they are named here too.
+        log_warning(f"Failed to read thread root {thread_ts} in {channel_id}: {str(e)}")
+        return False
+    messages = (resp.get("messages") or []) if resp else []
+    root_text = messages[0].get("text", "") if messages else ""
+    return f"<@{bot_user_id}>" in root_text
 
 
 def build_run_metadata(
