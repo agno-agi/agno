@@ -27,8 +27,8 @@ from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS
+from agno.os.authz import Authorization
 from agno.os.authz.provider import AuthorizationContext, AuthorizationProvider
-from agno.os.config import AuthorizationConfig
 
 # ---------------------------------------------------------------------------
 # Create Example
@@ -86,8 +86,7 @@ agent_os = AgentOS(
     description="AgentOS protected by a custom authorization provider",
     agents=[research_agent],
     db=db,
-    authorization=True,
-    authorization_config=AuthorizationConfig(
+    authorization=Authorization(
         verification_keys=[JWT_SECRET],
         algorithm="HS256",
         authorization_provider=TierAuthorizationProvider(),

@@ -5,7 +5,7 @@ tables (see :class:`DbAuditSink`) because they answer different questions:
 
 1. Decision audit ("was alice allowed to run agent X, and with which token?") —
    recorded by the JWT middleware on every protected request when an
-   :class:`AuditSink` is set on ``AuthorizationConfig(audit=...)``. Each row is an
+   :class:`AuditSink` is set via ``Authorization(audit=...)`` / ``AgentOS(audit=...)``. Each row is an
    ``access.allowed`` / ``access.denied`` event with the principal, the route, the
    required scopes, the caller's scopes, and a NON-secret token reference (the
    token's ``jti`` when present, otherwise a short hash — never the token itself).

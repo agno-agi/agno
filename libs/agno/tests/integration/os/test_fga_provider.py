@@ -16,8 +16,7 @@ from fastapi.testclient import TestClient
 from agno.agent.agent import Agent
 from agno.db.in_memory import InMemoryDb
 from agno.os import AgentOS
-from agno.os.authz import AuthorizationContext, FGAAuthorizationProvider, ScopeAuthorizationProvider
-from agno.os.config import AuthorizationConfig
+from agno.os.authz import Authorization, AuthorizationContext, FGAAuthorizationProvider, ScopeAuthorizationProvider
 
 SECRET = "fga-provider-test-secret-at-least-256-bits-long-xxxxxx"
 OS_ID = "fga-test-os"
@@ -128,8 +127,7 @@ def test_fga_gates_a_real_agentos_per_resource():
     agent_os = AgentOS(
         id=OS_ID,
         agents=[research, other],
-        authorization=True,
-        authorization_config=AuthorizationConfig(
+        authorization=Authorization(
             verification_keys=[SECRET],
             algorithm="HS256",
             verify_audience=True,
@@ -174,8 +172,7 @@ def test_fga_list_endpoint_returns_a_filtered_list_not_a_403():
             Agent(id="research-agent", name="Research Agent", db=InMemoryDb()),
             Agent(id="other-agent", name="Other Agent", db=InMemoryDb()),
         ],
-        authorization=True,
-        authorization_config=AuthorizationConfig(
+        authorization=Authorization(
             verification_keys=[SECRET],
             algorithm="HS256",
             verify_audience=True,

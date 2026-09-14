@@ -25,11 +25,7 @@ Example::
 
     agent_os = AgentOS(
         agents=[...],
-        authorization=True,
-        authorization_config=AuthorizationConfig(
-            verification_keys=[...],
-            authorization_provider=store.provider,   # plug it in
-        ),
+        authorization=Authorization(verification_keys=[...], role_store=store),  # plug it in
     )
 
     # later, live (no redeploy, same token):

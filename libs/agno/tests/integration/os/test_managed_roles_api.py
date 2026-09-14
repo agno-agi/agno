@@ -16,9 +16,9 @@ pytest.importorskip("sqlalchemy")  # managed roles persist/enforce via the nativ
 from agno.agent import Agent  # noqa: E402
 from agno.db.in_memory import InMemoryDb  # noqa: E402
 from agno.os import AgentOS  # noqa: E402
+from agno.os.authz import Authorization  # noqa: E402
 from agno.os.authz.role_router import get_roles_router  # noqa: E402
 from agno.os.authz.role_store import ManagedRoleStore  # noqa: E402
-from agno.os.config import AuthorizationConfig  # noqa: E402
 
 SECRET = "managed-roles-api-test-secret-at-least-256-bits-long-xx"
 OS_ID = "managed-roles-api-test-os"
@@ -59,8 +59,7 @@ def client_and_store():
     agent_os = AgentOS(
         id=OS_ID,
         agents=[agent],
-        authorization=True,
-        authorization_config=AuthorizationConfig(
+        authorization=Authorization(
             verification_keys=[SECRET],
             algorithm="HS256",
             verify_audience=True,
@@ -219,8 +218,7 @@ def test_admin_via_token_claim_can_manage():
     agent_os = AgentOS(
         id=OS_ID,
         agents=[agent],
-        authorization=True,
-        authorization_config=AuthorizationConfig(
+        authorization=Authorization(
             verification_keys=[SECRET],
             algorithm="HS256",
             verify_audience=True,

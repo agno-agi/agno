@@ -27,7 +27,7 @@ other engine by writing an equally small client.
 Typical wiring composes FGA (per-resource ReBAC) with the scope provider (coarse
 route gating), since FGA has no notion of non-resource routes like ``/config``::
 
-    AuthorizationConfig(authorization_provider=[
+    Authorization(verification_keys=KEYS, audience=OS_ID, authorization_provider=[
         ScopeAuthorizationProvider(),          # gates /config, /sessions, ... by scope
         FGAAuthorizationProvider(fga_client),  # per-resource agents/teams/workflows by relationship
     ])

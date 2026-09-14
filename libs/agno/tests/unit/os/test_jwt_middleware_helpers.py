@@ -853,7 +853,7 @@ async def test_dispatch_sets_private_marker_on_success():
 
 
 class TestIssuerPinning:
-    """``AuthorizationConfig(issuer=...)`` must actually reject foreign issuers.
+    """``Authorization(issuer=...)`` must actually reject foreign issuers.
 
     A valid signature says the token was minted by SOMEONE holding a trusted key, not
     by the issuer you meant to trust: a deployment verifying several keys (multi-IdP,
@@ -899,15 +899,19 @@ class TestIssuerPinning:
         payload = self._validator().validate_token(self._token(iss=self.EVIL))
         assert payload["sub"] == "u"
 
-    def test_config_issuer_reaches_middleware_kwargs(self):
-        """Regression: the field must EXIST on AuthorizationConfig -- pydantic silently
-        dropped the kwarg before, so the whole feature was a no-op from config."""
+    def test_issuer_reaches_middleware_kwargs(self):
+        """Regression: the pinned issuer must actually reach the middleware. It lives on the
+        Authorization object (the released AuthorizationConfig has no such field, and pydantic
+        would silently drop an unknown kwarg), so the builder takes it explicitly."""
+        from agno.os.authz import Authorization
         from agno.os.config import AuthorizationConfig
         from agno.os.middleware.jwt import build_jwt_middleware_kwargs
 
-        config = AuthorizationConfig(verification_keys=[JWT_SECRET], algorithm="HS256", issuer=self.GOOD)
-        assert config.issuer == self.GOOD
-        assert build_jwt_middleware_kwargs(config, authorization=True)["issuer"] == self.GOOD
+        authz = Authorization(verification_keys=[JWT_SECRET], algorithm="HS256", issuer=self.GOOD)
+        assert authz.issuer == self.GOOD
+        config = AuthorizationConfig(verification_keys=[JWT_SECRET], algorithm="HS256")
+        assert build_jwt_middleware_kwargs(config, authorization=True, issuer=authz.issuer)["issuer"] == self.GOOD
+        assert "issuer" not in build_jwt_middleware_kwargs(config, authorization=True)  # unpinned by default
 
 
 class TestCreateDevToken:

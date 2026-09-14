@@ -10,11 +10,11 @@ Real deployments often have two populations hitting the same OS:
   carries identity; the store decides.
 
 A single provider can't be both "trust the token's scopes" and "ignore the token,
-ask the store." The public way to run several planes is to pass a **list** of
-providers to ``AuthorizationConfig`` / ``AgentOS`` — a request is allowed if any
-of them allows it::
+ask the store." The public way to run several planes is ``Authorization(trust_token_scopes=True)``
+with managed roles, or a **list** of providers on ``Authorization(authorization_provider=[...])``
+for a bring-your-own setup — a request is allowed if any of them allows it::
 
-    AuthorizationConfig(authorization_provider=[
+    Authorization(verification_keys=KEYS, audience=OS_ID, authorization_provider=[
         ScopeAuthorizationProvider(),   # operators: scopes from the token
         roles.provider,                 # end users: the OS-local managed store
     ])

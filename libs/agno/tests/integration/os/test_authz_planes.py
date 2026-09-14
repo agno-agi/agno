@@ -11,12 +11,12 @@ pytest.importorskip("sqlalchemy")  # managed roles persist/enforce via the nativ
 from agno.agent import Agent  # noqa: E402
 from agno.db.in_memory import InMemoryDb  # noqa: E402
 from agno.os import AgentOS  # noqa: E402
+from agno.os.authz import Authorization  # noqa: E402
 from agno.os.authz._composite import CompositeAuthorizationProvider  # noqa: E402 (internal mechanism)
 from agno.os.authz.provider import AuthorizationContext  # noqa: E402
 from agno.os.authz.role_router import get_roles_router  # noqa: E402
 from agno.os.authz.role_store import ManagedRoleStore  # noqa: E402
 from agno.os.authz.scope_provider import ScopeAuthorizationProvider  # noqa: E402
-from agno.os.config import AuthorizationConfig  # noqa: E402
 
 SECRET = "composite-secret-at-least-256-bits-long-padding-xxxxxxxx"
 OS_ID = "composite-os"
@@ -95,8 +95,7 @@ def test_both_planes_enforce_on_one_os_end_to_end():
     agent_os = AgentOS(
         id=OS_ID,
         agents=[agent],
-        authorization=True,
-        authorization_config=AuthorizationConfig(
+        authorization=Authorization(
             verification_keys=[SECRET],
             algorithm="HS256",
             verify_audience=True,
@@ -124,8 +123,7 @@ def test_admin_gate_accepts_admin_from_token_scope():
     agent_os = AgentOS(
         id=OS_ID,
         agents=[agent],
-        authorization=True,
-        authorization_config=AuthorizationConfig(
+        authorization=Authorization(
             verification_keys=[SECRET],
             algorithm="HS256",
             verify_audience=True,
@@ -172,8 +170,7 @@ def test_custom_provider_does_not_fail_open_on_non_resource_routes():
     agent_os = AgentOS(
         id=OS_ID,
         agents=[agent],
-        authorization=True,
-        authorization_config=AuthorizationConfig(
+        authorization=Authorization(
             verification_keys=[SECRET],
             algorithm="HS256",
             verify_audience=True,
@@ -193,15 +190,37 @@ def test_custom_provider_does_not_fail_open_on_non_resource_routes():
 
 
 def test_authorization_provider_rejects_a_string():
-    """A list of providers is supported; a string is a mistake. The typed
-    AuthorizationConfig field rejects it at construction (pydantic ValidationError,
-    a ValueError), so it can never be mistaken for an iterable of characters."""
+    """A list of providers is supported; a string is a mistake. AgentOS rejects it when it seeds
+    the provider, so it can never be mistaken for an iterable of characters."""
+    from agno.agent import Agent
+    from agno.db.in_memory import InMemoryDb
+
+    authz = Authorization(
+        verification_keys=[SECRET],
+        algorithm="HS256",
+        authorization_provider="ScopeAuthorizationProvider",  # oops, a string
+    )
     with pytest.raises(ValueError, match="AuthorizationProvider"):
-        AuthorizationConfig(
-            verification_keys=[SECRET],
-            algorithm="HS256",
-            authorization_provider="ScopeAuthorizationProvider",  # oops, a string
-        )
+        AgentOS(id=OS_ID, agents=[Agent(id="a", name="A", db=InMemoryDb())], authorization=authz).get_app()
+
+
+def test_authorization_provider_rejects_a_class_and_a_stray_list_element():
+    """The provider used to be a typed config field, so a class passed instead of an instance
+    (``MyProvider`` for ``MyProvider()``), or a list with a non-provider in it, failed at
+    construction. Now that it travels on the Authorization object, AgentOS checks every element
+    when it seeds the provider, so the mistake surfaces at boot and not as a 500 on the first
+    request."""
+    from agno.agent import Agent
+    from agno.db.in_memory import InMemoryDb
+
+    def _os(provider):
+        authz = Authorization(verification_keys=[SECRET], algorithm="HS256", authorization_provider=provider)
+        return AgentOS(id=OS_ID, agents=[Agent(id="a", name="A", db=InMemoryDb())], authorization=authz)
+
+    with pytest.raises(ValueError, match=r"the class ScopeAuthorizationProvider \(pass an instance"):
+        _os(ScopeAuthorizationProvider).get_app()  # the class, not an instance
+    with pytest.raises(ValueError, match="AuthorizationProvider instance.*got a NoneType"):
+        _os([ScopeAuthorizationProvider(), None]).get_app()  # one good plane, one stray element
 
 
 def test_composite_filter_accessible_unions_and_respects_per_plane_deny():

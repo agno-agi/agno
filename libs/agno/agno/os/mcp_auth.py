@@ -360,6 +360,7 @@ def _build_jwt_token_verifier(os: "AgentOS") -> Optional[JWTBearerTokenVerifier]
     kwargs = build_jwt_middleware_kwargs(
         getattr(os, "authorization_config", None),
         authorization=bool(getattr(os, "authorization", False)),
+        issuer=getattr(os, "_facade_issuer", None),
     )
     jwt_configured = bool(
         kwargs["verification_keys"] or kwargs["jwks_file"] or getenv("JWT_VERIFICATION_KEY") or getenv("JWT_JWKS_FILE")

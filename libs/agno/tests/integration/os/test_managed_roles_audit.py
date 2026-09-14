@@ -17,10 +17,10 @@ pytest.importorskip("sqlalchemy")  # managed roles persist/enforce via the nativ
 from agno.agent import Agent  # noqa: E402
 from agno.db.in_memory import InMemoryDb  # noqa: E402
 from agno.os import AgentOS  # noqa: E402
+from agno.os.authz import Authorization  # noqa: E402
 from agno.os.authz.audit import AuditEvent, AuditSink, DbAuditSink  # noqa: E402
 from agno.os.authz.role_router import get_roles_router  # noqa: E402
 from agno.os.authz.role_store import ManagedRoleStore  # noqa: E402
-from agno.os.config import AuthorizationConfig  # noqa: E402
 
 SECRET = "managed-roles-audit-secret-at-least-256-bits-long-xxxx"
 OS_ID = "managed-roles-audit-os"
@@ -131,8 +131,7 @@ def test_http_api_records_actor_from_jwt():
     agent_os = AgentOS(
         id=OS_ID,
         agents=[agent],
-        authorization=True,
-        authorization_config=AuthorizationConfig(
+        authorization=Authorization(
             verification_keys=[SECRET],
             algorithm="HS256",
             verify_audience=True,
@@ -171,8 +170,7 @@ def _decision_os(sink):
         id=OS_ID,
         agents=[agent],
         db=db,
-        authorization=True,
-        authorization_config=AuthorizationConfig(
+        authorization=Authorization(
             verification_keys=[SECRET],
             algorithm="HS256",
             verify_audience=True,
@@ -274,8 +272,7 @@ def test_decisions_endpoint_returns_trail_for_admin(tmp_path):
     agent_os = AgentOS(
         id=OS_ID,
         agents=[agent],
-        authorization=True,
-        authorization_config=AuthorizationConfig(
+        authorization=Authorization(
             verification_keys=[SECRET],
             algorithm="HS256",
             verify_audience=True,
@@ -318,8 +315,7 @@ def test_audit_endpoint_returns_trail(tmp_path):
     agent_os = AgentOS(
         id=OS_ID,
         agents=[agent],
-        authorization=True,
-        authorization_config=AuthorizationConfig(
+        authorization=Authorization(
             verification_keys=[SECRET],
             algorithm="HS256",
             verify_audience=True,
@@ -421,8 +417,7 @@ def test_per_resource_deny_is_recorded_when_it_denies_independently():
         id=OS_ID,
         agents=[Agent(id="yours", name="Yours", db=db)],
         db=db,
-        authorization=True,
-        authorization_config=AuthorizationConfig(
+        authorization=Authorization(
             verification_keys=[SECRET],
             algorithm="HS256",
             verify_audience=True,
@@ -457,9 +452,8 @@ def test_audit_sink_is_mirrored_onto_the_mcp_subapp():
         id=OS_ID,
         agents=[Agent(id="research-agent", name="Research Agent", db=db)],
         db=db,
-        authorization=True,
         mcp_server=True,
-        authorization_config=AuthorizationConfig(
+        authorization=Authorization(
             verification_keys=[SECRET],
             algorithm="HS256",
             authorization_provider=store.provider,
