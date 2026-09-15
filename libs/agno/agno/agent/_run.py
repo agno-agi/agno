@@ -1306,23 +1306,21 @@ def _run_stream(
 
 
 def _stamp_prompt_versions(agent: Agent, run_context: RunContext, run_response: RunOutput) -> None:
-    """Record the Prompt-backed fields that shape this run's system message.
+    """Record the Prompt-backed field that shapes this run's system message.
 
     Mirrors get_system_message: a custom system_message replaces everything
     else, and build_context=False builds no system message, so instructions
-    behind either are omitted as ineffective. The list is assigned fresh and a
+    behind either are omitted as ineffective. A never-published inline Prompt
+    leaves no record either; only catalog text and the inline fallback that
+    stood in for it are attributed. The list is assigned fresh and a
     caller-supplied value under the key is dropped.
     """
     from agno.db.schemas.scheduler import assign_prompt_versions, prompt_version_record
 
-    records = []
-    system_handle = retained_prompt_handle(agent, "system_message")
-    if system_handle is not None:
-        records.append(prompt_version_record(system_handle))
-    elif agent.system_message is None and agent.build_context:
-        instructions_handle = retained_prompt_handle(agent, "instructions")
-        if instructions_handle is not None:
-            records.append(prompt_version_record(instructions_handle))
+    effective = retained_prompt_handle(agent, "system_message")
+    if effective is None and agent.system_message is None and agent.build_context:
+        effective = retained_prompt_handle(agent, "instructions")
+    records = [prompt_version_record(effective)] if effective is not None and effective.attributable else []
     run_context.metadata = run_response.metadata = assign_prompt_versions(run_context.metadata, records)
 
 

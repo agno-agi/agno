@@ -6,7 +6,8 @@ It is assigned fresh at dispatch, replaces or removes any caller value, survives
 retries and continuation, and is skipped for a caller-supplied RunContext.
 """
 
-from typing import Any, AsyncIterator, Iterator, List, Optional
+import json
+from typing import Any, AsyncIterator, Iterator, List, Optional, Tuple
 
 import pytest
 
@@ -83,6 +84,40 @@ class StubModel(Model):
 
     def _parse_provider_response_delta(self, response: Any) -> ModelResponse:
         return self._response
+
+
+class DelegatingModel(StubModel):
+    """Leader double: each run delegates to ``member_id`` first, then answers the tool result."""
+
+    def __init__(self, member_id: str):
+        super().__init__()
+        self._delegation = ModelResponse(
+            role="assistant",
+            tool_calls=[
+                {
+                    "id": "delegate-1",
+                    "type": "function",
+                    "function": {
+                        "name": "delegate_task_to_member",
+                        "arguments": json.dumps({"member_id": member_id, "task": "Handle this."}),
+                    },
+                }
+            ],
+            response_usage=MessageMetrics(),
+        )
+
+    def _next(self, kwargs) -> ModelResponse:
+        self._record(kwargs)
+        return self._response if self.calls[-1][-1].role == "tool" else self._delegation
+
+    def invoke(self, *args, **kwargs) -> ModelResponse:
+        return self._next(kwargs)
+
+    async def ainvoke(self, *args, **kwargs) -> ModelResponse:
+        return self._next(kwargs)
+
+    def _parse_provider_response(self, response: Any, **kwargs) -> ModelResponse:
+        return response
 
 
 def _system_content(model: StubModel) -> Optional[str]:
@@ -311,6 +346,36 @@ class TestAgentAttribution:
         plain = Agent(model=StubModel(), instructions="plain").run("hi")
         assert not plain.metadata or KEY not in plain.metadata
 
+    def test_in_place_edits_between_runs_end_the_attribution(self, db):
+        _publish(db, content=["Be concise."])
+        _saved_agent(db, instructions=Prompt(id="support"))
+        agent = _load_agent(db)
+        first = agent.run("hi")
+        agent.instructions.append("Added by hand.")
+        second = agent.run("hi again")
+        assert first.metadata[KEY] == [_record()]
+        assert not second.metadata or KEY not in second.metadata
+        assert "Added by hand." in _system_content(agent.model)
+
+    def test_a_never_published_inline_prompt_is_not_recorded(self):
+        model = StubModel()
+        output = Agent(model=model, instructions=Prompt(id="support", content="Be concise.")).run("hi")
+        assert not output.metadata or KEY not in output.metadata
+        assert "Be concise." in _system_content(model)
+
+    async def test_a_never_published_inline_system_message_is_not_recorded_async(self):
+        model = StubModel()
+        agent = Agent(model=model, system_message=Prompt(id="sm", content="Only this text."))
+        output = await agent.arun("hi")
+        assert not output.metadata or KEY not in output.metadata
+        assert _system_content(model) == "Only this text."
+
+    def test_a_forged_value_is_removed_for_an_inline_prompt(self):
+        agent = Agent(model=StubModel(), instructions=Prompt(id="support", content="Be concise."))
+        output = agent.run("hi", metadata={KEY: "forged", "team": "growth"})
+        assert KEY not in output.metadata
+        assert output.metadata["team"] == "growth"
+
 
 class TestTeamAttribution:
     def test_instructions_only(self, db):
@@ -386,3 +451,68 @@ class TestTeamAttribution:
         assert first.metadata[KEY] == [_record()]
         assert second.metadata[KEY] == [_record()]
         assert first.metadata[KEY] is not second.metadata[KEY]
+
+    def test_a_never_published_inline_prompt_is_not_recorded(self):
+        model = StubModel()
+        team = Team(model=model, members=[_member()], instructions=Prompt(id="support", content="Be concise."))
+        output = team.run("hi")
+        assert not output.metadata or KEY not in output.metadata
+        assert "Be concise." in _system_content(model)
+
+    async def test_a_never_published_inline_system_message_is_not_recorded_async(self):
+        model = StubModel()
+        team = Team(model=model, members=[_member()], system_message=Prompt(id="sm", content="Only this text."))
+        output = await team.arun("hi")
+        assert not output.metadata or KEY not in output.metadata
+        assert _system_content(model) == "Only this text."
+
+
+def _saved_team_with_member(db, *, member_instructions):
+    _publish(db, content="Lead well.")
+    member = Agent(id="member", name="Member", instructions=member_instructions)
+    Team(id="t", members=[member], instructions=Prompt(id="support")).save(db=db)
+
+
+def _delegating_team(db) -> Tuple[Team, StubModel]:
+    team = Team.load("t", db=db)
+    team.model = DelegatingModel("member")
+    member_model = StubModel()
+    team.members[0].model = member_model
+    return team, member_model
+
+
+class TestMemberDispatchIsolation:
+    """Delegation forwards the leader's run metadata; every member run re-derives its own records."""
+
+    def test_the_member_records_only_its_own_prompt(self, db):
+        _publish(db, prompt_id="member-prompt", content="Member text.")
+        _saved_team_with_member(db, member_instructions=Prompt(id="member-prompt"))
+        team, member_model = _delegating_team(db)
+        output = team.run("hi", metadata={"team": "growth"})
+        assert output.metadata[KEY] == [_record()]
+        [member_run] = output.member_responses
+        assert member_run.metadata[KEY] == [_record(prompt_id="member-prompt")]
+        assert member_run.metadata["team"] == "growth"
+        assert "Member text." in _system_content(member_model)
+
+    def test_a_member_without_a_prompt_drops_the_inherited_key(self, db):
+        _saved_team_with_member(db, member_instructions="Help the team.")
+        team, member_model = _delegating_team(db)
+        caller = {KEY: "forged", "team": "growth"}
+        output = team.run("hi", metadata=caller)
+        assert output.metadata[KEY] == [_record()]
+        [member_run] = output.member_responses
+        assert KEY not in member_run.metadata
+        assert member_run.metadata["team"] == "growth"
+        assert caller == {KEY: "forged", "team": "growth"}
+        assert member_model.calls
+
+    def test_repeated_delegations_do_not_accumulate(self, db):
+        _publish(db, prompt_id="member-prompt", content="Member text.")
+        _saved_team_with_member(db, member_instructions=Prompt(id="member-prompt"))
+        team, _ = _delegating_team(db)
+        first = team.run("hi")
+        second = team.run("again")
+        records = [output.member_responses[0].metadata[KEY] for output in (first, second)]
+        assert records == [[_record(prompt_id="member-prompt")]] * 2
+        assert records[0] is not records[1]

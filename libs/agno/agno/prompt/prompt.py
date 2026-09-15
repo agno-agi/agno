@@ -190,8 +190,9 @@ PROMPT_FIELDS = ("system_message", "instructions")
 class PromptHandle:
     """The Prompt relationship one host field retains after binding.
 
-    ``prompt`` is the host's own copy. ``bound_value`` is the text placed in the
-    public field; once the field no longer holds it, the relationship is stale.
+    ``prompt`` is the host's own copy. ``bound_value`` is a snapshot of the text
+    placed in the public field; once the field no longer equals it, whether by
+    reassignment or by an in-place edit, the relationship is stale.
     Resolution state is filled in when the host is loaded from the catalog
     (``published``) or when text on the Prompt itself is used (``inline``).
     """
@@ -219,6 +220,11 @@ class PromptHandle:
     def resolved(self) -> bool:
         return self.source is not None
 
+    @property
+    def attributable(self) -> bool:
+        """Whether a run records this relationship: catalog text, or the inline fallback that stood in for it."""
+        return self.source == "published" or self.fallback
+
 
 def _prompt_handles(host: Any) -> Dict[str, PromptHandle]:
     handles = getattr(host, "_prompt_handles", None)
@@ -245,7 +251,7 @@ def bind_prompt_field(host: Any, field_name: str, value: Any) -> Any:
         if isinstance(value.fallback, list):
             raise ValueError("`system_message` accepts a Prompt with a string fallback, not a list of blocks")
     prompt = copy.deepcopy(value)
-    handle = PromptHandle(prompt=prompt, field=field_name, bound_value=prompt.content)
+    handle = PromptHandle(prompt=prompt, field=field_name, bound_value=copy.deepcopy(prompt.content))
     if prompt.content is not None:
         # Text carried by the Prompt itself is usable as is; a catalog load replaces this.
         handle.source = "inline"
@@ -254,13 +260,20 @@ def bind_prompt_field(host: Any, field_name: str, value: Any) -> Any:
 
 
 def retained_prompt_handle(host: Any, field_name: str) -> Optional[PromptHandle]:
-    """The handle bound to ``host.<field_name>``, or None once the field was reassigned."""
+    """The handle bound to ``host.<field_name>``, or None once the field no longer holds the bound text.
+
+    A Prompt assigned to the field after construction is bound on the first
+    read of the relationship, exactly as a constructor value is.
+    """
+    current = getattr(host, field_name, None)
+    if isinstance(current, Prompt):
+        setattr(host, field_name, bind_prompt_field(host, field_name, current))
+        return _prompt_handles(host)[field_name]
     handles = getattr(host, "_prompt_handles", None) or {}
     handle = handles.get(field_name)
     if handle is None:
         return None
-    current = getattr(host, field_name, None)
-    if current is not handle.bound_value and current != handle.bound_value:
+    if current != handle.bound_value:
         del handles[field_name]
         return None
     return handle
@@ -286,6 +299,21 @@ def require_resolved_prompts(host: Any, host_label: str) -> None:
                 f"{host_label} `{field_name}` references Prompt '{handle.prompt.id}' but no content was resolved: "
                 f"load the {host_label} from its database or give the Prompt content"
             )
+
+
+def require_resolved_member_prompts(team: Any, host_label: str) -> None:
+    """Apply the guard to each direct, already-created member before the leader run.
+
+    Only a static member list is walked, as the save path does: a callable
+    member factory is not invoked here, and a nested Team's own members are
+    not walked. Each member's dispatcher applies the guard again when it runs.
+    """
+    members = getattr(team, "members", None)
+    if not isinstance(members, list):
+        return
+    for member in members:
+        member_id = getattr(member, "id", None) or getattr(member, "name", None)
+        require_resolved_prompts(member, f"{host_label} member {type(member).__name__} '{member_id}'")
 
 
 # Fixed reasons recorded when lenient loading falls back; tied to the requested selection.
@@ -352,7 +380,7 @@ def _use_published(handle: PromptHandle, row: Dict[str, Any], version: int, reas
     handle.resolved_version = version
     handle.source = "published"
     handle.fallback_reason = reason
-    handle.bound_value = content
+    handle.bound_value = copy.deepcopy(content)
     return content
 
 
@@ -363,7 +391,7 @@ def _use_inline(handle: PromptHandle, reason: str) -> PromptContent:
     handle.resolved_version = None
     handle.source = "inline"
     handle.fallback_reason = reason
-    handle.bound_value = content
+    handle.bound_value = copy.deepcopy(content)
     return content
 
 
@@ -391,7 +419,7 @@ def resolve_prompt_handle(handle: PromptHandle, *, db: BaseDb, strict: bool, hos
         if strict:
             raise ComponentPinError(
                 f"{label} pins Prompt '{prompt.id}' at version {requested}, which is not published. "
-                f"Restore that version, or re-save the {host_label} to pin the current version."
+                f"Restore that version, or bind `{handle.field}` to a published version and save the {host_label}."
             )
         if current_row is not None and current_version is not None:
             log_warning(
@@ -434,10 +462,12 @@ def resolve_prompt_fields(host: Any, *, db: BaseDb, strict: bool, host_label: st
 def prompt_links_for_save(host: Any, *, db: BaseDb, host_label: str) -> List[Dict[str, Any]]:
     """Validate every bound Prompt against the catalog and build its link rows.
 
-    Runs before the first host write. An omitted selector is pinned to the
-    current published version now; an explicit pin must be published; "latest"
-    stores NULL. A handle that already fell back keeps its requested selector
-    instead of pinning the substitute. Host saves never publish Prompt text.
+    Runs before the first host write and changes nothing on the host. An
+    omitted selector links the current published version; an explicit pin must
+    be published; "latest" stores NULL. The requested selector is kept as is,
+    so a handle that fell back at load time is refused until its selector is
+    publishable again or the field is rebound. Host saves never publish Prompt
+    text.
     """
     links: List[Dict[str, Any]] = []
     for position, field_name in enumerate(PROMPT_FIELDS):
@@ -459,26 +489,23 @@ def prompt_links_for_save(host: Any, *, db: BaseDb, host_label: str) -> List[Dic
         else:
             target_version = prompt.version if prompt.version is not None else current_version
             child_version = target_version
-        if not handle.fallback:
-            row = _published_config(db, prompt.id, target_version) if target_version is not None else None
-            if row is None:
-                detail = (
-                    f"version {target_version}, which is not published"
-                    if target_version is not None
-                    else "which has no published version"
-                )
+        row = _published_config(db, prompt.id, target_version) if target_version is not None else None
+        if row is None:
+            if target_version is not None:
                 raise ValueError(
-                    f"{label} references Prompt '{prompt.id}' {detail}. Only published Prompt versions can be "
-                    "linked; call Prompt.save() first."
+                    f"{label} pins Prompt '{prompt.id}' at version {target_version}, which is not published. Only "
+                    f"published Prompt versions can be linked: restore that version, or bind `{field_name}` to one."
                 )
-            if prompt.content is not None and prompt.content != (row.get("config") or {}).get("content"):
-                raise ValueError(
-                    f"{label} carries Prompt '{prompt.id}' content that differs from published version "
-                    f"{row.get('version')}. Host saves never publish Prompt text; call Prompt.save() to publish "
-                    "it explicitly."
-                )
-        if prompt.version is None:
-            prompt.version = child_version
+            raise ValueError(
+                f"{label} references Prompt '{prompt.id}', which has no published version. Only published Prompt "
+                "versions can be linked; call Prompt.save() first."
+            )
+        if prompt.content is not None and prompt.content != (row.get("config") or {}).get("content"):
+            raise ValueError(
+                f"{label} carries Prompt '{prompt.id}' content that differs from published version "
+                f"{row.get('version')}. Host saves never publish Prompt text; call Prompt.save() to publish "
+                "it explicitly."
+            )
         link: Dict[str, Any] = {
             "link_kind": "prompt",
             "link_key": field_name,
@@ -490,3 +517,24 @@ def prompt_links_for_save(host: Any, *, db: BaseDb, host_label: str) -> List[Dic
             link["meta"] = {"fallback": prompt.fallback}
         links.append(link)
     return links
+
+
+def pin_stored_prompt_references(config: Dict[str, Any], links: List[Dict[str, Any]]) -> None:
+    """Write each integer link pin into the matching reference of a serialized host config, in place.
+
+    The saved reference then records the same pin as its link row, so a config
+    version written later without Prompt links still loads pinned. The live
+    handle is left alone until the save has succeeded.
+    """
+    for link in links:
+        reference = config.get(link["link_key"])
+        if isinstance(reference, dict) and is_prompt_reference(reference) and link["child_version"] is not None:
+            reference["version"] = link["child_version"]
+
+
+def pin_saved_prompt_selectors(host: Any, links: List[Dict[str, Any]]) -> None:
+    """Pin each omitted selector to the version its link row stored; called only after the host save succeeded."""
+    for link in links:
+        handle = retained_prompt_handle(host, link["link_key"])
+        if handle is not None and handle.prompt.version is None:
+            handle.prompt.version = link["child_version"]

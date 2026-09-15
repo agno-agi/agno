@@ -1008,8 +1008,11 @@ class Agent:
         strict: bool = False,
         db: Optional[BaseDb] = None,
         links: Optional[List[Dict[str, Any]]] = None,
+        resolve_prompts: bool = True,
     ) -> "Agent":
-        return _storage.from_dict(cls, data=data, registry=registry, strict=strict, db=db, links=links)
+        return _storage.from_dict(
+            cls, data=data, registry=registry, strict=strict, db=db, links=links, resolve_prompts=resolve_prompts
+        )
 
     def save(
         self,
@@ -1811,6 +1814,7 @@ def get_agent_by_id(
     user_id: Optional[str] = None,
     strict: bool = False,
     published_only: bool = True,
+    resolve_prompts: bool = True,
 ) -> Optional["Agent"]:
     """
     Get an Agent by id from the database (new entities/configs schema).
@@ -1827,6 +1831,8 @@ def get_agent_by_id(
         user_id: If set, only resolve the agent when owned by this user, unowned (shared), or published.
         strict: If True, unresolvable registry references raise
             ComponentRehydrationError; None strictly means the agent was not found.
+        resolve_prompts: Resolve Prompt-bound fields; listings pass False to
+            keep a degraded agent visible and unresolved.
 
     Returns:
         Agent instance or None.
@@ -1867,7 +1873,9 @@ def get_agent_by_id(
             links = db.get_links(component_id=id, version=resolved_version) if isinstance(resolved_version, int) else []
         except NotImplementedError:
             links = []
-        agent = Agent.from_dict(cfg, registry=registry, strict=strict, db=db, links=links)
+        agent = Agent.from_dict(
+            cfg, registry=registry, strict=strict, db=db, links=links, resolve_prompts=resolve_prompts
+        )
         agent.id = id
         # Only fall back to the caller-provided db if the config didn't
         # reconstruct one, matching Agent.load.
@@ -1963,8 +1971,27 @@ def get_agents(
                         if "id" not in agent_config:
                             agent_config["id"] = component_id
                         # Lenient on purpose: listings must show degraded
-                        # components so they stay visible and fixable.
-                        agent = Agent.from_dict(agent_config, registry=registry, strict=False)
+                        # components so they stay visible and fixable. Prompt
+                        # links carry the stored selector and fallback, and the
+                        # fields stay unresolved so a Prompt that no longer
+                        # resolves cannot drop the agent here; the run guard
+                        # refuses to run it.
+                        config_version = config.get("version")
+                        try:
+                            prompt_links = [
+                                link
+                                for link in (
+                                    (db.get_links(component_id=component_id, version=config_version) or [])
+                                    if isinstance(config_version, int)
+                                    else []
+                                )
+                                if link.get("link_kind") == "prompt"
+                            ]
+                        except NotImplementedError:
+                            prompt_links = []
+                        agent = Agent.from_dict(
+                            agent_config, registry=registry, strict=False, links=prompt_links, resolve_prompts=False
+                        )
                         agent.id = component_id
                         agent._version = component.get("current_version")
                         agent._stage = config.get("stage")

@@ -30,6 +30,8 @@ from agno.models.base import Model
 from agno.models.message import Message
 from agno.prompt.prompt import (
     bind_prompt_references,
+    pin_saved_prompt_selectors,
+    pin_stored_prompt_references,
     prompt_links_for_save,
     resolve_prompt_fields,
     retained_prompt_handle,
@@ -1197,6 +1199,7 @@ def from_dict(
     strict: bool = False,
     db: Optional[BaseDb] = None,
     links: Optional[List[Dict[str, Any]]] = None,
+    resolve_prompts: bool = True,
 ) -> Agent:
     """
     Create an agent from a dictionary.
@@ -1215,6 +1218,10 @@ def from_dict(
             unresolved and the agent refuses to run.
         links: Component links of this agent version; Prompt links carry the
             selector and fallback saved for each field.
+        resolve_prompts: Resolve Prompt-bound fields against ``db``. Listings
+            pass False so a Prompt that no longer resolves cannot drop the
+            agent; it stays visible with the field unresolved, and the run
+            guard refuses to run it.
 
     Returns:
         Agent: Reconstructed agent instance
@@ -1502,7 +1509,7 @@ def from_dict(
         debug_level=config.get("debug_level", 1),
         telemetry=config.get("telemetry", True),
     )
-    if db is not None:
+    if db is not None and resolve_prompts:
         resolve_prompt_fields(agent, db=db, strict=strict, host_label=component_label)
     return agent
 
@@ -1555,15 +1562,20 @@ def save(
             metadata=getattr(agent, "metadata", None),
         )
 
+        # The saved reference records the pin its link row stores; the live selector changes only after the write.
+        config_body = to_dict(agent)
+        pin_stored_prompt_references(config_body, prompt_links)
+
         # Create or update config
         config = db_.upsert_config(
             component_id=agent.id,
-            config=to_dict(agent),
+            config=config_body,
             links=prompt_links or None,
             label=label,
             stage=stage,
             notes=notes,
         )
+        pin_saved_prompt_selectors(agent, prompt_links)
 
         return config.get("version")
 

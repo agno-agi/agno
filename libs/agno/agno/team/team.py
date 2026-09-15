@@ -1642,8 +1642,11 @@ class Team:
         registry: Optional["Registry"] = None,
         links: Optional[List[Dict[str, Any]]] = None,
         strict: bool = False,
+        resolve_prompts: bool = True,
     ) -> "Team":
-        return _storage.from_dict(cls, data=data, db=db, registry=registry, links=links, strict=strict)
+        return _storage.from_dict(
+            cls, data=data, db=db, registry=registry, links=links, strict=strict, resolve_prompts=resolve_prompts
+        )
 
     def save(
         self,
@@ -1889,6 +1892,7 @@ def get_team_by_id(
     user_id: Optional[str] = None,
     strict: bool = False,
     published_only: bool = True,
+    resolve_prompts: bool = True,
 ) -> Optional["Team"]:
     """
     Get a Team by id from the database.
@@ -1907,6 +1911,8 @@ def get_team_by_id(
         user_id: If set, only resolve the team when owned by this user, unowned (shared), or published.
         strict: If True, unresolvable members and registry references
             raise ComponentRehydrationError; None strictly means the team was not found.
+        resolve_prompts: Resolve Prompt-bound fields of the team and its members;
+            listings pass False to keep a degraded team visible and unresolved.
 
     Returns:
         Team instance or None.
@@ -1953,7 +1959,9 @@ def get_team_by_id(
 
         # Resolve DB-backed members under the same owner scope as the team.
         with component_owner_scope(user_id):
-            team = Team.from_dict(cfg, db=db, registry=registry, links=links, strict=strict)
+            team = Team.from_dict(
+                cfg, db=db, registry=registry, links=links, strict=strict, resolve_prompts=resolve_prompts
+            )
         # Ensure team.id is set to the component_id
         team.id = id
         # Only fall back to the caller-provided db if the config didn't
@@ -2054,9 +2062,33 @@ def get_teams(
                         # components so they stay visible and fixable. Listings
                         # also show members at their current version; the
                         # per-version pin links are a detail-read concern.
+                        # Prompt links are the exception: they carry the stored
+                        # selector and fallback, and the fields stay unresolved
+                        # so a Prompt that no longer resolves cannot drop the
+                        # Team here; the run guard refuses to run it.
+                        config_version = config.get("version")
+                        try:
+                            prompt_links = [
+                                link
+                                for link in (
+                                    (db.get_links(component_id=component_id, version=config_version) or [])
+                                    if isinstance(config_version, int)
+                                    else []
+                                )
+                                if link.get("link_kind") == "prompt"
+                            ]
+                        except NotImplementedError:
+                            prompt_links = []
                         # Resolve DB-backed members under the same owner scope as the team.
                         with component_owner_scope(user_id):
-                            team = Team.from_dict(team_config, db=db, registry=registry, strict=False)
+                            team = Team.from_dict(
+                                team_config,
+                                db=db,
+                                registry=registry,
+                                links=prompt_links,
+                                strict=False,
+                                resolve_prompts=False,
+                            )
                         team.id = component_id
                         team._version = component.get("current_version")
                         team._stage = config.get("stage")

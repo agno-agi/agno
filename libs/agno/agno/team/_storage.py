@@ -36,6 +36,8 @@ from agno.models.message import Message
 from agno.models.utils import resolve_model
 from agno.prompt.prompt import (
     bind_prompt_references,
+    pin_saved_prompt_selectors,
+    pin_stored_prompt_references,
     prompt_links_for_save,
     resolve_prompt_fields,
     retained_prompt_handle,
@@ -955,6 +957,7 @@ def from_dict(
     registry: Optional["Registry"] = None,
     links: Optional[List[Dict[str, Any]]] = None,
     strict: bool = False,
+    resolve_prompts: bool = True,
 ) -> "Team":
     """
     Create a Team from a dictionary.
@@ -971,6 +974,10 @@ def from_dict(
             references raise ComponentRehydrationError instead of being
             silently dropped. Pass False to reconstruct as much as possible,
             e.g. for listings that must show degraded components.
+        resolve_prompts: Resolve Prompt-bound fields of the team and its
+            members against ``db``. Listings pass False so a Prompt that no
+            longer resolves cannot drop the Team; it stays visible with the
+            field unresolved, and the run guard refuses to run it.
 
     Returns:
         Team: Reconstructed team instance
@@ -1025,6 +1032,7 @@ def from_dict(
                             registry=registry,
                             user_id=owner_user_id,
                             strict=strict,
+                            resolve_prompts=resolve_prompts,
                         )
                         if db is not None
                         else None
@@ -1054,7 +1062,12 @@ def from_dict(
                     )
                     if db is not None:
                         agent = get_agent_by_id(
-                            id=agent_id, db=db, registry=registry, strict=False, user_id=owner_user_id
+                            id=agent_id,
+                            db=db,
+                            registry=registry,
+                            strict=False,
+                            user_id=owner_user_id,
+                            resolve_prompts=resolve_prompts,
                         )
                 # Fall back to a code-defined agent registered in the registry.
                 # These are legitimately not persisted as DB components (e.g. agents
@@ -1091,6 +1104,7 @@ def from_dict(
                             registry=registry,
                             user_id=owner_user_id,
                             strict=strict,
+                            resolve_prompts=resolve_prompts,
                         )
                         if db is not None
                         else None
@@ -1120,7 +1134,12 @@ def from_dict(
                     )
                     if db is not None:
                         nested_team = get_team_by_id(
-                            id=team_id, db=db, registry=registry, strict=False, user_id=owner_user_id
+                            id=team_id,
+                            db=db,
+                            registry=registry,
+                            strict=False,
+                            user_id=owner_user_id,
+                            resolve_prompts=resolve_prompts,
                         )
                 # Fall back to a code-defined team registered in the registry.
                 # Deep copy so the shared registry singleton isn't mutated on run.
@@ -1432,7 +1451,7 @@ def from_dict(
         ),
     )
 
-    if db is not None:
+    if db is not None and resolve_prompts:
         resolve_prompt_fields(team, db=db, strict=strict, host_label=component_label)
 
     return team
@@ -1506,15 +1525,20 @@ def save(
             metadata=getattr(team, "metadata", None),
         )
 
+        # The saved reference records the pin its link row stores; the live selector changes only after the write.
+        config_body = team.to_dict()
+        pin_stored_prompt_references(config_body, prompt_links)
+
         # Create or update config with links
         config = db_.upsert_config(
             component_id=team.id,
-            config=team.to_dict(),
+            config=config_body,
             links=all_links if all_links else None,
             label=label,
             stage=stage,
             notes=notes,
         )
+        pin_saved_prompt_selectors(team, prompt_links)
 
         return config["version"]
 

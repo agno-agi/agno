@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from agno.agent import Agent
+from agno.agent.agent import get_agents
 from agno.db.base import ComponentType, SessionType
 from agno.db.sqlite import SqliteDb
 from agno.exceptions import ComponentPinError, ComponentRehydrationError
@@ -19,7 +20,7 @@ from agno.models.base import Model
 from agno.models.message import Message, MessageMetrics
 from agno.models.response import ModelResponse
 from agno.prompt import Prompt
-from agno.team import Team
+from agno.team import Team, get_teams
 
 BLOCKS = ["Be concise.", "Never expose private customer data."]
 
@@ -162,6 +163,7 @@ class TestAgentBinding:
         assert clone.instructions == BLOCKS
         assert clone.to_dict()["instructions"] == {"prompt_id": "support"}
         clone.instructions.append("clone only")
+        assert clone.to_dict()["instructions"] == BLOCKS + ["clone only"]
         assert agent.instructions == BLOCKS
         assert agent.to_dict()["instructions"] == {"prompt_id": "support"}
 
@@ -175,6 +177,37 @@ class TestAgentBinding:
         assert clone.instructions == "Other text"
         assert clone.to_dict()["instructions"] == {"prompt_id": "other"}
         assert agent.to_dict()["instructions"] == {"prompt_id": "support"}
+
+    def test_a_prompt_assigned_after_construction_is_bound(self):
+        model = StubModel()
+        agent = Agent(model=model)
+        agent.instructions = Prompt(id="support", content=list(BLOCKS))
+        assert agent.to_dict()["instructions"] == {"prompt_id": "support"}
+        assert "Never expose" not in repr(agent.to_dict())
+        agent.run("hi")
+        assert "Never expose private customer data." in _system_content(model)
+        assert agent.instructions == BLOCKS
+
+    async def test_a_system_message_assigned_after_construction_is_bound(self):
+        model = StubModel()
+        agent = Agent(model=model, description="ignored")
+        agent.system_message = Prompt(id="sm", content="Only this text.")
+        await agent.arun("hi")
+        assert _system_content(model) == "Only this text."
+        assert agent.to_dict()["system_message"] == {"prompt_id": "sm"}
+
+    def test_a_content_free_prompt_assigned_after_construction_fails_before_the_model(self):
+        model = StubModel()
+        agent = Agent(model=model)
+        agent.instructions = Prompt(id="missing")
+        with pytest.raises(ValueError, match="missing"):
+            agent.run("hi")
+        assert model.calls == []
+
+    def test_in_place_edits_of_bound_blocks_drop_the_reference(self):
+        agent = Agent(instructions=Prompt(id="support", content=list(BLOCKS)))
+        agent.instructions.append("Added by hand.")
+        assert agent.to_dict()["instructions"] == BLOCKS + ["Added by hand."]
 
     def test_bound_text_reaches_the_model(self):
         model = StubModel()
@@ -269,11 +302,42 @@ class TestTeamBinding:
         clone = team.deep_copy()
         assert clone.to_dict()["instructions"] == {"prompt_id": "support"}
         clone.instructions.append("clone only")
+        assert clone.to_dict()["instructions"] == BLOCKS + ["clone only"]
         assert team.instructions == BLOCKS
 
     def test_deep_copy_override_drops_the_reference(self):
         team = Team(members=[_member()], instructions=Prompt(id="support", content="Be concise."))
         assert team.deep_copy(update={"instructions": "override"}).to_dict()["instructions"] == "override"
+
+    def test_a_prompt_assigned_after_construction_is_bound(self):
+        model = StubModel()
+        team = Team(model=model, members=[_member()])
+        team.instructions = Prompt(id="support", content=list(BLOCKS))
+        assert team.to_dict()["instructions"] == {"prompt_id": "support"}
+        team.run("hi")
+        assert "Never expose private customer data." in _system_content(model)
+        assert team.instructions == BLOCKS
+
+    async def test_a_system_message_assigned_after_construction_is_bound(self):
+        model = StubModel()
+        team = Team(model=model, members=[_member()])
+        team.system_message = Prompt(id="sm", content="Only this text.")
+        await team.arun("hi")
+        assert _system_content(model) == "Only this text."
+        assert team.to_dict()["system_message"] == {"prompt_id": "sm"}
+
+    def test_a_content_free_prompt_assigned_after_construction_fails_before_the_model(self):
+        model = StubModel()
+        team = Team(model=model, members=[_member()])
+        team.instructions = Prompt(id="missing")
+        with pytest.raises(ValueError, match="missing"):
+            team.run("hi")
+        assert model.calls == []
+
+    def test_in_place_edits_of_bound_blocks_drop_the_reference(self):
+        team = Team(members=[_member()], instructions=Prompt(id="support", content=list(BLOCKS)))
+        team.instructions.append("Added by hand.")
+        assert team.to_dict()["instructions"] == BLOCKS + ["Added by hand."]
 
     def test_custom_system_message_is_a_total_replacement(self):
         model = StubModel()
@@ -338,6 +402,7 @@ class TestAgentPersistence:
         [link] = db.get_links("a", version=1)
         assert (link["link_kind"], link["link_key"], link["child_component_id"]) == ("prompt", field, "support")
         assert (link["child_version"], link["position"]) == (stored, position)
+        # The saved reference records the resolved selector; the link row carries the same pin.
         assert db.get_config("a", version=1)["config"][field] == {"prompt_id": "support", "version": reference}
         loaded = Agent.load("a", db=db)
         assert getattr(loaded, field) == "one"
@@ -355,6 +420,94 @@ class TestAgentPersistence:
         assert agent.to_dict()["instructions"] == {"prompt_id": "support", "version": 1}
         _publish(db, content="two")
         assert Agent.load("a", db=db).instructions == "one"
+
+    def test_a_failed_save_leaves_an_omitted_selector_unchanged(self, db, monkeypatch):
+        _publish(db)
+        agent = Agent(id="a", instructions=Prompt(id="support"))
+        monkeypatch.setattr(db, "upsert_config", MagicMock(side_effect=RuntimeError("disk full")))
+        with pytest.raises(RuntimeError, match="disk full"):
+            agent.save(db=db)
+        assert _handle(agent, "instructions").prompt.version is None
+        assert agent.to_dict()["instructions"] == {"prompt_id": "support"}
+
+    def test_a_failed_save_leaves_every_selector_unchanged(self, db, monkeypatch):
+        _publish(db)
+        _publish(db, prompt_id="sm", content="Only this text.")
+        agent = Agent(id="a", instructions=Prompt(id="support"), system_message=Prompt(id="sm"))
+        for method in ("upsert_component", "upsert_config"):
+            with monkeypatch.context() as patched:
+                patched.setattr(db, method, MagicMock(side_effect=RuntimeError("disk full")))
+                with pytest.raises(RuntimeError, match="disk full"):
+                    agent.save(db=db)
+            assert _handle(agent, "instructions").prompt.version is None
+            assert _handle(agent, "system_message").prompt.version is None
+            assert agent.to_dict()["system_message"] == {"prompt_id": "sm"}
+        assert agent.save(db=db) == 1
+        assert (_handle(agent, "instructions").prompt.version, _handle(agent, "system_message").prompt.version) == (
+            1,
+            1,
+        )
+        config = db.get_config("a", version=1)["config"]
+        assert config["instructions"] == {"prompt_id": "support", "version": 1}
+        assert config["system_message"] == {"prompt_id": "sm", "version": 1}
+
+    def test_a_config_version_written_without_prompt_links_keeps_the_pin(self, db):
+        # The generic config routes derive no Prompt links yet; the saved reference alone must keep the pin.
+        _publish(db, content="one")
+        Agent(id="a", instructions=Prompt(id="support")).save(db=db)
+        rewritten = {**db.get_config("a", version=1)["config"], "name": "renamed"}
+        assert db.upsert_config(component_id="a", config=rewritten, stage="published")["version"] == 2
+        _publish(db, content="two")
+        loaded = Agent.load("a", db=db, strict=True)
+        assert loaded.instructions == "one"
+        assert _state(loaded, "instructions") == (1, 1, "published", False, None)
+
+    def test_saving_a_listed_agent_keeps_the_pin(self, db):
+        _publish(db, content="one")
+        Agent(id="a", instructions=Prompt(id="support")).save(db=db)
+        _publish(db, content="two")
+        [listed] = get_agents(db=db)
+        assert listed.to_dict()["instructions"] == {"prompt_id": "support", "version": 1}
+        assert listed.save(db=db) == 2
+        [link] = db.get_links("a", version=2)
+        assert link["child_version"] == 1
+        assert Agent.load("a", db=db, strict=True).instructions == "one"
+
+    @pytest.mark.parametrize(
+        "selector, stored, child_version",
+        [("latest", "latest", None), (1, 1, 1)],
+        ids=["latest", "integer-pin"],
+    )
+    def test_saving_a_listed_agent_keeps_the_fallback(self, db, selector, stored, child_version):
+        """The listing reads the version's Prompt rows, so a re-save keeps the consumer's fallback."""
+        _publish(db, content="one")
+        Agent(id="a", instructions=Prompt(id="support", version=selector, fallback=["Answer safely."])).save(db=db)
+        [listed] = get_agents(db=db)
+        handle = _handle(listed, "instructions")
+        assert handle.prompt.version == selector
+        assert handle.prompt.fallback == ["Answer safely."]
+        assert not handle.resolved
+        assert listed.instructions is None
+        assert listed.save(db=db) == 2
+        assert db.get_config("a", version=2)["config"]["instructions"] == {"prompt_id": "support", "version": stored}
+        [link] = db.get_links("a", version=2)
+        assert (link["child_version"], link["meta"]) == (child_version, {"fallback": ["Answer safely."]})
+        assert Agent.load("a", db=db, strict=True).instructions == "one"
+
+    def test_listing_leaves_a_literal_agent_unchanged(self, db):
+        Agent(id="plain", instructions=["Just text."]).save(db=db)
+        [listed] = get_agents(db=db)
+        assert listed.instructions == ["Just text."]
+        assert not listed._prompt_handles
+        assert listed.save(db=db) == 2
+        assert db.get_links("plain", version=2) == []
+
+    def test_in_place_edits_after_load_drop_the_reference(self, db):
+        _publish(db, content=list(BLOCKS))
+        Agent(id="a", instructions=Prompt(id="support")).save(db=db)
+        loaded = Agent.load("a", db=db)
+        loaded.instructions.append("Added by hand.")
+        assert loaded.to_dict()["instructions"] == BLOCKS + ["Added by hand."]
 
     def test_latest_refreshes_only_on_the_next_load(self, db):
         _publish(db, content="one")
@@ -571,16 +724,72 @@ class TestResolutionMatrix:
             with pytest.raises(RuntimeError, match="database down"):
                 Agent.load("a", db=db, strict=strict)
 
-    def test_resave_after_fallback_keeps_the_requested_pin(self, db):
+    def test_in_place_edits_of_inline_fallback_blocks_drop_the_reference(self, db):
+        _saved_agent(db, version=2, fallback=["Answer safely."])
+        _drop_prompt(db)
+        loaded = Agent.load("a", db=db, strict=False)
+        loaded.instructions.append("Added by hand.")
+        assert loaded.to_dict()["instructions"] == ["Answer safely.", "Added by hand."]
+
+    def test_resave_after_fallback_refuses_the_missing_pin_before_any_write(self, db):
         _saved_agent(db, version=2)
         _drop_prompt(db, republish="fresh")
         loaded = Agent.load("a", db=db, strict=False)
         assert loaded.instructions == "fresh"
+        with pytest.raises(ValueError, match="version 2"):
+            loaded.save(db=db)
+        assert db.get_config("a", version=2) is None
+        assert _handle(loaded, "instructions").prompt.version == 2
+
+    @pytest.mark.parametrize("child_version, message", [(2, "version 2"), (None, "no published version")])
+    def test_resave_after_inline_fallback_refuses_the_unpublishable_link(self, db, child_version, message):
+        # An active Prompt with only a draft: the pin and the current version are both missing.
+        db.upsert_component(component_id="support", component_type=ComponentType.PROMPT, name="support")
+        db.upsert_config(component_id="support", config={"type": "prompt", "content": "draft"})
+        db.create_component_with_config(
+            component_id="a",
+            component_type=ComponentType.AGENT,
+            name="a",
+            config={"instructions": {"prompt_id": "support"}},
+            stage="published",
+            links=[
+                {
+                    "link_kind": "prompt",
+                    "link_key": "instructions",
+                    "child_component_id": "support",
+                    "child_version": child_version,
+                    "position": 1,
+                    "meta": {"fallback": ["Answer safely."]},
+                }
+            ],
+        )
+        loaded = Agent.load("a", db=db, strict=False)
+        assert loaded.instructions == ["Answer safely."]
+        assert _handle(loaded, "instructions").source == "inline"
+        with pytest.raises(ValueError, match=message):
+            loaded.save(db=db)
+        assert db.get_config("a", version=2) is None
+
+    def test_resave_after_fallback_accepts_a_restored_pin(self, db):
+        _saved_agent(db, version=2)
+        _drop_prompt(db, republish="fresh")
+        loaded = Agent.load("a", db=db, strict=False)
+        _publish(db, content="restored")
         assert loaded.save(db=db) == 2
         [link] = db.get_links("a", version=2)
         assert link["child_version"] == 2
-        assert db.get_config("a", version=2)["config"]["instructions"] == {"prompt_id": "support", "version": 2}
-        assert db.get_component("support")["current_version"] == 1
+        assert Agent.load("a", db=db, strict=True).instructions == "restored"
+
+    def test_resave_after_fallback_accepts_an_explicit_replacement(self, db):
+        _saved_agent(db, version=2)
+        _drop_prompt(db, republish="fresh")
+        loaded = Agent.load("a", db=db, strict=False)
+        loaded.instructions = Prompt(id="support", version=1)
+        assert loaded.save(db=db) == 2
+        [link] = db.get_links("a", version=2)
+        assert link["child_version"] == 1
+        assert db.get_config("a", version=2)["config"]["instructions"] == {"prompt_id": "support", "version": 1}
+        assert Agent.load("a", db=db, strict=True).instructions == "fresh"
 
 
 class TestTeamPersistence:
@@ -631,8 +840,169 @@ class TestTeamPersistence:
         loaded.run("hi")
         assert _system_content(model) == "Only this text."
 
+    def test_listing_keeps_a_degraded_team_visible_but_not_runnable(self, db):
+        _publish(db, content="one")
+        _publish(db, content="two")
+        Team(id="t", members=[_plain_member()], instructions=Prompt(id="support", version=2)).save(db=db)
+        _drop_prompt(db)
+        with pytest.raises(ComponentRehydrationError):
+            Team.load("t", db=db, strict=False)
+        [listed] = get_teams(db=db)
+        assert listed.id == "t"
+        handle = _handle(listed, "instructions")
+        assert (handle.requested_version, handle.resolved) == (2, False)
+        listed.model = StubModel()
+        with pytest.raises(ValueError, match="support"):
+            listed.run("hi")
+        assert listed.model.calls == []
+
+    def test_listing_retains_the_stored_fallback_without_resolving(self, db):
+        _publish(db, content="one")
+        team = Team(id="t", members=[_plain_member()], instructions=Prompt(id="support", fallback=["Answer safely."]))
+        team.save(db=db)
+        [listed] = get_teams(db=db)
+        handle = _handle(listed, "instructions")
+        assert (handle.requested_version, handle.prompt.fallback, handle.resolved) == (1, ["Answer safely."], False)
+        assert Team.load("t", db=db).instructions == "one"
+
+    def test_a_config_version_written_with_member_links_only_keeps_the_pin(self, db):
+        _publish(db, content="one")
+        Team(id="t", members=[_plain_member()], instructions=Prompt(id="support")).save(db=db)
+        member_links = [
+            {
+                key: link[key]
+                for key in ("link_kind", "link_key", "child_component_id", "child_version", "position", "meta")
+            }
+            for link in db.get_links("t", version=1)
+            if link["link_kind"] == "member"
+        ]
+        rewritten = {**db.get_config("t", version=1)["config"], "name": "renamed"}
+        assert (
+            db.upsert_config(component_id="t", config=rewritten, stage="published", links=member_links)["version"] == 2
+        )
+        _publish(db, content="two")
+        loaded = Team.load("t", db=db, strict=True)
+        assert loaded.instructions == "one"
+        assert _state(loaded, "instructions") == (1, 1, "published", False, None)
+
+    def test_listing_keeps_a_team_visible_when_a_member_prompt_is_unavailable(self, db):
+        _publish(db, prompt_id="mp", content="member one")
+        _publish(db, prompt_id="mp", content="member two")
+        member = Agent(id="member", instructions=Prompt(id="mp", version=2))
+        Team(id="t", members=[member], instructions="Lead.").save(db=db)
+        db.delete_component("mp", require_no_dependents=False)
+        with pytest.raises(ComponentRehydrationError):
+            Team.load("t", db=db, strict=False)
+        [listed] = get_teams(db=db)
+        [listed_member] = listed.members
+        assert listed_member.instructions is None
+        assert (
+            _handle(listed_member, "instructions").requested_version,
+            _handle(listed_member, "instructions").resolved,
+        ) == (2, False)
+        listed.model = StubModel()
+        with pytest.raises(ValueError, match="'mp'"):
+            listed.run("hi")
+        assert listed.model.calls == []
+
+    def test_listing_retains_a_member_fallback_without_resolving(self, db):
+        _publish(db, prompt_id="mp", content="member one")
+        member = Agent(id="member", instructions=Prompt(id="mp", fallback=["Answer safely."]))
+        Team(id="t", members=[member], instructions="Lead.").save(db=db)
+        [listed] = get_teams(db=db)
+        handle = _handle(listed.members[0], "instructions")
+        assert (handle.requested_version, handle.prompt.fallback, handle.resolved) == (1, ["Answer safely."], False)
+        assert Team.load("t", db=db).members[0].instructions == "member one"
+
+    def test_listing_keeps_a_team_visible_when_a_nested_team_prompt_is_unavailable(self, db):
+        _publish(db, content="one")
+        _publish(db, content="two")
+        inner = Team(id="inner", members=[_plain_member()], instructions=Prompt(id="support", version=2))
+        Team(id="outer", members=[inner], instructions="Lead.").save(db=db)
+        db.delete_component("support", require_no_dependents=False)
+        [listed] = [team for team in get_teams(db=db) if team.id == "outer"]
+        [nested] = listed.members
+        assert nested.id == "inner"
+        assert _handle(nested, "instructions").resolved is False
+        for team_id in ("inner", "outer"):
+            with pytest.raises(ComponentRehydrationError):
+                Team.load(team_id, db=db, strict=False)
+
+    def test_listing_does_not_disguise_errors_as_a_prompt_fallback(self, db, monkeypatch):
+        _publish(db, content="one")
+        Team(id="t", members=[_plain_member()], instructions=Prompt(id="support", fallback="Answer safely.")).save(
+            db=db
+        )
+        db.create_component_with_config(
+            component_id="broken",
+            component_type=ComponentType.TEAM,
+            name="broken",
+            config={"instructions": {"prompt_id": 5}, "members": []},
+            stage="published",
+        )
+        assert [team.id for team in get_teams(db=db)] == ["t"]
+        monkeypatch.setattr(db, "get_links", MagicMock(side_effect=RuntimeError("database down")))
+        assert get_teams(db=db) == []
+
     def test_team_save_rejects_missing_prompt_before_any_write(self, db):
         with pytest.raises(ValueError, match="not an active Prompt"):
             Team(id="t", members=[_plain_member()], instructions=Prompt(id="support")).save(db=db)
         assert db.get_component("t") is None
         assert db.get_component("member") is None
+
+
+class TestDirectMemberGuard:
+    """The leader run checks each direct member's own Prompt-backed fields before any side effect."""
+
+    def test_an_unresolved_direct_member_refuses_the_leader_run_before_side_effects(self, db, monkeypatch):
+        import agno.team._run as team_run
+
+        spy = MagicMock()
+        monkeypatch.setattr(team_run, "register_run", spy)
+        model = StubModel()
+        member = Agent(id="m", model=StubModel(), instructions=Prompt(id="missing"))
+        team = Team(model=model, db=db, members=[member], instructions="Lead.")
+        with pytest.raises(ValueError, match="'missing'"):
+            team.run("hi")
+        assert model.calls == []
+        spy.assert_not_called()
+        assert db.get_sessions(session_type=SessionType.TEAM) == []
+
+    async def test_an_unresolved_direct_member_refuses_the_leader_run_before_side_effects_async(self, db, monkeypatch):
+        import agno.team._run as team_run
+
+        spy = AsyncMock()
+        monkeypatch.setattr(team_run, "aregister_run", spy)
+        model = StubModel()
+        member = Agent(id="m", model=StubModel(), system_message=Prompt(id="missing"))
+        team = Team(model=model, db=db, members=[member], instructions="Lead.")
+        with pytest.raises(ValueError, match="'missing'"):
+            await team.arun("hi")
+        assert model.calls == []
+        spy.assert_not_called()
+        assert db.get_sessions(session_type=SessionType.TEAM) == []
+
+    def test_a_direct_nested_team_field_is_checked(self):
+        inner = Team(id="inner", members=[_member()], instructions=Prompt(id="missing"))
+        model = StubModel()
+        team = Team(model=model, members=[inner], instructions="Lead.")
+        with pytest.raises(ValueError, match="'missing'"):
+            team.run("hi")
+        assert model.calls == []
+
+    def test_a_callable_member_factory_is_not_invoked_by_the_check(self):
+        from agno.prompt.prompt import require_resolved_member_prompts
+
+        factory = MagicMock(return_value=[_member()])
+        team = Team(members=factory, instructions="Lead.")
+        require_resolved_member_prompts(team, "Team")
+        factory.assert_not_called()
+
+    def test_members_with_text_still_run(self):
+        model = StubModel()
+        members = [
+            Agent(id="literal", model=StubModel(), instructions="Help."),
+            Agent(id="inline", model=StubModel(), instructions=Prompt(id="p", content="Inline text.")),
+        ]
+        team = Team(model=model, members=members, instructions="Lead.")
+        assert team.run("hi").content == "ok"
