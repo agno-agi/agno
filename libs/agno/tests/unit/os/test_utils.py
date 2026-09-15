@@ -7,13 +7,21 @@ from typing import Optional
 import pytest
 from starlette.datastructures import Headers, UploadFile
 
+from agno.agent import Agent
 from agno.media import File
+from agno.models.openai import OpenAIResponses
 from agno.os.utils import (
     DOCUMENT_MIME_TYPES,
     classify_upload_file,
+    collect_components_from_workflow,
     process_document,
     to_utc_datetime,
 )
+from agno.registry import Registry
+from agno.utils.verifiers import CHECK_REGISTRY_PREFIX
+from agno.workflow.step import Step
+from agno.workflow.verify import Verify
+from agno.workflow.workflow import Workflow
 
 
 def test_returns_none_for_none_input():
@@ -244,3 +252,31 @@ class TestDocumentMimeTypesConsistency:
         for mime_type in DOCUMENT_MIME_TYPES:
             # Should not raise.
             File(content=b"data", mime_type=mime_type)
+
+
+def test_component_walk_reaches_verify_absorbed_segment_and_checks():
+    # After _prepare_steps the Verify has absorbed its loop-back segment, so
+    # the top-level steps list holds only the Verify: the walk must recurse
+    # into it (or the absorbed agent is lost to the registry) and register
+    # each check under the name to_dict emits (or rehydration degrades every
+    # check to the fail-closed placeholder).
+    def named_check(run_output):
+        return True
+
+    model = OpenAIResponses(id="gpt-5.5", api_key="test")
+    agent = Agent(id="draft-agent", name="Draft Agent", model=model)
+    workflow = Workflow(
+        id="wf-verify",
+        name="WF Verify",
+        steps=[Step(name="draft", agent=agent), Verify([named_check], name="gate")],
+    )
+    workflow._prepare_steps()
+    registry = Registry(name="walk-test")
+    collect_components_from_workflow(workflow, registry, set())
+
+    registered = registry.get_function(CHECK_REGISTRY_PREFIX + "named_check")
+    assert registered is not None
+    assert getattr(registered, "__wrapped__", registered) is named_check
+    # Checks live under their own prefix, never on an executor's key.
+    assert registry.get_function("named_check") is None
+    assert model in registry.models

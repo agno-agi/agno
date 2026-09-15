@@ -11,10 +11,12 @@ so the two representations can never drift.
 
 from __future__ import annotations
 
+import pytest
+
 from agno.models.message import Message
-from agno.run.agent import RunOutput
+from agno.run.agent import RunInput, RunOutput
 from agno.run.base import HISTORY_SKIP_STATUSES, RunStatus
-from agno.run.team import TeamRunOutput
+from agno.run.team import TeamRunInput, TeamRunOutput
 from agno.session.agent import AgentSession
 from agno.session.team import TeamSession
 
@@ -83,3 +85,57 @@ def test_team_get_messages_skips_regenerated():
     contents = _contents(session.get_messages())
     assert "keep" in contents
     assert "drop" not in contents
+
+
+# --- unverified runs: kept in history, their re-entry report kept out of chat history ---
+
+REPORT = '<verification attempt="1/3" nonce="abc">\n[FAIL] report_exists: report.md is missing\n</verification>'
+
+
+def _run(kind: str, run_id: str, status: RunStatus, prompt: str, answer: str, report: bool = False):
+    messages = [Message(role="user", content=prompt), Message(role="assistant", content="draft")]
+    if report:
+        messages.append(Message(role="user", content=REPORT))
+        messages.append(Message(role="assistant", content=answer))
+    if kind == "team":
+        return TeamRunOutput(
+            run_id=run_id,
+            team_id="team-1",
+            status=status,
+            input=TeamRunInput(input_content=prompt),
+            content=answer,
+            messages=messages,
+        )
+    return RunOutput(
+        run_id=run_id,
+        agent_id="agent-1",
+        status=status,
+        input=RunInput(input_content=prompt),
+        content=answer,
+        messages=messages,
+    )
+
+
+def test_team_history_keeps_unverified_runs():
+    session = TeamSession(session_id="t1", team_id="team-1")
+    session.upsert_run(_run("team", "r1", RunStatus.completed, "q1", "a1"))
+    session.upsert_run(_run("team", "r2", RunStatus.unverified, "q2", "a2"))
+    session.upsert_run(_run("team", "r3", RunStatus.error, "q3", "a3"))
+
+    assert session.get_team_history() == [("q1", "a1"), ("q2", "a2")]
+    assert session.get_team_history(num_runs=1) == [("q2", "a2")]
+    assert session.get_team_history(team_id="team-1") == [("q1", "a1"), ("q2", "a2")]
+
+
+@pytest.mark.parametrize("kind", ["agent", "team"])
+def test_chat_history_drops_the_verification_report(kind):
+    session = (
+        TeamSession(session_id="t1", team_id="team-1")
+        if kind == "team"
+        else AgentSession(session_id="s1", agent_id="agent-1")
+    )
+    session.upsert_run(_run(kind, "r1", RunStatus.unverified, "q1", "a1", report=True))
+
+    assert [m.content for m in session.get_chat_history()] == ["q1", "draft", "a1"]
+    # Model history keeps the report: it is real transcript the model re-reads.
+    assert any(str(m.content).startswith("<verification ") for m in session.get_messages())

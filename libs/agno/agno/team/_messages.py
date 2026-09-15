@@ -53,6 +53,7 @@ from agno.utils.team import (
     get_member_id,
 )
 from agno.utils.timer import Timer
+from agno.utils.verifiers import resolve_verification
 
 
 def _input_kwarg(method: Any, input_message: Any) -> Dict[str, Any]:
@@ -340,6 +341,13 @@ def _build_identity_sections(
             content += f"<instructions>\n{rendered}\n</instructions>\n\n"
         else:
             content += rendered + "\n\n"
+    # Tell the model completion is checked when verifiers are configured
+    verification = resolve_verification(team)
+    if verification is not None and verification.add_verification_to_context:
+        from agno.verifiers.base import verifier_names
+        from agno.verifiers.report import build_verification_context
+
+        content += build_verification_context(verifier_names(team.verifiers)) + "\n\n"
     return content
 
 

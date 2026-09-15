@@ -2600,6 +2600,17 @@ class FunctionCall(BaseModel):
         # read an identity the call will not actually execute with.
         self._drop_injected_overrides(entrypoint_args)
 
+        # Refuse hooks on a verified tool before the pre-hook runs (it could rewrite the
+        # prediction); a refusal surfaces as a failed tool result and no hook runs.
+        try:
+            from agno.verifiers.tools import validate_verified_tool_hooks
+
+            validate_verified_tool_hooks(self.function)
+        except Exception as e:
+            log_warning(f"Could not run function {self.get_call_str()}: {str(e)}")
+            self.error = str(e)
+            return FunctionExecutionResult(status="failure", error=str(e))
+
         # Execute pre-hook if it exists
         self._handle_pre_hook()
 
@@ -2852,6 +2863,17 @@ class FunctionCall(BaseModel):
         # Sanitize before any hook runs, so a hook used as an authorization gate cannot
         # read an identity the call will not actually execute with.
         self._drop_injected_overrides(entrypoint_args)
+
+        # Refuse hooks on a verified tool before the pre-hook runs (it could rewrite the
+        # prediction); a refusal surfaces as a failed tool result and no hook runs.
+        try:
+            from agno.verifiers.tools import validate_verified_tool_hooks
+
+            validate_verified_tool_hooks(self.function)
+        except Exception as e:
+            log_warning(f"Could not run function {self.get_call_str()}: {str(e)}")
+            self.error = str(e)
+            return FunctionExecutionResult(status="failure", error=str(e))
 
         # Execute pre-hook if it exists
         if iscoroutinefunction(self.function.pre_hook):

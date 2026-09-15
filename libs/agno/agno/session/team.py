@@ -12,6 +12,7 @@ from agno.run.base import HISTORY_SKIP_STATUSES
 from agno.run.team import TeamRunOutput
 from agno.session.summary import SessionSummary
 from agno.utils.log import log_debug, log_warning
+from agno.verifiers.report import is_verification_report
 
 
 @dataclass
@@ -282,9 +283,14 @@ class TeamSession:
         Returns:
             A list of user and assistant Messages belonging to the session.
         """
-        return self.get_messages(
-            skip_roles=["system", "tool"], skip_member_messages=True, skip_statuses=[], last_n_runs=last_n_runs
-        )
+        # The verification report is a user-role message only for the model; it is not a turn.
+        return [
+            message
+            for message in self.get_messages(
+                skip_roles=["system", "tool"], skip_member_messages=True, skip_statuses=[], last_n_runs=last_n_runs
+            )
+            if not is_verification_report(message)
+        ]
 
     def get_tool_calls(self, num_calls: Optional[int] = None) -> List[Dict[str, Any]]:
         """Returns a list of tool calls from the messages"""
@@ -322,16 +328,20 @@ class TeamSession:
 
         from agno.run.base import RunStatus
 
-        # Get completed runs only (exclude current/pending run)
+        # Get finished runs only (exclude current/pending run). Unverified runs are
+        # included: they carry a real transcript even though their verifiers never passed.
         if team_id is not None:
             completed_runs = [
                 run
                 for run in self.runs
-                if run.status == RunStatus.completed and getattr(run, "team_id", None) == team_id
+                if run.status in (RunStatus.completed, RunStatus.unverified)
+                and getattr(run, "team_id", None) == team_id
             ]
         else:
             completed_runs = [
-                run for run in self.runs if run.status == RunStatus.completed and run.parent_run_id is None
+                run
+                for run in self.runs
+                if run.status in (RunStatus.completed, RunStatus.unverified) and run.parent_run_id is None
             ]
 
         if num_runs is not None:

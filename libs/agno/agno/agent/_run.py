@@ -122,6 +122,8 @@ from agno.utils.log import (
     log_warning,
 )
 from agno.utils.response import get_paused_content
+from agno.utils.verifiers import require_sync_verification
+from agno.verifiers._gate import VerificationGate
 
 # Strong references to background tasks so they aren't garbage-collected mid-execution.
 # See: https://docs.python.org/3/library/asyncio-task.html#asyncio.create_task
@@ -394,6 +396,7 @@ def _run(
     10. Update the RunOutput with the model response
     11. Store media if enabled
     12. Convert the response to the structured format if needed
+        Verify: run the verifiers and re-enter the model until they pass or the budget is spent
     13. Execute post-hooks
     14. Wait for background memory creation
     15. Create session summary
@@ -409,6 +412,7 @@ def _run(
         handle_reasoning,
         parse_response_with_parser_model,
         update_run_response,
+        verify_response,
     )
     from agno.agent._storage import load_session_state, read_or_create_session, update_metadata
     from agno.agent._telemetry import log_agent_telemetry
@@ -551,71 +555,89 @@ def _run(
                 # 9. Generate a response from the Model (includes running function calls)
                 agent.model = cast(Model, agent.model)
 
-                model_response: ModelResponse = call_model_with_fallback(
-                    agent.model,
-                    agent.fallback_config,
-                    messages=run_messages.messages,
-                    tools=_tools,
-                    tool_choice=agent.tool_choice,
-                    tool_call_limit=agent.tool_call_limit,
-                    response_format=response_format,
-                    run_response=run_response,
-                    send_media_to_model=agent.send_media_to_model,
-                    compression_manager=agent.compression_manager if agent.compress_tool_results else None,
-                    **result_store_kwargs(agent),
-                    after_tool_results=build_after_tool_results_callback(
-                        agent,
-                        run_response=run_response,
-                        session=agent_session,
-                        run_messages=run_messages,
-                        run_context=run_context,
-                    ),
-                )
-
-                # Check for cancellation after model call
-                raise_if_cancelled(run_response.run_id)  # type: ignore
-
-                # If an output model is provided, generate output using the output model
-                generate_response_with_output_model(agent, model_response, run_messages, run_response=run_response)
-
-                # If a parser model is provided, structure the response separately
-                parse_response_with_parser_model(
-                    agent, model_response, run_messages, run_context=run_context, run_response=run_response
-                )
-
-                # 10. Update the RunOutput with the model response
-                update_run_response(
+                # The gate re-enters the model with the evidence report until the checks pass or the budget is spent
+                verification_gate = VerificationGate.from_run(
                     agent,
-                    model_response=model_response,
                     run_response=run_response,
                     run_messages=run_messages,
                     run_context=run_context,
+                    session=agent_session,
+                    resume=False,
                 )
+                if verification_gate is not None:
+                    verification_gate.begin()
 
-                # We should break out of the run function
-                if any(tool_call.is_paused for tool_call in run_response.tools or []):
-                    wait_for_open_threads(
-                        memory_future=memory_future,  # type: ignore
-                        learning_future=learning_future,  # type: ignore
-                    )
-                    merge_background_metrics(
-                        run_response.metrics,
-                        collect_background_metrics(memory_future, learning_future),
-                    )
-
-                    return handle_agent_run_paused(
-                        agent,
+                while True:
+                    model_response: ModelResponse = call_model_with_fallback(
+                        agent.model,
+                        agent.fallback_config,
+                        messages=run_messages.messages,
+                        tools=_tools,
+                        tool_choice=agent.tool_choice,
+                        tool_call_limit=agent.tool_call_limit,
+                        response_format=response_format,
                         run_response=run_response,
-                        session=agent_session,
-                        run_context=run_context,
-                        user_id=user_id,
+                        send_media_to_model=agent.send_media_to_model,
+                        compression_manager=agent.compression_manager if agent.compress_tool_results else None,
+                        **result_store_kwargs(agent),
+                        after_tool_results=build_after_tool_results_callback(
+                            agent,
+                            run_response=run_response,
+                            session=agent_session,
+                            run_messages=run_messages,
+                            run_context=run_context,
+                        ),
                     )
 
-                # 11. Store media in run output for the caller
-                store_media_util(run_response, model_response)
+                    # Check for cancellation after model call
+                    raise_if_cancelled(run_response.run_id)  # type: ignore
 
-                # 12. Convert the response to the structured format if needed
-                convert_response_to_structured_format(agent, run_response, run_context=run_context)
+                    # If an output model is provided, generate output using the output model
+                    generate_response_with_output_model(agent, model_response, run_messages, run_response=run_response)
+
+                    # If a parser model is provided, structure the response separately
+                    parse_response_with_parser_model(
+                        agent, model_response, run_messages, run_context=run_context, run_response=run_response
+                    )
+
+                    # 10. Update the RunOutput with the model response
+                    update_run_response(
+                        agent,
+                        model_response=model_response,
+                        run_response=run_response,
+                        run_messages=run_messages,
+                        run_context=run_context,
+                    )
+
+                    # We should break out of the run function
+                    if any(tool_call.is_paused for tool_call in run_response.tools or []):
+                        wait_for_open_threads(
+                            memory_future=memory_future,  # type: ignore
+                            learning_future=learning_future,  # type: ignore
+                        )
+                        merge_background_metrics(
+                            run_response.metrics,
+                            collect_background_metrics(memory_future, learning_future),
+                        )
+
+                        return handle_agent_run_paused(
+                            agent,
+                            run_response=run_response,
+                            session=agent_session,
+                            run_context=run_context,
+                            user_id=user_id,
+                        )
+
+                    # 11. Store media in run output for the caller
+                    store_media_util(run_response, model_response)
+
+                    # 12. Convert the response to the structured format if needed
+                    convert_response_to_structured_format(agent, run_response, run_context=run_context)
+
+                    # Verify: the checks run on the parsed output, before followups
+                    if verify_response(agent, verification_gate, run_response):
+                        continue
+                    break
 
                 # 12b. Generate follow-up suggestions if enabled
                 generate_followups(agent, run_response=run_response)
@@ -659,7 +681,8 @@ def _run(
                     except Exception as e:
                         log_warning(f"Error in session summary creation: {str(e)}")
 
-                run_response.status = RunStatus.completed
+                if run_response.status != RunStatus.unverified:
+                    run_response.status = RunStatus.completed
 
                 # 16. Cleanup and store the run response and session
                 cleanup_and_store(
@@ -814,6 +837,7 @@ def _run_stream(
         handle_model_response_stream,
         handle_reasoning_stream,
         parse_response_with_parser_model_stream,
+        verify_response_stream,
     )
     from agno.agent._storage import load_session_state, read_or_create_session, update_metadata
     from agno.agent._telemetry import log_agent_telemetry
@@ -967,76 +991,95 @@ def _run_stream(
                 # Check for cancellation before model processing
                 raise_if_cancelled(run_response.run_id)  # type: ignore
 
-                # 9. Process model response
-                if agent.output_model is None:
-                    for event in handle_model_response_stream(
-                        agent,
+                # The gate re-enters the model with the evidence report until the checks pass or the budget is spent
+                verification_gate = VerificationGate.from_run(
+                    agent,
+                    run_response=run_response,
+                    run_messages=run_messages,
+                    run_context=run_context,
+                    session=agent_session,
+                    resume=False,
+                )
+                if verification_gate is not None:
+                    verification_gate.begin()
+
+                while True:
+                    # 9. Process model response
+                    if agent.output_model is None:
+                        for event in handle_model_response_stream(
+                            agent,
+                            session=agent_session,
+                            run_response=run_response,
+                            run_messages=run_messages,
+                            tools=_tools,
+                            response_format=response_format,
+                            stream_events=stream_events,
+                            session_state=run_context.session_state,
+                            run_context=run_context,
+                        ):
+                            if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
+                                raise_if_cancelled(run_response.run_id)  # type: ignore
+                            yield event
+                    else:
+                        from agno.run.agent import (
+                            IntermediateRunContentEvent,
+                            RunContentEvent,
+                        )  # type: ignore
+
+                        for event in handle_model_response_stream(
+                            agent,
+                            session=agent_session,
+                            run_response=run_response,
+                            run_messages=run_messages,
+                            tools=_tools,
+                            response_format=response_format,
+                            stream_events=stream_events,
+                            session_state=run_context.session_state,
+                            run_context=run_context,
+                        ):
+                            if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
+                                raise_if_cancelled(run_response.run_id)  # type: ignore
+                            if isinstance(event, RunContentEvent):
+                                if stream_events:
+                                    yield IntermediateRunContentEvent(
+                                        content=event.content,
+                                        content_type=event.content_type,
+                                    )
+                            else:
+                                yield event
+
+                        # If an output model is provided, generate output using the output model
+                        for event in generate_response_with_output_model_stream(
+                            agent,
+                            session=agent_session,
+                            run_response=run_response,
+                            run_messages=run_messages,
+                            stream_events=stream_events,
+                        ):
+                            if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
+                                raise_if_cancelled(run_response.run_id)  # type: ignore
+                            yield event  # type: ignore
+
+                    # Check for cancellation after model processing
+                    raise_if_cancelled(run_response.run_id)  # type: ignore
+
+                    # 10. Parse response with parser model if provided
+                    for event in parse_response_with_parser_model_stream(
+                        agent,  # type: ignore
                         session=agent_session,
                         run_response=run_response,
-                        run_messages=run_messages,
-                        tools=_tools,
-                        response_format=response_format,
                         stream_events=stream_events,
-                        session_state=run_context.session_state,
                         run_context=run_context,
                     ):
                         if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
                             raise_if_cancelled(run_response.run_id)  # type: ignore
                         yield event
-                else:
-                    from agno.run.agent import (
-                        IntermediateRunContentEvent,
-                        RunContentEvent,
-                    )  # type: ignore
 
-                    for event in handle_model_response_stream(
-                        agent,
-                        session=agent_session,
-                        run_response=run_response,
-                        run_messages=run_messages,
-                        tools=_tools,
-                        response_format=response_format,
-                        stream_events=stream_events,
-                        session_state=run_context.session_state,
-                        run_context=run_context,
-                    ):
-                        if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
-                            raise_if_cancelled(run_response.run_id)  # type: ignore
-                        if isinstance(event, RunContentEvent):
-                            if stream_events:
-                                yield IntermediateRunContentEvent(
-                                    content=event.content,
-                                    content_type=event.content_type,
-                                )
-                        else:
-                            yield event
-
-                    # If an output model is provided, generate output using the output model
-                    for event in generate_response_with_output_model_stream(
-                        agent,
-                        session=agent_session,
-                        run_response=run_response,
-                        run_messages=run_messages,
-                        stream_events=stream_events,
-                    ):
-                        if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
-                            raise_if_cancelled(run_response.run_id)  # type: ignore
-                        yield event  # type: ignore
-
-                # Check for cancellation after model processing
-                raise_if_cancelled(run_response.run_id)  # type: ignore
-
-                # 10. Parse response with parser model if provided
-                for event in parse_response_with_parser_model_stream(
-                    agent,  # type: ignore
-                    session=agent_session,
-                    run_response=run_response,
-                    stream_events=stream_events,
-                    run_context=run_context,
-                ):
-                    if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
-                        raise_if_cancelled(run_response.run_id)  # type: ignore
-                    yield event
+                    # Verify: the checks run on the parsed output, before followups
+                    yield from verify_response_stream(agent, verification_gate, run_response, stream_events)
+                    if verification_gate is not None and verification_gate.reenter:
+                        continue
+                    break
 
                 # 10b. Generate follow-up suggestions if enabled
                 for event in generate_followups_stream(
@@ -1147,6 +1190,10 @@ def _run_stream(
                 if agent_session.session_data is not None and "session_state" in agent_session.session_data:
                     run_response.session_state = agent_session.session_data["session_state"]
 
+                # Set the run status to completed (an unverified terminal outcome wins)
+                if run_response.status != RunStatus.unverified:
+                    run_response.status = RunStatus.completed
+
                 # Create the run completed event
                 completed_event = handle_event(  # type: ignore
                     create_run_completed_event(from_run_response=run_response),
@@ -1154,9 +1201,6 @@ def _run_stream(
                     events_to_skip=agent.events_to_skip,  # type: ignore
                     store_events=agent.store_events,
                 )
-
-                # Set the run status to completed
-                run_response.status = RunStatus.completed
 
                 # 13. Cleanup and store the run response and session
                 cleanup_and_store(
@@ -1367,6 +1411,8 @@ def run_dispatch(
             agent.post_hooks = normalize_post_hooks(agent.post_hooks)  # type: ignore
         agent._hooks_normalised = True
 
+    require_sync_verification(agent)
+
     # Initialize session
     session_id, user_id = initialize_session(agent, session_id=session_id, user_id=user_id)
 
@@ -1524,8 +1570,8 @@ async def _arun(
     8. Reason about the task if reasoning is enabled
     9. Generate a response from the Model (includes running function calls)
     10. Update the RunOutput with the model response
-    11. Convert response to structured format
-    12. Store media if enabled
+    11. Store media if enabled
+    12. Convert response to structured format
     13. Execute post-hooks
     14. Wait for background memory creation
     15. Create session summary
@@ -1539,6 +1585,7 @@ async def _arun(
         agenerate_response_with_output_model,
         ahandle_reasoning,
         aparse_response_with_parser_model,
+        averify_response,
         convert_response_to_structured_format,
         update_run_response,
     )
@@ -1689,79 +1736,97 @@ async def _arun(
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
 
                 # 9. Generate a response from the Model (includes running function calls)
-                model_response: ModelResponse = await acall_model_with_fallback(
-                    agent.model,
-                    agent.fallback_config,
-                    messages=run_messages.messages,
-                    tools=_tools,
-                    tool_choice=agent.tool_choice,
-                    tool_call_limit=agent.tool_call_limit,
-                    response_format=response_format,
-                    send_media_to_model=agent.send_media_to_model,
+                # The gate re-enters the model with the evidence report until the checks pass or the budget is spent
+                verification_gate = VerificationGate.from_run(
+                    agent,
                     run_response=run_response,
-                    compression_manager=agent.compression_manager if agent.compress_tool_results else None,
-                    **result_store_kwargs(agent),
-                    after_tool_results=abuild_after_tool_results_callback(
-                        agent,
+                    run_messages=run_messages,
+                    run_context=run_context,
+                    session=agent_session,
+                    resume=False,
+                )
+                if verification_gate is not None:
+                    await verification_gate.abegin()
+
+                while True:
+                    model_response: ModelResponse = await acall_model_with_fallback(
+                        agent.model,
+                        agent.fallback_config,
+                        messages=run_messages.messages,
+                        tools=_tools,
+                        tool_choice=agent.tool_choice,
+                        tool_call_limit=agent.tool_call_limit,
+                        response_format=response_format,
+                        send_media_to_model=agent.send_media_to_model,
                         run_response=run_response,
-                        session=agent_session,
+                        compression_manager=agent.compression_manager if agent.compress_tool_results else None,
+                        **result_store_kwargs(agent),
+                        after_tool_results=abuild_after_tool_results_callback(
+                            agent,
+                            run_response=run_response,
+                            session=agent_session,
+                            run_messages=run_messages,
+                            run_context=run_context,
+                        ),
+                    )
+
+                    # Check for cancellation after model call
+                    await araise_if_cancelled(run_response.run_id)  # type: ignore
+
+                    # If an output model is provided, generate output using the output model
+                    await agenerate_response_with_output_model(
+                        agent, model_response=model_response, run_messages=run_messages, run_response=run_response
+                    )
+
+                    # If a parser model is provided, structure the response separately
+                    await aparse_response_with_parser_model(
+                        agent,
+                        model_response=model_response,
                         run_messages=run_messages,
                         run_context=run_context,
-                    ),
-                )
-
-                # Check for cancellation after model call
-                await araise_if_cancelled(run_response.run_id)  # type: ignore
-
-                # If an output model is provided, generate output using the output model
-                await agenerate_response_with_output_model(
-                    agent, model_response=model_response, run_messages=run_messages, run_response=run_response
-                )
-
-                # If a parser model is provided, structure the response separately
-                await aparse_response_with_parser_model(
-                    agent,
-                    model_response=model_response,
-                    run_messages=run_messages,
-                    run_context=run_context,
-                    run_response=run_response,
-                )
-
-                # 10. Update the RunOutput with the model response
-                update_run_response(
-                    agent,
-                    model_response=model_response,
-                    run_response=run_response,
-                    run_messages=run_messages,
-                    run_context=run_context,
-                )
-
-                # We should break out of the run function
-                if any(tool_call.is_paused for tool_call in run_response.tools or []):
-                    await await_for_open_threads(
-                        memory_task=memory_task,
-                        learning_task=learning_task,
-                    )
-                    merge_background_metrics(
-                        run_response.metrics,
-                        collect_background_metrics(memory_task, learning_task),
-                    )
-                    return await ahandle_agent_run_paused(
-                        agent,
                         run_response=run_response,
-                        session=agent_session,
-                        run_context=run_context,
-                        user_id=user_id,
                     )
 
-                # 11. Convert the response to the structured format if needed
-                convert_response_to_structured_format(agent, run_response, run_context=run_context)
+                    # 10. Update the RunOutput with the model response
+                    update_run_response(
+                        agent,
+                        model_response=model_response,
+                        run_response=run_response,
+                        run_messages=run_messages,
+                        run_context=run_context,
+                    )
 
-                # 11b. Generate follow-up suggestions if enabled
+                    # We should break out of the run function
+                    if any(tool_call.is_paused for tool_call in run_response.tools or []):
+                        await await_for_open_threads(
+                            memory_task=memory_task,
+                            learning_task=learning_task,
+                        )
+                        merge_background_metrics(
+                            run_response.metrics,
+                            collect_background_metrics(memory_task, learning_task),
+                        )
+                        return await ahandle_agent_run_paused(
+                            agent,
+                            run_response=run_response,
+                            session=agent_session,
+                            run_context=run_context,
+                            user_id=user_id,
+                        )
+
+                    # 11. Store media in run output for the caller (a gate re-entry resets it per attempt)
+                    store_media_util(run_response, model_response)
+
+                    # 12. Convert the response to the structured format if needed
+                    convert_response_to_structured_format(agent, run_response, run_context=run_context)
+
+                    # Verify: the checks run on the parsed output, before followups
+                    if await averify_response(agent, verification_gate, run_response):
+                        continue
+                    break
+
+                # 12b. Generate follow-up suggestions if enabled
                 await agenerate_followups(agent, run_response=run_response)
-
-                # 12. Store media in run output for the caller
-                store_media_util(run_response, model_response)
 
                 # 13. Execute post-hooks (after output is generated but before response is returned)
                 if agent.post_hooks is not None:
@@ -1802,7 +1867,8 @@ async def _arun(
                     except Exception as e:
                         log_warning(f"Error in session summary creation: {str(e)}")
 
-                run_response.status = RunStatus.completed
+                if run_response.status != RunStatus.unverified:
+                    run_response.status = RunStatus.completed
 
                 # 16. Cleanup and store the run response and session
                 await acleanup_and_store(
@@ -2292,6 +2358,7 @@ async def _arun_stream(
         ahandle_model_response_stream,
         ahandle_reasoning_stream,
         aparse_response_with_parser_model_stream,
+        averify_response_stream,
     )
     from agno.agent._storage import aread_or_create_session, load_session_state, update_metadata
     from agno.agent._telemetry import alog_agent_telemetry
@@ -2451,76 +2518,96 @@ async def _arun_stream(
 
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
 
-                # 9. Generate a response from the Model
-                if agent.output_model is None:
-                    async for event in ahandle_model_response_stream(
-                        agent,
-                        session=agent_session,
-                        run_response=run_response,
-                        run_messages=run_messages,
-                        tools=_tools,
-                        response_format=response_format,
-                        stream_events=stream_events,
-                        session_state=run_context.session_state,
-                        run_context=run_context,
-                    ):
-                        if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
-                            await araise_if_cancelled(run_response.run_id)  # type: ignore
-                        yield event
-                else:
-                    from agno.run.agent import (
-                        IntermediateRunContentEvent,
-                        RunContentEvent,
-                    )  # type: ignore
+                # The gate re-enters the model with the evidence report until the checks pass or the budget is spent
+                verification_gate = VerificationGate.from_run(
+                    agent,
+                    run_response=run_response,
+                    run_messages=run_messages,
+                    run_context=run_context,
+                    session=agent_session,
+                    resume=False,
+                )
+                if verification_gate is not None:
+                    await verification_gate.abegin()
 
-                    async for event in ahandle_model_response_stream(
-                        agent,
-                        session=agent_session,
-                        run_response=run_response,
-                        run_messages=run_messages,
-                        tools=_tools,
-                        response_format=response_format,
-                        stream_events=stream_events,
-                        session_state=run_context.session_state,
-                        run_context=run_context,
-                    ):
-                        if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
-                            await araise_if_cancelled(run_response.run_id)  # type: ignore
-                        if isinstance(event, RunContentEvent):
-                            if stream_events:
-                                yield IntermediateRunContentEvent(
-                                    content=event.content,
-                                    content_type=event.content_type,
-                                )
-                        else:
+                while True:
+                    # 9. Generate a response from the Model
+                    if agent.output_model is None:
+                        async for event in ahandle_model_response_stream(
+                            agent,
+                            session=agent_session,
+                            run_response=run_response,
+                            run_messages=run_messages,
+                            tools=_tools,
+                            response_format=response_format,
+                            stream_events=stream_events,
+                            session_state=run_context.session_state,
+                            run_context=run_context,
+                        ):
+                            if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
+                                await araise_if_cancelled(run_response.run_id)  # type: ignore
+                            yield event
+                    else:
+                        from agno.run.agent import (
+                            IntermediateRunContentEvent,
+                            RunContentEvent,
+                        )  # type: ignore
+
+                        async for event in ahandle_model_response_stream(
+                            agent,
+                            session=agent_session,
+                            run_response=run_response,
+                            run_messages=run_messages,
+                            tools=_tools,
+                            response_format=response_format,
+                            stream_events=stream_events,
+                            session_state=run_context.session_state,
+                            run_context=run_context,
+                        ):
+                            if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
+                                await araise_if_cancelled(run_response.run_id)  # type: ignore
+                            if isinstance(event, RunContentEvent):
+                                if stream_events:
+                                    yield IntermediateRunContentEvent(
+                                        content=event.content,
+                                        content_type=event.content_type,
+                                    )
+                            else:
+                                yield event
+
+                        # If an output model is provided, generate output using the output model
+                        async for event in agenerate_response_with_output_model_stream(
+                            agent,
+                            session=agent_session,
+                            run_response=run_response,
+                            run_messages=run_messages,
+                            stream_events=stream_events,
+                        ):
+                            if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
+                                await araise_if_cancelled(run_response.run_id)  # type: ignore
                             yield event
 
-                    # If an output model is provided, generate output using the output model
-                    async for event in agenerate_response_with_output_model_stream(
+                    # Check for cancellation after model processing
+                    await araise_if_cancelled(run_response.run_id)  # type: ignore
+
+                    # 10. Parse response with parser model if provided
+                    async for event in aparse_response_with_parser_model_stream(
                         agent,
                         session=agent_session,
                         run_response=run_response,
-                        run_messages=run_messages,
                         stream_events=stream_events,
+                        run_context=run_context,
                     ):
                         if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
                             await araise_if_cancelled(run_response.run_id)  # type: ignore
+                        yield event  # type: ignore
+
+                    # Verify: the checks run on the parsed output, before followups
+                    async for event in averify_response_stream(agent, verification_gate, run_response, stream_events):
                         yield event
-
-                # Check for cancellation after model processing
-                await araise_if_cancelled(run_response.run_id)  # type: ignore
-
-                # 10. Parse response with parser model if provided
-                async for event in aparse_response_with_parser_model_stream(
-                    agent,
-                    session=agent_session,
-                    run_response=run_response,
-                    stream_events=stream_events,
-                    run_context=run_context,
-                ):
-                    if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
-                        await araise_if_cancelled(run_response.run_id)  # type: ignore
-                    yield event  # type: ignore
+                    if verification_gate is not None and verification_gate.reenter:
+                        continue
+                    break
 
                 # 10b. Generate follow-up suggestions if enabled
                 async for event in agenerate_followups_stream(
@@ -2633,6 +2720,10 @@ async def _arun_stream(
                 if agent_session.session_data is not None and "session_state" in agent_session.session_data:
                     run_response.session_state = agent_session.session_data["session_state"]
 
+                # Set the run status to completed (an unverified terminal outcome wins)
+                if run_response.status != RunStatus.unverified:
+                    run_response.status = RunStatus.completed
+
                 # Create the run completed event
                 completed_event = handle_event(
                     create_run_completed_event(from_run_response=run_response),
@@ -2640,9 +2731,6 @@ async def _arun_stream(
                     events_to_skip=agent.events_to_skip,  # type: ignore
                     store_events=agent.store_events,
                 )
-
-                # Set the run status to completed
-                run_response.status = RunStatus.completed
 
                 # 13. Cleanup and store the run response and session
                 await acleanup_and_store(
@@ -3071,7 +3159,9 @@ def _truncate_run_to_checkpoint(run_response: RunOutput, message_index: int) -> 
     - a remaining assistant message's ``tool_calls`` list.
 
     A requirement is kept iff its underlying tool execution survives. The
-    checkpoint marker is updated to ``message_index``.
+    checkpoint marker is updated to ``message_index``. The verification record
+    is dropped — its attempts' ``message_index`` values indexed the pre-cut
+    transcript, so a kept record would point at the wrong messages.
 
     No-op when ``message_index >= len(messages)`` or ``message_index < 0``.
     """
@@ -3094,6 +3184,11 @@ def _truncate_run_to_checkpoint(run_response: RunOutput, message_index: int) -> 
 
     # Truncate messages
     run_response.messages = run_response.messages[:message_index]
+
+    # The verification record's attempts index into the transcript this cut just rewrote;
+    # a kept record would point at the wrong messages, so it does not survive a real
+    # truncation. The next gate (if any) builds a fresh record, mirroring _fork_run.
+    run_response.verification = None
 
     # Collect tool_call_ids referenced by the surviving messages
     valid_tool_call_ids: set = set()
@@ -3161,6 +3256,9 @@ def _fork_run(run_response: RunOutput, message_index: int) -> RunOutput:
     forked.metrics.start_timer()
     forked.created_at = int(_time())
     forked.events = None
+    # A fork is a new run: the parent's verification record (its attempts index into the
+    # parent's untruncated transcript) must not ride along; the fork's own gate starts fresh.
+    forked.verification = None
     _truncate_run_to_checkpoint(forked, message_index)
     return forked
 
@@ -3475,6 +3573,9 @@ def continue_run_dispatch(
     # Refused here rather than at the persist below, which runs after the model call.
     if isinstance(agent.media_storage, AsyncMediaStorage):
         raise ValueError("Cannot use sync continue_run() with an AsyncMediaStorage. Use acontinue_run() instead.")
+
+    # Refused here rather than at the gate, which runs after the model call.
+    require_sync_verification(agent)
 
     background_tasks = kwargs.pop("background_tasks", None)
     if background_tasks is not None:
@@ -3797,8 +3898,8 @@ def _continue_run(
     1. Handle any updated tools
     2. Generate a response from the Model
     3. Update the RunOutput with the model response
-    4. Convert response to structured format
-    5. Store media if enabled
+    4. Store media if enabled
+    5. Convert response to structured format
     6. Execute post-hooks
     7. Create session summary
     8. Cleanup and store (scrub, stop timer, save to file, add to session, calculate metrics, save session)
@@ -3812,6 +3913,7 @@ def _continue_run(
         generate_response_with_output_model,
         parse_response_with_parser_model,
         update_run_response,
+        verify_response,
     )
     from agno.agent._telemetry import log_agent_telemetry
     from agno.agent._tools import handle_tool_call_updates
@@ -3830,63 +3932,81 @@ def _continue_run(
                 # Check for cancellation before model call
                 raise_if_cancelled(run_response.run_id)  # type: ignore
 
-                # 2. Generate a response from the Model (includes running function calls)
-                agent.model = cast(Model, agent.model)
-                model_response: ModelResponse = call_model_with_fallback(
-                    agent.model,
-                    agent.fallback_config,
-                    messages=run_messages.messages,
-                    response_format=response_format,
-                    tools=tools,
-                    tool_choice=agent.tool_choice,
-                    tool_call_limit=agent.tool_call_limit,
-                    run_response=run_response,
-                    send_media_to_model=agent.send_media_to_model,
-                    compression_manager=agent.compression_manager if agent.compress_tool_results else None,
-                    **result_store_kwargs(agent),
-                    after_tool_results=build_after_tool_results_callback(
-                        agent,
-                        run_response=run_response,
-                        session=session,
-                        run_messages=run_messages,
-                        run_context=run_context,
-                    ),
-                )
-
-                # Check for cancellation after model processing
-                raise_if_cancelled(run_response.run_id)  # type: ignore
-
-                # If an output model is provided, generate output using the output model
-                generate_response_with_output_model(agent, model_response, run_messages, run_response=run_response)
-
-                # If a parser model is provided, structure the response separately
-                parse_response_with_parser_model(
-                    agent, model_response, run_messages, run_context=run_context, run_response=run_response
-                )
-
-                # 3. Update the RunOutput with the model response
-                update_run_response(
+                # The gate re-enters the model with the evidence report until the checks pass or the budget is spent
+                verification_gate = VerificationGate.from_run(
                     agent,
-                    model_response=model_response,
                     run_response=run_response,
                     run_messages=run_messages,
                     run_context=run_context,
+                    session=session,
+                    resume=True,
                 )
+                if verification_gate is not None:
+                    verification_gate.begin()
 
-                # We should break out of the run function
-                if any(tool_call.is_paused for tool_call in run_response.tools or []):
-                    return handle_agent_run_paused(
-                        agent, run_response=run_response, session=session, run_context=run_context, user_id=user_id
+                while True:
+                    # 2. Generate a response from the Model (includes running function calls)
+                    agent.model = cast(Model, agent.model)
+                    model_response: ModelResponse = call_model_with_fallback(
+                        agent.model,
+                        agent.fallback_config,
+                        messages=run_messages.messages,
+                        response_format=response_format,
+                        tools=tools,
+                        tool_choice=agent.tool_choice,
+                        tool_call_limit=agent.tool_call_limit,
+                        run_response=run_response,
+                        send_media_to_model=agent.send_media_to_model,
+                        compression_manager=agent.compression_manager if agent.compress_tool_results else None,
+                        **result_store_kwargs(agent),
+                        after_tool_results=build_after_tool_results_callback(
+                            agent,
+                            run_response=run_response,
+                            session=session,
+                            run_messages=run_messages,
+                            run_context=run_context,
+                        ),
                     )
 
-                # 4. Convert the response to the structured format if needed
-                convert_response_to_structured_format(agent, run_response, run_context=run_context)
+                    # Check for cancellation after model processing
+                    raise_if_cancelled(run_response.run_id)  # type: ignore
 
-                # 4b. Generate follow-up suggestions if enabled
+                    # If an output model is provided, generate output using the output model
+                    generate_response_with_output_model(agent, model_response, run_messages, run_response=run_response)
+
+                    # If a parser model is provided, structure the response separately
+                    parse_response_with_parser_model(
+                        agent, model_response, run_messages, run_context=run_context, run_response=run_response
+                    )
+
+                    # 3. Update the RunOutput with the model response
+                    update_run_response(
+                        agent,
+                        model_response=model_response,
+                        run_response=run_response,
+                        run_messages=run_messages,
+                        run_context=run_context,
+                    )
+
+                    # We should break out of the run function
+                    if any(tool_call.is_paused for tool_call in run_response.tools or []):
+                        return handle_agent_run_paused(
+                            agent, run_response=run_response, session=session, run_context=run_context, user_id=user_id
+                        )
+
+                    # 4. Store media in run output for the caller (a gate re-entry resets it per attempt)
+                    store_media_util(run_response, model_response)
+
+                    # 5. Convert the response to the structured format if needed
+                    convert_response_to_structured_format(agent, run_response, run_context=run_context)
+
+                    # Verify: the checks run on the parsed output, before followups
+                    if verify_response(agent, verification_gate, run_response):
+                        continue
+                    break
+
+                # 5b. Generate follow-up suggestions if enabled
                 generate_followups(agent, run_response=run_response)
-
-                # 5. Store media in run output for the caller
-                store_media_util(run_response, model_response)
 
                 # 6. Execute post-hooks
                 if agent.post_hooks is not None:
@@ -3917,8 +4037,9 @@ def _continue_run(
                     except Exception as e:
                         log_warning(f"Error in session summary creation: {str(e)}")
 
-                # Set the run status to completed
-                run_response.status = RunStatus.completed
+                # Set the run status to completed (an unverified terminal outcome wins)
+                if run_response.status != RunStatus.unverified:
+                    run_response.status = RunStatus.completed
 
                 # 8. Cleanup and store the run response and session
                 cleanup_and_store(
@@ -4032,6 +4153,7 @@ def _continue_run_stream(
         generate_followups_stream,
         handle_model_response_stream,
         parse_response_with_parser_model_stream,
+        verify_response_stream,
     )
     from agno.agent._telemetry import log_agent_telemetry
     from agno.agent._tools import handle_tool_call_updates_stream
@@ -4066,33 +4188,52 @@ def _continue_run_stream(
                         raise_if_cancelled(run_response.run_id)  # type: ignore
                     yield event
 
-                # 3. Process model response
-                for event in handle_model_response_stream(
+                # The gate re-enters the model with the evidence report until the checks pass or the budget is spent
+                verification_gate = VerificationGate.from_run(
                     agent,
-                    session=session,
                     run_response=run_response,
                     run_messages=run_messages,
-                    tools=tools,
-                    response_format=response_format,
-                    stream_events=stream_events,
-                    session_state=run_context.session_state,
                     run_context=run_context,
-                ):
-                    if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
-                        raise_if_cancelled(run_response.run_id)  # type: ignore
-                    yield event
-
-                # Parse response with parser model if provided
-                for event in parse_response_with_parser_model_stream(
-                    agent,  # type: ignore
                     session=session,
-                    run_response=run_response,
-                    stream_events=stream_events,
-                    run_context=run_context,
-                ):
-                    if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
-                        raise_if_cancelled(run_response.run_id)  # type: ignore
-                    yield event
+                    resume=True,
+                )
+                if verification_gate is not None:
+                    verification_gate.begin()
+
+                while True:
+                    # 3. Process model response
+                    for event in handle_model_response_stream(
+                        agent,
+                        session=session,
+                        run_response=run_response,
+                        run_messages=run_messages,
+                        tools=tools,
+                        response_format=response_format,
+                        stream_events=stream_events,
+                        session_state=run_context.session_state,
+                        run_context=run_context,
+                    ):
+                        if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
+                            raise_if_cancelled(run_response.run_id)  # type: ignore
+                        yield event
+
+                    # Parse response with parser model if provided
+                    for event in parse_response_with_parser_model_stream(
+                        agent,  # type: ignore
+                        session=session,
+                        run_response=run_response,
+                        stream_events=stream_events,
+                        run_context=run_context,
+                    ):
+                        if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
+                            raise_if_cancelled(run_response.run_id)  # type: ignore
+                        yield event
+
+                    # Verify: the checks run on the parsed output, before followups
+                    yield from verify_response_stream(agent, verification_gate, run_response, stream_events)
+                    if verification_gate is not None and verification_gate.reenter:
+                        continue
+                    break
 
                 # Generate follow-up suggestions if enabled
                 for event in generate_followups_stream(
@@ -4177,6 +4318,10 @@ def _continue_run_stream(
                 if session.session_data is not None and "session_state" in session.session_data:
                     run_response.session_state = session.session_data["session_state"]
 
+                # Set the run status to completed (an unverified terminal outcome wins)
+                if run_response.status != RunStatus.unverified:
+                    run_response.status = RunStatus.completed
+
                 # Create the run completed event
                 completed_event = handle_event(
                     create_run_completed_event(run_response),
@@ -4184,9 +4329,6 @@ def _continue_run_stream(
                     events_to_skip=agent.events_to_skip,  # type: ignore
                     store_events=agent.store_events,
                 )
-
-                # Set the run status to completed
-                run_response.status = RunStatus.completed
 
                 # 5. Cleanup and store the run response and session
                 cleanup_and_store(
@@ -4870,8 +5012,8 @@ async def _acontinue_run(
     7. Handle the updated tools
     8. Get model response
     9. Update the RunOutput with the model response
-    10. Convert response to structured format
-    11. Store media if enabled
+    10. Store media if enabled
+    11. Convert response to structured format
     12. Execute post-hooks
     13. Create session summary
     14. Cleanup and store (scrub, stop timer, save to file, add to session, calculate metrics, save session)
@@ -4883,6 +5025,7 @@ async def _acontinue_run(
         agenerate_followups,
         agenerate_response_with_output_model,
         aparse_response_with_parser_model,
+        averify_response,
         convert_response_to_structured_format,
         update_run_response,
     )
@@ -5146,71 +5289,89 @@ async def _acontinue_run(
                     agent, run_response=run_response, run_messages=run_messages, tools=_tools
                 )
 
-                # 8. Get model response
-                model_response: ModelResponse = await acall_model_with_fallback(
-                    agent.model,
-                    agent.fallback_config,
-                    messages=run_messages.messages,
-                    response_format=response_format,
-                    tools=_tools,
-                    tool_choice=agent.tool_choice,
-                    tool_call_limit=agent.tool_call_limit,
-                    run_response=run_response,
-                    send_media_to_model=agent.send_media_to_model,
-                    compression_manager=agent.compression_manager if agent.compress_tool_results else None,
-                    **result_store_kwargs(agent),
-                    after_tool_results=abuild_after_tool_results_callback(
-                        agent,
-                        run_response=run_response,
-                        session=agent_session,
-                        run_messages=run_messages,
-                        run_context=run_context,
-                    ),
-                )
-                # Check for cancellation after model call
-                await araise_if_cancelled(run_response.run_id)  # type: ignore
-
-                # If an output model is provided, generate output using the output model
-                await agenerate_response_with_output_model(
-                    agent, model_response=model_response, run_messages=run_messages, run_response=run_response
-                )
-
-                # If a parser model is provided, structure the response separately
-                await aparse_response_with_parser_model(
+                # The gate re-enters the model with the evidence report until the checks pass or the budget is spent
+                verification_gate = VerificationGate.from_run(
                     agent,
-                    model_response=model_response,
-                    run_messages=run_messages,
-                    run_context=run_context,
-                    run_response=run_response,
-                )
-
-                # 9. Update the RunOutput with the model response
-                update_run_response(
-                    agent,
-                    model_response=model_response,
                     run_response=run_response,
                     run_messages=run_messages,
                     run_context=run_context,
+                    session=agent_session,
+                    resume=True,
                 )
+                if verification_gate is not None:
+                    await verification_gate.abegin()
 
-                # Break out of the run function if a tool call is paused
-                if any(tool_call.is_paused for tool_call in run_response.tools or []):
-                    return await ahandle_agent_run_paused(
-                        agent,
+                while True:
+                    # 8. Get model response
+                    model_response: ModelResponse = await acall_model_with_fallback(
+                        agent.model,
+                        agent.fallback_config,
+                        messages=run_messages.messages,
+                        response_format=response_format,
+                        tools=_tools,
+                        tool_choice=agent.tool_choice,
+                        tool_call_limit=agent.tool_call_limit,
                         run_response=run_response,
-                        session=agent_session,
-                        run_context=run_context,
-                        user_id=user_id,
+                        send_media_to_model=agent.send_media_to_model,
+                        compression_manager=agent.compression_manager if agent.compress_tool_results else None,
+                        **result_store_kwargs(agent),
+                        after_tool_results=abuild_after_tool_results_callback(
+                            agent,
+                            run_response=run_response,
+                            session=agent_session,
+                            run_messages=run_messages,
+                            run_context=run_context,
+                        ),
+                    )
+                    # Check for cancellation after model call
+                    await araise_if_cancelled(run_response.run_id)  # type: ignore
+
+                    # If an output model is provided, generate output using the output model
+                    await agenerate_response_with_output_model(
+                        agent, model_response=model_response, run_messages=run_messages, run_response=run_response
                     )
 
-                # 10. Convert the response to the structured format if needed
-                convert_response_to_structured_format(agent, run_response, run_context=run_context)
+                    # If a parser model is provided, structure the response separately
+                    await aparse_response_with_parser_model(
+                        agent,
+                        model_response=model_response,
+                        run_messages=run_messages,
+                        run_context=run_context,
+                        run_response=run_response,
+                    )
 
-                # 10b. Generate follow-up suggestions if enabled
+                    # 9. Update the RunOutput with the model response
+                    update_run_response(
+                        agent,
+                        model_response=model_response,
+                        run_response=run_response,
+                        run_messages=run_messages,
+                        run_context=run_context,
+                    )
+
+                    # Break out of the run function if a tool call is paused
+                    if any(tool_call.is_paused for tool_call in run_response.tools or []):
+                        return await ahandle_agent_run_paused(
+                            agent,
+                            run_response=run_response,
+                            session=agent_session,
+                            run_context=run_context,
+                            user_id=user_id,
+                        )
+
+                    # 10. Store media in run output for the caller (a gate re-entry resets it per attempt)
+                    store_media_util(run_response, model_response)
+
+                    # 11. Convert the response to the structured format if needed
+                    convert_response_to_structured_format(agent, run_response, run_context=run_context)
+
+                    # Verify: the checks run on the parsed output, before followups
+                    if await averify_response(agent, verification_gate, run_response):
+                        continue
+                    break
+
+                # 11b. Generate follow-up suggestions if enabled
                 await agenerate_followups(agent, run_response=run_response)
-
-                # 11. Store media in run output for the caller
-                store_media_util(run_response, model_response)
 
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
 
@@ -5244,8 +5405,9 @@ async def _acontinue_run(
                     except Exception as e:
                         log_warning(f"Error in session summary creation: {str(e)}")
 
-                # Set the run status to completed
-                run_response.status = RunStatus.completed
+                # Set the run status to completed (an unverified terminal outcome wins)
+                if run_response.status != RunStatus.unverified:
+                    run_response.status = RunStatus.completed
 
                 # 14. Cleanup and store the run response and session
                 await acleanup_and_store(
@@ -5431,6 +5593,7 @@ async def _acontinue_run_stream(
         agenerate_response_with_output_model_stream,
         ahandle_model_response_stream,
         aparse_response_with_parser_model_stream,
+        averify_response_stream,
     )
     from agno.agent._storage import aread_or_create_session, load_session_state, update_metadata
     from agno.agent._telemetry import alog_agent_telemetry
@@ -5708,74 +5871,94 @@ async def _acontinue_run_stream(
                         await araise_if_cancelled(run_response.run_id)  # type: ignore
                     yield event
 
-                # 8. Process model response
-                if agent.output_model is None:
-                    async for event in ahandle_model_response_stream(
-                        agent,
-                        session=agent_session,
-                        run_response=run_response,
-                        run_messages=run_messages,
-                        tools=_tools,
-                        response_format=response_format,
-                        stream_events=stream_events,
-                        run_context=run_context,
-                    ):
-                        if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
-                            await araise_if_cancelled(run_response.run_id)  # type: ignore
-                        yield event
-                else:
-                    from agno.run.agent import (
-                        IntermediateRunContentEvent,
-                        RunContentEvent,
-                    )  # type: ignore
+                # The gate re-enters the model with the evidence report until the checks pass or the budget is spent
+                verification_gate = VerificationGate.from_run(
+                    agent,
+                    run_response=run_response,
+                    run_messages=run_messages,
+                    run_context=run_context,
+                    session=agent_session,
+                    resume=True,
+                )
+                if verification_gate is not None:
+                    await verification_gate.abegin()
 
-                    async for event in ahandle_model_response_stream(
-                        agent,
-                        session=agent_session,
-                        run_response=run_response,
-                        run_messages=run_messages,
-                        tools=_tools,
-                        response_format=response_format,
-                        stream_events=stream_events,
-                        run_context=run_context,
-                    ):
-                        if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
-                            await araise_if_cancelled(run_response.run_id)  # type: ignore
-                        if isinstance(event, RunContentEvent):
-                            if stream_events:
-                                yield IntermediateRunContentEvent(
-                                    content=event.content,
-                                    content_type=event.content_type,
-                                )
-                        else:
+                while True:
+                    # 8. Process model response
+                    if agent.output_model is None:
+                        async for event in ahandle_model_response_stream(
+                            agent,
+                            session=agent_session,
+                            run_response=run_response,
+                            run_messages=run_messages,
+                            tools=_tools,
+                            response_format=response_format,
+                            stream_events=stream_events,
+                            run_context=run_context,
+                        ):
+                            if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
+                                await araise_if_cancelled(run_response.run_id)  # type: ignore
+                            yield event
+                    else:
+                        from agno.run.agent import (
+                            IntermediateRunContentEvent,
+                            RunContentEvent,
+                        )  # type: ignore
+
+                        async for event in ahandle_model_response_stream(
+                            agent,
+                            session=agent_session,
+                            run_response=run_response,
+                            run_messages=run_messages,
+                            tools=_tools,
+                            response_format=response_format,
+                            stream_events=stream_events,
+                            run_context=run_context,
+                        ):
+                            if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
+                                await araise_if_cancelled(run_response.run_id)  # type: ignore
+                            if isinstance(event, RunContentEvent):
+                                if stream_events:
+                                    yield IntermediateRunContentEvent(
+                                        content=event.content,
+                                        content_type=event.content_type,
+                                    )
+                            else:
+                                yield event
+
+                        # If an output model is provided, generate output using the output model
+                        async for event in agenerate_response_with_output_model_stream(
+                            agent,
+                            session=agent_session,
+                            run_response=run_response,
+                            run_messages=run_messages,
+                            stream_events=stream_events,
+                        ):
+                            if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
+                                await araise_if_cancelled(run_response.run_id)  # type: ignore
                             yield event
 
-                    # If an output model is provided, generate output using the output model
-                    async for event in agenerate_response_with_output_model_stream(
+                    # Check for cancellation after model processing
+                    await araise_if_cancelled(run_response.run_id)  # type: ignore
+
+                    # Parse response with parser model if provided
+                    async for event in aparse_response_with_parser_model_stream(
                         agent,
                         session=agent_session,
                         run_response=run_response,
-                        run_messages=run_messages,
                         stream_events=stream_events,
+                        run_context=run_context,
                     ):
                         if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
                             await araise_if_cancelled(run_response.run_id)  # type: ignore
+                        yield event  # type: ignore
+
+                    # Verify: the checks run on the parsed output, before followups
+                    async for event in averify_response_stream(agent, verification_gate, run_response, stream_events):
                         yield event
-
-                # Check for cancellation after model processing
-                await araise_if_cancelled(run_response.run_id)  # type: ignore
-
-                # Parse response with parser model if provided
-                async for event in aparse_response_with_parser_model_stream(
-                    agent,
-                    session=agent_session,
-                    run_response=run_response,
-                    stream_events=stream_events,
-                    run_context=run_context,
-                ):
-                    if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
-                        await araise_if_cancelled(run_response.run_id)  # type: ignore
-                    yield event  # type: ignore
+                    if verification_gate is not None and verification_gate.reenter:
+                        continue
+                    break
 
                 # Generate follow-up suggestions if enabled
                 async for event in agenerate_followups_stream(
@@ -5861,6 +6044,10 @@ async def _acontinue_run_stream(
                 if agent_session.session_data is not None and "session_state" in agent_session.session_data:
                     run_response.session_state = agent_session.session_data["session_state"]
 
+                # Set the run status to completed (an unverified terminal outcome wins)
+                if run_response.status != RunStatus.unverified:
+                    run_response.status = RunStatus.completed
+
                 # Create the run completed event
                 completed_event = handle_event(
                     create_run_completed_event(run_response),
@@ -5868,9 +6055,6 @@ async def _acontinue_run_stream(
                     events_to_skip=agent.events_to_skip,  # type: ignore
                     store_events=agent.store_events,
                 )
-
-                # Set the run status to completed
-                run_response.status = RunStatus.completed
 
                 # 10. Cleanup and store the run response and session
                 await acleanup_and_store(
@@ -6500,8 +6684,18 @@ def _sync_run_response_with_model_response(
     will redo this work; the duplication is intentional — we need an accurate
     intermediate snapshot.
     """
+    # Merge by tool_call_id: the run may already carry executions from an earlier
+    # verification attempt or a continued leg, and a replace would erase them.
     if model_response.tool_executions is not None:
-        run_response.tools = list(model_response.tool_executions)
+        if run_response.tools is None:
+            run_response.tools = list(model_response.tool_executions)
+        else:
+            existing_by_id = {t.tool_call_id: i for i, t in enumerate(run_response.tools) if t.tool_call_id}
+            for tool in model_response.tool_executions:
+                if tool.tool_call_id and tool.tool_call_id in existing_by_id:
+                    run_response.tools[existing_by_id[tool.tool_call_id]] = tool
+                else:
+                    run_response.tools.append(tool)
     run_response.messages = [m for m in run_messages.messages if m.add_to_agent_memory]
 
 

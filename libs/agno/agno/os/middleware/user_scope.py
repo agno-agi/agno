@@ -550,6 +550,46 @@ async def verify_run_in_session_via_db(
         raise HTTPException(status_code=404, detail="Run not found")
 
 
+async def acancel_not_recorded(
+    db: Optional[Union[BaseDb, AsyncBaseDb]], session_id: Optional[str], run_id: str
+) -> bool:
+    """True when a cancel must record nothing: the stored run ended unverified and is not executing.
+
+    Such a run continues in place under the same run_id, so a stored intent would cancel that later
+    continue; a continue already executing is registered with the cancellation manager and stays
+    cancellable. The row is read straight from the db so factory routes, which never build an
+    entity, share the check. A read failure records the cancel: a broken db must not make a live
+    run uncancellable.
+    """
+    from agno.run.base import RunStatus
+    from agno.run.cancel import aget_active_runs
+
+    try:
+        stored_run = await _stored_run_via_db(db, session_id, run_id)
+        if stored_run is None or stored_run.status != RunStatus.unverified:
+            return False
+        return run_id not in await aget_active_runs()
+    except Exception as e:
+        log_warning(f"Could not read run {run_id} before cancelling ({e}); proceeding")
+        return False
+
+
+async def _stored_run_via_db(db: Optional[Union[BaseDb, AsyncBaseDb]], session_id: Optional[str], run_id: str) -> Any:
+    if db is None:
+        return None
+    if session_id:
+        if isinstance(db, AsyncBaseDb):
+            session = await db.get_session(session_id=session_id)
+        else:
+            session = db.get_session(session_id=session_id)
+        if session is not None and not isinstance(session, dict):
+            stored_run = session.get_run(run_id=run_id)
+            if stored_run is not None:
+                return stored_run
+    # No session, or one that does not hold the run: the per-run row, which only v3 storage serves
+    return await db.get_run(run_id) if isinstance(db, AsyncBaseDb) else db.get_run(run_id)
+
+
 def resolve_owned_agent(os: "AgentOS") -> Callable:
     """Return a FastAPI dependency yielding the Agent for a run the caller owns.
 

@@ -344,6 +344,16 @@ class TestInlineContinueSettlesTicket:
         assert "inline continue" in job["error"]
 
     @pytest.mark.asyncio
+    async def test_settle_maps_unverified_to_unverified(self):
+        from agno.os.job_queue import asettle_paused_ticket
+
+        worker, store = await self._paused_ticket_worker()
+        await asettle_paused_ticket(worker, "r1", RunStatus.unverified)
+        job = await store.get_job("r1")
+        assert job["status"] == "unverified"
+        assert job["error"] is None
+
+    @pytest.mark.asyncio
     async def test_settle_without_worker_or_ticket_is_a_noop(self):
         from agno.os.job_queue import asettle_paused_ticket
 

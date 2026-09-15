@@ -9,6 +9,8 @@ if TYPE_CHECKING:
     from agno.offload.store import ResultStore
     from agno.team.mode import TeamMode
     from agno.team.team import Team
+    from agno.verifiers.base import Verifier
+    from agno.verifiers.types import VerificationConfig
 
 from os import getenv
 from typing import (
@@ -60,6 +62,7 @@ from agno.utils.log import (
 )
 from agno.utils.safe_formatter import SafeFormatter
 from agno.utils.string import generate_id_from_name
+from agno.utils.verifiers import validate_verifiers
 
 
 def __init__(
@@ -136,6 +139,8 @@ def __init__(
     tool_hooks: Optional[List[Callable]] = None,
     pre_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail, BaseEval]]] = None,
     post_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail, BaseEval]]] = None,
+    verifiers: Optional[List[Union["Verifier", Callable[..., Any]]]] = None,
+    verification: Optional[Union[bool, "VerificationConfig"]] = None,
     input_schema: Optional[Type[BaseModel]] = None,
     output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
     parser_model: Optional[Union[Model, str]] = None,
@@ -319,6 +324,9 @@ def __init__(
     # Initialize hooks
     team.pre_hooks = pre_hooks
     team.post_hooks = post_hooks
+
+    owner = f"Team {team.name or team.id or ''}".rstrip()
+    team.verifiers, team.verification = validate_verifiers(verifiers, verification, owner=owner)
 
     team.input_schema = input_schema
     team.output_schema = output_schema

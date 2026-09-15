@@ -41,6 +41,7 @@ WorkflowSteps = List[
         "Parallel",  # type: ignore # noqa: F821
         "Condition",  # type: ignore # noqa: F821
         "Router",  # type: ignore # noqa: F821
+        "Verify",  # type: ignore # noqa: F821
         "Workflow",  # type: ignore # noqa: F821 - Nested workflow support
     ]
 ]
@@ -103,13 +104,57 @@ class Router:
         from agno.workflow.types import validate_human_review_for_router
 
         validate_human_review_for_router(self.human_review)
+        self._reject_unresolvable_verify_choices(self.choices)
+
+    def _reject_unresolvable_verify_choices(self, choices: Any) -> None:
+        """Refuse a direct-choice Verify that still expects a loop-back segment.
+
+        A Router routes to one choice in isolation: a directly-chosen Verify has no
+        preceding steps list to absorb its ``on_fail`` target from, so it could never
+        re-run anything and would only fail at execution time — where a per-step error
+        handler records the failure and the run still completes. Raising here keeps the
+        failure at build time. A pure gate (``on_fail=None``) and a Verify inside a list
+        route (wrapped in Steps, which absorbs the segment) both stay valid.
+        """
+        from agno.workflow.verify import Verify
+
+        for choice in choices or []:
+            if isinstance(choice, Verify) and not choice._resolved:
+                raise ValueError(
+                    f"Router {self.name!r} choice {choice.name!r} is a Verify with on_fail, which needs preceding "
+                    "steps a direct route does not have; use on_fail=None or a list route."
+                )
+
+    def _choice_to_dict(self, index: int, choice: Any) -> Optional[Dict[str, Any]]:
+        """One route's serialized form. A list route serializes as the Steps wrapper its
+        preparation builds, flagged so it comes back as a list."""
+        if isinstance(choice, list):
+            return {
+                "type": "Steps",
+                "name": f"steps_group_{index}",
+                "description": None,
+                "list_route": True,
+                "steps": [
+                    prepared.to_dict()
+                    for prepared in (self._prepare_single_step(step) for step in choice)
+                    if hasattr(prepared, "to_dict")
+                ],
+            }
+        if hasattr(choice, "to_dict"):
+            return choice.to_dict()
+        return None
 
     def to_dict(self) -> Dict[str, Any]:
+        choices: List[Dict[str, Any]] = []
+        for index, choice in enumerate(self.choices):
+            choice_data = self._choice_to_dict(index, choice)
+            if choice_data is not None:
+                choices.append(choice_data)
         result: Dict[str, Any] = {
             "type": "Router",
             "name": self.name,
             "description": self.description,
-            "choices": [step.to_dict() for step in self.choices if hasattr(step, "to_dict")],
+            "choices": choices,
         }
         # Serialize selector
         if self.selector is None:
@@ -276,6 +321,12 @@ class Router:
                 return cls.from_dict(
                     step_data, registry=registry, db=db, links=links, strict=strict, branch_suffix=suffix
                 )
+            elif step_type == "Verify":
+                from agno.workflow.verify import Verify
+
+                return Verify.from_dict(
+                    step_data, registry=registry, db=db, links=links, strict=strict, branch_suffix=suffix
+                )
             else:
                 return Step.from_dict(
                     step_data, registry=registry, db=db, links=links, strict=strict, branch_suffix=suffix
@@ -306,10 +357,10 @@ class Router:
                         from agno.exceptions import ComponentRehydrationError
 
                         raise ComponentRehydrationError(message)
-                    from agno.workflow.step import _unresolvable_callable_placeholder
+                    from agno.workflow.step import unresolvable_callable_placeholder
 
                     log_warning(message)
-                    func = _unresolvable_callable_placeholder("Router selector", selector_data)
+                    func = unresolvable_callable_placeholder("Router selector", selector_data)
                 selector = func
         else:
             raise ValueError(f"Invalid selector type in data: {type(selector_data).__name__}")
@@ -322,9 +373,14 @@ class Router:
             drop_legacy_hitl_keys(data, StepType.ROUTER)
             human_review = HumanReview()
 
+        def deserialize_choice(choice_data: Dict[str, Any]) -> Any:
+            if choice_data.get("list_route"):
+                return [deserialize_step(step) for step in choice_data.get("steps", [])]
+            return deserialize_step(choice_data)
+
         return cls(
             selector=selector,
-            choices=[deserialize_step(step) for step in data.get("choices", [])],
+            choices=[deserialize_choice(step) for step in data.get("choices", [])],
             name=data.get("name"),
             description=data.get("description"),
             human_review=human_review,
@@ -339,6 +395,7 @@ class Router:
         from agno.workflow.parallel import Parallel
         from agno.workflow.step import Step
         from agno.workflow.steps import Steps
+        from agno.workflow.verify import Verify
         from agno.workflow.workflow import Workflow
 
         if callable(step) and hasattr(step, "__name__"):
@@ -349,7 +406,7 @@ class Router:
             return Step(name=step.name, description=step.description, team=step)
         elif isinstance(step, Workflow):
             return Step(name=step.name, description=step.description, workflow=step)
-        elif isinstance(step, (Step, Steps, Loop, Parallel, Condition, Router)):
+        elif isinstance(step, (Step, Steps, Loop, Parallel, Condition, Router, Verify)):
             return step
         else:
             raise ValueError(f"Invalid step type: {type(step).__name__}")
@@ -357,6 +414,10 @@ class Router:
     def _prepare_steps(self):
         """Prepare the steps for execution - mirrors workflow logic"""
         from agno.workflow.steps import Steps
+
+        # Choices can be replaced after construction; re-check for a direct-choice
+        # Verify that still expects a loop-back segment before any step runs.
+        self._reject_unresolvable_verify_choices(self.choices)
 
         prepared_steps: WorkflowSteps = []
         for step in self.choices:
@@ -469,6 +530,7 @@ class Router:
         from agno.workflow.loop import Loop
         from agno.workflow.parallel import Parallel
         from agno.workflow.steps import Steps
+        from agno.workflow.verify import Verify
 
         if result is None:
             return []
@@ -486,8 +548,8 @@ class Router:
                 )
                 return []
 
-        # Handle step types (Step, Steps, Loop, Parallel, Condition, Router)
-        if isinstance(result, (Step, Steps, Loop, Parallel, Condition, Router)):
+        # Handle step types (Step, Steps, Loop, Parallel, Condition, Router, Verify)
+        if isinstance(result, (Step, Steps, Loop, Parallel, Condition, Router, Verify)):
             # Validate that the returned step is in the router's choices
             step_name = getattr(result, "name", None)
             if step_name and step_name not in self._step_name_map:
@@ -501,10 +563,13 @@ class Router:
 
         # Handle list of results (could be strings, Steps, or mixed)
         if isinstance(result, list):
+            from agno.workflow.verify import resolve_verify_steps
+
             resolved = []
             for item in result:
                 resolved.extend(self._resolve_selector_result(item))
-            return resolved
+            # A Verify in a list route absorbs its segment here, as a named route did at prepare time
+            return resolve_verify_steps(resolved)
 
         logger.warning(f"Router selector returned unexpected type: {type(result)}")
         return []

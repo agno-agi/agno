@@ -32,6 +32,8 @@ from agno.run.workflow import WorkflowRunOutputEvent
 from agno.team import RemoteTeam, Team, TeamFactory
 from agno.tools import Function, Toolkit
 from agno.utils.log import log_debug, log_warning, logger
+from agno.utils.verifiers import register_verify_checks
+from agno.verifiers.base import coerce_verifier
 from agno.workflow import RemoteWorkflow, Workflow, WorkflowFactory
 
 
@@ -425,7 +427,7 @@ async def queued_run_tail_streamer(run_id: str, from_index: Optional[int] = None
                     if (
                         job is not None
                         and job.get("job_type", "run") == "run"
-                        and job.get("status") in ("completed", "failed", "cancelled")
+                        and job.get("status") in ("completed", "failed", "cancelled", "unverified")
                     ):
                         stream_status = await event_stream.get_run_status(run_id)
                         if stream_status is None or stream_status in (RunStatus.pending, RunStatus.running):
@@ -692,7 +694,9 @@ async def afinalize_continue_stream(
         if queue_worker is not None:
             from agno.os.job_queue import asettle_paused_ticket
 
-            await asettle_paused_ticket(queue_worker, run_id, final)
+            # An untracked run (a non-stream background run) closes no stream view, but its
+            # ticket still settles from the status the caller returned.
+            await asettle_paused_ticket(queue_worker, run_id, final if final is not None else final_status)
         return final
 
     task = asyncio.ensure_future(_obligation())
@@ -2209,6 +2213,7 @@ def collect_mcp_tools_from_workflow_step(step: Any, mcp_tools: List[Any]) -> Non
     from agno.workflow.router import Router
     from agno.workflow.step import Step
     from agno.workflow.steps import Steps
+    from agno.workflow.verify import Verify
 
     if isinstance(step, Step):
         # Check step's agent
@@ -2228,10 +2233,21 @@ def collect_mcp_tools_from_workflow_step(step: Any, mcp_tools: List[Any]) -> Non
             for step in steps:
                 collect_mcp_tools_from_workflow_step(step, mcp_tools)
 
-    elif isinstance(step, (Parallel, Loop, Condition, Router)):
-        # These contain other steps - recursively check them
+    elif isinstance(step, Router):
+        # A Router holds its routes on .choices until it is prepared; a list route is a
+        # raw list of steps.
+        for choice in step.choices or []:
+            for sub_step in choice if isinstance(choice, list) else [choice]:
+                collect_mcp_tools_from_workflow_step(sub_step, mcp_tools)
+
+    elif isinstance(step, (Parallel, Loop, Condition, Verify)):
+        # These contain other steps - recursively check them (a resolved
+        # Verify holds its absorbed loop-back segment on .steps)
         if hasattr(step, "steps") and step.steps:
             for sub_step in step.steps:
+                collect_mcp_tools_from_workflow_step(sub_step, mcp_tools)
+        if isinstance(step, Condition) and step.else_steps:
+            for sub_step in step.else_steps:
                 collect_mcp_tools_from_workflow_step(sub_step, mcp_tools)
 
     elif isinstance(step, Agent):
@@ -2309,6 +2325,10 @@ def collect_components_from_agent(agent: Any, registry: Registry, visited: Set[i
         for tool in tools:
             registry.add_tool(tool, source=ToolSource.DISCOVERED)
 
+    verifiers = getattr(agent, "verifiers", None)
+    if isinstance(verifiers, list):
+        register_verify_checks([coerce_verifier(v) for v in verifiers], registry)
+
     registry.add_schema(getattr(agent, "input_schema", None))
     registry.add_schema(getattr(agent, "output_schema", None))
     registry.add_db(getattr(agent, "db", None))
@@ -2336,6 +2356,10 @@ def collect_components_from_team(team: Any, registry: Registry, visited: Set[int
     if isinstance(tools, list):
         for tool in tools:
             registry.add_tool(tool, source=ToolSource.DISCOVERED)
+
+    verifiers = getattr(team, "verifiers", None)
+    if isinstance(verifiers, list):
+        register_verify_checks([coerce_verifier(v) for v in verifiers], registry)
 
     registry.add_schema(getattr(team, "input_schema", None))
     registry.add_schema(getattr(team, "output_schema", None))
@@ -2394,6 +2418,7 @@ def _collect_components_from_step(step: Any, registry: Registry, visited: Set[in
     from agno.workflow.router import Router
     from agno.workflow.step import Step
     from agno.workflow.steps import Steps
+    from agno.workflow.verify import Verify
 
     if step is None:
         return
@@ -2418,6 +2443,13 @@ def _collect_components_from_step(step: Any, registry: Registry, visited: Set[in
     elif isinstance(step, Workflow):
         collect_components_from_workflow(step, registry, visited)
 
+    elif isinstance(step, Verify):
+        # The checks resolve by name at rehydration, like other callable refs.
+        register_verify_checks(getattr(step, "_verifiers", None), registry)
+        # A resolved Verify holds its absorbed loop-back segment on .steps.
+        for sub_step in step.steps or []:
+            _collect_components_from_step(sub_step, registry, visited)
+
     elif isinstance(step, (Steps, Loop, Parallel, Condition, Router)):
         # Container-level callable refs resolve by function name at rehydration.
         if isinstance(step, Condition) and callable(getattr(step, "evaluator", None)):
@@ -2432,7 +2464,14 @@ def _collect_components_from_step(step: Any, registry: Registry, visited: Set[in
             sub_steps = getattr(step, attr, None)
             if isinstance(sub_steps, list):
                 for sub_step in sub_steps:
-                    _collect_components_from_step(sub_step, registry, visited)
+                    if isinstance(sub_step, list):
+                        # A Router list route stays a raw list inside `choices`;
+                        # its elements (including any Verify's checks) must still
+                        # register, or rehydration degrades them to placeholders.
+                        for inner_step in sub_step:
+                            _collect_components_from_step(inner_step, registry, visited)
+                    else:
+                        _collect_components_from_step(sub_step, registry, visited)
 
     elif callable(step):
         # A bare callable used directly as a step serializes as an executor ref.

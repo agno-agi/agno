@@ -17,6 +17,7 @@ from agno.utils.media import (
     reconstruct_response_audio,
     reconstruct_videos,
 )
+from agno.verifiers.types import Verification
 
 if TYPE_CHECKING:
     from agno.workflow.types import (
@@ -75,6 +76,11 @@ class WorkflowRunEvent(str, Enum):
 
     steps_execution_started = "StepsExecutionStarted"
     steps_execution_completed = "StepsExecutionCompleted"
+
+    verify_execution_started = "VerifyExecutionStarted"
+    verify_attempt_started = "VerifyAttemptStarted"
+    verify_attempt_completed = "VerifyAttemptCompleted"
+    verify_execution_completed = "VerifyExecutionCompleted"
 
     step_output = "StepOutput"
 
@@ -235,6 +241,8 @@ class WorkflowCompletedEvent(BaseWorkflowRunOutputEvent):
 
     # Full workflow run output for nested workflows
     run_output: Optional["WorkflowRunOutput"] = None
+    # The run's terminal status: "COMPLETED", or "UNVERIFIED" when a Verify gate decided the run
+    status: Optional[str] = None
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "WorkflowCompletedEvent":
@@ -583,6 +591,58 @@ class StepsExecutionCompletedEvent(BaseWorkflowRunOutputEvent):
 
 
 @dataclass
+class VerifyExecutionStartedEvent(BaseWorkflowRunOutputEvent):
+    """Event sent when a Verify gate starts"""
+
+    event: str = WorkflowRunEvent.verify_execution_started.value
+    step_name: Optional[str] = None
+    step_index: Optional[Union[int, tuple]] = None
+    max_attempts: Optional[int] = None
+
+
+@dataclass
+class VerifyAttemptStartedEvent(BaseWorkflowRunOutputEvent):
+    """Event sent when a Verify gate starts one attempt: a segment pass followed by the checks"""
+
+    event: str = WorkflowRunEvent.verify_attempt_started.value
+    step_name: Optional[str] = None
+    step_index: Optional[Union[int, tuple]] = None
+    attempt: int = 1
+    max_attempts: Optional[int] = None
+
+
+@dataclass
+class VerifyAttemptCompletedEvent(BaseWorkflowRunOutputEvent):
+    """Event sent when a Verify gate has judged one attempt"""
+
+    event: str = WorkflowRunEvent.verify_attempt_completed.value
+    step_name: Optional[str] = None
+    step_index: Optional[Union[int, tuple]] = None
+    attempt: int = 1
+    max_attempts: Optional[int] = None
+    passed: bool = False
+    # Whether the segment re-runs with the evidence report
+    should_continue: bool = False
+    # The gate's verification record so far, serialized
+    verification: Optional[Dict[str, Any]] = None
+
+
+@dataclass
+class VerifyExecutionCompletedEvent(BaseWorkflowRunOutputEvent):
+    """Event sent when a Verify gate concludes"""
+
+    event: str = WorkflowRunEvent.verify_execution_completed.value
+    step_name: Optional[str] = None
+    step_index: Optional[Union[int, tuple]] = None
+    total_attempts: int = 0
+    max_attempts: Optional[int] = None
+    # "verified" or "unverified"
+    status: Optional[str] = None
+    stop_reason: Optional[str] = None
+    verification: Optional[Dict[str, Any]] = None
+
+
+@dataclass
 class StepOutputEvent(BaseWorkflowRunOutputEvent):
     """Event sent when a step produces output - replaces direct StepOutput yielding"""
 
@@ -674,6 +734,10 @@ WorkflowRunOutputEvent = Union[
     RouterPausedEvent,
     StepsExecutionStartedEvent,
     StepsExecutionCompletedEvent,
+    VerifyExecutionStartedEvent,
+    VerifyAttemptStartedEvent,
+    VerifyAttemptCompletedEvent,
+    VerifyExecutionCompletedEvent,
     StepOutputEvent,
     CustomEvent,
 ]
@@ -713,6 +777,10 @@ WORKFLOW_RUN_EVENT_TYPE_REGISTRY = {
     WorkflowRunEvent.router_paused.value: RouterPausedEvent,
     WorkflowRunEvent.steps_execution_started.value: StepsExecutionStartedEvent,
     WorkflowRunEvent.steps_execution_completed.value: StepsExecutionCompletedEvent,
+    WorkflowRunEvent.verify_execution_started.value: VerifyExecutionStartedEvent,
+    WorkflowRunEvent.verify_attempt_started.value: VerifyAttemptStartedEvent,
+    WorkflowRunEvent.verify_attempt_completed.value: VerifyAttemptCompletedEvent,
+    WorkflowRunEvent.verify_execution_completed.value: VerifyExecutionCompletedEvent,
     WorkflowRunEvent.step_output.value: StepOutputEvent,
     WorkflowRunEvent.custom_event.value: CustomEvent,
 }
@@ -779,6 +847,11 @@ class WorkflowRunOutput:
     created_at: int = field(default_factory=lambda: int(time()))
 
     status: RunStatus = RunStatus.pending
+
+    # The verification record of the Verify gate that decided this run's status: the
+    # gate that halted it or ended it unverified, else the last gate that ran. None when
+    # no Verify step ran.
+    verification: Optional[Verification] = None
     # Queue-attempt generation stamp: set by the queue worker when attempt N
     # claims this run. Terminal writes carry their attempt and are fenced
     # against a NEWER stored value, so a presumed-dead attempt's late write
@@ -883,6 +956,7 @@ class WorkflowRunOutput:
             "workflow_agent_run",
             "step_requirements",
             "error_requirements",
+            "verification",
         }
         _dict = {}
         for f in fields(self):
@@ -971,6 +1045,11 @@ class WorkflowRunOutput:
             _dict["error_requirements"] = [
                 req.to_dict() if hasattr(req, "to_dict") else req for req in self.error_requirements
             ]
+
+        if self.verification is not None:
+            _dict["verification"] = (
+                self.verification.to_dict() if hasattr(self.verification, "to_dict") else self.verification
+            )
 
         return _dict
 
@@ -1083,6 +1162,13 @@ class WorkflowRunOutput:
 
             error_requirements = [ErrorRequirement.from_dict(req) for req in error_requirements_data]
 
+        verification_data = data.pop("verification", None)
+        verification: Optional[Verification] = None
+        if isinstance(verification_data, Verification):
+            verification = verification_data
+        elif isinstance(verification_data, dict):
+            verification = Verification.from_dict(verification_data)
+
         input_data = data.pop("input", None)
 
         # Filter data to only include fields that are actually defined in the WorkflowRunOutput dataclass
@@ -1105,6 +1191,7 @@ class WorkflowRunOutput:
             step_executor_runs=step_executor_runs,
             step_requirements=step_requirements,
             error_requirements=error_requirements,
+            verification=verification,
             input=input_data,
             **filtered_data,
         )
@@ -1125,4 +1212,4 @@ class WorkflowRunOutput:
 
     def has_completed(self) -> bool:
         """Check if the workflow run is completed (either successfully or with error)"""
-        return self.status in [RunStatus.completed, RunStatus.error]
+        return self.status in [RunStatus.completed, RunStatus.unverified, RunStatus.error]

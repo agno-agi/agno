@@ -14,6 +14,7 @@ from copy import copy
 from typing import (
     Any,
     AsyncIterator,
+    Callable,
     Dict,
     Iterator,
     List,
@@ -47,6 +48,7 @@ from agno.run.agent import (
     RunOutput,
     RunOutputEvent,
 )
+from agno.run.base import RunStatus
 from agno.run.cancel import (
     araise_if_cancelled,
     aregister_member_run,
@@ -84,8 +86,10 @@ from agno.utils.response import (
 from agno.utils.team import (
     add_interaction_to_team_run_context,
     format_member_agent_task,
+    get_member_id,
 )
 from agno.utils.timer import Timer
+from agno.verifiers.report import first_line
 
 # Per-run identity keys a member stamps on its own session_state; never merged back into the team's.
 _MEMBER_TRANSIENT_STATE_KEYS = ("current_session_id", "current_user_id", "current_run_id")
@@ -126,6 +130,58 @@ async def _acascading_cancel_run(run_id: str) -> bool:
     from agno.team._run import acancel_run as _team_acancel_run
 
     return await _team_acancel_run(run_id)
+
+
+def member_unverified_note(
+    member_agent: Union[Agent, "Team"], member_run_response: Optional[Union[TeamRunOutput, RunOutput]]
+) -> Optional[str]:
+    """One line for the leader when a member run ended unverified, so the rejected draft is not read as its result."""
+    if member_run_response is None or member_run_response.status != RunStatus.unverified:
+        return None
+    verification = member_run_response.verification
+    stop_reason = (
+        verification.stop_reason.value if verification is not None and verification.stop_reason is not None else None
+    ) or "unverified"
+    failing = ""
+    for attempt in reversed(verification.attempts if verification is not None else []):
+        for verdict in attempt.verdicts:
+            if verdict.gates and not verdict.passed:
+                summary_line = first_line(verdict.report)
+                failing = f"[FAIL] {verdict.name or 'verifier'}" + (f": {summary_line}" if summary_line else "")
+                break
+        if failing:
+            break
+    member_name = member_agent.name or member_agent.id or "Unknown"
+    note = f"Member '{member_name}' ended UNVERIFIED ({stop_reason})"
+    return f"{note}: {failing}" if failing else note
+
+
+def delegate_unverified_note(
+    team: "Team", member_agent: Union[Agent, "Team"], member_run_response: Optional[Union[TeamRunOutput, RunOutput]]
+) -> Optional[str]:
+    """The member note for a delegate result. Under respond_directly the result is the user's answer
+    and no leader reads it, so there is none: the member's status stays on member_responses and the
+    team's own verifiers remain the team's gate."""
+    if team.respond_directly:
+        return None
+    return member_unverified_note(member_agent, member_run_response)
+
+
+def link_child_run(
+    run_response: TeamRunOutput,
+    tool_name: str,
+    child_run_id: Optional[str],
+    matches: Callable[[Dict[str, Any]], bool],
+) -> None:
+    """Stamp the member run on the first unlinked `tool_name` call whose arguments `matches` accepts."""
+    if run_response.tools is None or child_run_id is None:
+        return
+    for tool in run_response.tools:
+        if not tool.tool_name or tool.tool_name.lower() != tool_name or tool.child_run_id is not None:
+            continue
+        if matches(tool.tool_args or {}):
+            tool.child_run_id = child_run_id
+            break
 
 
 def _get_update_user_memory_function(team: "Team", user_id: Optional[str] = None, async_mode: bool = False) -> Function:
@@ -566,12 +622,6 @@ def _get_delegate_task_function(
         if member_agent_run_response is not None:
             member_agent_run_response.parent_run_id = run_response.run_id  # type: ignore
 
-        # Update the top-level team run_response tool call to have the run_id of the member run
-        if run_response.tools is not None and member_agent_run_response is not None:
-            for tool in run_response.tools:
-                if tool.tool_name and tool.tool_name.lower() == "delegate_task_to_member":
-                    tool.child_run_id = member_agent_run_response.run_id  # type: ignore
-
         # Update the team run context
         member_name = member_agent.name if member_agent.name else member_agent.id if member_agent.id else "Unknown"
         # The task the leader asked for, never the prompt assembled from it.
@@ -583,6 +633,16 @@ def _get_delegate_task_function(
             normalized_task = str(delegated_task.content)
         else:
             normalized_task = ""
+
+        # Update the top-level team run_response tool call to have the run_id of the member run
+        if member_agent_run_response is not None:
+            member_id = get_member_id(member_agent)
+            link_child_run(
+                run_response,
+                "delegate_task_to_member",
+                member_agent_run_response.run_id,
+                lambda args: args.get("member_id") == member_id and args.get("task") == normalized_task,
+            )
         add_interaction_to_team_run_context(
             team_run_context=team_run_context,
             member_name=member_name,
@@ -643,12 +703,6 @@ def _get_delegate_task_function(
         if member_agent_run_response is not None:
             member_agent_run_response.parent_run_id = run_response.run_id  # type: ignore
 
-        # Update the top-level team run_response tool call to have the run_id of the member run
-        if run_response.tools is not None and member_agent_run_response is not None:
-            for tool in run_response.tools:
-                if tool.tool_name and tool.tool_name.lower() == "delegate_task_to_member":
-                    tool.child_run_id = member_agent_run_response.run_id  # type: ignore
-
         # Update the team run context
         member_name = member_agent.name if member_agent.name else member_agent.id if member_agent.id else "Unknown"
         # The task the leader asked for, never the prompt assembled from it.
@@ -660,6 +714,16 @@ def _get_delegate_task_function(
             normalized_task = str(delegated_task.content)
         else:
             normalized_task = ""
+
+        # Update the top-level team run_response tool call to have the run_id of the member run
+        if member_agent_run_response is not None:
+            member_id = get_member_id(member_agent)
+            link_child_run(
+                run_response,
+                "delegate_task_to_member",
+                member_agent_run_response.run_id,
+                lambda args: args.get("member_id") == member_id and args.get("task") == normalized_task,
+            )
         add_interaction_to_team_run_context(
             team_run_context=team_run_context,
             member_name=member_name,
@@ -868,6 +932,10 @@ def _get_delegate_task_function(
             except Exception as e:
                 yield str(e)
 
+        member_note = delegate_unverified_note(team, member_agent, member_agent_run_response)
+        if member_note is not None:
+            yield f"\n{member_note}"
+
         # Afterward, switch back to the team logger
         use_team_logger()
 
@@ -1050,6 +1118,10 @@ def _get_delegate_task_function(
             except Exception as e:
                 yield str(e)
 
+        member_note = delegate_unverified_note(team, member_agent, member_agent_run_response)
+        if member_note is not None:
+            yield f"\n{member_note}"
+
         # Afterward, switch back to the team logger
         use_team_logger()
 
@@ -1219,6 +1291,10 @@ def _get_delegate_task_function(
                 except Exception as e:
                     yield f"Agent {member_agent.name}: Error - {str(e)}"
 
+            member_note = delegate_unverified_note(team, member_agent, member_agent_run_response)
+            if member_note is not None:
+                yield f"\n{member_note}"
+
             _process_delegate_task_to_member(
                 member_agent_run_response,
                 member_agent,
@@ -1341,6 +1417,9 @@ def _get_delegate_task_function(
                                 task,  # type: ignore
                                 member_session_state_copy,  # type: ignore
                             )
+                            member_note = delegate_unverified_note(team, agent, member_agent_run_response)
+                            if member_note is not None:
+                                await queue.put(f"\n{member_note}")
                 finally:
                     await queue.put(done_marker)
 
@@ -1452,40 +1531,34 @@ def _get_delegate_task_function(
                         member_session_state_copy,  # type: ignore
                     )
 
+                    result_text = f"Agent {member_name}: No Response"
                     try:
                         if member_agent_run_response.content is None and (
                             member_agent_run_response.tools is None or len(member_agent_run_response.tools) == 0
                         ):
-                            return (f"Agent {member_name}: No response from the member agent.", None, None)
+                            result_text = f"Agent {member_name}: No response from the member agent."
                         elif isinstance(member_agent_run_response.content, str):
                             if len(member_agent_run_response.content.strip()) > 0:
-                                return (f"Agent {member_name}: {member_agent_run_response.content}", None, None)
+                                result_text = f"Agent {member_name}: {member_agent_run_response.content}"
                             elif (
                                 member_agent_run_response.tools is not None and len(member_agent_run_response.tools) > 0
                             ):
-                                return (
-                                    f"Agent {member_name}: {','.join([tool.result for tool in member_agent_run_response.tools])}",
-                                    None,
-                                    None,
-                                )
+                                result_text = f"Agent {member_name}: {','.join([tool.result for tool in member_agent_run_response.tools])}"
                         elif issubclass(type(member_agent_run_response.content), BaseModel):
-                            return (
-                                f"Agent {member_name}: {member_agent_run_response.content.model_dump_json(indent=2)}",  # type: ignore
-                                None,
-                                None,
+                            result_text = (
+                                f"Agent {member_name}: {member_agent_run_response.content.model_dump_json(indent=2)}"  # type: ignore
                             )
                         else:
                             import json
 
-                            return (
-                                f"Agent {member_name}: {json.dumps(member_agent_run_response.content, indent=2, ensure_ascii=False)}",
-                                None,
-                                None,
-                            )
+                            result_text = f"Agent {member_name}: {json.dumps(member_agent_run_response.content, indent=2, ensure_ascii=False)}"
                     except Exception as e:
-                        return (f"Agent {member_name}: Error - {str(e)}", None, None)
+                        result_text = f"Agent {member_name}: Error - {str(e)}"
 
-                    return (f"Agent {member_name}: No Response", None, None)
+                    member_note = delegate_unverified_note(team, member_agent, member_agent_run_response)
+                    if member_note is not None:
+                        result_text = f"{result_text}\n{member_note}"
+                    return (result_text, None, None)
 
                 tasks.append(run_member_agent)  # type: ignore
 

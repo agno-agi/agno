@@ -15,6 +15,8 @@ from typing import Any, AsyncIterator, Iterator, List, Optional, Tuple, Union
 import pytest
 
 from agno.agent import Agent
+from agno.agent._run import _bind_run_context_to_run
+from agno.agent._session import asave_run
 from agno.db.sqlite import SqliteDb
 from agno.metrics import MessageMetrics
 from agno.models.base import Model
@@ -23,6 +25,7 @@ from agno.run.agent import RunOutput
 from agno.run.base import RunContext, RunStatus
 from agno.run.team import TeamRunOutput
 from agno.team import Team
+from agno.team._run import _bind_run_context_to_team_run
 
 
 class _ScriptedModel(Model):
@@ -275,7 +278,6 @@ class TestAgentContinuationRebind:
     def test_the_rebind_cannot_blank_the_session_id(self):
         """`_initialize_session_state` guards session_id with `is not None`, which an empty
         string satisfies, so a context carrying "" would overwrite a good value with nothing."""
-        from agno.agent._run import _bind_run_context_to_run
 
         context = RunContext(
             run_id="old",
@@ -397,7 +399,6 @@ class TestAgentContinuationRebind:
         """A cancelled run is refused downstream. The background streamer never took the
         source row over, so the refusal must not stamp ERROR over it on the way out — and
         the refusal is an answer, so the client gets a RunError frame, not an empty body."""
-        from agno.agent._session import asave_run
 
         db = SqliteDb(db_file=str(tmp_path / "bg.db"))
         agent = Agent(model=_ScriptedModel([_text("first run done")]), db=db, telemetry=False)
@@ -482,8 +483,6 @@ class TestTeamContinuationRebind:
         )
 
     def test_the_rebind_cannot_blank_the_session_id(self):
-        from agno.team._run import _bind_run_context_to_team_run
-
         member = Agent(name="member", model=_ScriptedModel([_text("x")]), telemetry=False)
         team = Team(members=[member], model=_ScriptedModel([_text("x")]), telemetry=False)
         context = RunContext(

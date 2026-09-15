@@ -21,8 +21,9 @@ try:
 except ImportError:
     httpx = None  # type: ignore[assignment]
 
-# Terminal run statuses (RunStatus enum values from agno.run.base)
-_TERMINAL_STATUSES = {"COMPLETED", "CANCELLED", "ERROR", "PAUSED"}
+# Terminal run statuses (RunStatus enum values from agno.run.base), as the string
+# literals this poller reads off HTTP responses. A new terminal status must be added here.
+_TERMINAL_STATUSES = {"COMPLETED", "CANCELLED", "ERROR", "PAUSED", "UNVERIFIED"}
 
 # Default polling interval in seconds for background run status checks
 _DEFAULT_POLL_INTERVAL = 30
@@ -42,7 +43,7 @@ class ScheduleExecutor:
 
     For run endpoints (``/agents/*/runs``, ``/teams/*/runs``, etc.) the executor
     submits a background run (``background=true``), then polls the run status
-    endpoint until it reaches a terminal state (COMPLETED, ERROR, CANCELLED, PAUSED).
+    endpoint until it reaches a terminal state (COMPLETED, ERROR, CANCELLED, PAUSED, UNVERIFIED).
 
     For all other endpoints a simple request/response cycle is used.
     """
@@ -227,7 +228,9 @@ class ScheduleExecutor:
                     else:
                         db.update_schedule_run(run_record_id, **updates)
 
-                    if last_status in ("success", "paused"):
+                    # A settled outcome ends the schedule run; an unverified run is
+                    # settled too, and retrying it would only spend its budget again.
+                    if last_status in ("success", "paused", "unverified"):
                         break
 
                 except Exception as exc:
@@ -561,6 +564,12 @@ class ScheduleExecutor:
                 elif run_status == "CANCELLED":
                     status = "failed"
                     error = data.get("error") or "Run was cancelled"
+                elif run_status == "UNVERIFIED":
+                    # The run produced an answer but its verifiers never
+                    # passed within budget: terminal for the schedule run,
+                    # never retried, with its own status and message.
+                    status = "unverified"
+                    error = data.get("error") or "Run ended unverified: its verifiers did not pass within budget"
                 else:
                     status = "failed"
                     error = data.get("error") or f"Run failed with status {run_status}"
