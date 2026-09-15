@@ -1,13 +1,13 @@
-# Test Log
+# Test Log: 07_predictions
 
-## 2026-08-26 — gpt-5.5, demo venv
+> Tested 2026-09-15 against `gpt-5.6-luna` (OpenAIResponses), demo venv, agno source tree.
 
 ### verified_tool.py
 
 **Status:** PASS
 
-**Description:** A counter tool with a hidden cap of +5 per call, decorated with @verified_tool. The model predicted the first call would land on 17; the cap advanced it only to 5; the divergence block reported expected 17 / actual 5; the model replanned from the real value (5 -> 10 -> 15 -> 17) and reached the target in capped steps, then stated what it learned about the tool's behavior.
+**Description:** A counter tool with a hidden +5 cap per call, decorated with @verified_tool; the model predicts each new value in `expect`.
 
-**Result:** Success — the prediction contract turned a silent wrong assumption into an immediate, evidence-based correction.
+**Result:** Exit 0. Calls (amount, expect, new value): `(17, '17', 5)`, `(12, '17', 10)`, `(7, '17', 15)`, `(2, '17', 17)`; `Final counter: 17`. The model replanned from each diverging result and stated that the tool caps each increment at 5.
 
 ---

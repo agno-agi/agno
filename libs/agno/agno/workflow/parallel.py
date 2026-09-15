@@ -112,10 +112,8 @@ class Parallel:
         for step in steps or []:
             if isinstance(step, Verify) and not step._resolved:
                 raise ValueError(
-                    f"Parallel {self.name!r} step {step.name!r} is a Verify with a loop-back target (on_fail); "
-                    "parallel branches run in isolation, so it has no preceding steps to absorb and can never "
-                    "re-run anything. Use on_fail=None for a pure gate, or wrap the Verify in Steps after the "
-                    "steps it loops back to"
+                    f"Parallel {self.name!r} step {step.name!r} is a Verify with on_fail, which needs preceding "
+                    "steps a parallel branch does not have; use on_fail=None or wrap it in Steps."
                 )
 
     def to_dict(self) -> Dict[str, Any]:

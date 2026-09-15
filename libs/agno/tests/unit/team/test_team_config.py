@@ -1953,3 +1953,47 @@ class TestGetTeamsPagination:
 
         assert len(loaded) == 120
         assert {item.id for item in loaded} == {f"own-team-{i:03d}" for i in range(120)}
+
+
+# =============================================================================
+# Verifiers round-trip
+# =============================================================================
+
+
+def report_missing(run_output):
+    return "report.md is missing"
+
+
+class TestTeamVerifiersRoundTrip:
+    def test_from_dict_restores_a_registered_check_with_its_policy(self):
+        """The check registers under the verify: prefix at AgentOS startup and resolves
+        by name on load, with the saved policy re-applied to the restored wrapper."""
+        from agno.os.utils import collect_components_from_team
+        from agno.verifiers import VerificationConfig, verifier
+
+        team = Team(
+            id="verified-team",
+            members=[],
+            verifiers=[verifier(report_missing, stop_on_failure=True)],
+            verification=VerificationConfig(max_attempts=1),
+            telemetry=False,
+        )
+        registry = Registry()
+        collect_components_from_team(team, registry, set())
+        assert registry.get_function("verify:report_missing").__wrapped__ is report_missing
+
+        restored = Team.from_dict(team.to_dict(), registry=registry, strict=True)
+
+        wrapper = restored.verifiers[0]
+        assert wrapper.name == "report_missing"
+        assert wrapper.fn.__wrapped__ is report_missing
+        assert wrapper.stop_on_failure is True
+        assert restored.verification.max_attempts == 1
+
+
+def test_telemetry_reports_has_verifiers():
+    from agno.team._telemetry import get_telemetry_data
+
+    assert get_telemetry_data(Team(name="team", members=[Agent(name="member")]))["has_verifiers"] is False
+    verified = Team(name="team", members=[Agent(name="member")], verifiers=[lambda run_output: True])
+    assert get_telemetry_data(verified)["has_verifiers"] is True

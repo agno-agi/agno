@@ -58,6 +58,13 @@ from agno.utils.log import (
 )
 from agno.utils.merge_dict import merge_dictionaries
 from agno.utils.string import generate_id_from_name
+from agno.utils.verifiers import (
+    verification_config_from_dict,
+    verification_config_to_dict,
+    verifier_to_dict,
+    verifiers_from_dict,
+)
+from agno.verifiers.base import coerce_verifier
 
 # ---------------------------------------------------------------------------
 # Run output accessors
@@ -696,6 +703,16 @@ def to_dict(team: "Team") -> Dict[str, Any]:
     if team.get_member_information_tool:
         config["get_member_information_tool"] = team.get_member_information_tool
 
+    # --- Verification settings ---
+    # Each check serializes as its name and policy; the callable comes back from the
+    # registry on load, like a tool. run_condition and the fingerprint never serialize.
+    if team.verifiers:
+        config["verifiers"] = [verifier_to_dict(coerce_verifier(v)) for v in team.verifiers]
+    if isinstance(team.verification, bool):
+        config["verification"] = team.verification
+    elif team.verification is not None:
+        config["verification"] = verification_config_to_dict(team.verification)
+
     # --- Schema settings ---
     if team.input_schema is not None:
         if issubclass(team.input_schema, BaseModel):
@@ -1205,6 +1222,16 @@ def from_dict(
                 log_warning(f"No registry provided; these tools cannot execute: {unresolved_tools}")
             config["tools"] = rehydrated_tools
 
+    # --- Handle verifiers reconstruction ---
+    # A ShellVerifier rebuilds from its command; every other check resolves through the
+    # registry. A miss raises under strict, otherwise it loads as a fail-closed placeholder.
+    if "verifiers" in config and config["verifiers"]:
+        config["verifiers"] = verifiers_from_dict(
+            config["verifiers"], registry, strict, label=f"{component_label} verifier"
+        )
+    if "verification" in config and isinstance(config["verification"], dict):
+        config["verification"] = verification_config_from_dict(config["verification"], component_label)
+
     # --- Handle DB reconstruction ---
     if "db" in config and isinstance(config["db"], dict):
         resolved = resolve_db_from_config(config["db"], registry=registry)
@@ -1359,6 +1386,9 @@ def from_dict(
             tool_call_limit=config.get("tool_call_limit"),
             tool_choice=config.get("tool_choice"),
             get_member_information_tool=config.get("get_member_information_tool", False),
+            # --- Verification settings ---
+            verifiers=config.get("verifiers"),
+            verification=config.get("verification"),
             # --- Schema settings ---
             input_schema=config.get("input_schema"),
             output_schema=config.get("output_schema"),

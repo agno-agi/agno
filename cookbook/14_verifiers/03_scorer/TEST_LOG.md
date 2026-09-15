@@ -1,13 +1,13 @@
-# Test Log
+# Test Log: 03_scorer
 
-## 2026-08-26 — gpt-5.5, demo venv
+> Tested 2026-09-15 against `gpt-5.6-luna` (OpenAIResponses), demo venv, agno source tree.
 
 ### judge_gate.py
 
 **Status:** PASS
 
-**Description:** ScorerVerifier(JudgeScorer numeric, threshold 8). Attempt 0 scored 6/10 (over length, too much jargon — full reasoning in Verdict.data); the model rewrote against the critique; attempt 1 scored 9/10 and passed.
+**Description:** ScorerVerifier over a numeric JudgeScorer with threshold 8, printed with print_response.
 
-**Result:** Success — a live demonstration of the loop improving an answer against a rubric.
+**Result:** Exit 0. `Attempt 0: FAIL | score: 0.67`, `Attempt 1: PASS | score: 1.00`; `Verification: verified / passed`. The final answer explained a race condition with a shared-counter example and no unexplained jargon.
 
 ---

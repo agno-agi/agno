@@ -2543,6 +2543,8 @@ def build_mcp_server(
         team_id: Optional[str] = None,
         workflow_id: Optional[str] = None,
     ) -> str:
+        from agno.os.middleware.user_scope import acancel_not_recorded
+
         component_type, component_id = _classify_lifecycle_target(agent_id, team_id, workflow_id)
         _require_published_component("cancel_run", component_type, component_id)
         _require_tool_scopes("POST", f"/{component_type}/{component_id}/runs/{run_id}/cancel")
@@ -2554,10 +2556,10 @@ def build_mcp_server(
         roster = {"agents": os.agents, "teams": os.teams, "workflows": os.workflows}[component_type]
         factory = find_factory_by_id(component_id, roster)
         if factory is not None:
-            await _verify_factory_run_ownership(
-                getattr(factory, "db", None) or os.db, component_type, component_id, session_id, run_id
-            )
-            await _static_cancel_factory_run(component_type, run_id)
+            check_db = getattr(factory, "db", None) or os.db
+            await _verify_factory_run_ownership(check_db, component_type, component_id, session_id, run_id)
+            if component_type == "workflows" or not await acancel_not_recorded(check_db, session_id, run_id):
+                await _static_cancel_factory_run(component_type, run_id)
             return f"Run {run_id} cancellation requested"
         # Lenient: cancel needs only a handle on the component, and a drifted
         # registry must never make a run uncancellable. Matches the REST route
@@ -2567,7 +2569,12 @@ def build_mcp_server(
             os, component_type, component_id, user_id=None, session_id=session_id, strict=False, published_only=False
         )
         await _verify_run_ownership(component, component_type, component_id, session_id, run_id)
-        await run_service.cancel_component_run(component, run_id, auth_token=_forwarded_auth_token())
+        if (
+            isinstance(component, BaseRemote)
+            or component_type == "workflows"
+            or not await acancel_not_recorded(getattr(component, "db", None) or os.db, session_id, run_id)
+        ):
+            await run_service.cancel_component_run(component, run_id, auth_token=_forwarded_auth_token())
         return f"Run {run_id} cancellation requested"
 
     # ==================== Session Tools (read-only) ====================

@@ -1,19 +1,20 @@
-"""Unit tests for agno.verifiers.fingerprints (test 12 and the failure rule)."""
+"""Unit tests for agno.verifiers.fingerprints: the digest and the failure rule."""
 
-import asyncio
 import os
 import subprocess
+import sys
 
 import pytest
 
 from agno.verifiers.fingerprints import (
-    DEFAULT_EXCLUDES,
     CallableFingerprint,
     GitWorktreeFingerprint,
     StateFingerprint,
+    asafe_capture,
     coerce_fingerprint,
-    noop_between,
+    require_sync_fingerprint,
     safe_capture,
+    state_unchanged,
 )
 
 
@@ -38,52 +39,102 @@ def repo(tmp_path):
     return root
 
 
-def test_stable_when_nothing_changed(repo):
-    fp = GitWorktreeFingerprint(str(repo))
-    assert fp.capture() == fp.capture()
+def _write(path, text):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text)
 
 
-def test_differs_after_editing_tracked_file(repo):
+def _nested_repo(repo):
+    (repo / "vendor").mkdir()
+    _git("init", "-q", cwd=repo / "vendor")
+    _write(repo / "vendor" / "lib.py", "x = 1")
+
+
+def _symlink(repo, target):
+    if (repo / "link").is_symlink():
+        os.unlink(repo / "link")
+    os.symlink(target, repo / "link")
+
+
+def _chmod_script(repo, mode):
+    script = repo / "run.sh"
+    if not script.exists():
+        script.write_text("#!/bin/sh\necho hi\n")
+    os.chmod(script, mode)
+
+
+@pytest.mark.parametrize(
+    "setup, mutate",
+    [
+        (lambda repo: None, lambda repo: _write(repo / "tracked.txt", "v2\n")),
+        (lambda repo: _write(repo / "notes.md", "v1"), lambda repo: _write(repo / "notes.md", "v2")),
+        (lambda repo: _write(repo / "my notes.md", "a"), lambda repo: _write(repo / "my notes.md", "b")),
+        (
+            lambda repo: _write(repo / "tracked.txt", "staged\n"),
+            lambda repo: _git("add", "tracked.txt", cwd=repo),
+        ),
+        (
+            lambda repo: (_write(repo / "tracked.txt", "head\n"), _git("add", "tracked.txt", cwd=repo)),
+            lambda repo: _git("commit", "-q", "-m", "advance head", cwd=repo),
+        ),
+        (lambda repo: None, lambda repo: (repo / "tracked.txt").unlink()),
+        pytest.param(
+            lambda repo: _symlink(repo, "tracked.txt"),
+            lambda repo: _symlink(repo, "missing.txt"),
+            marks=pytest.mark.skipif(os.name == "nt", reason="symlinks need privileges on Windows"),
+        ),
+        (lambda repo: _chmod_script(repo, 0o644), lambda repo: _chmod_script(repo, 0o755)),
+        # `git status -uall` lists a nested repository as one directory entry, so a constant
+        # digest for it would make an agent working inside a vendored checkout read as idle.
+        (_nested_repo, lambda repo: _write(repo / "vendor" / "lib.py", "x = 2  # real work")),
+    ],
+    ids=[
+        "tracked-edit",
+        "untracked-content",
+        "path-with-space",
+        "staged",
+        "commit",
+        "delete-tracked",
+        "symlink-retarget",
+        "chmod-untracked",
+        "nested-repo-edit",
+    ],
+)
+def test_worktree_edit_changes_the_digest(repo, setup, mutate):
     fp = GitWorktreeFingerprint(str(repo))
+    setup(repo)
     before = fp.capture()
-    (repo / "tracked.txt").write_text("v2\n")
+    assert fp.capture() == before
+    mutate(repo)
     assert fp.capture() != before
 
 
-def test_differs_after_editing_untracked_file_content(repo):
-    fp = GitWorktreeFingerprint(str(repo))
-    (repo / "notes.md").write_text("v1")
-    created = fp.capture()
-    (repo / "notes.md").write_text("v2")
-    assert fp.capture() != created
+def _pycache(repo):
+    _write(repo / "__pycache__" / "x.pyc", "\x00")
+    _write(repo / ".pytest_cache" / "lastfailed", "{}")
 
 
-def test_differs_after_second_file_in_untracked_directory(repo):
-    fp = GitWorktreeFingerprint(str(repo))
-    (repo / "newdir").mkdir()
-    (repo / "newdir" / "a.py").write_text("a")
-    one = fp.capture()
-    (repo / "newdir" / "b.py").write_text("b")
-    assert fp.capture() != one
+def _tracked_vendor(repo):
+    _write(repo / "node_modules" / "pkg.js", "v1")
+    _git("add", "-f", "-A", cwd=repo)
+    _git("commit", "-q", "-m", "vendor", cwd=repo)
 
 
-def test_stable_when_excluded_artefact_appears(repo):
+@pytest.mark.parametrize(
+    "setup, mutate",
+    [
+        (lambda repo: None, _pycache),
+        # `exclude` applies to the two tracked diffs as well as the status listing.
+        (_tracked_vendor, lambda repo: _write(repo / "node_modules" / "pkg.js", "v2 changed")),
+    ],
+    ids=["untracked-pycache", "tracked-node-modules-edit"],
+)
+def test_stable_when_excluded_artefact_appears(repo, setup, mutate):
+    setup(repo)
     fp = GitWorktreeFingerprint(str(repo))
     before = fp.capture()
-    (repo / "__pycache__").mkdir()
-    (repo / "__pycache__" / "x.pyc").write_bytes(b"\x00")
-    (repo / ".pytest_cache").mkdir()
-    (repo / ".pytest_cache" / "lastfailed").write_text("{}")
+    mutate(repo)
     assert fp.capture() == before
-
-
-def test_stable_with_untracked_nested_repository(repo):
-    fp = GitWorktreeFingerprint(str(repo))
-    (repo / "nested").mkdir()
-    _git("init", "-q", cwd=repo / "nested")
-    first = fp.capture()
-    assert isinstance(first, str)
-    assert fp.capture() == first
 
 
 def test_subdirectory_path_digests_whole_worktree(repo):
@@ -111,156 +162,34 @@ def test_unborn_head_repo_is_stable_string(tmp_path):
     assert fp.capture() != first
 
 
-def test_non_repo_fallback_differs_on_edit_and_is_stable(tmp_path):
-    plain = tmp_path / "plain"
-    plain.mkdir()
-    (plain / "f.txt").write_text("1")
-    fp = GitWorktreeFingerprint(str(plain))
-    first = fp.capture()
-    assert fp.capture() == first
-    (plain / "f.txt").write_text("22")
-    assert fp.capture() != first
+def _equal_length_edit(target):
+    # The listing fallback never hashes content, so size and mtime are what stand between an
+    # `a - b` -> `a + b` fix and a false unchanged state.
+    target.write_text("def add(a, b):\n    return a + b\n")
+    os.utime(target, ns=(0, os.stat(target).st_mtime_ns + 1_000_000))
 
 
-def test_missing_git_binary_returns_none(tmp_path, monkeypatch):
-    fp = GitWorktreeFingerprint(str(tmp_path))
-
-    def no_git(*args, **kwargs):
-        raise FileNotFoundError("git")
-
-    monkeypatch.setattr(subprocess, "run", no_git)
-    assert fp.capture() is None
-    assert safe_capture(fp) is None
-
-
-def test_head_and_staged_diff_are_digest_inputs(repo):
-    fp = GitWorktreeFingerprint(str(repo))
+@pytest.mark.parametrize(
+    "mutate",
+    [_equal_length_edit, lambda target: os.chmod(target, 0o755)],
+    ids=["equal-length-edit", "chmod"],
+)
+def test_equal_length_edit_outside_a_repo_is_visible(tmp_path, mutate):
+    work = tmp_path / "plain"
+    work.mkdir()
+    target = work / "calc.py"
+    target.write_text("def add(a, b):\n    return a - b\n")
+    os.chmod(target, 0o644)
+    fp = GitWorktreeFingerprint(str(work))  # not a repo -> listing fallback
     before = fp.capture()
-    (repo / "tracked.txt").write_text("staged\n")
-    _git("add", "tracked.txt", cwd=repo)
-    staged = fp.capture()
-    assert staged != before
-    _git("commit", "-q", "-m", "advance head", cwd=repo)
-    assert fp.capture() not in (before, staged)
-
-
-def test_deleted_tracked_file_and_removed_untracked_file_change_digest(repo):
-    fp = GitWorktreeFingerprint(str(repo))
-    base = fp.capture()
-    (repo / "scratch.txt").write_text("x")
-    with_untracked = fp.capture()
-    (repo / "scratch.txt").unlink()
-    assert fp.capture() == base
-    (repo / "tracked.txt").unlink()
-    assert fp.capture() not in (base, with_untracked)
-
-
-def test_path_with_space_is_hashed(repo):
-    fp = GitWorktreeFingerprint(str(repo))
-    (repo / "my notes.md").write_text("a")
-    first = fp.capture()
-    (repo / "my notes.md").write_text("b")
-    assert fp.capture() != first
-
-
-@pytest.mark.asyncio
-async def test_acapture_matches_capture(repo):
-    fp = GitWorktreeFingerprint(str(repo))
-    assert await fp.acapture() == fp.capture()
-
-
-def test_callable_fingerprint_sync_and_async():
-    fp = CallableFingerprint(lambda: "abc")
-    assert fp.capture() == "abc"
-    assert asyncio.run(fp.acapture()) == "abc"
-
-    async def afn():
-        return "from-afn"
-
-    assert asyncio.run(CallableFingerprint(lambda: "sync", afn=afn).acapture()) == "from-afn"
-
-
-def test_failure_rule_exception_none_and_empty_are_unknown():
-    def boom():
-        raise OSError("disk")
-
-    assert safe_capture(CallableFingerprint(boom)) is None
-    assert safe_capture(CallableFingerprint(lambda: None)) is None
-    assert safe_capture(CallableFingerprint(lambda: "")) is None
-
-
-def test_unknown_never_equals():
-    assert noop_between(None, None) is False
-    assert noop_between("a", None) is False
-    assert noop_between("a", "a") is True
-    assert noop_between("a", "b") is False
-
-
-def test_capture_only_object_gets_acapture():
-    class CaptureOnly:
-        def capture(self):
-            return "c"
-
-    fp = coerce_fingerprint(CaptureOnly())
-    assert isinstance(fp, StateFingerprint)
-    assert asyncio.run(fp.acapture()) == "c"
-
-
-def test_object_without_capture_is_rejected():
-    with pytest.raises(ValueError):
-        coerce_fingerprint(object())
-
-
-def test_symlink_target_is_part_of_digest(repo):
-    if os.name == "nt":
-        pytest.skip("symlinks need privileges on Windows")
-    fp = GitWorktreeFingerprint(str(repo))
-    os.symlink("tracked.txt", repo / "link")
-    first = fp.capture()
-    os.unlink(repo / "link")
-    os.symlink("missing.txt", repo / "link")
-    assert fp.capture() != first
-
-
-def test_chmod_on_untracked_file_changes_digest(repo):
-    fp = GitWorktreeFingerprint(str(repo))
-    script = repo / "run.sh"
-    script.write_text("#!/bin/sh\necho hi\n")
-    os.chmod(script, 0o644)
-    before = fp.capture()
-    os.chmod(script, 0o755)
-    assert fp.capture() != before
-    os.chmod(script, 0o644)
     assert fp.capture() == before
-
-
-def test_chmod_changes_listing_fallback_digest(tmp_path):
-    plain = tmp_path / "plain"
-    plain.mkdir()
-    script = plain / "run.sh"
-    script.write_text("#!/bin/sh\n")
-    os.chmod(script, 0o644)
-    fp = GitWorktreeFingerprint(str(plain))
-    before = fp.capture()
-    os.chmod(script, 0o755)
-    assert fp.capture() != before
-
-
-def test_edit_inside_an_untracked_nested_repository_is_visible(repo):
-    """`git status -uall` lists a nested repository as a single directory entry, so digesting a
-    constant for it would make an agent working inside a vendored checkout read as idle."""
-    fp = GitWorktreeFingerprint(str(repo))
-    (repo / "vendor").mkdir()
-    _git("init", "-q", cwd=repo / "vendor")
-    (repo / "vendor" / "lib.py").write_text("x = 1")
-    before = fp.capture()
-    (repo / "vendor" / "lib.py").write_text("x = 2  # real work")
+    mutate(target)
     assert fp.capture() != before
 
 
 def test_unlistable_directory_is_unknown_not_a_partial_digest(tmp_path):
     """os.walk skips a subtree it cannot list and says nothing. A digest over only the readable
-    part is stable, so work inside the unreadable part would read as a no-op and end the run."""
+    part is stable, so work inside the unreadable part would read as an unchanged state and end the run."""
     work = tmp_path / "work"
     (work / "secret").mkdir(parents=True)
     (work / "visible.txt").write_text("v")
@@ -273,46 +202,126 @@ def test_unlistable_directory_is_unknown_not_a_partial_digest(tmp_path):
         os.chmod(work / "secret", 0o700)
 
 
-def test_equal_length_edit_outside_a_repo_is_visible(tmp_path):
-    """The listing fallback never hashes content, so this is the only thing standing between an
-    `a - b` -> `a + b` fix and a false no-op."""
-    work = tmp_path / "plain"
-    work.mkdir()
-    target = work / "calc.py"
-    target.write_text("def add(a, b):\n    return a - b\n")
-    fp = GitWorktreeFingerprint(str(work))
-    before = fp.capture()
-    target.write_text("def add(a, b):\n    return a + b\n")  # identical byte count
-    os.utime(target, ns=(0, os.stat(target).st_mtime_ns + 1_000_000))
-    assert fp.capture() != before
+async def test_callable_fingerprint_sync_and_async():
+    fp = CallableFingerprint(lambda: "abc")
+    assert fp.capture() == "abc"
+    assert await fp.acapture() == "abc"
+
+    async def afn():
+        return "from-afn"
+
+    assert await CallableFingerprint(lambda: "sync", afn=afn).acapture() == "from-afn"
 
 
-def test_inherited_git_dir_does_not_redirect_the_digest(repo, tmp_path, monkeypatch):
+def test_failure_rule_exception_none_and_empty_are_unknown():
+    def boom():
+        raise OSError("disk")
+
+    assert safe_capture(CallableFingerprint(boom)) is None
+    assert safe_capture(CallableFingerprint(lambda: None)) is None
+    assert safe_capture(CallableFingerprint(lambda: "")) is None
+    # Unknown never equals, not even another unknown.
+    assert state_unchanged(None, None) is False
+    assert state_unchanged("a", None) is False
+    assert state_unchanged("a", "a") is True
+    assert state_unchanged("a", "b") is False
+
+
+class CaptureOnly:
+    def capture(self):
+        return "c"
+
+
+class AcaptureOnly:
+    async def acapture(self):
+        return "a"
+
+
+@pytest.mark.parametrize("entry", [CaptureOnly, AcaptureOnly, object], ids=["capture-only", "acapture-only", "neither"])
+async def test_acapture_only_fingerprint_is_refused_by_run(entry):
+    if entry is object:
+        with pytest.raises(ValueError):
+            coerce_fingerprint(object())
+        return
+    fp = coerce_fingerprint(entry())
+    assert isinstance(fp, StateFingerprint)
+    if entry is CaptureOnly:
+        require_sync_fingerprint(fp)
+        assert safe_capture(fp) == "c"
+        assert await asafe_capture(fp) == "c"
+    else:
+        with pytest.raises(ValueError, match=r"Cannot use AcaptureOnly \(an async fingerprint\) with `run\(\)`"):
+            require_sync_fingerprint(fp)
+        assert await asafe_capture(fp) == "a"
+
+
+# ---------------------------------------------------------------------------
+# Repository-configured programs, submodules and git environment
+# ---------------------------------------------------------------------------
+
+
+def _recording_hook(tmp_path):
+    """A shell program that records each run in a marker file."""
+    marker = tmp_path / "ran"
+    hook = tmp_path / "hook.sh"
+    hook.write_text(f"#!/bin/sh\necho ran >> {marker}\necho '/'\n")
+    hook.chmod(0o755)
+    return hook, marker
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="posix shell hook")
+def test_fingerprint_never_runs_repository_configured_programs(repo, tmp_path):
+    hook, marker = _recording_hook(tmp_path)
+    (repo / "tracked.txt").write_text("b\n")
+    _git("config", "core.fsmonitor", str(hook), cwd=repo)
+    _git("config", "diff.external", str(hook), cwd=repo)
+    fingerprint = GitWorktreeFingerprint(str(repo))
+    digest = fingerprint.capture()
+    assert digest is not None
+    assert not marker.exists()
+    (repo / "tracked.txt").write_text("c\n")
+    assert fingerprint.capture() != digest
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="posix paths")
+def test_fingerprint_sees_edits_inside_a_submodule(repo, tmp_path):
+    sub = tmp_path / "sub"
+    sub.mkdir()
+    _git("init", "-q", cwd=sub)
+    (sub / "s.txt").write_text("s\n")
+    _git("add", ".", cwd=sub)
+    _git("commit", "-q", "-m", "sub", cwd=sub)
+    _git("-c", "protocol.file.allow=always", "submodule", "add", "-q", str(sub), "sub", cwd=repo)
+    _git("commit", "-q", "-m", "add sub", cwd=repo)
+    fingerprint = GitWorktreeFingerprint(str(repo))
+    clean = fingerprint.capture()
+    (repo / "sub" / "s.txt").write_text("edit A\n")
+    edit_a = fingerprint.capture()
+    (repo / "sub" / "s.txt").write_text("edit B\n")
+    edit_b = fingerprint.capture()
+    assert clean != edit_a
+    assert edit_a != edit_b
+
+
+def test_fingerprint_drops_git_config_from_the_environment(repo, tmp_path, monkeypatch):
     other = tmp_path / "other"
     other.mkdir()
     _git("init", "-q", cwd=other)
     fp = GitWorktreeFingerprint(str(repo))
     clean = fp.capture()
+    # An inherited GIT_DIR / GIT_WORK_TREE cannot redirect the digest to another repository.
     monkeypatch.setenv("GIT_DIR", str(other / ".git"))
     monkeypatch.setenv("GIT_WORK_TREE", str(other))
     assert fp.capture() == clean
+    monkeypatch.delenv("GIT_DIR")
+    monkeypatch.delenv("GIT_WORK_TREE")
 
-
-def test_excluded_directory_is_ignored_in_the_tracked_diffs_too(repo):
-    """The docstring promises `exclude` applies on both paths; the two diffs used to ignore it,
-    so a tracked file under node_modules still moved the digest."""
-    vendor = repo / "node_modules"
-    vendor.mkdir()
-    (vendor / "pkg.js").write_text("v1")
-    _git("add", "-f", "-A", cwd=repo)
-    _git("commit", "-q", "-m", "vendor", cwd=repo)
-    fp = GitWorktreeFingerprint(str(repo))
-    before = fp.capture()
-    (vendor / "pkg.js").write_text("v2 changed")
-    assert fp.capture() == before
-
-
-def test_extra_excludes_adds_to_the_defaults_instead_of_replacing_them():
-    fp = GitWorktreeFingerprint(extra_excludes=(".coverage",))
-    assert ".coverage" in fp.exclude
-    assert set(DEFAULT_EXCLUDES).issubset(set(fp.exclude))
+    # Inherited GIT_CONFIG_* and GIT_EXTERNAL_DIFF cannot inject a program to run.
+    hook, marker = _recording_hook(tmp_path)
+    (repo / "tracked.txt").write_text("b\n")
+    monkeypatch.setenv("GIT_CONFIG_COUNT", "1")
+    monkeypatch.setenv("GIT_CONFIG_KEY_0", "core.fsmonitor")
+    monkeypatch.setenv("GIT_CONFIG_VALUE_0", str(hook))
+    monkeypatch.setenv("GIT_EXTERNAL_DIFF", str(hook))
+    assert fp.capture() is not None
+    assert not marker.exists()

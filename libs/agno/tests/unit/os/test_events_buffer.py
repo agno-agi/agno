@@ -1,7 +1,10 @@
 """Tests for EventsBuffer — monotonic indexing and trim correctness."""
 
+from time import time
+
 from agno.os.managers import EventsBuffer
 from agno.run.agent import RunContentEvent
+from agno.run.base import RunStatus
 
 
 def _make_event(content: str) -> RunContentEvent:
@@ -203,42 +206,27 @@ class TestBackendRetentionParity:
 
 
 class TestProducerTakeover:
-    """An event arriving on a PAUSED or UNVERIFIED entry means a continuation producer
-    took the run over: both statuses are continuable under the same run id, and the old
-    status with its completed_at would let the cleanup pass reap a live run's buffer and
-    would route /resume to replay instead of subscribing."""
-
-    @staticmethod
-    def _settled_buffer(status) -> EventsBuffer:
-        buf = EventsBuffer(max_events_per_run=10)
-        buf.add_event("r1", _make_event("before"))
-        buf.set_run_completed("r1", status)
-        assert buf.run_metadata["r1"]["status"] == status
-        assert "completed_at" in buf.run_metadata["r1"]
-        return buf
-
-    def test_event_on_paused_entry_flips_to_running(self):
-        from agno.run.base import RunStatus
-
-        buf = self._settled_buffer(RunStatus.paused)
-        buf.add_event("r1", _make_event("continuation"))
-        assert buf.run_metadata["r1"]["status"] == RunStatus.running
-        assert "completed_at" not in buf.run_metadata["r1"]
+    """An event arriving on an UNVERIFIED entry means a continuation producer took the
+    run over: an unverified run is continued under the same run id, and the old status
+    with its completed_at would let the cleanup pass reap a live run's buffer and would
+    route /resume to replay instead of subscribing."""
 
     def test_event_on_unverified_entry_flips_to_running(self):
-        from agno.run.base import RunStatus
-
-        buf = self._settled_buffer(RunStatus.unverified)
+        buf = EventsBuffer(max_events_per_run=10)
+        buf.add_event("r1", _make_event("before"))
+        buf.set_run_completed("r1", RunStatus.unverified)
+        assert "completed_at" in buf.run_metadata["r1"]
         buf.add_event("r1", _make_event("continuation"))
         assert buf.run_metadata["r1"]["status"] == RunStatus.running
         assert "completed_at" not in buf.run_metadata["r1"]
 
-    def test_event_on_completed_entry_does_not_flip(self):
-        """COMPLETED is not continuable under the same run id (a continue forks), so a
-        late event must not resurrect the entry."""
-        from agno.run.base import RunStatus
 
-        buf = self._settled_buffer(RunStatus.completed)
-        buf.add_event("r1", _make_event("stray"))
-        assert buf.run_metadata["r1"]["status"] == RunStatus.completed
-        assert "completed_at" in buf.run_metadata["r1"]
+def test_events_buffer_cleanup_reaps_unverified():
+    buffer = EventsBuffer()
+    buffer.register_run("run-unverified", RunStatus.running)
+    buffer.set_run_completed("run-unverified", RunStatus.unverified)
+    # Age the completion past the retention window, then reap.
+    buffer.run_metadata["run-unverified"]["completed_at"] = time() - buffer.cleanup_interval - 1
+    buffer.cleanup_runs()
+    assert "run-unverified" not in buffer.run_metadata
+    assert "run-unverified" not in buffer.events

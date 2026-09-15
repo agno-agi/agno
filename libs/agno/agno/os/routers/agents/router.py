@@ -54,6 +54,7 @@ from agno.os.job_queue import (
 )
 from agno.os.middleware.user_scope import (
     SESSION_ID_REQUIRED,
+    acancel_not_recorded,
     assert_session_matches_component,
     assert_session_writable,
     caller_is_admin,
@@ -95,7 +96,7 @@ from agno.os.utils import (
 )
 from agno.registry import Registry
 from agno.run.agent import RunErrorEvent, RunOutput
-from agno.run.base import RunStatus
+from agno.run.base import TERMINAL_RUN_STATUSES, RunStatus
 from agno.utils.log import log_debug, log_error, log_warning
 
 if TYPE_CHECKING:
@@ -514,13 +515,7 @@ async def _resume_stream_generator(
         yield f"event: error\ndata: {json.dumps(error)}\n\n"
         return
 
-    if buffer_status in (
-        RunStatus.completed,
-        RunStatus.error,
-        RunStatus.cancelled,
-        RunStatus.paused,
-        RunStatus.unverified,
-    ):
+    if buffer_status in TERMINAL_RUN_STATUSES:
         # PATH 2: Run finished -- replay missed events from the event stream
         total_buffered = await event_stream.get_event_count(run_id)
         missed_events = await event_stream.replay(run_id, last_event_index=last_event_index)
@@ -1213,6 +1208,8 @@ def get_agent_router(
                     component_type="agents",
                     component_id=agent_id,
                 )
+            if await acancel_not_recorded(getattr(factory, "db", None) or os.db, session_id, run_id):
+                return JSONResponse(content={}, status_code=200)
 
             # Tombstone a still-queued durable ticket first: intent alone
             # does not stop a job no task is executing yet
@@ -1257,6 +1254,10 @@ def get_agent_router(
                 component_type="agents",
                 component_id=agent_id,
             )
+        if not isinstance(agent, RemoteAgent) and await acancel_not_recorded(
+            getattr(agent, "db", None) or os.db, session_id, run_id
+        ):
+            return JSONResponse(content={}, status_code=200)
 
         # Tombstone a still-queued durable ticket first: intent alone does not
         # stop a job no task is executing yet
@@ -1282,7 +1283,9 @@ def get_agent_router(
             "- PAUSED + resolved admin approval (empty tools) → apply resolution, resume\n"
             "- RUNNING / ERROR (no unresolved HITL requirements) → resume from "
             "last persisted state\n"
-            "- COMPLETED + new tools → continue with appended messages\n\n"
+            "- COMPLETED + new tools → continue with appended messages\n"
+            "- UNVERIFIED + optional input → continue in place under the same run_id; the "
+            "verification budget restarts\n\n"
             "**Tools Parameter:**\n"
             "JSON string containing array of tool execution objects with results. Optional — "
             "only required when the persisted run has unresolved HITL requirements."
@@ -2373,7 +2376,9 @@ def get_agent_router(
         request: Request,
         agent_id: str,
         session_id: str = Query(..., description="Session ID to list runs for"),
-        status: Optional[str] = Query(None, description="Filter by run status (PENDING, RUNNING, COMPLETED, ERROR)"),
+        status: Optional[str] = Query(
+            None, description="Filter by run status (PENDING, RUNNING, COMPLETED, ERROR, PAUSED, UNVERIFIED)"
+        ),
     ):
         from agno.os.schema import RunSchema
 

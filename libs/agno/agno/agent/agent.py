@@ -70,6 +70,7 @@ from agno.tools import Toolkit
 from agno.tools.function import Function
 from agno.utils.log import log_warning
 from agno.utils.safe_formatter import SafeFormatter
+from agno.utils.verifiers import validate_verifiers
 
 
 @dataclass(init=False)
@@ -205,14 +206,12 @@ class Agent:
     _run_hooks_in_background: Optional[bool] = None
 
     # --- Verification ---
-    # Checks that run when the model stops; a failure is sent back to the model as evidence
-    # and the run continues, inside the same run. A run that never passes within budget ends
+    # Checks that run when the model stops; a run that never passes within budget ends
     # with RunStatus.unverified and the record on RunOutput.verification.
     verifiers: Optional[List[Union["Verifier", Callable[..., Any]]]] = None
-    # Shared-loop budget and options for the verification loop. Ignored when verifiers is None.
-    verification: Optional["VerificationConfig"] = None
-    # The coerced verifier list, built at construction (and rebuilt on a copy).
-    _verifiers: Optional[List[Any]] = None
+    # Shared-loop budget and options for the verification loop: True is the default config and
+    # False turns verification off. Ignored when verifiers is None.
+    verification: Optional[Union[bool, "VerificationConfig"]] = None
 
     # --- Agent Reasoning ---
     # Enable reasoning by providing a reasoning_model (must be a native reasoning model).
@@ -452,7 +451,7 @@ class Agent:
         pre_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail, BaseEval]]] = None,
         post_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail, BaseEval]]] = None,
         verifiers: Optional[List[Union["Verifier", Callable[..., Any]]]] = None,
-        verification: Optional["VerificationConfig"] = None,
+        verification: Optional[Union[bool, "VerificationConfig"]] = None,
         reasoning_model: Optional[Union[Model, str]] = None,
         reasoning_agent: Optional[Agent] = None,
         read_chat_history: bool = False,
@@ -622,16 +621,8 @@ class Agent:
         self.pre_hooks = pre_hooks
         self.post_hooks = post_hooks
 
-        self.verifiers = list(verifiers) if verifiers else None
-        self.verification = verification
-        # Coerce now so a bad entry (a bare Scorer, a callable with an unknown parameter
-        # name) fails at construction, not mid-run. Rebuilt lazily on copies.
-        if self.verifiers:
-            from agno.verifiers.base import coerce_verifier
-
-            self._verifiers = [coerce_verifier(v) for v in self.verifiers]
-        else:
-            self._verifiers = None
+        owner = f"Agent {self.name or self.id or ''}".rstrip()
+        self.verifiers, self.verification = validate_verifiers(verifiers, verification, owner=owner)
 
         self.reasoning_model = reasoning_model  # type: ignore[assignment]
         self.reasoning_agent = reasoning_agent

@@ -224,7 +224,7 @@ async def _run_attempt(
         stop_reason = StopReason.timeout
     else:
         stop_reason = _stop_reason_for(state)
-        if stop_reason != StopReason.completed and not state.errored:
+        if stop_reason not in (StopReason.completed, StopReason.unverified) and not state.errored:
             if state.run is None:
                 state.errors.append("no run output recorded")
             else:

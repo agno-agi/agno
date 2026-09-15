@@ -270,10 +270,10 @@ class Condition:
                         from agno.exceptions import ComponentRehydrationError
 
                         raise ComponentRehydrationError(message)
-                    from agno.workflow.step import _unresolvable_callable_placeholder
+                    from agno.workflow.step import unresolvable_callable_placeholder
 
                     log_warning(message)
-                    func = _unresolvable_callable_placeholder("Condition evaluator", evaluator_data)
+                    func = unresolvable_callable_placeholder("Condition evaluator", evaluator_data)
                 evaluator = func
         else:
             raise ValueError(f"Invalid evaluator type in data: {type(evaluator_data).__name__}")

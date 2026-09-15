@@ -786,6 +786,9 @@ class WorkflowRunSchema(BaseModel):
     audio: Optional[List[dict]] = Field(None, description="Audio files included in the workflow")
     files: Optional[List[dict]] = Field(None, description="Files included in the workflow")
     response_audio: Optional[dict] = Field(None, description="Audio response if generated")
+    verification: Optional[Dict[str, Any]] = Field(
+        None, description="Verification record of the gate that decided this run when a Verify step ran"
+    )
 
     @classmethod
     def from_dict(cls, run_response: Dict[str, Any]) -> "WorkflowRunSchema":
@@ -817,6 +820,7 @@ class WorkflowRunSchema(BaseModel):
             audio=run_response.get("audio", []),
             files=run_response.get("files", []),
             response_audio=run_response.get("response_audio", None),
+            verification=run_response.get("verification"),
         )
 
 

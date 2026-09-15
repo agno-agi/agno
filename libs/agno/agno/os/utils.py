@@ -32,6 +32,8 @@ from agno.run.workflow import WorkflowRunOutputEvent
 from agno.team import RemoteTeam, Team, TeamFactory
 from agno.tools import Function, Toolkit
 from agno.utils.log import log_debug, log_warning, logger
+from agno.utils.verifiers import register_verify_checks
+from agno.verifiers.base import coerce_verifier
 from agno.workflow import RemoteWorkflow, Workflow, WorkflowFactory
 
 
@@ -425,7 +427,7 @@ async def queued_run_tail_streamer(run_id: str, from_index: Optional[int] = None
                     if (
                         job is not None
                         and job.get("job_type", "run") == "run"
-                        and job.get("status") in ("completed", "failed", "cancelled")
+                        and job.get("status") in ("completed", "failed", "cancelled", "unverified")
                     ):
                         stream_status = await event_stream.get_run_status(run_id)
                         if stream_status is None or stream_status in (RunStatus.pending, RunStatus.running):
@@ -692,7 +694,9 @@ async def afinalize_continue_stream(
         if queue_worker is not None:
             from agno.os.job_queue import asettle_paused_ticket
 
-            await asettle_paused_ticket(queue_worker, run_id, final)
+            # An untracked run (a non-stream background run) closes no stream view, but its
+            # ticket still settles from the status the caller returned.
+            await asettle_paused_ticket(queue_worker, run_id, final if final is not None else final_status)
         return final
 
     task = asyncio.ensure_future(_obligation())
@@ -2229,11 +2233,21 @@ def collect_mcp_tools_from_workflow_step(step: Any, mcp_tools: List[Any]) -> Non
             for step in steps:
                 collect_mcp_tools_from_workflow_step(step, mcp_tools)
 
-    elif isinstance(step, (Parallel, Loop, Condition, Router, Verify)):
+    elif isinstance(step, Router):
+        # A Router holds its routes on .choices until it is prepared; a list route is a
+        # raw list of steps.
+        for choice in step.choices or []:
+            for sub_step in choice if isinstance(choice, list) else [choice]:
+                collect_mcp_tools_from_workflow_step(sub_step, mcp_tools)
+
+    elif isinstance(step, (Parallel, Loop, Condition, Verify)):
         # These contain other steps - recursively check them (a resolved
         # Verify holds its absorbed loop-back segment on .steps)
         if hasattr(step, "steps") and step.steps:
             for sub_step in step.steps:
+                collect_mcp_tools_from_workflow_step(sub_step, mcp_tools)
+        if isinstance(step, Condition) and step.else_steps:
+            for sub_step in step.else_steps:
                 collect_mcp_tools_from_workflow_step(sub_step, mcp_tools)
 
     elif isinstance(step, Agent):
@@ -2311,6 +2325,10 @@ def collect_components_from_agent(agent: Any, registry: Registry, visited: Set[i
         for tool in tools:
             registry.add_tool(tool, source=ToolSource.DISCOVERED)
 
+    verifiers = getattr(agent, "verifiers", None)
+    if isinstance(verifiers, list):
+        register_verify_checks([coerce_verifier(v) for v in verifiers], registry)
+
     registry.add_schema(getattr(agent, "input_schema", None))
     registry.add_schema(getattr(agent, "output_schema", None))
     registry.add_db(getattr(agent, "db", None))
@@ -2338,6 +2356,10 @@ def collect_components_from_team(team: Any, registry: Registry, visited: Set[int
     if isinstance(tools, list):
         for tool in tools:
             registry.add_tool(tool, source=ToolSource.DISCOVERED)
+
+    verifiers = getattr(team, "verifiers", None)
+    if isinstance(verifiers, list):
+        register_verify_checks([coerce_verifier(v) for v in verifiers], registry)
 
     registry.add_schema(getattr(team, "input_schema", None))
     registry.add_schema(getattr(team, "output_schema", None))
@@ -2382,54 +2404,6 @@ def _collect_components_from_steps(steps: Any, registry: Registry, visited: Set[
         _collect_components_from_step(steps, registry, visited)
 
 
-def _registrable_verify_check(coerced: Any) -> Optional[Any]:
-    """The callable to register for one coerced Verify check, or None.
-
-    ``Verify.to_dict`` serializes each check as its verifier NAME, and
-    rehydration resolves that name through ``registry.get_function`` - which
-    matches on ``__name__``. So the registered callable must carry exactly the
-    emitted name. When the underlying callable already does, it registers
-    as-is; when the check was renamed (``check(fn, name=...)``), a delegating
-    adapter carries the emitted name plus the mount's policy attributes, with
-    ``__wrapped__`` preserving the original signature for by-name argument
-    routing. Protocol objects without a usable ``__name__`` return None - the
-    fail-closed rehydration placeholder covers them.
-    """
-    import functools
-    import inspect as _inspect
-
-    emitted = getattr(coerced, "name", "") or "verifier"
-    target = getattr(coerced, "fn", None)
-    if target is None:
-        target = getattr(coerced, "inner", None)
-    if target is None:
-        target = coerced
-    if not callable(target):
-        return None
-    if getattr(target, "__name__", None) == emitted:
-        return target
-    if getattr(coerced, "fn", None) is None:
-        # A renamed protocol object cannot be re-routed through a plain
-        # function adapter without losing its verify/averify halves.
-        return None
-    if _inspect.iscoroutinefunction(target) or _inspect.iscoroutinefunction(getattr(target, "__call__", None)):
-
-        async def adapter(*args: Any, **kwargs: Any) -> Any:
-            return await target(*args, **kwargs)
-    else:
-
-        def adapter(*args: Any, **kwargs: Any) -> Any:  # type: ignore[misc]
-            return target(*args, **kwargs)
-
-    adapter = functools.wraps(target)(adapter)
-    adapter.__name__ = emitted
-    adapter.__qualname__ = emitted
-    for attr in ("required", "rerun", "run_when", "fatal"):
-        if hasattr(coerced, attr):
-            setattr(adapter, attr, getattr(coerced, attr))
-    return adapter
-
-
 def _collect_components_from_step(step: Any, registry: Registry, visited: Set[int]) -> None:
     """Add components from a single workflow step of any type.
 
@@ -2471,10 +2445,7 @@ def _collect_components_from_step(step: Any, registry: Registry, visited: Set[in
 
     elif isinstance(step, Verify):
         # The checks resolve by name at rehydration, like other callable refs.
-        for coerced in getattr(step, "_verifiers", None) or []:
-            registrable = _registrable_verify_check(coerced)
-            if registrable is not None:
-                registry.add_function(registrable)
+        register_verify_checks(getattr(step, "_verifiers", None), registry)
         # A resolved Verify holds its absorbed loop-back segment on .steps.
         for sub_step in step.steps or []:
             _collect_components_from_step(sub_step, registry, visited)

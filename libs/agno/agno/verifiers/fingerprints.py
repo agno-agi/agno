@@ -1,4 +1,4 @@
-"""State fingerprints: the no-op detector's sensor.
+"""State fingerprints: the unchanged-state detector's sensor.
 
 A fingerprint digests the world after an attempt. If two consecutive attempts digest the same,
 the agent changed nothing between them. Not the same word as `env_fingerprint` in
@@ -7,6 +7,7 @@ agno.environments, which identifies what was run; this one measures what running
 
 import asyncio
 import hashlib
+import inspect
 import os
 import subprocess
 from typing import Any, Awaitable, Callable, List, Optional, Protocol, Sequence, Tuple, runtime_checkable
@@ -14,47 +15,43 @@ from typing import Any, Awaitable, Callable, List, Optional, Protocol, Sequence,
 from agno.utils.log import log_warning
 
 # Path components skipped on both the git path and the listing fallback. They are where
-# verifiers (pytest, the interpreter) leave artefacts that would otherwise read as agent work.
+# verifiers (pytest, the interpreter) leave artifacts that would otherwise read as agent work.
 DEFAULT_EXCLUDES: Sequence[str] = (".git", "__pycache__", ".pytest_cache", ".venv", "node_modules")
+
+# A git command that has not returned by then is hung on something outside the worktree.
+_GIT_TIMEOUT_SECONDS = 60.0
+
+# Repository config that makes `git status` or `git diff` run a program: the fsmonitor, an
+# external diff, and the post-index-change hook `git status` fires when it refreshes the
+# index. The repository's own config is inside the tree the agent writes, so each is pinned
+# off on the command line. A clean filter the repository configures still runs: git applies
+# it whenever it re-reads a modified tracked file, and there is no switch to turn filters off.
+_GIT_CONFIG_OVERRIDES = ("core.fsmonitor=false", "diff.external=", "core.hooksPath=/dev/null")
 
 
 @runtime_checkable
 class StateFingerprint(Protocol):
-    """A stable digest of world state, cheap enough to run once per attempt. None means
-    unknown; unknown never compares equal to anything, so it can never flag a no-op."""
-
-    def capture(self) -> Optional[str]: ...
-
-    async def acapture(self) -> Optional[str]: ...
-
-
-class _HalfFingerprint:
-    """Wraps an object that implements only `capture`, deriving `acapture`."""
-
-    def __init__(self, inner: Any) -> None:
-        self.inner = inner
-
-    def capture(self) -> Optional[str]:
-        return self.inner.capture()
-
-    async def acapture(self) -> Optional[str]:
-        if callable(getattr(self.inner, "acapture", None)):
-            return await self.inner.acapture()
-        return await asyncio.to_thread(self.inner.capture)
+    """A stable digest of world state, cheap enough to run once per attempt, from a ``capture``
+    method, an ``acapture`` method, or both. ``run()`` calls ``capture``; ``arun()`` awaits
+    ``acapture``, or runs ``capture`` on a worker thread. None means unknown; unknown never
+    compares equal to anything, so it can never flag an unchanged state."""
 
 
 def coerce_fingerprint(obj: Any) -> StateFingerprint:
-    """Accept a full StateFingerprint, or an object with only `capture`; reject the rest."""
-    has_sync = callable(getattr(obj, "capture", None))
-    has_async = callable(getattr(obj, "acapture", None))
-    if has_sync and has_async:
+    """Accept an object with `capture`, `acapture`, or both; reject the rest."""
+    if callable(getattr(obj, "capture", None)) or callable(getattr(obj, "acapture", None)):
         return obj
-    if has_sync:
-        return _HalfFingerprint(obj)
-    raise ValueError(f"fingerprint must implement capture(); got {type(obj).__name__}")
+    raise ValueError(f"Fingerprint must implement capture() or acapture(), got {type(obj).__name__}")
 
 
-def _normalise(value: Any) -> Optional[str]:
+def require_sync_fingerprint(fp: Any) -> None:
+    """Raise when `run()` cannot capture this fingerprint."""
+    capture = getattr(fp, "capture", None)
+    if not callable(capture) or inspect.iscoroutinefunction(capture):
+        raise ValueError(f"Cannot use {type(fp).__name__} (an async fingerprint) with `run()`. Use `arun()` instead.")
+
+
+def _normalize(value: Any) -> Optional[str]:
     if value is None:
         return None
     if not isinstance(value, str):
@@ -62,27 +59,25 @@ def _normalise(value: Any) -> Optional[str]:
     return value or None
 
 
-def _warn_unknown(value: Optional[str]) -> Optional[str]:
-    if value is None:
-        log_warning("Fingerprint capture returned no value; treating state as unknown")
-    return value
-
-
-def safe_capture(fp: StateFingerprint) -> Optional[str]:
-    """capture() with the failure rule applied: an exception, None or "" is unknown (None),
-    logged, and never ends a run."""
+def safe_capture(fp: Any) -> Optional[str]:
+    """capture() with the failure rule applied: an exception, None or "" is unknown (None) and
+    never ends a run; the attempt records the unknown state."""
     try:
-        return _warn_unknown(_normalise(fp.capture()))
+        return _normalize(fp.capture())
     except Exception as exc:
-        log_warning(f"Fingerprint capture failed; treating state as unknown: {type(exc).__name__}: {exc}")
+        log_warning(f"Could not capture fingerprint: {exc}")
         return None
 
 
-async def asafe_capture(fp: StateFingerprint) -> Optional[str]:
+async def asafe_capture(fp: Any) -> Optional[str]:
     try:
-        return _warn_unknown(_normalise(await fp.acapture()))
+        if callable(getattr(fp, "acapture", None)):
+            value = await fp.acapture()
+        else:
+            value = await asyncio.to_thread(fp.capture)
+        return _normalize(value)
     except Exception as exc:
-        log_warning(f"Fingerprint capture failed; treating state as unknown: {type(exc).__name__}: {exc}")
+        log_warning(f"Could not capture fingerprint: {exc}")
         return None
 
 
@@ -96,8 +91,8 @@ def _walk_stats(root: str, exclude: Sequence[str]) -> List[Tuple[str, os.stat_re
 
     Traversal errors are raised, never swallowed. `os.walk` reports them to `onerror` and
     otherwise skips that subtree silently, which would produce a stable digest over only the
-    readable part of the tree: work done inside an unlistable directory would then read as a
-    no-op and end the run early, with nothing to say it had gone blind.
+    readable part of the tree: work done inside an unlistable directory would then read as an
+    unchanged state and end the run early, with nothing to say it had gone blind.
     """
 
     def blow_up(error: OSError) -> None:
@@ -134,21 +129,27 @@ class GitWorktreeFingerprint:
     def __init__(
         self, path: str = ".", exclude: Sequence[str] = DEFAULT_EXCLUDES, extra_excludes: Sequence[str] = ()
     ) -> None:
-        # `exclude` replaces the defaults, `extra_excludes` adds to them. Passing one entry to
-        # `exclude` used to silently drop .git/__pycache__/.venv filtering, which is the
-        # opposite of what someone adding an entry wants.
+        # `exclude` replaces the defaults, `extra_excludes` adds to them.
         self.exclude = tuple(exclude) + tuple(extra_excludes)
         self.path = path
 
     def _git(self, *args: str, cwd: str) -> "subprocess.CompletedProcess[bytes]":
-        # LC_ALL=C keeps git's messages in English so the not-a-repository detection below
-        # does not break under locale packs. GIT_DIR / GIT_WORK_TREE are dropped: inherited
-        # from the environment they would silently point the digest at a different repository
-        # than `path`, and the no-op guard would then be measuring the wrong world.
+        # LC_ALL=C keeps git's messages English for the not-a-repository check; inherited
+        # GIT_* variables and config overrides are dropped so the environment cannot redirect git.
         env = {**os.environ, "LC_ALL": "C", "LC_MESSAGES": "C"}
-        for leaked in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR"):
+        for leaked in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_EXTERNAL_DIFF"):
             env.pop(leaked, None)
-        return subprocess.run(["git", *args], cwd=cwd, capture_output=True, check=False, env=env)
+        for leaked in [key for key in env if key.startswith("GIT_CONFIG")]:
+            env.pop(leaked, None)
+        overrides = [arg for key in _GIT_CONFIG_OVERRIDES for arg in ("-c", key)]
+        return subprocess.run(
+            ["git", *overrides, *args],
+            cwd=cwd,
+            capture_output=True,
+            check=False,
+            env=env,
+            timeout=_GIT_TIMEOUT_SECONDS,
+        )
 
     def _exclude_pathspec(self) -> List[str]:
         """Pathspecs that keep the two diffs to the same scope as the status listing."""
@@ -206,6 +207,7 @@ class GitWorktreeFingerprint:
         if status.returncode != 0:
             raise RuntimeError(status.stderr.decode("utf-8", errors="replace").strip() or "git status failed")
         untracked = []
+        submodules = []
         for entry in status.stdout.split(b"\x00"):
             if len(entry) < 4:
                 continue
@@ -217,16 +219,22 @@ class GitWorktreeFingerprint:
             digest.update(b"\x00")
             if code == b"??":
                 untracked.append(rel_path)
+            elif os.path.isdir(os.path.join(top, rel_path)):
+                # A registered submodule shows up as one "M sub" line whatever changed inside
+                # it; its tree is walked so two different edits do not digest the same.
+                submodules.append(rel_path)
 
         pathspec = self._exclude_pathspec()
         for args in (("diff", "--binary"), ("diff", "--binary", "--staged")):
-            diff = self._git(*args, "--", ".", *pathspec, cwd=top)
+            diff = self._git(*args, "--no-ext-diff", "--no-textconv", "--no-color", "--", ".", *pathspec, cwd=top)
             if diff.returncode != 0:
                 raise RuntimeError(diff.stderr.decode("utf-8", errors="replace").strip() or "git diff failed")
             digest.update(diff.stdout)
             digest.update(b"\x00")
 
         for rel_path in sorted(untracked):
+            self._hash_untracked(top, rel_path, digest)
+        for rel_path in sorted(submodules):
             self._hash_untracked(top, rel_path, digest)
         return digest.hexdigest()
 
@@ -250,7 +258,7 @@ class GitWorktreeFingerprint:
                 return self._listing_digest()
             return self._git_digest(top)
         except Exception as exc:
-            log_warning(f"GitWorktreeFingerprint could not capture {self.path}: {type(exc).__name__}: {exc}")
+            log_warning(f"Could not capture fingerprint for {self.path}: {exc}")
             return None
 
     async def acapture(self) -> Optional[str]:
@@ -277,18 +285,6 @@ class CallableFingerprint:
         return await asyncio.to_thread(self.fn)
 
 
-def noop_between(previous: Optional[str], current: Optional[str]) -> bool:
+def state_unchanged(previous: Optional[str], current: Optional[str]) -> bool:
     """The comparison rule: equal and both known."""
     return previous is not None and current is not None and previous == current
-
-
-__all__ = [
-    "DEFAULT_EXCLUDES",
-    "CallableFingerprint",
-    "GitWorktreeFingerprint",
-    "StateFingerprint",
-    "asafe_capture",
-    "coerce_fingerprint",
-    "noop_between",
-    "safe_capture",
-]

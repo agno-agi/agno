@@ -1,3 +1,8 @@
-# Fingerprints
+# 04_fingerprints
 
-- `noop_guard.py` — `GitWorktreeFingerprint` + `stop_on_noop=True`: a failed attempt that changed nothing ends the run instead of burning budget on identical retries.
+Ending runs whose failed attempts change nothing.
+
+## Files
+
+- `unchanged_state_guard.py`: `GitWorktreeFingerprint` with `stop_on_unchanged_state=True` ends the run of an agent that cannot write with stop reason `"unchanged_state"`.
+- `callable_fingerprint.py`: `CallableFingerprint` over an in-memory ledger; a failed attempt that changed state keeps the loop going.

@@ -2120,20 +2120,6 @@ class FunctionExecutionResult(BaseModel):
     files: Optional[List[File]] = None
 
 
-def _refuse_hooks_on_a_verified_tool(function: "Function") -> None:
-    """Fail closed when hooks would silently defeat an @verified_tool comparison.
-
-    Kept behind a local import so agno.tools never depends on agno.verifiers at module scope.
-    """
-    try:
-        from agno.verifiers.tools import hook_conflict
-    except ImportError:  # narrow on purpose: a broad guard here would hide a real defect
-        return
-    reason = hook_conflict(function)
-    if reason:
-        raise ValueError(reason)
-
-
 class FunctionCall(BaseModel):
     """Model for Function Calls"""
 
@@ -2614,13 +2600,12 @@ class FunctionCall(BaseModel):
         # read an identity the call will not actually execute with.
         self._drop_injected_overrides(entrypoint_args)
 
-        # Hooks can defeat an @verified_tool comparison, so refuse before the pre-hook gets
-        # a chance to run: a pre-hook can rewrite the prediction and then erase itself, and a
-        # check placed after it would find nothing to refuse. Wrapped in its own handler so a
-        # refusal surfaces as a failed tool result, not an unhandled raise - and no hook
-        # (post_hook included) runs on a refused call.
+        # Refuse hooks on a verified tool before the pre-hook runs (it could rewrite the
+        # prediction); a refusal surfaces as a failed tool result and no hook runs.
         try:
-            _refuse_hooks_on_a_verified_tool(self.function)
+            from agno.verifiers.tools import validate_verified_tool_hooks
+
+            validate_verified_tool_hooks(self.function)
         except Exception as e:
             log_warning(f"Could not run function {self.get_call_str()}: {str(e)}")
             self.error = str(e)
@@ -2879,13 +2864,12 @@ class FunctionCall(BaseModel):
         # read an identity the call will not actually execute with.
         self._drop_injected_overrides(entrypoint_args)
 
-        # Hooks can defeat an @verified_tool comparison, so refuse before the pre-hook gets
-        # a chance to run: a pre-hook can rewrite the prediction and then erase itself, and a
-        # check placed after it would find nothing to refuse. Wrapped in its own handler so a
-        # refusal surfaces as a failed tool result, not an unhandled raise - and no hook
-        # (post_hook included) runs on a refused call.
+        # Refuse hooks on a verified tool before the pre-hook runs (it could rewrite the
+        # prediction); a refusal surfaces as a failed tool result and no hook runs.
         try:
-            _refuse_hooks_on_a_verified_tool(self.function)
+            from agno.verifiers.tools import validate_verified_tool_hooks
+
+            validate_verified_tool_hooks(self.function)
         except Exception as e:
             log_warning(f"Could not run function {self.get_call_str()}: {str(e)}")
             self.error = str(e)

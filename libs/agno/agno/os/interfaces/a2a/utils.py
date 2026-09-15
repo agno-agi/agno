@@ -14,13 +14,11 @@ from agno.run.team import RunCancelledEvent as TeamRunCancelledEvent
 from agno.run.team import RunCompletedEvent as TeamRunCompletedEvent
 from agno.run.team import RunContentEvent as TeamRunContentEvent
 from agno.run.team import RunStartedEvent as TeamRunStartedEvent
-from agno.run.team import (
-    TeamRunOutputEvent,
-    TeamVerificationCompletedEvent,
-    TeamVerificationStartedEvent,
-)
+from agno.run.team import TeamRunOutputEvent
 from agno.run.team import ToolCallCompletedEvent as TeamToolCallCompletedEvent
 from agno.run.team import ToolCallStartedEvent as TeamToolCallStartedEvent
+from agno.run.team import VerificationCompletedEvent as TeamVerificationCompletedEvent
+from agno.run.team import VerificationStartedEvent as TeamVerificationStartedEvent
 from agno.run.workflow import (
     ConditionExecutionCompletedEvent,
     ConditionExecutionStartedEvent,
@@ -334,17 +332,11 @@ async def stream_a2a_response(
     accumulated_content = ""
     completion_event = None
     cancelled_event = None
-    last_verification_event = None
     root_run_id: Optional[str] = None
 
     def _is_root_event(candidate: Any) -> bool:
-        # The task's lifecycle is scoped to the ROOT run: a Team's member legs
-        # and a workflow's nested steps emit their own started/completed/
-        # verification events on the same stream, and letting those decide the
-        # task identity or terminal state marked a completed team run failed
-        # off a member's outcome. Before the root is known (or when an event
-        # carries no run_id), the nesting marker decides: nested events always
-        # carry parent_run_id.
+        # Only the root run decides the task identity and terminal state; member and
+        # nested-step events share the stream and always carry parent_run_id.
         candidate_run_id = getattr(candidate, "run_id", None)
         if root_run_id is not None and candidate_run_id is not None:
             return candidate_run_id == root_run_id
@@ -354,7 +346,7 @@ async def stream_a2a_response(
     async for event in event_stream:
         # 1. Send initial event
         if isinstance(event, (RunStartedEvent, TeamRunStartedEvent, WorkflowStartedEvent)):
-            # Only the FIRST top-level started event names the task; nested
+            # Only the first top-level started event names the task; nested
             # started events still flow as working updates below but must not
             # replace the requested task identity.
             if root_run_id is None and _is_root_event(event):
@@ -796,26 +788,18 @@ async def stream_a2a_response(
             yield f"event: TaskStatusUpdateEvent\ndata: {json.dumps(response.model_dump(exclude_none=True))}\n\n"
 
         elif isinstance(event, (VerificationCompletedEvent, TeamVerificationCompletedEvent)):
-            # The ROOT run's LAST completed pass carries the run's verification
-            # outcome: its stop_reason decides the terminal task state below.
-            # A member/nested pass still flows as a working update (marked with
-            # its origin run_id) but never decides the task terminal - a failed
-            # member must not mark a completed team run failed.
-            is_root_verification = _is_root_event(event)
-            if is_root_verification:
-                last_verification_event = event
             metadata = {
                 "agno_event_type": "verification_completed",
                 "attempt": event.attempt,
                 "max_attempts": event.max_attempts,
                 "passed": event.passed,
             }
-            if not is_root_verification and getattr(event, "run_id", None):
+            if not _is_root_event(event) and getattr(event, "run_id", None):
                 metadata["origin_run_id"] = event.run_id
             if event.stop_reason:
                 metadata["stop_reason"] = event.stop_reason
             if event.verdicts:
-                metadata["verdicts"] = event.verdicts
+                metadata["verdicts"] = [v.to_dict() for v in event.verdicts]
             status_event = TaskStatusUpdateEvent(
                 task_id=task_id,
                 context_id=context_id,
@@ -846,15 +830,13 @@ async def stream_a2a_response(
         if completion_metadata:
             status_metadata = dict(completion_metadata)
 
-    # A run whose last verification pass concluded with a non-passed stop_reason
-    # ended UNVERIFIED: its verifiers never passed within budget, so the A2A
-    # terminal state must be failed, never completed (which would misreport an
-    # unverified answer as a verified one to the consuming agent).
-    unverified_stop_reason: Optional[str] = None
-    if last_verification_event is not None:
-        last_stop_reason = getattr(last_verification_event, "stop_reason", None)
-        if last_stop_reason and last_stop_reason != "passed":
-            unverified_stop_reason = str(last_stop_reason)
+    # An unverified run's terminal state is failed, never completed. A workflow's terminal
+    # status rides the run output on its completed event.
+    if isinstance(completion_event, WorkflowCompletedEvent):
+        terminal_status = getattr(completion_event.run_output, "status", None)
+    else:
+        terminal_status = getattr(completion_event, "status", None)
+    ended_unverified = terminal_status == RunStatus.unverified
 
     # 3. Send final status event
     # If cancelled, send canceled status; otherwise send failed (unverified) or completed
@@ -870,22 +852,11 @@ async def stream_a2a_response(
             final=True,
             metadata=metadata,
         )
-    elif unverified_stop_reason:
-        metadata = dict(status_metadata) if status_metadata else {}
-        metadata["agno_event_type"] = "run_unverified"
-        metadata["stop_reason"] = unverified_stop_reason
-        final_status_event = TaskStatusUpdateEvent(
-            task_id=task_id,
-            context_id=context_id,
-            status=TaskStatus(state=TaskState.failed),
-            final=True,
-            metadata=metadata,
-        )
     else:
         final_status_event = TaskStatusUpdateEvent(
             task_id=task_id,
             context_id=context_id,
-            status=TaskStatus(state=TaskState.completed),
+            status=TaskStatus(state=TaskState.failed if ended_unverified else TaskState.completed),
             final=True,
             metadata=status_metadata if status_metadata else None,
         )
@@ -1018,7 +989,7 @@ async def stream_a2a_response(
     task = Task(
         id=task_id,
         context_id=context_id,
-        status=TaskStatus(state=TaskState.failed if unverified_stop_reason else TaskState.completed),
+        status=TaskStatus(state=TaskState.failed if ended_unverified else TaskState.completed),
         history=[final_message],
         artifacts=artifacts if artifacts else None,
     )

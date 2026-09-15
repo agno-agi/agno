@@ -43,6 +43,7 @@ from agno.utils.log import log_debug, log_warning
 from agno.utils.message import copy_history_message, filter_tool_calls, get_text_from_message, render_instructions
 from agno.utils.prompts import get_json_output_prompt, get_response_model_format_prompt
 from agno.utils.timer import Timer
+from agno.utils.verifiers import resolve_verification
 
 
 def _get_resolved_knowledge(agent: "Agent", run_context: Optional[RunContext] = None) -> Any:
@@ -284,11 +285,12 @@ def get_system_message(
         else:
             system_message_content += rendered + "\n\n"
     # Tell the model completion is checked when verifiers are configured
-    if agent.verifiers and (agent.verification is None or agent.verification.add_notice):
+    verification = resolve_verification(agent)
+    if verification is not None and verification.add_verification_to_context:
         from agno.verifiers.base import verifier_names
-        from agno.verifiers.report import build_notice
+        from agno.verifiers.report import build_verification_context
 
-        system_message_content += build_notice(verifier_names(agent.verifiers)) + "\n\n"
+        system_message_content += build_verification_context(verifier_names(agent.verifiers)) + "\n\n"
     # 3.3.4 Add additional information
     if len(additional_information) > 0:
         system_message_content += "<additional_information>"
@@ -587,11 +589,12 @@ async def aget_system_message(
         else:
             system_message_content += rendered + "\n\n"
     # Tell the model completion is checked when verifiers are configured
-    if agent.verifiers and (agent.verification is None or agent.verification.add_notice):
+    verification = resolve_verification(agent)
+    if verification is not None and verification.add_verification_to_context:
         from agno.verifiers.base import verifier_names
-        from agno.verifiers.report import build_notice
+        from agno.verifiers.report import build_verification_context
 
-        system_message_content += build_notice(verifier_names(agent.verifiers)) + "\n\n"
+        system_message_content += build_verification_context(verifier_names(agent.verifiers)) + "\n\n"
     # 3.3.4 Add additional information
     if len(additional_information) > 0:
         system_message_content += "<additional_information>"

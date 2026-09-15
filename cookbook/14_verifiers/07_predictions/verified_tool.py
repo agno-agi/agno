@@ -15,17 +15,19 @@ result before it spends the next step, and a divergence forces a replan before t
 finished.
 """
 
-from typing import Optional
+from typing import List, Optional, Tuple
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIResponses
 from agno.verifiers import verified_tool
 
 # ---------------------------------------------------------------------------
-# A stateful tool with a hidden rule, and the prediction check
+# Create Tool
 # ---------------------------------------------------------------------------
 
-state = {"n": 0, "calls": []}
+# The counter the tool advances, and every call as (amount, expect, new value).
+COUNTER = 0
+CALLS: List[Tuple[int, Optional[str], int]] = []
 
 
 def same_value(result: str, expect: str) -> bool:
@@ -41,9 +43,10 @@ def step(amount: int, expect: Optional[str] = None) -> str:
         expect: Your prediction of the new counter value, as a string. Send an empty string
             when you have no prediction.
     """
-    state["n"] += min(amount, 5)
-    state["calls"].append((amount, expect, state["n"]))
-    return str(state["n"])
+    global COUNTER
+    COUNTER += min(amount, 5)
+    CALLS.append((amount, expect, COUNTER))
+    return str(COUNTER)
 
 
 # ---------------------------------------------------------------------------
@@ -51,7 +54,7 @@ def step(amount: int, expect: Optional[str] = None) -> str:
 # ---------------------------------------------------------------------------
 
 agent = Agent(
-    model=OpenAIResponses(id="gpt-5.5"),
+    model=OpenAIResponses(id="gpt-5.6-luna"),
     tools=[step],
     instructions=[
         "You drive a counter that starts at 0 with the step tool. Your goal is a counter of exactly 17.",
@@ -64,15 +67,13 @@ agent = Agent(
 )
 
 # ---------------------------------------------------------------------------
-# Run
+# Run Demo
 # ---------------------------------------------------------------------------
 
-response = agent.run("Take the counter from 0 to exactly 17.")
+if __name__ == "__main__":
+    agent.print_response("Take the counter from 0 to exactly 17.")
 
-print("tool calls (amount, expect, new value):")
-for call in state["calls"]:
-    print("  ", call)
-print()
-print("final counter:", state["n"])
-print()
-print(response.content)
+    print("\nTool calls (amount, expect, new value):")
+    for call in CALLS:
+        print(f"  {call}")
+    print(f"Final counter: {COUNTER}")

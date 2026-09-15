@@ -27,7 +27,7 @@ import contextlib
 from typing import TYPE_CHECKING, Any, AsyncIterator, Dict, List, Optional, Tuple, Union
 
 from agno.os.event_streams.base import BaseEventStream
-from agno.run.base import RunStatus
+from agno.run.base import REOPENABLE_RUN_STATUSES, TERMINAL_RUN_STATUSES, RunStatus
 from agno.utils.log import log_debug, log_warning
 
 # Writer-generation fence scripts. The INCR script refuses when the stored generation is
@@ -75,13 +75,6 @@ except ImportError:
         AsyncRedis = Any
         AsyncRedisCluster = Any
 
-_TERMINAL_STATUSES = (
-    RunStatus.completed,
-    RunStatus.error,
-    RunStatus.cancelled,
-    RunStatus.paused,
-    RunStatus.unverified,
-)
 
 # Refresh key TTLs when at least this fraction of ttl_seconds has elapsed
 # since the last refresh (time-based, so slow producers with long gaps between
@@ -328,7 +321,7 @@ class RedisEventStream(BaseEventStream):
             self._refresher_task = None
 
     async def complete_run(self, run_id: str, status: RunStatus, generation: Optional[int] = None) -> None:
-        if status not in _TERMINAL_STATUSES:
+        if status not in TERMINAL_RUN_STATUSES:
             # Contract: this call MARKS TERMINAL (see in-memory twin)
             status = RunStatus.completed
 
@@ -364,10 +357,10 @@ class RedisEventStream(BaseEventStream):
             self._last_ttl_refresh.pop(run_id, None)
 
     async def reopen_run(self, run_id: str, include_error: bool = False, floor: Optional[int] = None) -> bool:
-        """Atomically reopen a PAUSED run for a continuation leg.
+        """Atomically reopen a PAUSED or UNVERIFIED run for a continuation leg.
 
         WATCH/MULTI CAS on the status key: the flip to PENDING only lands if
-        the status is still PAUSED (or the keys expired), so a racing
+        the status is still PAUSED or UNVERIFIED (or the keys expired), so a racing
         worker's terminal write is never overwritten. The same transaction
         appends a "reopen" marker to the stream - tails end on a sentinel
         only when NOTHING follows it, so the marker invalidates the pause
@@ -385,10 +378,8 @@ class RedisEventStream(BaseEventStream):
         # before the reopen, and declining there would drop the counter seed.
         # UNVERIFIED reopens like PAUSED: terminal-for-the-stream but
         # continuable, and the continuation appends to the same stream.
-        reopenable = (
-            (RunStatus.paused.value, RunStatus.error.value, RunStatus.pending.value, RunStatus.unverified.value)
-            if include_error
-            else (RunStatus.paused.value, RunStatus.pending.value, RunStatus.unverified.value)
+        reopenable = tuple(
+            status.value for status in REOPENABLE_RUN_STATUSES + ((RunStatus.error,) if include_error else ())
         )
         status_key = self._status_key(run_id)
         stream_key = self._stream_key(run_id)
@@ -704,7 +695,7 @@ class RedisEventStream(BaseEventStream):
                     continue
                 if consecutive_failures:
                     await asyncio.sleep(min(0.1 * (2 ** min(consecutive_failures, 6)), 5.0))
-                if status is None or status in _TERMINAL_STATUSES:
+                if status is None or status in TERMINAL_RUN_STATUSES:
                     return
                 # Dead-producer bound: only the producing process refreshes the
                 # status key TTL (every ttl/3 via its refresher). A remaining

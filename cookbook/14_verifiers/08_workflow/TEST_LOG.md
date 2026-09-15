@@ -1,32 +1,13 @@
-# Test Log
+# Test Log: 08_workflow
 
-## 2026-08-27 — gpt-5.5, demo venv
+> Tested 2026-09-15 against `gpt-5.6-luna` (OpenAIResponses), demo venv, agno source tree.
 
 ### verify_step.py
 
 **Status:** PASS
 
-**Description:** Workflow [write -> Verify(on_fail="write", max_rounds=2) -> publish] with a file-and-content check as the gate. The writer produced RELEASE_NOTES.md correctly on round one; the Verify step passed (record verified/passed, 1 attempt) and the publisher ran. The loop-back-with-evidence leg is pinned by the unit suite (the re-entered step's input carries the verification block).
+**Description:** Workflow [write -> Verify(on_fail="write", max_attempts=3, stop_on_unverified=True) -> publish]; the gate requires version 1.4.0 and an "## Upgrade notes" section the prompt never mentions, and RELEASE_NOTES.md is emptied at setup.
 
-**Result:** Success. Note: the absorbed segment step ("write") nests under the Verify StepOutput.steps rather than appearing at the top level of step_results.
-
----
-
-## 2026-08-27 — review follow-up (not a live run)
-
-`verify_step.py` gained `stop_when_unverified=True` on its Verify step after review: when the
-gate ends unverified, the workflow now stops instead of publishing anyway. Pinned by the unit
-suite (`test_verify_step.py`); the example itself has not been re-run against a live model since
-the change.
-
----
-
-### verify_step.py (re-run after review round 1)
-
-**Status:** PASS (2026-08-27, gpt-5.5, demo venv)
-
-**Description:** Re-run with stop_when_unverified=True after the review fixes. Write -> Verify (verified/passed, 1 attempt) -> publish; the gate now halts the pipeline when unverified instead of continuing past a failed check.
-
-**Result:** Success.
+**Result:** Exit 0 on three runs. `Workflow status: COMPLETED`; `Step: verify | success: True` with `Segment step: write` nested under it, `Verification: verified / passed`, `Attempt 0: FAIL notes_complete`, `Attempt 1: PASS notes_complete`; then `Step: publish | success: True`. The verify step's content read `Verify verify: passed (2 attempts)` with no error, and the workflow content was the publisher's output: a one-sentence announcement on one run, while on another run the publisher repeated the release notes themselves. The unverified leg (S2/S3 content and error) is not exercised here, because the gate passed.
 
 ---

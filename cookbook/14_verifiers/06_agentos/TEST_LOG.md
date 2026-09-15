@@ -1,13 +1,13 @@
-# Test Log
+# Test Log: 06_agentos
 
-## 2026-08-26
+> Tested 2026-09-15 against `gpt-5.6-luna` (OpenAIResponses), demo venv, agno source tree.
 
 ### verified_agent_os.py
 
-**Status:** PASS (verified in-process)
+**Status:** PASS
 
-**Description:** The same surface is exercised end-to-end by the unit suite (libs/agno/tests/unit/verifiers/test_agentos_end_to_end.py): the REST run endpoint returns status UNVERIFIED with the verification record, the SSE stream carries the verification events, the persisted row reads back, and the run-list filter accepts status=UNVERIFIED. Serving this file live is a manual demo; see the module docstring for the curl call.
+**Description:** Served with `uvicorn verified_agent_os:app --port 7890` and exercised over HTTP with curl; the check requires a "Call to action:" line in pitch.md the request never mentions.
 
-**Result:** Success via the in-process TestClient equivalent.
+**Result:** Streaming POST to `/agents/verified-writer/runs`: the SSE stream carried `VerificationStarted` / `VerificationCompleted` twice, the first with `passed: false` and the report `pitch.md has no 'Call to action:' line`, the second `passed: true, stop_reason: passed`, then `RunCompleted`. A second non-stream POST on the same server (a different pitch) also failed attempt 0 and passed attempt 1, returning `COMPLETED` with record `verified / passed`; `GET /sessions/{id}/runs` listed the row as `('COMPLETED', 'passed')`. Two server starts in a row: each start emptied pitch.md (0 bytes at startup), and each start's streamed run showed attempt 1 `passed: false`, attempt 2 `passed: true`, then `RunCompleted`. Starting through `python verified_agent_os.py` (reload=True) also served `/health` with 200.
 
 ---

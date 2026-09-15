@@ -300,6 +300,14 @@ class TestWaitingLifecycleParity:
         assert (await store.get_job("r1"))["status"] == "completed"
 
     @pytest.mark.asyncio
+    async def test_settle_paused_job_resettles_an_unverified_ticket(self, store):
+        await store.enqueue_job(make_job("r1"))
+        claimed = await store.claim_job("w1")
+        await store.complete_job("r1", "w1", claimed["attempt"], "unverified")
+        assert await store.settle_paused_job("r1", "completed") is True
+        assert (await store.get_job("r1"))["status"] == "completed"
+
+    @pytest.mark.asyncio
     async def test_requeue_only_terminal_grants_one_execution(self, store):
         await store.enqueue_job(make_job("r1"))
         claimed = await store.claim_job("w1")

@@ -1,114 +1,115 @@
 """The verification gate: the piece of the run loop that holds the model to its verifiers.
 
-One `VerificationGate` is created per run-function invocation (inside the retry loop, so a
-model-level retry starts with a fresh window) and drives a two-step protocol at the point
-where the model has stopped and its output is parsed:
-
-    gate = VerificationGate.for_run(owner, run_response=..., run_messages=..., run_context=..., session=...)
-    if gate is not None:
-        gate.begin()                       # once, before the first model call
-    while True:
-        ... model call, response update, pause check, structured output ...
-        if gate is None:
-            break
-        started = gate.open_attempt()      # None when the gate must not run (paused leg)
-        if started is None:
-            break
-        # emit started.event, then:
-        decision = gate.settle_attempt()   # or: await gate.asettle_attempt()
-        # emit decision.event, then:
-        if decision.reenter:
-            raise_if_cancelled(run_response.run_id)
-            continue
-        break
-
-The gate owns all bookkeeping: the persisted record on ``run_response.verification``
-(resuming it across HITL pauses, restarting the budget window when an unverified run is
-continued), fingerprint capture and the settled comparison baseline, the report message
-appended for a re-entry, and the terminal ``RunStatus.unverified`` stamp. The caller only
-emits the two events and honours ``decision.reenter``.
-
-Exception discipline: everything that executes user code is guarded (verifiers through
-GuardedVerifier/CallableVerifier, fingerprints through safe_capture), so the gate itself
-never raises into the surrounding retry loop.
+One gate is created per run-function invocation. ``begin()`` opens the budget window before
+the first model call; after each model stop ``open_attempt()`` and ``settle_attempt()`` run the
+checks and decide whether the model re-enters. The gate owns the persisted record, the
+fingerprint baseline, the report message and the terminal ``RunStatus.unverified`` stamp; the
+callers (``verify_response`` and its async and streaming versions) only emit the two events. Everything that runs
+user code is guarded, so the gate never raises into the surrounding retry loop.
 """
 
 import asyncio
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from time import monotonic
 from typing import Any, Dict, List, Optional
 
+from agno.models.message import Message
 from agno.run.base import RunStatus
-from agno.verifiers.base import _ArgMap, _is_async_callable, run_sync
-from agno.verifiers.fingerprints import asafe_capture, noop_between, safe_capture
-from agno.verifiers.report import _first_line, build_report
-from agno.verifiers.types import Verdict, Verification, VerificationAttempt, VerificationConfig
+from agno.utils.events import (
+    create_team_verification_completed_event,
+    create_team_verification_started_event,
+    create_verification_completed_event,
+    create_verification_started_event,
+)
+from agno.utils.log import log_debug
+from agno.utils.verifiers import resolve_verification
+from agno.verifiers.base import CoercedVerifier, coerce_verifier, is_async_callable, verifier_args
+from agno.verifiers.fingerprints import asafe_capture, safe_capture, state_unchanged
+from agno.verifiers.report import build_report
+from agno.verifiers.types import (
+    Verdict,
+    Verification,
+    VerificationAttempt,
+    VerificationConfig,
+    VerificationStatus,
+    VerificationStopReason,
+)
 
 # ---------------------------------------------------------------------------
-# The check runner — shared by every mount (the agent/team gate and the
-# workflow Verify step), so the per-check policy semantics exist exactly once.
+# The check runner, shared by the agent/team gate and the workflow Verify step
 # ---------------------------------------------------------------------------
 
 
 @dataclass
-class CheckRun:
+class VerifierResults:
     """One pass over a mount's checks: the stamped verdicts, in declared order."""
 
     verdicts: List[Verdict] = field(default_factory=list)
-    # True when a check marked fatal failed: the mount must stop re-entering immediately.
+    # True when a stop_on_failure check (or a fatal verdict) failed: the mount must stop re-entering immediately.
     fatal_failure: bool = False
 
     @property
     def passed(self) -> bool:
-        """Every required, non-skipped check passed (vacuously true when none gate)."""
-        return all(v.passed is True for v in self.verdicts if v.gates)
+        """Every required, non-skipped check passed; an attempt on which no check ran cannot."""
+        ran = [v for v in self.verdicts if not v.skipped]
+        return bool(ran) and all(v.passed is True for v in ran if v.required)
 
 
 def _should_run(
     v: Any, verdicts_so_far: List[Verdict], run_output: Any, run_context: Any, owner: Any, session: Any
 ) -> bool:
-    """Evaluate a check's run_when predicate. A broken predicate runs the check: skipping a
+    """Evaluate a check's run_condition predicate. A broken predicate runs the check: skipping a
     gate on an exception would fail open."""
-    run_when = getattr(v, "run_when", None)
-    if run_when is None:
+    run_condition = v.run_condition
+    if run_condition is None:
         return True
     try:
-        argmap = _ArgMap(run_when, label=f"verifier {getattr(v, 'name', '?')!r} run_when", extra_allowed=("verdicts",))
-        args, kwargs = argmap.build(run_output, run_context, owner, session, extras={"verdicts": list(verdicts_so_far)})
-        result = run_when(*args, **kwargs)
-        if _is_async_callable(run_when):
-            result = run_sync(result)
-        return bool(result)
-    except Exception:
+        kwargs = verifier_args(run_condition, run_output, run_context, owner, session, verdicts=list(verdicts_so_far))
+        return bool(run_condition(**kwargs))
+    except (Exception, SystemExit):
         return True
 
 
 async def _ashould_run(
     v: Any, verdicts_so_far: List[Verdict], run_output: Any, run_context: Any, owner: Any, session: Any
 ) -> bool:
-    """Async twin of `_should_run`."""
-    run_when = getattr(v, "run_when", None)
-    if run_when is None:
+    """Async version of `_should_run`."""
+    run_condition = v.run_condition
+    if run_condition is None:
         return True
     try:
-        argmap = _ArgMap(run_when, label=f"verifier {getattr(v, 'name', '?')!r} run_when", extra_allowed=("verdicts",))
-        args, kwargs = argmap.build(run_output, run_context, owner, session, extras={"verdicts": list(verdicts_so_far)})
-        if _is_async_callable(run_when):
-            result = await run_when(*args, **kwargs)
+        kwargs = verifier_args(run_condition, run_output, run_context, owner, session, verdicts=list(verdicts_so_far))
+        if is_async_callable(run_condition):
+            result = await run_condition(**kwargs)
         else:
-            result = await asyncio.to_thread(run_when, *args, **kwargs)
+            result = await asyncio.to_thread(run_condition, **kwargs)
         return bool(result)
-    except Exception:
+    except (Exception, SystemExit):
         return True
 
 
-def _stamp(verdict: Verdict, v: Any, index: int) -> Verdict:
-    # skipped=False unconditionally: this verdict came from a check that ran. Only the
-    # loop's own run_when branch records a skip; a returned skipped=True would make a
-    # required failure non-gating and pass the attempt vacuously.
-    return verdict.named(getattr(v, "name", "") or f"verifier {index}").stamped(
-        required=getattr(v, "required", True), skipped=False
-    )
+def _stamp(verdict: Verdict, name: str, v: "CoercedVerifier") -> Verdict:
+    # skipped=False unconditionally: only the loop's run_condition branch records a skip, so a
+    # returned skipped=True cannot pass a required failure. The loop's name wins.
+    if verdict.name != name:
+        verdict = replace(verdict, name=name)
+    return verdict.stamped(required=v.required, skipped=False)
+
+
+def _check_names(verifiers: List[Any]) -> List[str]:
+    """Display names in declared order, made distinct so two checks called `tests` are told apart."""
+    names: List[str] = []
+    seen: Dict[str, int] = {}
+    for index, v in enumerate(verifiers):
+        name = getattr(v, "name", "") or f"verifier {index}"
+        seen[name] = seen.get(name, 0) + 1
+        names.append(name if seen[name] == 1 else f"{name} #{seen[name]}")
+    return names
+
+
+def _fatal(v: Any, verdict: Verdict) -> bool:
+    # A verdict marks itself fatal for a harness error (the check's own command missing)
+    return v.stop_on_failure or verdict.fatal
 
 
 def run_checks(
@@ -117,30 +118,25 @@ def run_checks(
     run_context: Any = None,
     owner: Any = None,
     session: Any = None,
-) -> CheckRun:
-    """Run coerced checks in declared order, no short-circuit, honouring per-check policy:
-    `run_when` skips (recorded, non-gating), `rerun` retries the check itself before
-    trusting a failure, `required=False` reports without gating, `fatal` flags the run as
+) -> VerifierResults:
+    """Run coerced checks in declared order, no short-circuit, honoring per-check policy:
+    `run_condition` skips (recorded, non-gating), `max_retries` retries the check itself before
+    trusting a failure, `required=False` reports without gating, `stop_on_failure` flags the run as
     not worth re-entering."""
-    result = CheckRun()
-    for index, v in enumerate(verifiers):
-        required = getattr(v, "required", True)
+    result = VerifierResults()
+    for name, v in zip(_check_names(verifiers), verifiers):
+        required = v.required
         if not _should_run(v, result.verdicts, run_output, run_context, owner, session):
-            result.verdicts.append(
-                Verdict(
-                    passed=True, name=getattr(v, "name", "") or f"verifier {index}", required=required, skipped=True
-                )
-            )
+            result.verdicts.append(Verdict(passed=True, name=name, required=required, skipped=True))
             continue
-        tries = 1 + max(int(getattr(v, "rerun", 0) or 0), 0)
-        verdict = None
-        for _ in range(tries):
-            verdict = v.verify(run_output=run_output, run_context=run_context, owner=owner, session=session)
+        verdict = v.verify(run_output=run_output, run_context=run_context, owner=owner, session=session)
+        for _ in range(v.max_retries):
             if verdict.passed is True:
                 break
-        verdict = _stamp(verdict, v, index)  # type: ignore[arg-type]
+            verdict = v.verify(run_output=run_output, run_context=run_context, owner=owner, session=session)
+        verdict = _stamp(verdict, name, v)
         result.verdicts.append(verdict)
-        if getattr(v, "fatal", False) and verdict.passed is not True:
+        if verdict.passed is not True and _fatal(v, verdict):
             result.fatal_failure = True
     return result
 
@@ -151,36 +147,24 @@ async def arun_checks(
     run_context: Any = None,
     owner: Any = None,
     session: Any = None,
-) -> CheckRun:
-    """Async twin of `run_checks`."""
-    result = CheckRun()
-    for index, v in enumerate(verifiers):
-        required = getattr(v, "required", True)
+) -> VerifierResults:
+    """Async version of `run_checks`."""
+    result = VerifierResults()
+    for name, v in zip(_check_names(verifiers), verifiers):
+        required = v.required
         if not await _ashould_run(v, result.verdicts, run_output, run_context, owner, session):
-            result.verdicts.append(
-                Verdict(
-                    passed=True, name=getattr(v, "name", "") or f"verifier {index}", required=required, skipped=True
-                )
-            )
+            result.verdicts.append(Verdict(passed=True, name=name, required=required, skipped=True))
             continue
-        tries = 1 + max(int(getattr(v, "rerun", 0) or 0), 0)
-        verdict = None
-        for _ in range(tries):
-            verdict = await v.averify(run_output=run_output, run_context=run_context, owner=owner, session=session)
+        verdict = await v.averify(run_output=run_output, run_context=run_context, owner=owner, session=session)
+        for _ in range(v.max_retries):
             if verdict.passed is True:
                 break
-        verdict = _stamp(verdict, v, index)  # type: ignore[arg-type]
+            verdict = await v.averify(run_output=run_output, run_context=run_context, owner=owner, session=session)
+        verdict = _stamp(verdict, name, v)
         result.verdicts.append(verdict)
-        if getattr(v, "fatal", False) and verdict.passed is not True:
+        if verdict.passed is not True and _fatal(v, verdict):
             result.fatal_failure = True
     return result
-
-
-@dataclass
-class AttemptStarted:
-    """What `open_attempt` hands back: the started event, ready to emit."""
-
-    event: Any
 
 
 @dataclass
@@ -198,9 +182,9 @@ class GateDecision:
 
 
 def _filtered_len(messages: List[Any]) -> int:
-    """Index the attempt starts at, in the add_to_agent_memory view that becomes
-    ``RunOutput.messages``."""
-    return sum(1 for m in messages if getattr(m, "add_to_agent_memory", True))
+    """Index the attempt starts at, in the view that is persisted as ``RunOutput.messages``:
+    add_to_agent_memory messages that are not replayed history."""
+    return sum(1 for m in messages if getattr(m, "add_to_agent_memory", True) and not getattr(m, "from_history", False))
 
 
 class VerificationGate:
@@ -216,6 +200,8 @@ class VerificationGate:
         team_mode: bool = False,
         resume: bool = True,
     ) -> None:
+        # Whether the last settled attempt asks for a re-entry; the stream legs read it after yielding
+        self.reenter: bool = False
         self.owner = owner
         self.run_response = run_response
         self.run_messages = run_messages
@@ -225,17 +211,18 @@ class VerificationGate:
         self.config = config
         self.team_mode = team_mode
         self.resume = resume
-        self._t0: Optional[float] = None
+        self._started_at: Optional[float] = None
         self._settled: Optional[str] = None
         self._attempt_start: int = 0
         self._open: Optional[VerificationAttempt] = None
+        self._reasoning: Any = None
 
     # ------------------------------------------------------------------
     # Construction
     # ------------------------------------------------------------------
 
     @classmethod
-    def for_run(
+    def from_run(
         cls,
         owner: Any,
         run_response: Any,
@@ -245,7 +232,7 @@ class VerificationGate:
         resume: bool,
         team_mode: bool = False,
     ) -> Optional["VerificationGate"]:
-        """The gate for this run, or None when the owner has no verifiers configured.
+        """The gate for this run, or None when the owner's runs are not verified.
 
         The verifier list is coerced fresh on every run (about 25 microseconds for five
         checks): a cached list goes stale the moment the owner's ``verifiers`` is mutated,
@@ -255,13 +242,10 @@ class VerificationGate:
         run paths: a model-level retry must start a fresh window, not resurrect attempts
         whose message indices point into the discarded transcript).
         """
-        raw = getattr(owner, "verifiers", None)
-        if not raw:
+        config = resolve_verification(owner)
+        if config is None:
             return None
-        from agno.verifiers.base import coerce_verifier
-
-        verifiers = [coerce_verifier(v) for v in raw]
-        config = getattr(owner, "verification", None) or VerificationConfig()
+        verifiers = [coerce_verifier(v) for v in owner.verifiers]
         return cls(
             owner=owner,
             run_response=run_response,
@@ -278,16 +262,14 @@ class VerificationGate:
     # Lifecycle
     # ------------------------------------------------------------------
 
-    def begin(self) -> None:
-        """Once, before the first model call: bind or resume the record, start the clock,
-        capture the comparison baseline.
+    def _open_window(self) -> Verification:
+        """Bind or resume the record and open a fresh budget window on it.
 
         A record already on the run_response is resumed: a "pending" one continues where a
-        HITL pause left it (the budget holds across the pause); an "unverified" one means
-        the caller is continuing a run that already exhausted its budget — the history is
-        kept and the budget window restarts for the new instruction. The baseline for the
-        first no-op comparison is captured NOW, not inherited: a continuation starts from
-        the world as it stands.
+        HITL pause left it (the budget holds across the pause); a settled one means the
+        caller is continuing a run whose window already closed — the history is kept and the
+        budget window restarts for the new instruction. A stale unverified stamp from an
+        earlier window is cleared with it: this window decides the run's status afresh.
         """
         record = getattr(self.run_response, "verification", None)
         if record is None or not isinstance(record, Verification) or not self.resume:
@@ -295,35 +277,36 @@ class VerificationGate:
             # model-level retry's leftover, whose attempts index a discarded transcript.
             record = Verification()
             self.run_response.verification = record
-        if record.status == "unverified":
-            record.status = "pending"
+        if record.status != VerificationStatus.pending:
+            record.status = VerificationStatus.pending
             record.stop_reason = None
             record.budget_baseline = len(record.attempts)
-        self._t0 = monotonic()
-        if self.config.fingerprint is not None:
-            self._settled = safe_capture(self.config.fingerprint)
-            if record.baseline_fingerprint is None:
-                record.baseline_fingerprint = self._settled
+            record.baseline_fingerprint = None
+        if self.run_response.status == RunStatus.unverified:
+            self.run_response.status = RunStatus.running
+        self._started_at = monotonic()
+        self._reasoning = getattr(self.run_response, "reasoning_content", None)
         self._attempt_start = _filtered_len(self.run_messages.messages)
+        return record
+
+    def begin(self) -> None:
+        """Once, before the first model call: open the window, start the clock, capture the
+        comparison baseline. A new window captures it from the world as it stands; a resumed HITL
+        pause keeps the baseline stored before the pause, since the confirmed tools already ran
+        and their changes belong to the paused attempt."""
+        record = self._open_window()
+        if self.config.fingerprint is not None:
+            if record.baseline_fingerprint is None:
+                record.baseline_fingerprint = safe_capture(self.config.fingerprint)
+            self._settled = record.baseline_fingerprint
 
     async def abegin(self) -> None:
-        """Async twin of `begin`."""
-        record = getattr(self.run_response, "verification", None)
-        if record is None or not isinstance(record, Verification) or not self.resume:
-            # The run paths never resume: a pre-existing record there can only be a
-            # model-level retry's leftover, whose attempts index a discarded transcript.
-            record = Verification()
-            self.run_response.verification = record
-        if record.status == "unverified":
-            record.status = "pending"
-            record.stop_reason = None
-            record.budget_baseline = len(record.attempts)
-        self._t0 = monotonic()
+        """Async version of `begin`."""
+        record = self._open_window()
         if self.config.fingerprint is not None:
-            self._settled = await asafe_capture(self.config.fingerprint)
             if record.baseline_fingerprint is None:
-                record.baseline_fingerprint = self._settled
-        self._attempt_start = _filtered_len(self.run_messages.messages)
+                record.baseline_fingerprint = await asafe_capture(self.config.fingerprint)
+            self._settled = record.baseline_fingerprint
 
     # ------------------------------------------------------------------
     # One attempt
@@ -344,30 +327,33 @@ class VerificationGate:
         return record
 
     def _attempt_number(self, record: Verification) -> int:
-        """1-based position of the CURRENT attempt within the budget window."""
+        """1-based position of the current attempt within the budget window."""
         return len(record.attempts) - record.budget_baseline + 1
 
-    def open_attempt(self) -> Optional[AttemptStarted]:
+    def open_attempt(self) -> Optional[Any]:
         """Build this attempt and hand back the started event — or None when the gate must
         not run (the model paused for HITL; the pause leg persists the pending record)."""
+        # The stream legs read `reenter` after this call: a paused attempt must not inherit
+        # the previous attempt's re-entry and call the model over an unanswered tool call.
+        self.reenter = False
         if self._paused():
             return None
         record = self._record()
         self._open = VerificationAttempt(index=len(record.attempts), message_index=self._attempt_start)
         event = self._build_started_event(self._attempt_number(record))
-        return AttemptStarted(event=event)
+        return event
 
     def settle_attempt(self) -> GateDecision:
-        """Capture, verify, settle, decide. Sync path: async verifier halves run through the
-        package's bridge inside their adapters."""
+        """Capture, verify, settle, decide."""
         record = self._record()
         attempt = self._open
-        assert attempt is not None, "settle_attempt called without open_attempt"
+        if attempt is None:
+            raise RuntimeError("settle_attempt called without open_attempt")
         self._open = None
         if self.config.fingerprint is not None:
             attempt.fingerprint = safe_capture(self.config.fingerprint)
             attempt.compared_against = self._settled
-            attempt.noop = noop_between(self._settled, attempt.fingerprint)
+            attempt.state_unchanged = state_unchanged(self._settled, attempt.fingerprint)
         check_run = run_checks(
             self.verifiers,
             run_output=self.run_response,
@@ -379,22 +365,24 @@ class VerificationGate:
         record.attempts.append(attempt)
         decision = self._decide(record, attempt, fatal_failure=check_run.fatal_failure)
         if decision.reenter and self.config.fingerprint is not None:
-            # Settle AFTER the verifiers: their artefacts (a .pytest_cache, a formatter
+            # Settle after the verifiers: their artifacts (a .pytest_cache, a formatter
             # pass) must not be charged to the model as the next attempt's work. Only a
             # re-entry needs the baseline; a terminal attempt's capture would be waste.
             self._settled = safe_capture(self.config.fingerprint)
+            record.baseline_fingerprint = self._settled
         return decision
 
     async def asettle_attempt(self) -> GateDecision:
-        """Async twin of `settle_attempt`."""
+        """Async version of `settle_attempt`."""
         record = self._record()
         attempt = self._open
-        assert attempt is not None, "asettle_attempt called without open_attempt"
+        if attempt is None:
+            raise RuntimeError("asettle_attempt called without open_attempt")
         self._open = None
         if self.config.fingerprint is not None:
             attempt.fingerprint = await asafe_capture(self.config.fingerprint)
             attempt.compared_against = self._settled
-            attempt.noop = noop_between(self._settled, attempt.fingerprint)
+            attempt.state_unchanged = state_unchanged(self._settled, attempt.fingerprint)
         check_run = await arun_checks(
             self.verifiers,
             run_output=self.run_response,
@@ -407,6 +395,7 @@ class VerificationGate:
         decision = self._decide(record, attempt, fatal_failure=check_run.fatal_failure)
         if decision.reenter and self.config.fingerprint is not None:
             self._settled = await asafe_capture(self.config.fingerprint)
+            record.baseline_fingerprint = self._settled
         return decision
 
     # ------------------------------------------------------------------
@@ -418,84 +407,76 @@ class VerificationGate:
         passed = attempt.passed
         reenter = False
         if fatal_failure:
-            # A fatal check failed: retrying is pointless by the author's own declaration,
+            # A stop_on_failure check failed: the author declared that retrying cannot fix it,
             # whatever the remaining budget says.
-            record.status = "unverified"
-            record.stop_reason = "fatal"
+            record.status = VerificationStatus.unverified
+            record.stop_reason = VerificationStopReason.fatal
         elif passed:
-            record.status = "verified"
-            record.stop_reason = "passed"
-        elif attempt.noop and self.config.stop_on_noop:
-            record.status = "unverified"
-            record.stop_reason = "noop"
+            record.status = VerificationStatus.verified
+            record.stop_reason = VerificationStopReason.passed
+        elif attempt.state_unchanged and self.config.stop_on_unchanged_state:
+            record.status = VerificationStatus.unverified
+            record.stop_reason = VerificationStopReason.unchanged_state
         elif (
-            self.config.timeout_s is not None
-            and self._t0 is not None
-            and monotonic() - self._t0 >= self.config.timeout_s
+            self.config.timeout is not None
+            and self._started_at is not None
+            and monotonic() - self._started_at >= self.config.timeout
         ):
-            record.status = "unverified"
-            record.stop_reason = "timeout"
+            record.status = VerificationStatus.unverified
+            record.stop_reason = VerificationStopReason.timeout
         elif attempts_used >= self.config.max_attempts:
-            record.status = "unverified"
-            record.stop_reason = "exhausted"
+            record.status = VerificationStatus.unverified
+            record.stop_reason = VerificationStopReason.exhausted
         else:
             reenter = True
-            # Media is per-attempt on the run's OUTPUT surface, mirroring content: the run
-            # loop stores each attempt's generated media before the gate opens, the verifier
-            # judges the attempt in front of it, and a re-entry resets the surface so the
-            # caller receives only the accepted attempt's media. Without this reset a
-            # rejected image would stay visible forever, making correction impossible. The
-            # transcript's messages keep whatever they carried; only the output resets.
-            self.run_response.images = None
-            self.run_response.videos = None
-            self.run_response.audio = None
-            self.run_response.response_audio = None
+            log_debug(
+                f"Re-entering run {self.run_response.run_id}. Verification attempt {attempts_used} of {self.config.max_attempts} failed..."
+            )
+            # The text fields reset on re-entry so the caller receives the accepted attempt's
+            # answer: a streamed pass appends to content and a pass with no text leaves it.
+            # Media is not reset. Model-generated media lives only on these top-level lists
+            # (never on the assistant Message), so a reset would lose a rejected attempt's
+            # drawing for good; like tools, media accumulates across attempts, and a checkpoint
+            # media_reference must never be dropped. Reasoning written once before the loop is
+            # restored, not cleared.
+            self.run_response.content = None
+            self.run_response.citations = None
+            self.run_response.model_provider_data = None
+            self.run_response.reasoning_content = self._reasoning
             report = build_report(
                 attempt,
                 attempt_number=attempts_used,
                 total_attempts=self.config.max_attempts,
                 has_fingerprint=self.config.fingerprint is not None,
-                stop_on_noop=self.config.stop_on_noop,
+                stop_on_unchanged_state=self.config.stop_on_unchanged_state,
             )
-            from agno.models.message import Message
-
-            # Default flags, deliberately: the report is part of the run's real transcript
-            # (persisted, replayed into later history). temporary=True would strip it before
-            # persistence and the record's message_index slicing would lie.
-            self.run_messages.messages.append(Message(role="user", content=report))
+            # The report is real transcript (persisted, replayed), so no temporary flag. It is
+            # mirrored onto the run output's own list when that is a separate list.
+            message = Message(role="user", content=report)
+            self.run_messages.messages.append(message)
+            mirrored = getattr(self.run_response, "messages", None)
+            if isinstance(mirrored, list) and mirrored is not self.run_messages.messages:
+                mirrored.append(message)
             self._attempt_start = _filtered_len(self.run_messages.messages)
-        if record.status == "unverified":
+        if record.status == VerificationStatus.unverified:
             self.run_response.status = RunStatus.unverified
         event = self._build_completed_event(
             attempt_number=attempts_used,
             passed=passed,
             verdicts=attempt.verdicts,
-            noop=attempt.noop,
-            stop_reason=record.stop_reason if record.status != "pending" else None,
+            state_unchanged=attempt.state_unchanged,
+            stop_reason=record.stop_reason.value
+            if record.stop_reason is not None and record.status != VerificationStatus.pending
+            else None,
         )
+        self.reenter = reenter
         return GateDecision(reenter=reenter, passed=passed, event=event)
-
-    def _verdict_payload(self, verdicts: List[Verdict]) -> List[Dict[str, Any]]:
-        return [
-            {
-                "name": v.name,
-                "passed": v.passed,
-                "summary": _first_line(v.report),
-                "required": v.required,
-                "skipped": v.skipped,
-            }
-            for v in verdicts
-        ]
 
     def _build_started_event(self, attempt_number: int) -> Any:
         if self.team_mode:
-            from agno.utils.events import create_team_verification_started_event
-
             return create_team_verification_started_event(
                 self.run_response, attempt=attempt_number, max_attempts=self.config.max_attempts
             )
-        from agno.utils.events import create_verification_started_event
-
         return create_verification_started_event(
             self.run_response, attempt=attempt_number, max_attempts=self.config.max_attempts
         )
@@ -505,30 +486,25 @@ class VerificationGate:
         attempt_number: int,
         passed: bool,
         verdicts: List[Verdict],
-        noop: bool,
+        state_unchanged: bool,
         stop_reason: Optional[str],
     ) -> Any:
-        payload = self._verdict_payload(verdicts)
         if self.team_mode:
-            from agno.utils.events import create_team_verification_completed_event
-
             return create_team_verification_completed_event(
                 self.run_response,
                 attempt=attempt_number,
                 max_attempts=self.config.max_attempts,
                 passed=passed,
-                verdicts=payload,
-                noop=noop,
+                verdicts=list(verdicts),
+                state_unchanged=state_unchanged,
                 stop_reason=stop_reason,
             )
-        from agno.utils.events import create_verification_completed_event
-
         return create_verification_completed_event(
             self.run_response,
             attempt=attempt_number,
             max_attempts=self.config.max_attempts,
             passed=passed,
-            verdicts=payload,
-            noop=noop,
+            verdicts=list(verdicts),
+            state_unchanged=state_unchanged,
             stop_reason=stop_reason,
         )

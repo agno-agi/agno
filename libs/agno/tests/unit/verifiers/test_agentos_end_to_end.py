@@ -1,145 +1,111 @@
-"""The verification loop through AgentOS itself: the REST run endpoint, the persisted row,
-the run-list filter, and the SSE stream all see the same truth — no runner, no special
-route, just an agent with verifiers behind the ordinary surface."""
+"""The verification loop through AgentOS itself: continue and cancel of an unverified run
+through the ordinary REST doors, with no runner and no special route."""
 
-import json
-import tempfile
-from typing import Any, AsyncIterator, Iterator, List
-
+import pytest
 from fastapi.testclient import TestClient
 
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
-from agno.models.base import Model
-from agno.models.response import ModelResponse
 from agno.os import AgentOS
+from agno.run.cancel import cleanup_run, is_cancelled, register_run
+from agno.team import Team
+from agno.verifiers import VerificationConfig
+
+from .conftest import ScriptedModel, _text
 
 
-class ScriptedModel(Model):
-    def __init__(self, script: List[ModelResponse]) -> None:
-        super().__init__(id="scripted", name="scripted", provider="test")
-        self.script = list(script)
-        self.calls = 0
-
-    def __deepcopy__(self, memo: Any) -> "ScriptedModel":
-        return self
-
-    def _next(self) -> ModelResponse:
-        response = self.script[min(self.calls, len(self.script) - 1)]
-        self.calls += 1
-        return response
-
-    def invoke(self, *args: Any, **kwargs: Any) -> ModelResponse:
-        return self._next()
-
-    async def ainvoke(self, *args: Any, **kwargs: Any) -> ModelResponse:
-        return self._next()
-
-    def invoke_stream(self, *args: Any, **kwargs: Any) -> Iterator[ModelResponse]:
-        yield self._next()
-
-    async def ainvoke_stream(self, *args: Any, **kwargs: Any) -> AsyncIterator[ModelResponse]:
-        yield self._next()
-
-    def _parse_provider_response(self, response: Any, **kwargs: Any) -> ModelResponse:
-        return response
-
-    def _parse_provider_response_delta(self, response: Any) -> ModelResponse:
-        return response
+@pytest.fixture
+def db(tmp_path):
+    return SqliteDb(db_file=str(tmp_path / "os.db"))
 
 
-def _text(content: str) -> ModelResponse:
-    return ModelResponse(role="assistant", content=content)
+@pytest.fixture
+def client(db):
+    """An AgentOS serving a verified agent and team whose check never passes."""
 
+    def not_good_enough(run_output):
+        return "not good enough"
 
-def _make_app(tmp_path, verifier, max_attempts=2):
-    from agno.verifiers import VerificationConfig
-
+    member = Agent(id="member", name="Member", model=ScriptedModel([_text("member ok")]))
     agent = Agent(
         id="verified-agent",
         name="Verified Agent",
         model=ScriptedModel([_text("claimed done")]),
-        db=SqliteDb(db_file=str(tmp_path / "os.db")),
-        verifiers=[verifier],
-        verification=VerificationConfig(max_attempts=max_attempts),
+        db=db,
+        verifiers=[not_good_enough],
+        verification=VerificationConfig(max_attempts=2),
     )
-    return AgentOS(agents=[agent], telemetry=False).get_app()
+    team = Team(
+        id="verified-team",
+        name="Verified Team",
+        members=[member],
+        model=ScriptedModel([_text("claimed done")]),
+        db=db,
+        verifiers=[not_good_enough],
+        verification=VerificationConfig(max_attempts=2),
+    )
+    with TestClient(AgentOS(agents=[agent], teams=[team], telemetry=False).get_app()) as test_client:
+        yield test_client
 
 
-def test_rest_run_reports_unverified_and_persists_the_record(tmp_path):
-    app = _make_app(tmp_path, lambda run_output: "not good enough")
-    with TestClient(app) as client:
-        response = client.post(
-            "/agents/verified-agent/runs",
-            data={"message": "do the work", "stream": "false", "session_id": "e2e-1"},
+def _unverified_run(client, kind: str, session_id: str) -> str:
+    response = client.post(
+        f"/{kind}s/verified-{kind}/runs",
+        data={"message": "do the work", "stream": "false", "session_id": session_id},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "UNVERIFIED"
+    return response.json()["run_id"]
+
+
+@pytest.mark.parametrize("kind", ["agent", "team"])
+def test_continue_of_an_unverified_run_stays_in_place(client, kind):
+    session_id = f"e2e-{kind}"
+    run_id = _unverified_run(client, kind, session_id)
+
+    # The run continues in place under the same run id; the check still fails.
+    continued = client.post(
+        f"/{kind}s/verified-{kind}/runs/{run_id}/continue",
+        data={"session_id": session_id, "stream": "false", "input": "try again"},
+    )
+    assert continued.status_code == 200, continued.text
+    assert continued.json()["run_id"] == run_id
+    assert continued.json()["status"] == "UNVERIFIED"
+
+    listed = client.get(f"/{kind}s/verified-{kind}/runs", params={"session_id": session_id})
+    assert listed.status_code == 200
+    (row,) = [r for r in listed.json() if r["run_id"] == run_id]
+    assert row["verification"]["status"] == "unverified"
+    assert row["verification"]["attempts"][0]["verdicts"][0]["report"] == "not good enough"
+
+
+@pytest.mark.parametrize("cancel_session", ["same", "mismatched", "missing"])
+@pytest.mark.parametrize("kind", ["agent", "team"])
+def test_cancel_of_an_unverified_run_records_nothing_and_the_continue_is_not_cancelled(client, kind, cancel_session):
+    session_id = f"e2e-cancel-{kind}-{cancel_session}"
+    run_id = _unverified_run(client, kind, session_id)
+    params = {"same": {"session_id": session_id}, "mismatched": {"session_id": "another-session"}, "missing": {}}
+
+    cancelled = client.post(f"/{kind}s/verified-{kind}/runs/{run_id}/cancel", params=params[cancel_session])
+    assert cancelled.status_code == 200, cancelled.text
+    assert cancelled.json() == {}
+    assert not is_cancelled(run_id)
+
+    continued = client.post(
+        f"/{kind}s/verified-{kind}/runs/{run_id}/continue",
+        data={"session_id": session_id, "stream": "false", "input": "try again", "fork": "false"},
+    )
+    assert continued.status_code == 200, continued.text
+    assert continued.json()["run_id"] == run_id
+    assert continued.json()["status"] == "UNVERIFIED"
+
+    # A continue still executing is registered, and its cancel is recorded
+    register_run(run_id)
+    try:
+        assert (
+            client.post(f"/{kind}s/verified-{kind}/runs/{run_id}/cancel", params=params[cancel_session]).status_code
+            == 200
         )
-        assert response.status_code == 200
-        body = response.json()
-        assert body["status"] == "UNVERIFIED"
-        assert body["verification"]["status"] == "unverified"
-        assert body["verification"]["stop_reason"] == "exhausted"
-        assert len(body["verification"]["attempts"]) == 2
-
-        # The persisted row carries the same truth through the single-run read.
-        run_id = body["run_id"]
-        stored = client.get(f"/sessions/e2e-1/runs/{run_id}")
-        if stored.status_code == 200:
-            stored_body = stored.json()
-            assert stored_body.get("status") == "UNVERIFIED"
-
-        # The run-list filter accepts the new status string and returns the run.
-        listed = client.get(
-            "/agents/verified-agent/runs",
-            params={"session_id": "e2e-1", "status": "UNVERIFIED"},
-        )
-        assert listed.status_code == 200
-        listed_body = listed.json()
-        listed_runs = listed_body if isinstance(listed_body, list) else listed_body.get("runs", [])
-        assert run_id in [r.get("run_id") for r in listed_runs]
-
-
-def test_rest_run_verified_leg(tmp_path):
-    app = _make_app(tmp_path, lambda run_output: True)
-    with TestClient(app) as client:
-        response = client.post(
-            "/agents/verified-agent/runs",
-            data={"message": "do the work", "stream": "false", "session_id": "e2e-2"},
-        )
-        assert response.status_code == 200
-        body = response.json()
-        assert body["status"] == "COMPLETED"
-        assert body["verification"]["status"] == "verified"
-
-
-def test_sse_stream_carries_verification_events(tmp_path):
-    app = _make_app(tmp_path, lambda run_output: "still failing")
-    with TestClient(app) as client:
-        with client.stream(
-            "POST",
-            "/agents/verified-agent/runs",
-            data={"message": "go", "stream": "true", "session_id": "e2e-3"},
-        ) as response:
-            assert response.status_code == 200
-            payload = "".join(chunk for chunk in response.iter_text())
-    event_names = [
-        json.loads(line[len("data: ") :]).get("event")
-        for line in payload.splitlines()
-        if line.startswith("data: ") and line[len("data: ") :].strip().startswith("{")
-    ]
-    assert event_names.count("VerificationStarted") == 2
-    assert event_names.count("VerificationCompleted") == 2
-    assert "RunCompleted" in event_names
-
-
-def test_unverified_smoke_via_tempdir():
-    # tmp_path-free variant so the module also runs standalone.
-    with tempfile.TemporaryDirectory() as td:
-        from pathlib import Path
-
-        app = _make_app(Path(td), lambda run_output: "no", max_attempts=1)
-        with TestClient(app) as client:
-            response = client.post(
-                "/agents/verified-agent/runs",
-                data={"message": "hi", "stream": "false"},
-            )
-            assert response.json()["status"] == "UNVERIFIED"
+        assert is_cancelled(run_id)
+    finally:
+        cleanup_run(run_id)

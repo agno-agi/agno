@@ -281,31 +281,29 @@ class TestStatusCasingNormalization:
 
 
 class TestUnverifiedDefacementFence:
-    """ONE narrow extra terminal rule: a stored UNVERIFIED row refuses an
-    incoming ERROR. An unverified run is settled - it holds a real answer
-    whose verification budget was spent - and a late ERROR write (shutdown
-    drain, stale error persist) would deface it. Every other transition over
-    unverified stays legal: continue-in-place re-stamps RUNNING and later
-    lands COMPLETED/CANCELLED on the same row."""
+    """One narrow extra terminal rule: a stored UNVERIFIED row refuses an
+    incoming ERROR or CANCELLED. An unverified run is settled - it holds a real
+    answer whose verification budget was spent - and a late ERROR or CANCELLED
+    write (shutdown drain, stale error persist) would deface it. Every other
+    transition over unverified stays legal: continue-in-place re-stamps RUNNING
+    and later lands COMPLETED/CANCELLED on the same row."""
 
     @pytest.mark.asyncio
-    async def test_error_over_unverified_refused_async(self, db):
-        await seed_session(db, "s1", ["r1"])
-        assert await db.update_run_in_session("s1", "r1", {"status": "UNVERIFIED"}) is RunPersistOutcome.UPDATED
-        refused = await db.update_run_in_session("s1", "r1", {"status": "ERROR"})
-        assert refused is RunPersistOutcome.TERMINAL_REFUSED
-        runs = await get_runs(db, "s1")
-        assert runs["r1"]["status"] == "UNVERIFIED", "settled unverified row must survive the ERROR write"
-
-    @pytest.mark.asyncio
-    async def test_non_error_transitions_over_unverified_stay_legal_async(self, db):
+    async def test_unverified_row_refuses_error_and_cancelled_but_not_a_continue_async(self, db):
         await seed_session(db, "s1", ["r1", "r2"])
         assert await db.update_run_in_session("s1", "r1", {"status": "UNVERIFIED"}) is RunPersistOutcome.UPDATED
+        assert await db.update_run_in_session("s1", "r1", {"status": "ERROR"}) is RunPersistOutcome.TERMINAL_REFUSED
+        runs = await get_runs(db, "s1")
+        assert runs["r1"]["status"] == "UNVERIFIED", "settled unverified row must survive the ERROR write"
         # Continue-in-place: RUNNING re-stamps the row, then lands COMPLETED.
         assert await db.update_run_in_session("s1", "r1", {"status": "RUNNING"}) is RunPersistOutcome.UPDATED
         assert await db.update_run_in_session("s1", "r1", {"status": "COMPLETED"}) is RunPersistOutcome.UPDATED
+        # A late CANCELLED lands only after a continue re-stamped RUNNING; straight over
+        # UNVERIFIED it is a defacement like ERROR, the rule the SQLite fallback already applies.
         assert await db.update_run_in_session("s1", "r2", {"status": "UNVERIFIED"}) is RunPersistOutcome.UPDATED
-        assert await db.update_run_in_session("s1", "r2", {"status": "CANCELLED"}) is RunPersistOutcome.UPDATED
+        assert await db.update_run_in_session("s1", "r2", {"status": "CANCELLED"}) is RunPersistOutcome.TERMINAL_REFUSED
+        runs = await get_runs(db, "s1")
+        assert runs["r2"]["status"] == "UNVERIFIED"
 
     @pytest.mark.asyncio
     async def test_error_over_unverified_refused_sync(self, db):

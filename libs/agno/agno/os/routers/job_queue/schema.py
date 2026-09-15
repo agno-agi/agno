@@ -15,7 +15,7 @@ class QueueJobSchema(BaseModel):
     job_type: str = Field("run", description="Kind of work the ticket carries (runs only today)")
     user_id: Optional[str] = Field(None, description="User the run was submitted for")
     payload: Dict[str, Any] = Field(default_factory=dict, description="Serialized run parameters")
-    status: str = Field(..., description="queued | running | completed | failed | cancelled | paused")
+    status: str = Field(..., description="queued | running | completed | unverified | failed | cancelled | paused")
     attempt: int = Field(0, description="Executions started so far")
     max_attempts: int = Field(1, description="Execution budget under any failure mode")
     idempotency_key: Optional[str] = Field(None, description="Client-provided dedupe key, if any")

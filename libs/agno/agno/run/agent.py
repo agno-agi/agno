@@ -21,7 +21,7 @@ from agno.utils.media import (
     reconstruct_response_audio,
     reconstruct_videos,
 )
-from agno.verifiers.types import Verification
+from agno.verifiers.types import Verdict, Verification
 
 if TYPE_CHECKING:
     from agno.session.summary import SessionSummary
@@ -296,6 +296,8 @@ class RunCompletedEvent(BaseAgentRunEvent):
     metadata: Optional[Dict[str, Any]] = None
     metrics: Optional[RunMetrics] = None
     session_state: Optional[Dict[str, Any]] = None
+    # Terminal RunStatus value: "COMPLETED", or "UNVERIFIED" when the verifiers never passed
+    status: Optional[str] = None
 
 
 @dataclass
@@ -531,9 +533,9 @@ class VerificationCompletedEvent(BaseAgentRunEvent):
     attempt: int = 0
     max_attempts: int = 0
     passed: bool = False
-    # One dict per verifier: {name, passed, summary}; summary is the first report line
-    verdicts: Optional[List[Dict[str, Any]]] = None
-    noop: bool = False
+    # One verdict per verifier, in declared order
+    verdicts: Optional[List[Verdict]] = None
+    state_unchanged: bool = False
     stop_reason: Optional[str] = None
 
 
@@ -882,7 +884,7 @@ class RunOutput:
             _dict["requirements"] = [req.to_dict() if hasattr(req, "to_dict") else req for req in self.requirements]
 
         if self.verification is not None:
-            # Verification.to_dict applies the JSON-safety pass to verdict data; asdict would skip it
+            # Verification.to_dict applies the JSON-safety pass to Verdict.detail; asdict would skip it
             _dict["verification"] = self.verification.to_dict()
 
         if self.input is not None:

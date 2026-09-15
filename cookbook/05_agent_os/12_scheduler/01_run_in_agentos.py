@@ -149,7 +149,8 @@ def watch_natural_run() -> None:
             finished = [
                 run
                 for run in new_runs
-                if run["status"] in {"success", "failed", "paused", "timeout"}
+                if run["status"]
+                in {"success", "failed", "paused", "timeout", "unverified"}
             ]
             if finished:
                 run = finished[0]

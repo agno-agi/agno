@@ -4549,7 +4549,8 @@ class AsyncPostgresDb(AsyncBaseDb):
         Attempt fencing: when ``expected_attempt`` is given, the write is
         rejected if the stored run carries a NEWER ``queue_attempt`` (a
         reclaimed job's later attempt owns the row). Terminal guard: a
-        completed/cancelled run is never rewritten to a different status.
+        completed/cancelled run is never rewritten to a different status,
+        and an unverified run is never rewritten to error or cancelled.
         The indexed ``status`` column is kept in sync with run_data.
         Exceptions PROPAGATE - a DB failure must never read as a
         fallback-permitting outcome.
@@ -4595,15 +4596,9 @@ class AsyncPostgresDb(AsyncBaseDb):
                         and incoming_status != stored_status
                     ):
                         return RunPersistOutcome.TERMINAL_REFUSED  # terminal row wins
-                    if stored_status == "unverified" and incoming_status == "error":
-                        # An UNVERIFIED row is settled: the run finished with a
-                        # real answer, only its verification budget was spent.
-                        # A late ERROR write (shutdown drain, a stale error
-                        # persist) would deface that settled answer, so this
-                        # ONE transition is refused. Every other write over
-                        # unverified stays legal: continue-in-place re-stamps
-                        # RUNNING and later lands COMPLETED/CANCELLED on the
-                        # same row.
+                    if stored_status == "unverified" and incoming_status in ("error", "cancelled"):
+                        # An UNVERIFIED row is settled: a late ERROR or CANCELLED write must not overwrite it.
+                        # Every other status may still land on it (a continue re-stamps RUNNING).
                         return RunPersistOutcome.TERMINAL_REFUSED
                     run.update(fields)
                     if content_if_absent is not None and not run.get("content"):
@@ -5006,9 +5001,9 @@ class AsyncPostgresDb(AsyncBaseDb):
     async def settle_paused_job(self, job_id: str, status: str, error: Optional[str] = None) -> bool:
         """Terminalize a PAUSED ticket whose continue ran INLINE, outside the
         queue (see InMemoryQueueStore.settle_paused_job). Single conditional
-        UPDATE on status='paused'; a queued/claimed continuation owns the
-        ticket and is never clobbered."""
-        if status not in ("completed", "cancelled", "failed"):
+        UPDATE on status='paused' or 'unverified'; a queued/claimed continuation
+        owns the ticket and is never clobbered."""
+        if status not in ("completed", "unverified", "cancelled", "failed"):
             return False
         try:
             table = await self._get_table(table_type="jobs")
@@ -5019,7 +5014,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                 async with sess.begin():
                     result = await sess.execute(
                         update(table)
-                        .where(table.c.id == job_id, table.c.status == "paused")
+                        .where(table.c.id == job_id, table.c.status.in_(["paused", "unverified"]))
                         .values(
                             status=status,
                             error=error,
@@ -5118,8 +5113,8 @@ class AsyncPostgresDb(AsyncBaseDb):
     async def settle_swept_job(self, job_id: str, worker_id: str, status: str, error: Optional[str] = None) -> bool:
         """Ownership-keyed settle for the sweeper - see the in-memory store's
         docstring: the sweep reconciles the ticket with what the run row
-        says (completed/cancelled/paused/failed), never blind-fails it."""
-        if status not in ("completed", "cancelled", "paused", "failed"):
+        says (completed/unverified/cancelled/paused/failed), never blind-fails it."""
+        if status not in ("completed", "unverified", "cancelled", "paused", "failed"):
             return False
         try:
             table = await self._get_table(table_type="jobs")
@@ -5273,7 +5268,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                 if row is None:
                     return {"outcome": "conflict", "job": None}
                 job = dict(row._mapping)
-                if job["status"] in ("completed", "failed", "cancelled"):
+                if job["status"] in ("completed", "unverified", "failed", "cancelled"):
                     return {"outcome": "conflict", "job": job}
                 if job["status"] in ("queued", "running"):
                     return {"outcome": "attach", "job": job}
@@ -5339,7 +5334,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                 async with sess.begin():
                     result = await sess.execute(
                         table.delete().where(
-                            table.c.status.in_(["completed", "failed", "cancelled"]),
+                            table.c.status.in_(["completed", "unverified", "failed", "cancelled"]),
                             table.c.completed_at.is_not(None),
                             table.c.completed_at <= cutoff,
                         )

@@ -61,6 +61,8 @@ from agno.team._default_tools import (
     _acascading_cancel_run,
     _cascading_cancel_run,
     _merge_member_session_state,
+    link_child_run,
+    member_unverified_note,
 )
 from agno.team.task import TaskList, TaskStatus, save_task_list
 from agno.tools.function import Function
@@ -360,17 +362,22 @@ def _get_task_management_tools(
         member_session_state_copy: Optional[Dict[str, Any]],
         tool_name: str = "execute_task",
         skip_session_merge: bool = False,
+        task_id: Optional[str] = None,
     ) -> None:
         """Post-process a member run: update parent IDs, interactions, session state."""
         if member_run_response is not None:
             member_run_response.parent_run_id = run_response.run_id
 
         # Update tool child_run_id
-        if run_response.tools is not None and member_run_response is not None:
-            for tool in run_response.tools:
-                if tool.tool_name and tool.tool_name.lower() == tool_name and tool.child_run_id is None:
-                    tool.child_run_id = member_run_response.run_id
-                    break
+        if member_run_response is not None:
+            link_child_run(
+                run_response,
+                tool_name,
+                member_run_response.run_id,
+                lambda args: (
+                    task_id is None or args.get("task_id") == task_id or task_id in (args.get("task_ids") or [])
+                ),
+            )
 
         member_name = member_agent.name or (member_agent.id if member_agent.id else "Unknown")
         # The task as given, never the prompt assembled from it. That prompt
@@ -418,6 +425,7 @@ def _get_task_management_tools(
         member_session_state_copy: Optional[Dict[str, Any]],
         tool_name: str = "execute_task",
         skip_session_merge: bool = False,
+        task_id: Optional[str] = None,
     ) -> None:
         """Async twin of the sync post-processor above.
 
@@ -433,11 +441,15 @@ def _get_task_management_tools(
             member_run_response.parent_run_id = run_response.run_id
 
         # Update tool child_run_id
-        if run_response.tools is not None and member_run_response is not None:
-            for tool in run_response.tools:
-                if tool.tool_name and tool.tool_name.lower() == tool_name and tool.child_run_id is None:
-                    tool.child_run_id = member_run_response.run_id
-                    break
+        if member_run_response is not None:
+            link_child_run(
+                run_response,
+                tool_name,
+                member_run_response.run_id,
+                lambda args: (
+                    task_id is None or args.get("task_id") == task_id or task_id in (args.get("task_ids") or [])
+                ),
+            )
 
         member_name = member_agent.name or (member_agent.id if member_agent.id else "Unknown")
         # The task as given, never the prompt assembled from it. That prompt
@@ -605,7 +617,7 @@ def _get_task_management_tools(
         except RunCancelledException:
             use_team_logger()
             _post_process_member_run(
-                member_run_response, member_agent, member_task_description, member_session_state_copy
+                member_run_response, member_agent, member_task_description, member_session_state_copy, task_id=task.id
             )
             # Preserve any partial member content as task.result before re-raising
             if member_run_response is not None and member_run_response.content:
@@ -627,18 +639,29 @@ def _get_task_management_tools(
             save_task_list(run_context.session_state, task_list)
             use_team_logger()
             _post_process_member_run(
-                member_run_response, member_agent, member_task_description, member_session_state_copy
+                member_run_response, member_agent, member_task_description, member_session_state_copy, task_id=task.id
             )
             yield f"Member '{member_agent.name}' requires human input before continuing. Task [{task.id}] paused."
             return
 
         # Process result
         use_team_logger()
-        _post_process_member_run(member_run_response, member_agent, member_task_description, member_session_state_copy)
+        _post_process_member_run(
+            member_run_response, member_agent, member_task_description, member_session_state_copy, task_id=task.id
+        )
 
         if member_run_response is not None and member_run_response.status == RunStatus.error:
             task.status = TaskStatus.failed
             task.result = str(member_run_response.content) if member_run_response.content else "Task failed"
+            save_task_list(run_context.session_state, task_list)
+            if stream_events:
+                yield _emit_task_updated(task, "in_progress", result=task.result)
+            yield f"Task [{task.id}] failed: {task.result}"
+        elif member_run_response is not None and member_run_response.status == RunStatus.unverified:
+            # The draft reaches the leader with the note under it, as a delegated result does
+            note = member_unverified_note(member_agent, member_run_response)
+            task.status = TaskStatus.failed
+            task.result = f"{member_run_response.content}\n{note}" if member_run_response.content else note
             save_task_list(run_context.session_state, task_list)
             if stream_events:
                 yield _emit_task_updated(task, "in_progress", result=task.result)
@@ -792,6 +815,7 @@ def _get_task_management_tools(
                 member_agent,
                 member_task_description,
                 member_session_state_copy,
+                task_id=task.id,
             )
             # Preserve any partial member content as task.result before re-raising
             if member_run_response is not None and member_run_response.content:
@@ -816,6 +840,7 @@ def _get_task_management_tools(
                 member_agent,
                 member_task_description,
                 member_session_state_copy,
+                task_id=task.id,
             )
             yield f"Member '{member_agent.name}' requires human input before continuing. Task [{task.id}] paused."
             return
@@ -826,11 +851,21 @@ def _get_task_management_tools(
             member_agent,
             member_task_description,
             member_session_state_copy,
+            task_id=task.id,
         )
 
         if member_run_response is not None and member_run_response.status == RunStatus.error:
             task.status = TaskStatus.failed
             task.result = str(member_run_response.content) if member_run_response.content else "Task failed"
+            save_task_list(run_context.session_state, task_list)
+            if stream_events:
+                yield _emit_task_updated(task, "in_progress", result=task.result)
+            yield f"Task [{task.id}] failed: {task.result}"
+        elif member_run_response is not None and member_run_response.status == RunStatus.unverified:
+            # The draft reaches the leader with the note under it, as a delegated result does
+            note = member_unverified_note(member_agent, member_run_response)
+            task.status = TaskStatus.failed
+            task.result = f"{member_run_response.content}\n{note}" if member_run_response.content else note
             save_task_list(run_context.session_state, task_list)
             if stream_events:
                 yield _emit_task_updated(task, "in_progress", result=task.result)
@@ -979,6 +1014,7 @@ def _get_task_management_tools(
                             state_copy,
                             tool_name="execute_tasks_parallel",
                             skip_session_merge=True,
+                            task_id=tid,
                         )
                         results_text.append(
                             f"Task [{tid}]: Member '{member_agent.name}' requires human input. Task paused."
@@ -993,6 +1029,25 @@ def _get_task_management_tools(
                             state_copy,
                             tool_name="execute_tasks_parallel",
                             skip_session_merge=True,
+                            task_id=tid,
+                        )
+                        if stream_events:
+                            completion_events.append(
+                                _emit_task_updated(task_obj, "in_progress", result=task_obj.result)
+                            )
+                        results_text.append(f"Task [{tid}] failed: {task_obj.result}")
+                    elif member_run is not None and member_run.status == RunStatus.unverified:
+                        note = member_unverified_note(member_agent, member_run)
+                        task_obj.status = TaskStatus.failed
+                        task_obj.result = f"{member_run.content}\n{note}" if member_run.content else note
+                        _post_process_member_run(
+                            member_run,
+                            member_agent,
+                            member_task,
+                            state_copy,
+                            tool_name="execute_tasks_parallel",
+                            skip_session_merge=True,
+                            task_id=tid,
                         )
                         if stream_events:
                             completion_events.append(
@@ -1010,6 +1065,7 @@ def _get_task_management_tools(
                             state_copy,
                             tool_name="execute_tasks_parallel",
                             skip_session_merge=True,
+                            task_id=tid,
                         )
                         if stream_events:
                             completion_events.append(
@@ -1026,6 +1082,7 @@ def _get_task_management_tools(
                             state_copy,
                             tool_name="execute_tasks_parallel",
                             skip_session_merge=True,
+                            task_id=tid,
                         )
                         if stream_events:
                             completion_events.append(
@@ -1200,6 +1257,7 @@ def _get_task_management_tools(
                     state_copy,
                     tool_name="execute_tasks_parallel",
                     skip_session_merge=True,
+                    task_id=tid,
                 )
                 results_text.append(f"Task [{tid}]: Member '{member_agent.name}' requires human input. Task paused.")
             elif member_run is not None and member_run.status == RunStatus.error:
@@ -1212,6 +1270,23 @@ def _get_task_management_tools(
                     state_copy,
                     tool_name="execute_tasks_parallel",
                     skip_session_merge=True,
+                    task_id=tid,
+                )
+                if stream_events:
+                    completion_events.append(_emit_task_updated(task_obj, "in_progress", result=task_obj.result))
+                results_text.append(f"Task [{tid}] failed: {task_obj.result}")
+            elif member_run is not None and member_run.status == RunStatus.unverified:
+                note = member_unverified_note(member_agent, member_run)
+                task_obj.status = TaskStatus.failed
+                task_obj.result = f"{member_run.content}\n{note}" if member_run.content else note
+                await _apost_process_member_run(
+                    member_run,
+                    member_agent,
+                    member_task,
+                    state_copy,
+                    tool_name="execute_tasks_parallel",
+                    skip_session_merge=True,
+                    task_id=tid,
                 )
                 if stream_events:
                     completion_events.append(_emit_task_updated(task_obj, "in_progress", result=task_obj.result))
@@ -1227,6 +1302,7 @@ def _get_task_management_tools(
                     state_copy,
                     tool_name="execute_tasks_parallel",
                     skip_session_merge=True,
+                    task_id=tid,
                 )
                 if stream_events:
                     completion_events.append(_emit_task_updated(task_obj, "in_progress", result=task_obj.result))
@@ -1241,6 +1317,7 @@ def _get_task_management_tools(
                     state_copy,
                     tool_name="execute_tasks_parallel",
                     skip_session_merge=True,
+                    task_id=tid,
                 )
                 if stream_events:
                     completion_events.append(_emit_task_updated(task_obj, "in_progress", result=task_obj.result))

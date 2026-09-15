@@ -19,7 +19,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
 from agno.run.agent import RunOutputEvent
-from agno.run.base import RunStatus
+from agno.run.base import REOPENABLE_RUN_STATUSES, TERMINAL_RUN_STATUSES, RunStatus
 from agno.run.team import TeamRunOutputEvent
 from agno.run.workflow import WorkflowRunOutputEvent
 from agno.utils.log import log_debug, log_warning, logger
@@ -382,11 +382,7 @@ class EventsBuffer:
         # UNVERIFIED reopens too: terminal-for-the-stream but continuable
         # (a continue restarts the verification budget on the same stream),
         # so its sentinel is invalidated exactly like a pause's.
-        reopenable = (
-            (RunStatus.paused, RunStatus.error, RunStatus.pending, RunStatus.unverified)
-            if include_error
-            else (RunStatus.paused, RunStatus.pending, RunStatus.unverified)
-        )
+        reopenable = REOPENABLE_RUN_STATUSES + ((RunStatus.error,) if include_error else ())
         metadata = self.run_metadata.get(run_id)
         if metadata is None:
             # State expired/lost (restart): re-create it, pre-execution
@@ -408,10 +404,7 @@ class EventsBuffer:
         # A paused run can be continued later under the same id: its monotonic
         # index survives the reclaim, so the continuation's event indices keep
         # ascending past every index a client has already seen. UNVERIFIED is
-        # continuable on the same stream too (a continue restarts the
-        # verification budget under the same run id), so its counter survives
-        # the same way - a reaped unverified run reopening at index 0 would
-        # make resuming clients' dedup discard every post-continuation event.
+        # continuable on the same stream too, so its counter survives the same way.
         if (self.run_metadata.get(run_id) or {}).get("status") not in (RunStatus.paused, RunStatus.unverified):
             self._next_index.pop(run_id, None)
         if run_id in self.run_metadata:
@@ -427,13 +420,7 @@ class EventsBuffer:
             # Terminal runs, plus paused runs: a pause can wait on an approval
             # forever, and a reclaimed paused entry is rebuilt by add_event
             # when the run is eventually continued.
-            if metadata["status"] in [
-                RunStatus.completed,
-                RunStatus.error,
-                RunStatus.cancelled,
-                RunStatus.paused,
-                RunStatus.unverified,
-            ]:
+            if metadata["status"] in TERMINAL_RUN_STATUSES:
                 completed_at = metadata.get("completed_at", metadata["last_updated"])
                 if current_time - completed_at > self.cleanup_interval:
                     runs_to_cleanup.append(run_id)

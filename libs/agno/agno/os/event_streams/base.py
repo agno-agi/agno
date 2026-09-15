@@ -29,7 +29,7 @@ Contract notes for implementations:
 from abc import ABC, abstractmethod
 from typing import Any, AsyncIterator, List, Optional, Tuple
 
-from agno.run.base import RunStatus
+from agno.run.base import REOPENABLE_RUN_STATUSES, RunStatus
 
 
 class BaseEventStream(ABC):
@@ -115,11 +115,7 @@ class BaseEventStream(ABC):
         a best-effort fallback for third-party streams only (it cannot seed
         a counter it does not know about).
         """
-        reopenable = (
-            (RunStatus.paused, RunStatus.error, RunStatus.pending, RunStatus.unverified)
-            if include_error
-            else (RunStatus.paused, RunStatus.pending, RunStatus.unverified)
-        )
+        reopenable = REOPENABLE_RUN_STATUSES + ((RunStatus.error,) if include_error else ())
         status = await self.get_run_status(run_id)
         if status is not None and status not in reopenable:
             return False

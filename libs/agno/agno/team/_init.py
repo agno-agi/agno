@@ -62,6 +62,7 @@ from agno.utils.log import (
 )
 from agno.utils.safe_formatter import SafeFormatter
 from agno.utils.string import generate_id_from_name
+from agno.utils.verifiers import validate_verifiers
 
 
 def __init__(
@@ -139,7 +140,7 @@ def __init__(
     pre_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail, BaseEval]]] = None,
     post_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail, BaseEval]]] = None,
     verifiers: Optional[List[Union["Verifier", Callable[..., Any]]]] = None,
-    verification: Optional["VerificationConfig"] = None,
+    verification: Optional[Union[bool, "VerificationConfig"]] = None,
     input_schema: Optional[Type[BaseModel]] = None,
     output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
     parser_model: Optional[Union[Model, str]] = None,
@@ -324,16 +325,8 @@ def __init__(
     team.pre_hooks = pre_hooks
     team.post_hooks = post_hooks
 
-    team.verifiers = list(verifiers) if verifiers else None
-    team.verification = verification
-    # Coerce now so a bad entry (a bare Scorer, a callable with an unknown parameter
-    # name) fails at construction, not mid-run. Rebuilt lazily on copies.
-    if team.verifiers:
-        from agno.verifiers.base import coerce_verifier
-
-        team._verifiers = [coerce_verifier(v) for v in team.verifiers]
-    else:
-        team._verifiers = None
+    owner = f"Team {team.name or team.id or ''}".rstrip()
+    team.verifiers, team.verification = validate_verifiers(verifiers, verification, owner=owner)
 
     team.input_schema = input_schema
     team.output_schema = output_schema

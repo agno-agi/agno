@@ -40,6 +40,8 @@ from agno.run.agent import (
     RunStartedEvent,
     ToolCallCompletedEvent,
     ToolCallStartedEvent,
+    VerificationCompletedEvent,
+    VerificationStartedEvent,
 )
 
 __all__ = [
@@ -71,6 +73,8 @@ __all__ = [
     "RunContinuedEvent",
     "RunStartedEvent",
     "RunCompletedEvent",
+    "VerificationStartedEvent",
+    "VerificationCompletedEvent",
     "MemoryUpdateStartedEvent",
     "MemoryUpdateCompletedEvent",
     "ReasoningStartedEvent",

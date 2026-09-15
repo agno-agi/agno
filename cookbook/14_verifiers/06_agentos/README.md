@@ -1,3 +1,7 @@
-# AgentOS
+# 06_agentos
 
-- `verified_agent_os.py` — verifiers live on the agent, so AgentOS gets the loop for free: verification events on the stream, `UNVERIFIED` in the run list, the record on the run row.
+A verified agent served over AgentOS.
+
+## Files
+
+- `verified_agent_os.py`: Verification events on the SSE stream, `RunStatus.unverified` in the run list, the record on the run row.

@@ -15,6 +15,7 @@ from agno.utils.media import (
     reconstruct_videos,
 )
 from agno.utils.timer import Timer
+from agno.verifiers.types import Verification
 
 
 class OnReject(str, Enum):
@@ -570,12 +571,20 @@ class StepOutput:
 
     # The verification record a Verify step attaches: a Verification dataclass
     # (agno.verifiers.types) carrying status, stop_reason, and per-attempt verdicts.
-    verification: Optional[Any] = None
+    verification: Optional[Verification] = None
+
+    # A Verify step's earlier attempts' outputs, oldest first; ``steps`` holds only the
+    # attempt the checks judged last, so a lookup by step name finds that attempt's output.
+    previous_attempts: Optional[List[List["StepOutput"]]] = None
 
     # Loop iteration review: signals the workflow to pause for per-iteration review.
     # This is a transient flag — NOT serialized. It is cleared after the workflow
     # processes it.
     requires_iteration_review_pause: bool = False
+    # Where a paused composite sat in its stream, so a resume emits its events in the same
+    # place with the same parent; only a paused Verify output carries them.
+    step_index: Optional[Union[int, tuple]] = None
+    parent_step_id: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary"""
@@ -589,7 +598,7 @@ class StepOutput:
             else:
                 content_dict = str(self.content)
 
-        result = {
+        result: Dict[str, Any] = {
             "content": content_dict,
             "step_name": self.step_name,
             "step_id": self.step_id,
@@ -618,6 +627,15 @@ class StepOutput:
             result["verification"] = (
                 self.verification.to_dict() if hasattr(self.verification, "to_dict") else self.verification
             )
+        if self.step_index is not None:
+            result["step_index"] = list(self.step_index) if isinstance(self.step_index, tuple) else self.step_index
+        if self.parent_step_id is not None:
+            result["parent_step_id"] = self.parent_step_id
+        if self.previous_attempts:
+            result["previous_attempts"] = [
+                [step.to_dict() if hasattr(step, "to_dict") else step for step in attempt_steps]
+                for attempt_steps in self.previous_attempts
+            ]
 
         return result
 
@@ -648,13 +666,21 @@ class StepOutput:
         # the dataclass, not a dict.
         verification = None
         if data.get("verification"):
-            from agno.verifiers.types import Verification
-
             verification = Verification.from_dict(data["verification"])
 
+        previous_attempts_data = data.get("previous_attempts")
+        previous_attempts = None
+        if previous_attempts_data:
+            previous_attempts = [
+                [cls.from_dict(step_data) for step_data in attempt_steps] for attempt_steps in previous_attempts_data
+            ]
+
+        step_index = data.get("step_index")
         return cls(
             step_name=data.get("step_name"),
             step_id=data.get("step_id"),
+            step_index=tuple(step_index) if isinstance(step_index, list) else step_index,
+            parent_step_id=data.get("parent_step_id"),
             step_type=data.get("step_type"),
             executor_type=data.get("executor_type"),
             executor_name=data.get("executor_name"),
@@ -671,6 +697,7 @@ class StepOutput:
             is_paused=data.get("is_paused", False),
             steps=steps,
             verification=verification,
+            previous_attempts=previous_attempts,
         )
 
 

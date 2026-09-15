@@ -9,6 +9,7 @@ The scorer owns its threshold; the verifier just holds the run to the scorer's v
 """
 
 from agno.agent import Agent
+from agno.db.in_memory import InMemoryDb
 from agno.models.openai import OpenAIResponses
 from agno.scorer import JudgeScorer
 from agno.verifiers import ScorerVerifier
@@ -18,7 +19,7 @@ from agno.verifiers import ScorerVerifier
 # ---------------------------------------------------------------------------
 
 judge = JudgeScorer(
-    model=OpenAIResponses(id="gpt-5.5"),
+    model=OpenAIResponses(id="gpt-5.6-luna"),
     criteria=(
         "The explanation is aimed at a newcomer: no unexplained jargon, one concrete "
         "example, and under 150 words."
@@ -28,23 +29,26 @@ judge = JudgeScorer(
 )
 
 agent = Agent(
-    model=OpenAIResponses(id="gpt-5.5"),
+    model=OpenAIResponses(id="gpt-5.6-luna"),
+    db=InMemoryDb(),
     verifiers=[ScorerVerifier(judge)],
 )
 
 # ---------------------------------------------------------------------------
-# Run
+# Run Demo
 # ---------------------------------------------------------------------------
 
-output = agent.run("Explain what a race condition is.")
+if __name__ == "__main__":
+    agent.print_response("Explain what a race condition is.")
 
-print("status:", output.status)
-print("verification:", output.verification.status, "/", output.verification.stop_reason)
-for attempt in output.verification.attempts:
-    for verdict in attempt.verdicts:
-        detail = verdict.data or {}
-        print(
-            "attempt", attempt.index, "-> passed:", verdict.passed, "| detail:", detail
-        )
-print()
-print(output.content)
+    run_output = agent.get_last_run_output()
+    verification = run_output.verification
+    print(
+        f"\nVerification: {verification.status.value} / {verification.stop_reason.value}"
+    )
+    for attempt in verification.attempts:
+        for verdict in attempt.verdicts:
+            result = "PASS" if verdict.passed else "FAIL"
+            # The judge's normalized score and its reasoning ride on Verdict.detail.
+            score = (verdict.detail or {}).get("value")
+            print(f"Attempt {attempt.index}: {result} | score: {score:.2f}")

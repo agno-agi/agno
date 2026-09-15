@@ -122,6 +122,7 @@ from agno.utils.log import (
     log_warning,
 )
 from agno.utils.response import get_paused_content
+from agno.utils.verifiers import require_sync_verification
 from agno.verifiers._gate import VerificationGate
 
 # Strong references to background tasks so they aren't garbage-collected mid-execution.
@@ -395,6 +396,7 @@ def _run(
     10. Update the RunOutput with the model response
     11. Store media if enabled
     12. Convert the response to the structured format if needed
+        Verify: run the verifiers and re-enter the model until they pass or the budget is spent
     13. Execute post-hooks
     14. Wait for background memory creation
     15. Create session summary
@@ -410,6 +412,7 @@ def _run(
         handle_reasoning,
         parse_response_with_parser_model,
         update_run_response,
+        verify_response,
     )
     from agno.agent._storage import load_session_state, read_or_create_session, update_metadata
     from agno.agent._telemetry import log_agent_telemetry
@@ -552,9 +555,8 @@ def _run(
                 # 9. Generate a response from the Model (includes running function calls)
                 agent.model = cast(Model, agent.model)
 
-                # The verification gate re-enters the model with an evidence report until
-                # the verifiers pass or the budget is spent; the whole loop is ONE run.
-                verification_gate = VerificationGate.for_run(
+                # The gate re-enters the model with the evidence report until the checks pass or the budget is spent
+                verification_gate = VerificationGate.from_run(
                     agent,
                     run_response=run_response,
                     run_messages=run_messages,
@@ -632,27 +634,8 @@ def _run(
                     # 12. Convert the response to the structured format if needed
                     convert_response_to_structured_format(agent, run_response, run_context=run_context)
 
-                    # 12v. Verify: the checks run on the parsed output, before followups
-                    if verification_gate is None:
-                        break
-                    started = verification_gate.open_attempt()
-                    if started is None:
-                        break
-                    handle_event(
-                        started.event,
-                        run_response,
-                        events_to_skip=agent.events_to_skip,  # type: ignore
-                        store_events=agent.store_events,
-                    )
-                    decision = verification_gate.settle_attempt()
-                    handle_event(
-                        decision.event,
-                        run_response,
-                        events_to_skip=agent.events_to_skip,  # type: ignore
-                        store_events=agent.store_events,
-                    )
-                    if decision.reenter:
-                        raise_if_cancelled(run_response.run_id)  # type: ignore
+                    # Verify: the checks run on the parsed output, before followups
+                    if verify_response(agent, verification_gate, run_response):
                         continue
                     break
 
@@ -854,6 +837,7 @@ def _run_stream(
         handle_model_response_stream,
         handle_reasoning_stream,
         parse_response_with_parser_model_stream,
+        verify_response_stream,
     )
     from agno.agent._storage import load_session_state, read_or_create_session, update_metadata
     from agno.agent._telemetry import log_agent_telemetry
@@ -1007,9 +991,8 @@ def _run_stream(
                 # Check for cancellation before model processing
                 raise_if_cancelled(run_response.run_id)  # type: ignore
 
-                # The verification gate re-enters the model with an evidence report until
-                # the verifiers pass or the budget is spent; the whole loop is ONE run.
-                verification_gate = VerificationGate.for_run(
+                # The gate re-enters the model with the evidence report until the checks pass or the budget is spent
+                verification_gate = VerificationGate.from_run(
                     agent,
                     run_response=run_response,
                     run_messages=run_messages,
@@ -1092,31 +1075,9 @@ def _run_stream(
                             raise_if_cancelled(run_response.run_id)  # type: ignore
                         yield event
 
-                    # 10v. Verify: the checks run on the parsed output, before followups
-                    if verification_gate is None:
-                        break
-                    started = verification_gate.open_attempt()
-                    if started is None:
-                        break
-                    started_event = handle_event(
-                        started.event,
-                        run_response,
-                        events_to_skip=agent.events_to_skip,  # type: ignore
-                        store_events=agent.store_events,
-                    )
-                    if stream_events:
-                        yield started_event  # type: ignore
-                    decision = verification_gate.settle_attempt()
-                    completed_event = handle_event(
-                        decision.event,
-                        run_response,
-                        events_to_skip=agent.events_to_skip,  # type: ignore
-                        store_events=agent.store_events,
-                    )
-                    if stream_events:
-                        yield completed_event  # type: ignore
-                    if decision.reenter:
-                        raise_if_cancelled(run_response.run_id)  # type: ignore
+                    # Verify: the checks run on the parsed output, before followups
+                    yield from verify_response_stream(agent, verification_gate, run_response, stream_events)
+                    if verification_gate is not None and verification_gate.reenter:
                         continue
                     break
 
@@ -1229,6 +1190,10 @@ def _run_stream(
                 if agent_session.session_data is not None and "session_state" in agent_session.session_data:
                     run_response.session_state = agent_session.session_data["session_state"]
 
+                # Set the run status to completed (an unverified terminal outcome wins)
+                if run_response.status != RunStatus.unverified:
+                    run_response.status = RunStatus.completed
+
                 # Create the run completed event
                 completed_event = handle_event(  # type: ignore
                     create_run_completed_event(from_run_response=run_response),
@@ -1236,10 +1201,6 @@ def _run_stream(
                     events_to_skip=agent.events_to_skip,  # type: ignore
                     store_events=agent.store_events,
                 )
-
-                # Set the run status to completed (an unverified terminal outcome wins)
-                if run_response.status != RunStatus.unverified:
-                    run_response.status = RunStatus.completed
 
                 # 13. Cleanup and store the run response and session
                 cleanup_and_store(
@@ -1450,6 +1411,8 @@ def run_dispatch(
             agent.post_hooks = normalize_post_hooks(agent.post_hooks)  # type: ignore
         agent._hooks_normalised = True
 
+    require_sync_verification(agent)
+
     # Initialize session
     session_id, user_id = initialize_session(agent, session_id=session_id, user_id=user_id)
 
@@ -1622,6 +1585,7 @@ async def _arun(
         agenerate_response_with_output_model,
         ahandle_reasoning,
         aparse_response_with_parser_model,
+        averify_response,
         convert_response_to_structured_format,
         update_run_response,
     )
@@ -1772,9 +1736,8 @@ async def _arun(
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
 
                 # 9. Generate a response from the Model (includes running function calls)
-                # The verification gate re-enters the model with an evidence report until
-                # the verifiers pass or the budget is spent; the whole loop is ONE run.
-                verification_gate = VerificationGate.for_run(
+                # The gate re-enters the model with the evidence report until the checks pass or the budget is spent
+                verification_gate = VerificationGate.from_run(
                     agent,
                     run_response=run_response,
                     run_messages=run_messages,
@@ -1851,36 +1814,14 @@ async def _arun(
                             user_id=user_id,
                         )
 
-                    # 11. Store media in run output for the caller. Media is per-attempt on the
-                    # output surface: a gate re-entry clears the rejected attempt's media (the
-                    # gate owns that reset), so verifiers and the caller see only the attempt
-                    # in front of them; the transcript's messages keep their own history.
+                    # 11. Store media in run output for the caller (a gate re-entry resets it per attempt)
                     store_media_util(run_response, model_response)
 
                     # 12. Convert the response to the structured format if needed
                     convert_response_to_structured_format(agent, run_response, run_context=run_context)
 
-                    # 12v. Verify: the checks run on the parsed output, before followups
-                    if verification_gate is None:
-                        break
-                    started = verification_gate.open_attempt()
-                    if started is None:
-                        break
-                    handle_event(
-                        started.event,
-                        run_response,
-                        events_to_skip=agent.events_to_skip,  # type: ignore
-                        store_events=agent.store_events,
-                    )
-                    decision = await verification_gate.asettle_attempt()
-                    handle_event(
-                        decision.event,
-                        run_response,
-                        events_to_skip=agent.events_to_skip,  # type: ignore
-                        store_events=agent.store_events,
-                    )
-                    if decision.reenter:
-                        await araise_if_cancelled(run_response.run_id)  # type: ignore
+                    # Verify: the checks run on the parsed output, before followups
+                    if await averify_response(agent, verification_gate, run_response):
                         continue
                     break
 
@@ -2417,6 +2358,7 @@ async def _arun_stream(
         ahandle_model_response_stream,
         ahandle_reasoning_stream,
         aparse_response_with_parser_model_stream,
+        averify_response_stream,
     )
     from agno.agent._storage import aread_or_create_session, load_session_state, update_metadata
     from agno.agent._telemetry import alog_agent_telemetry
@@ -2576,9 +2518,8 @@ async def _arun_stream(
 
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
 
-                # The verification gate re-enters the model with an evidence report until
-                # the verifiers pass or the budget is spent; the whole loop is ONE run.
-                verification_gate = VerificationGate.for_run(
+                # The gate re-enters the model with the evidence report until the checks pass or the budget is spent
+                verification_gate = VerificationGate.from_run(
                     agent,
                     run_response=run_response,
                     run_messages=run_messages,
@@ -2661,31 +2602,10 @@ async def _arun_stream(
                             await araise_if_cancelled(run_response.run_id)  # type: ignore
                         yield event  # type: ignore
 
-                    # 10v. Verify: the checks run on the parsed output, before followups
-                    if verification_gate is None:
-                        break
-                    started = verification_gate.open_attempt()
-                    if started is None:
-                        break
-                    started_event = handle_event(
-                        started.event,
-                        run_response,
-                        events_to_skip=agent.events_to_skip,  # type: ignore
-                        store_events=agent.store_events,
-                    )
-                    if stream_events:
-                        yield started_event  # type: ignore
-                    decision = await verification_gate.asettle_attempt()
-                    completed_event = handle_event(
-                        decision.event,
-                        run_response,
-                        events_to_skip=agent.events_to_skip,  # type: ignore
-                        store_events=agent.store_events,
-                    )
-                    if stream_events:
-                        yield completed_event  # type: ignore
-                    if decision.reenter:
-                        await araise_if_cancelled(run_response.run_id)  # type: ignore
+                    # Verify: the checks run on the parsed output, before followups
+                    async for event in averify_response_stream(agent, verification_gate, run_response, stream_events):
+                        yield event
+                    if verification_gate is not None and verification_gate.reenter:
                         continue
                     break
 
@@ -2800,6 +2720,10 @@ async def _arun_stream(
                 if agent_session.session_data is not None and "session_state" in agent_session.session_data:
                     run_response.session_state = agent_session.session_data["session_state"]
 
+                # Set the run status to completed (an unverified terminal outcome wins)
+                if run_response.status != RunStatus.unverified:
+                    run_response.status = RunStatus.completed
+
                 # Create the run completed event
                 completed_event = handle_event(
                     create_run_completed_event(from_run_response=run_response),
@@ -2807,10 +2731,6 @@ async def _arun_stream(
                     events_to_skip=agent.events_to_skip,  # type: ignore
                     store_events=agent.store_events,
                 )
-
-                # Set the run status to completed (an unverified terminal outcome wins)
-                if run_response.status != RunStatus.unverified:
-                    run_response.status = RunStatus.completed
 
                 # 13. Cleanup and store the run response and session
                 await acleanup_and_store(
@@ -3654,6 +3574,9 @@ def continue_run_dispatch(
     if isinstance(agent.media_storage, AsyncMediaStorage):
         raise ValueError("Cannot use sync continue_run() with an AsyncMediaStorage. Use acontinue_run() instead.")
 
+    # Refused here rather than at the gate, which runs after the model call.
+    require_sync_verification(agent)
+
     background_tasks = kwargs.pop("background_tasks", None)
     if background_tasks is not None:
         from fastapi import BackgroundTasks
@@ -3990,6 +3913,7 @@ def _continue_run(
         generate_response_with_output_model,
         parse_response_with_parser_model,
         update_run_response,
+        verify_response,
     )
     from agno.agent._telemetry import log_agent_telemetry
     from agno.agent._tools import handle_tool_call_updates
@@ -4008,9 +3932,8 @@ def _continue_run(
                 # Check for cancellation before model call
                 raise_if_cancelled(run_response.run_id)  # type: ignore
 
-                # The verification gate re-enters the model with an evidence report until
-                # the verifiers pass or the budget is spent; the whole loop is ONE run.
-                verification_gate = VerificationGate.for_run(
+                # The gate re-enters the model with the evidence report until the checks pass or the budget is spent
+                verification_gate = VerificationGate.from_run(
                     agent,
                     run_response=run_response,
                     run_messages=run_messages,
@@ -4071,36 +3994,14 @@ def _continue_run(
                             agent, run_response=run_response, session=session, run_context=run_context, user_id=user_id
                         )
 
-                    # 4. Store media in run output for the caller. Media is per-attempt on the
-                    # output surface: a gate re-entry clears the rejected attempt's media (the
-                    # gate owns that reset), so verifiers and the caller see only the attempt
-                    # in front of them; the transcript's messages keep their own history.
+                    # 4. Store media in run output for the caller (a gate re-entry resets it per attempt)
                     store_media_util(run_response, model_response)
 
                     # 5. Convert the response to the structured format if needed
                     convert_response_to_structured_format(agent, run_response, run_context=run_context)
 
-                    # 5v. Verify: the checks run on the parsed output, before followups
-                    if verification_gate is None:
-                        break
-                    started = verification_gate.open_attempt()
-                    if started is None:
-                        break
-                    handle_event(
-                        started.event,
-                        run_response,
-                        events_to_skip=agent.events_to_skip,  # type: ignore
-                        store_events=agent.store_events,
-                    )
-                    decision = verification_gate.settle_attempt()
-                    handle_event(
-                        decision.event,
-                        run_response,
-                        events_to_skip=agent.events_to_skip,  # type: ignore
-                        store_events=agent.store_events,
-                    )
-                    if decision.reenter:
-                        raise_if_cancelled(run_response.run_id)  # type: ignore
+                    # Verify: the checks run on the parsed output, before followups
+                    if verify_response(agent, verification_gate, run_response):
                         continue
                     break
 
@@ -4252,6 +4153,7 @@ def _continue_run_stream(
         generate_followups_stream,
         handle_model_response_stream,
         parse_response_with_parser_model_stream,
+        verify_response_stream,
     )
     from agno.agent._telemetry import log_agent_telemetry
     from agno.agent._tools import handle_tool_call_updates_stream
@@ -4286,9 +4188,8 @@ def _continue_run_stream(
                         raise_if_cancelled(run_response.run_id)  # type: ignore
                     yield event
 
-                # The verification gate re-enters the model with an evidence report until
-                # the verifiers pass or the budget is spent; the whole loop is ONE run.
-                verification_gate = VerificationGate.for_run(
+                # The gate re-enters the model with the evidence report until the checks pass or the budget is spent
+                verification_gate = VerificationGate.from_run(
                     agent,
                     run_response=run_response,
                     run_messages=run_messages,
@@ -4328,31 +4229,9 @@ def _continue_run_stream(
                             raise_if_cancelled(run_response.run_id)  # type: ignore
                         yield event
 
-                    # 3v. Verify: the checks run on the parsed output, before followups
-                    if verification_gate is None:
-                        break
-                    started = verification_gate.open_attempt()
-                    if started is None:
-                        break
-                    started_event = handle_event(
-                        started.event,
-                        run_response,
-                        events_to_skip=agent.events_to_skip,  # type: ignore
-                        store_events=agent.store_events,
-                    )
-                    if stream_events:
-                        yield started_event  # type: ignore
-                    decision = verification_gate.settle_attempt()
-                    completed_event = handle_event(
-                        decision.event,
-                        run_response,
-                        events_to_skip=agent.events_to_skip,  # type: ignore
-                        store_events=agent.store_events,
-                    )
-                    if stream_events:
-                        yield completed_event  # type: ignore
-                    if decision.reenter:
-                        raise_if_cancelled(run_response.run_id)  # type: ignore
+                    # Verify: the checks run on the parsed output, before followups
+                    yield from verify_response_stream(agent, verification_gate, run_response, stream_events)
+                    if verification_gate is not None and verification_gate.reenter:
                         continue
                     break
 
@@ -4439,6 +4318,10 @@ def _continue_run_stream(
                 if session.session_data is not None and "session_state" in session.session_data:
                     run_response.session_state = session.session_data["session_state"]
 
+                # Set the run status to completed (an unverified terminal outcome wins)
+                if run_response.status != RunStatus.unverified:
+                    run_response.status = RunStatus.completed
+
                 # Create the run completed event
                 completed_event = handle_event(
                     create_run_completed_event(run_response),
@@ -4446,10 +4329,6 @@ def _continue_run_stream(
                     events_to_skip=agent.events_to_skip,  # type: ignore
                     store_events=agent.store_events,
                 )
-
-                # Set the run status to completed (an unverified terminal outcome wins)
-                if run_response.status != RunStatus.unverified:
-                    run_response.status = RunStatus.completed
 
                 # 5. Cleanup and store the run response and session
                 cleanup_and_store(
@@ -5146,6 +5025,7 @@ async def _acontinue_run(
         agenerate_followups,
         agenerate_response_with_output_model,
         aparse_response_with_parser_model,
+        averify_response,
         convert_response_to_structured_format,
         update_run_response,
     )
@@ -5409,9 +5289,8 @@ async def _acontinue_run(
                     agent, run_response=run_response, run_messages=run_messages, tools=_tools
                 )
 
-                # The verification gate re-enters the model with an evidence report until
-                # the verifiers pass or the budget is spent; the whole loop is ONE run.
-                verification_gate = VerificationGate.for_run(
+                # The gate re-enters the model with the evidence report until the checks pass or the budget is spent
+                verification_gate = VerificationGate.from_run(
                     agent,
                     run_response=run_response,
                     run_messages=run_messages,
@@ -5480,36 +5359,14 @@ async def _acontinue_run(
                             user_id=user_id,
                         )
 
-                    # 10. Store media in run output for the caller. Media is per-attempt on the
-                    # output surface: a gate re-entry clears the rejected attempt's media (the
-                    # gate owns that reset), so verifiers and the caller see only the attempt
-                    # in front of them; the transcript's messages keep their own history.
+                    # 10. Store media in run output for the caller (a gate re-entry resets it per attempt)
                     store_media_util(run_response, model_response)
 
                     # 11. Convert the response to the structured format if needed
                     convert_response_to_structured_format(agent, run_response, run_context=run_context)
 
-                    # 11v. Verify: the checks run on the parsed output, before followups
-                    if verification_gate is None:
-                        break
-                    started = verification_gate.open_attempt()
-                    if started is None:
-                        break
-                    handle_event(
-                        started.event,
-                        run_response,
-                        events_to_skip=agent.events_to_skip,  # type: ignore
-                        store_events=agent.store_events,
-                    )
-                    decision = await verification_gate.asettle_attempt()
-                    handle_event(
-                        decision.event,
-                        run_response,
-                        events_to_skip=agent.events_to_skip,  # type: ignore
-                        store_events=agent.store_events,
-                    )
-                    if decision.reenter:
-                        await araise_if_cancelled(run_response.run_id)  # type: ignore
+                    # Verify: the checks run on the parsed output, before followups
+                    if await averify_response(agent, verification_gate, run_response):
                         continue
                     break
 
@@ -5736,6 +5593,7 @@ async def _acontinue_run_stream(
         agenerate_response_with_output_model_stream,
         ahandle_model_response_stream,
         aparse_response_with_parser_model_stream,
+        averify_response_stream,
     )
     from agno.agent._storage import aread_or_create_session, load_session_state, update_metadata
     from agno.agent._telemetry import alog_agent_telemetry
@@ -6013,9 +5871,8 @@ async def _acontinue_run_stream(
                         await araise_if_cancelled(run_response.run_id)  # type: ignore
                     yield event
 
-                # The verification gate re-enters the model with an evidence report until
-                # the verifiers pass or the budget is spent; the whole loop is ONE run.
-                verification_gate = VerificationGate.for_run(
+                # The gate re-enters the model with the evidence report until the checks pass or the budget is spent
+                verification_gate = VerificationGate.from_run(
                     agent,
                     run_response=run_response,
                     run_messages=run_messages,
@@ -6096,31 +5953,10 @@ async def _acontinue_run_stream(
                             await araise_if_cancelled(run_response.run_id)  # type: ignore
                         yield event  # type: ignore
 
-                    # 8v. Verify: the checks run on the parsed output, before followups
-                    if verification_gate is None:
-                        break
-                    started = verification_gate.open_attempt()
-                    if started is None:
-                        break
-                    started_event = handle_event(
-                        started.event,
-                        run_response,
-                        events_to_skip=agent.events_to_skip,  # type: ignore
-                        store_events=agent.store_events,
-                    )
-                    if stream_events:
-                        yield started_event  # type: ignore
-                    decision = await verification_gate.asettle_attempt()
-                    completed_event = handle_event(
-                        decision.event,
-                        run_response,
-                        events_to_skip=agent.events_to_skip,  # type: ignore
-                        store_events=agent.store_events,
-                    )
-                    if stream_events:
-                        yield completed_event  # type: ignore
-                    if decision.reenter:
-                        await araise_if_cancelled(run_response.run_id)  # type: ignore
+                    # Verify: the checks run on the parsed output, before followups
+                    async for event in averify_response_stream(agent, verification_gate, run_response, stream_events):
+                        yield event
+                    if verification_gate is not None and verification_gate.reenter:
                         continue
                     break
 
@@ -6208,6 +6044,10 @@ async def _acontinue_run_stream(
                 if agent_session.session_data is not None and "session_state" in agent_session.session_data:
                     run_response.session_state = agent_session.session_data["session_state"]
 
+                # Set the run status to completed (an unverified terminal outcome wins)
+                if run_response.status != RunStatus.unverified:
+                    run_response.status = RunStatus.completed
+
                 # Create the run completed event
                 completed_event = handle_event(
                     create_run_completed_event(run_response),
@@ -6215,10 +6055,6 @@ async def _acontinue_run_stream(
                     events_to_skip=agent.events_to_skip,  # type: ignore
                     store_events=agent.store_events,
                 )
-
-                # Set the run status to completed (an unverified terminal outcome wins)
-                if run_response.status != RunStatus.unverified:
-                    run_response.status = RunStatus.completed
 
                 # 10. Cleanup and store the run response and session
                 await acleanup_and_store(
@@ -6848,8 +6684,18 @@ def _sync_run_response_with_model_response(
     will redo this work; the duplication is intentional — we need an accurate
     intermediate snapshot.
     """
+    # Merge by tool_call_id: the run may already carry executions from an earlier
+    # verification attempt or a continued leg, and a replace would erase them.
     if model_response.tool_executions is not None:
-        run_response.tools = list(model_response.tool_executions)
+        if run_response.tools is None:
+            run_response.tools = list(model_response.tool_executions)
+        else:
+            existing_by_id = {t.tool_call_id: i for i, t in enumerate(run_response.tools) if t.tool_call_id}
+            for tool in model_response.tool_executions:
+                if tool.tool_call_id and tool.tool_call_id in existing_by_id:
+                    run_response.tools[existing_by_id[tool.tool_call_id]] = tool
+                else:
+                    run_response.tools.append(tool)
     run_response.messages = [m for m in run_messages.messages if m.add_to_agent_memory]
 
 

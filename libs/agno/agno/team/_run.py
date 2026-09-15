@@ -91,6 +91,7 @@ from agno.run.team import (
 )
 from agno.session import TeamSession
 from agno.session._utils import resolve_run_index
+from agno.team._default_tools import delegate_unverified_note
 from agno.tools.function import Function
 from agno.utils.agent import (
     abuild_full_run_storage_copy,
@@ -127,6 +128,7 @@ from agno.utils.log import (
     log_info,
     log_warning,
 )
+from agno.utils.verifiers import require_sync_verification
 from agno.verifiers._gate import VerificationGate
 
 # Strong references to background tasks so they aren't garbage-collected mid-execution.
@@ -265,6 +267,7 @@ def _run_tasks(
         _convert_response_to_structured_format,
         _update_run_response,
         handle_reasoning,
+        verify_response,
     )
     from agno.team._telemetry import log_team_telemetry
     from agno.team._tools import _determine_tools_for_model
@@ -371,11 +374,9 @@ def _run_tasks(
         model_response: Optional[ModelResponse] = None
 
         # The verification gate re-enters the model with an evidence report until the
-        # verifiers pass or the budget is spent; the whole loop is ONE run. A re-entry
-        # re-runs the task loop: its first iteration always calls the model, and the
-        # model can reopen tasks after reading the report, so an already-settled task
-        # list cannot dead-end the re-entry.
-        verification_gate = VerificationGate.for_run(
+        # verifiers pass or the budget is spent; the whole loop is one run. A re-entry
+        # re-runs the task loop from its first iteration, so a settled task list cannot dead-end it.
+        verification_gate = VerificationGate.from_run(
             team,
             run_response=run_response,
             run_messages=run_messages,
@@ -460,7 +461,7 @@ def _run_tasks(
 
                 # A run that needs no tasks ends by answering: with an empty list, one reminder still
                 # goes out, and a second turn that writes text but calls no tool is final. Without this,
-                # an empty list never satisfies all_terminal and a greeting burns max_iterations.
+                # an empty list never satisfies all_terminal and a greeting spends max_iterations.
                 if not task_list.tasks:
                     if len(run_response.tools or []) == n_tools_before_iteration:
                         idle_answer_turns += 1
@@ -489,31 +490,7 @@ def _run_tasks(
             _convert_response_to_structured_format(team, run_response=run_response, run_context=run_context)
 
             # Verify: the checks run on the parsed output, before post-hooks
-            if verification_gate is None:
-                break
-            started = verification_gate.open_attempt()
-            if started is None:
-                break
-            handle_event(
-                started.event,
-                run_response,
-                events_to_skip=team.events_to_skip,  # type: ignore
-                store_events=team.store_events,
-            )
-            decision = verification_gate.settle_attempt()
-            handle_event(
-                decision.event,
-                run_response,
-                events_to_skip=team.events_to_skip,  # type: ignore
-                store_events=team.store_events,
-            )
-            if decision.reenter:
-                raise_if_cancelled(run_response.run_id)  # type: ignore
-                # Team content and reasoning content accumulate across model passes;
-                # the re-entered attempt replaces the rejected answer, not
-                # concatenates onto it.
-                run_response.content = None
-                run_response.reasoning_content = None
+            if verify_response(team, verification_gate, run_response):
                 continue
             break
 
@@ -658,6 +635,7 @@ def _run_tasks_stream(
         _handle_model_response_stream,
         generate_response_with_output_model_stream,
         handle_reasoning_stream,
+        verify_response_stream,
     )
     from agno.team._telemetry import log_team_telemetry
     from agno.team._tools import _determine_tools_for_model
@@ -784,11 +762,9 @@ def _run_tasks_stream(
         accumulated_messages = run_messages.messages
 
         # The verification gate re-enters the model with an evidence report until the
-        # verifiers pass or the budget is spent; the whole loop is ONE run. A re-entry
-        # re-runs the task loop: its first iteration always calls the model, and the
-        # model can reopen tasks after reading the report, so an already-settled task
-        # list cannot dead-end the re-entry.
-        verification_gate = VerificationGate.for_run(
+        # verifiers pass or the budget is spent; the whole loop is one run. A re-entry
+        # re-runs the task loop from its first iteration, so a settled task list cannot dead-end it.
+        verification_gate = VerificationGate.from_run(
             team,
             run_response=run_response,
             run_messages=run_messages,
@@ -959,7 +935,7 @@ def _run_tasks_stream(
 
                 # A run that needs no tasks ends by answering: with an empty list, one reminder still
                 # goes out, and a second turn that writes text but calls no tool is final. Without this,
-                # an empty list never satisfies all_terminal and a greeting burns max_iterations.
+                # an empty list never satisfies all_terminal and a greeting spends max_iterations.
                 if not task_list.tasks:
                     if len(run_response.tools or []) == n_tools_before_iteration:
                         idle_answer_turns += 1
@@ -984,35 +960,8 @@ def _run_tasks_stream(
             _convert_response_to_structured_format(team, run_response=run_response, run_context=run_context)
 
             # Verify: the checks run on the parsed output, before the content-completed event
-            if verification_gate is None:
-                break
-            started = verification_gate.open_attempt()
-            if started is None:
-                break
-            started_event = handle_event(
-                started.event,
-                run_response,
-                events_to_skip=team.events_to_skip,  # type: ignore
-                store_events=team.store_events,
-            )
-            if stream_events:
-                yield started_event
-            decision = verification_gate.settle_attempt()
-            completed_event = handle_event(
-                decision.event,
-                run_response,
-                events_to_skip=team.events_to_skip,  # type: ignore
-                store_events=team.store_events,
-            )
-            if stream_events:
-                yield completed_event
-            if decision.reenter:
-                raise_if_cancelled(run_response.run_id)  # type: ignore
-                # Team content and reasoning content accumulate across model passes;
-                # the re-entered attempt replaces the rejected answer, not
-                # concatenates onto it.
-                run_response.content = None
-                run_response.reasoning_content = None
+            yield from verify_response_stream(team, verification_gate, run_response, stream_events)
+            if verification_gate is not None and verification_gate.reenter:
                 continue
             break
 
@@ -1082,6 +1031,10 @@ def _run_tasks_stream(
 
         raise_if_cancelled(run_response.run_id)  # type: ignore
 
+        # Set the run status to completed (an unverified terminal outcome wins)
+        if run_response.status != RunStatus.unverified:
+            run_response.status = RunStatus.completed
+
         # Create the run completed event
         completed_event = handle_event(
             create_team_run_completed_event(from_run_response=run_response),
@@ -1094,10 +1047,6 @@ def _run_tasks_stream(
         from agno.team._response import generate_team_followups_stream
 
         yield from generate_team_followups_stream(team, run_response=run_response, stream_events=stream_events)
-
-        # Set the run status to completed (an unverified terminal outcome wins)
-        if run_response.status != RunStatus.unverified:
-            run_response.status = RunStatus.completed
 
         # Cleanup and store
         _cleanup_and_store(team, run_response=run_response, session=session)
@@ -1228,6 +1177,7 @@ def _run(
         handle_reasoning,
         parse_response_with_output_model,
         parse_response_with_parser_model,
+        verify_response,
     )
     from agno.team._telemetry import log_team_telemetry
     from agno.team._tools import _determine_tools_for_model
@@ -1359,9 +1309,8 @@ def _run(
                 # Check for cancellation before model call
                 raise_if_cancelled(run_response.run_id)  # type: ignore
 
-                # The verification gate re-enters the model with an evidence report until
-                # the verifiers pass or the budget is spent; the whole loop is ONE run.
-                verification_gate = VerificationGate.for_run(
+                # The gate re-enters the model with the evidence report until the checks pass or the budget is spent
+                verification_gate = VerificationGate.from_run(
                     team,
                     run_response=run_response,
                     run_messages=run_messages,
@@ -1427,32 +1376,8 @@ def _run(
                     # 9. Convert response to structured format
                     _convert_response_to_structured_format(team, run_response=run_response, run_context=run_context)
 
-                    # 9v. Verify: the checks run on the parsed output, before post-hooks
-                    if verification_gate is None:
-                        break
-                    started = verification_gate.open_attempt()
-                    if started is None:
-                        break
-                    handle_event(
-                        started.event,
-                        run_response,
-                        events_to_skip=team.events_to_skip,  # type: ignore
-                        store_events=team.store_events,
-                    )
-                    decision = verification_gate.settle_attempt()
-                    handle_event(
-                        decision.event,
-                        run_response,
-                        events_to_skip=team.events_to_skip,  # type: ignore
-                        store_events=team.store_events,
-                    )
-                    if decision.reenter:
-                        raise_if_cancelled(run_response.run_id)  # type: ignore
-                        # Team content and reasoning content accumulate across model passes;
-                        # the re-entered attempt replaces the rejected answer, not
-                        # concatenates onto it.
-                        run_response.content = None
-                        run_response.reasoning_content = None
+                    # Verify: the checks run on the parsed output, before post-hooks
+                    if verify_response(team, verification_gate, run_response):
                         continue
                     break
 
@@ -1631,6 +1556,7 @@ def _run_stream(
         generate_response_with_output_model_stream,
         handle_reasoning_stream,
         parse_response_with_parser_model_stream,
+        verify_response_stream,
     )
     from agno.team._telemetry import log_team_telemetry
     from agno.team._tools import _determine_tools_for_model
@@ -1782,9 +1708,8 @@ def _run_stream(
                 # Check for cancellation before model processing
                 raise_if_cancelled(run_response.run_id)  # type: ignore
 
-                # The verification gate re-enters the model with an evidence report until
-                # the verifiers pass or the budget is spent; the whole loop is ONE run.
-                verification_gate = VerificationGate.for_run(
+                # The gate re-enters the model with the evidence report until the checks pass or the budget is spent
+                verification_gate = VerificationGate.from_run(
                     team,
                     run_response=run_response,
                     run_messages=run_messages,
@@ -1871,36 +1796,9 @@ def _run_stream(
                         run_context=run_context,
                     )
 
-                    # 7v. Verify: the checks run on the parsed output, before the content-completed event
-                    if verification_gate is None:
-                        break
-                    started = verification_gate.open_attempt()
-                    if started is None:
-                        break
-                    started_event = handle_event(
-                        started.event,
-                        run_response,
-                        events_to_skip=team.events_to_skip,  # type: ignore
-                        store_events=team.store_events,
-                    )
-                    if stream_events:
-                        yield started_event
-                    decision = verification_gate.settle_attempt()
-                    completed_event = handle_event(
-                        decision.event,
-                        run_response,
-                        events_to_skip=team.events_to_skip,  # type: ignore
-                        store_events=team.store_events,
-                    )
-                    if stream_events:
-                        yield completed_event
-                    if decision.reenter:
-                        raise_if_cancelled(run_response.run_id)  # type: ignore
-                        # Team content and reasoning content accumulate across model passes;
-                        # the re-entered attempt replaces the rejected answer, not
-                        # concatenates onto it.
-                        run_response.content = None
-                        run_response.reasoning_content = None
+                    # Verify: the checks run on the parsed output, before the content-completed event
+                    yield from verify_response_stream(team, verification_gate, run_response, stream_events)
+                    if verification_gate is not None and verification_gate.reenter:
                         continue
                     break
 
@@ -1972,6 +1870,10 @@ def _run_stream(
                         )
 
                 raise_if_cancelled(run_response.run_id)  # type: ignore
+                # Set the run status to completed (an unverified terminal outcome wins)
+                if run_response.status != RunStatus.unverified:
+                    run_response.status = RunStatus.completed
+
                 # Create the run completed event
                 completed_event = handle_event(
                     create_team_run_completed_event(
@@ -1986,10 +1888,6 @@ def _run_stream(
                 from agno.team._response import generate_team_followups_stream
 
                 yield from generate_team_followups_stream(team, run_response=run_response, stream_events=stream_events)
-
-                # Set the run status to completed (an unverified terminal outcome wins)
-                if run_response.status != RunStatus.unverified:
-                    run_response.status = RunStatus.completed
 
                 # 10. Cleanup and store the run response
                 _cleanup_and_store(team, run_response=run_response, session=session)
@@ -2173,6 +2071,8 @@ def run_dispatch(
                 team.post_hooks = normalize_post_hooks(team.post_hooks)  # type: ignore
             team._hooks_normalised = True
 
+        require_sync_verification(team)
+
         session_id, user_id = _initialize_session(team, session_id=session_id, user_id=user_id)
 
         image_artifacts, video_artifacts, audio_artifacts, file_artifacts = validate_media_object_id(
@@ -2344,6 +2244,7 @@ async def _arun_tasks(
         _convert_response_to_structured_format,
         _update_run_response,
         ahandle_reasoning,
+        averify_response,
     )
     from agno.team._telemetry import alog_team_telemetry
     from agno.team._tools import _aget_learning_tools, _check_and_refresh_mcp_tools, _determine_tools_for_model
@@ -2466,11 +2367,9 @@ async def _arun_tasks(
         model_response: Optional[ModelResponse] = None
 
         # The verification gate re-enters the model with an evidence report until the
-        # verifiers pass or the budget is spent; the whole loop is ONE run. A re-entry
-        # re-runs the task loop: its first iteration always calls the model, and the
-        # model can reopen tasks after reading the report, so an already-settled task
-        # list cannot dead-end the re-entry.
-        verification_gate = VerificationGate.for_run(
+        # verifiers pass or the budget is spent; the whole loop is one run. A re-entry
+        # re-runs the task loop from its first iteration, so a settled task list cannot dead-end it.
+        verification_gate = VerificationGate.from_run(
             team,
             run_response=run_response,
             run_messages=run_messages,
@@ -2553,7 +2452,7 @@ async def _arun_tasks(
 
                 # A run that needs no tasks ends by answering: with an empty list, one reminder still
                 # goes out, and a second turn that writes text but calls no tool is final. Without this,
-                # an empty list never satisfies all_terminal and a greeting burns max_iterations.
+                # an empty list never satisfies all_terminal and a greeting spends max_iterations.
                 if not task_list.tasks:
                     if len(run_response.tools or []) == n_tools_before_iteration:
                         idle_answer_turns += 1
@@ -2582,31 +2481,7 @@ async def _arun_tasks(
             _convert_response_to_structured_format(team, run_response=run_response, run_context=run_context)
 
             # Verify: the checks run on the parsed output, before post-hooks
-            if verification_gate is None:
-                break
-            started = verification_gate.open_attempt()
-            if started is None:
-                break
-            handle_event(
-                started.event,
-                run_response,
-                events_to_skip=team.events_to_skip,  # type: ignore
-                store_events=team.store_events,
-            )
-            decision = await verification_gate.asettle_attempt()
-            handle_event(
-                decision.event,
-                run_response,
-                events_to_skip=team.events_to_skip,  # type: ignore
-                store_events=team.store_events,
-            )
-            if decision.reenter:
-                await araise_if_cancelled(run_response.run_id)  # type: ignore
-                # Team content and reasoning content accumulate across model passes;
-                # the re-entered attempt replaces the rejected answer, not
-                # concatenates onto it.
-                run_response.content = None
-                run_response.reasoning_content = None
+            if await averify_response(team, verification_gate, run_response):
                 continue
             break
 
@@ -2771,6 +2646,7 @@ async def _arun_tasks_stream(
         _convert_response_to_structured_format,
         agenerate_response_with_output_model_stream,
         ahandle_reasoning_stream,
+        averify_response_stream,
     )
     from agno.team._telemetry import alog_team_telemetry
     from agno.team._tools import _aget_learning_tools, _check_and_refresh_mcp_tools, _determine_tools_for_model
@@ -2914,11 +2790,9 @@ async def _arun_tasks_stream(
         accumulated_messages = run_messages.messages
 
         # The verification gate re-enters the model with an evidence report until the
-        # verifiers pass or the budget is spent; the whole loop is ONE run. A re-entry
-        # re-runs the task loop: its first iteration always calls the model, and the
-        # model can reopen tasks after reading the report, so an already-settled task
-        # list cannot dead-end the re-entry.
-        verification_gate = VerificationGate.for_run(
+        # verifiers pass or the budget is spent; the whole loop is one run. A re-entry
+        # re-runs the task loop from its first iteration, so a settled task list cannot dead-end it.
+        verification_gate = VerificationGate.from_run(
             team,
             run_response=run_response,
             run_messages=run_messages,
@@ -3088,7 +2962,7 @@ async def _arun_tasks_stream(
 
                 # A run that needs no tasks ends by answering: with an empty list, one reminder still
                 # goes out, and a second turn that writes text but calls no tool is final. Without this,
-                # an empty list never satisfies all_terminal and a greeting burns max_iterations.
+                # an empty list never satisfies all_terminal and a greeting spends max_iterations.
                 if not task_list.tasks:
                     if len(run_response.tools or []) == n_tools_before_iteration:
                         idle_answer_turns += 1
@@ -3113,35 +2987,9 @@ async def _arun_tasks_stream(
             _convert_response_to_structured_format(team, run_response=run_response, run_context=run_context)
 
             # Verify: the checks run on the parsed output, before the content-completed event
-            if verification_gate is None:
-                break
-            started = verification_gate.open_attempt()
-            if started is None:
-                break
-            started_event = handle_event(
-                started.event,
-                run_response,
-                events_to_skip=team.events_to_skip,  # type: ignore
-                store_events=team.store_events,
-            )
-            if stream_events:
-                yield started_event
-            decision = await verification_gate.asettle_attempt()
-            completed_event = handle_event(
-                decision.event,
-                run_response,
-                events_to_skip=team.events_to_skip,  # type: ignore
-                store_events=team.store_events,
-            )
-            if stream_events:
-                yield completed_event
-            if decision.reenter:
-                await araise_if_cancelled(run_response.run_id)  # type: ignore
-                # Team content and reasoning content accumulate across model passes;
-                # the re-entered attempt replaces the rejected answer, not
-                # concatenates onto it.
-                run_response.content = None
-                run_response.reasoning_content = None
+            async for event in averify_response_stream(team, verification_gate, run_response, stream_events):
+                yield event
+            if verification_gate is not None and verification_gate.reenter:
                 continue
             break
 
@@ -3213,6 +3061,10 @@ async def _arun_tasks_stream(
 
         await araise_if_cancelled(run_response.run_id)  # type: ignore
 
+        # Set the run status to completed (an unverified terminal outcome wins)
+        if run_response.status != RunStatus.unverified:
+            run_response.status = RunStatus.completed
+
         # Create the run completed event
         completed_event = handle_event(
             create_team_run_completed_event(from_run_response=run_response),
@@ -3228,10 +3080,6 @@ async def _arun_tasks_stream(
             team, run_response=run_response, stream_events=stream_events
         ):
             yield event
-
-        # Set the run status to completed (an unverified terminal outcome wins)
-        if run_response.status != RunStatus.unverified:
-            run_response.status = RunStatus.completed
 
         # Cleanup and store
         await _acleanup_and_store(team, run_response=run_response, session=team_session)
@@ -3392,6 +3240,7 @@ async def _arun(
         agenerate_response_with_output_model,
         ahandle_reasoning,
         aparse_response_with_parser_model,
+        averify_response,
     )
     from agno.team._telemetry import alog_team_telemetry
     from agno.team._tools import _aget_learning_tools, _check_and_refresh_mcp_tools, _determine_tools_for_model
@@ -3545,9 +3394,8 @@ async def _arun(
                 # Check for cancellation before model call
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
 
-                # The verification gate re-enters the model with an evidence report until
-                # the verifiers pass or the budget is spent; the whole loop is ONE run.
-                verification_gate = VerificationGate.for_run(
+                # The gate re-enters the model with the evidence report until the checks pass or the budget is spent
+                verification_gate = VerificationGate.from_run(
                     team,
                     run_response=run_response,
                     run_messages=run_messages,
@@ -3618,32 +3466,8 @@ async def _arun(
                     # 9. Convert response to structured format
                     _convert_response_to_structured_format(team, run_response=run_response, run_context=run_context)
 
-                    # 9v. Verify: the checks run on the parsed output, before post-hooks
-                    if verification_gate is None:
-                        break
-                    started = verification_gate.open_attempt()
-                    if started is None:
-                        break
-                    handle_event(
-                        started.event,
-                        run_response,
-                        events_to_skip=team.events_to_skip,  # type: ignore
-                        store_events=team.store_events,
-                    )
-                    decision = await verification_gate.asettle_attempt()
-                    handle_event(
-                        decision.event,
-                        run_response,
-                        events_to_skip=team.events_to_skip,  # type: ignore
-                        store_events=team.store_events,
-                    )
-                    if decision.reenter:
-                        await araise_if_cancelled(run_response.run_id)  # type: ignore
-                        # Team content and reasoning content accumulate across model passes;
-                        # the re-entered attempt replaces the rejected answer, not
-                        # concatenates onto it.
-                        run_response.content = None
-                        run_response.reasoning_content = None
+                    # Verify: the checks run on the parsed output, before post-hooks
+                    if await averify_response(team, verification_gate, run_response):
                         continue
                     break
 
@@ -4148,6 +3972,7 @@ async def _arun_stream(
         agenerate_response_with_output_model_stream,
         ahandle_reasoning_stream,
         aparse_response_with_parser_model_stream,
+        averify_response_stream,
     )
     from agno.team._telemetry import alog_team_telemetry
     from agno.team._tools import _aget_learning_tools, _check_and_refresh_mcp_tools, _determine_tools_for_model
@@ -4318,9 +4143,8 @@ async def _arun_stream(
                 # Check for cancellation before model processing
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
 
-                # The verification gate re-enters the model with an evidence report until
-                # the verifiers pass or the budget is spent; the whole loop is ONE run.
-                verification_gate = VerificationGate.for_run(
+                # The gate re-enters the model with the evidence report until the checks pass or the budget is spent
+                verification_gate = VerificationGate.from_run(
                     team,
                     run_response=run_response,
                     run_messages=run_messages,
@@ -4409,36 +4233,10 @@ async def _arun_stream(
                     ):
                         yield event
 
-                    # 7v. Verify: the checks run on the parsed output, before the content-completed event
-                    if verification_gate is None:
-                        break
-                    started = verification_gate.open_attempt()
-                    if started is None:
-                        break
-                    started_event = handle_event(
-                        started.event,
-                        run_response,
-                        events_to_skip=team.events_to_skip,  # type: ignore
-                        store_events=team.store_events,
-                    )
-                    if stream_events:
-                        yield started_event
-                    decision = await verification_gate.asettle_attempt()
-                    completed_event = handle_event(
-                        decision.event,
-                        run_response,
-                        events_to_skip=team.events_to_skip,  # type: ignore
-                        store_events=team.store_events,
-                    )
-                    if stream_events:
-                        yield completed_event
-                    if decision.reenter:
-                        await araise_if_cancelled(run_response.run_id)  # type: ignore
-                        # Team content and reasoning content accumulate across model passes;
-                        # the re-entered attempt replaces the rejected answer, not
-                        # concatenates onto it.
-                        run_response.content = None
-                        run_response.reasoning_content = None
+                    # Verify: the checks run on the parsed output, before the content-completed event
+                    async for event in averify_response_stream(team, verification_gate, run_response, stream_events):
+                        yield event
+                    if verification_gate is not None and verification_gate.reenter:
                         continue
                     break
 
@@ -4513,6 +4311,10 @@ async def _arun_stream(
 
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
 
+                # Set the run status to completed (an unverified terminal outcome wins)
+                if run_response.status != RunStatus.unverified:
+                    run_response.status = RunStatus.completed
+
                 # Create the run completed event
                 completed_event = handle_event(
                     create_team_run_completed_event(from_run_response=run_response),
@@ -4528,10 +4330,6 @@ async def _arun_stream(
                     team, run_response=run_response, stream_events=stream_events
                 ):
                     yield event
-
-                # Set the run status to completed (an unverified terminal outcome wins)
-                if run_response.status != RunStatus.unverified:
-                    run_response.status = RunStatus.completed
 
                 # 10. Cleanup and store the run response and session
                 await _acleanup_and_store(team, run_response=run_response, session=team_session)
@@ -5532,7 +5330,17 @@ def _sync_team_run_response_with_model_response(
             for tool in new_tools:
                 if tool.child_run_id is None and tool.tool_call_id in existing_child_run_ids:
                     tool.child_run_id = existing_child_run_ids[tool.tool_call_id]
-        run_response.tools = new_tools
+        # Merge by tool_call_id: the run may already carry executions from an earlier
+        # verification attempt or a continued leg, and a replace would erase them.
+        if run_response.tools is None:
+            run_response.tools = new_tools
+        else:
+            existing_by_id = {t.tool_call_id: i for i, t in enumerate(run_response.tools) if t.tool_call_id}
+            for tool in new_tools:
+                if tool.tool_call_id and tool.tool_call_id in existing_by_id:
+                    run_response.tools[existing_by_id[tool.tool_call_id]] = tool
+                else:
+                    run_response.tools.append(tool)
     run_response.messages = [m for m in run_messages.messages if m.add_to_agent_memory]
 
 
@@ -6983,6 +6791,9 @@ def _route_requirements_to_members(
             session.upsert_run(_member_run_for_storage(team, session, member_response))
 
             content = getattr(member_response, "content", None) or "Task completed"
+            member_note = delegate_unverified_note(team, member, member_response)
+            if member_note is not None:
+                content = f"{content}\n{member_note}"
             member_results.append(f"[{member.name or member_id}]: {content}")
 
         # Clear _member_run_response references to allow GC of the member RunOutput
@@ -7090,6 +6901,9 @@ def _route_requirements_to_members_stream(
         else:
             session.upsert_run(_member_run_for_storage(team, session, member_response))
             content = getattr(member_response, "content", None) or "Task completed"
+            member_note = delegate_unverified_note(team, member, member_response)
+            if member_note is not None:
+                content = f"{content}\n{member_note}"
             member_results.append(f"[{member.name or member_id}]: {content}")
 
         # Clear _member_run_response references to allow GC of the member RunOutput
@@ -7170,6 +6984,9 @@ async def _aroute_requirements_to_members(
             session.upsert_run(await _amember_run_for_storage(team, session, member_response))
 
             content = getattr(member_response, "content", None) or "Task completed"
+            member_note = delegate_unverified_note(team, member, member_response)
+            if member_note is not None:
+                content = f"{content}\n{member_note}"
             return f"[{member.name or member_id}]: {content}"
 
     tasks = [_continue_member(member, member_run_output, reqs) for member, member_run_output, reqs in groups]
@@ -7177,14 +6994,12 @@ async def _aroute_requirements_to_members(
 
     member_results: List[str] = []
     for r in results:
-        if isinstance(r, RunNotContinuableError):
-            # A member (e.g. a sub-team) refused the continue outright; the
-            # paused state is intact, so surface it instead of completing
-            # the team run without the approved tool.
-            raise r
         if isinstance(r, BaseException):
-            log_warning(f"Member continue_run failed: {r}")
-        elif isinstance(r, str):
+            # A member refused or failed the continue; the paused state is intact, so
+            # surface it (like the sync version) instead of completing the team run without
+            # the approved tool.
+            raise r
+        if isinstance(r, str):
             member_results.append(r)
     return member_results
 
@@ -7290,6 +7105,9 @@ async def _aroute_requirements_to_members_stream(
         else:
             session.upsert_run(await _amember_run_for_storage(team, session, member_response))
             content = getattr(member_response, "content", None) or "Task completed"
+            member_note = delegate_unverified_note(team, member, member_response)
+            if member_note is not None:
+                content = f"{content}\n{member_note}"
             member_results.append(f"[{member.name or member_id}]: {content}")
 
         # Clear _member_run_response references to allow GC of the member RunOutput
@@ -7988,6 +7806,9 @@ def continue_run_dispatch(
     # Refused here rather than at the persist below, which runs after the model call.
     if isinstance(team.media_storage, AsyncMediaStorage):
         raise ValueError("Cannot use sync continue_run() with an AsyncMediaStorage. Use acontinue_run() instead.")
+
+    # Refused here rather than at the gate, which runs after the model call.
+    require_sync_verification(team)
 
     background_tasks = kwargs.pop("background_tasks", None)
     if background_tasks is not None:
@@ -8756,6 +8577,7 @@ def _continue_run(
         _update_run_response,
         parse_response_with_output_model,
         parse_response_with_parser_model,
+        verify_response,
     )
     from agno.team._telemetry import log_team_telemetry
     from agno.utils.events import create_team_run_continued_event
@@ -8778,9 +8600,8 @@ def _continue_run(
             try:
                 raise_if_cancelled(run_response.run_id)  # type: ignore
 
-                # The verification gate re-enters the model with an evidence report until
-                # the verifiers pass or the budget is spent; the whole loop is ONE run.
-                verification_gate = VerificationGate.for_run(
+                # The gate re-enters the model with the evidence report until the checks pass or the budget is spent
+                verification_gate = VerificationGate.from_run(
                     team,
                     run_response=run_response,
                     run_messages=run_messages,
@@ -8843,31 +8664,7 @@ def _continue_run(
                     store_media_util(run_response, model_response)
 
                     # Verify: the checks run on the parsed output, before post-hooks
-                    if verification_gate is None:
-                        break
-                    started = verification_gate.open_attempt()
-                    if started is None:
-                        break
-                    handle_event(
-                        started.event,
-                        run_response,
-                        events_to_skip=team.events_to_skip,  # type: ignore
-                        store_events=team.store_events,
-                    )
-                    decision = verification_gate.settle_attempt()
-                    handle_event(
-                        decision.event,
-                        run_response,
-                        events_to_skip=team.events_to_skip,  # type: ignore
-                        store_events=team.store_events,
-                    )
-                    if decision.reenter:
-                        raise_if_cancelled(run_response.run_id)  # type: ignore
-                        # Team content and reasoning content accumulate across model passes;
-                        # the re-entered attempt replaces the rejected answer, not
-                        # concatenates onto it.
-                        run_response.content = None
-                        run_response.reasoning_content = None
+                    if verify_response(team, verification_gate, run_response):
                         continue
                     break
 
@@ -8990,6 +8787,7 @@ def _continue_run_stream(
         _handle_model_response_stream,
         generate_response_with_output_model_stream,
         parse_response_with_parser_model_stream,
+        verify_response_stream,
     )
     from agno.team._telemetry import log_team_telemetry
     from agno.utils.events import create_team_run_continued_event
@@ -9020,9 +8818,8 @@ def _continue_run_stream(
                     stream_events=stream_events,
                 )
 
-                # The verification gate re-enters the model with an evidence report until
-                # the verifiers pass or the budget is spent; the whole loop is ONE run.
-                verification_gate = VerificationGate.for_run(
+                # The gate re-enters the model with the evidence report until the checks pass or the budget is spent
+                verification_gate = VerificationGate.from_run(
                     team,
                     run_response=run_response,
                     run_messages=run_messages,
@@ -9109,35 +8906,8 @@ def _continue_run_stream(
                     )
 
                     # Verify: the checks run on the parsed output, before the content-completed event
-                    if verification_gate is None:
-                        break
-                    started = verification_gate.open_attempt()
-                    if started is None:
-                        break
-                    started_event = handle_event(
-                        started.event,
-                        run_response,
-                        events_to_skip=team.events_to_skip,  # type: ignore
-                        store_events=team.store_events,
-                    )
-                    if stream_events:
-                        yield started_event
-                    decision = verification_gate.settle_attempt()
-                    completed_event = handle_event(
-                        decision.event,
-                        run_response,
-                        events_to_skip=team.events_to_skip,  # type: ignore
-                        store_events=team.store_events,
-                    )
-                    if stream_events:
-                        yield completed_event
-                    if decision.reenter:
-                        raise_if_cancelled(run_response.run_id)  # type: ignore
-                        # Team content and reasoning content accumulate across model passes;
-                        # the re-entered attempt replaces the rejected answer, not
-                        # concatenates onto it.
-                        run_response.content = None
-                        run_response.reasoning_content = None
+                    yield from verify_response_stream(team, verification_gate, run_response, stream_events)
+                    if verification_gate is not None and verification_gate.reenter:
                         continue
                     break
 
@@ -9192,6 +8962,9 @@ def _continue_run_stream(
                             store_events=team.store_events,
                         )
 
+                if run_response.status != RunStatus.unverified:
+                    run_response.status = RunStatus.completed
+
                 # Completed event
                 completed_event = handle_event(
                     create_team_run_completed_event(run_response),
@@ -9199,9 +8972,6 @@ def _continue_run_stream(
                     events_to_skip=team.events_to_skip,
                     store_events=team.store_events,
                 )
-
-                if run_response.status != RunStatus.unverified:
-                    run_response.status = RunStatus.completed
                 _cleanup_and_store(team, run_response=run_response, session=session)
 
                 if stream_events:
@@ -9996,6 +9766,7 @@ async def _acontinue_run(
     """Continue a paused team run (async, non-streaming)."""
     from agno.team._hooks import _aexecute_post_hooks
     from agno.team._init import _disconnect_connectable_tools, _disconnect_mcp_tools
+    from agno.team._response import averify_response
     from agno.team._telemetry import alog_team_telemetry
     from agno.team._tools import _aget_learning_tools, _check_and_refresh_mcp_tools, _determine_tools_for_model
 
@@ -10307,9 +10078,8 @@ async def _acontinue_run(
                     run_response.status = RunStatus.running
                     run_response.content = None
 
-                    # The verification gate re-enters the model with an evidence report until
-                    # the verifiers pass or the budget is spent; the whole loop is ONE run.
-                    verification_gate = VerificationGate.for_run(
+                    # The gate re-enters the model with the evidence report until the checks pass or the budget is spent
+                    verification_gate = VerificationGate.from_run(
                         team,
                         run_response=run_response,
                         run_messages=run_messages,
@@ -10336,31 +10106,7 @@ async def _acontinue_run(
                             return paused_result
 
                         # Verify: the checks run on the parsed output, before post-hooks
-                        if verification_gate is None:
-                            break
-                        started = verification_gate.open_attempt()
-                        if started is None:
-                            break
-                        handle_event(
-                            started.event,
-                            run_response,
-                            events_to_skip=team.events_to_skip,  # type: ignore
-                            store_events=team.store_events,
-                        )
-                        decision = await verification_gate.asettle_attempt()
-                        handle_event(
-                            decision.event,
-                            run_response,
-                            events_to_skip=team.events_to_skip,  # type: ignore
-                            store_events=team.store_events,
-                        )
-                        if decision.reenter:
-                            await araise_if_cancelled(run_response.run_id)  # type: ignore
-                            # Team content and reasoning content accumulate across model passes;
-                            # the re-entered attempt replaces the rejected answer, not
-                            # concatenates onto it.
-                            run_response.content = None
-                            run_response.reasoning_content = None
+                        if await averify_response(team, verification_gate, run_response):
                             continue
                         break
 
@@ -10397,9 +10143,8 @@ async def _acontinue_run(
 
                     log_debug(f"Team Continue Run (Member HITL): {run_response.run_id}", center=True)
 
-                    # The verification gate re-enters the model with an evidence report until
-                    # the verifiers pass or the budget is spent; the whole loop is ONE run.
-                    verification_gate = VerificationGate.for_run(
+                    # The gate re-enters the model with the evidence report until the checks pass or the budget is spent
+                    verification_gate = VerificationGate.from_run(
                         team,
                         run_response=run_response,
                         run_messages=run_messages,
@@ -10426,31 +10171,7 @@ async def _acontinue_run(
                             return paused_result
 
                         # Verify: the checks run on the parsed output, before post-hooks
-                        if verification_gate is None:
-                            break
-                        started = verification_gate.open_attempt()
-                        if started is None:
-                            break
-                        handle_event(
-                            started.event,
-                            run_response,
-                            events_to_skip=team.events_to_skip,  # type: ignore
-                            store_events=team.store_events,
-                        )
-                        decision = await verification_gate.asettle_attempt()
-                        handle_event(
-                            decision.event,
-                            run_response,
-                            events_to_skip=team.events_to_skip,  # type: ignore
-                            store_events=team.store_events,
-                        )
-                        if decision.reenter:
-                            await araise_if_cancelled(run_response.run_id)  # type: ignore
-                            # Team content and reasoning content accumulate across model passes;
-                            # the re-entered attempt replaces the rejected answer, not
-                            # concatenates onto it.
-                            run_response.content = None
-                            run_response.reasoning_content = None
+                        if await averify_response(team, verification_gate, run_response):
                             continue
                         break
 
@@ -10596,6 +10317,7 @@ async def _acontinue_run_stream(
         _ahandle_model_response_stream,
         agenerate_response_with_output_model_stream,
         aparse_response_with_parser_model_stream,
+        averify_response_stream,
     )
     from agno.team._telemetry import alog_team_telemetry
     from agno.team._tools import _aget_learning_tools, _check_and_refresh_mcp_tools, _determine_tools_for_model
@@ -10923,9 +10645,8 @@ async def _acontinue_run_stream(
                         await araise_if_cancelled(run_response.run_id)  # type: ignore
                         yield event
 
-                    # The verification gate re-enters the model with an evidence report until
-                    # the verifiers pass or the budget is spent; the whole loop is ONE run.
-                    verification_gate = VerificationGate.for_run(
+                    # The gate re-enters the model with the evidence report until the checks pass or the budget is spent
+                    verification_gate = VerificationGate.from_run(
                         team,
                         run_response=run_response,
                         run_messages=run_messages,
@@ -11016,35 +10737,11 @@ async def _acontinue_run_stream(
                             yield event
 
                         # Verify: the checks run on the parsed output, before the content-completed event
-                        if verification_gate is None:
-                            break
-                        started = verification_gate.open_attempt()
-                        if started is None:
-                            break
-                        started_event = handle_event(
-                            started.event,
-                            run_response,
-                            events_to_skip=team.events_to_skip,  # type: ignore
-                            store_events=team.store_events,
-                        )
-                        if stream_events:
-                            yield started_event
-                        decision = await verification_gate.asettle_attempt()
-                        completed_event = handle_event(
-                            decision.event,
-                            run_response,
-                            events_to_skip=team.events_to_skip,  # type: ignore
-                            store_events=team.store_events,
-                        )
-                        if stream_events:
-                            yield completed_event
-                        if decision.reenter:
-                            await araise_if_cancelled(run_response.run_id)  # type: ignore
-                            # Team content and reasoning content accumulate across model passes;
-                            # the re-entered attempt replaces the rejected answer, not
-                            # concatenates onto it.
-                            run_response.content = None
-                            run_response.reasoning_content = None
+                        async for event in averify_response_stream(
+                            team, verification_gate, run_response, stream_events
+                        ):
+                            yield event
+                        if verification_gate is not None and verification_gate.reenter:
                             continue
                         break
 
@@ -11092,9 +10789,8 @@ async def _acontinue_run_stream(
                             store_events=team.store_events,
                         )
 
-                    # The verification gate re-enters the model with an evidence report until
-                    # the verifiers pass or the budget is spent; the whole loop is ONE run.
-                    verification_gate = VerificationGate.for_run(
+                    # The gate re-enters the model with the evidence report until the checks pass or the budget is spent
+                    verification_gate = VerificationGate.from_run(
                         team,
                         run_response=run_response,
                         run_messages=run_messages,
@@ -11183,35 +10879,11 @@ async def _acontinue_run_stream(
                             yield event
 
                         # Verify: the checks run on the parsed output, before the content-completed event
-                        if verification_gate is None:
-                            break
-                        started = verification_gate.open_attempt()
-                        if started is None:
-                            break
-                        started_event = handle_event(
-                            started.event,
-                            run_response,
-                            events_to_skip=team.events_to_skip,  # type: ignore
-                            store_events=team.store_events,
-                        )
-                        if stream_events:
-                            yield started_event
-                        decision = await verification_gate.asettle_attempt()
-                        completed_event = handle_event(
-                            decision.event,
-                            run_response,
-                            events_to_skip=team.events_to_skip,  # type: ignore
-                            store_events=team.store_events,
-                        )
-                        if stream_events:
-                            yield completed_event
-                        if decision.reenter:
-                            await araise_if_cancelled(run_response.run_id)  # type: ignore
-                            # Team content and reasoning content accumulate across model passes;
-                            # the re-entered attempt replaces the rejected answer, not
-                            # concatenates onto it.
-                            run_response.content = None
-                            run_response.reasoning_content = None
+                        async for event in averify_response_stream(
+                            team, verification_gate, run_response, stream_events
+                        ):
+                            yield event
+                        if verification_gate is not None and verification_gate.reenter:
                             continue
                         break
 
@@ -11266,6 +10938,9 @@ async def _acontinue_run_stream(
                             store_events=team.store_events,
                         )
 
+                if run_response.status != RunStatus.unverified:
+                    run_response.status = RunStatus.completed
+
                 # Completed
                 completed_event = handle_event(
                     create_team_run_completed_event(run_response),
@@ -11273,9 +10948,6 @@ async def _acontinue_run_stream(
                     events_to_skip=team.events_to_skip,
                     store_events=team.store_events,
                 )
-
-                if run_response.status != RunStatus.unverified:
-                    run_response.status = RunStatus.completed
                 await _acleanup_and_store(team, run_response=run_response, session=team_session)
 
                 if stream_events:

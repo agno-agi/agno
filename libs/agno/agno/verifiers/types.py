@@ -1,31 +1,65 @@
 """Core types for agno.verifiers: Verdict, the loop config, and the verification record."""
 
 import json
+import math
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional
+from enum import Enum
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
+
+from agno.utils.serialize import json_serializer
+from agno.verifiers.fingerprints import coerce_fingerprint
 
 if TYPE_CHECKING:
     from agno.verifiers.fingerprints import StateFingerprint
 
 # Hard cap on any single report, inclusive of the elision marker.
-REPORT_CAP_BYTES = 6144
+MAX_REPORT_BYTES = 6144
+
+# Verifier names are identifiers in the report block, not evidence; the body carries detail.
+MAX_NAME_BYTES = 120
 
 # Sits between the kept head and the kept tail of a truncated report. 16 bytes of UTF-8.
 ELISION = " …[truncated] "
 
-StopReason = Literal["passed", "exhausted", "timeout", "noop", "fatal"]
+
+class VerificationStatus(str, Enum):
+    """Where a verification record stands"""
+
+    pending = "pending"
+    verified = "verified"
+    unverified = "unverified"
+
+
+class VerificationStopReason(str, Enum):
+    """Why a concluded verification loop stopped"""
+
+    passed = "passed"
+    exhausted = "exhausted"
+    timeout = "timeout"
+    unchanged_state = "unchanged_state"
+    fatal = "fatal"
 
 
 def _json_safe(value: Any) -> Any:
-    """Coerce verifier-supplied data into something every JSON serialiser accepts. The record
-    is persisted with the run row; one Path or set in a verdict must not drop the row."""
+    """Verifier-supplied data as plain JSON, or None when it cannot be. The record is persisted with
+    the run row, so a NaN, a lone surrogate or a circular reference must not lose the row."""
+
+    def scrub(item: Any) -> Any:
+        if isinstance(item, str):
+            return encodable(item)
+        if isinstance(item, float) and not math.isfinite(item):
+            return None
+        if isinstance(item, dict):
+            return {encodable(str(k)): scrub(v) for k, v in item.items()}
+        if isinstance(item, (list, tuple, set, frozenset)):
+            return [scrub(v) for v in item]
+        return item
+
     if value is None:
         return None
     try:
-        # allow_nan=False: NaN/Infinity survive Python's json round-trip but are invalid
-        # JSON, so a downstream store would reject the whole run row.
-        return json.loads(json.dumps(value, default=str, allow_nan=False))
-    except (TypeError, ValueError):
+        return json.loads(json.dumps(scrub(value), default=lambda o: scrub(json_serializer(o)), allow_nan=False))
+    except (TypeError, ValueError, RecursionError):
         return None
 
 
@@ -44,7 +78,7 @@ def encodable(text: str) -> str:
         return text.encode("utf-8", errors="backslashreplace").decode("utf-8")
 
 
-def cap_text(text: str, cap: int = REPORT_CAP_BYTES) -> str:
+def cap_text(text: str, cap: int = MAX_REPORT_BYTES) -> str:
     """Truncate `text` to at most `cap` bytes of UTF-8, keeping the head and the tail.
 
     The head gets one third of the budget and the tail two thirds: test runners and compilers
@@ -71,11 +105,11 @@ def cap_text(text: str, cap: int = REPORT_CAP_BYTES) -> str:
 class Verdict:
     """One verifier's decision about one attempt.
 
-    `report` is what the model sees on failure; it is capped to REPORT_CAP_BYTES in
-    `__post_init__` so no caller can exceed it. `data` is for programmatic consumers and is
+    `report` is what the model sees on failure; it is capped to MAX_REPORT_BYTES in
+    `__post_init__` so no caller can exceed it. `detail` is for programmatic consumers and is
     never rendered to the model. `required` and `skipped` are stamped by the loop from the
     check's policy: an advisory (required=False) failure is reported but never gates the
-    outcome, and a skipped check (its run_when said no) is recorded without running. A check
+    outcome, and a skipped check (its run_condition said no) is recorded without running. A check
     cannot skip itself: the loop stamps skipped=False onto any verdict a check returned,
     because a returned skipped=True on a failure would pass the attempt vacuously.
     """
@@ -83,15 +117,14 @@ class Verdict:
     passed: bool
     report: str = ""
     name: str = ""
-    data: Optional[Dict[str, Any]] = None
+    detail: Optional[Dict[str, Any]] = None
+    # A failure retrying cannot fix (a harness error); the verifier sets it
+    fatal: bool = False
     required: bool = True
     skipped: bool = False
 
     def __post_init__(self) -> None:
-        if not isinstance(self.name, str):
-            self.name = "" if self.name is None else str(self.name)
-        if not isinstance(self.report, str):
-            self.report = str(self.report)
+        self.name = cap_text(self.name, MAX_NAME_BYTES)
         if not isinstance(self.passed, bool):
             # Only a real bool decides a run. bool("false") is True; len(failures) is truthy;
             # an exit code is truthy on failure. None of those may verify a run.
@@ -127,9 +160,10 @@ class Verdict:
             "name": self.name,
             "passed": self.passed,
             "report": self.report,
-            "data": _json_safe(self.data),
+            "detail": _json_safe(self.detail),
             "required": self.required,
             "skipped": self.skipped,
+            "fatal": self.fatal,
         }
 
     @classmethod
@@ -138,46 +172,37 @@ class Verdict:
             passed=data.get("passed", False),
             report=data.get("report", ""),
             name=data.get("name", ""),
-            data=data.get("data"),
+            detail=data.get("detail"),
             required=data.get("required", True),
             skipped=data.get("skipped", False),
+            fatal=data.get("fatal", False),
         )
 
 
 @dataclass
 class VerificationConfig:
-    """Shared-loop budget and options for `Agent(verifiers=...)` / `Team(verifiers=...)`.
+    """Shared-loop budget and options for ``Agent(verifiers=...)`` and ``Team(verifiers=...)``.
 
-    Holds only what is shared by all verifiers on the agent: one model re-entry serves every
-    verifier, so the attempt budget and the wall clock are properties of the loop, not of any
-    one check. Per-check configuration (a shell command's timeout, a scorer's threshold)
-    lives on the verifier instance itself.
-
-    `max_attempts` counts model attempts in total, the first included. `timeout_s` is a wall
-    clock measured from the first model call and checked only between attempts: a running
-    model call or verifier is never interrupted, so the run may overshoot by one attempt plus
-    one verifier pass. `stop_on_noop` requires `fingerprint` and ends a FAILED attempt whose
-    world state is unchanged as unverified — an agent that "completes" without changing the
-    world is the commonest lie. `add_notice` appends the verification paragraph to the
-    system message so the model knows completion is checked before its first attempt.
+    One model re-entry serves every verifier, so the budget and the clock are properties of
+    the loop; per-check configuration lives on the verifier. ``max_attempts`` counts model
+    attempts, the first included. ``timeout`` is checked between attempts only, so a run may
+    overshoot by one attempt plus one verifier pass. ``stop_on_unchanged_state`` requires ``fingerprint``
+    and ends a failed attempt that changed nothing as unverified. ``add_verification_to_context`` names the
+    checks in the system message, so a check named for its expected answer gives it away.
     """
 
     max_attempts: int = 3
-    timeout_s: Optional[float] = None
-    stop_on_noop: bool = False
+    timeout: Optional[float] = None
+    stop_on_unchanged_state: bool = False
     fingerprint: Optional["StateFingerprint"] = None
-    add_notice: bool = True
+    add_verification_to_context: bool = True
 
     def __post_init__(self) -> None:
         if self.max_attempts < 1:
             raise ValueError("VerificationConfig.max_attempts must be at least 1")
-        if self.stop_on_noop and self.fingerprint is None:
-            raise ValueError("VerificationConfig(stop_on_noop=True) requires a fingerprint")
+        if self.stop_on_unchanged_state and self.fingerprint is None:
+            raise ValueError("VerificationConfig(stop_on_unchanged_state=True) requires a fingerprint")
         if self.fingerprint is not None:
-            # Coerce here so a capture-only fingerprint object gets its async twin derived;
-            # uncoerced, the async legs fail the capture and noop detection is silently inert.
-            from agno.verifiers.fingerprints import coerce_fingerprint
-
             self.fingerprint = coerce_fingerprint(self.fingerprint)
 
 
@@ -185,38 +210,36 @@ class VerificationConfig:
 class VerificationAttempt:
     """One model attempt inside one verified run.
 
-    `verdicts` is empty only when the run left the loop before this attempt's verifiers ran
-    (paused, error, cancelled). `fingerprint` is captured after the attempt's model stopped
-    and before its verifiers ran: it is the state the verifiers judged. `compared_against` is
-    the baseline `noop` was decided against — the run's baseline for the first attempt, and
-    for later attempts a capture SETTLED after the previous attempt's verifiers ran, so a
-    verifier's own artefacts (a `.pytest_cache`, a formatter pass) are never charged to the
-    model as work. None never compares equal to anything, so `noop` is False whenever either
-    side is unknown. `message_index` is the index in `RunOutput.messages` of the first
-    message of this attempt; slice `messages[a.message_index : next_a.message_index]` for one
-    attempt's transcript.
+    ``verdicts`` is empty only when the run left the loop before the checks ran (paused, error,
+    cancelled). ``fingerprint`` is captured after the model stopped and before the checks ran;
+    ``compared_against`` is the baseline settled after the previous attempt's checks, so a
+    check's own artifacts are never charged to the model as work, and None never compares
+    equal. ``message_index`` is where this attempt starts in ``RunOutput.messages``.
     """
 
     index: int
     verdicts: List[Verdict] = field(default_factory=list)
     fingerprint: Optional[str] = None
     compared_against: Optional[str] = None
-    noop: bool = False
+    state_unchanged: bool = False
     message_index: int = 0
 
     @property
     def passed(self) -> bool:
         """Every required, non-skipped check passed. Advisory failures and skipped checks
-        never gate; an attempt whose checks are all advisory passes with warnings on record."""
-        return bool(self.verdicts) and all(v.passed is True for v in self.verdicts if v.gates)
+        never gate; an attempt whose checks are all advisory passes with warnings on record.
+        An attempt on which no check ran at all cannot pass: it verified nothing."""
+        ran = [v for v in self.verdicts if not v.skipped]
+        return bool(ran) and all(v.passed is True for v in ran if v.required)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
             "index": self.index,
             "verdicts": [v.to_dict() for v in self.verdicts],
-            "fingerprint": self.fingerprint,
-            "compared_against": self.compared_against,
-            "noop": self.noop,
+            # A user fingerprint may carry a lone surrogate, which the run row cannot store
+            "fingerprint": encodable(self.fingerprint) if self.fingerprint is not None else None,
+            "compared_against": encodable(self.compared_against) if self.compared_against is not None else None,
+            "state_unchanged": self.state_unchanged,
             "message_index": self.message_index,
         }
 
@@ -227,7 +250,7 @@ class VerificationAttempt:
             verdicts=[Verdict.from_dict(v) for v in data.get("verdicts") or []],
             fingerprint=data.get("fingerprint"),
             compared_against=data.get("compared_against"),
-            noop=data.get("noop", False),
+            state_unchanged=data.get("state_unchanged", False),
             message_index=data.get("message_index", 0),
         )
 
@@ -238,31 +261,41 @@ class Verification:
 
     `status` is "pending" while the loop is open (and on a run that left it paused, errored
     or cancelled before concluding); a concluded record is "verified" or "unverified". The
-    record describes the run's LAST GATED attempt window, not a mirror of RunStatus: a later
+    record describes the run's last gated attempt window, not a mirror of RunStatus: a later
     continuation by an owner without verifiers can complete the run while the record still
     reads "unverified" - genuine audit history, healed by the next gated continuation.
     `stop_reason` is "passed" iff verified. `budget_baseline` is the number of attempts made
     before the current continuation window: continuing a run that ended unverified restarts
     the attempt budget for the new user instruction while keeping the full attempt history,
     so the budget check is `len(attempts) - budget_baseline >= max_attempts`.
+    `baseline_fingerprint` is the baseline the open attempt compares against; it rides a HITL
+    pause so the resumed attempt is compared against the state from before the pause.
     """
 
-    status: Literal["pending", "verified", "unverified"] = "pending"
-    stop_reason: Optional[StopReason] = None
+    status: VerificationStatus = VerificationStatus.pending
+    stop_reason: Optional[VerificationStopReason] = None
     attempts: List[VerificationAttempt] = field(default_factory=list)
     baseline_fingerprint: Optional[str] = None
     budget_baseline: int = 0
 
+    def __post_init__(self) -> None:
+        # A plain string (a hand-built record) becomes the member; an unknown value raises.
+        self.status = VerificationStatus(self.status)
+        if self.stop_reason is not None:
+            self.stop_reason = VerificationStopReason(self.stop_reason)
+
     @property
     def passed(self) -> bool:
-        return self.status == "verified"
+        return self.status == VerificationStatus.verified
 
     def to_dict(self) -> Dict[str, Any]:
         return {
-            "status": self.status,
-            "stop_reason": self.stop_reason,
+            "status": self.status.value,
+            "stop_reason": self.stop_reason.value if self.stop_reason is not None else None,
             "attempts": [a.to_dict() for a in self.attempts],
-            "baseline_fingerprint": self.baseline_fingerprint,
+            "baseline_fingerprint": encodable(self.baseline_fingerprint)
+            if self.baseline_fingerprint is not None
+            else None,
             "budget_baseline": self.budget_baseline,
         }
 

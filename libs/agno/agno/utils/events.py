@@ -82,18 +82,14 @@ from agno.run.team import TaskIterationCompletedEvent as TeamTaskIterationComple
 from agno.run.team import TaskIterationStartedEvent as TeamTaskIterationStartedEvent
 from agno.run.team import TaskStateUpdatedEvent as TeamTaskStateUpdatedEvent
 from agno.run.team import TaskUpdatedEvent as TeamTaskUpdatedEvent
-from agno.run.team import (
-    TeamRunEvent,
-    TeamRunInput,
-    TeamRunOutput,
-    TeamRunOutputEvent,
-    TeamVerificationCompletedEvent,
-    TeamVerificationStartedEvent,
-)
+from agno.run.team import TeamRunEvent, TeamRunInput, TeamRunOutput, TeamRunOutputEvent
 from agno.run.team import ToolCallCompletedEvent as TeamToolCallCompletedEvent
 from agno.run.team import ToolCallErrorEvent as TeamToolCallErrorEvent
 from agno.run.team import ToolCallStartedEvent as TeamToolCallStartedEvent
+from agno.run.team import VerificationCompletedEvent as TeamVerificationCompletedEvent
+from agno.run.team import VerificationStartedEvent as TeamVerificationStartedEvent
 from agno.session.summary import SessionSummary
+from agno.verifiers.types import Verdict
 
 
 def create_team_run_started_event(from_run_response: TeamRunOutput) -> TeamRunStartedEvent:
@@ -142,6 +138,7 @@ def create_team_run_completed_event(from_run_response: TeamRunOutput) -> TeamRun
         metadata=from_run_response.metadata,  # type: ignore
         metrics=from_run_response.metrics,  # type: ignore
         session_state=from_run_response.session_state,  # type: ignore
+        status=from_run_response.status.value if from_run_response.status is not None else None,
     )
 
 
@@ -168,6 +165,7 @@ def create_run_completed_event(from_run_response: RunOutput) -> RunCompletedEven
         metadata=from_run_response.metadata,  # type: ignore
         metrics=from_run_response.metrics,  # type: ignore
         session_state=from_run_response.session_state,  # type: ignore
+        status=from_run_response.status.value if from_run_response.status is not None else None,
     )
 
 
@@ -822,8 +820,8 @@ def create_verification_completed_event(
     attempt: int,
     max_attempts: int,
     passed: bool,
-    verdicts: Optional[List[Dict[str, Any]]] = None,
-    noop: bool = False,
+    verdicts: Optional[List[Verdict]] = None,
+    state_unchanged: bool = False,
     stop_reason: Optional[str] = None,
 ) -> VerificationCompletedEvent:
     return VerificationCompletedEvent(
@@ -835,7 +833,7 @@ def create_verification_completed_event(
         max_attempts=max_attempts,
         passed=passed,
         verdicts=verdicts,
-        noop=noop,
+        state_unchanged=state_unchanged,
         stop_reason=stop_reason,
     )
 
@@ -1090,8 +1088,8 @@ def create_team_verification_completed_event(
     attempt: int,
     max_attempts: int,
     passed: bool,
-    verdicts: Optional[List[Dict[str, Any]]] = None,
-    noop: bool = False,
+    verdicts: Optional[List[Verdict]] = None,
+    state_unchanged: bool = False,
     stop_reason: Optional[str] = None,
 ) -> TeamVerificationCompletedEvent:
     return TeamVerificationCompletedEvent(
@@ -1103,7 +1101,7 @@ def create_team_verification_completed_event(
         max_attempts=max_attempts,
         passed=passed,
         verdicts=verdicts,
-        noop=noop,
+        state_unchanged=state_unchanged,
         stop_reason=stop_reason,
     )
 

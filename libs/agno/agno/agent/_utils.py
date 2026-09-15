@@ -125,6 +125,9 @@ SHARED_BY_REFERENCE_FIELDS = (
     "compression_manager",
     "learning",
     "skills",
+    # A verifier may carry a judge model or a fingerprint over a live process
+    "verifiers",
+    "verification",
 )
 
 

@@ -292,14 +292,12 @@ class Team:
     _run_hooks_in_background: Optional[bool] = None
 
     # --- Verification ---
-    # Checks that run when the model stops; a failure is sent back to the model as evidence
-    # and the run continues, inside the same run. A run that never passes within budget ends
+    # Checks that run when the model stops; a run that never passes within budget ends
     # with RunStatus.unverified and the record on TeamRunOutput.verification.
     verifiers: Optional[List[Union["Verifier", Callable[..., Any]]]] = None
-    # Shared-loop budget and options for the verification loop. Ignored when verifiers is None.
-    verification: Optional["VerificationConfig"] = None
-    # The coerced verifier list, built at construction (and rebuilt on a copy).
-    _verifiers: Optional[List[Any]] = None
+    # Shared-loop budget and options for the verification loop: True is the default config and
+    # False turns verification off. Ignored when verifiers is None.
+    verification: Optional[Union[bool, "VerificationConfig"]] = None
 
     # --- Structured output ---
     # Input schema for validating input
@@ -546,7 +544,7 @@ class Team:
         pre_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail, BaseEval]]] = None,
         post_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail, BaseEval]]] = None,
         verifiers: Optional[List[Union["Verifier", Callable[..., Any]]]] = None,
-        verification: Optional["VerificationConfig"] = None,
+        verification: Optional[Union[bool, "VerificationConfig"]] = None,
         input_schema: Optional[Type[BaseModel]] = None,
         output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
         parser_model: Optional[Union[Model, str]] = None,

@@ -271,10 +271,10 @@ class Loop:
                         from agno.exceptions import ComponentRehydrationError
 
                         raise ComponentRehydrationError(message)
-                    from agno.workflow.step import _unresolvable_callable_placeholder
+                    from agno.workflow.step import unresolvable_callable_placeholder
 
                     log_warning(message)
-                    end_condition = _unresolvable_callable_placeholder("Loop end condition", end_condition_data)
+                    end_condition = unresolvable_callable_placeholder("Loop end condition", end_condition_data)
 
         if data.get("human_review"):
             human_review = HumanReview.from_dict(data["human_review"])

@@ -23,6 +23,10 @@ def loose_match(run, expected):
     return str(run.content) == str(expected)
 
 
+def exact(run, expected):
+    return str(run.content) == expected
+
+
 def search_tool(query: str) -> str:
     """Find things."""
     return query
@@ -92,6 +96,61 @@ def _env(**overrides) -> Environment:
 # ---------------------------------------------------------------------------
 # Fingerprints
 # ---------------------------------------------------------------------------
+
+
+def test_env_fingerprint_covers_verifiers_and_loop_config():
+    # Verifiers decide when an attempt is done, so they are environment: adding one,
+    # renaming one, or changing the loop budget must each flip env_fingerprint, and
+    # none of them touch the policy fingerprint.
+    from agno.verifiers import verifier
+    from agno.verifiers.types import VerificationConfig
+
+    def report_exists(run_output):
+        return True
+
+    def tests_pass(run_output):
+        return True
+
+    def _agent(**overrides):
+        settings = {"model": OpenAIChat(id="gpt-5-mini"), "instructions": "Answer tersely.", "tools": [search_tool]}
+        settings.update(overrides)
+        return Agent(**settings)
+
+    base = _env()
+    with_check = _env(agent=_agent(verifiers=[report_exists]))
+    renamed_check = _env(agent=_agent(verifiers=[verifier(report_exists, name="report")]))
+    other_check = _env(agent=_agent(verifiers=[tests_pass]))
+    with_budget = _env(agent=_agent(verifiers=[report_exists], verification=VerificationConfig(max_attempts=5)))
+
+    fingerprints = [env.env_fingerprint() for env in (base, with_check, renamed_check, other_check, with_budget)]
+    assert len(set(fingerprints)) == len(fingerprints)
+    assert _env(agent=_agent(verifiers=[report_exists])).env_fingerprint() == with_check.env_fingerprint()
+    assert {env.policy_fingerprint() for env in (base, with_check, with_budget)} == {base.policy_fingerprint()}
+    # verification=True is the default config, not a distinct environment.
+    enabled = _env(agent=_agent(verifiers=[report_exists], verification=True))
+    configured = _env(agent=_agent(verifiers=[report_exists], verification=VerificationConfig()))
+    assert enabled.env_fingerprint() == configured.env_fingerprint()
+
+
+def _always_passes(run_output):
+    return True
+
+
+@pytest.mark.parametrize(
+    "verification_settings",
+    [{}, {"verification": True}, {"verifiers": [_always_passes], "verification": False}],
+    ids=["no_verifiers", "verification_on_without_verifiers", "verifiers_turned_off"],
+)
+def test_env_fingerprint_without_active_verification_matches_the_stored_format(verification_settings):
+    # An agent whose verification does not resolve must hash exactly as before verifiers
+    # existed, so stored results keep matching their environment.
+    from agno.models.openai import OpenAIResponses
+
+    agent = Agent(
+        model=OpenAIResponses(id="gpt-5.6-luna"), instructions="Answer with digits only.", **verification_settings
+    )
+    env = Environment(name="math", agent=agent, tasks=(Task(input="2+2", expected="4"),), scorer=CodeScorer(exact))
+    assert env.env_fingerprint() == "envfp2:9e1b0d87dd27f8ba31afdd0bd0aada2134b6667a818f908452e0321d9582d9e6"
 
 
 def test_fingerprint_sensitivity():

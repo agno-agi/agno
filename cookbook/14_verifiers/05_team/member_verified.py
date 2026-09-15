@@ -5,61 +5,82 @@ Verifiers are an agent property, so a team member carries its own definition of 
 into every delegation: the member's run loop verifies the member's work, and the leader
 can read the outcome off member_responses.
 
+The member's check requires a closing "Key takeaway:" line the leader's task never
+mentions, so the member's attempt 0 fails, the evidence goes back to the member, and
+attempt 1 adds the line before the member returns to the leader.
+
 Teams take verifiers too - Team(verifiers=[...]) gates the leader's final answer the
-same way; here the gate is on the member, where the evidence lives.
+same way (leader_verified.py); here the gate is on the member, where the evidence lives.
 """
 
-import tempfile
 from pathlib import Path
+from typing import Union
 
 from agno.agent import Agent
+from agno.db.in_memory import InMemoryDb
 from agno.models.openai import OpenAIResponses
+from agno.run.agent import RunOutput
 from agno.team import Team
 from agno.tools.file import FileTools
 
 # ---------------------------------------------------------------------------
-# A member with its own definition of done
+# Setup
 # ---------------------------------------------------------------------------
 
-workdir = Path(tempfile.mkdtemp(prefix="member_verified_"))
+# Empty summary.md at the start of every run, so an earlier run's file never passes the check.
+WORKDIR = Path("tmp/verifiers/member_verified")
+WORKDIR.mkdir(parents=True, exist_ok=True)
+(WORKDIR / "summary.md").write_text("")
+
+# ---------------------------------------------------------------------------
+# Create Members
+# ---------------------------------------------------------------------------
 
 
-def summary_exists(run_output) -> object:
-    """The member's definition of done: summary.md exists."""
-    return (
-        True if (workdir / "summary.md").exists() else "summary.md does not exist yet"
-    )
+def summary_complete(run_output: RunOutput) -> Union[bool, str]:
+    """The member's definition of done: summary.md ends with a Key takeaway line."""
+    if "Key takeaway:" not in (WORKDIR / "summary.md").read_text():
+        return "summary.md has no 'Key takeaway:' line"
+    return True
 
 
 writer = Agent(
     name="Writer",
     role="Writes files the team needs",
-    model=OpenAIResponses(id="gpt-5.5"),
-    tools=[FileTools(base_dir=workdir)],
-    verifiers=[summary_exists],
+    model=OpenAIResponses(id="gpt-5.6-luna"),
+    tools=[FileTools(base_dir=WORKDIR)],
+    verifiers=[summary_complete],
 )
+
+# ---------------------------------------------------------------------------
+# Create Team
+# ---------------------------------------------------------------------------
 
 team = Team(
     members=[writer],
-    model=OpenAIResponses(id="gpt-5.5"),
+    model=OpenAIResponses(id="gpt-5.6-luna"),
+    db=InMemoryDb(),
+    store_member_responses=True,
 )
 
 # ---------------------------------------------------------------------------
-# Run
+# Run Demo
 # ---------------------------------------------------------------------------
 
-output = team.run(
-    "Have the writer produce summary.md: three sentences on why tests matter."
-)
+if __name__ == "__main__":
+    team.print_response(
+        "Have the writer produce summary.md: three sentences on why tests matter."
+    )
 
-print("team status:", output.status)
-for member_run in output.member_responses or []:
-    print("member status:", member_run.status)
-    if member_run.verification is not None:
+    run_output = team.get_last_run_output()
+    for member_run in run_output.member_responses or []:
+        verification = member_run.verification
+        if verification is None:
+            continue
         print(
-            "member verification:",
-            member_run.verification.status,
-            "/",
-            member_run.verification.stop_reason,
+            f"\nMember verification: {verification.status.value} / {verification.stop_reason.value}"
         )
-print("summary.md written:", (workdir / "summary.md").exists())
+        for attempt in verification.attempts:
+            for verdict in attempt.verdicts:
+                result = "PASS" if verdict.passed else "FAIL"
+                print(f"Attempt {attempt.index}: {result} {verdict.name}")

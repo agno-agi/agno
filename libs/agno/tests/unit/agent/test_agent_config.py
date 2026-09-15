@@ -1754,3 +1754,89 @@ class TestGetAgentsPagination:
 
         assert len(loaded) == 120
         assert {item.id for item in loaded} == {f"own-agent-{i:03d}" for i in range(120)}
+
+
+# =============================================================================
+# Verifiers round-trip
+# =============================================================================
+
+
+def report_missing(run_output):
+    return "report.md is missing"
+
+
+class TestAgentVerifiersRoundTrip:
+    def test_from_dict_restores_a_registered_check_with_its_policy(self):
+        """The check registers under the verify: prefix at AgentOS startup and resolves by
+        name on load."""
+        from agno.os.utils import collect_components_from_agent
+        from agno.verifiers import VerificationConfig, verifier
+
+        agent = Agent(
+            id="verified-agent",
+            verifiers=[verifier(report_missing, stop_on_failure=True)],
+            verification=VerificationConfig(max_attempts=1),
+            telemetry=False,
+        )
+        registry = Registry()
+        collect_components_from_agent(agent, registry, set())
+        assert registry.get_function("verify:report_missing").__wrapped__ is report_missing
+
+        restored = Agent.from_dict(agent.to_dict(), registry=registry, strict=True)
+
+        wrapper = restored.verifiers[0]
+        assert wrapper.name == "report_missing"
+        assert wrapper.fn.__wrapped__ is report_missing
+        assert wrapper.stop_on_failure is True
+        assert restored.verification.max_attempts == 1
+
+    def test_from_dict_rebuilds_a_shell_verifier_without_a_registry(self):
+        from agno.verifiers import ShellVerifier
+
+        agent = Agent(
+            id="shell-agent",
+            verifiers=[ShellVerifier("true", cwd="/tmp", timeout=3, name="unit", required=False, max_retries=1)],
+            telemetry=False,
+        )
+
+        restored = Agent.from_dict(agent.to_dict(), strict=True)
+
+        wrapper = restored.verifiers[0]
+        assert isinstance(wrapper.inner, ShellVerifier)
+        assert wrapper.inner.command == "true"
+        assert wrapper.inner.cwd == "/tmp"
+        assert wrapper.inner.timeout == 3
+        assert wrapper.name == "unit"
+        assert wrapper.required is False
+        assert wrapper.max_retries == 1
+        assert wrapper.stop_on_failure is False
+
+    def test_from_dict_turns_off_stop_on_unchanged_state_with_warning(self):
+        from agno.verifiers import VerificationConfig, verifier
+
+        class Fingerprint:
+            def capture(self):
+                return "state"
+
+        agent = Agent(
+            id="unchanged-state-agent",
+            verifiers=[verifier(report_missing)],
+            verification=VerificationConfig(stop_on_unchanged_state=True, fingerprint=Fingerprint()),
+            telemetry=False,
+        )
+        data = agent.to_dict()
+        assert data["verification"]["stop_on_unchanged_state"] is True
+
+        with patch("agno.utils.verifiers.log_warning") as mock_warn:
+            restored = Agent.from_dict(data, registry=Registry(functions=[report_missing]))
+
+        assert restored.verification.stop_on_unchanged_state is False
+        assert restored.verification.fingerprint is None
+        assert any("stop_on_unchanged_state" in call.args[0] for call in mock_warn.call_args_list)
+
+
+def test_telemetry_reports_has_verifiers():
+    from agno.agent._telemetry import get_telemetry_data
+
+    assert get_telemetry_data(Agent(name="plain"))["has_verifiers"] is False
+    assert get_telemetry_data(Agent(name="verified", verifiers=[lambda run_output: True]))["has_verifiers"] is True

@@ -59,6 +59,7 @@ Hundreds of examples. Copy, paste, run.
 ### FileSystem
 [13_filesystem](./13_filesystem) — Give your agent a durable, private filesystem for its own working state: records of what it has processed, decisions, progress checkpoints. Database-backed by default, local disk optional.
 
+### Verifiers
 [14_verifiers](./14_verifiers) — Evidence-based verification: `Agent(verifiers=[...])` checks the model's "done" against executable evidence inside the run, sends failures back as evidence, and ends a run that never passes as `UNVERIFIED`. Shell commands, LLM judges, or any callable as the definition of done.
 
 ### Models
