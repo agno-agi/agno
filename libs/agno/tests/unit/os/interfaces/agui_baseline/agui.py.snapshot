@@ -7,13 +7,10 @@ from fastapi.routing import APIRouter
 from agno.agent import Agent
 from agno.agent.remote import RemoteAgent
 from agno.os.interfaces.agui.handlers import validate_subagent_visibility
-from agno.os.interfaces.agui.interrupts import subagent_suspension_available, validate_interrupt_outcome
 from agno.os.interfaces.agui.router import attach_routes
-from agno.os.interfaces.agui.state import SUBAGENT_VISIBILITY_ATTRIBUTED
 from agno.os.interfaces.base import BaseInterface
 from agno.team import Team
 from agno.team.remote import RemoteTeam
-from agno.utils.log import log_warning
 
 
 class AGUI(BaseInterface):
@@ -28,7 +25,6 @@ class AGUI(BaseInterface):
         prefix: str = "",
         tags: Optional[List[str]] = None,
         subagent_visibility: Optional[str] = None,
-        emit_interrupt_outcome: bool = False,
     ):
         """
         Initialize the AGUI interface.
@@ -73,34 +69,6 @@ class AGUI(BaseInterface):
                 withheld, and both read a pending tool call it paused on off the
                 outer run's requirements, which the default leaves unread and so
                 does not prompt.
-            emit_interrupt_outcome: Whether a paused run's terminal says the run
-                is waiting. Off by default, which is the stream this interface
-                sent before the interrupt-aware lifecycle existed: the pause
-                reaches the client as the pending tool calls this interface can
-                show it, and the run terminal carries no outcome, so a pause and
-                a completion look the same on it. Two pauses reach it with no
-                call to act on, and both are logged rather than passed off
-                silently: one whose every pending call carries no tool call id
-                or no tool name, none of which can be rendered, and, under the
-                default ``subagent_visibility="inline"``, one reported by an
-                Agent whose only pending call arrives through the run's active
-                requirements, which is not read at all. On, that terminal carries
-                ``outcome: {"type": "interrupt", ...}``, one interrupt per
-                requirement the run still needs answered, each naming the tool
-                call it is bound to where that call had an id of its own, and
-                the shape of the answer it wants. Every open requirement is
-                carried whichever visibility is set, including one the prompt
-                above leaves unread: a client that answered only what it was
-                shown would leave the run unresumable. On is also what turns a
-                pause no answer could resolve into a failed run rather than a
-                prompt, and what closes the lane of a member the run paused
-                inside as suspended.
-                It is off by default because a client released before that
-                lifecycle stops sending its own resume directive the moment it
-                sees the structured outcome, which strands the run: turn it on
-                for a client that resumes through ``RunAgentInput.resume``.
-                Accepting that resume array does not depend on this setting; the
-                interface reads it either way.
         """
         self.agent = agent
         self.team = team
@@ -114,23 +82,6 @@ class AGUI(BaseInterface):
             raise ValueError("AGUI requires an agent or a team")
 
         self.subagent_visibility = validate_subagent_visibility(subagent_visibility)
-        self.emit_interrupt_outcome = validate_interrupt_outcome(emit_interrupt_outcome)
-
-        # A member the run paused inside is closed as suspended, so a client
-        # renders it as waiting rather than done. That outcome came to the
-        # protocol later than the interrupt one, so an install with the interrupt
-        # types but not this one attributes the interrupt to the member and
-        # closes its lane plainly, and says so rather than doing it silently.
-        if (
-            self.emit_interrupt_outcome
-            and self.subagent_visibility == SUBAGENT_VISIBILITY_ATTRIBUTED
-            and not subagent_suspension_available()
-        ):
-            log_warning(
-                "AG-UI cannot close a subagent the run paused inside as suspended: the installed "
-                "ag_ui.core omits the suspended subagent outcome, so such a member finishes like one "
-                "whose work completed. Please upgrade with `pip install -U ag-ui-protocol`."
-            )
 
     def get_router(self) -> APIRouter:
         self.router = APIRouter(prefix=self.prefix, tags=self.tags)  # type: ignore
@@ -140,7 +91,6 @@ class AGUI(BaseInterface):
             agent=self.agent,
             team=self.team,
             subagent_visibility=self.subagent_visibility,
-            emit_interrupt_outcome=self.emit_interrupt_outcome,
         )
 
         return self.router

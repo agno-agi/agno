@@ -1,16 +1,28 @@
+import json
 import logging
+from types import SimpleNamespace
 from unittest.mock import MagicMock
+from uuid import uuid4
 
 import pytest
 
 pytest.importorskip("ag_ui", reason="ag_ui not installed")
 
-from ag_ui.core import EventType
+from ag_ui.core import EventType, RunAgentInput
+from ag_ui.core.types import Context, UserMessage
 from ag_ui.core.types import Tool as AGUITool
+from ag_ui.core.types import ToolMessage as AGUIToolMessage
 
+from agno.agent.agent import Agent
 from agno.agent.remote import RemoteAgent
+from agno.db.in_memory import InMemoryDb
+from agno.os.interfaces.agui import router
 from agno.os.interfaces.agui.router import run_entity
+from agno.run.base import RunContext
 from agno.team.remote import RemoteTeam
+from agno.tools import tool
+
+from .agui_stream_invariants import ScriptedModel
 
 
 class FakeRunInput:
@@ -112,9 +124,9 @@ async def test_run_entity_passes_client_tools_in_run_context():
     assert "change_background" in tool_names
     assert "show_modal" in tool_names
 
-    for tool in run_context.client_tools:
-        assert tool.external_execution is True
-        assert tool.external_execution_silent is True
+    for client_tool in run_context.client_tools:
+        assert client_tool.external_execution is True
+        assert client_tool.external_execution_silent is True
 
 
 @pytest.mark.asyncio
@@ -218,3 +230,117 @@ async def test_run_entity_remote_agent_warns_and_drops_client_tools(caplog):
     assert "run_context" not in captured
     assert any("client tools are not forwarded" in record.message for record in caplog.records)
     assert events[-1].type == EventType.RUN_FINISHED
+
+
+# --- Options a resumed run must not be handed ---------------------------------
+
+
+DEPENDENCIES_THE_TOOL_SAW: list = []
+
+
+@tool(requires_confirmation=True)
+def send_email(to: str, run_context: RunContext) -> str:
+    DEPENDENCIES_THE_TOOL_SAW.append(dict(run_context.dependencies or {}))
+    return f"Email sent to {to}"
+
+
+def _request(*, context=None, trailing=None):
+    """The request the route reads, carrying a prompt and optionally an answer."""
+    messages = [UserMessage(id="m1", role="user", content="email ops@example.com")]
+    messages.extend(trailing or [])
+    return RunAgentInput(
+        thread_id="deps-session",
+        run_id=str(uuid4()),
+        state={},
+        messages=messages,
+        tools=[],
+        context=context or [],
+        forwarded_props={},
+    )
+
+
+def _confirmation(tool_call_id: str):
+    return AGUIToolMessage(
+        id="answer-1",
+        role="tool",
+        content=json.dumps({"accepted": True}),
+        tool_call_id=tool_call_id,
+    )
+
+
+@pytest.mark.asyncio
+async def test_resumed_run_is_not_handed_the_fresh_run_dependency_option():
+    """``add_dependencies_to_context`` is a fresh-run option, and a resume must not carry it.
+
+    The continue entry point does not declare it, so it lands in that call's
+    catch-all keywords and is splatted into the run's post-hook arguments, where
+    a hook taking ``**kwargs`` is handed an option on turn two that turn one
+    never handed it. Nothing on the continue path reads it as an option: it is
+    read while a user message is built, and a continue replays the paused run's
+    stored messages rather than building one. The request's context still
+    reaches the resumed run, through the run context, which is the other half
+    pinned here.
+    """
+    DEPENDENCIES_THE_TOOL_SAW.clear()
+    hook_arguments: list = []
+
+    def record_hook_arguments(**kwargs):
+        hook_arguments.append(dict(kwargs))
+
+    agent = Agent(
+        id="dependency-agent",
+        model=ScriptedModel(
+            "m",
+            [("tool", "send_email", {"to": "ops@example.com"}, "tc-1"), ("content", "Sent.")],
+        ),
+        db=InMemoryDb(),
+        tools=[send_email],
+        post_hooks=[record_hook_arguments],
+        telemetry=False,
+    )
+    context = [Context(description="user_name", value="Alice")]
+
+    async for _ in run_entity(agent, _request(context=context)):
+        pass
+
+    request = _request(context=context, trailing=[_confirmation("tc-1")])
+    resumed = [event async for event in run_entity(agent, request)]
+
+    assert [event.message for event in resumed if event.type == EventType.RUN_ERROR] == []
+    assert hook_arguments, "the resumed run ran no post hook, so it pins nothing"
+    handed = [sorted(args) for args in hook_arguments if "add_dependencies_to_context" in args]
+    assert handed == [], f"a resumed run's post hook was handed a fresh-run option: {handed}"
+    assert DEPENDENCIES_THE_TOOL_SAW == [{"user_name": "Alice"}]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "channel, extra_input",
+    [
+        ("resume_paused_run_from_entries", {"resume": [SimpleNamespace(interrupt_id="i-1")]}),
+        ("resume_paused_run", {"messages": [MagicMock(role="user", content="go"), MagicMock(role="tool")]}),
+    ],
+    ids=["resume-array", "tool-messages"],
+)
+async def test_neither_resume_channel_is_handed_the_fresh_run_dependency_option(channel, extra_input, monkeypatch):
+    """Both channels resume through the same continue entry point, which takes no such option."""
+    captured: dict = {}
+
+    async def capture(**kwargs):
+        captured.update(kwargs["run_kwargs"])
+
+        async def nothing():
+            return
+            yield
+
+        return nothing()
+
+    monkeypatch.setattr(router, channel, capture)
+    run_input = FakeRunInput(context=[MagicMock(description="user_name", value="Alice")])
+    for name, value in extra_input.items():
+        setattr(run_input, name, value)
+
+    async for _ in run_entity(MagicMock(), run_input):
+        pass
+
+    assert "add_dependencies_to_context" not in captured
