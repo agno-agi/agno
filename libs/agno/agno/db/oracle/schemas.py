@@ -24,6 +24,7 @@ Oracle dialect already compiles them to ``NUMBER(19)``, ``NUMBER(10)``,
 """
 
 import json
+from decimal import Decimal
 from functools import partial
 from typing import Any, Dict, List, Optional
 
@@ -71,14 +72,36 @@ def varchar(width: int) -> String:
 # accept an already-decoded value on read: python-oracledb's thin driver can
 # hand a native JSON column back as an already-decoded dict/list rather than
 # text, so process_result_value must not assume a string.
+def _replace_decimals(value: Any) -> Any:
+    """Recursively convert Decimal to int/float in a decoded JSON value.
+
+    python-oracledb's thin driver decodes a native JSON column's numbers to
+    ``decimal.Decimal`` rather than int/float (confirmed against a live
+    server: a run's ``run_index`` came back as a Decimal). ``Decimal`` is not
+    JSON-serializable, so any caller that re-serializes a value read from
+    here -- the run-object cache building its raw-text cache key, for one --
+    fails with ``TypeError: Object of type Decimal is not JSON serializable``.
+    Converting at the point of decode, once, is simpler than teaching every
+    downstream re-serialization call about this Oracle-specific quirk.
+    """
+    if isinstance(value, Decimal):
+        as_int = int(value)
+        return as_int if as_int == value else float(value)
+    if isinstance(value, dict):
+        return {k: _replace_decimals(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_replace_decimals(v) for v in value]
+    return value
+
+
 def _decode_json(value: Any) -> Any:
     if value is None:
         return None
     if isinstance(value, (dict, list)):
-        return value
+        return _replace_decimals(value)
     if hasattr(value, "read"):  # a LOB proxy, when the driver does not inline small CLOBs
         value = value.read()
-    return json.loads(value)
+    return _replace_decimals(json.loads(value))
 
 
 class OracleNativeJSON(TypeDecorator):

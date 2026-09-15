@@ -1,0 +1,1425 @@
+"""Oracle Database adapter.
+
+Full public surface parity with PostgresDb is built up across several
+tickets; this file starts with the domains needed to keep an Agent's
+conversation working end to end (sessions, runs, schema versioning and table
+creation) plus the differential harness proving it. Every other abstract
+method is present as an explicit stub -- the class must instantiate now, and
+each stub names the ticket that replaces it, mirroring the pattern the MySQL
+adapter already uses for its own coverage gaps.
+
+Sections below are ordered to match ``agno.db.postgres.postgres`` so the two
+files read side by side.
+"""
+
+import time
+from datetime import date, datetime
+from typing import Any, Dict, List, Optional, Tuple, Union
+
+from sqlalchemy import (
+    CheckConstraint,
+    Column,
+    Engine,
+    ForeignKey,
+    ForeignKeyConstraint,
+    Index,
+    MetaData,
+    PrimaryKeyConstraint,
+    Table,
+    UniqueConstraint,
+    create_engine,
+    func,
+    select,
+    text,
+)
+from sqlalchemy.orm import Session as SQLASession
+from sqlalchemy.orm import scoped_session, sessionmaker
+
+from agno.db.base import BaseDb, SessionType
+from agno.db.migrations.manager import MigrationManager
+from agno.db.oracle._version import OracleCapabilities, detect_capabilities
+from agno.db.oracle.engine import _engine_options
+from agno.db.oracle.schemas import OracleClobJSON, get_table_schema_definition
+from agno.db.oracle.utils import (
+    apply_sorting,
+    is_table_available,
+    is_valid_table,
+    merge_upsert,
+    partial_unique_index_elements,
+    truncate_identifier,
+)
+from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
+from agno.db.schemas.knowledge import KnowledgeRow
+from agno.db.schemas.memory import UserMemory
+from agno.db.utils import (
+    SessionRunObjectCache,
+    build_single_run_row,
+    deserialize_run,
+    deserialize_session,
+    deserialize_sessions,
+    table_schema_mismatch_error,
+    validate_pagination,
+)
+from agno.run.agent import RunOutput
+from agno.run.base import RunStatus
+from agno.run.team import TeamRunOutput
+from agno.run.workflow import WorkflowRunOutput
+from agno.session import AgentSession, Session, TeamSession, WorkflowSession
+from agno.utils.log import log_debug, log_error, log_warning
+from agno.utils.string import generate_id
+
+
+class OracleDb(BaseDb):
+    """Interface for interacting with an Oracle Database (19c and later).
+
+    The following order is used to determine the database connection:
+        1. Use db_engine if provided.
+        2. Use db_url.
+        3. Raise if neither is provided.
+    """
+
+    def __init__(
+        self,
+        db_url: Optional[str] = None,
+        db_engine: Optional[Engine] = None,
+        db_schema: Optional[str] = None,
+        session_table: Optional[str] = None,
+        runs_table: Optional[str] = None,
+        memory_table: Optional[str] = None,
+        metrics_table: Optional[str] = None,
+        eval_table: Optional[str] = None,
+        knowledge_table: Optional[str] = None,
+        traces_table: Optional[str] = None,
+        spans_table: Optional[str] = None,
+        versions_table: Optional[str] = None,
+        components_table: Optional[str] = None,
+        component_configs_table: Optional[str] = None,
+        component_links_table: Optional[str] = None,
+        learnings_table: Optional[str] = None,
+        schedules_table: Optional[str] = None,
+        schedule_runs_table: Optional[str] = None,
+        job_table: Optional[str] = None,
+        approvals_table: Optional[str] = None,
+        auth_tokens_table: Optional[str] = None,
+        service_accounts_table: Optional[str] = None,
+        mcp_oauth_clients_table: Optional[str] = None,
+        mcp_oauth_transactions_table: Optional[str] = None,
+        mcp_oauth_codes_table: Optional[str] = None,
+        mcp_oauth_refresh_tokens_table: Optional[str] = None,
+        mcp_oauth_keys_table: Optional[str] = None,
+        id: Optional[str] = None,
+        create_schema: bool = True,
+        json_storage: Optional[str] = None,
+    ):
+        """
+        Args:
+            db_url: The database URL to connect to.
+            db_engine: The SQLAlchemy database engine to use.
+            db_schema: The Oracle schema (user) tables live under. On Oracle a
+                schema IS a user: the default, None, means the connecting
+                user's own schema, and tables are created unqualified. An
+                explicit value is validated for existence at first use, since
+                creating a user requires DBA privilege an application user
+                should not hold.
+            ... (table name overrides -- see BaseDb.__init__)
+            id: ID of the database.
+            create_schema: On every other SQL adapter this creates a schema.
+                Here it cannot: creating an Oracle user needs a privilege
+                application code should never carry. Kept for interface
+                parity; True (the default) logs, once, that this is a no-op.
+                Set False to suppress even that log line.
+            json_storage: Override capability detection ("native" or "clob").
+                For locked-down environments where the connecting user cannot
+                read PRODUCT_COMPONENT_VERSION. Boolean and vector support are
+                conservatively assumed absent when this is set -- construct
+                OracleCapabilities directly for finer control.
+
+        Raises:
+            ValueError: If neither db_url nor db_engine is provided.
+        """
+        _engine: Optional[Engine] = db_engine
+        if _engine is None and db_url is not None:
+            _engine = create_engine(db_url, **_engine_options())
+        if _engine is None:
+            raise ValueError("One of db_url or db_engine must be provided")
+
+        self.db_url: Optional[str] = db_url
+        self.db_engine: Engine = _engine
+
+        if id is None:
+            base_seed = db_url or str(_engine.url)
+            seed = f"{base_seed}#{db_schema or ''}"
+            id = generate_id(seed)
+
+        super().__init__(
+            id=id,
+            session_table=session_table,
+            runs_table=runs_table,
+            memory_table=memory_table,
+            metrics_table=metrics_table,
+            eval_table=eval_table,
+            knowledge_table=knowledge_table,
+            traces_table=traces_table,
+            spans_table=spans_table,
+            versions_table=versions_table,
+            components_table=components_table,
+            component_configs_table=component_configs_table,
+            component_links_table=component_links_table,
+            learnings_table=learnings_table,
+            schedules_table=schedules_table,
+            schedule_runs_table=schedule_runs_table,
+            job_table=job_table,
+            approvals_table=approvals_table,
+            auth_tokens_table=auth_tokens_table,
+            service_accounts_table=service_accounts_table,
+            mcp_oauth_clients_table=mcp_oauth_clients_table,
+            mcp_oauth_transactions_table=mcp_oauth_transactions_table,
+            mcp_oauth_codes_table=mcp_oauth_codes_table,
+            mcp_oauth_refresh_tokens_table=mcp_oauth_refresh_tokens_table,
+            mcp_oauth_keys_table=mcp_oauth_keys_table,
+        )
+
+        # None, not "ai": a schema is a user on Oracle, and the default is
+        # "whichever user this connection authenticated as".
+        self.db_schema: Optional[str] = db_schema
+        self.metadata: MetaData = MetaData(schema=self.db_schema)
+        # Reinterpreted per ADR: Oracle has no privilege-safe way to create a
+        # schema (user) from application code. True is the default purely for
+        # interface parity with every other SQL adapter; it changes nothing
+        # except whether the reinterpretation is logged.
+        self.create_schema: bool = create_schema
+        if create_schema:
+            log_debug(
+                "OracleDb: create_schema has no effect on Oracle -- a schema is a user, and creating one "
+                "requires DBA privilege application code should not hold. Tables are created in the "
+                "connecting user's own schema (or in db_schema, if given, which must already exist)."
+            )
+        if db_schema is not None:
+            self._require_schema_exists(db_schema)
+
+        if json_storage is not None:
+            self.capabilities: OracleCapabilities = OracleCapabilities.override(json_storage=json_storage)
+        else:
+            self.capabilities = detect_capabilities(self.db_engine)
+
+        self.Session: scoped_session = scoped_session(sessionmaker(bind=self.db_engine, expire_on_commit=False))
+
+        self._run_object_cache = SessionRunObjectCache()
+        self._metrics_refreshed_at: float = 0.0
+
+    def _require_schema_exists(self, db_schema: str) -> None:
+        """Validate an explicitly-given schema (user) exists.
+
+        Raises with the DBA action required, rather than letting every
+        subsequent query fail with an opaque ORA-00942 (table or view does
+        not exist) that gives no hint the schema itself is the problem.
+        """
+        with self.db_engine.connect() as conn:
+            exists = (
+                conn.execute(
+                    text("SELECT 1 FROM all_users WHERE username = UPPER(:schema)"), {"schema": db_schema}
+                ).first()
+                is not None
+            )
+        if not exists:
+            raise ValueError(
+                f"Oracle schema (user) '{db_schema}' does not exist. On Oracle a schema is a user; "
+                f"OracleDb cannot create one (that requires DBA privilege). Ask a DBA to run: "
+                f"CREATE USER {db_schema} IDENTIFIED BY <password>; GRANT CREATE SESSION, CREATE TABLE, "
+                f"CREATE SEQUENCE TO {db_schema}; ALTER USER {db_schema} QUOTA UNLIMITED ON <tablespace>;"
+            )
+
+    # -- Serialization methods --
+    def to_dict(self) -> Dict[str, Any]:
+        base = super().to_dict()
+        base.update({"db_url": self.db_url, "db_schema": self.db_schema, "type": "oracle"})
+        return base
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "OracleDb":
+        return cls(
+            db_url=data.get("db_url"),
+            db_schema=data.get("db_schema"),
+            session_table=data.get("session_table"),
+            runs_table=data.get("runs_table"),
+            memory_table=data.get("memory_table"),
+            metrics_table=data.get("metrics_table"),
+            eval_table=data.get("eval_table"),
+            knowledge_table=data.get("knowledge_table"),
+            traces_table=data.get("traces_table"),
+            spans_table=data.get("spans_table"),
+            versions_table=data.get("versions_table"),
+            components_table=data.get("components_table"),
+            component_configs_table=data.get("component_configs_table"),
+            component_links_table=data.get("component_links_table"),
+            learnings_table=data.get("learnings_table"),
+            schedules_table=data.get("schedules_table"),
+            schedule_runs_table=data.get("schedule_runs_table"),
+            approvals_table=data.get("approvals_table"),
+            service_accounts_table=data.get("service_accounts_table"),
+            id=data.get("id"),
+        )
+
+    def close(self) -> None:
+        """Close database connections and dispose of the connection pool."""
+        if self.db_engine is not None:
+            self.db_engine.dispose()
+
+    # -- Table creation and resolution --
+    def table_exists(self, table_name: str) -> bool:
+        with self.Session() as sess:
+            return is_table_available(session=sess, table_name=table_name, db_schema=self.db_schema)
+
+    def _resolve_table_name(self, logical_name: str) -> str:
+        table_map = {
+            "traces": self.trace_table_name,
+            "spans": self.span_table_name,
+            "sessions": self.session_table_name,
+            "runs": self.runs_table_name,
+            "memories": self.memory_table_name,
+            "metrics": self.metrics_table_name,
+            "evals": self.eval_table_name,
+            "knowledge": self.knowledge_table_name,
+            "versions": self.versions_table_name,
+            "components": self.components_table_name,
+            "component_configs": self.component_configs_table_name,
+            "component_links": self.component_links_table_name,
+            "learnings": self.learnings_table_name,
+            "schedules": self.schedules_table_name,
+            "schedule_runs": self.schedule_runs_table_name,
+            "jobs": self.job_table_name,
+            "tool_results": self.tool_results_table_name,
+            "approvals": self.approvals_table_name,
+            "auth_tokens": self.auth_tokens_table_name,
+            "service_accounts": self.service_accounts_table_name,
+            "mcp_oauth_clients": self.mcp_oauth_clients_table_name,
+            "mcp_oauth_transactions": self.mcp_oauth_transactions_table_name,
+            "mcp_oauth_codes": self.mcp_oauth_codes_table_name,
+            "mcp_oauth_refresh_tokens": self.mcp_oauth_refresh_tokens_table_name,
+            "mcp_oauth_keys": self.mcp_oauth_keys_table_name,
+        }
+        return table_map.get(logical_name, logical_name)
+
+    def _resolve_fk_reference(self, fk_ref: str) -> str:
+        """Resolve "logical_table.column" to a schema-qualified reference.
+
+        Unlike Postgres, the schema qualifier is omitted entirely when
+        db_schema is None (the connecting user's own schema) -- Oracle tables
+        are created unqualified in that case, and qualifying the FK target
+        would reference a schema the parent table was never created in.
+        """
+        parts = fk_ref.rsplit(".", 1)
+        if len(parts) == 2:
+            table, column = parts
+            resolved_table = self._resolve_table_name(table)
+            if self.db_schema:
+                return f"{self.db_schema}.{resolved_table}.{column}"
+            return f"{resolved_table}.{column}"
+        return fk_ref
+
+    def _create_table(self, table_name: str, table_type: str) -> Table:
+        """Create a table for ``table_type``, translating the five special
+        schema keys the way Oracle needs (see module and utils.py docstrings
+        for why each translation exists):
+
+        - ``_unique_constraints`` / ``__primary_key__`` / ``__foreign_keys__``
+          / ``__composite_indexes__``: structurally identical to Postgres.
+        - ``_partial_unique_indexes``: becomes a unique function-based index
+          (``partial_unique_index_elements``), since Oracle has no partial index.
+        - A column typed ``OracleClobJSON`` gets an out-of-line ``IS JSON``
+          check constraint, added here rather than inline in the column's own
+          DDL (Oracle rejects an inline check that names any column, ORA-02438).
+        """
+        try:
+            table_schema = get_table_schema_definition(
+                table_type,
+                self.capabilities,
+                traces_table_name=self.trace_table_name,
+                db_schema=self.db_schema,
+                schedules_table_name=self.schedules_table_name,
+                session_table_name=self.session_table_name,
+                components_table_name=self.components_table_name,
+                component_configs_table_name=self.component_configs_table_name,
+            ).copy()
+
+            declares_fk = bool(table_schema.get("__foreign_keys__")) or any(
+                isinstance(cfg, dict) and "foreign_key" in cfg for cfg in table_schema.values()
+            )
+            if declares_fk:
+                registered = {t.name for t in self.metadata.tables.values()}
+                for ref_type, ref_name in self._fk_dependencies(table_type):
+                    if ref_name not in registered:
+                        self._resolve_table(table_name=ref_name, table_type=ref_type, create_table_if_not_found=True)
+
+            schema_unique_constraints = table_schema.pop("_unique_constraints", [])
+            schema_primary_key = table_schema.pop("__primary_key__", None)
+            schema_foreign_keys = table_schema.pop("__foreign_keys__", [])
+            schema_composite_indexes = table_schema.pop("__composite_indexes__", [])
+            schema_partial_unique_indexes = table_schema.pop("_partial_unique_indexes", [])
+
+            columns: List[Column] = []
+            single_indexes: List[str] = []
+            clob_json_columns: List[str] = []
+
+            for col_name, col_config in table_schema.items():
+                column_args: List[Any] = [col_name, col_config["type"]()]
+                column_kwargs: Dict[str, Any] = {}
+
+                if col_config.get("type") is OracleClobJSON:
+                    clob_json_columns.append(col_name)
+                if col_config.get("primary_key", False) and schema_primary_key is None:
+                    column_kwargs["primary_key"] = True
+                if "nullable" in col_config:
+                    column_kwargs["nullable"] = col_config["nullable"]
+                if "default" in col_config:
+                    column_kwargs["default"] = col_config["default"]
+                if col_config.get("unique", False):
+                    column_kwargs["unique"] = True
+                if col_config.get("index", False):
+                    single_indexes.append(col_name)
+                if "foreign_key" in col_config:
+                    fk_ref = self._resolve_fk_reference(col_config["foreign_key"])
+                    fk_kwargs: Dict[str, Any] = {}
+                    if "ondelete" in col_config:
+                        fk_kwargs["ondelete"] = col_config["ondelete"]
+                    column_args.append(ForeignKey(fk_ref, **fk_kwargs))
+
+                columns.append(Column(*column_args, **column_kwargs))
+
+            table = Table(table_name, self.metadata, *columns, schema=self.db_schema)
+
+            if schema_primary_key is not None:
+                missing = [c for c in schema_primary_key if c not in table.c]
+                if missing:
+                    raise ValueError(f"Composite PK references missing columns in {table_name}: {missing}")
+                table.append_constraint(
+                    PrimaryKeyConstraint(*schema_primary_key, name=truncate_identifier(f"{table_name}_pkey"))
+                )
+
+            for fk_config in schema_foreign_keys:
+                fk_columns = fk_config["columns"]
+                ref_columns = fk_config["ref_columns"]
+                if len(fk_columns) != len(ref_columns):
+                    raise ValueError(f"Composite FK in {table_name} has mismatched columns/ref_columns")
+                missing = [c for c in fk_columns if c not in table.c]
+                if missing:
+                    raise ValueError(f"Composite FK references missing columns in {table_name}: {missing}")
+
+                resolved_ref_table = self._resolve_table_name(fk_config["ref_table"])
+                ref_column_strings = [f"{resolved_ref_table}.{col}" for col in ref_columns]
+                table.append_constraint(
+                    ForeignKeyConstraint(
+                        fk_columns,
+                        ref_column_strings,
+                        name=truncate_identifier(f"{table_name}_{'_'.join(fk_columns)}_fkey"),
+                    )
+                )
+
+            for constraint in schema_unique_constraints:
+                constraint_columns = constraint["columns"]
+                missing = [c for c in constraint_columns if c not in table.c]
+                if missing:
+                    raise ValueError(f"Unique constraint references missing columns in {table_name}: {missing}")
+                table.append_constraint(
+                    UniqueConstraint(
+                        *constraint_columns, name=truncate_identifier(f"{table_name}_{constraint['name']}")
+                    )
+                )
+
+            for idx_col in single_indexes:
+                if idx_col not in table.c:
+                    raise ValueError(f"Index references missing column in {table_name}: {idx_col}")
+                # A unique= column already carries an implicit index backing
+                # that constraint. On Postgres a second explicit index over
+                # the identical column is merely redundant; on Oracle it is
+                # ORA-01408 ("such column list already indexed"). Skip it.
+                if table_schema[idx_col].get("unique"):
+                    continue
+                Index(truncate_identifier(f"idx_{table_name}_{idx_col}"), table.c[idx_col])
+
+            for idx_config in schema_composite_indexes:
+                idx_cols = [table.c[c] for c in idx_config["columns"]]
+                Index(truncate_identifier(f"idx_{table_name}_{'_'.join(idx_config['columns'])}"), *idx_cols)
+
+            for idx_config in schema_partial_unique_indexes:
+                idx_columns = idx_config["columns"]
+                missing = [c for c in idx_columns if c not in table.c]
+                if missing:
+                    raise ValueError(f"Partial unique index references missing columns in {table_name}: {missing}")
+                elements = partial_unique_index_elements(table, idx_columns, idx_config["where"])
+                Index(truncate_identifier(f"{table_name}_{idx_config['name']}"), *elements, unique=True)
+
+            # Out-of-line IS JSON check per CLOB-backed JSON column -- see
+            # OracleClobJSON's docstring for why this cannot be inline.
+            for col_name in clob_json_columns:
+                table.append_constraint(
+                    CheckConstraint(f"{col_name} IS JSON", name=truncate_identifier(f"{table_name}_{col_name}_is_json"))
+                )
+
+            table_created = False
+            if not self.table_exists(table_name):
+                table.create(self.db_engine, checkfirst=True)
+                log_debug(f"Created table {table_name}")
+                table_created = True
+            else:
+                log_debug(f"Table {table_name} already exists", log_level=2)
+
+            for idx in table.indexes:
+                try:
+                    with self.Session() as sess:
+                        params: Dict[str, Any]
+                        if self.db_schema is None:
+                            exists_query = text("SELECT 1 FROM user_indexes WHERE index_name = UPPER(:index_name)")
+                            params = {"index_name": idx.name}
+                        else:
+                            exists_query = text(
+                                "SELECT 1 FROM all_indexes WHERE owner = UPPER(:db_schema) "
+                                "AND index_name = UPPER(:index_name)"
+                            )
+                            params = {"db_schema": self.db_schema, "index_name": idx.name}
+                        if sess.execute(exists_query, params).scalar() is not None:
+                            continue
+                    idx.create(self.db_engine)
+                    log_debug(f"Created index: {idx.name} for table {table_name}")
+                except Exception as e:
+                    log_error(f"Error creating index {idx.name}: {str(e)}")
+
+            if table_name != self.versions_table_name and table_created:
+                latest_schema_version = MigrationManager(self).latest_schema_version
+                self.upsert_schema_version(table_name=table_name, version=latest_schema_version.public)
+
+            return table
+
+        except Exception as e:
+            # ORA-00955 (name already used) / ORA-00001 (unique violation): a
+            # concurrent CREATE TABLE lost the catalog's own uniqueness race.
+            # An existing winner is not a database outage.
+            orig = getattr(e, "orig", e)
+            code = getattr(orig, "code", None) or next(
+                (getattr(a, "code", None) for a in getattr(orig, "args", ())), None
+            )
+            if code in (955, 1) and self.table_exists(table_name):
+                log_debug(f"Concurrent table creation: {table_name}", log_level=2)
+            else:
+                log_error(f"Could not create table {table_name}: {str(e)}")
+                raise
+            return self._reflect_table(table_name)
+
+    def _reflect_table(self, table_name: str) -> Table:
+        return Table(table_name, self.metadata, schema=self.db_schema, autoload_with=self.db_engine)
+
+    def _resolve_table(
+        self, table_name: str, table_type: str, create_table_if_not_found: Optional[bool] = False
+    ) -> Optional[Table]:
+        with self.Session() as sess:
+            table_is_available = is_table_available(session=sess, table_name=table_name, db_schema=self.db_schema)
+
+        if not table_is_available:
+            if not create_table_if_not_found:
+                return None
+            table = self._create_table(table_name=table_name, table_type=table_type)
+            self._store_resolved_table(table_type, table_name, table)
+            return table
+
+        expected_columns = get_table_schema_definition(
+            table_type,
+            self.capabilities,
+            traces_table_name=self.trace_table_name,
+            db_schema=self.db_schema,
+            schedules_table_name=self.schedules_table_name,
+            session_table_name=self.session_table_name,
+            components_table_name=self.components_table_name,
+            component_configs_table_name=self.component_configs_table_name,
+        ).keys()
+        if not is_valid_table(
+            db_engine=self.db_engine, table_name=table_name, expected_columns=expected_columns, db_schema=self.db_schema
+        ):
+            raise table_schema_mismatch_error(
+                f"{self.db_schema}.{table_name}" if self.db_schema else table_name, table_type=table_type
+            )
+
+        try:
+            table = self._reflect_table(table_name)
+            self._store_resolved_table(table_type, table_name, table)
+            return table
+        except Exception as e:
+            log_error(f"Error loading existing table {table_name}: {str(e)}")
+            raise
+
+    def _get_table(self, table_type: str, create_table_if_not_found: Optional[bool] = False) -> Optional[Table]:
+        table_name = self._resolve_table_name(table_type)
+        return self._get_or_create_table(
+            table_name=table_name, table_type=table_type, create_table_if_not_found=create_table_if_not_found
+        )
+
+    # -- Schema version --
+    def get_latest_schema_version(self, table_name: str) -> str:
+        """Latest stamped version for ``table_name``, or the base version.
+
+        Never returns None: the migration manager skips migration entirely
+        (with only a warning) on a None return, leaving the table behind in
+        silence -- exactly the failure mode this whole ticket exists to close.
+        """
+        table = self._get_table(table_type="versions", create_table_if_not_found=True)
+        if table is None:
+            return self.default_schema_version
+        with self.Session() as sess:
+            stmt = (
+                select(table.c.version)
+                .where(table.c.table_name == table_name)
+                .order_by(table.c.version.desc())
+                .limit(1)
+            )
+            row = sess.execute(stmt).first()
+        return row[0] if row and row[0] else self.default_schema_version
+
+    def upsert_schema_version(self, table_name: str, version: str) -> None:
+        versions_table = self._get_table(table_type="versions", create_table_if_not_found=True)
+        if versions_table is None:
+            return
+        current_datetime = datetime.now().isoformat()
+        with self.Session() as sess, sess.begin():
+            merge_upsert(
+                sess,
+                versions_table,
+                key_columns=["table_name"],
+                values={
+                    "table_name": table_name,
+                    "version": version,
+                    "created_at": current_datetime,
+                    "updated_at": current_datetime,
+                },
+            )
+
+    def _create_all_tables(self) -> None:
+        tables_to_create = [
+            (self.session_table_name, "sessions"),
+            (self.runs_table_name, "runs"),
+        ]
+        for table_name, table_type in tables_to_create:
+            if not self.table_exists(table_name):
+                self._invalidate_table_cache(table_name)
+            self._get_or_create_table(table_name=table_name, table_type=table_type, create_table_if_not_found=True)
+
+    # -- Runs --
+    def get_run(
+        self, run_id: str, deserialize: Optional[bool] = True
+    ) -> Optional[Union[RunOutput, TeamRunOutput, WorkflowRunOutput, Dict[str, Any]]]:
+        try:
+            table = self._get_table(table_type="runs")
+            if table is None:
+                return None
+            with self.Session() as sess:
+                result = sess.execute(select(table).where(table.c.run_id == run_id)).fetchone()
+                if result is None:
+                    return None
+                run_row = dict(result._mapping)
+            if not deserialize:
+                return run_row
+            return deserialize_run(run_row.get("run_type"), run_row["run_data"])
+        except Exception as e:
+            log_error(f"Exception reading from runs table: {str(e)}")
+            raise
+
+    def upsert_run(
+        self,
+        run: Union[RunOutput, TeamRunOutput, WorkflowRunOutput, Dict[str, Any]],
+        session_id: str,
+        user_id: Optional[str] = None,
+        run_index: Optional[int] = None,
+    ) -> None:
+        try:
+            runs_table = self._get_table(table_type="runs", create_table_if_not_found=True)
+            if runs_table is None:
+                return
+
+            row = build_single_run_row(run=run, session_id=session_id, user_id=user_id, run_index=run_index)
+
+            with self.Session() as sess, sess.begin():
+                if row.get("run_index") is None:
+                    # Serialize same-session backfills so two concurrent
+                    # max-reads cannot both land the same index. Oracle has no
+                    # advisory-lock primitive keyed on an arbitrary string the
+                    # way Postgres does; a row lock on the session's own row
+                    # gives the same same-session serialization instead.
+                    sessions_table = self._get_table(table_type="sessions")
+                    if sessions_table is not None:
+                        sess.execute(
+                            select(sessions_table.c.session_id)
+                            .where(sessions_table.c.session_id == session_id)
+                            .with_for_update()
+                        ).first()
+                    current_max = sess.execute(
+                        select(func.max(runs_table.c.run_index)).where(runs_table.c.session_id == session_id)
+                    ).scalar()
+                    row["run_index"] = (current_max + 1) if current_max is not None else 0
+
+                merge_upsert(
+                    sess,
+                    runs_table,
+                    key_columns=["run_id"],
+                    values=row,
+                )
+        except Exception as e:
+            log_error(f"Exception upserting run to runs table: {str(e)}")
+            raise
+
+    def get_runs(
+        self,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+        status: Optional[RunStatus] = None,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+        deserialize: Optional[bool] = True,
+    ) -> Union[List[Union[RunOutput, TeamRunOutput, WorkflowRunOutput]], Tuple[List[Dict[str, Any]], int]]:
+        validate_pagination(limit, page)
+        try:
+            table = self._get_table(table_type="runs")
+            if table is None:
+                return [] if deserialize else ([], 0)
+
+            with self.Session() as sess:
+                stmt = select(table)
+                if session_id is not None:
+                    stmt = stmt.where(table.c.session_id == session_id)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
+                if agent_id is not None:
+                    stmt = stmt.where(table.c.agent_id == agent_id)
+                if team_id is not None:
+                    stmt = stmt.where(table.c.team_id == team_id)
+                if workflow_id is not None:
+                    stmt = stmt.where(table.c.workflow_id == workflow_id)
+                if status is not None:
+                    status_value = status.value if isinstance(status, RunStatus) else status
+                    stmt = stmt.where(table.c.status == status_value)
+
+                count_stmt = select(func.count()).select_from(stmt.alias())
+                total_count = sess.execute(count_stmt).scalar() or 0
+
+                if sort_by is not None:
+                    stmt = apply_sorting(stmt, table, sort_by, sort_order)
+                else:
+                    stmt = stmt.order_by(table.c.run_index.asc(), table.c.created_at.asc())
+
+                if limit is not None:
+                    offset = (page - 1) * limit if page and page > 1 else 0
+                    stmt = stmt.offset(offset).limit(limit)
+
+                records = sess.execute(stmt).fetchall()
+                run_rows = [dict(record._mapping) for record in records]
+
+            if not deserialize:
+                return run_rows, total_count
+            return [deserialize_run(row.get("run_type"), row["run_data"]) for row in run_rows]
+        except Exception as e:
+            log_error(f"Exception reading from runs table: {str(e)}")
+            raise
+
+    def delete_run(self, run_id: str) -> bool:
+        try:
+            table = self._get_table(table_type="runs")
+            if table is None:
+                return False
+            with self.Session() as sess, sess.begin():
+                result = sess.execute(table.delete().where(table.c.run_id == run_id))
+                return result.rowcount > 0
+        except Exception as e:
+            log_error(f"Error deleting run: {str(e)}")
+            raise
+
+    def delete_runs(self, run_ids: List[str]) -> None:
+        try:
+            table = self._get_table(table_type="runs")
+            if table is None:
+                return
+            with self.Session() as sess, sess.begin():
+                result = sess.execute(table.delete().where(table.c.run_id.in_(run_ids)))
+            log_debug(f"Successfully deleted {result.rowcount} runs")
+        except Exception as e:
+            log_error(f"Error deleting runs: {str(e)}")
+            raise
+
+    # -- Sessions --
+    def _cascade_tool_results(self, session_ids: List[str]) -> None:
+        """Best-effort cleanup of offloaded tool results on session delete.
+
+        Real tool-result offloading is a later ticket; until then this table
+        is always empty, so this is a safe, cheap no-op. Kept here (rather
+        than added later) so delete_session's behavior does not silently
+        change shape once offloading is turned on.
+        """
+        if not session_ids:
+            return
+        try:
+            table = self._get_table(table_type="tool_results")
+            if table is None:
+                return
+            with self.Session() as sess, sess.begin():
+                sess.execute(table.delete().where(table.c.session_id.in_(session_ids)))
+        except Exception:
+            log_debug("tool-result cascade failed; the primary session delete still succeeded", exc_info=True)
+
+    def delete_session(self, session_id: str, user_id: Optional[str] = None) -> bool:
+        try:
+            table = self._get_table(table_type="sessions")
+            if table is None:
+                return False
+            runs_table = self._get_table(table_type="runs")
+
+            with self.Session() as sess, sess.begin():
+                delete_stmt = table.delete().where(table.c.session_id == session_id)
+                if user_id is not None:
+                    delete_stmt = delete_stmt.where(table.c.user_id == user_id)
+                result = sess.execute(delete_stmt)
+                if result.rowcount == 0:
+                    return False
+                if runs_table is not None:
+                    sess.execute(runs_table.delete().where(runs_table.c.session_id == session_id))
+
+            self._cascade_tool_results([session_id])
+            self._run_object_cache.drop_session(session_id)
+            return True
+        except Exception as e:
+            log_error(f"Error deleting session: {str(e)}")
+            raise
+
+    def delete_sessions(self, session_ids: List[str], user_id: Optional[str] = None) -> None:
+        try:
+            table = self._get_table(table_type="sessions")
+            if table is None:
+                return
+            runs_table = self._get_table(table_type="runs")
+
+            with self.Session() as sess, sess.begin():
+                select_stmt = select(table.c.session_id).where(table.c.session_id.in_(session_ids))
+                if user_id is not None:
+                    select_stmt = select_stmt.where(table.c.user_id == user_id)
+                deletable_ids = [row[0] for row in sess.execute(select_stmt)]
+                cascade_ids = session_ids if user_id is None else deletable_ids
+
+                result = sess.execute(table.delete().where(table.c.session_id.in_(deletable_ids)))
+
+                if runs_table is not None:
+                    runs_delete_stmt = runs_table.delete().where(runs_table.c.session_id.in_(session_ids))
+                    if user_id is not None:
+                        runs_delete_stmt = runs_delete_stmt.where(runs_table.c.user_id == user_id)
+                    sess.execute(runs_delete_stmt)
+
+            log_debug(f"Successfully deleted {result.rowcount} sessions")
+            self._cascade_tool_results(cascade_ids)
+            for deleted_id in cascade_ids:
+                self._run_object_cache.drop_session(deleted_id)
+        except Exception as e:
+            log_error(f"Error deleting sessions: {str(e)}")
+            raise
+
+    def get_session(
+        self,
+        session_id: str,
+        session_type: Optional[SessionType] = None,
+        user_id: Optional[str] = None,
+        deserialize: Optional[bool] = True,
+        runs_limit: Optional[int] = None,
+    ) -> Optional[Union[Session, Dict[str, Any]]]:
+        try:
+            table = self._get_table(table_type="sessions")
+            if table is None:
+                return None
+            runs_table = self._get_table(table_type="runs")
+
+            with self.Session() as sess:
+                stmt = select(table).where(table.c.session_id == session_id)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
+                result = sess.execute(stmt).fetchone()
+                if result is None:
+                    return None
+
+                session = dict(result._mapping)
+                run_rows: Optional[List[Tuple[str, str]]] = None
+
+                if runs_table is None:
+                    session["runs"] = []
+                elif runs_limit is not None:
+                    session["runs"] = self._get_session_runs_data(
+                        sess=sess, runs_table=runs_table, session_id=session_id, limit=runs_limit
+                    )
+                elif (
+                    deserialize
+                    and session.get("session_type") == SessionType.AGENT.value
+                    and (session_type is None or session_type == SessionType.AGENT)
+                ):
+                    run_rows = self._get_session_run_rows(sess=sess, runs_table=runs_table, session_id=session_id)
+                    session["runs"] = None
+                else:
+                    session["runs"] = self._get_session_runs_data(
+                        sess=sess, runs_table=runs_table, session_id=session_id
+                    )
+
+            if not deserialize:
+                return session
+
+            if run_rows is not None:
+                session_obj = deserialize_session(session_type, session)
+                session_obj.runs = self._run_object_cache.runs_from_rows(session_id, run_rows)  # type: ignore[union-attr]
+                return session_obj
+            return deserialize_session(session_type, session)
+        except Exception as e:
+            log_error(f"Exception reading from session table: {str(e)}")
+            raise
+
+    def _get_session_run_rows(self, sess: SQLASession, runs_table: Table, session_id: str) -> List[Tuple[str, str]]:
+        """(run_id, raw run_data text) for the whole session, insertion order.
+
+        Feeds the run-object cache, which reparses a run only when its text
+        changed since the last read.
+
+        Unlike the Postgres adapter, this does not push the text conversion
+        down to SQL via CAST: Oracle's CAST does not accept a native JSON
+        column as a source (ORA-22849 -- JSON_SERIALIZE is needed instead,
+        and that would only cover the native-JSON variant, not the CLOB one).
+        Both OracleNativeJSON and OracleClobJSON already decode to a Python
+        dict on read, so the row is fetched decoded and re-encoded here in
+        Python instead -- functionally identical, and dialect-variant-agnostic.
+        """
+        import json as _json
+
+        stmt = (
+            select(runs_table.c.run_id, runs_table.c.run_data)
+            .where(runs_table.c.session_id == session_id)
+            .order_by(runs_table.c.run_index.asc(), runs_table.c.created_at.asc(), runs_table.c.run_id.asc())
+        )
+        rows = sess.execute(stmt).fetchall()
+        return [(run_id, run_data if isinstance(run_data, str) else _json.dumps(run_data)) for run_id, run_data in rows]
+
+    def _get_session_runs_data(
+        self, sess: SQLASession, runs_table: Table, session_id: str, limit: Optional[int] = None
+    ) -> List[Dict[str, Any]]:
+        if limit is not None:
+            stmt = (
+                select(runs_table.c.run_data)
+                .where(runs_table.c.session_id == session_id)
+                .order_by(runs_table.c.run_index.desc(), runs_table.c.created_at.desc(), runs_table.c.run_id.desc())
+                .limit(limit)
+            )
+            rows = [row[0] for row in sess.execute(stmt).fetchall()]
+            rows.reverse()
+            return rows
+        stmt = (
+            select(runs_table.c.run_data)
+            .where(runs_table.c.session_id == session_id)
+            .order_by(runs_table.c.run_index.asc(), runs_table.c.created_at.asc(), runs_table.c.run_id.asc())
+        )
+        return [row[0] for row in sess.execute(stmt).fetchall()]
+
+    def _get_sessions_runs_data(
+        self, sess: SQLASession, runs_table: Table, session_ids: List[str]
+    ) -> Dict[str, List[Dict[str, Any]]]:
+        if not session_ids:
+            return {}
+        stmt = (
+            select(runs_table.c.session_id, runs_table.c.run_data)
+            .where(runs_table.c.session_id.in_(session_ids))
+            .order_by(runs_table.c.run_index.asc(), runs_table.c.created_at.asc())
+        )
+        runs_by_session: Dict[str, List[Dict[str, Any]]] = {}
+        for session_id, run_data in sess.execute(stmt).fetchall():
+            runs_by_session.setdefault(session_id, []).append(run_data)
+        return runs_by_session
+
+    def get_sessions(
+        self,
+        session_type: Optional[SessionType] = None,
+        user_id: Optional[str] = None,
+        component_id: Optional[str] = None,
+        session_name: Optional[str] = None,
+        start_timestamp: Optional[int] = None,
+        end_timestamp: Optional[int] = None,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+        deserialize: Optional[bool] = True,
+        include_runs: bool = True,
+    ) -> Union[List[Session], Tuple[List[Dict[str, Any]], int]]:
+        validate_pagination(limit, page)
+        try:
+            table = self._get_table(table_type="sessions")
+            if table is None:
+                return [] if deserialize else ([], 0)
+            runs_table = self._get_table(table_type="runs")
+
+            with self.Session() as sess, sess.begin():
+                stmt = select(table)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
+                if component_id is not None:
+                    if session_type == SessionType.AGENT:
+                        stmt = stmt.where(table.c.agent_id == component_id)
+                    elif session_type == SessionType.TEAM:
+                        stmt = stmt.where(table.c.team_id == component_id)
+                    elif session_type == SessionType.WORKFLOW:
+                        stmt = stmt.where(table.c.workflow_id == component_id)
+                    elif session_type is None:
+                        stmt = stmt.where(
+                            (table.c.agent_id == component_id)
+                            | (table.c.team_id == component_id)
+                            | (table.c.workflow_id == component_id)
+                        )
+                if start_timestamp is not None:
+                    stmt = stmt.where(table.c.created_at >= start_timestamp)
+                if end_timestamp is not None:
+                    stmt = stmt.where(table.c.created_at <= end_timestamp)
+                if session_name is not None:
+                    # session_data's session_name is inside a JSON column;
+                    # matched in Python below rather than pushed to SQL, so
+                    # this works identically across both JSON storage
+                    # variants (native JSON, or CLOB) without dialect-specific
+                    # JSON path syntax.
+                    pass
+                if session_type is not None:
+                    session_type_value = session_type.value if isinstance(session_type, SessionType) else session_type
+                    stmt = stmt.where(table.c.session_type == session_type_value)
+
+                if sort_by is not None:
+                    stmt = apply_sorting(stmt, table, sort_by, sort_order)
+                else:
+                    stmt = apply_sorting(stmt, table, "created_at", "desc")
+
+                records = sess.execute(stmt).fetchall()
+                sessions = [dict(record._mapping) for record in records]
+
+                if session_name is not None:
+                    needle = session_name.lower()
+                    sessions = [
+                        s
+                        for s in sessions
+                        if needle in str((s.get("session_data") or {}).get("session_name") or "").lower()
+                    ]
+
+                total_count = len(sessions)
+                if limit is not None:
+                    offset = (page - 1) * limit if page and page > 1 else 0
+                    sessions = sessions[offset : offset + limit]
+
+                if include_runs and runs_table is not None:
+                    runs_by_session = self._get_sessions_runs_data(
+                        sess=sess, runs_table=runs_table, session_ids=[s["session_id"] for s in sessions]
+                    )
+                    for s in sessions:
+                        s["runs"] = runs_by_session.get(s["session_id"], [])
+                else:
+                    for s in sessions:
+                        s["runs"] = None
+
+                if not deserialize:
+                    return sessions, total_count
+
+            return deserialize_sessions(session_type, sessions)
+        except Exception as e:
+            log_error(f"Exception reading from session table: {str(e)}")
+            raise
+
+    def rename_session(
+        self,
+        session_id: str,
+        session_type: Optional[SessionType],
+        session_name: str,
+        user_id: Optional[str] = None,
+        deserialize: Optional[bool] = True,
+    ) -> Optional[Union[Session, Dict[str, Any]]]:
+        """Rename a session by reading, mutating in Python, and writing back.
+
+        Oracle has no single cross-variant JSON-patch expression covering
+        both the native JSON type (21c+) and the CLOB fallback (below 21c);
+        SQLite takes the same read-modify-write approach for the equivalent
+        reason. The round trip happens inside one transaction so a concurrent
+        writer's changes are not silently lost -- see the row lock below.
+        """
+        try:
+            table = self._get_table(table_type="sessions")
+            if table is None:
+                return None
+
+            with self.Session() as sess, sess.begin():
+                stmt = select(table).where(table.c.session_id == session_id).with_for_update()
+                if session_type is not None:
+                    stmt = stmt.where(table.c.session_type == session_type.value)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
+                row = sess.execute(stmt).fetchone()
+                if row is None:
+                    return None
+
+                session_data = dict(row._mapping.get("session_data") or {})
+                session_data["session_name"] = session_name
+
+                update_stmt = (
+                    table.update()
+                    .where(table.c.session_id == session_id)
+                    .values(session_data=session_data, updated_at=int(time.time()))
+                )
+                sess.execute(update_stmt)
+
+                refreshed = sess.execute(select(table).where(table.c.session_id == session_id)).fetchone()
+                session = dict(refreshed._mapping)
+
+            runs_table = self._get_table(table_type="runs")
+            if runs_table is not None:
+                with self.Session() as sess:
+                    session["runs"] = self._get_session_runs_data(
+                        sess=sess, runs_table=runs_table, session_id=session_id
+                    )
+            else:
+                session["runs"] = []
+
+            log_debug(f"Renamed session with id '{session_id}' to '{session_name}'")
+            if not deserialize:
+                return session
+            return deserialize_session(session_type, session)
+        except Exception as e:
+            log_error(f"Exception renaming session: {str(e)}")
+            raise
+
+    def upsert_session(
+        self, session: Session, deserialize: Optional[bool] = True
+    ) -> Optional[Union[Session, Dict[str, Any]]]:
+        """Insert or update the session row.
+
+        Runs are persisted independently via upsert_run() -- this method does
+        not touch the runs table.
+        """
+        try:
+            table = self._get_table(table_type="sessions", create_table_if_not_found=True)
+            if table is None:
+                return None
+
+            session_dict = session.to_dict(include_runs=False)
+
+            if isinstance(session, AgentSession):
+                type_values: Dict[str, Any] = dict(
+                    session_type=SessionType.AGENT.value,
+                    agent_id=session_dict.get("agent_id"),
+                    agent_data=session_dict.get("agent_data"),
+                )
+            elif isinstance(session, TeamSession):
+                type_values = dict(
+                    session_type=SessionType.TEAM.value,
+                    team_id=session_dict.get("team_id"),
+                    team_data=session_dict.get("team_data"),
+                )
+            elif isinstance(session, WorkflowSession):
+                type_values = dict(
+                    session_type=SessionType.WORKFLOW.value,
+                    workflow_id=session_dict.get("workflow_id"),
+                    workflow_data=session_dict.get("workflow_data"),
+                )
+            else:
+                raise ValueError(f"Invalid session type: {session.session_type}")
+
+            now = int(time.time())
+            values = {
+                "session_id": session_dict.get("session_id"),
+                "user_id": session_dict.get("user_id"),
+                "session_data": session_dict.get("session_data"),
+                "summary": session_dict.get("summary"),
+                "metadata": session_dict.get("metadata"),
+                "created_at": session_dict.get("created_at") or now,
+                "updated_at": now,
+                **type_values,
+            }
+
+            with self.Session() as sess, sess.begin():
+                # Owner-scoped match, mirroring Postgres's ON CONFLICT ...
+                # WHERE clause: a session_id collision only updates the
+                # existing row when it is unowned or already owned by this
+                # same user, so one user's upsert cannot silently overwrite
+                # another user's row of the same id.
+                existing = sess.execute(
+                    select(table.c.session_id, table.c.user_id).where(table.c.session_id == values["session_id"])
+                ).first()
+                if existing is not None and existing[1] is not None and existing[1] != values["user_id"]:
+                    log_warning(
+                        f"upsert_session: session_id '{values['session_id']}' is owned by a different user; "
+                        "not overwriting."
+                    )
+                    return None
+
+                merge_upsert(sess, table, key_columns=["session_id"], values=values)
+                row = sess.execute(select(table).where(table.c.session_id == values["session_id"])).fetchone()
+                if row is None:
+                    return None
+                session_dict = dict(row._mapping)
+
+            if not deserialize:
+                session_dict["runs"] = [run if isinstance(run, dict) else run.to_dict() for run in session.runs or []]
+                return session_dict
+
+            session_dict.pop("runs", None)
+            upserted_session = deserialize_session(None, session_dict)
+            upserted_session.runs = session.runs  # type: ignore[union-attr]
+            return upserted_session
+        except Exception as e:
+            log_error(f"Exception upserting into sessions table: {str(e)}")
+            raise
+
+    def upsert_sessions(
+        self,
+        sessions: List[Session],
+        deserialize: Optional[bool] = True,
+        preserve_updated_at: bool = False,
+    ) -> List[Union[Session, Dict[str, Any]]]:
+        """Bulk upsert, implemented as a loop over upsert_session.
+
+        Deliberately simpler than Postgres's per-type batched MERGE: correct
+        and easy to verify, at the cost of one round trip per session rather
+        than one per type. Revisit if this shows up as a real bottleneck.
+        """
+        if not sessions:
+            return []
+        results: List[Union[Session, Dict[str, Any]]] = []
+        for session in sessions:
+            if preserve_updated_at:
+                # upsert_session always stamps "now"; simulate preservation by
+                # writing the caller's updated_at back afterward when given.
+                result = self.upsert_session(session, deserialize=deserialize)
+                if result is not None and getattr(session, "updated_at", None) is not None:
+                    table = self._get_table(table_type="sessions")
+                    if table is not None:
+                        with self.Session() as sess, sess.begin():
+                            sess.execute(
+                                table.update()
+                                .where(table.c.session_id == session.session_id)
+                                .values(updated_at=session.updated_at)
+                            )
+                        if isinstance(result, dict):
+                            result["updated_at"] = session.updated_at
+                        else:
+                            result.updated_at = session.updated_at  # type: ignore[union-attr]
+                results.append(result) if result is not None else None
+            else:
+                result = self.upsert_session(session, deserialize=deserialize)
+                if result is not None:
+                    results.append(result)
+        return results
+
+    # -- Not yet implemented: owned by later tickets --
+    #
+    # Every method below is a required override of an @abstractmethod on
+    # BaseDb. Each raises NotImplementedError explicitly, naming the ticket
+    # that replaces it with a real implementation -- the same pattern the
+    # MySQL adapter already uses for its own learnings stubs
+    # (mysql.py, "Learning methods (stubs)"), rather than a silent pass.
+
+    def clear_memories(self) -> None:
+        raise NotImplementedError("OracleDb memory methods are implemented in ticket 04.")
+
+    def delete_user_memory(self, memory_id: str, user_id: Optional[str] = None) -> None:
+        raise NotImplementedError("OracleDb memory methods are implemented in ticket 04.")
+
+    def delete_user_memories(self, memory_ids: List[str], user_id: Optional[str] = None) -> None:
+        raise NotImplementedError("OracleDb memory methods are implemented in ticket 04.")
+
+    def get_all_memory_topics(self, user_id: Optional[str] = None) -> List[str]:
+        raise NotImplementedError("OracleDb memory methods are implemented in ticket 04.")
+
+    def get_user_memory(
+        self, memory_id: str, deserialize: Optional[bool] = True, user_id: Optional[str] = None
+    ) -> Optional[Union[UserMemory, Dict[str, Any]]]:
+        raise NotImplementedError("OracleDb memory methods are implemented in ticket 04.")
+
+    def get_user_memories(
+        self,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        topics: Optional[List[str]] = None,
+        search_content: Optional[str] = None,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+        deserialize: Optional[bool] = True,
+    ) -> Union[List[UserMemory], Tuple[List[Dict[str, Any]], int]]:
+        raise NotImplementedError("OracleDb memory methods are implemented in ticket 04.")
+
+    def get_user_memory_stats(
+        self, limit: Optional[int] = None, page: Optional[int] = None, user_id: Optional[str] = None
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        raise NotImplementedError("OracleDb memory methods are implemented in ticket 04.")
+
+    def upsert_user_memory(
+        self, memory: UserMemory, deserialize: Optional[bool] = True
+    ) -> Optional[Union[UserMemory, Dict[str, Any]]]:
+        raise NotImplementedError("OracleDb memory methods are implemented in ticket 04.")
+
+    def upsert_memories(
+        self, memories: List[UserMemory], deserialize: Optional[bool] = True, preserve_updated_at: bool = False
+    ) -> List[Union[UserMemory, Dict[str, Any]]]:
+        raise NotImplementedError("OracleDb memory methods are implemented in ticket 04.")
+
+    def get_metrics(
+        self, starting_date: Optional[date] = None, ending_date: Optional[date] = None, user_id: Optional[str] = None
+    ) -> Tuple[List[Dict[str, Any]], Optional[int]]:
+        raise NotImplementedError("OracleDb metrics methods are implemented in ticket 04.")
+
+    def calculate_metrics(self) -> Optional[Any]:
+        raise NotImplementedError("OracleDb metrics methods are implemented in ticket 04.")
+
+    def delete_knowledge_content(self, id: str, user_id: Optional[str] = None):
+        raise NotImplementedError("OracleDb knowledge methods are implemented in ticket 04.")
+
+    def get_knowledge_content(self, id: str, user_id: Optional[str] = None) -> Optional[KnowledgeRow]:
+        raise NotImplementedError("OracleDb knowledge methods are implemented in ticket 04.")
+
+    def get_knowledge_contents(
+        self,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+        linked_to: Optional[str] = None,
+        user_id: Optional[str] = None,
+    ) -> Tuple[List[KnowledgeRow], int]:
+        raise NotImplementedError("OracleDb knowledge methods are implemented in ticket 04.")
+
+    def upsert_knowledge_content(self, knowledge_row: KnowledgeRow):
+        raise NotImplementedError("OracleDb knowledge methods are implemented in ticket 04.")
+
+    def create_eval_run(self, eval_run: EvalRunRecord) -> Optional[EvalRunRecord]:
+        raise NotImplementedError("OracleDb eval methods are implemented in ticket 05.")
+
+    def delete_eval_runs(self, eval_run_ids: List[str], user_id: Optional[str] = None) -> None:
+        raise NotImplementedError("OracleDb eval methods are implemented in ticket 05.")
+
+    def get_eval_run(
+        self, eval_run_id: str, deserialize: Optional[bool] = True, user_id: Optional[str] = None
+    ) -> Optional[Union[EvalRunRecord, Dict[str, Any]]]:
+        raise NotImplementedError("OracleDb eval methods are implemented in ticket 05.")
+
+    def get_eval_runs(
+        self,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+        model_id: Optional[str] = None,
+        filter_type: Optional[EvalFilterType] = None,
+        eval_type: Optional[List[EvalType]] = None,
+        deserialize: Optional[bool] = True,
+        user_id: Optional[str] = None,
+    ) -> Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
+        raise NotImplementedError("OracleDb eval methods are implemented in ticket 05.")
+
+    def rename_eval_run(
+        self, eval_run_id: str, name: str, deserialize: Optional[bool] = True, user_id: Optional[str] = None
+    ) -> Optional[Union[EvalRunRecord, Dict[str, Any]]]:
+        raise NotImplementedError("OracleDb eval methods are implemented in ticket 05.")
+
+    def upsert_trace(self, trace: Any) -> None:
+        raise NotImplementedError("OracleDb trace methods are implemented in ticket 05.")
+
+    def get_trace(self, trace_id: Optional[str] = None, run_id: Optional[str] = None):
+        raise NotImplementedError("OracleDb trace methods are implemented in ticket 05.")
+
+    def get_traces(
+        self,
+        run_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+        status: Optional[str] = None,
+        start_time: Optional[datetime] = None,
+        end_time: Optional[datetime] = None,
+        limit: Optional[int] = 20,
+        page: Optional[int] = 1,
+        filter_expr: Optional[Dict[str, Any]] = None,
+    ) -> Tuple[List, int]:
+        raise NotImplementedError("OracleDb trace methods are implemented in ticket 05.")
+
+    def get_trace_stats(
+        self,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+        start_time: Optional[datetime] = None,
+        end_time: Optional[datetime] = None,
+        limit: Optional[int] = 20,
+        page: Optional[int] = 1,
+        filter_expr: Optional[Dict[str, Any]] = None,
+        group_by: str = "session",
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        raise NotImplementedError("OracleDb trace methods are implemented in ticket 05.")
+
+    def create_span(self, span: Any) -> None:
+        raise NotImplementedError("OracleDb span methods are implemented in ticket 05.")
+
+    def create_spans(self, spans: List) -> None:
+        raise NotImplementedError("OracleDb span methods are implemented in ticket 05.")
+
+    def get_span(self, span_id: str):
+        raise NotImplementedError("OracleDb span methods are implemented in ticket 05.")
+
+    def get_spans(
+        self, trace_id: Optional[str] = None, parent_span_id: Optional[str] = None, limit: Optional[int] = 1000
+    ) -> List:
+        raise NotImplementedError("OracleDb span methods are implemented in ticket 05.")
+
+    def get_learning(
+        self,
+        learning_type: str,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        namespace: Optional[str] = None,
+        entity_id: Optional[str] = None,
+        entity_type: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        raise NotImplementedError("OracleDb learning methods are implemented in ticket 06.")
+
+    def upsert_learning(
+        self,
+        id: str,
+        learning_type: str,
+        content: Dict[str, Any],
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        namespace: Optional[str] = None,
+        entity_id: Optional[str] = None,
+        entity_type: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        raise NotImplementedError("OracleDb learning methods are implemented in ticket 06.")
+
+    def delete_learning(self, id: str) -> bool:
+        raise NotImplementedError("OracleDb learning methods are implemented in ticket 06.")
+
+    def get_learnings(
+        self,
+        learning_type: Optional[str] = None,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        namespace: Optional[str] = None,
+        entity_id: Optional[str] = None,
+        entity_type: Optional[str] = None,
+        limit: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        raise NotImplementedError("OracleDb learning methods are implemented in ticket 06.")

@@ -1,4 +1,12 @@
-"""Oracle engines with Agno's connection-pool and JSON defaults."""
+"""Oracle engines with Agno's connection-pool defaults.
+
+Unlike the Postgres engine, no ``json_serializer`` is passed to
+``create_engine``: the Oracle dialect does not accept that keyword at all
+(``create_engine`` raises ``TypeError`` on it), and it would be redundant
+here regardless -- ``agno.db.oracle.schemas.OracleNativeJSON`` and
+``OracleClobJSON`` already serialize through ``agno.db.utils.json_serializer``
+themselves, in their own ``process_bind_param``.
+"""
 
 from typing import Any, Dict, Union
 
@@ -6,14 +14,12 @@ from sqlalchemy import create_engine
 from sqlalchemy.engine import URL, Engine, make_url
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
-from agno.db.utils import json_serializer
-
 
 def _engine_options(**kwargs: Any) -> Dict[str, Any]:
     # pool_pre_ping=True matters more here than on Postgres: Oracle connections
     # are frequently dropped by a firewall or load balancer's idle timeout, and
     # a dead connection surfaces as an opaque driver error without it.
-    return {"pool_pre_ping": True, "pool_recycle": 3600, "json_serializer": json_serializer, **kwargs}
+    return {"pool_pre_ping": True, "pool_recycle": 3600, **kwargs}
 
 
 def _oracle_url(db_url: Union[str, URL]) -> URL:
@@ -28,9 +34,9 @@ def _oracle_url(db_url: Union[str, URL]) -> URL:
 def create_oracle_engine(db_url: Union[str, URL], **kwargs: Any) -> Engine:
     """Create a synchronous Oracle engine without opening a connection.
 
-    Defaults to pool_pre_ping=True, pool_recycle=3600 and Agno's JSON
-    serializer. Keyword arguments are passed to SQLAlchemy and override these
-    defaults; use connect_args for driver options such as connection timeouts.
+    Defaults to pool_pre_ping=True and pool_recycle=3600. Keyword arguments
+    are passed to SQLAlchemy and override these defaults; use connect_args
+    for driver options such as connection timeouts.
     A plain oracle:// URL selects the python-oracledb dialect. Explicit
     drivers are preserved. URL objects accept unescaped credentials.
 

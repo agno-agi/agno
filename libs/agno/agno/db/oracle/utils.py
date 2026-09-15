@@ -7,7 +7,7 @@ length handling, unique-violation detection, and upsert via MERGE with retry.
 import hashlib
 from typing import Any, Dict, List, Optional, Sequence
 
-from sqlalchemy import Table, case
+from sqlalchemy import Table, bindparam, case, func
 from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.inspection import inspect
 from sqlalchemy.orm import Session
@@ -88,6 +88,28 @@ def truncate_identifier(name: str, max_length: int = MAX_IDENTIFIER_LENGTH) -> s
     budget = max_length - len(digest) - 1  # -1 for the separator
     truncated = encoded[:budget].decode("utf-8", errors="ignore")
     return f"{truncated}_{digest}"
+
+
+def apply_sorting(stmt: Any, table: Table, sort_by: Optional[str] = None, sort_order: Optional[str] = None) -> Any:
+    """Apply ORDER BY to a SELECT statement. Identical to the Postgres helper
+    of the same name -- nothing here is dialect-specific.
+
+    For ``updated_at``, falls back to ``created_at`` via COALESCE so pre-3.0
+    records with a null ``updated_at`` still sort by their creation time.
+    """
+    if sort_by is None:
+        return stmt
+    if not hasattr(table.c, sort_by):
+        return stmt
+
+    if sort_by == "updated_at" and hasattr(table.c, "created_at"):
+        sort_column = func.coalesce(table.c.updated_at, table.c.created_at)
+    else:
+        sort_column = getattr(table.c, sort_by)
+
+    if sort_order == "asc":
+        return stmt.order_by(sort_column.asc())
+    return stmt.order_by(sort_column.desc())
 
 
 # -- Table existence and validity --
@@ -269,7 +291,15 @@ def build_merge_statement(table: Table, key_columns: Sequence[str], value_column
     from ``on_conflict_do_update``'s SET clause).
 
     Returns a SQLAlchemy ``TextClause`` with named bind parameters matching
-    ``value_columns``; execute it with a dict of those names to values.
+    ``value_columns``, each explicitly typed via ``bindparams(type_=...)``
+    from the corresponding column on ``table``. This is not optional: a bare
+    ``text()`` bind parameter carries no type, so a column's own
+    ``process_bind_param`` -- which is where ``OracleNativeJSON`` and
+    ``OracleClobJSON`` serialize a Python dict to text -- never runs, and the
+    raw dict reaches the driver, which cannot bind it
+    (``DPY-3002: Python value of type "dict" is not supported``), confirmed
+    against a live server. Execute the returned statement with a dict of
+    ``value_columns`` names to values.
     """
     key_set = set(key_columns)
     update_columns = [c for c in value_columns if c not in key_set]
@@ -287,7 +317,8 @@ def build_merge_statement(table: Table, key_columns: Sequence[str], value_column
         merge_sql += f" WHEN MATCHED THEN UPDATE SET {update_set}"
     merge_sql += f" WHEN NOT MATCHED THEN INSERT ({insert_columns}) VALUES ({insert_values})"
 
-    return text(merge_sql)
+    typed_params = [bindparam(c, type_=table.c[c].type) for c in value_columns]
+    return text(merge_sql).bindparams(*typed_params)
 
 
 def merge_upsert(
