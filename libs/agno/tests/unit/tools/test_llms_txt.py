@@ -548,10 +548,16 @@ def test_knowledge_error_handling(tools_with_knowledge):
 # ============================================================================
 
 
-def test_reader_allowed_hosts_default_none():
+def test_reader_allowed_hosts_default_none_blocks_private():
+    """With allowed_hosts=None, private/reserved IPs must still be blocked (SSRF prevention)."""
     reader = LLMsTxtReader()
     assert reader.allowed_hosts is None
-    assert is_host_allowed("http://anything.example/path", reader.allowed_hosts) is True
+    with patch("agno.knowledge.reader.utils.url_validation.socket.getaddrinfo",
+               return_value=[(None, None, None, None, ("169.254.169.254", 80))]):
+        assert is_host_allowed("http://metadata.internal/", reader.allowed_hosts) is False
+    with patch("agno.knowledge.reader.utils.url_validation.socket.getaddrinfo",
+               return_value=[(None, None, None, None, ("93.184.216.34", 80))]):
+        assert is_host_allowed("http://example.com/path", reader.allowed_hosts) is True
 
 
 def test_reader_allowed_hosts_normalizes_case():
@@ -611,15 +617,25 @@ def test_reader_fetch_url_uses_event_hook_when_allowlisted():
     assert get_kwargs.get("follow_redirects") is True
 
 
-def test_reader_fetch_url_uses_fetch_with_retry_when_no_allowlist():
-    """Without an allowlist the existing retry helper is still used unchanged."""
+def test_reader_fetch_url_uses_event_hook_when_no_allowlist():
+    """Without an allowlist, the redirect guard is still active (blocks private IPs)."""
     reader = LLMsTxtReader()
     response = _mock_httpx_response("Doc content", "text/plain")
 
-    with patch("agno.knowledge.reader.llms_txt_reader.fetch_with_retry", return_value=response) as mock_fetch:
-        reader.fetch_url("https://example.com/page")
+    mock_client = MagicMock()
+    mock_client.__enter__.return_value = mock_client
+    mock_client.get.return_value = response
 
-    mock_fetch.assert_called_once()
+    with (
+        patch("agno.knowledge.reader.llms_txt_reader.fetch_with_retry") as mock_fetch,
+        patch("agno.knowledge.reader.llms_txt_reader.httpx.Client", return_value=mock_client),
+        patch("agno.knowledge.reader.utils.url_validation.socket.getaddrinfo",
+              return_value=[(None, None, None, None, ("93.184.216.34", 80))]),
+    ):
+        result = reader.fetch_url("https://example.com/page")
+
+    assert result == "Doc content"
+    mock_fetch.assert_not_called()  # guard path is always used now
 
 
 def test_reader_fetch_url_returns_none_when_redirect_target_disallowed():
