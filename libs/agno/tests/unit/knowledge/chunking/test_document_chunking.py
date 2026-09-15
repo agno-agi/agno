@@ -97,6 +97,27 @@ class TestDocumentChunkingOversizedSentences:
         assert all(len(chunk.content) <= 10 for chunk in chunks)
         assert " ".join(chunk.content for chunk in chunks).split(" ") == ["aaaaaa", "bbbb", "qqqqqqqqqq", "q"]
 
+    def test_trailing_sentence_pieces_are_joined_with_a_space(self):
+        # Leftover sentence pieces were sized for a " " join but emitted with "\n\n", exceeding chunk_size
+        doc = Document(id="doc", name="doc", content="aaaaaa foo. bbbb.")
+        chunker = DocumentChunking(chunk_size=10, overlap=0)
+
+        chunks = chunker.chunk(doc)
+
+        assert all(len(chunk.content) <= 10 for chunk in chunks)
+        assert [chunk.content for chunk in chunks] == ["aaaaaa", "foo. bbbb."]
+
+    def test_sentence_pieces_are_not_merged_into_the_next_paragraph(self):
+        # A following paragraph must start its own chunk rather than being glued onto sentence pieces
+        doc = Document(id="doc", name="doc", content="aaaaaa foo. bbbb.\n\ncc")
+        chunker = DocumentChunking(chunk_size=10, overlap=0)
+
+        chunks = chunker.chunk(doc)
+
+        assert all(len(chunk.content) <= 10 for chunk in chunks)
+        assert [chunk.content for chunk in chunks] == ["aaaaaa", "foo. bbbb.", "cc"]
+        assert [chunk.meta_data["chunk"] for chunk in chunks] == [1, 2, 3]
+
     def test_non_positive_chunk_size_is_rejected(self):
         with pytest.raises(ValueError):
             DocumentChunking(chunk_size=0)

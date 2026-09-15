@@ -120,6 +120,19 @@ class DocumentChunking(ChunkingStrategy):
                         current_chunk = [sentence]
                         current_size = sentence_size
 
+                # Sentence pieces were sized for a single-space join, so emit them here instead of
+                # letting them fall through to the paragraph join ("\n\n"), which would exceed chunk_size.
+                if current_chunk:
+                    meta_data = chunk_meta_data.copy()
+                    meta_data["chunk"] = chunk_number
+                    chunk_content = " ".join(current_chunk)
+                    chunk_id = self._generate_chunk_id(document, chunk_number, chunk_content)
+                    meta_data["chunk_size"] = len(chunk_content)
+                    chunks.append(Document(id=chunk_id, name=document.name, meta_data=meta_data, content=chunk_content))
+                    chunk_number += 1
+                    current_chunk = []
+                    current_size = 0
+
             elif current_size + para_size <= self.chunk_size:
                 current_chunk.append(para)
                 current_size += para_size
