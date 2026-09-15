@@ -636,6 +636,8 @@ def read_or_create_session(
     agent: Agent,
     session_id: str,
     user_id: Optional[str] = None,
+    *,
+    persist_introduction: bool = True,
 ) -> AgentSession:
     from time import time
     from uuid import uuid4
@@ -687,14 +689,14 @@ def read_or_create_session(
             # v3: session.runs is in-memory; persist the intro to the runs table
             # so a session reload picks it up (pre-3.0's save_session wrote the
             # entire runs blob, so this happened for free).
-            if agent.db is not None and agent.team_id is None and agent.workflow_id is None:
+            if persist_introduction and agent.db is not None and agent.team_id is None and agent.workflow_id is None:
                 from agno.agent._session import save_session
                 from agno.agent._storage import upsert_run
 
                 save_session(agent, session=agent_session)
                 upsert_run(agent, run=introduction_run, session_id=session_id, user_id=user_id, run_index=0)
 
-    if agent.cache_session:
+    if persist_introduction and agent.cache_session:
         agent._set_cached_session(agent_session)
 
     return agent_session
@@ -704,6 +706,8 @@ async def aread_or_create_session(
     agent: Agent,
     session_id: str,
     user_id: Optional[str] = None,
+    *,
+    persist_introduction: bool = True,
 ) -> AgentSession:
     from time import time
     from uuid import uuid4
@@ -759,7 +763,7 @@ async def aread_or_create_session(
             # v3: session.runs is in-memory; persist the intro to the runs table
             # so a session reload picks it up (pre-3.0's save_session wrote the
             # entire runs blob, so this happened for free).
-            if agent.db is not None and agent.team_id is None and agent.workflow_id is None:
+            if persist_introduction and agent.db is not None and agent.team_id is None and agent.workflow_id is None:
                 from agno.agent._session import asave_session, save_session
                 from agno.agent._storage import aupsert_run, upsert_run
 
@@ -770,7 +774,7 @@ async def aread_or_create_session(
                     save_session(agent, session=agent_session)
                     upsert_run(agent, run=introduction_run, session_id=session_id, user_id=user_id, run_index=0)
 
-    if agent.cache_session:
+    if persist_introduction and agent.cache_session:
         agent._set_cached_session(agent_session)
 
     return agent_session
