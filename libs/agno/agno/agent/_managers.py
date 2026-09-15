@@ -1,4 +1,4 @@
-"""Background task orchestration for memory, learning, and cultural knowledge."""
+"""Background task orchestration for memory and learning."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ from asyncio import CancelledError, Task, create_task
 from concurrent.futures import Future
 from typing import (
     TYPE_CHECKING,
+    Any,
     List,
     Optional,
 )
@@ -15,7 +16,6 @@ if TYPE_CHECKING:
     from agno.metrics import RunMetrics
 
 from agno.db.base import UserMemory
-from agno.db.schemas.culture import CulturalKnowledge
 from agno.models.message import Message
 from agno.run.messages import RunMessages
 from agno.session import AgentSession
@@ -258,132 +258,6 @@ async def aget_user_memories(agent: Agent, user_id: Optional[str] = None) -> Opt
 
 
 # ---------------------------------------------------------------------------
-# Cultural knowledge
-# ---------------------------------------------------------------------------
-
-
-def make_cultural_knowledge(
-    agent: Agent,
-    run_messages: RunMessages,
-) -> Optional[RunMetrics]:
-    from agno.metrics import RunMetrics
-
-    collector = RunMetrics()
-    if run_messages.user_message is not None and agent.culture_manager is not None and agent.update_cultural_knowledge:
-        log_debug("Creating cultural knowledge.")
-        agent.culture_manager.create_cultural_knowledge(
-            message=run_messages.user_message.get_content_string(),
-            run_metrics=collector,
-        )
-    return collector
-
-
-async def acreate_cultural_knowledge(
-    agent: Agent,
-    run_messages: RunMessages,
-) -> Optional[RunMetrics]:
-    from agno.metrics import RunMetrics
-
-    collector = RunMetrics()
-    if run_messages.user_message is not None and agent.culture_manager is not None and agent.update_cultural_knowledge:
-        log_debug("Creating cultural knowledge.")
-        await agent.culture_manager.acreate_cultural_knowledge(
-            message=run_messages.user_message.get_content_string(),
-            run_metrics=collector,
-        )
-    return collector
-
-
-async def astart_cultural_knowledge_task(
-    agent: Agent,
-    run_messages: RunMessages,
-    existing_task: Optional[Task],
-) -> Optional[Task]:
-    """Cancel any existing cultural knowledge task and start a new one if conditions are met.
-
-    Args:
-        agent: The Agent instance.
-        run_messages: The run messages containing the user message.
-        existing_task: An existing cultural knowledge task to cancel before starting a new one.
-
-    Returns:
-        A new cultural knowledge task if conditions are met, None otherwise.
-    """
-    # Cancel any existing task from a previous retry attempt
-    if existing_task is not None and not existing_task.done():
-        existing_task.cancel()
-        try:
-            await existing_task
-        except CancelledError:
-            pass
-
-    # Create new task if conditions are met
-    if run_messages.user_message is not None and agent.culture_manager is not None and agent.update_cultural_knowledge:
-        log_debug("Starting cultural knowledge creation in background task.")
-        return create_task(acreate_cultural_knowledge(agent, run_messages=run_messages))
-
-    return None
-
-
-def start_cultural_knowledge_future(
-    agent: Agent,
-    run_messages: RunMessages,
-    existing_future: Optional[Future] = None,
-) -> Optional[Future]:
-    """Cancel any existing cultural knowledge future and start a new one if conditions are met.
-
-    Args:
-        agent: The Agent instance.
-        run_messages: The run messages containing the user message.
-        existing_future: An existing cultural knowledge future to cancel before starting a new one.
-
-    Returns:
-        A new cultural knowledge future if conditions are met, None otherwise.
-    """
-    # Cancel any existing future from a previous retry attempt
-    # Note: cancel() only works if the future hasn't started yet
-    if existing_future is not None and not existing_future.done():
-        existing_future.cancel()
-
-    # Create new future if conditions are met
-    if run_messages.user_message is not None and agent.culture_manager is not None and agent.update_cultural_knowledge:
-        log_debug("Starting cultural knowledge creation in background thread.")
-        return agent.background_executor.submit(make_cultural_knowledge, agent, run_messages=run_messages)
-
-    return None
-
-
-def get_culture_knowledge(agent: Agent) -> Optional[List[CulturalKnowledge]]:
-    """Get the cultural knowledge the agent has access to
-
-    Args:
-        agent: The Agent instance.
-
-    Returns:
-        Optional[List[CulturalKnowledge]]: The cultural knowledge.
-    """
-    if agent.culture_manager is None:
-        return None
-
-    return agent.culture_manager.get_all_knowledge()
-
-
-async def aget_culture_knowledge(agent: Agent) -> Optional[List[CulturalKnowledge]]:
-    """Get the cultural knowledge the agent has access to
-
-    Args:
-        agent: The Agent instance.
-
-    Returns:
-        Optional[List[CulturalKnowledge]]: The cultural knowledge.
-    """
-    if agent.culture_manager is None:
-        return None
-
-    return await agent.culture_manager.aget_all_knowledge()
-
-
-# ---------------------------------------------------------------------------
 # Learning
 # ---------------------------------------------------------------------------
 
@@ -393,6 +267,7 @@ def process_learnings(
     run_messages: RunMessages,
     session: AgentSession,
     user_id: Optional[str],
+    run_context: Optional[Any] = None,
 ) -> Optional[RunMetrics]:
     """Process learnings from conversation (runs in background thread)."""
     if agent._learning is None:
@@ -412,6 +287,10 @@ def process_learnings(
             agent_id=agent.id,
             team_id=agent.team_id,
             run_metrics=collector,
+            run_context=run_context,
+            metadata=getattr(run_context, "metadata", None),
+            dependencies=getattr(run_context, "dependencies", None),
+            session_state=getattr(run_context, "session_state", None),
         )
         log_debug("Learning extraction completed.")
     except Exception as e:
@@ -424,6 +303,7 @@ async def aprocess_learnings(
     run_messages: RunMessages,
     session: AgentSession,
     user_id: Optional[str],
+    run_context: Optional[Any] = None,
 ) -> Optional[RunMetrics]:
     """Async process learnings from conversation."""
     if agent._learning is None:
@@ -442,6 +322,10 @@ async def aprocess_learnings(
             agent_id=agent.id,
             team_id=agent.team_id,
             run_metrics=collector,
+            run_context=run_context,
+            metadata=getattr(run_context, "metadata", None),
+            dependencies=getattr(run_context, "dependencies", None),
+            session_state=getattr(run_context, "session_state", None),
         )
         log_debug("Learning extraction completed.")
     except Exception as e:
@@ -455,6 +339,7 @@ async def astart_learning_task(
     session: AgentSession,
     user_id: Optional[str],
     existing_task: Optional[Task] = None,
+    run_context: Optional[Any] = None,
 ) -> Optional[Task]:
     """Start learning extraction as async task.
 
@@ -485,6 +370,7 @@ async def astart_learning_task(
                 run_messages=run_messages,
                 session=session,
                 user_id=user_id,
+                run_context=run_context,
             )
         )
 
@@ -497,6 +383,7 @@ def start_learning_future(
     session: AgentSession,
     user_id: Optional[str],
     existing_future: Optional[Future] = None,
+    run_context: Optional[Any] = None,
 ) -> Optional[Future]:
     """Start learning extraction in background thread.
 
@@ -523,6 +410,7 @@ def start_learning_future(
             run_messages=run_messages,
             session=session,
             user_id=user_id,
+            run_context=run_context,
         )
 
     return None

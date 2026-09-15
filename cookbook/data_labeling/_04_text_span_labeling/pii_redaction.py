@@ -9,9 +9,9 @@ and its PII type; Python does the find-and-replace.
 
 from typing import List, Literal
 
-from agno.agent import Agent, RunOutput  # noqa
+from agno.agent import Agent, RunOutput
 from pydantic import BaseModel, Field
-from rich.pretty import pprint  # noqa
+from rich.pretty import pprint
 
 
 # ---------------------------------------------------------------------------

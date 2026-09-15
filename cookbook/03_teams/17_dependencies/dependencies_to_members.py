@@ -79,5 +79,4 @@ if __name__ == "__main__":
             "current_context": get_current_context,
         },
         add_dependencies_to_context=True,
-        debug_mode=True,
     )

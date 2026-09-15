@@ -24,12 +24,19 @@ from ag_ui.core import (
     ToolCallResultEvent,
     ToolCallStartEvent,
 )
+from ag_ui.core import (
+    RunErrorEvent as AGUIRunErrorEvent,
+)
 
+from agno.models.response import ToolExecution
 from agno.os.interfaces.agui.state import StreamState
+from agno.os.interfaces.agui.utils import to_json_str
 from agno.reasoning.step import ReasoningStep
 from agno.run.agent import RunContentEvent, RunEvent
+from agno.run.agent import RunPausedEvent as AgentRunPausedEvent
 from agno.run.base import BaseRunOutputEvent
 from agno.run.team import RunContentEvent as TeamRunContentEvent
+from agno.run.team import RunPausedEvent as TeamRunPausedEvent
 from agno.run.team import TeamRunEvent
 from agno.utils.message import get_text_from_message
 
@@ -93,6 +100,32 @@ def _emit_state_delta(state: StreamState) -> List[BaseEvent]:
         return []
     state.set_state_snapshot(state.run_state)
     return [StateDeltaEvent(type=EventType.STATE_DELTA, delta=ops)]
+
+
+def _close_open_spans(state: StreamState) -> List[BaseEvent]:
+    """End any reasoning, tool call, or text message still open, so a terminal event never leaves a dangling span."""
+    events: List[BaseEvent] = []
+
+    # Close orphaned reasoning session
+    if state.reasoning_message_id is not None:
+        events.append(
+            ReasoningMessageEndEvent(type=EventType.REASONING_MESSAGE_END, message_id=state.reasoning_message_id)
+        )
+        events.append(ReasoningEndEvent(type=EventType.REASONING_END, message_id=state.reasoning_message_id))
+        state.end_reasoning()
+
+    # Close remaining active tool calls
+    for tool_call_id in list(state.active_tool_call_ids):
+        if tool_call_id not in state.ended_tool_call_ids:
+            events.append(ToolCallEndEvent(type=EventType.TOOL_CALL_END, tool_call_id=tool_call_id))
+            state.end_tool_call(tool_call_id)
+
+    # Close open text message
+    if state.text_message_open:
+        events.append(TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=state.text_message_id))
+        state.close_text_message()
+
+    return events
 
 
 def on_run_content(chunk: BaseRunOutputEvent, state: StreamState) -> List[BaseEvent]:
@@ -190,13 +223,15 @@ def on_tool_call_completed(chunk: BaseRunOutputEvent, state: StreamState) -> Lis
     state.end_tool_call(tool.tool_call_id)
 
     if tool.result is not None:
+        content = to_json_str(tool.result)
         events.append(
             ToolCallResultEvent(
                 type=EventType.TOOL_CALL_RESULT,
                 tool_call_id=tool.tool_call_id,
-                content=str(tool.result),
+                content=content,
                 role="tool",
-                message_id=str(uuid.uuid4()),
+                # Use tool_call_id as message_id so frontend can link result to the tool call
+                message_id=tool.tool_call_id,
             )
         )
 
@@ -308,77 +343,94 @@ def on_unknown_event(chunk: BaseRunOutputEvent, state: StreamState) -> List[Base
     return [RawEvent(type=EventType.RAW, event=raw_dict, source="agno")]
 
 
-def on_run_completed(chunk: BaseRunOutputEvent, state: StreamState) -> List[BaseEvent]:
-    events: List[BaseEvent] = []
+def on_run_error(chunk: BaseRunOutputEvent, state: StreamState) -> List[BaseEvent]:
+    """Close open spans, then emit the terminal AG-UI error event. Nothing may follow RUN_ERROR."""
+    try:
+        raw_event: Any = chunk.to_dict()
+    except Exception:
+        raw_event = {"event": str(getattr(chunk, "event", "RunError"))}
 
-    # Close orphaned reasoning session
-    if state.reasoning_message_id is not None:
-        events.append(
-            ReasoningMessageEndEvent(type=EventType.REASONING_MESSAGE_END, message_id=state.reasoning_message_id)
+    message = getattr(chunk, "content", None) or "Run failed"
+    error_type = getattr(chunk, "error_type", None)
+
+    events = _close_open_spans(state)
+    events.append(
+        AGUIRunErrorEvent(
+            type=EventType.RUN_ERROR,
+            message=str(message),
+            code=error_type,
+            rawEvent=raw_event,
         )
-        events.append(ReasoningEndEvent(type=EventType.REASONING_END, message_id=state.reasoning_message_id))
-        state.end_reasoning()
+    )
+    return events
 
-    # Close remaining active tool calls
-    for tool_call_id in list(state.active_tool_call_ids):
-        if tool_call_id not in state.ended_tool_call_ids:
-            events.append(ToolCallEndEvent(type=EventType.TOOL_CALL_END, tool_call_id=tool_call_id))
-            state.end_tool_call(tool_call_id)
 
-    # Close open text message
-    if state.text_message_open:
-        events.append(TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=state.text_message_id))
-        state.close_text_message()
+def on_run_completed(chunk: BaseRunOutputEvent, state: StreamState) -> List[BaseEvent]:
+    events = _close_open_spans(state)
 
-    # Emit external execution tools for paused runs
-    from agno.run.agent import RunPausedEvent
+    # 1. Collect paused tools for frontend rendering
+    paused_tools: List[ToolExecution] = []
+    if isinstance(chunk, AgentRunPausedEvent):
+        paused_tools = (
+            chunk.tools_awaiting_external_execution
+            + chunk.tools_requiring_confirmation
+            + chunk.tools_requiring_user_input
+        )
+    elif isinstance(chunk, TeamRunPausedEvent):
+        # Leader tools from .tools, member tools from active_requirements
+        paused_tools = (
+            chunk.tools_awaiting_external_execution
+            + chunk.tools_requiring_confirmation
+            + chunk.tools_requiring_user_input
+        )
+        for req in chunk.active_requirements:
+            if req.member_agent_id and req.tool_execution:
+                paused_tools.append(req.tool_execution)
 
-    if isinstance(chunk, RunPausedEvent):
-        external_tools = chunk.tools_awaiting_external_execution
-        if external_tools:
-            assistant_message_id = str(uuid.uuid4())
+    if paused_tools:
+        assistant_message_id = str(uuid.uuid4())
+        events.append(
+            TextMessageStartEvent(
+                type=EventType.TEXT_MESSAGE_START,
+                message_id=assistant_message_id,
+                role="assistant",
+            )
+        )
+
+        content = getattr(chunk, "content", None)
+        if content:
             events.append(
-                TextMessageStartEvent(
-                    type=EventType.TEXT_MESSAGE_START,
+                TextMessageContentEvent(
+                    type=EventType.TEXT_MESSAGE_CONTENT,
                     message_id=assistant_message_id,
-                    role="assistant",
+                    delta=str(content),
                 )
             )
 
-            content = getattr(chunk, "content", None)
-            if content:
-                events.append(
-                    TextMessageContentEvent(
-                        type=EventType.TEXT_MESSAGE_CONTENT,
-                        message_id=assistant_message_id,
-                        delta=str(content),
-                    )
+        events.append(TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=assistant_message_id))
+
+        for tool in paused_tools:
+            if tool.tool_call_id is None or tool.tool_name is None:
+                continue
+
+            events.append(
+                ToolCallStartEvent(
+                    type=EventType.TOOL_CALL_START,
+                    tool_call_id=tool.tool_call_id,
+                    tool_call_name=tool.tool_name,
+                    parent_message_id=assistant_message_id,
                 )
+            )
 
-            events.append(TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=assistant_message_id))
-
-            for tool in external_tools:
-                if tool.tool_call_id is None or tool.tool_name is None:
-                    continue
-
-                events.append(
-                    ToolCallStartEvent(
-                        type=EventType.TOOL_CALL_START,
-                        tool_call_id=tool.tool_call_id,
-                        tool_call_name=tool.tool_name,
-                        parent_message_id=assistant_message_id,
-                    )
+            events.append(
+                ToolCallArgsEvent(
+                    type=EventType.TOOL_CALL_ARGS,
+                    tool_call_id=tool.tool_call_id,
+                    delta=json.dumps(tool.tool_args),
                 )
+            )
 
-                events.append(
-                    ToolCallArgsEvent(
-                        type=EventType.TOOL_CALL_ARGS,
-                        tool_call_id=tool.tool_call_id,
-                        delta=json.dumps(tool.tool_args),
-                    )
-                )
-
-                events.append(ToolCallEndEvent(type=EventType.TOOL_CALL_END, tool_call_id=tool.tool_call_id))
+            events.append(ToolCallEndEvent(type=EventType.TOOL_CALL_END, tool_call_id=tool.tool_call_id))
 
     # Emit final state snapshot
     if state.run_state is not None:
@@ -407,19 +459,21 @@ HANDLERS: Dict[str, EventHandler] = {
     RunEvent.custom_event.value: on_custom_event,
 }
 
-# Terminal events that trigger completion handling
+# Terminal events that trigger terminal handling
 _COMPLETION_EVENTS = frozenset(
     {
         RunEvent.run_completed.value,
+        RunEvent.run_error.value,
         RunEvent.run_paused.value,
         TeamRunEvent.run_completed.value,
+        TeamRunEvent.run_error.value,
         TeamRunEvent.run_paused.value,
     }
 )
 
 
 def is_completion_event(chunk: BaseRunOutputEvent) -> bool:
-    """Check if this event signals stream completion."""
+    """Check if this event is terminal for the stream (completed, paused, or error)."""
     event = getattr(chunk, "event", None)
     if event is None:
         return False
@@ -444,5 +498,9 @@ def process_event(chunk: BaseRunOutputEvent, state: StreamState) -> List[BaseEve
 
 
 def process_completion(chunk: BaseRunOutputEvent, state: StreamState) -> List[BaseEvent]:
-    """Process completion event (run_completed/run_paused) and return cleanup events."""
+    """Process a terminal event and return the corresponding AG-UI events."""
+    event = getattr(chunk, "event", None)
+    event_value = event.value if event is not None and hasattr(event, "value") else str(event)
+    if _normalize_event(event_value) == RunEvent.run_error.value:
+        return on_run_error(chunk, state)
     return on_run_completed(chunk, state)

@@ -190,10 +190,10 @@ class TestAgentStateSnapshot:
             mock_arun.return_value = mock_stream()
             client.post("/agui", json=make_request_body("Test", state=initial_state))
 
-        # Verify agent.arun received session_state
+        # Verify agent.arun received session_state via run_context
         mock_arun.assert_called_once()
         call_kwargs = mock_arun.call_args.kwargs
-        assert call_kwargs["session_state"] == initial_state
+        assert call_kwargs["run_context"].session_state == initial_state
 
 
 class TestAgentStateDelta:

@@ -12,8 +12,11 @@ Tests cover:
 - Parallel step guard for executor HITL
 """
 
+import json
 from unittest.mock import MagicMock
 
+from agno.models.response import ToolExecution
+from agno.run.requirement import RunRequirement
 from agno.run.workflow import (
     StepExecutorPausedEvent,
     WorkflowRunEvent,
@@ -192,6 +195,32 @@ class TestStepRequirementExecutorFields:
         assert d["executor_run_id"] == "run-1"
         assert d["executor_type"] == "agent"
         assert "_executor_run_response" not in d
+
+    def test_to_dict_serializes_run_requirement_objects(self):
+        """to_dict() converts nested RunRequirement objects for JSON storage."""
+        run_req = RunRequirement(
+            id="r1",
+            tool_execution=ToolExecution(
+                tool_call_id="call-1",
+                tool_name="commit_review",
+                tool_args={"row_id": "row-1"},
+                requires_confirmation=True,
+            ),
+        )
+        req = StepRequirement(
+            step_id="s1",
+            step_name="test",
+            step_index=0,
+            step_type=StepType.STEP,
+            requires_executor_input=True,
+            executor_requirements=[run_req],
+        )
+
+        d = req.to_dict()
+
+        json.dumps(d)
+        assert d["executor_requirements"][0]["id"] == "r1"
+        assert d["executor_requirements"][0]["tool_execution"]["tool_name"] == "commit_review"
 
     def test_to_dict_without_executor_fields(self):
         """to_dict() does not include executor fields when requires_executor_input is False."""

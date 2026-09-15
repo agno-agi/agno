@@ -18,7 +18,7 @@ from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.os.app import AgentOS
 from agno.team import Team
-from agno.workflow import Workflow
+from agno.workflow import HumanReview, Workflow
 from agno.workflow.step import Step
 
 
@@ -1603,7 +1603,7 @@ class TestCustomExecutorWithInternalAgentTeam:
             name="continue-step-id-workflow",
             id="continue-step-id-workflow-id",
             db=db,
-            steps=[Step(name="gated", executor=my_func, requires_confirmation=True)],
+            steps=[Step(name="gated", executor=my_func, human_review=HumanReview(requires_confirmation=True))],
         )
 
         # The OS run route deep-copies per request
@@ -1781,7 +1781,9 @@ class TestCustomExecutorWithInternalAgentTeam:
             execution_log.append(
                 {
                     "request_id": local_agent.metadata["request_id"],
-                    "agent_id": id(local_agent),
+                    # Keep the instance itself (not id()) so a garbage-collected
+                    # address can't be reused and falsely look like the same agent.
+                    "agent": local_agent,
                 }
             )
             # In real usage: result = local_agent.run(step_input.input)
@@ -1804,7 +1806,7 @@ class TestCustomExecutorWithInternalAgentTeam:
         assert len(execution_log) == 2
         assert execution_log[0]["request_id"] == "req-1"
         assert execution_log[1]["request_id"] == "req-2"
-        assert execution_log[0]["agent_id"] != execution_log[1]["agent_id"]
+        assert execution_log[0]["agent"] is not execution_log[1]["agent"]
 
     def test_safe_pattern_agent_deep_copy_in_function(self):
         """SAFE PATTERN: deep_copy the template agent inside function."""
@@ -2095,27 +2097,6 @@ class TestToolsDeepCopy:
         # MCP tool should be the SAME instance (shared)
         assert copy.tools[0] is mcp_tool
         assert copy.tools[0].instance_id == mcp_tool.instance_id
-
-    def test_multi_mcp_tools_are_shared(self):
-        """MultiMCPTools should also be shared."""
-
-        class MultiMCPTools:
-            """Mock MultiMCPTools for testing."""
-
-            def __init__(self):
-                self.instance_id = uuid.uuid4()
-                self.servers = ["server1", "server2"]
-
-        class TestMultiMCPTools(MultiMCPTools):
-            pass
-
-        multi_mcp = TestMultiMCPTools()
-        agent = Agent(name="test-agent", id="test-id", tools=[multi_mcp])
-
-        copy = agent.deep_copy()
-
-        # MultiMCPTools should be shared
-        assert copy.tools[0] is multi_mcp
 
     def test_mixed_tools_handled_correctly(self):
         """Mix of MCP and regular tools should be handled correctly."""

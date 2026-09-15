@@ -43,7 +43,10 @@ from agno.workflow import Workflow
 @pytest.fixture
 def test_agent():
     """Create a test agent for A2A."""
-    return Agent(name="test-a2a-agent", instructions="You are a helpful assistant.")
+    agent = Agent(name="test-a2a-agent", instructions="You are a helpful assistant.")
+    # Return same instance from deep_copy so arun patches work
+    agent.deep_copy = lambda **kwargs: agent
+    return agent
 
 
 @pytest.fixture
@@ -592,7 +595,10 @@ def test_team():
     """Create a test team for A2A."""
     agent1 = Agent(name="agent1", instructions="You are agent 1.")
     agent2 = Agent(name="agent2", instructions="You are agent 2.")
-    return Team(name="test-a2a-team", members=[agent1, agent2], instructions="You are a helpful team.")
+    team = Team(name="test-a2a-team", members=[agent1, agent2], instructions="You are a helpful team.")
+    # Return same instance from deep_copy so arun patches work
+    team.deep_copy = lambda **kwargs: team
+    return team
 
 
 @pytest.fixture
@@ -1098,6 +1104,8 @@ def test_workflow():
         return f"Workflow echo: {input}"
 
     workflow = Workflow(name="test-a2a-workflow", steps=[echo_step])
+    # Return same instance from deep_copy so arun patches work
+    workflow.deep_copy = lambda **kwargs: workflow
     return workflow
 
 

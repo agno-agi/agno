@@ -43,33 +43,36 @@ class WorkflowSession:
     # The unix timestamp when this session was last updated
     updated_at: Optional[int] = None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self, include_runs: bool = True) -> Dict[str, Any]:
         """Convert to dictionary for storage, serializing runs to dicts"""
 
-        runs_data: Optional[List[Dict[str, Any]]] = None
-        if self.runs:
-            runs_data = []
-            for run in self.runs:
-                try:
-                    if isinstance(run, dict):
-                        runs_data.append(run)  # type: ignore[arg-type]
-                    else:
-                        runs_data.append(run.to_dict())
-                except Exception as e:
-                    raise ValueError(f"Serialization failed: {str(e)}")
-
-        return {
+        session_dict: Dict[str, Any] = {
             "session_id": self.session_id,
             "user_id": self.user_id,
             "workflow_id": self.workflow_id,
             "workflow_name": self.workflow_name,
-            "runs": runs_data,
             "session_data": self.session_data,
             "workflow_data": self.workflow_data,
             "metadata": self.metadata,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }
+
+        if include_runs:
+            runs_data: Optional[List[Dict[str, Any]]] = None
+            if self.runs:
+                runs_data = []
+                for run in self.runs:
+                    try:
+                        if isinstance(run, dict):
+                            runs_data.append(run)  # type: ignore[arg-type]
+                        else:
+                            runs_data.append(run.to_dict())
+                    except Exception as e:
+                        raise ValueError(f"Serialization failed: {str(e)}")
+            session_dict["runs"] = runs_data
+
+        return session_dict
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> Optional[WorkflowSession]:
@@ -89,6 +92,11 @@ class WorkflowSession:
                     # Already a WorkflowRunOutput object (from deserialize_session_json_fields)
                     runs.append(run_item)
                 elif isinstance(run_item, dict):
+                    # A step's agent/team run shares this session id; the workflow run carries it.
+                    from agno.db.utils import get_run_type  # circular at module level
+
+                    if get_run_type(run_item) != "workflow":
+                        continue
                     # Still a dictionary, needs to be converted
                     runs.append(WorkflowRunOutput.from_dict(run_item))
                 else:
@@ -140,6 +148,12 @@ class WorkflowSession:
         # Find existing run and update it, or append new one
         for i, existing_run in enumerate(self.runs):
             if existing_run.run_id == run.run_id:
+                # queue_attempt is sticky: the generation stamp lives on the
+                # stored row (written by the queue worker's fenced patch), and
+                # a whole-run save from execution - which never knows its
+                # attempt - must not erase it
+                if getattr(run, "queue_attempt", None) is None:
+                    run.queue_attempt = getattr(existing_run, "queue_attempt", None)
                 self.runs[i] = run
                 break
         else:
@@ -157,7 +171,9 @@ class WorkflowSession:
         # Get completed runs only (exclude current/pending run)
         completed_runs = [run for run in self.runs if run.status == RunStatus.completed]
 
-        if num_runs is not None and len(completed_runs) > num_runs:
+        if num_runs is not None:
+            if num_runs <= 0:
+                return []
             recent_runs = completed_runs[-num_runs:]
         else:
             recent_runs = completed_runs
@@ -252,6 +268,12 @@ class WorkflowSession:
         if skip_statuses:
             runs = [run for run in runs if hasattr(run, "status") and run.status not in skip_statuses]  # type: ignore
 
+        # Filter by last_n_runs before applying message limit
+        if last_n_runs is not None:
+            if last_n_runs <= 0:
+                return []
+            runs = runs[-last_n_runs:]
+
         messages_from_history = []
         system_message = None
 
@@ -273,11 +295,17 @@ class WorkflowSession:
                         messages_from_history.append(message)
 
             if system_message:
-                messages_from_history = [system_message] + messages_from_history[
-                    -(limit - 1) :
-                ]  # Grab one less message then add the system message
+                if limit <= 1:
+                    messages_from_history = [system_message]
+                else:
+                    messages_from_history = [system_message] + messages_from_history[
+                        -(limit - 1) :
+                    ]  # Grab one less message then add the system message
             else:
-                messages_from_history = messages_from_history[-limit:]
+                if limit <= 0:
+                    messages_from_history = []
+                else:
+                    messages_from_history = messages_from_history[-limit:]
 
             # Remove tool result messages that don't have an associated assistant message with tool calls
             while len(messages_from_history) > 0 and messages_from_history[0].role == "tool":
@@ -285,8 +313,7 @@ class WorkflowSession:
 
         # If limit is not set, return all messages
         else:
-            runs_to_process = runs[-last_n_runs:] if last_n_runs is not None else runs
-            for run_response in runs_to_process:
+            for run_response in runs:
                 if not run_response or not run_response.messages:
                     continue
 
@@ -347,12 +374,19 @@ class WorkflowSession:
             return False
 
         # Filter for top-level runs (main team runs or agent runs when sharing session)
+        session_runs = runs
         if skip_member_messages:
             session_runs = [run for run in runs if run.team_id == team_id]
 
         # Filter runs by status
         if skip_statuses:
             session_runs = [run for run in session_runs if hasattr(run, "status") and run.status not in skip_statuses]
+
+        # Filter by last_n_runs before applying message limit
+        if last_n_runs is not None:
+            if last_n_runs <= 0:
+                return []
+            session_runs = session_runs[-last_n_runs:]
 
         messages_from_history = []
         system_message = None
@@ -375,20 +409,23 @@ class WorkflowSession:
                         messages_from_history.append(message)
 
             if system_message:
-                messages_from_history = [system_message] + messages_from_history[
-                    -(limit - 1) :
-                ]  # Grab one less message then add the system message
+                if limit <= 1:
+                    messages_from_history = [system_message]
+                else:
+                    messages_from_history = [system_message] + messages_from_history[
+                        -(limit - 1) :
+                    ]  # Grab one less message then add the system message
             else:
-                messages_from_history = messages_from_history[-limit:]
+                if limit <= 0:
+                    messages_from_history = []
+                else:
+                    messages_from_history = messages_from_history[-limit:]
 
             # Remove tool result messages that don't have an associated assistant message with tool calls
             while len(messages_from_history) > 0 and messages_from_history[0].role == "tool":
                 messages_from_history.pop(0)
         else:
-            # Filter by last_n runs
-            runs_to_process = session_runs[-last_n_runs:] if last_n_runs is not None else session_runs
-
-            for run_response in runs_to_process:
+            for run_response in session_runs:
                 if not (run_response and run_response.messages):
                     continue
 
@@ -491,6 +528,8 @@ class WorkflowSession:
         runs = self.runs
 
         if last_n_runs is not None:
+            if last_n_runs <= 0:
+                return []
             runs = self.runs[-last_n_runs:]
 
         return [

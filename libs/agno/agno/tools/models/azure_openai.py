@@ -151,7 +151,7 @@ class AzureOpenAITools(Toolkit):
 
         try:
             # Make API request using stored base URL
-            headers = {"api-key": self.api_key, "Content-Type": "application/json"}
+            headers: Dict[str, Any] = {"api-key": self.api_key, "Content-Type": "application/json"}
             response = post(self.image_base_url, headers=headers, json=params)
 
             if response.status_code != 200:

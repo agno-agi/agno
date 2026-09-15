@@ -402,6 +402,95 @@ def test_from_agent_directory_builds_sources_with_correct_targets():
     assert all(s["type"] == "inline" for s in agent.sources)
 
 
+def _symlink_or_skip(link: Path, target: Path) -> None:
+    try:
+        link.symlink_to(target)
+    except OSError:
+        pytest.skip("Symlinks not supported on this system")
+
+
+def test_from_agent_directory_skips_workspace_and_skill_files_that_escape_via_symlink():
+    with tempfile.TemporaryDirectory() as d:
+        root = Path(d)
+        agent_dir = root / "agent"
+        agent_dir.mkdir()
+        _make_agent_dir(agent_dir)
+
+        secret = root / "outside_secret.txt"
+        secret.write_text("OUTSIDE_SECRET")
+        _symlink_or_skip(agent_dir / "workspace" / "linked.txt", secret)
+        (agent_dir / "skills" / "leaky").mkdir()
+        _symlink_or_skip(agent_dir / "skills" / "leaky" / "SKILL.md", secret)
+
+        agent = AntigravityAgent.from_agent_directory(str(agent_dir), api_key="dummy", register=False)
+
+    sources = agent.sources or []
+    targets = {s["target"] for s in sources}
+    contents = "\n".join(s["content"] for s in sources)
+    assert "/about.txt" in targets
+    assert "/linked.txt" not in targets
+    assert "/.agents/skills/leaky/SKILL.md" not in targets
+    assert "OUTSIDE_SECRET" not in contents
+
+
+def test_from_agent_directory_ignores_agents_md_that_escapes_via_symlink():
+    with tempfile.TemporaryDirectory() as d:
+        root = Path(d)
+        agent_dir = root / "agent"
+        agent_dir.mkdir()
+        _make_agent_dir(agent_dir, with_agents_md=False)
+
+        secret = root / "outside_secret.txt"
+        secret.write_text("OUTSIDE_SECRET")
+        _symlink_or_skip(agent_dir / "AGENTS.md", secret)
+
+        agent = AntigravityAgent.from_agent_directory(str(agent_dir), api_key="dummy", register=False)
+
+    # AGENTS.md escapes the agent dir, so it is not read; instructions fall back to the yaml value
+    assert agent.custom_agent_instructions == "yaml-instructions"
+
+
+def test_from_agent_directory_skips_source_dir_that_is_a_symlink_to_outside():
+    with tempfile.TemporaryDirectory() as d:
+        root = Path(d)
+        agent_dir = root / "agent"
+        agent_dir.mkdir()
+        agent_dir.joinpath("agent.yaml").write_text("id: my-bot\nbase_agent: antigravity-preview-05-2026\n")
+        (agent_dir / "skills" / "haiku").mkdir(parents=True)
+        (agent_dir / "skills" / "haiku" / "SKILL.md").write_text("# Haiku skill")
+
+        outside = root / "outside_dir"
+        outside.mkdir()
+        (outside / "secret.txt").write_text("OUTSIDE_DIR_SECRET")
+        _symlink_or_skip(agent_dir / "workspace", outside)
+
+        agent = AntigravityAgent.from_agent_directory(str(agent_dir), api_key="dummy", register=False)
+
+    sources = agent.sources or []
+    targets = {s["target"] for s in sources}
+    contents = "\n".join(s["content"] for s in sources)
+    assert "/secret.txt" not in targets
+    assert "OUTSIDE_DIR_SECRET" not in contents
+    # the real skills/ folder is unaffected
+    assert "/.agents/skills/haiku/SKILL.md" in targets
+
+
+def test_from_agent_directory_rejects_agent_yaml_that_escapes_via_symlink():
+    with tempfile.TemporaryDirectory() as d:
+        root = Path(d)
+        agent_dir = root / "agent"
+        agent_dir.mkdir()
+        _make_agent_dir(agent_dir)
+
+        outside_yaml = root / "outside.yaml"
+        outside_yaml.write_text("id: evil\nbase_agent: antigravity-preview-05-2026\n")
+        (agent_dir / "agent.yaml").unlink()
+        _symlink_or_skip(agent_dir / "agent.yaml", outside_yaml)
+
+        with pytest.raises(FileNotFoundError):
+            AntigravityAgent.from_agent_directory(str(agent_dir), api_key="dummy", register=False)
+
+
 def test_from_agent_directory_requires_id_and_base_agent():
     with tempfile.TemporaryDirectory() as d:
         p = Path(d)

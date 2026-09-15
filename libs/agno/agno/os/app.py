@@ -1,11 +1,13 @@
 import asyncio
+import contextlib
 from contextlib import asynccontextmanager
 from functools import partial
 from os import getenv
-from typing import Any, Dict, List, Literal, Optional, Union
+from typing import TYPE_CHECKING, Any, Dict, Iterator, List, Literal, Optional, Set, Union
 from uuid import uuid4
 
 from fastapi import APIRouter, FastAPI, HTTPException
+from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
@@ -18,7 +20,9 @@ from agno.agent import Agent, AgentFactory, RemoteAgent
 from agno.agent.protocol import AgentProtocol
 from agno.agents.base import BaseExternalAgent
 from agno.db.base import AsyncBaseDb, BaseDb
+from agno.job_queue import QueueConfig
 from agno.knowledge.knowledge import Knowledge
+from agno.media.storage.base import AsyncMediaStorage, MediaStorage
 from agno.os.config import (
     AgentOSConfig,
     AuthorizationConfig,
@@ -31,7 +35,7 @@ from agno.os.config import (
     KnowledgeInstanceConfig,
     LearningConfig,
     LearningDomainConfig,
-    MCPServerConfig,
+    MCPConfig,
     MemoryConfig,
     MemoryDomainConfig,
     MetricsConfig,
@@ -41,7 +45,9 @@ from agno.os.config import (
     TracesConfig,
     TracesDomainConfig,
 )
+from agno.os.event_streams import BaseEventStream, set_event_stream
 from agno.os.interfaces.base import BaseInterface
+from agno.os.job_queue import apply_queue_config, queue_lifespan
 from agno.os.router import get_base_router, get_info_router, get_websocket_router
 from agno.os.routers.agents import get_agent_router
 from agno.os.routers.approvals import get_approval_router
@@ -50,12 +56,15 @@ from agno.os.routers.database import get_database_router
 from agno.os.routers.evals import get_eval_router
 from agno.os.routers.health import get_health_router
 from agno.os.routers.home import get_home_router
+from agno.os.routers.job_queue import get_queue_router
 from agno.os.routers.knowledge import get_knowledge_router
 from agno.os.routers.learnings import get_learnings_router
+from agno.os.routers.media import get_media_router
 from agno.os.routers.memory import get_memory_router
 from agno.os.routers.metrics import get_metrics_router
 from agno.os.routers.registry import get_registry_router
 from agno.os.routers.schedules import get_schedule_router
+from agno.os.routers.service_accounts import get_service_accounts_router
 from agno.os.routers.session import get_session_router
 from agno.os.routers.teams import get_team_router
 from agno.os.routers.traces import get_traces_router
@@ -64,6 +73,7 @@ from agno.os.settings import AgnoAPISettings
 from agno.os.utils import (
     _generate_knowledge_id,
     collect_components_from_os,
+    collect_mcp_tools_from_registry,
     collect_mcp_tools_from_team,
     collect_mcp_tools_from_workflow,
     find_conflicting_routes,
@@ -79,6 +89,11 @@ from agno.team import RemoteTeam, Team, TeamFactory
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id, generate_id_from_name
 from agno.workflow import RemoteWorkflow, Workflow, WorkflowFactory
+
+if TYPE_CHECKING:
+    # Typed for static checkers only -- fastmcp is an optional extra, so importing it at
+    # runtime here would break `import agno.os` when the extra is not installed.
+    from fastmcp.server.auth import AuthProvider
 
 
 @asynccontextmanager
@@ -103,6 +118,22 @@ async def http_client_lifespan(_):
     await aclose_default_clients()
 
 
+@asynccontextmanager
+async def agent_os_telemetry_lifespan(_, agent_os: "AgentOS"):
+    """Emit launch telemetry after the serving worker has started.
+
+    Best-effort: a telemetry failure (including a failed import of the
+    telemetry client) must not stop the server from starting.
+    """
+    try:
+        from agno.api.os import OSLaunch, log_os_telemetry
+
+        log_os_telemetry(launch=OSLaunch(os_id=agent_os.id, data=agent_os._get_telemetry_data()))
+    except Exception as e:
+        log_debug(f"Could not send AgentOS launch telemetry: {type(e).__name__}")
+    yield
+
+
 async def _drain_cancel_persist_tasks(timeout: float = 30.0) -> None:
     """Await in-flight cancel-persist writes before databases close on shutdown."""
     from agno.agent._run import _background_tasks as agent_tasks
@@ -118,9 +149,34 @@ async def _drain_cancel_persist_tasks(timeout: float = 30.0) -> None:
             return
         remaining = deadline - asyncio.get_running_loop().time()
         if remaining <= 0:
-            log_warning(f"Timed out draining {len(pending)} cancel-persist task(s) before database shutdown")
+            # Cancel stragglers NOW, while the pool is still open, so their
+            # CancelledError handlers can persist a terminal status. Without
+            # this they are cancelled at loop teardown - AFTER _close_databases
+            # - and their persists silently hit a closed pool.
+            log_warning(
+                f"Drain timeout: cancelling {len(pending)} background task(s) so terminal "
+                "statuses persist before database shutdown"
+            )
+            for task in pending:
+                task.cancel()
+            with contextlib.suppress(Exception):
+                await asyncio.wait(pending, timeout=5.0)
             return
         await asyncio.wait(pending, timeout=remaining)
+
+
+def _error_body(detail: str, exc: BaseException) -> Dict[str, Any]:
+    """Build the JSON error body, carrying the error's identity when the exception has one.
+
+    ``AgnoError`` subclasses (and ``AgnoHTTPException``, which wraps them) expose ``error_id``
+    and a type so clients can branch on the kind of failure rather than on ``detail`` text.
+    """
+    body: Dict[str, Any] = {"detail": detail}
+    error_id = getattr(exc, "error_id", None)
+    if error_id:
+        body["error_id"] = error_id
+        body["error_type"] = getattr(exc, "error_type", None) or getattr(exc, "type", None)
+    return body
 
 
 @asynccontextmanager
@@ -236,22 +292,27 @@ class AgentOS:
         authorization: bool = False,
         authorization_config: Optional[AuthorizationConfig] = None,
         cors_allowed_origins: Optional[List[str]] = None,
+        media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None,
         config: Optional[Union[str, AgentOSConfig]] = None,
         settings: Optional[AgnoAPISettings] = None,
         lifespan: Optional[Any] = None,
-        enable_mcp_server: bool = False,
-        mcp_config: Optional[MCPServerConfig] = None,
+        mcp: Optional[Union[bool, MCPConfig]] = None,
+        mcp_server: Optional[Union[bool, MCPConfig]] = None,
+        mcp_auth: Optional["AuthProvider"] = None,
         base_app: Optional[FastAPI] = None,
         on_route_conflict: Literal["preserve_agentos", "preserve_base_app", "error"] = "preserve_agentos",
         tracing: bool = False,
         auto_provision_dbs: bool = True,
         run_hooks_in_background: bool = False,
+        queue: Optional[QueueConfig] = None,
+        event_stream: Optional[BaseEventStream] = None,
         telemetry: bool = True,
         registry: Optional[Registry] = None,
         scheduler: bool = False,
         scheduler_poll_interval: int = 15,
         scheduler_base_url: Optional[str] = None,
         internal_service_token: Optional[str] = None,
+        public: Optional[Any] = None,
     ):
         """Initialize AgentOS.
 
@@ -262,8 +323,8 @@ class AgentOS:
             version: Version of the AgentOS instance
             db: Default database for the AgentOS instance. Agents, teams and workflows with no db will use this one.
             checkpoint: Default checkpoint level for agents in this AgentOS. Agents without their own
-                checkpoint setting inherit this one. One of "runs", "tool-batch", "tools" (see
-                specs/agno/features/checkpointing/). None means no OS-level default; each agent falls
+                checkpoint setting inherit this one. One of "runs", "tool-batch", "tools".
+                None means no OS-level default; each agent falls
                 back to "runs" at first-run time.
             agents: List of agents to include in the OS
             teams: List of teams to include in the OS
@@ -274,26 +335,57 @@ class AgentOS:
             config: Configuration file path or AgentOSConfig instance
             settings: API settings for the OS
             lifespan: Optional lifespan context manager for the FastAPI app
-            enable_mcp_server: Whether to enable MCP (Model Context Protocol)
-            mcp_config: Optional configuration for the MCP server. Register custom tools via
-                ``tools=[...]`` and/or scope the built-in tools via ``enable_builtin_tools`` /
-                ``include_tags`` / ``exclude_tags``. Ignored when ``enable_mcp_server`` is False.
-                When omitted, the MCP server exposes all built-in tools (unchanged behavior).
+            mcp: Serve the OS over MCP (Model Context Protocol) at ``/mcp``. Pass
+                ``True`` for the default surface (all default tools), or an
+                ``MCPConfig`` to expose agents/teams/workflows as individual tools:
+                its ``tools=[...]`` takes components, ``component.as_tool(name=...,
+                description=...)`` markers, and custom callables; ``default_tools``
+                and ``include_tags``/``exclude_tags`` scope the default surface.
+            mcp_server: Deprecated alias for ``mcp``, still accepted; passing both with
+                different values is an error.
+            mcp_auth: An ``AuthProvider`` object that owns authentication for the MCP
+                endpoint (OAuth for connector clients like claude.ai and ChatGPT). Use
+                ``AgentOSBuiltinAuth.from_env()`` (from ``agno.os``) for the built-in
+                authorization server — it binds to this AgentOS's Postgres db — or an
+                external provider such as WorkOS ``AuthKitProvider`` for bring-your-own.
+                When set, fastmcp serves the provider's discovery/OAuth routes and the 401
+                challenge on the MCP surface, agno bridges the verified identity into the
+                tool layer, and the provider is composed with the service-account verifier
+                and the existing JWT config so ``agno_pat_`` and agno-JWT bearers keep
+                working. Requires the MCP server to be enabled via ``mcp``.
+                When unset, the existing PAT/JWT path is unchanged.
             base_app: Optional base FastAPI app to use for the AgentOS. All routes and middleware will be added to this app.
             on_route_conflict: What to do when a route conflict is detected in case a custom base_app is provided.
             auto_provision_dbs: Whether to automatically provision databases
             authorization: Whether to enable authorization
             authorization_config: Configuration for the authorization middleware
             cors_allowed_origins: List of allowed CORS origins (will be merged with default Agno domains)
+            media_storage: Backend the media routes read stored media from. Defaults to the first
+                one configured on an agent, team or workflow.
             tracing: If True, enables OpenTelemetry tracing for all agents and teams in the OS
             run_hooks_in_background: If True, run agent/team pre/post hooks as FastAPI background tasks (non-blocking)
+            queue: Configuration for the AgentOS job queue (QueueConfig). Background runs
+                execute through it today; it is not a message-broker integration.
+                background=True runs are accepted immediately as PENDING and execute under
+                queue.max_concurrency per replica (shared across agents, teams and workflows;
+                enforced per event loop, so process-wide in the standard deployment). Runs beyond
+                the cap wait in line and can still be cancelled while waiting. 0 or below disables
+                capping. Setting queue.redis (URL or RedisCoordination) additionally enables
+                BOTH cross-container transports for background runs, built from shared clients:
+                distributed cancellation (control in) and the Redis event stream (events out), so
+                cancel and /resume work from any replica. Process-global: last setter wins if
+                multiple AgentOS instances configure it, and None leaves the current process
+                settings untouched (concurrency falls back to the AGNO_BACKGROUND_MAX_CONCURRENCY
+                env var or the default of 32).
+            event_stream: Explicit event stream override (granular escape hatch). Takes
+                precedence over the stream queue.redis would configure. Defaults to the
+                in-memory stream when neither is set.
             telemetry: Whether to enable telemetry
             registry: Optional registry to use for the AgentOS
             scheduler: Whether to enable the cron scheduler
             scheduler_poll_interval: Seconds between scheduler poll cycles (default: 15)
             scheduler_base_url: Base URL for scheduler HTTP calls (default: http://127.0.0.1:7777)
             internal_service_token: Token for scheduler-to-OS auth (auto-generated if not provided)
-
         """
         if not agents and not workflows and not teams and not knowledge and not db:
             raise ValueError("Either agents, teams, workflows, knowledge bases or a database must be provided.")
@@ -334,11 +426,31 @@ class AgentOS:
         self.telemetry = telemetry
         self.tracing = tracing
 
-        self.enable_mcp_server = enable_mcp_server
-        self.mcp_config = mcp_config
+        self._public_explicit_id = id
+        self.public = public
+        self.mcp_config: Optional[MCPConfig] = None
+        # ``mcp_server`` is the deprecated alias for ``mcp``.
+        if mcp is not None and mcp_server is not None and mcp != mcp_server:
+            raise ValueError(
+                "AgentOS() got both mcp= and its deprecated alias mcp_server= with different values; pass only mcp=."
+            )
+        self.mcp = mcp if mcp is not None else (mcp_server if mcp_server is not None else False)
+        self.mcp_auth: Optional["AuthProvider"] = mcp_auth
+        # Resolved lazily (and once): the MultiAuth-wrapped provider handed to FastMCP.
+        self._resolved_mcp_auth: Optional["AuthProvider"] = None
+        if self.mcp_auth is not None and not self.mcp:
+            raise ValueError("AgentOS(mcp_auth=...) requires the MCP server: pass mcp=True or an MCPConfig.")
         self.lifespan = lifespan
 
         self.registry = registry
+        # Knowledge mirrored into the registry by a sync (component-owned
+        # instances collected for name resolution) is not a knowledge-route
+        # source; anything else on the registry list the user put there -- at
+        # construction or later via add_knowledge -- and feeds the routes on
+        # every (re)sync. Provenance lives on the Registry itself (marked at
+        # mirror time, never snapshotted), because a registry can be shared
+        # between AgentOS instances: another OS's mirror must not look
+        # user-registered here.
 
         # RBAC
         self.authorization = authorization
@@ -346,9 +458,28 @@ class AgentOS:
 
         # CORS configuration - merge user-provided origins with defaults from settings
         self.cors_allowed_origins = resolve_origins(cors_allowed_origins, self.settings.cors_origin_list)
+        self.media_storage = media_storage
 
         # If True, run agent/team hooks as FastAPI background tasks
         self.run_hooks_in_background = run_hooks_in_background
+
+        # Queue configuration. None keeps the process defaults (env var or
+        # library default for the concurrency cap, in-memory transports).
+        # queue.redis wires the cross-container transports over the process
+        # defaults only; the explicit event_stream parameter is applied first
+        # and survives the wiring regardless of its type.
+        self.queue = queue
+
+        # Event stream FIRST: the coordination wiring below only replaces the
+        # never-explicitly-set defaults and warns on asymmetric transports - it
+        # must see the user's explicit stream, or the one split-Redis config it
+        # exists to catch (custom stream on Redis A, wired cancellation on
+        # Redis B) never warns.
+        if event_stream is not None:
+            set_event_stream(event_stream)
+
+        if queue is not None:
+            apply_queue_config(queue)
 
         # Scheduler configuration
         self._scheduler_enabled = scheduler
@@ -360,9 +491,19 @@ class AgentOS:
             internal_service_token = secrets.token_urlsafe(32)
         self._internal_service_token = internal_service_token
 
-        # List of all MCP tools used inside the AgentOS
+        # Shared verifier for service account tokens (agno_pat_...), created lazily
+        # when a db is available. One instance per AgentOS so the failed-lookup
+        # limiter and last_used_at throttle are shared across the REST and MCP apps.
+        self._service_account_verifier: Optional[Any] = None
+
+        # Client-side MCP: the MCPTools connections that agents/teams/workflows in this
+        # AgentOS consume (collected so their lifecycles are managed in the app lifespan).
+        # Unrelated to ``mcp=``, which SERVES this AgentOS as an MCP server at /mcp.
         self.mcp_tools: List[Any] = []
         self._mcp_app: Optional[Any] = None
+        # Guards get_app() idempotency when a base_app is supplied (that path mutates
+        # the caller's app in place, so preparing twice would double routes/lifespans).
+        self._base_app_prepared: bool = False
 
         self._initialize_agents()
         self._initialize_teams()
@@ -370,6 +511,7 @@ class AgentOS:
 
         # Populate registry with code-defined agents/teams
         self._populate_registry()
+        self._warn_on_foreign_studio_registries()
         self._populate_registry_managers()
 
         # Discover knowledge instances and mirror them into the registry so that
@@ -381,16 +523,49 @@ class AgentOS:
         # Collect models, tools, dbs and vector dbs from the agent/team/workflow tree
         self._populate_registry_components()
 
+        # Track MCP tools declared on the registry so they connect in the same
+        # lifespan as agent/team/workflow MCP tools (e.g. for components created
+        # from registry tools via StudioTools)
+        collect_mcp_tools_from_registry(self.registry, self.mcp_tools)
+
         # Check for duplicate IDs
         self._raise_if_duplicate_ids()
 
         if self.tracing:
             self._setup_tracing()
 
-        if self.telemetry:
-            from agno.api.os import OSLaunch, log_os_telemetry
+    @property
+    def mcp(self) -> bool:
+        """Whether the MCP server is enabled. Assigning an ``MCPConfig`` enables
+        the server and stores the config on ``mcp_config``, matching the constructor."""
+        return self._mcp_enabled
 
-            log_os_telemetry(launch=OSLaunch(os_id=self.id, data=self._get_telemetry_data()))
+    @mcp.setter
+    def mcp(self, value: Union[bool, MCPConfig]) -> None:
+        if isinstance(value, MCPConfig):
+            self._mcp_enabled = True
+            self.mcp_config = value
+        else:
+            import collections.abc
+
+            # A dict here is always a mistake: bool(dict) would enable the server while
+            # silently discarding every setting in it -- including authorize.
+            if isinstance(value, collections.abc.Mapping):
+                raise TypeError(
+                    "AgentOS.mcp takes True/False or an MCPConfig instance; got a dict. "
+                    "Pass MCPConfig(**your_dict) -- a plain dict would enable the server "
+                    "but silently discard its settings, including authorize."
+                )
+            self._mcp_enabled = bool(value)
+
+    @property
+    def mcp_server(self) -> bool:
+        """Deprecated alias for ``mcp``."""
+        return self.mcp
+
+    @mcp_server.setter
+    def mcp_server(self, value: Union[bool, MCPConfig]) -> None:
+        self.mcp = value
 
     def _add_agent_os_to_lifespan_function(self, lifespan):
         """
@@ -428,29 +603,60 @@ class AgentOS:
 
         # Populate registry with code-defined agents/teams
         self._populate_registry()
+        self._warn_on_foreign_studio_registries()
         self._populate_registry_managers()
 
         # Check for duplicate IDs
         self._raise_if_duplicate_ids()
         self._auto_discover_databases()
+        self._auto_discover_media_storage()
         self._auto_discover_knowledge_instances()
         self._populate_registry_knowledge()
 
         # Collect models, tools, dbs and vector dbs from the agent/team/workflow tree
         self._populate_registry_components()
 
-        if self.enable_mcp_server:
-            from agno.os.mcp import get_mcp_server
+        # Track MCP tools declared on the registry
+        collect_mcp_tools_from_registry(self.registry, self.mcp_tools)
+
+        # Reuse the already-started MCP app. Its BUILTIN tools close over this AgentOS
+        # instance and resolve component ids at call time, so components added since
+        # construction are runnable through them without a rebuild. EXPOSED tools
+        # (MCPConfig.tools) are registered on the FastMCP server when the app is built:
+        # an exposure added after boot appears in tools/list only after a restart --
+        # and under default_tools=False it is unreachable over MCP until then (the
+        # riding continue_run/cancel_run are bounded to the components published at
+        # build time).
+        # Building a fresh app here cannot fix that: it would mount one whose
+        # StreamableHTTP lifespan never runs, so every /mcp request would 500.
+        if self.mcp and self._mcp_app is None:
+            try:
+                from agno.os.mcp import get_mcp_server
+            except ImportError as e:
+                raise ImportError(
+                    "`fastmcp` not installed. It is required for `mcp=True`. "
+                    "Please install it using `pip install fastmcp`."
+                ) from e
 
             self._mcp_app = get_mcp_server(self)
 
         self._reprovision_routers(app=app)
 
+    def _mount_mcp_app(self, app: FastAPI) -> None:
+        """Mount the MCP app at root exactly once (idempotent across get_app/resync calls)."""
+        if self._mcp_app is None:
+            return
+        if any(getattr(route, "app", None) is self._mcp_app for route in app.router.routes):
+            return
+        app.mount("/", self._mcp_app)
+
     def _reprovision_routers(self, app: FastAPI) -> None:
         """Re-provision all routes for the AgentOS."""
+        # The home router is added by _add_built_in_routes below; adding it here too
+        # would duplicate the GET / route on every resync.
         updated_routers = [
-            get_home_router(self),
-            get_session_router(dbs=self.dbs),
+            get_session_router(dbs=self.dbs, media_storage=self.media_storage),
+            get_media_router(dbs=self.dbs, media_storage=self.media_storage, settings=self.settings),
             get_memory_router(dbs=self.dbs),
             get_learnings_router(dbs=self.dbs, settings=self.settings),
             get_eval_router(
@@ -469,13 +675,23 @@ class AgentOS:
                 updated_routers.append(get_components_router(os_db=self.db, registry=self.registry))
             else:
                 updated_routers.append(_get_disabled_feature_router("/components", "Components", "sync db (BaseDb)"))
-            updated_routers.append(get_schedule_router(os_db=self.db, settings=self.settings))
+            updated_routers.append(
+                get_schedule_router(
+                    os_db=self.db,
+                    settings=self.settings,
+                    include_agents=self.agents,
+                    include_teams=self.teams,
+                    include_workflows=self.workflows,
+                )
+            )
             updated_routers.append(get_approval_router(os_db=self.db, settings=self.settings))
+            updated_routers.append(get_service_accounts_router(os_db=self.db, settings=self.settings))
         else:
             for prefix, tag in [
                 ("/components", "Components"),
                 ("/schedules", "Schedules"),
                 ("/approvals", "Approvals"),
+                ("/service-accounts", "Service Accounts"),
             ]:
                 updated_routers.append(_get_disabled_feature_router(prefix, tag, "db"))
         # Registry router
@@ -503,14 +719,14 @@ class AgentOS:
             self._add_router(app, router)
 
         # Mount MCP if needed
-        if self.enable_mcp_server and self._mcp_app:
-            app.mount("/", self._mcp_app)
+        if self.mcp:
+            self._mount_mcp_app(app)
 
     def _add_built_in_routes(self, app: FastAPI) -> None:
         """Add all AgentOSbuilt-in routes to the given app."""
-        # Add the home router if MCP server is not enabled
-        if not self.enable_mcp_server:
-            self._add_router(app, get_home_router(self))
+        # Always add the home router: explicit routes win over the root MCP Mount, and
+        # without it GET / falls through to the MCP app's plain-text 404.
+        self._add_router(app, get_home_router(self))
 
         self._add_router(app, get_health_router(health_endpoint="/health"))
         self._add_router(app, get_info_router(self))
@@ -520,12 +736,29 @@ class AgentOS:
         self._add_router(app, get_workflow_router(self, settings=self.settings))
         self._add_router(app, get_websocket_router(self, settings=self.settings))
 
+        # Job queue operations surface (DLQ, requeue, stats) - only meaningful
+        # when the durable queue is enabled
+        if self.queue is not None and self.queue.durable:
+            self._add_router(app, get_queue_router(self, settings=self.settings))
+        else:
+            # Parity with every other switchable feature: answer 503 naming
+            # the switch instead of 404ing the whole surface
+            self._add_router(app, _get_disabled_feature_router("/queue", "Queue", "queue=QueueConfig(durable=True)"))
+
         # Add A2A interface if relevant
         has_a2a_interface = False
+        self._public_interface_routes: List[tuple[str, str]] = []
         for interface in self.interfaces:
             if not has_a2a_interface and interface.__class__.__name__ == "A2A":
                 has_a2a_interface = True
             interface_router = interface.get_router()
+            if getattr(interface, "authenticates_own_requests", False):
+                self._public_interface_routes.extend(
+                    (method, route.path)
+                    for route in interface_router.routes
+                    if hasattr(route, "methods") and hasattr(route, "path")
+                    for method in route.methods
+                )
             self._add_router(app, interface_router)
         if self.a2a_interface and not has_a2a_interface:
             from agno.os.interfaces.a2a import A2A
@@ -610,10 +843,10 @@ class AgentOS:
             # Track all MCP tools to later handle their connection
             if agent.tools and isinstance(agent.tools, list):
                 for tool in agent.tools:
-                    # Checking if the tool is an instance of MCPTools, MultiMCPTools, or a subclass of those
+                    # Checking if the tool is an instance of MCPTools or a subclass of it
                     if hasattr(type(tool), "__mro__"):
                         mro_names = {cls.__name__ for cls in type(tool).__mro__}
-                        if mro_names & {"MCPTools", "MultiMCPTools"}:
+                        if "MCPTools" in mro_names:
                             if tool not in self.mcp_tools:
                                 self.mcp_tools.append(tool)
 
@@ -677,15 +910,59 @@ class AgentOS:
             workflow.propagate_run_hooks_in_background(self.run_hooks_in_background)
 
     def _populate_registry(self) -> None:
-        """Populate the registry with code-defined agents and teams.
+        """Populate the registry with code-defined agents, teams, and workflows.
 
-        This ensures that workflows loaded from DB can rehydrate their steps
-        using code-defined agents/teams via the registry.
+        This ensures that components loaded from DB can rehydrate their
+        references using code-defined components via the registry, and that
+        Studio surfaces holding this registry can see everything the OS
+        serves.
         """
         if self.registry is None:
             self.registry = Registry()
-            # Auto-created purely to wire up primitives; suppress duplicate chatter.
-            self.registry._emit_dedup_logs = False
+
+        # Name the db behind the component catalog outright, including when
+        # there is none. A Studio toolkit given no db of its own resolves this
+        # rather than guessing at the head of registry.dbs: that list is
+        # whatever the component tree happened to carry, so guessing binds
+        # Studio to an agent-private session db and writes the catalog where no
+        # OS surface reads it.
+        if self.db is not None:
+            # This OS's db backs the catalog. Declared again on every run so a
+            # resync, or a db swapped in place, reaches Studio too.
+            #
+            # A db that cannot back a synchronous catalog still gets to be the
+            # one declared: declare_component_db reads it as a refusal, and a
+            # refusal is the honest answer. Reaching for the registry's list
+            # instead whenever this db is async or remote would put the guess
+            # back exactly where this declaration removed it, and would land
+            # the catalog behind the listings an OS turns off for such a db:
+            # /components, and the stored half of /agents, /teams and
+            # /workflows.
+            self.registry.declare_component_db(self.db)
+        elif not self.registry.component_db_declared:
+            # With no db of its own, declare what the USER put on the registry
+            # rather than a flat None. This runs before component discovery, so
+            # registry.dbs can only hold dbs passed to Registry(...) at this
+            # point, never an agent-private one collected from the served tree
+            # - and re-running it later must not reach for that list either.
+            self.registry.declare_component_db(self.registry.dbs[0] if self.registry.dbs else None)
+
+        # The catalog db also goes first in registry.dbs, so rehydration that
+        # walks the list meets it before any component-private db. Ordering is
+        # a convenience here, not the contract - the declaration above is what
+        # Studio resolves - so an id already taken by another db is left to
+        # add_db's own duplicate-id warning rather than warned about twice.
+        if self.db is not None and isinstance(self.db, BaseDb):
+            existing_index = next(
+                (index for index, existing in enumerate(self.registry.dbs) if existing is self.db), None
+            )
+            if existing_index is None:
+                self.registry.add_db(self.db)
+                existing_index = next(
+                    (index for index, existing in enumerate(self.registry.dbs) if existing is self.db), None
+                )
+            if existing_index is not None and existing_index > 0:
+                self.registry.dbs.insert(0, self.registry.dbs.pop(existing_index))
 
         if self._agents:
             existing_agents = {aid: a for a in self.registry.agents if (aid := getattr(a, "id", None)) is not None}
@@ -697,8 +974,11 @@ class AgentOS:
                 if existing_agent is not None:
                     if existing_agent is not agent:
                         log_warning(
-                            f"Registry: multiple distinct agents share id '{agent_id}'; keeping the "
-                            "first. Give them distinct ids to avoid one shadowing the other."
+                            f"Registry: multiple distinct agents share id '{agent_id}'. The registry keeps "
+                            "the first, so Studio and registry-backed dispatch resolve that one, while "
+                            "this AgentOS keeps serving the one it was constructed with over HTTP - the "
+                            "same id resolves to different objects on the two surfaces. Give them "
+                            "distinct ids."
                         )
                     continue
                 self.registry.agents.append(agent)
@@ -714,46 +994,166 @@ class AgentOS:
                 if existing_team is not None:
                     if existing_team is not team:
                         log_warning(
-                            f"Registry: multiple distinct teams share id '{team_id}'; keeping the "
-                            "first. Give them distinct ids to avoid one shadowing the other."
+                            f"Registry: multiple distinct teams share id '{team_id}'. The registry keeps "
+                            "the first, so Studio and registry-backed dispatch resolve that one, while "
+                            "this AgentOS keeps serving the one it was constructed with over HTTP - the "
+                            "same id resolves to different objects on the two surfaces. Give them "
+                            "distinct ids."
                         )
                     continue
                 self.registry.teams.append(team)
                 existing_teams[team_id] = team
 
-    def _populate_registry_knowledge(self) -> None:
-        """Add discovered knowledge instances to the registry.
+        if self._workflows:
+            existing_workflows = {
+                wid: w for w in self.registry.workflows if (wid := getattr(w, "id", None)) is not None
+            }
+            for workflow in self._workflows:
+                workflow_id = getattr(workflow, "id", None)
+                if workflow_id is None:
+                    continue
+                existing_workflow = existing_workflows.get(workflow_id)
+                if existing_workflow is not None:
+                    if existing_workflow is not workflow:
+                        log_warning(
+                            f"Registry: multiple distinct workflows share id '{workflow_id}'. The registry keeps "
+                            "the first, so Studio and registry-backed dispatch resolve that one, while "
+                            "this AgentOS keeps serving the one it was constructed with over HTTP - the "
+                            "same id resolves to different objects on the two surfaces. Give them "
+                            "distinct ids."
+                        )
+                    continue
+                self.registry.workflows.append(workflow)
+                existing_workflows[workflow_id] = workflow
 
-        Sources are the knowledge instances collected by
-        ``_auto_discover_knowledge_instances`` (agents, teams, the AgentOS
-        ``knowledge`` param, and ``registry.knowledge``). That discovery only
-        keeps instances backed by a ``contents_db``, so a ``contents_db`` is
-        required for a knowledge base to be resolvable from a Studio/Builder
-        component config (vector-search-only knowledge is not registered).
+    def _populate_registry_knowledge(self) -> None:
+        """Add knowledge instances to the registry so stored components resolve them by name.
+
+        Sources are the contents_db-backed instances collected by
+        ``_auto_discover_knowledge_instances`` (which also feed the knowledge
+        routes) plus every named instance handed to the AgentOS ``knowledge``
+        param: registry resolution is by name and needs no ``contents_db``.
+        Agent- and team-attached knowledge is added by the component walk in
+        ``_populate_registry_components``.
         """
         if self.registry is None:
             self.registry = Registry()
-            # Auto-created purely to wire up primitives; suppress duplicate chatter.
-            self.registry._emit_dedup_logs = False
 
-        if self.knowledge_instances:
-            existing_knowledge = {
-                name: k for k in self.registry.knowledge if (name := getattr(k, "name", None)) is not None
-            }
-            for kb in self.knowledge_instances:
-                kb_name = getattr(kb, "name", None)
-                if kb_name is None:
+        for kb in self.knowledge_instances or []:
+            self.registry.add_knowledge(kb, mirrored=True)
+        for kb in self.knowledge or []:
+            self.registry.add_knowledge(kb, mirrored=True)
+
+    def _iter_component_carriers(self) -> Iterator[Any]:
+        """Every served component that can carry a toolkit: top-level
+        agents and teams, team members recursively, and the agents/teams
+        executing workflow steps (nested step containers included)."""
+        seen: Set[int] = set()
+
+        def visit(component: Any):
+            if component is None or id(component) in seen:
+                return
+            seen.add(id(component))
+            yield component
+            # members may be a callable factory, which is truthy but not
+            # iterable; only a materialized list can be walked, and a
+            # factory cannot be called safely at construction time.
+            members = getattr(component, "members", None)
+            if isinstance(members, list):
+                for member in members:
+                    yield from visit(member)
+
+        for top in [*self._agents, *self._teams]:
+            yield from visit(top)
+
+        def visit_steps(steps: Any):
+            # steps may be a Steps container rather than a plain list --
+            # WorkflowSteps accepts one at the top level, and a bare
+            # container here would otherwise skip the whole subtree. A tuple
+            # is a step list too, in both spellings.
+            if not isinstance(steps, (list, tuple)):
+                inner = getattr(steps, "steps", None)
+                if steps is None or not isinstance(inner, (list, tuple)):
+                    return
+                steps = inner
+            for step in steps:
+                # Containers can reference each other; without this the
+                # walk recurses until the stack dies, taking the whole
+                # application down at construction time.
+                if id(step) in seen:
                     continue
-                existing = existing_knowledge.get(kb_name)
-                if existing is not None:
-                    if existing is not kb:
-                        log_warning(
-                            f"Registry: multiple distinct knowledge instances share name '{kb_name}'; "
-                            "keeping the first. Give them distinct names to avoid one shadowing the other."
-                        )
+                # An agent or team may BE the step, with no Step wrapper
+                # around it, and carries toolkits exactly like a wrapped
+                # executor does. visit() records the id, which is what keeps
+                # the guard above meaningful, so nothing marks it here.
+                yield from visit(step)
+                for attr in ("agent", "team"):
+                    yield from visit(getattr(step, attr, None))
+                # Every container a step can be: Loop, Parallel and
+                # Condition hold steps, Condition also else_steps, Router
+                # holds choices, and a nested Workflow its own step list.
+                for attr in ("steps", "else_steps", "choices"):
+                    yield from visit_steps(getattr(step, attr, None))
+                nested = getattr(step, "workflow", None)
+                if nested is not None and id(nested) not in seen:
+                    seen.add(id(nested))
+                    yield from visit_steps(getattr(nested, "steps", None))
+
+        for workflow in self._workflows:
+            yield from visit_steps(getattr(workflow, "steps", None))
+
+    def _warn_on_foreign_studio_registries(self) -> None:
+        """Warn when a served component carries a Studio toolkit bound to a
+        different Registry than the one this OS populates.
+
+        This is the likeliest zero-wiring mistake: StudioTools(registry=reg)
+        built against one registry while AgentOS mints or holds another.
+        Everything then appears to work - drafts save, publish works - but the
+        OS's code-defined components are invisible to Studio, with no error
+        anywhere. Adopting the tool's registry or rebinding the tool silently
+        would both be surprising, so the split is loud instead.
+        """
+        from agno.tools.studio import StudioTools
+        from agno.tools.studio_runner import StudioRunnerTools
+
+        for component in self._iter_component_carriers():
+            tools = getattr(component, "tools", None)
+            # tools may be a callable factory; only a materialized list can be
+            # inspected here, and a factory cannot be called safely at
+            # construction time.
+            if not isinstance(tools, list):
+                continue
+            for tool in tools:
+                if not isinstance(tool, (StudioTools, StudioRunnerTools)):
                     continue
-                self.registry.knowledge.append(kb)
-                existing_knowledge[kb_name] = kb
+                component_label = getattr(component, "id", None) or getattr(component, "name", None)
+                tool_registry = getattr(tool, "registry", None)
+                if tool_registry is not None and tool_registry is not self.registry:
+                    log_warning(
+                        f"Component '{component_label}' carries {type(tool).__name__} bound to a different "
+                        "Registry than this AgentOS populates: the OS's code-defined agents, teams, and "
+                        "workflows will be invisible to it. Pass that registry to AgentOS (registry=...), "
+                        "or construct the toolkit with the OS's registry."
+                    )
+                # No catalog db means every Studio WRITE refuses. Say so here:
+                # the alternative to refusing is adopting a component-private
+                # db and writing a catalog no OS surface serves, and a silent
+                # success is the worse of the two failures.
+                #
+                # Only StudioTools: StudioRunnerTools registers no write tools
+                # and lists and dispatches code-defined components perfectly
+                # well with no db at all. And the question is what the TOOL
+                # will resolve, which is its own registry's answer - the
+                # warning above exists precisely because that can differ from
+                # this OS's.
+                tool_registry_db = tool_registry.resolve_component_db() if tool_registry is not None else None
+                if isinstance(tool, StudioTools) and getattr(tool, "_db", None) is None and tool_registry_db is None:
+                    log_warning(
+                        f"Component '{component_label}' carries {type(tool).__name__} but this AgentOS has no "
+                        "database that can back the component catalog, so every Studio write will answer "
+                        "db_not_configured. Pass a synchronous db to AgentOS (db=...), or give the toolkit "
+                        "its own (StudioTools(db=...))."
+                    )
 
     def _populate_registry_managers(self) -> None:
         """Add memory and session summary managers from agents/teams to the registry.
@@ -763,8 +1163,6 @@ class AgentOS:
         """
         if self.registry is None:
             self.registry = Registry()
-            # Auto-created purely to wire up primitives; suppress duplicate chatter.
-            self.registry._emit_dedup_logs = False
 
         registry = self.registry
         memory_by_id = {mid: m for m in registry.memory_managers if (mid := getattr(m, "id", None)) is not None}
@@ -833,8 +1231,6 @@ class AgentOS:
         """
         if self.registry is None:
             self.registry = Registry()
-            # Auto-created purely to wire up primitives; suppress duplicate chatter.
-            self.registry._emit_dedup_logs = False
 
         try:
             collect_components_from_os(self._agents, self._teams, self._workflows, self.registry)
@@ -882,12 +1278,35 @@ class AgentOS:
         setup_tracing_for_os(db=db)
 
     def get_app(self) -> FastAPI:
+        if self.public is not None:
+            from agno.os.public import PublicSurface
+
+            if not isinstance(self.public, PublicSurface):
+                raise ValueError("AgentOS.public must be a PublicSurface")
+            self.public._bind(self)
+        # Pick up MCP tools added to the registry after construction, before the
+        # lifespan that connects them is assembled below
+        collect_mcp_tools_from_registry(self.registry, self.mcp_tools)
+
         if self.base_app:
             fastapi_app = self.base_app
 
+            # get_app() on a base_app mutates that app in place, so a second call (e.g. via
+            # get_routes()) must not prepare it again: it would nest the combined lifespan
+            # inside a new one (double db init, an orphaned MCP session manager) and mount
+            # a second copy of every route.
+            if self._base_app_prepared:
+                return fastapi_app
+
             # Initialize MCP server if enabled
-            if self.enable_mcp_server:
-                from agno.os.mcp import get_mcp_server
+            if self.mcp and self._mcp_app is None:
+                try:
+                    from agno.os.mcp import get_mcp_server
+                except ImportError as e:
+                    raise ImportError(
+                        "`fastmcp` not installed. It is required for `mcp=True`. "
+                        "Please install it using `pip install fastmcp`."
+                    ) from e
 
                 self._mcp_app = get_mcp_server(self)
 
@@ -909,7 +1328,7 @@ class AgentOS:
                 lifespans.append(partial(mcp_lifespan, mcp_tools=self.mcp_tools))
 
             # The /mcp server lifespan
-            if self.enable_mcp_server and self._mcp_app:
+            if self.mcp and self._mcp_app:
                 lifespans.append(self._mcp_app.lifespan)
 
             # The async database lifespan
@@ -918,6 +1337,15 @@ class AgentOS:
             # The scheduler lifespan (after db so tables exist)
             if self._scheduler_enabled and self.db is not None:
                 lifespans.append(partial(scheduler_lifespan, agent_os=self))
+
+            # The durable job queue worker (after db so tables exist)
+            if self.queue is not None and self.queue.durable:
+                lifespans.append(partial(queue_lifespan, agent_os=self))
+
+            # Launch telemetry starts here, after any pre-fork application
+            # construction and after substantive worker startup lifespans.
+            if self.telemetry:
+                lifespans.append(partial(agent_os_telemetry_lifespan, agent_os=self))
 
             # The httpx client cleanup lifespan (should be last to close after other lifespans)
             lifespans.append(http_client_lifespan)
@@ -937,11 +1365,19 @@ class AgentOS:
             if self.mcp_tools:
                 lifespans.append(partial(mcp_lifespan, mcp_tools=self.mcp_tools))
 
-            # MCP server lifespan
-            if self.enable_mcp_server:
-                from agno.os.mcp import get_mcp_server
+            # MCP server lifespan (reuse an app built by an earlier get_app() call -- a
+            # rebuilt one would orphan the started StreamableHTTP session manager)
+            if self.mcp:
+                if self._mcp_app is None:
+                    try:
+                        from agno.os.mcp import get_mcp_server
+                    except ImportError as e:
+                        raise ImportError(
+                            "`fastmcp` not installed. It is required for `mcp=True`. "
+                            "Please install it using `pip install fastmcp`."
+                        ) from e
 
-                self._mcp_app = get_mcp_server(self)
+                    self._mcp_app = get_mcp_server(self)
                 lifespans.append(self._mcp_app.lifespan)
 
             # Async database initialization lifespan
@@ -950,6 +1386,15 @@ class AgentOS:
             # The scheduler lifespan (after db so tables exist)
             if self._scheduler_enabled and self.db is not None:
                 lifespans.append(partial(scheduler_lifespan, agent_os=self))
+
+            # The durable job queue worker (after db so tables exist)
+            if self.queue is not None and self.queue.durable:
+                lifespans.append(partial(queue_lifespan, agent_os=self))
+
+            # Launch telemetry starts here, after any pre-fork application
+            # construction and after substantive worker startup lifespans.
+            if self.telemetry:
+                lifespans.append(partial(agent_os_telemetry_lifespan, agent_os=self))
 
             # The httpx client cleanup lifespan (should be last to close after other lifespans)
             lifespans.append(http_client_lifespan)
@@ -960,6 +1405,7 @@ class AgentOS:
         self._add_built_in_routes(app=fastapi_app)
 
         self._auto_discover_databases()
+        self._auto_discover_media_storage()
         self._auto_discover_knowledge_instances()
         self._populate_registry_knowledge()
 
@@ -967,7 +1413,8 @@ class AgentOS:
         self._populate_registry_components()
 
         routers = [
-            get_session_router(dbs=self.dbs),
+            get_session_router(dbs=self.dbs, media_storage=self.media_storage),
+            get_media_router(dbs=self.dbs, media_storage=self.media_storage, settings=self.settings),
             get_memory_router(dbs=self.dbs),
             get_learnings_router(dbs=self.dbs, settings=self.settings),
             get_eval_router(
@@ -986,16 +1433,27 @@ class AgentOS:
                 routers.append(get_components_router(os_db=self.db, registry=self.registry))
             else:
                 routers.append(_get_disabled_feature_router("/components", "Components", "sync db (BaseDb)"))
-            routers.append(get_schedule_router(os_db=self.db, settings=self.settings))
+            routers.append(
+                get_schedule_router(
+                    os_db=self.db,
+                    settings=self.settings,
+                    include_agents=self.agents,
+                    include_teams=self.teams,
+                    include_workflows=self.workflows,
+                )
+            )
             routers.append(get_approval_router(os_db=self.db, settings=self.settings))
+            routers.append(get_service_accounts_router(os_db=self.db, settings=self.settings))
         else:
             log_debug(
-                "Components, Scheduler, and Approval routers not enabled: requires a db to be provided to AgentOS"
+                "Components, Scheduler, Approval, and Service Account routers not enabled: "
+                "requires a db to be provided to AgentOS"
             )
             for prefix, tag in [
                 ("/components", "Components"),
                 ("/schedules", "Schedules"),
                 ("/approvals", "Approvals"),
+                ("/service-accounts", "Service Accounts"),
             ]:
                 routers.append(_get_disabled_feature_router(prefix, tag, "db"))
 
@@ -1010,25 +1468,27 @@ class AgentOS:
             self._add_router(fastapi_app, router)
 
         # Mount MCP if needed
-        if self.enable_mcp_server and self._mcp_app:
-            fastapi_app.mount("/", self._mcp_app)
+        if self.mcp:
+            self._mount_mcp_app(fastapi_app)
 
         if not self._app_set:
 
             @fastapi_app.exception_handler(RequestValidationError)
-            async def validation_exception_handler(_: Request, exc: RequestValidationError) -> JSONResponse:
+            async def validation_exception_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
                 log_error(f"Validation error (422): {exc.errors()}")
-                return JSONResponse(
-                    status_code=422,
-                    content={"detail": exc.errors()},
-                )
+                # Delegate the body to FastAPI's own handler: pydantic v2 puts the live
+                # exception object in ``ctx["error"]`` for any validator that raised
+                # ValueError, so the errors list must be run through ``jsonable_encoder``
+                # before it can be a JSON body. Building it here by hand is what made every
+                # custom validator answer 500 instead of 422.
+                return await request_validation_exception_handler(request, exc)
 
             @fastapi_app.exception_handler(HTTPException)
             async def http_exception_handler(_, exc: HTTPException) -> JSONResponse:
                 log_error(f"HTTP exception: {exc.status_code} {exc.detail}")
                 return JSONResponse(
                     status_code=exc.status_code,
-                    content={"detail": str(exc.detail)},
+                    content=_error_body(str(exc.detail), exc),
                 )
 
             @fastapi_app.exception_handler(HTTPStatusError)
@@ -1047,9 +1507,17 @@ class AgentOS:
 
                 log_error(f"Unhandled exception:\n{traceback.format_exc(limit=5)}")
 
+                status_code = getattr(exc, "status_code", 500)
+                # 4xx exceptions that carry their own status wrote their
+                # message for the client; 5xx details must never echo
+                # str(exc) - unhandled server errors are routinely store or
+                # driver failures whose text carries connection strings, SQL
+                # fragments, and hostnames. The full traceback is in the
+                # server log above; the wire gets the exception type only.
+                detail = str(exc) if status_code < 500 else f"Internal server error ({type(exc).__name__})"
                 return JSONResponse(
-                    status_code=getattr(exc, "status_code", 500),
-                    content={"detail": str(exc)},
+                    status_code=status_code,
+                    content=_error_body(detail, exc),
                 )
 
         # Update CORS middleware
@@ -1064,59 +1532,244 @@ class AgentOS:
         if self._internal_service_token:
             fastapi_app.state.internal_service_token = self._internal_service_token
 
-        # Add JWT middleware if authorization is enabled
+        # Install the single auth layer whenever any credential is configured. It
+        # covers the REST routes and the mounted /mcp app together (one middleware on
+        # the parent app), so the mounted sub-app carries no auth code of its own.
+        security_key = self.settings.os_security_key if self.settings else None
+        jwt_env_configured = bool(getenv("JWT_VERIFICATION_KEY") or getenv("JWT_JWKS_FILE"))
         if self.authorization:
             # Set authorization_enabled flag on settings so security key validation is skipped
             self.settings.authorization_enabled = True
-
-            jwt_configured = bool(getenv("JWT_VERIFICATION_KEY") or getenv("JWT_JWKS_FILE"))
-            security_key_set = bool(self.settings.os_security_key)
-            if jwt_configured and security_key_set:
+            if jwt_env_configured and bool(security_key):
                 log_warning(
                     "Both JWT configuration (JWT_VERIFICATION_KEY or JWT_JWKS_FILE) and OS_SECURITY_KEY are set. "
                     "With authorization=True, only JWT authorization will be used. "
                     "Consider removing OS_SECURITY_KEY from your environment."
                 )
 
-            self._add_jwt_middleware(fastapi_app)
+        # The verifier is the *capability* to check ``agno_pat_`` tokens and exists
+        # whenever there is a db to verify against. It must be on app.state even when
+        # no auth is configured here: the WS authenticate action, the REST dependency,
+        # and any manually added JWTMiddleware all resolve it at request time. Whether
+        # a request is *required* to authenticate is a separate policy decision -- the
+        # middleware below only installs when the operator configured a base auth
+        # mechanism, so a db alone never locks an instance down.
+        service_account_verifier = self._get_service_account_verifier()
+        if service_account_verifier is not None:
+            fastapi_app.state.service_account_verifier = service_account_verifier
+
+        if self.public is not None:
+            from contextlib import asynccontextmanager
+
+            from agno.os.public._middleware import PublicMiddleware
+            from agno.os.public._policy import PublicRoutePolicy
+
+            fastapi_app.state.public_route_policy = PublicRoutePolicy(self.public, self)
+
+            original_lifespan = fastapi_app.router.lifespan_context
+
+            @asynccontextmanager
+            async def public_lifespan(app):
+                assert self.public is not None
+                await self.public._limiter._aprepare()
+                async with original_lifespan(app) as state:
+                    yield state
+
+            fastapi_app.router.lifespan_context = public_lifespan
+            fastapi_app.add_middleware(
+                PublicMiddleware, surface=self.public, agent_os=self, policy=fastapi_app.state.public_route_policy
+            )
+
+        auth_configured = bool(self.authorization or jwt_env_configured or security_key)
+        if auth_configured:
+            # In JWT mode the security key is ignored (JWT takes precedence), matching
+            # get_effective_auth_mode; pass None so the middleware doesn't fall back to it.
+            effective_key = None if (self.authorization or jwt_env_configured) else security_key
+            self._add_auth_middleware(fastapi_app, security_key=effective_key)
+
+        # Under mcp_auth, the OAuth flow routes must be reachable without an agno bearer.
+        # AgentOS exempts them on the AuthMiddleware it installs itself, but an agno
+        # JWTMiddleware installed MANUALLY on a base_app carries its own exclusions that
+        # agno cannot amend. Fail fast (with the exact paths) rather than 401 connector
+        # discovery. (Only agno's own AuthMiddleware is inspected; see the method docstring.)
+        self._check_mcp_auth_middleware_composition(fastapi_app)
 
         # Add trailing slash normalization middleware
         from agno.os.middleware.trailing_slash import TrailingSlashMiddleware
 
         fastapi_app.add_middleware(TrailingSlashMiddleware)
 
+        if self.mcp and self.mcp_config is not None:
+            from agno.os.middleware.mcp_routing import MCPRoutingMiddleware, validate_mcp_routes
+
+            if self.mcp_auth is not None and (
+                self.mcp_config.path != "/mcp" or self.mcp_config.path_aliases or self.mcp_config.root_host
+            ):
+                raise ValueError(
+                    "Custom MCP routing does not yet support OAuth resource discovery; use the native /mcp path"
+                )
+            validate_mcp_routes(fastapi_app, self.mcp_config, self._mcp_app)
+            fastapi_app.add_middleware(MCPRoutingMiddleware, config=self.mcp_config)
+
+        if self.public is not None:
+            from starlette.middleware.cors import CORSMiddleware
+
+            # Keep preflights and admission/auth failures under the configured CORS policy.
+            cors = [middleware for middleware in fastapi_app.user_middleware if middleware.cls is CORSMiddleware]
+            fastapi_app.user_middleware[:] = cors + [
+                middleware for middleware in fastapi_app.user_middleware if middleware.cls is not CORSMiddleware
+            ]
+
+        if self.base_app is not None:
+            self._base_app_prepared = True
+
         return fastapi_app
 
-    def _add_jwt_middleware(self, fastapi_app: FastAPI) -> None:
-        from agno.os.middleware.jwt import JWTMiddleware, JWTValidator
+    def _get_service_account_verifier(self) -> Optional[Any]:
+        """Get (lazily creating) the verifier for service account tokens.
+
+        Returns None when the AgentOS has no db - service accounts live in the
+        AgentOS database, so there is nothing to verify against without one.
+        """
+        if self.db is None:
+            return None
+        if self._service_account_verifier is None:
+            from agno.os.service_accounts import ServiceAccountVerifier
+
+            self._service_account_verifier = ServiceAccountVerifier(
+                db=self.db,
+                cache_ttl_seconds=self.settings.service_account_cache_ttl_seconds,
+            )
+        return self._service_account_verifier
+
+    def _get_mcp_auth_provider(self) -> Optional["AuthProvider"]:
+        """The resolved fastmcp auth provider for the MCP endpoint, or None.
+
+        Resolution (type checks, ``MultiAuth`` composition with the service-account
+        verifier) happens once: ``get_mcp_server`` and the auth-middleware exemptions
+        must see the same instance.
+        """
+        if self.mcp_auth is None:
+            return None
+        if self._resolved_mcp_auth is None:
+            from agno.os.mcp_auth import resolve_mcp_auth
+
+            self._resolved_mcp_auth = resolve_mcp_auth(self)
+        return self._resolved_mcp_auth
+
+    def mcp_auth_exempt_paths(self) -> List[str]:
+        """The MCP OAuth routes that must be public (exempt from any auth middleware).
+
+        When ``mcp_auth`` is set, connector clients (claude.ai, ChatGPT) hit discovery,
+        ``/register``, ``/authorize``, ``/token`` and the ``/mcp`` challenge with no agno
+        bearer, so those paths must not be behind the parent auth layer. AgentOS exempts
+        them automatically on the middleware it installs; if you install your own JWT/auth
+        middleware on a ``base_app``, pass these to its ``excluded_route_paths``. Returns
+        ``[]`` when ``mcp_auth`` is unset.
+        """
+        provider = self._get_mcp_auth_provider()
+        if provider is None:
+            return []
+        from agno.os.mcp_auth import mcp_auth_route_paths
+
+        return mcp_auth_route_paths(provider)
+
+    def _check_mcp_auth_middleware_composition(self, app: FastAPI) -> None:
+        """Reject an mcp_auth deployment whose OAuth routes a manual agno auth middleware blocks.
+
+        An agno ``JWTMiddleware`` (an alias of ``AuthMiddleware``) installed via
+        ``app.add_middleware(JWTMiddleware, ...)`` on a ``base_app`` carries its own
+        ``excluded_route_paths``, which AgentOS cannot amend. If it does not exempt the
+        OAuth routes, connector discovery / DCR / the ``/mcp`` challenge 401 before FastMCP
+        runs -- and silently, so it reads as a token problem. The AuthMiddleware AgentOS
+        installs itself already carries the exemptions (so it is skipped here).
+
+        Only agno's own ``AuthMiddleware`` is inspected. A THIRD-PARTY auth middleware
+        (authlib, fastapi-users, a hand-rolled ``BaseHTTPMiddleware`` doing bearer
+        validation) is not detected here -- AgentOS can't introspect an arbitrary
+        middleware's exemptions -- so if you install one on a ``base_app`` you must exempt
+        ``os.mcp_auth_exempt_paths()`` from it yourself. It fails closed either way (a 401
+        at discovery, never an open endpoint).
+        """
+        exempt_paths = self.mcp_auth_exempt_paths()
+        if not exempt_paths:
+            return
+        from agno.os.middleware.jwt import AuthMiddleware, jwt_kwargs_have_key_source
+
+        exempt = set(exempt_paths)
+        for mw in getattr(app, "user_middleware", None) or []:
+            cls = getattr(mw, "cls", None)
+            if not (isinstance(cls, type) and issubclass(cls, AuthMiddleware)):
+                continue
+            kwargs = getattr(mw, "kwargs", None) or {}
+            # A plain security-key / service-account layer (no JWT source) does not
+            # 401 an unauthenticated request when no bearer is present the way a
+            # JWT-validating one does; only the latter blocks the browser-driven flow.
+            if not jwt_kwargs_have_key_source(kwargs):
+                continue
+            if exempt.issubset(set(kwargs.get("excluded_route_paths") or [])):
+                continue  # this middleware already exempts the OAuth routes
+            raise ValueError(
+                "AgentOS(mcp_auth=...) with a manually-installed agno JWTMiddleware requires the OAuth "
+                "flow routes to be exempted from it, or connector discovery (claude.ai / ChatGPT) is blocked "
+                "with a 401 before it runs. Add these to your middleware's excluded_route_paths: "
+                f"{sorted(exempt)} (get them from os.mcp_auth_exempt_paths() or "
+                "agno.os.mcp_auth.mcp_auth_route_paths(provider)). Or let AgentOS manage auth via "
+                "authorization=True instead of installing the middleware yourself."
+            )
+
+    def _add_auth_middleware(self, fastapi_app: FastAPI, security_key: Optional[str]) -> None:
+        """Install the single AgentOS auth layer on the parent app.
+
+        One ``AuthMiddleware`` covers JWTs, service-account tokens, the internal
+        service token, and the OS security key across the REST routes AND the mounted
+        ``/mcp`` app (Starlette runs parent-app middleware before dispatching to a
+        mount), so no auth code lives on the mounted sub-app.
+
+        Called whenever any credential is configured: ``authorization=True`` (JWT),
+        an ``OS_SECURITY_KEY``, or a service-account verifier (a db is present).
+        """
+        from agno.os.middleware.jwt import AuthMiddleware, JWTValidator, build_jwt_middleware_kwargs
         from agno.os.scopes import AgentOSScope
 
-        verify_audience = False
-        jwks_file = None
-        verification_keys = None
-        algorithm = "RS256"
-        audience = None
-        admin_scope: Optional[str] = None
-        user_isolation = False
-
-        if self.authorization_config:
-            algorithm = self.authorization_config.algorithm or "RS256"
-            verification_keys = self.authorization_config.verification_keys
-            jwks_file = self.authorization_config.jwks_file
-            verify_audience = self.authorization_config.verify_audience or False
-            audience = self.authorization_config.audience
-            admin_scope = self.authorization_config.admin_scope
-            user_isolation = self.authorization_config.user_isolation
-
-        log_info(f"Adding JWT middleware for authorization (algorithm: {algorithm})")
-
-        # Create validator and store on app.state for WebSocket access
-        jwt_validator = JWTValidator(
-            verification_keys=verification_keys,
-            jwks_file=jwks_file,
-            algorithm=algorithm,
+        middleware_kwargs = build_jwt_middleware_kwargs(
+            self.authorization_config,
+            authorization=self.authorization,
+            service_account_verifier=self._get_service_account_verifier(),
         )
-        fastapi_app.state.jwt_validator = jwt_validator
+        middleware_kwargs["security_key"] = security_key
+        algorithm = middleware_kwargs["algorithm"]
+        verification_keys = middleware_kwargs["verification_keys"]
+        jwks_file = middleware_kwargs["jwks_file"]
+        verify_audience = middleware_kwargs["verify_audience"]
+        audience = middleware_kwargs.get("audience")
+        admin_scope: Optional[str] = middleware_kwargs.get("admin_scope")
+        user_isolation = middleware_kwargs.get("user_isolation", False)
+
+        jwt_configured = bool(
+            verification_keys or jwks_file or getenv("JWT_VERIFICATION_KEY") or getenv("JWT_JWKS_FILE")
+        )
+        # Fail fast at app construction (not on the first request) if RBAC was asked for
+        # with no way to verify a JWT: otherwise every JWT and anonymous request would fall
+        # through unauthenticated, silently serving an OPEN instance. AuthMiddleware enforces
+        # the same invariant as a backstop for the manual add_middleware path.
+        if self.authorization and not jwt_configured:
+            raise ValueError(
+                "AgentOS(authorization=True) requires a JWT verification key: set JWT_VERIFICATION_KEY or "
+                "JWT_JWKS_FILE (or pass verification_keys / jwks_file via authorization_config). Without one, "
+                "JWT and anonymous requests are not authenticated and RBAC is not enforced. For "
+                "service-account-only enforcement, use a db without authorization=True."
+            )
+        log_info("Adding AgentOS auth middleware" + (f" (JWT algorithm: {algorithm})" if jwt_configured else ""))
+
+        # A JWT validator on app.state is only meaningful (and only constructible --
+        # it requires a key) when JWT is actually configured. WebSocket JWT auth reads it.
+        if jwt_configured:
+            fastapi_app.state.jwt_validator = JWTValidator(
+                verification_keys=verification_keys,
+                jwks_file=jwks_file,
+                algorithm=algorithm,
+            )
         # Expose audience config + admin scope on app.state so WebSocket auth
         # (which does not flow through HTTP middleware) can honour them.
         fastapi_app.state.jwt_verify_audience = verify_audience
@@ -1127,20 +1780,42 @@ class AgentOS:
         # added by the user-scoped-DB work stay dormant.
         fastapi_app.state.user_isolation_enabled = user_isolation
 
-        # Collect interface route prefixes to exclude from JWT auth.
-        # Interfaces use their own authentication mechanisms
-        # (e.g. Slack HMAC-SHA256 signing, Telegram webhook verification).
+        # Only interfaces that verify the authenticity of their own inbound requests
+        # (Slack HMAC, Telegram/WhatsApp webhook secrets -- see
+        # BaseInterface.authenticates_own_requests) are excluded from the central auth
+        # layer alongside the public routes. Interfaces that do NOT self-authenticate
+        # (e.g. A2A) stay behind AuthMiddleware, so enabling authentication protects them
+        # too. Passing excluded_route_paths replaces the middleware defaults, so custom,
+        # interface, and MCP exclusions are merged with the defaults here.
         excluded_route_paths: Optional[List[str]] = None
+        interface_prefixes: List[str] = []
         if self.interfaces:
             interface_prefixes = [
                 f"{interface.prefix}/*"
                 for interface in self.interfaces
-                if hasattr(interface, "prefix") and interface.prefix
+                if getattr(interface, "authenticates_own_requests", False) and getattr(interface, "prefix", None)
             ]
-            if interface_prefixes:
-                # Passing excluded_route_paths replaces the middleware defaults,
-                # so include the default excluded routes as well.
-                excluded_route_paths = [
+        # With mcp_auth set, the fastmcp provider owns authentication for the whole MCP
+        # surface: the MCP path itself (the provider's RequireAuthMiddleware emits the
+        # RFC 9728 challenge) and its OAuth/discovery routes, which browsers and connector
+        # backends hit with no agno bearer. Exact paths only, derived from the provider --
+        # a hand-typed wildcard here would silently un-authenticate unrelated routes.
+        mcp_auth_paths: List[str] = []
+        mcp_auth_provider = self._get_mcp_auth_provider()
+        if mcp_auth_provider is not None:
+            from agno.os.mcp_auth import mcp_auth_route_paths
+
+            mcp_auth_paths = mcp_auth_route_paths(mcp_auth_provider)
+        # The Server Card is discovery before authentication: public by design, no secrets.
+        server_card_paths: List[str] = []
+        if self.mcp and (self.mcp_config is None or self.mcp_config.server_card):
+            from agno.os.config import MCP_SERVER_CARD_PATH
+
+            server_card_paths = [MCP_SERVER_CARD_PATH]
+        excluded_routes = (self.authorization_config.excluded_route_paths or []) if self.authorization_config else []
+        if excluded_routes or interface_prefixes or mcp_auth_paths or server_card_paths:
+            excluded_route_paths = (
+                [
                     "/",
                     "/health",
                     "/info",
@@ -1148,26 +1823,36 @@ class AgentOS:
                     "/redoc",
                     "/openapi.json",
                     "/docs/oauth2-redirect",
-                ] + interface_prefixes
+                ]
+                + excluded_routes
+                + interface_prefixes
+                + mcp_auth_paths
+                + server_card_paths
+            )
 
-        # Add middleware to stack
-        middleware_kwargs: Dict[str, Any] = {
-            "verification_keys": verification_keys,
-            "jwks_file": jwks_file,
-            "algorithm": algorithm,
-            "authorization": self.authorization,
-            "verify_audience": verify_audience,
-            "excluded_route_paths": excluded_route_paths,
-        }
-        if audience:
-            middleware_kwargs["audience"] = audience
-        if admin_scope:
-            middleware_kwargs["admin_scope"] = admin_scope
-        # Default to False on the middleware; only forward when actually enabled
-        # so manual app.add_middleware(JWTMiddleware) defaults stay backwards-compatible.
-        if user_isolation:
-            middleware_kwargs["user_isolation"] = True
-        fastapi_app.add_middleware(JWTMiddleware, **middleware_kwargs)
+        middleware_kwargs["excluded_route_paths"] = excluded_route_paths
+
+        # Interface routes are authorization-gated by the scope entries each interface
+        # declares (Interface.get_scope_mappings), merged here against its ACTUAL mount
+        # prefix. This covers operator-configurable prefixes (A2A/AGUI(prefix=...)) and
+        # subclasses, which the default scope map (keyed on default prefixes) cannot -- an
+        # interface that runs entities but has no scope entry falls through to the
+        # unmapped-route default (allow). Self-authenticating interfaces are excluded from
+        # the auth layer entirely, so their mappings are irrelevant here.
+        interface_mappings: Dict[str, List[str]] = {}
+        for interface in self.interfaces:
+            if getattr(interface, "authenticates_own_requests", False):
+                continue
+            interface_mappings.update(interface.get_scope_mappings())
+        if interface_mappings:
+            # middleware_kwargs carries no scope_mappings today (AuthorizationConfig has no
+            # such field); the merge is defensive so that if one is ever threaded through,
+            # it wins over interface defaults instead of being clobbered.
+            merged = dict(middleware_kwargs.get("scope_mappings") or {})
+            interface_mappings.update(merged)
+            middleware_kwargs["scope_mappings"] = interface_mappings
+
+        fastapi_app.add_middleware(AuthMiddleware, **middleware_kwargs)
 
     def get_routes(self) -> List[Any]:
         """Retrieve all routes from the FastAPI app.
@@ -1253,6 +1938,36 @@ class AgentOS:
             "interfaces": [interface.type for interface in self.interfaces] if self.interfaces else None,
         }
 
+    def _auto_discover_media_storage(self) -> None:
+        """Fall back to the first media storage configured on an agent, team or workflow.
+
+        Media offload is configured per agent/team/workflow, so AgentOS itself is usually left
+        without a backend. Mirrors how tracing falls back to the first available database.
+        """
+        if self.media_storage is not None:
+            return
+
+        # Collected rather than short-circuited so a mixed tree can be reported.
+        found = [
+            entity.media_storage
+            for group in (self._agents, self._teams, self._workflows)
+            for entity in group
+            if entity.media_storage
+        ]
+        if not found:
+            return
+
+        self.media_storage = found[0]
+        # Compared on backend and bucket so two equivalent instances do not read as a conflict.
+        identities = {(getattr(storage, "backend_name", None), getattr(storage, "bucket", None)) for storage in found}
+        if len(identities) > 1:
+            log_warning(
+                "Multiple media storage backends found across the agent tree, serving media with "
+                f"{type(self.media_storage).__name__}. Set media_storage on AgentOS to choose explicitly."
+            )
+        else:
+            log_debug(f"Media storage auto-discovered from the agent tree: {type(self.media_storage).__name__}")
+
     def _auto_discover_databases(self) -> None:
         """Auto-discover and initialize the databases used by all contextual agents, teams and workflows."""
 
@@ -1337,6 +2052,7 @@ class AgentOS:
             try:
                 if hasattr(db, "_create_all_tables") and callable(db._create_all_tables):
                     db._create_all_tables()
+                    log_info(f"Database ready: {db.__class__.__name__} id={db.id}")
             except Exception as e:
                 log_warning(f"Failed to initialize {db.__class__.__name__} (id: {db.id}): {str(e)}")
 
@@ -1361,6 +2077,7 @@ class AgentOS:
             try:
                 if hasattr(db, "_create_all_tables") and callable(db._create_all_tables):
                     await db._create_all_tables()
+                    log_info(f"Database ready: {db.__class__.__name__} id={db.id}")
             except Exception as e:
                 log_warning(f"Failed to initialize async {db.__class__.__name__} (id: {db.id}): {str(e)}")
 
@@ -1394,7 +2111,6 @@ class AgentOS:
         """Get the table names for a database"""
         table_names = {
             "session_table_name": db.session_table_name,
-            "culture_table_name": db.culture_table_name,
             "memory_table_name": db.memory_table_name,
             "learnings_table_name": db.learnings_table_name,
             "metrics_table_name": db.metrics_table_name,
@@ -1446,6 +2162,16 @@ class AgentOS:
 
         if self.registry is not None:
             for knowledge_base in self.registry.knowledge or []:
+                # Only user-declared registry knowledge feeds the routes.
+                # Syncs mirror member- and step-owned knowledge into the
+                # registry for name resolution; that is not a grant of
+                # route-level exposure -- and the registry, not this OS, keeps
+                # the provenance, so a mirror by another AgentOS sharing the
+                # registry is excluded here too. Everything not mirrored the
+                # user registered, whether at construction or after (resync
+                # picks it up).
+                if self.registry.knowledge_is_mirrored(knowledge_base):
+                    continue
                 _add_knowledge_if_not_duplicate(knowledge_base)
 
         self.knowledge_instances = knowledge_instances
@@ -1476,7 +2202,7 @@ class AgentOS:
 
             # Get the name (with fallback)
             knowledge_name = getattr(knowledge, "name", None) or f"knowledge_{db_id}"
-            table_name = getattr(contents_db, "knowledge_table_name", "unknown")
+            table_name = getattr(contents_db, "knowledge_table_name", None) or "unknown"
 
             # Create unique key based on name + db + table
             key = (knowledge_name, db_id, table_name)
@@ -1507,7 +2233,7 @@ class AgentOS:
         for db_id, dbs in self.dbs.items():
             if db_id not in dbs_with_specific_config:
                 # Collect unique table names from all databases with the same id
-                unique_tables = list(set(db.session_table_name for db in dbs))
+                unique_tables = list({db.session_table_name for db in dbs if db.session_table_name is not None})
                 session_config.dbs.append(
                     DatabaseConfig(
                         db_id=db_id,
@@ -1529,7 +2255,7 @@ class AgentOS:
         for db_id, dbs in self.dbs.items():
             if db_id not in dbs_with_specific_config:
                 # Collect unique table names from all databases with the same id
-                unique_tables = list(set(db.memory_table_name for db in dbs))
+                unique_tables = list({db.memory_table_name for db in dbs if db.memory_table_name is not None})
                 memory_config.dbs.append(
                     DatabaseConfig(
                         db_id=db_id,
@@ -1551,7 +2277,7 @@ class AgentOS:
         for db_id, dbs in self.dbs.items():
             if db_id not in dbs_with_specific_config:
                 # Collect unique table names from all databases with the same id
-                unique_tables = list(set(db.learnings_table_name for db in dbs))
+                unique_tables = list({db.learnings_table_name for db in dbs if db.learnings_table_name is not None})
                 learning_config.dbs.append(
                     DatabaseConfig(
                         db_id=db_id,
@@ -1585,7 +2311,7 @@ class AgentOS:
             if not db_id:
                 continue
 
-            table_name = getattr(contents_db, "knowledge_table_name", "unknown")
+            table_name = getattr(contents_db, "knowledge_table_name", None) or "unknown"
             knowledge_name = getattr(knowledge, "name", None) or f"knowledge_{db_id}"
             knowledge_id = _generate_knowledge_id(knowledge_name, db_id, table_name)
 
@@ -1634,7 +2360,7 @@ class AgentOS:
         for db_id, dbs in self.dbs.items():
             if db_id not in dbs_with_specific_config:
                 # Collect unique table names from all databases with the same id
-                unique_tables = list(set(db.metrics_table_name for db in dbs))
+                unique_tables = list({db.metrics_table_name for db in dbs if db.metrics_table_name is not None})
                 metrics_config.dbs.append(
                     DatabaseConfig(
                         db_id=db_id,
@@ -1656,7 +2382,7 @@ class AgentOS:
         for db_id, dbs in self.dbs.items():
             if db_id not in dbs_with_specific_config:
                 # Collect unique table names from all databases with the same id
-                unique_tables = list(set(db.eval_table_name for db in dbs))
+                unique_tables = list({db.eval_table_name for db in dbs if db.eval_table_name is not None})
                 evals_config.dbs.append(
                     DatabaseConfig(
                         db_id=db_id,

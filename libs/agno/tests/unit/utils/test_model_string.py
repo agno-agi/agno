@@ -6,7 +6,6 @@ pytest.importorskip("google.genai")
 pytest.importorskip("groq")
 
 from agno.agent import Agent
-from agno.culture.manager import CultureManager
 from agno.knowledge.chunking.agentic import AgenticChunking
 from agno.memory.manager import MemoryManager
 from agno.models.anthropic import Claude
@@ -16,6 +15,7 @@ from agno.models.groq import Groq
 from agno.models.minimax import MiniMax
 from agno.models.n1n import N1N
 from agno.models.openai import OpenAIChat, OpenAIResponses
+from agno.models.tokenlab import TokenLab
 from agno.models.utils import get_model
 from agno.team import Team
 
@@ -82,6 +82,13 @@ def test_get_model_parses_n1n_string():
     assert model.id == "gpt-4o"
 
 
+def test_get_model_parses_tokenlab_string():
+    """Test get_model() parses TokenLab model string."""
+    model = get_model("tokenlab:gpt-5.4-mini")
+    assert isinstance(model, TokenLab)
+    assert model.id == "gpt-5.4-mini"
+
+
 def test_get_model_strips_whitespace():
     """Test that get_model() strips spaces from model string."""
     model = get_model(" openai : gpt-4o ")
@@ -124,7 +131,6 @@ def test_agent_with_all_model_params_as_strings():
     """Test Agent with all 4 model parameters as strings."""
     agent = Agent(
         model="openai:gpt-4o",
-        reasoning=True,
         reasoning_model="anthropic:claude-3-5-sonnet-20241022",
         parser_model="google:gemini-2.0-flash-exp",
         output_model="groq:llama-3.1-70b-versatile",
@@ -155,7 +161,6 @@ def test_team_with_all_model_params_as_strings():
     team = Team(
         members=[agent],
         model="anthropic:claude-3-5-sonnet-20241022",
-        reasoning=True,
         reasoning_model="openai:gpt-4o",
         parser_model="google:gemini-2.0-flash-exp",
         output_model="groq:llama-3.1-70b-versatile",
@@ -175,18 +180,6 @@ def test_memory_manager_with_model_string():
 def test_memory_manager_with_model_instance():
     """Test MemoryManager accepts Model instance."""
     manager = MemoryManager(model=OpenAIChat(id="gpt-4o"))
-    assert isinstance(manager.model, OpenAIChat)
-
-
-def test_culture_manager_with_model_string():
-    """Test CultureManager accepts model string."""
-    manager = CultureManager(model="openai:gpt-4o")
-    assert isinstance(manager.model, OpenAIResponses)
-
-
-def test_culture_manager_with_model_instance():
-    """Test CultureManager accepts Model instance."""
-    manager = CultureManager(model=OpenAIChat(id="gpt-4o"))
     assert isinstance(manager.model, OpenAIChat)
 
 

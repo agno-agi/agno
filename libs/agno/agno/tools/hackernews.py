@@ -15,10 +15,16 @@ class HackerNewsTools(Toolkit):
         enable_get_top_stories (bool): Enable getting top stories from Hacker News. Default is True.
         enable_get_user_details (bool): Enable getting user details from Hacker News. Default is True.
         all (bool): Enable all tools. Overrides individual flags when True. Default is False.
+        timeout (int): Per-request HTTP timeout in seconds. Defaults to 30.
     """
 
     def __init__(
-        self, enable_get_top_stories: bool = True, enable_get_user_details: bool = True, all: bool = False, **kwargs
+        self,
+        enable_get_top_stories: bool = True,
+        enable_get_user_details: bool = True,
+        all: bool = False,
+        timeout: int = 30,
+        **kwargs,
     ):
         tools: List[Any] = []
         if all or enable_get_top_stories:
@@ -26,7 +32,7 @@ class HackerNewsTools(Toolkit):
         if all or enable_get_user_details:
             tools.append(self.get_user_details)
 
-        super().__init__(name="hackers_news", tools=tools, **kwargs)
+        super().__init__(name="hackers_news", tools=tools, timeout=timeout, **kwargs)
 
     def get_top_hackernews_stories(self, num_stories: int = 10) -> str:
         """Use this function to get top stories from Hacker News.
@@ -41,13 +47,18 @@ class HackerNewsTools(Toolkit):
         try:
             log_debug(f"Getting top {num_stories} stories from Hacker News")
             # Fetch top story IDs
-            response = httpx.get("https://hacker-news.firebaseio.com/v0/topstories.json")
+            response = httpx.get("https://hacker-news.firebaseio.com/v0/topstories.json", timeout=self.timeout)
+            response.raise_for_status()
             story_ids = response.json()
 
             # Fetch story details
             stories = []
             for story_id in story_ids[:num_stories]:
-                story_response = httpx.get(f"https://hacker-news.firebaseio.com/v0/item/{story_id}.json")
+                story_response = httpx.get(
+                    f"https://hacker-news.firebaseio.com/v0/item/{story_id}.json",
+                    timeout=self.timeout,
+                )
+                story_response.raise_for_status()
                 story = story_response.json()
                 if story is None:
                     continue
@@ -70,7 +81,12 @@ class HackerNewsTools(Toolkit):
 
         try:
             log_debug(f"Getting details for user: {username}")
-            user = httpx.get(f"https://hacker-news.firebaseio.com/v0/user/{username}.json").json()
+            response = httpx.get(
+                f"https://hacker-news.firebaseio.com/v0/user/{username}.json",
+                timeout=self.timeout,
+            )
+            response.raise_for_status()
+            user = response.json()
             user_details = {
                 "id": user.get("id"),
                 "karma": user.get("karma"),

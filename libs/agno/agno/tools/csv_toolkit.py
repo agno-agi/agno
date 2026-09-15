@@ -150,8 +150,12 @@ class CsvTools(Toolkit):
                 return "Error connecting to DuckDB, please check the connection."
 
             # Create a table from the csv file
+            # Quote the table name so stems with hyphens or special characters are valid identifiers
+            # Bind the file path as a parameter so it can't break out of the SQL statement
+            table_name = csv_name.replace('"', '""')
             con.execute(
-                f"CREATE TABLE {csv_name} AS SELECT * FROM read_csv('{file_path}', ignore_errors=false, auto_detect=true)"
+                f'CREATE TABLE "{table_name}" AS SELECT * FROM read_csv(?, ignore_errors=false, auto_detect=true)',
+                [str(file_path)],
             )
 
             # -*- Format the SQL Query

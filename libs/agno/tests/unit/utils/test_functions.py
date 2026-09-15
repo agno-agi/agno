@@ -219,3 +219,15 @@ def test_get_function_call_no_arguments(sample_functions):
     assert result is not None
     assert result.arguments is None
     assert result.error is None
+
+
+def test_get_function_call_empty_array_arguments(sample_functions):
+    """Test function call with an empty JSON array as arguments."""
+    result = get_function_call(
+        name="test_function",
+        arguments="[]",
+        functions=sample_functions,
+    )
+    assert result is not None
+    assert result.arguments is None
+    assert result.error is None

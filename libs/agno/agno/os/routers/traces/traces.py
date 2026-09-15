@@ -1,10 +1,11 @@
 import logging
-from typing import Optional, Union
+from typing import Any, Optional, Union
 
 from fastapi import Depends, HTTPException, Query, Request
 from fastapi.routing import APIRouter
 
 from agno.db.base import AsyncBaseDb, BaseDb
+from agno.exceptions import AgnoError
 from agno.os.auth import get_auth_token_from_request, get_authentication_dependency
 from agno.os.middleware.user_scope import resolve_db_and_scope
 from agno.os.routers.traces.schemas import (
@@ -27,7 +28,7 @@ from agno.os.schema import (
     ValidationErrorResponse,
 )
 from agno.os.settings import AgnoAPISettings
-from agno.os.utils import timestamp_to_datetime
+from agno.os.utils import AgnoHTTPException, timestamp_to_datetime
 from agno.remote.base import RemoteDb
 from agno.utils.log import log_error
 
@@ -51,6 +52,22 @@ def _apply_user_scope_to_filter(filter_expr_dict: Optional[dict], effective_user
     if filter_expr_dict is None:
         return user_clause
     return {"op": "AND", "conditions": [user_clause, filter_expr_dict]}
+
+
+def _require_trace_owner(trace: Any, effective_user_id: Optional[str]) -> None:
+    """Enforce single-trace ownership for non-admin scoped callers.
+
+    ``get_trace`` looks a trace up by its unique ``trace_id`` / ``run_id`` with no
+    user filter (the DB contract delegates the ownership check to the route layer),
+    so a scoped caller must be shown only their own trace. A ``trace_id`` / ``run_id``
+    is not a capability — both leak through run/session APIs, SSE streams and logs —
+    so a mismatch is masked as a 404 rather than a 403. Admins / unscoped callers
+    (``effective_user_id is None``) are unaffected. A trace with no ``user_id`` is
+    treated as not-owned for a scoped caller (fail-closed), consistent with the list
+    endpoint, which also excludes NULL-user rows from a scoped caller's results.
+    """
+    if effective_user_id is not None and getattr(trace, "user_id", None) != effective_user_id:
+        raise HTTPException(status_code=404, detail="Trace not found")
 
 
 def get_traces_router(
@@ -250,6 +267,8 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                 ),
             )
 
+        except AgnoError as e:
+            raise AgnoHTTPException(e)
         except Exception as e:
             log_error(f"Error retrieving traces: {str(e)}")
             raise HTTPException(status_code=500, detail=f"Error retrieving traces: {str(e)}")
@@ -375,18 +394,27 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         db_id: Optional[str] = Query(default=None, description="Database ID to query trace from"),
     ):
         """Get detailed trace with hierarchical span tree, or a specific span within the trace"""
-        # ``trace_id`` is a unique key — there's nothing to narrow further at
-        # the DB layer, so ``get_trace`` only takes ``trace_id`` / ``run_id``.
-        # Authorization for this endpoint is upheld by the list endpoint
-        # (``GET /traces``), which is the only way for a non-admin caller to
-        # discover trace_ids in the first place; that listing is scoped to
-        # the caller's ``user_id``, so by the time a request lands here the
-        # caller necessarily owns the trace they're asking about.
-        db, _ = await resolve_db_and_scope(request, dbs, db_id)
+        # ``trace_id`` / ``run_id`` are unique keys, so ``get_trace`` takes no user
+        # filter at the DB layer; ownership is enforced here at the route layer (see
+        # ``_require_trace_owner``) after the trace is fetched. Both ids leak through
+        # run/session APIs, SSE and logs, so a non-admin caller reaching this route
+        # does NOT necessarily own the trace and must be checked.
+        db, effective_user_id = await resolve_db_and_scope(request, dbs, db_id)
 
         if isinstance(db, RemoteDb):
             auth_token = get_auth_token_from_request(request)
             headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
+            # Enforce ownership locally for a scoped caller, not only via the forwarded bearer.
+            # The remote also scopes by the bearer, but a remote that predates this fix (or
+            # trusts an upstream gateway) would otherwise leak. The full-trace result carries
+            # user_id; for a single span we fetch the parent trace first (a span has no
+            # user_id) and check it, mirroring the local branch below. Admin / unscoped callers
+            # (effective_user_id is None) keep the single-call fast path.
+            if effective_user_id is not None:
+                parent_trace = await db.get_trace(trace_id=trace_id, run_id=run_id, db_id=db_id, headers=headers)
+                _require_trace_owner(parent_trace, effective_user_id)
+                if span_id is None:
+                    return parent_trace
             return await db.get_trace(
                 trace_id=trace_id,
                 span_id=span_id,
@@ -407,6 +435,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
 
                 if parent_trace is None:
                     raise HTTPException(status_code=404, detail="Trace not found")
+                _require_trace_owner(parent_trace, effective_user_id)
 
                 if isinstance(db, AsyncBaseDb):
                     span = await db.get_span(span_id)
@@ -431,6 +460,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
 
             if trace is None:
                 raise HTTPException(status_code=404, detail="Trace not found")
+            _require_trace_owner(trace, effective_user_id)
 
             # Get all spans for this trace
             if isinstance(db, AsyncBaseDb):
@@ -443,6 +473,8 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
 
         except HTTPException:
             raise
+        except AgnoError as e:
+            raise AgnoHTTPException(e)
         except Exception as e:
             log_error(f"Error retrieving trace {trace_id}: {str(e)}")
             raise HTTPException(status_code=500, detail=f"Error retrieving trace: {str(e)}")
@@ -599,6 +631,8 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                 ),
             )
 
+        except AgnoError as e:
+            raise AgnoHTTPException(e)
         except Exception as e:
             log_error(f"Error retrieving trace statistics: {str(e)}")
             raise HTTPException(status_code=500, detail=f"Error retrieving statistics: {str(e)}")
@@ -779,6 +813,8 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
 
         except ValueError as e:
             raise HTTPException(status_code=400, detail=f"Invalid filter expression: {str(e)}")
+        except AgnoError as e:
+            raise AgnoHTTPException(e)
         except Exception as e:
             log_error(f"Error searching traces: {str(e)}")
             raise HTTPException(status_code=500, detail=f"Error searching traces: {str(e)}")

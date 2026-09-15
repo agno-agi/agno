@@ -50,15 +50,14 @@ class SpiderTools(Toolkit):
 
         super().__init__(name="spider", tools=tools, **kwargs)
 
-    def search_web(self, query: str, max_results: int = 5) -> str:
+    def search_web(self, query: str, max_results: Optional[int] = None) -> str:
         """Use this function to search the web.
         Args:
             query (str): The query to search the web with.
-            max_results (int, optional): The maximum number of results to return. Defaults to 5.
+            max_results (int, optional): The maximum number of results to return. Defaults to the value set on the toolkit, or 5.
         Returns:
             The results of the search.
         """
-        max_results = self.max_results or max_results
         return self._search(query, max_results=max_results)
 
     def scrape(self, url: str) -> str:
@@ -80,11 +79,14 @@ class SpiderTools(Toolkit):
         """
         return self._crawl(url, limit=limit)
 
-    def _search(self, query: str, max_results: int = 1) -> str:
+    def _search(self, query: str, max_results: Optional[int] = None) -> str:
         app = ExternalSpider()
-        log_info(f"Fetching results from spider for query: {query} with max_results: {max_results}")
         try:
-            options = {"fetch_page_content": False, "num": max_results, **self.optional_params}
+            options = {"fetch_page_content": False, "num": self.max_results or 5, **self.optional_params}
+            # Applied after the optional_params spread so an explicit call argument always wins.
+            if max_results is not None:
+                options["num"] = max_results
+            log_info(f"Fetching results from spider for query: {query} with max_results: {options['num']}")
             results = app.search(query, options)
             return json.dumps(results)
         except Exception as e:
@@ -106,9 +108,10 @@ class SpiderTools(Toolkit):
         app = ExternalSpider()
         log_info(f"Fetching content from spider for url: {url}")
         try:
-            if limit is None:
-                limit = 10
-            options = {"return_format": "markdown", "limit": limit, **self.optional_params}
+            options = {"return_format": "markdown", "limit": 10, **self.optional_params}
+            # Applied after the optional_params spread so an explicit call argument always wins.
+            if limit is not None:
+                options["limit"] = limit
             results = app.crawl_url(url, options)
             return json.dumps(results)
         except Exception as e:

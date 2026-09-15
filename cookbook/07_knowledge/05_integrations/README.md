@@ -33,6 +33,8 @@ Specific reader, cloud storage, and vector database integrations.
 | [vector_dbs/01_qdrant.py](./vector_dbs/01_qdrant.py) | Qdrant (recommended for production) |
 | [vector_dbs/02_local.py](./vector_dbs/02_local.py) | ChromaDB + LanceDB (local development) |
 | [vector_dbs/03_managed.py](./vector_dbs/03_managed.py) | Pinecone + PgVector (managed/production) |
+| [vector_dbs/04_pgvector.py](./vector_dbs/04_pgvector.py) | PgVector (PostgreSQL) |
+| [vector_dbs/05_scylladb.py](./vector_dbs/05_scylladb.py) | ScyllaDB |
 
 ## Running
 
@@ -43,5 +45,5 @@ Specific reader, cloud storage, and vector database integrations.
 ## Further Reading
 
 - [Knowledge Overview](https://docs.agno.com/knowledge/overview)
-- [Readers](https://docs.agno.com/knowledge/readers)
-- [Vector Databases](https://docs.agno.com/vectordb)
+- [Readers](https://docs.agno.com/knowledge/concepts/readers/overview)
+- [Vector Databases](https://docs.agno.com/knowledge/concepts/vector-db)

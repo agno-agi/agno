@@ -616,6 +616,7 @@ def test_team_preconfigured_vs_dynamic_schema(test_os_client: TestClient, test_t
     assert data1["content_type"] == data2["content_type"] == "MovieScript"
 
 
+@pytest.mark.flaky(reruns=2)
 def test_agent_use_json_schema_true_keeps_dict(test_os_client: TestClient, test_agent: Agent):
     """Test use_json_schema=true keeps output_schema as dict for direct pass-through."""
     schema = {

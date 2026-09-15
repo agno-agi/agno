@@ -9,10 +9,10 @@ Common shape for populating ticketing systems from voice channels.
 from typing import Literal, Optional
 
 import requests
-from agno.agent import Agent, RunOutput  # noqa
+from agno.agent import Agent, RunOutput
 from agno.media import Audio
 from pydantic import BaseModel, Field
-from rich.pretty import pprint  # noqa
+from rich.pretty import pprint
 
 
 # ---------------------------------------------------------------------------

@@ -26,6 +26,7 @@ class ZendeskTools(Toolkit):
         company_name: Optional[str] = None,
         enable_search_zendesk: bool = True,
         all: bool = False,
+        timeout: int = 30,
         **kwargs,
     ):
         """
@@ -50,7 +51,7 @@ class ZendeskTools(Toolkit):
         if all or enable_search_zendesk:
             tools.append(self.search_zendesk)
 
-        super().__init__(name="zendesk_tools", tools=tools, **kwargs)
+        super().__init__(name="zendesk_tools", tools=tools, timeout=timeout, **kwargs)
 
     def search_zendesk(self, search_string: str) -> str:
         """
@@ -74,7 +75,7 @@ class ZendeskTools(Toolkit):
         auth = (self.username, self.password)
         url = f"https://{self.company_name}.zendesk.com/api/v2/help_center/articles/search.json?query={quote_plus(search_string)}"
         try:
-            response = requests.get(url, auth=auth)
+            response = requests.get(url, auth=auth, timeout=self.timeout)
             response.raise_for_status()
             clean = re.compile("<.*?>")
             articles = [re.sub(clean, "", article["body"]) for article in response.json()["results"]]

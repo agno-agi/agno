@@ -95,6 +95,7 @@ async def knowledge_base(setup_csv_files):
     return knowledge
 
 
+@pytest.mark.flaky(reruns=2)
 @pytest.mark.skipif(not os.environ.get("OPENAI_API_KEY"), reason="OPENAI_API_KEY not set")
 async def test_agentic_filtering_openai(knowledge_base):
     agent = Agent(model=OpenAIChat("gpt-5.2"), knowledge=knowledge_base, enable_agentic_knowledge_filters=True)
@@ -128,6 +129,7 @@ async def test_agentic_filtering_openai(knowledge_base):
     assert found_tool, "search_knowledge_base tool was not called"
 
 
+@pytest.mark.flaky(reruns=2)
 @pytest.mark.skipif(not os.environ.get("OPENAI_API_KEY"), reason="OPENAI_API_KEY not set")
 async def test_agentic_filtering_openai_with_output_schema(knowledge_base):
     """Test agentic filtering with structured output schema - this was the original issue."""

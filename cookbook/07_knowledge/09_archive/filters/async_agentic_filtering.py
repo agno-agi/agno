@@ -97,7 +97,6 @@ agent = Agent(
     db=db,
     search_knowledge=True,
     enable_agentic_knowledge_filters=True,
-    debug_mode=True,
     markdown=True,
 )
 

@@ -41,9 +41,7 @@ if __name__ == "__main__":
         markdown=True,
     )
 
-    response = agent.run(
-        "Generate an image of a sports car and tell me its color.", debug_mode=True
-    )
+    response = agent.run("Generate an image of a sports car and tell me its color.")
 
     if isinstance(response, RunOutput):
         print("Agent response:", response.content)

@@ -63,9 +63,10 @@ def test_text_knowledge_base_directory(setup_vector_db):
         skip_if_exists=True,
     )
 
-    # Asserting the vector DB exists and pg_essay.md was split as expected
+    # pg_essay.md splits into 4 chunks; directory ingestion recurses, so
+    # filters/cv_1.md and filters/cv_2.md land one chunk each as well
     assert setup_vector_db.exists()
-    assert setup_vector_db.get_count() == 4
+    assert setup_vector_db.get_count() == 6
 
     agent = Agent(knowledge=kb)
     response = agent.run("What are the key factors in doing great work?", markdown=True)
@@ -90,9 +91,10 @@ async def test_text_knowledge_base_async_directory(setup_vector_db):
         include=["*.md"],
     )
 
-    # Asserting the vector DB exists and pg_essay.md was split as expected
+    # pg_essay.md splits into 4 chunks; directory ingestion recurses, so
+    # filters/cv_1.md and filters/cv_2.md land one chunk each as well
     assert setup_vector_db.exists()
-    assert setup_vector_db.get_count() == 4
+    assert setup_vector_db.get_count() == 6
 
     agent = Agent(knowledge=kb)
     response = await agent.arun("What does Paul Graham say about great work?", markdown=True)

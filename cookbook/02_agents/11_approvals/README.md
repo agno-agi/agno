@@ -53,5 +53,5 @@ Creates an approval record **after** the HITL interaction resolves. The record h
 ## Running
 
 ```bash
-.venvs/demo/bin/python cookbook/02_agents/human_in_the_loop/approvals/approval_basic.py
+.venvs/demo/bin/python cookbook/02_agents/11_approvals/approval_basic.py
 ```

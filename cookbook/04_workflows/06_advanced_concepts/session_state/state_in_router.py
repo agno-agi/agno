@@ -20,18 +20,20 @@ from agno.workflow.workflow import Workflow
 # ---------------------------------------------------------------------------
 # Define Router Functions (Preference-Based Routing)
 # ---------------------------------------------------------------------------
-def route_based_on_user_preference(step_input: StepInput, session_state: dict) -> Step:
+def route_based_on_user_preference(
+    step_input: StepInput, run_context: RunContext
+) -> Step:
     print("\n=== Routing Decision ===")
-    print(f"User ID: {session_state.get('current_user_id')}")
-    print(f"Session ID: {session_state.get('current_session_id')}")
+    print(f"User ID: {run_context.session_state.get('current_user_id')}")
+    print(f"Session ID: {run_context.session_state.get('current_session_id')}")
 
-    user_preference = session_state.get("agent_preference", "general")
-    interaction_count = session_state.get("interaction_count", 0)
+    user_preference = run_context.session_state.get("agent_preference", "general")
+    interaction_count = run_context.session_state.get("interaction_count", 0)
 
     print(f"User Preference: {user_preference}")
     print(f"Interaction Count: {interaction_count}")
 
-    session_state["interaction_count"] = interaction_count + 1
+    run_context.session_state["interaction_count"] = interaction_count + 1
 
     if user_preference == "technical":
         print("Routing to Technical Expert")
@@ -48,18 +50,18 @@ def route_based_on_user_preference(step_input: StepInput, session_state: dict) -
     return general_step
 
 
-def set_user_preference(step_input: StepInput, session_state: dict) -> StepOutput:
+def set_user_preference(step_input: StepInput, run_context: RunContext) -> StepOutput:
     print("\n=== Setting User Preference ===")
-    interaction_count = session_state.get("interaction_count", 0)
+    interaction_count = run_context.session_state.get("interaction_count", 0)
 
     if interaction_count % 3 == 1:
-        session_state["agent_preference"] = "technical"
+        run_context.session_state["agent_preference"] = "technical"
         preference = "technical"
     elif interaction_count % 3 == 2:
-        session_state["agent_preference"] = "friendly"
+        run_context.session_state["agent_preference"] = "friendly"
         preference = "friendly"
     else:
-        session_state["agent_preference"] = "general"
+        run_context.session_state["agent_preference"] = "general"
         preference = "general"
 
     print(f"Set preference to: {preference}")

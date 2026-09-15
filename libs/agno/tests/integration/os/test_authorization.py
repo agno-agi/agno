@@ -3061,9 +3061,16 @@ def test_jwks_parameter_takes_precedence_over_env(test_agent, rsa_key_pair, jwks
     """Test that jwks_file parameter takes precedence over JWT_JWKS_FILE env var."""
     import json
 
-    # Create a different JWKS file for env var (with different kid)
+    # Create a different JWKS file for the env var: same key material but a
+    # different kid, so a token minted with kid "test-key-1" only validates if
+    # the jwks_file parameter (not the env file) is the source. The env file
+    # must hold a real key: an empty key set fails JWTValidator's fail-closed
+    # construction inside AgentOS.get_app() before this test's middleware runs.
+    with open(jwks_file) as f:
+        env_jwks_data = json.load(f)
+    env_jwks_data["keys"][0]["kid"] = "env-key-2"
     env_jwks = tmp_path / "env_jwks.json"
-    env_jwks.write_text(json.dumps({"keys": []}))  # Empty keys
+    env_jwks.write_text(json.dumps(env_jwks_data))
 
     monkeypatch.setenv("JWT_JWKS_FILE", str(env_jwks))
 

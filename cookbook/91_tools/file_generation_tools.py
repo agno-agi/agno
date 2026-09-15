@@ -1,6 +1,6 @@
 """
 File Generation Tool Example
-This cookbook shows how to use the FileGenerationTool to generate various file types (JSON, CSV, PDF, TXT, DOCX, HTML).
+This cookbook shows how to use the FileGenerationTool to generate various file types (JSON, CSV, PDF, TXT, DOCX, HTML, and source code).
 The tool can generate files from agent responses and make them available for download or further processing.
 
 By default, files are returned as in-memory artifacts only (save_files=False).
@@ -10,7 +10,7 @@ Set save_files=True to also persist files to disk.
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
-from agno.tools.file_generation import FileGenerationTools
+from agno.tools.file import FileGenerationTools
 
 # ---------------------------------------------------------------------------
 # Create Agent
@@ -121,6 +121,22 @@ def example_html_generation():
     print()
 
 
+def example_code_generation():
+    """Example: Generate source code files for any language"""
+    print("=== Code File Generation Example ===")
+    response = agent.run(
+        "Write a Python script named fibonacci.py that prints the first 10 Fibonacci numbers, "
+        "and a TypeScript file named greet.ts that exports a greet(name) function."
+    )
+    print(response.content)
+    if response.files:
+        for file in response.files:
+            print(f"Generated file: {file.filename} ({file.size} bytes)")
+            if file.url:
+                print(f"File location: {file.url}")
+    print()
+
+
 # ---------------------------------------------------------------------------
 # Run Agent
 # ---------------------------------------------------------------------------
@@ -130,3 +146,9 @@ if __name__ == "__main__":
     print("=" * 50)
 
     example_pdf_generation()
+    # example_html_generation()
+    # example_code_generation()
+    # example_text_generation()
+    # example_docx_generation()
+    # example_csv_generation()
+    # example_json_generation()
