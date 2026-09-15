@@ -41,6 +41,12 @@ def up(db: BaseDb, table_type: str, table_name: str) -> bool:
         elif db_type == "SqliteDb":
             # SQLite already has session_id as primary key
             return False
+        elif db_type == "OracleDb":
+            # OracleDb was introduced against the v3.0.0 schema directly; its
+            # sessions table has always declared session_id PRIMARY KEY from
+            # creation (agno.db.oracle.schemas.get_session_table_schema), and
+            # never carried a redundant uq_session_id UNIQUE constraint to drop.
+            return False
         else:
             log_info(f"{db_type} does not require schema migrations")
         return False
@@ -68,6 +74,9 @@ async def async_up(db: AsyncBaseDb, table_type: str, table_name: str) -> bool:
             return await _migrate_async_mysql(db, table_name)
         elif db_type == "AsyncSqliteDb":
             # SQLite already has session_id as primary key
+            return False
+        elif db_type == "AsyncOracleDb":
+            # See the sync twin's own comment: always PRIMARY KEY from creation.
             return False
         else:
             log_info(f"{db_type} does not require schema migrations")
@@ -98,6 +107,10 @@ def down(db: BaseDb, table_type: str, table_name: str) -> bool:
             return _revert_singlestore(db, table_name)
         elif db_type == "SqliteDb":
             return False
+        elif db_type == "OracleDb":
+            # There is no pre-v2.5.0 Oracle shape (uq_session_id was never
+            # created) to revert to.
+            return False
         else:
             log_info(f"Revert not implemented for {db_type}")
         return False
@@ -124,6 +137,9 @@ async def async_down(db: AsyncBaseDb, table_type: str, table_name: str) -> bool:
         elif db_type == "AsyncMySQLDb":
             return await _revert_async_mysql(db, table_name)
         elif db_type == "AsyncSqliteDb":
+            return False
+        elif db_type == "AsyncOracleDb":
+            # See the sync twin's own comment: no pre-v2.5.0 Oracle shape exists.
             return False
         else:
             log_info(f"Revert not implemented for {db_type}")

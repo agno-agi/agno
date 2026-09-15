@@ -184,6 +184,20 @@ def up(db: BaseDb, table_type: str, table_name: str) -> bool:
             return _migrate_dynamodb(db, table_type, table_name)
         elif db_type == "SurrealDb":
             return _migrate_surrealdb(db, table_type, table_name)
+        elif db_type == "OracleDb":
+            # OracleDb was introduced against the v3.0.0 schema directly (this
+            # effort's own tickets 02+); no pre-3.0.0 Oracle table has ever
+            # existed. Every table type this migration touches already has
+            # its target shape from creation: the sessions table has no
+            # legacy `runs` JSON column to backfill from (runs have always
+            # lived in their own table -- agno.db.oracle.schemas.
+            # _get_run_table_schema), every table in USER_ID_TABLE_TYPES
+            # already carries user_id and its index, schedules already carry
+            # every SCHEDULE_PROVENANCE_COLUMNS entry, and the metrics table's
+            # unique key has always been (user_id, date, aggregation_period).
+            # Assessed, not assumed: verified column-by-column against
+            # agno.db.oracle.schemas before choosing this path.
+            log_info(f"{db_type}: v3.0.0 shape already present since table creation, nothing to do")
         else:
             log_info(f"Migration v3.0.0 is not implemented for {db_type}. Table '{table_name}' is left unchanged.")
         return False
@@ -220,6 +234,10 @@ async def async_up(db: AsyncBaseDb, table_type: str, table_name: str) -> bool:
             return await _migrate_async_mysql(db, table_type, table_name)
         elif db_type == "AsyncMongoDb":
             return await _migrate_async_mongo(db, table_type, table_name)
+        elif db_type == "AsyncOracleDb":
+            # See the sync twin's own comment: every table type this
+            # migration touches already has its v3.0.0 shape since creation.
+            log_info(f"{db_type}: v3.0.0 shape already present since table creation, nothing to do")
         else:
             log_info(f"Migration v3.0.0 is not implemented for {db_type}. Table '{table_name}' is left unchanged.")
         return False
@@ -276,6 +294,14 @@ def down(db: BaseDb, table_type: str, table_name: str) -> bool:
             return _revert_dynamodb(db, table_type, table_name)
         elif db_type == "SurrealDb":
             return _revert_surrealdb(db, table_type, table_name)
+        elif db_type == "OracleDb":
+            # There is no pre-v3.0.0 Oracle shape to revert to: reverting
+            # would mean dropping user_id columns, schedule provenance
+            # columns, or the runs table itself -- structure every Oracle
+            # query this adapter issues assumes exists unconditionally, so
+            # doing this would break the adapter, not restore a prior working
+            # state. Nothing was migrated forward, so nothing is reverted.
+            log_info(f"{db_type}: no pre-v3.0.0 Oracle schema exists to revert to, nothing to do")
         else:
             log_info(f"Revert not implemented for {db_type}")
         return False
@@ -316,6 +342,10 @@ async def async_down(db: AsyncBaseDb, table_type: str, table_name: str) -> bool:
             return await _revert_async_mysql(db, table_type, table_name)
         elif db_type == "AsyncMongoDb":
             return await _revert_async_mongo(db, table_type, table_name)
+        elif db_type == "AsyncOracleDb":
+            # See the sync twin's own comment: no pre-v3.0.0 Oracle schema
+            # exists to revert to.
+            log_info(f"{db_type}: no pre-v3.0.0 Oracle schema exists to revert to, nothing to do")
         else:
             log_info(f"Revert not implemented for {db_type}")
         return False
