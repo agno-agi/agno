@@ -735,7 +735,19 @@ class Workflow:
         self.store_events = store_events
         self.store_media = store_media
         self.media_storage = media_storage
-        self.events_to_skip = events_to_skip or []
+        # A step's agent or team emits one argument fragment event per handful
+        # of the characters a tool call's arguments are typed in, so storing
+        # them grows the run's own event list by hundreds of entries per call.
+        # They are still streamed to subscribers; this list only governs
+        # storage. Any list the caller gives, empty included, is taken as given,
+        # but no component serializes this setting, so a workflow loaded from a
+        # database gets this default rather than the list it was saved with.
+        # The per-token content event is as frequent, and an agent and a team
+        # both drop it from their own stored runs, but a workflow's stored run
+        # has always kept it, so it stays stored here.
+        self.events_to_skip = events_to_skip
+        if self.events_to_skip is None:
+            self.events_to_skip = [RunEvent.tool_call_args_delta, TeamRunEvent.tool_call_args_delta]
         self.stream = stream
         self.stream_executor_events = stream_executor_events
         self.store_executor_outputs = store_executor_outputs

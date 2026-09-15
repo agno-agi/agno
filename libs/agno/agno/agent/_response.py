@@ -34,7 +34,7 @@ from agno.run import RunContext
 from agno.run.agent import RUN_OUTPUT_EVENT_TYPES, Followups, RunEvent, RunOutput, RunOutputEvent
 from agno.run.messages import RunMessages
 from agno.run.requirement import RunRequirement
-from agno.run.team import TEAM_RUN_OUTPUT_EVENT_TYPES, TeamRunOutputEvent
+from agno.run.team import TEAM_RUN_OUTPUT_EVENT_TYPES, TeamRunEvent, TeamRunOutputEvent
 from agno.session import AgentSession
 from agno.tools.function import Function
 from agno.utils.events import (
@@ -51,6 +51,7 @@ from agno.utils.events import (
     create_reasoning_started_event,
     create_reasoning_step_event,
     create_run_output_content_event,
+    create_tool_call_args_delta_event,
     create_tool_call_completed_event,
     create_tool_call_error_event,
     create_tool_call_started_event,
@@ -65,6 +66,41 @@ from agno.utils.reasoning import (
     update_run_output_with_reasoning,
 )
 from agno.utils.string import parse_response_dict_str, parse_response_model_str
+from agno.utils.tools import (
+    REFUSED_TOOL_CALL_ERROR,
+    ToolCallArgsStream,
+    answer_streamed_tool_calls,
+    take_refused_tool_calls,
+)
+
+# The fragment event under both the names it reaches an agent under: its own,
+# and the one a nested team sends it out as.
+_TOOL_CALL_ARGS_DELTA_EVENTS = frozenset({RunEvent.tool_call_args_delta.value, TeamRunEvent.tool_call_args_delta.value})
+
+
+###########################################################################
+# Tool call argument streaming
+###########################################################################
+
+
+def close_refused_tool_calls(
+    agent: Agent,
+    run_response: RunOutput,
+    tool_args_stream: Optional[ToolCallArgsStream],
+) -> Iterator[RunOutputEvent]:
+    """Report as failed each call a client was shown that the run refused."""
+    for tool in take_refused_tool_calls(tool_args_stream):
+        yield handle_event(  # type: ignore
+            create_tool_call_error_event(
+                from_run_response=run_response,
+                tool=tool,
+                error=REFUSED_TOOL_CALL_ERROR,
+            ),
+            run_response,
+            events_to_skip=agent.events_to_skip,  # type: ignore
+            store_events=agent.store_events,
+        )
+
 
 ###########################################################################
 # Reasoning
@@ -469,6 +505,10 @@ def parse_response_with_parser_model_stream(
             messages_for_parser_model = get_messages_for_parser_model_stream(
                 agent, run_response, parser_response_format, run_context=run_context
             )
+            # The parser model is asked for its answer in one piece rather than
+            # streamed, so no delta of its own ever carries a call's arguments a
+            # fragment at a time. Nothing here threads the record that would
+            # attribute such fragments.
             for model_response_event in agent.parser_model.response_stream(
                 messages=messages_for_parser_model,
                 response_format=parser_response_format,
@@ -543,6 +583,10 @@ async def aparse_response_with_parser_model_stream(
                 stream_model_response=False,
                 run_response=run_response,
             )
+            # The parser model is asked for its answer in one piece rather than
+            # streamed, so no delta of its own ever carries a call's arguments a
+            # fragment at a time. Nothing here threads the record that would
+            # attribute such fragments.
             async for model_response_event in model_response_stream:  # type: ignore
                 for event in handle_model_response_chunk(
                     agent,
@@ -633,17 +677,33 @@ def generate_response_with_output_model_stream(
 
     model_response = ModelResponse(content="")
 
-    for model_response_event in agent.output_model.response_stream(
-        messages=messages_for_output_model, run_response=run_response
-    ):
-        yield from handle_model_response_chunk(
-            agent,
-            session=session,
-            run_response=run_response,
-            model_response=model_response,
-            model_response_event=model_response_event,
-            stream_events=stream_events,
-        )
+    # The run hands the output model none of its own tools, but a provider can
+    # answer with a call to one of its built-in tools whatever it was passed, so
+    # the record that attributes a call's argument fragments is threaded here.
+    # A caller that asked for no events is sent no fragments, so it is given no
+    # stream. Which of the call's other events this path announces is settled
+    # elsewhere and left as it was.
+    tool_args_stream = ToolCallArgsStream(run_response.session_id, run_response.run_id) if stream_events else None
+    try:
+        for model_response_event in agent.output_model.response_stream(
+            messages=messages_for_output_model, run_response=run_response
+        ):
+            yield from handle_model_response_chunk(
+                agent,
+                session=session,
+                run_response=run_response,
+                model_response=model_response,
+                model_response_event=model_response_event,
+                stream_events=stream_events,
+                tool_args_stream=tool_args_stream,
+            )
+    except Exception:
+        # As in the agent's own model loop: a stream that raised can still be
+        # yielded into, a generator the consumer abandoned cannot.
+        yield from close_refused_tool_calls(agent, run_response, tool_args_stream)
+        raise
+
+    yield from close_refused_tool_calls(agent, run_response, tool_args_stream)
 
     if stream_events:
         yield handle_event(
@@ -718,16 +778,34 @@ async def agenerate_response_with_output_model_stream(
         messages=messages_for_output_model, run_response=run_response
     )
 
-    async for model_response_event in model_response_stream:
-        for event in handle_model_response_chunk(
-            agent,
-            session=session,
-            run_response=run_response,
-            model_response=model_response,
-            model_response_event=model_response_event,
-            stream_events=stream_events,
-        ):
-            yield event
+    # The run hands the output model none of its own tools, but a provider can
+    # answer with a call to one of its built-in tools whatever it was passed, so
+    # the record that attributes a call's argument fragments is threaded here.
+    # A caller that asked for no events is sent no fragments, so it is given no
+    # stream. Which of the call's other events this path announces is settled
+    # elsewhere and left as it was.
+    tool_args_stream = ToolCallArgsStream(run_response.session_id, run_response.run_id) if stream_events else None
+    try:
+        async for model_response_event in model_response_stream:
+            for event in handle_model_response_chunk(
+                agent,
+                session=session,
+                run_response=run_response,
+                model_response=model_response,
+                model_response_event=model_response_event,
+                stream_events=stream_events,
+                tool_args_stream=tool_args_stream,
+            ):
+                yield event
+    except Exception:
+        # As in the agent's own model loop: a stream that raised can still be
+        # yielded into, a generator the consumer abandoned cannot.
+        for refused in close_refused_tool_calls(agent, run_response, tool_args_stream):
+            yield refused
+        raise
+
+    for refused in close_refused_tool_calls(agent, run_response, tool_args_stream):
+        yield refused
 
     if stream_events:
         yield handle_event(
@@ -1042,6 +1120,7 @@ def handle_model_response_stream(
         "reasoning_started": False,
         "reasoning_time_taken": 0.0,
     }
+    tool_args_stream = ToolCallArgsStream(run_response.session_id, run_response.run_id) if stream_events else None
     model_response = ModelResponse(content="")
 
     # Get output_schema from run_context
@@ -1055,103 +1134,121 @@ def handle_model_response_stream(
 
     from agno.agent._run import build_after_tool_results_callback
 
-    for model_response_event in call_model_stream_with_fallback(
-        agent.model,
-        agent.fallback_config,
-        messages=run_messages.messages,
-        response_format=response_format,
-        tools=tools,
-        tool_choice=agent.tool_choice,
-        tool_call_limit=agent.tool_call_limit,
-        stream_model_response=stream_model_response,
-        run_response=run_response,
-        send_media_to_model=agent.send_media_to_model,
-        compression_manager=agent.compression_manager if agent.compress_tool_results else None,
-        **result_store_kwargs(agent),
-        after_tool_results=build_after_tool_results_callback(
-            agent,
+    try:
+        for model_response_event in call_model_stream_with_fallback(
+            agent.model,
+            agent.fallback_config,
+            messages=run_messages.messages,
+            response_format=response_format,
+            tools=tools,
+            tool_choice=agent.tool_choice,
+            tool_call_limit=agent.tool_call_limit,
+            stream_model_response=stream_model_response,
             run_response=run_response,
-            session=session,
-            run_messages=run_messages,
-            run_context=run_context,
-        ),
-    ):
-        # Handle LLM request events and compression events from ModelResponse
-        if isinstance(model_response_event, ModelResponse):
-            if model_response_event.event == ModelResponseEvent.model_request_started.value:
-                if stream_events:
-                    yield handle_event(  # type: ignore
-                        create_model_request_started_event(
-                            from_run_response=run_response,
-                            model=agent.model.id,
-                            model_provider=agent.model.provider,
-                        ),
-                        run_response,
-                        events_to_skip=agent.events_to_skip,  # type: ignore
-                        store_events=agent.store_events,
-                    )
-                continue
+            send_media_to_model=agent.send_media_to_model,
+            compression_manager=agent.compression_manager if agent.compress_tool_results else None,
+            **result_store_kwargs(agent),
+            after_tool_results=build_after_tool_results_callback(
+                agent,
+                run_response=run_response,
+                session=session,
+                run_messages=run_messages,
+                run_context=run_context,
+            ),
+        ):
+            # Handle LLM request events and compression events from ModelResponse
+            if isinstance(model_response_event, ModelResponse):
+                if model_response_event.event == ModelResponseEvent.model_request_started.value:
+                    # By now the run has decided what to do with every call the last
+                    # turn made, and its tool call identities do not carry forward
+                    yield from close_refused_tool_calls(agent, run_response, tool_args_stream)
+                    if tool_args_stream is not None:
+                        tool_args_stream.begin_turn()
+                    if stream_events:
+                        yield handle_event(  # type: ignore
+                            create_model_request_started_event(
+                                from_run_response=run_response,
+                                model=agent.model.id,
+                                model_provider=agent.model.provider,
+                            ),
+                            run_response,
+                            events_to_skip=agent.events_to_skip,  # type: ignore
+                            store_events=agent.store_events,
+                        )
+                    continue
 
-            if model_response_event.event == ModelResponseEvent.model_request_completed.value:
-                if stream_events:
-                    yield handle_event(  # type: ignore
-                        create_model_request_completed_event(
-                            from_run_response=run_response,
-                            model=agent.model.id,
-                            model_provider=agent.model.provider,
-                            input_tokens=model_response_event.input_tokens,
-                            output_tokens=model_response_event.output_tokens,
-                            total_tokens=model_response_event.total_tokens,
-                            time_to_first_token=model_response_event.time_to_first_token,
-                            reasoning_tokens=model_response_event.reasoning_tokens,
-                            cache_read_tokens=model_response_event.cache_read_tokens,
-                            cache_write_tokens=model_response_event.cache_write_tokens,
-                        ),
-                        run_response,
-                        events_to_skip=agent.events_to_skip,  # type: ignore
-                        store_events=agent.store_events,
-                    )
-                continue
+                if model_response_event.event == ModelResponseEvent.model_request_completed.value:
+                    if stream_events:
+                        yield handle_event(  # type: ignore
+                            create_model_request_completed_event(
+                                from_run_response=run_response,
+                                model=agent.model.id,
+                                model_provider=agent.model.provider,
+                                input_tokens=model_response_event.input_tokens,
+                                output_tokens=model_response_event.output_tokens,
+                                total_tokens=model_response_event.total_tokens,
+                                time_to_first_token=model_response_event.time_to_first_token,
+                                reasoning_tokens=model_response_event.reasoning_tokens,
+                                cache_read_tokens=model_response_event.cache_read_tokens,
+                                cache_write_tokens=model_response_event.cache_write_tokens,
+                            ),
+                            run_response,
+                            events_to_skip=agent.events_to_skip,  # type: ignore
+                            store_events=agent.store_events,
+                        )
+                    continue
 
-            # Handle compression events
-            if model_response_event.event == ModelResponseEvent.compression_started.value:
-                if stream_events:
-                    yield handle_event(  # type: ignore
-                        create_compression_started_event(from_run_response=run_response),
-                        run_response,
-                        events_to_skip=agent.events_to_skip,  # type: ignore
-                        store_events=agent.store_events,
-                    )
-                continue
+                # Handle compression events
+                if model_response_event.event == ModelResponseEvent.compression_started.value:
+                    if stream_events:
+                        yield handle_event(  # type: ignore
+                            create_compression_started_event(from_run_response=run_response),
+                            run_response,
+                            events_to_skip=agent.events_to_skip,  # type: ignore
+                            store_events=agent.store_events,
+                        )
+                    continue
 
-            if model_response_event.event == ModelResponseEvent.compression_completed.value:
-                if stream_events:
-                    stats = model_response_event.compression_stats or {}
-                    yield handle_event(  # type: ignore
-                        create_compression_completed_event(
-                            from_run_response=run_response,
-                            tool_results_compressed=stats.get("tool_results_compressed"),
-                            original_size=stats.get("original_size"),
-                            compressed_size=stats.get("compressed_size"),
-                        ),
-                        run_response,
-                        events_to_skip=agent.events_to_skip,  # type: ignore
-                        store_events=agent.store_events,
-                    )
-                continue
+                if model_response_event.event == ModelResponseEvent.compression_completed.value:
+                    if stream_events:
+                        stats = model_response_event.compression_stats or {}
+                        yield handle_event(  # type: ignore
+                            create_compression_completed_event(
+                                from_run_response=run_response,
+                                tool_results_compressed=stats.get("tool_results_compressed"),
+                                original_size=stats.get("original_size"),
+                                compressed_size=stats.get("compressed_size"),
+                            ),
+                            run_response,
+                            events_to_skip=agent.events_to_skip,  # type: ignore
+                            store_events=agent.store_events,
+                        )
+                    continue
 
-        yield from handle_model_response_chunk(
-            agent,
-            session=session,
-            run_response=run_response,
-            model_response=model_response,
-            model_response_event=model_response_event,
-            reasoning_state=reasoning_state,
-            parse_structured_output=should_parse_structured_output,
-            stream_events=stream_events,
-            session_state=session_state,
-            run_context=run_context,
-        )
+            yield from handle_model_response_chunk(
+                agent,
+                session=session,
+                run_response=run_response,
+                model_response=model_response,
+                model_response_event=model_response_event,
+                reasoning_state=reasoning_state,
+                parse_structured_output=should_parse_structured_output,
+                stream_events=stream_events,
+                session_state=session_state,
+                run_context=run_context,
+                tool_args_stream=tool_args_stream,
+            )
+    except Exception:
+        # A stream that raised is still being read, so this generator can
+        # yield the closures. A generator the consumer abandoned cannot:
+        # that arrives as GeneratorExit, which is no Exception and is left
+        # alone, as are a keyboard interrupt and a process exit.
+        yield from close_refused_tool_calls(agent, run_response, tool_args_stream)
+        raise
+
+    # The stream ends here whether the run completed or paused, and a call
+    # refused on its last turn gets no later turn to be closed out on.
+    yield from close_refused_tool_calls(agent, run_response, tool_args_stream)
 
     # Update RunOutput
     # Build a list of messages that should be added to the RunOutput
@@ -1203,6 +1300,7 @@ async def ahandle_model_response_stream(
         "reasoning_started": False,
         "reasoning_time_taken": 0.0,
     }
+    tool_args_stream = ToolCallArgsStream(run_response.session_id, run_response.run_id) if stream_events else None
     model_response = ModelResponse(content="")
 
     # Get output_schema from run_context
@@ -1238,84 +1336,105 @@ async def ahandle_model_response_stream(
         ),
     )  # type: ignore
 
-    async for model_response_event in model_response_stream:  # type: ignore
-        # Handle LLM request events and compression events from ModelResponse
-        if isinstance(model_response_event, ModelResponse):
-            if model_response_event.event == ModelResponseEvent.model_request_started.value:
-                if stream_events:
-                    yield handle_event(  # type: ignore
-                        create_model_request_started_event(
-                            from_run_response=run_response,
-                            model=agent.model.id,
-                            model_provider=agent.model.provider,
-                        ),
-                        run_response,
-                        events_to_skip=agent.events_to_skip,  # type: ignore
-                        store_events=agent.store_events,
-                    )
-                continue
+    try:
+        async for model_response_event in model_response_stream:  # type: ignore
+            # Handle LLM request events and compression events from ModelResponse
+            if isinstance(model_response_event, ModelResponse):
+                if model_response_event.event == ModelResponseEvent.model_request_started.value:
+                    # By now the run has decided what to do with every call the last
+                    # turn made, and its tool call identities do not carry forward
+                    for refused in close_refused_tool_calls(agent, run_response, tool_args_stream):
+                        yield refused
+                    if tool_args_stream is not None:
+                        tool_args_stream.begin_turn()
+                    if stream_events:
+                        yield handle_event(  # type: ignore
+                            create_model_request_started_event(
+                                from_run_response=run_response,
+                                model=agent.model.id,
+                                model_provider=agent.model.provider,
+                            ),
+                            run_response,
+                            events_to_skip=agent.events_to_skip,  # type: ignore
+                            store_events=agent.store_events,
+                        )
+                    continue
 
-            if model_response_event.event == ModelResponseEvent.model_request_completed.value:
-                if stream_events:
-                    yield handle_event(  # type: ignore
-                        create_model_request_completed_event(
-                            from_run_response=run_response,
-                            model=agent.model.id,
-                            model_provider=agent.model.provider,
-                            input_tokens=model_response_event.input_tokens,
-                            output_tokens=model_response_event.output_tokens,
-                            total_tokens=model_response_event.total_tokens,
-                            time_to_first_token=model_response_event.time_to_first_token,
-                            reasoning_tokens=model_response_event.reasoning_tokens,
-                            cache_read_tokens=model_response_event.cache_read_tokens,
-                            cache_write_tokens=model_response_event.cache_write_tokens,
-                        ),
-                        run_response,
-                        events_to_skip=agent.events_to_skip,  # type: ignore
-                        store_events=agent.store_events,
-                    )
-                continue
+                if model_response_event.event == ModelResponseEvent.model_request_completed.value:
+                    if stream_events:
+                        yield handle_event(  # type: ignore
+                            create_model_request_completed_event(
+                                from_run_response=run_response,
+                                model=agent.model.id,
+                                model_provider=agent.model.provider,
+                                input_tokens=model_response_event.input_tokens,
+                                output_tokens=model_response_event.output_tokens,
+                                total_tokens=model_response_event.total_tokens,
+                                time_to_first_token=model_response_event.time_to_first_token,
+                                reasoning_tokens=model_response_event.reasoning_tokens,
+                                cache_read_tokens=model_response_event.cache_read_tokens,
+                                cache_write_tokens=model_response_event.cache_write_tokens,
+                            ),
+                            run_response,
+                            events_to_skip=agent.events_to_skip,  # type: ignore
+                            store_events=agent.store_events,
+                        )
+                    continue
 
-            # Handle compression events
-            if model_response_event.event == ModelResponseEvent.compression_started.value:
-                if stream_events:
-                    yield handle_event(  # type: ignore
-                        create_compression_started_event(from_run_response=run_response),
-                        run_response,
-                        events_to_skip=agent.events_to_skip,  # type: ignore
-                        store_events=agent.store_events,
-                    )
-                continue
+                # Handle compression events
+                if model_response_event.event == ModelResponseEvent.compression_started.value:
+                    if stream_events:
+                        yield handle_event(  # type: ignore
+                            create_compression_started_event(from_run_response=run_response),
+                            run_response,
+                            events_to_skip=agent.events_to_skip,  # type: ignore
+                            store_events=agent.store_events,
+                        )
+                    continue
 
-            if model_response_event.event == ModelResponseEvent.compression_completed.value:
-                if stream_events:
-                    stats = model_response_event.compression_stats or {}
-                    yield handle_event(  # type: ignore
-                        create_compression_completed_event(
-                            from_run_response=run_response,
-                            tool_results_compressed=stats.get("tool_results_compressed"),
-                            original_size=stats.get("original_size"),
-                            compressed_size=stats.get("compressed_size"),
-                        ),
-                        run_response,
-                        events_to_skip=agent.events_to_skip,  # type: ignore
-                        store_events=agent.store_events,
-                    )
-                continue
+                if model_response_event.event == ModelResponseEvent.compression_completed.value:
+                    if stream_events:
+                        stats = model_response_event.compression_stats or {}
+                        yield handle_event(  # type: ignore
+                            create_compression_completed_event(
+                                from_run_response=run_response,
+                                tool_results_compressed=stats.get("tool_results_compressed"),
+                                original_size=stats.get("original_size"),
+                                compressed_size=stats.get("compressed_size"),
+                            ),
+                            run_response,
+                            events_to_skip=agent.events_to_skip,  # type: ignore
+                            store_events=agent.store_events,
+                        )
+                    continue
 
-        for event in handle_model_response_chunk(
-            agent,
-            session=session,
-            run_response=run_response,
-            model_response=model_response,
-            model_response_event=model_response_event,
-            reasoning_state=reasoning_state,
-            parse_structured_output=should_parse_structured_output,
-            stream_events=stream_events,
-            session_state=session_state,
-            run_context=run_context,
-        ):
-            yield event
+            for event in handle_model_response_chunk(
+                agent,
+                session=session,
+                run_response=run_response,
+                model_response=model_response,
+                model_response_event=model_response_event,
+                reasoning_state=reasoning_state,
+                parse_structured_output=should_parse_structured_output,
+                stream_events=stream_events,
+                session_state=session_state,
+                run_context=run_context,
+                tool_args_stream=tool_args_stream,
+            ):
+                yield event
+    except Exception:
+        # A stream that raised is still being read, so this generator can
+        # yield the closures. A generator the consumer abandoned cannot:
+        # that arrives as GeneratorExit, which is no Exception and is left
+        # alone, as are a keyboard interrupt and a process exit.
+        for refused in close_refused_tool_calls(agent, run_response, tool_args_stream):
+            yield refused
+        raise
+
+    # The stream ends here whether the run completed or paused, and a call
+    # refused on its last turn gets no later turn to be closed out on.
+    for refused in close_refused_tool_calls(agent, run_response, tool_args_stream):
+        yield refused
 
     # Update RunOutput
     # Build a list of messages that should be added to the RunOutput
@@ -1360,6 +1479,7 @@ def handle_model_response_chunk(
     stream_events: bool = False,
     session_state: Optional[Dict[str, Any]] = None,
     run_context: Optional[RunContext] = None,
+    tool_args_stream: Optional[ToolCallArgsStream] = None,
 ) -> Iterator[RunOutputEvent]:
     from agno.run.workflow import WORKFLOW_RUN_OUTPUT_EVENT_TYPES
 
@@ -1368,6 +1488,13 @@ def handle_model_response_chunk(
         or isinstance(model_response_event, TEAM_RUN_OUTPUT_EVENT_TYPES)
         or isinstance(model_response_event, WORKFLOW_RUN_OUTPUT_EVENT_TYPES)
     ):
+        # A run told not to stream events is told that about the runs it nests
+        # too. A nested run is run with events on so the tool running it can
+        # read them, so its argument fragments arrive here and stop here, as
+        # this run's own do.
+        if not stream_events and model_response_event.event in _TOOL_CALL_ARGS_DELTA_EVENTS:
+            return
+
         if model_response_event.event == RunEvent.custom_event:  # type: ignore
             model_response_event.agent_id = agent.id  # type: ignore
             model_response_event.agent_name = agent.name  # type: ignore
@@ -1389,6 +1516,18 @@ def handle_model_response_chunk(
             model_response.reasoning_content = None
             run_response.content = None
             run_response.reasoning_content = None
+            # A replaced stream's own calls will never be made under its own ids
+            yield from close_refused_tool_calls(agent, run_response, tool_args_stream)
+            if tool_args_stream is not None:
+                tool_args_stream.begin_turn()
+            return
+        if model_response_event.event == ModelResponseEvent.model_request_started.value:
+            # The agent's own loop reads this event before delegating here. The
+            # output model's stream does not, and this is where its turns end:
+            # a provider's numbering restarts with each request it answers.
+            yield from close_refused_tool_calls(agent, run_response, tool_args_stream)
+            if tool_args_stream is not None:
+                tool_args_stream.begin_turn()
             return
         # If the model response is an assistant_response, yield a RunOutput
         if model_response_event.event == ModelResponseEvent.assistant_response.value:
@@ -1548,11 +1687,32 @@ def handle_model_response_chunk(
                         run_response.images = []
                     run_response.images.append(image)
 
+            # A chunk can carry both what the model said and the call it went on
+            # to make, and the saying came first, so the fragments go out last.
+            # A path threads a stream exactly when its fragments are the
+            # client's to receive, so the stream's presence is the whole gate.
+            if model_response_event.tool_calls and tool_args_stream is not None:
+                for tool_call_id, tool_name, tool_args_delta in tool_args_stream.fragments(
+                    model_response_event.tool_calls
+                ):
+                    yield handle_event(  # type: ignore
+                        create_tool_call_args_delta_event(
+                            from_run_response=run_response,
+                            tool_call_id=tool_call_id,
+                            tool_args_delta=tool_args_delta,
+                            tool_name=tool_name,
+                        ),
+                        run_response,
+                        events_to_skip=agent.events_to_skip,  # type: ignore
+                        store_events=agent.store_events,
+                    )
+
         # Handle tool interruption events (HITL flow)
         elif model_response_event.event == ModelResponseEvent.tool_call_paused.value:
             # Add tool calls to the run_response
             tool_executions_list = model_response_event.tool_executions
             if tool_executions_list is not None:
+                answer_streamed_tool_calls(tool_args_stream, tool_executions_list)
                 # Add tool calls to the agent.run_response
                 if run_response.tools is None:
                     run_response.tools = tool_executions_list
@@ -1569,6 +1729,7 @@ def handle_model_response_chunk(
         ):  # Add tool calls to the run_response
             tool_executions_list = model_response_event.tool_executions
             if tool_executions_list is not None:
+                answer_streamed_tool_calls(tool_args_stream, tool_executions_list)
                 # Add tool calls to the agent.run_response
                 if run_response.tools is None:
                     run_response.tools = tool_executions_list
@@ -1625,6 +1786,7 @@ def handle_model_response_chunk(
 
             tool_executions_list = model_response_event.tool_executions
             if tool_executions_list is not None:
+                answer_streamed_tool_calls(tool_args_stream, tool_executions_list)
                 # Update the existing tool call in the run_response
                 if run_response.tools:
                     # Create a mapping of tool_call_id to index

@@ -19,7 +19,7 @@ default empty prefix those routes are `POST /agui` and `GET /status`.
 | `structured_output.py` | Stream a response constrained by a Pydantic output schema. |
 | `reasoning_agent.py` | Translate Agno reasoning lifecycle events into AG-UI reasoning events. |
 | `agent_with_media.py` | Pass AG-UI image, audio, video, and document parts to Gemini. |
-| `shared_state.py` | Send state snapshots and JSON Patch deltas as session state changes. |
+| `shared_state.py` | Let a tool change session state and watch the interface's snapshots and deltas. |
 | `human_in_the_loop.py` | Pause and resume a real backend tool that uses `requires_confirmation`. |
 | `research_team.py` | Stream a coordinated Team and its member activity over AG-UI. |
 | `multiple_instances.py` | Mount two independent AG-UI interfaces on one AgentOS. |
@@ -98,10 +98,55 @@ curl -N http://localhost:7777/agui \
 ```
 
 The stream begins with `RUN_STARTED`, emits message or capability-specific
-events, and ends with `RUN_FINISHED`. Tool calls use `TOOL_CALL_*`; reasoning
-uses `REASONING_*`; shared state uses `STATE_SNAPSHOT` and `STATE_DELTA`.
-`threadId` becomes the Agno session ID, so later requests can continue the same
-conversation.
+events, and ends with `RUN_FINISHED`, or with `RUN_ERROR` if the run fails.
+Tool calls use `TOOL_CALL_*`; reasoning uses `REASONING_*`; shared state uses
+`STATE_SNAPSHOT` and `STATE_DELTA`. `threadId` becomes the Agno session ID, so
+later requests can continue the same conversation.
+
+## Shared state on the wire
+
+State events only happen when the request's `state` reads as a dictionary: a
+request that omits it, sends `null`, or sends a value the server cannot coerce
+gets none of them. When it is there, the AG-UI interface, not the example,
+sends that dictionary back as an opening `STATE_SNAPSHOT`, a `STATE_DELTA` each
+time a completed tool call leaves state different from the last payload, and a
+closing `STATE_SNAPSHOT` unless the run ends in `RUN_ERROR`. Four things are
+worth knowing about those payloads:
+
+- The opening snapshot is the dictionary the client sent, but the run does not
+  start from it. The agent's own `session_state` seeds the session row when
+  that row is created, and each run merges the row in under the request's own
+  state, which wins; the row is created once per `threadId`, so an edit to the
+  example's initial recipe shows up in a new conversation and never in one
+  already under way. Each delta is measured against the previous payload, so
+  unless the request already sent all of it, the first delta adds what the
+  merge brought in and reports more than the tool call itself touched. Later
+  deltas in the same run carry only what changed since the one before.
+- The delta is computed when a tool call completes, so several changes inside
+  one tool call arrive as a single delta, and a change made outside a tool call
+  reaches the client only in the closing snapshot.
+- They carry only the keys your application put in state. Agno also keeps
+  `current_user_id`, `current_session_id`, and `current_run_id` in session
+  state at runtime so tools and instruction templates can read them, and the
+  filter removes all three from every payload. It covers only those payloads:
+  `update_session_state` returns the whole of state as its result text, so the
+  session and run ids still reach the client in that tool result, and the user
+  id with them when the server resolved one. Treat them as reserved at the top
+  level: a key of your own with one of those names is filtered out too, so
+  pick another. That filtering is outbound only, so a value the request sent
+  under one of those names does reach the run. The filter does not descend, so
+  one of those names nested inside a value of yours does reach the client.
+- `STATE_DELTA` needs the `jsonpatch` package. Agno's `agui` extra installs it
+  together with `ag-ui-protocol`, and the `os` extra ships neither, so the gap
+  to watch for is an install that added `ag-ui-protocol` by hand on top of `os`.
+  `pip install jsonpatch` closes it. When no patch can be built for a change, a
+  missing package being one cause of several, the mid-stream event is a full
+  `STATE_SNAPSHOT` rather than a delta, and the server logs which cause fired.
+  Note that `agui` is those two packages and nothing else, so it does not stand
+  in for `os`: outside this cookbook's environment a bare `agno` install needs
+  `pip install "agno[os,agui]"`, plus the model package each file imports and
+  `ddgs` for `research_team.py`, before these servers will start; the
+  [Prerequisites](#prerequisites) environment above has all of it.
 
 ## Frontend tools and backend HITL are different
 
@@ -141,10 +186,13 @@ server, but cannot run until its confirmation requirement is resolved.
 
 ## State and media
 
-AG-UI state is a dictionary sent with the request. `shared_state.py` snapshots
-that dictionary before the run, lets `update_session_state` mutate it, emits a
-JSON Patch delta after the tool call, and finishes with an authoritative
-snapshot.
+AG-UI state is a dictionary sent with the request. `shared_state.py` gives its
+agent an `update_session_state` tool; the AG-UI interface, not the example,
+echoes the request dictionary back as an opening `STATE_SNAPSHOT`, emits a JSON
+Patch delta each time a completed tool call leaves state different from the
+last payload, and closes with a snapshot unless the run ends in `RUN_ERROR`.
+The opening snapshot is not the state the run starts from;
+[Shared state on the wire](#shared-state-on-the-wire) has the payload rules.
 
 Media belongs in the latest user message as an AG-UI image, audio, video, or
 document content part. The adapter converts URL or base64 data sources into

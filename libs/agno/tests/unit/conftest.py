@@ -1,9 +1,36 @@
-"""Shared isolation for the unit suite."""
+"""Shared isolation and shared readings of production defaults for the unit suite."""
+
+from typing import Any, Callable, List, Union
 
 import pytest
 
 import agno.run.cancel as cancel_module
+from agno.run.agent import RunEvent
 from agno.run.cancellation_management.in_memory_cancellation_manager import InMemoryRunCancellationManager
+from agno.run.team import TeamRunEvent
+
+_ARGUMENT_FRAGMENT_EVENTS = (RunEvent.tool_call_args_delta, TeamRunEvent.tool_call_args_delta)
+
+
+@pytest.fixture
+def skips_but_the_argument_fragments() -> Callable[[Any], List[Union[RunEvent, TeamRunEvent]]]:
+    """A component's own default skip list, less the argument fragment events.
+
+    An agent, a team and a workflow each have a suite asserting that asking for
+    the fragment events back re-enables nothing else the default keeps out of
+    storage. Reading the default off the component rather than writing it out
+    again in each of those suites is what keeps that assertion true when the
+    default changes.
+    """
+
+    def without_the_fragments(component: Any) -> List[Union[RunEvent, TeamRunEvent]]:
+        default = component.events_to_skip or []
+        assert any(event in _ARGUMENT_FRAGMENT_EVENTS for event in default), (
+            f"{type(component).__name__} no longer skips argument fragments by default"
+        )
+        return [event for event in default if event not in _ARGUMENT_FRAGMENT_EVENTS]
+
+    return without_the_fragments
 
 
 @pytest.fixture(autouse=True)
