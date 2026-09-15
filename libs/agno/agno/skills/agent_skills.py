@@ -195,7 +195,6 @@ class Skills:
                 script_names = [s["name"] if isinstance(s, dict) else s for s in skill.scripts]
                 lines.append(f"  <scripts>{', '.join(script_names)}</scripts>")
             else:
-                # Explicitly indicate no scripts to prevent model confusion
                 lines.append("  <scripts>none</scripts>")
             if skill.references:
                 ref_names = [r["name"] if isinstance(r, dict) else r for r in skill.references]
@@ -216,7 +215,6 @@ class Skills:
         """
         tools: List[Function] = []
 
-        # Tool: get_skill_instructions
         tools.append(
             Function(
                 name="get_skill_instructions",
@@ -226,7 +224,6 @@ class Skills:
         )
 
         if self._has_any_references():
-            # Tool: get_skill_reference
             tools.append(
                 Function(
                     name="get_skill_reference",
@@ -236,7 +233,6 @@ class Skills:
             )
 
         if self._has_any_scripts():
-            # Tool: get_skill_script
             tools.append(
                 Function(
                     name="get_skill_script",
@@ -269,20 +265,30 @@ class Skills:
         already_provided = skill_name in self._instructions_provided
         self._instructions_provided.add(skill_name)
 
-        result: Dict[str, object] = {
-            "skill_name": skill.name,
-            "description": skill.description,
-            "instructions": skill.instructions,
-            "available_scripts": skill.scripts,
-            "available_references": skill.references,
-        }
         if already_provided:
-            result["instructions_already_provided"] = True
-            result["note"] = (
-                "Instructions for this skill were already loaded in this session. "
-                "Prefer using them instead of calling get_skill_instructions again unless you need a refresh."
+            return json.dumps(
+                {
+                    "skill_name": skill.name,
+                    "instructions_already_provided": True,
+                    "note": (
+                        "Instructions for this skill were already loaded in this session. "
+                        "Use the instructions from the earlier tool result. "
+                        "Call get_skill_instructions again only if a refresh is required."
+                    ),
+                    "available_scripts": skill.scripts,
+                    "available_references": skill.references,
+                }
             )
-        return json.dumps(result)
+
+        return json.dumps(
+            {
+                "skill_name": skill.name,
+                "description": skill.description,
+                "instructions": skill.instructions,
+                "available_scripts": skill.scripts,
+                "available_references": skill.references,
+            }
+        )
 
     def _get_skill_reference(self, skill_name: str, reference_path: Optional[str] = None) -> str:
         """Load a reference document from a skill.
@@ -301,6 +307,15 @@ class Skills:
                 {
                     "error": f"Skill '{skill_name}' not found",
                     "available_skills": available,
+                }
+            )
+
+        if not skill.references:
+            return json.dumps(
+                {
+                    "error": f"Skill '{skill_name}' has no references",
+                    "skill_name": skill_name,
+                    "available_references": [],
                 }
             )
 
@@ -377,6 +392,15 @@ class Skills:
                 {
                     "error": f"Skill '{skill_name}' not found",
                     "available_skills": available,
+                }
+            )
+
+        if not skill.scripts:
+            return json.dumps(
+                {
+                    "error": f"Skill '{skill_name}' has no scripts",
+                    "skill_name": skill_name,
+                    "available_scripts": [],
                 }
             )
 

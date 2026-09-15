@@ -726,6 +726,62 @@ def test_no_skills_have_scripts_or_references(minimal_skill: Skill) -> None:
     assert "get_skill_instructions" in tool_names
 
 
+def test_mixed_skill_script_call_on_skillmd_only_skill_clear_error(sample_skill: Skill, minimal_skill: Skill) -> None:
+    """In a mixed skill set all three tools are registered, but calling
+    get_skill_script on a SKILL.md-only skill returns a clear error."""
+    loader = MockSkillLoader([sample_skill, minimal_skill])
+    skills = Skills(loaders=[loader])
+
+    tool_names = {t.name for t in skills.get_tools()}
+    assert tool_names == {"get_skill_instructions", "get_skill_reference", "get_skill_script"}
+
+    result = json.loads(skills._get_skill_script("minimal-skill", "some.py"))
+    assert result["error"] == "Skill 'minimal-skill' has no scripts"
+    assert result["available_scripts"] == []
+
+
+def test_mixed_skill_reference_call_on_skillmd_only_skill_clear_error(
+    sample_skill: Skill, minimal_skill: Skill
+) -> None:
+    """Calling get_skill_reference on a SKILL.md-only skill in a mixed set
+    returns a clear 'has no references' error."""
+    loader = MockSkillLoader([sample_skill, minimal_skill])
+    skills = Skills(loaders=[loader])
+
+    result = json.loads(skills._get_skill_reference("minimal-skill", "guide.md"))
+    assert result["error"] == "Skill 'minimal-skill' has no references"
+    assert result["available_references"] == []
+
+
+def test_mixed_skill_null_path_on_skillmd_only_skill_clear_error(sample_skill: Skill, minimal_skill: Skill) -> None:
+    """Even without a path argument, a SKILL.md-only skill's missing assets are
+    reported directly instead of a generic 'path is required' error."""
+    loader = MockSkillLoader([sample_skill, minimal_skill])
+    skills = Skills(loaders=[loader])
+
+    script_result = json.loads(skills._get_skill_script("minimal-skill", None))
+    assert script_result["error"] == "Skill 'minimal-skill' has no scripts"
+
+    ref_result = json.loads(skills._get_skill_reference("minimal-skill", None))
+    assert ref_result["error"] == "Skill 'minimal-skill' has no references"
+
+
+def test_mixed_skill_asset_errors_still_reported_for_skill_with_assets(
+    sample_skill: Skill, minimal_skill: Skill
+) -> None:
+    """In a mixed set, a skill that has assets keeps the existing error paths."""
+    loader = MockSkillLoader([sample_skill, minimal_skill])
+    skills = Skills(loaders=[loader])
+
+    script_result = json.loads(skills._get_skill_script("test-skill", "nonexistent.py"))
+    assert "not found" in script_result["error"].lower()
+    assert script_result["available_scripts"] == ["helper.py", "runner.sh"]
+
+    ref_result = json.loads(skills._get_skill_reference("test-skill", "nonexistent.md"))
+    assert "not found" in ref_result["error"].lower()
+    assert ref_result["available_references"] == ["guide.md", "api-docs.md"]
+
+
 # --- System Prompt IMPORTANT Block Tests ---
 
 
@@ -857,9 +913,9 @@ def test_get_skill_instructions_first_call_no_dedup_flag(mock_loader: MockSkillL
     assert "note" not in result
 
 
-def test_get_skill_instructions_second_call_includes_dedup_flag(mock_loader: MockSkillLoader) -> None:
-    """A second call for the same skill should include
-    'instructions_already_provided': True and a note."""
+def test_get_skill_instructions_second_call_omits_full_instructions(mock_loader: MockSkillLoader) -> None:
+    """A second call for the same skill should not resend the full instructions
+    body; instead it returns 'instructions_already_provided': True and a note."""
     skills = Skills(loaders=[mock_loader])
 
     skills._get_skill_instructions("test-skill")
@@ -868,8 +924,10 @@ def test_get_skill_instructions_second_call_includes_dedup_flag(mock_loader: Moc
     assert result["instructions_already_provided"] is True
     assert "note" in result
     assert "already loaded" in result["note"]
-    assert "instructions" in result
-    assert "Follow these instructions" in result["instructions"]
+    assert "instructions" not in result
+    assert "description" not in result
+    assert result["available_scripts"] == ["helper.py", "runner.sh"]
+    assert result["available_references"] == ["guide.md", "api-docs.md"]
 
 
 def test_get_skill_instructions_different_skills_independent(mock_loader_multiple: MockSkillLoader) -> None:
@@ -889,11 +947,14 @@ def test_get_skill_instructions_reload_clears_tracking(mock_loader: MockSkillLoa
     skills._get_skill_instructions("test-skill")
     result = json.loads(skills._get_skill_instructions("test-skill"))
     assert result["instructions_already_provided"] is True
+    assert "instructions" not in result
 
     skills.reload()
 
     result = json.loads(skills._get_skill_instructions("test-skill"))
     assert "instructions_already_provided" not in result
+    assert "instructions" in result
+    assert "Follow these instructions" in result["instructions"]
 
 
 def test_get_skill_instructions_not_found_never_tracked(mock_loader: MockSkillLoader) -> None:
