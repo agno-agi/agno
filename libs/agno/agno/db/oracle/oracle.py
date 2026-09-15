@@ -1766,16 +1766,73 @@ class OracleDb(BaseDb):
             log_error(f"Exception upserting knowledge content: {str(e)}")
             raise
 
+    # -- Evals --
     def create_eval_run(self, eval_run: EvalRunRecord) -> Optional[EvalRunRecord]:
-        raise NotImplementedError("OracleDb eval methods are implemented in ticket 05.")
+        try:
+            table = self._get_table(table_type="evals", create_table_if_not_found=True)
+            if table is None:
+                return None
+            with self.Session() as sess, sess.begin():
+                current_time = int(time.time())
+                eval_data = eval_run.model_dump()
+                eval_data["user_id"] = to_db_user_id(eval_data.get("user_id"))
+                sess.execute(
+                    table.insert().values({"created_at": current_time, "updated_at": current_time, **eval_data})
+                )
+            return eval_run
+        except Exception as e:
+            log_error(f"Error creating eval run: {str(e)}")
+            raise
+
+    def delete_eval_run(self, eval_run_id: str) -> None:
+        try:
+            table = self._get_table(table_type="evals")
+            if table is None:
+                return
+            with self.Session() as sess, sess.begin():
+                result = sess.execute(table.delete().where(table.c.run_id == eval_run_id))
+                if result.rowcount == 0:
+                    log_warning(f"No eval run found with ID: {eval_run_id}")
+        except Exception as e:
+            log_error(f"Error deleting eval run {eval_run_id}: {str(e)}")
+            raise
 
     def delete_eval_runs(self, eval_run_ids: List[str], user_id: Optional[str] = None) -> None:
-        raise NotImplementedError("OracleDb eval methods are implemented in ticket 05.")
+        try:
+            table = self._get_table(table_type="evals")
+            if table is None:
+                return
+            with self.Session() as sess, sess.begin():
+                stmt = table.delete().where(table.c.run_id.in_(eval_run_ids))
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == to_db_user_id(user_id))
+                sess.execute(stmt)
+        except Exception as e:
+            log_error(f"Error deleting eval runs {eval_run_ids}: {str(e)}")
+            raise
 
     def get_eval_run(
         self, eval_run_id: str, deserialize: Optional[bool] = True, user_id: Optional[str] = None
     ) -> Optional[Union[EvalRunRecord, Dict[str, Any]]]:
-        raise NotImplementedError("OracleDb eval methods are implemented in ticket 05.")
+        try:
+            table = self._get_table(table_type="evals")
+            if table is None:
+                return None
+            with self.Session() as sess, sess.begin():
+                stmt = select(table).where(table.c.run_id == eval_run_id)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == to_db_user_id(user_id))
+                result = sess.execute(stmt).fetchone()
+                if result is None:
+                    return None
+                eval_run_raw = dict(result._mapping)
+                eval_run_raw["user_id"] = from_db_user_id(eval_run_raw.get("user_id"))
+                if not deserialize:
+                    return eval_run_raw
+                return EvalRunRecord.model_validate(eval_run_raw)
+        except Exception as e:
+            log_error(f"Exception getting eval run {eval_run_id}: {str(e)}")
+            raise
 
     def get_eval_runs(
         self,
@@ -1792,18 +1849,249 @@ class OracleDb(BaseDb):
         deserialize: Optional[bool] = True,
         user_id: Optional[str] = None,
     ) -> Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
-        raise NotImplementedError("OracleDb eval methods are implemented in ticket 05.")
+        validate_pagination(limit, page)
+        try:
+            table = self._get_table(table_type="evals")
+            if table is None:
+                return [] if deserialize else ([], 0)
+
+            with self.Session() as sess, sess.begin():
+                stmt = select(table)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == to_db_user_id(user_id))
+                if agent_id is not None:
+                    stmt = stmt.where(table.c.agent_id == agent_id)
+                if team_id is not None:
+                    stmt = stmt.where(table.c.team_id == team_id)
+                if workflow_id is not None:
+                    stmt = stmt.where(table.c.workflow_id == workflow_id)
+                if model_id is not None:
+                    stmt = stmt.where(table.c.model_id == model_id)
+                if eval_type:
+                    eval_type_values = [e.value if hasattr(e, "value") else e for e in eval_type]
+                    stmt = stmt.where(table.c.eval_type.in_(eval_type_values))
+                if filter_type is not None:
+                    if filter_type == EvalFilterType.AGENT:
+                        stmt = stmt.where(table.c.agent_id.is_not(None))
+                    elif filter_type == EvalFilterType.TEAM:
+                        stmt = stmt.where(table.c.team_id.is_not(None))
+                    elif filter_type == EvalFilterType.WORKFLOW:
+                        stmt = stmt.where(table.c.workflow_id.is_not(None))
+
+                count_stmt = select(func.count()).select_from(stmt.alias())
+                total_count = sess.execute(count_stmt).scalar()
+
+                if sort_by is None:
+                    stmt = stmt.order_by(table.c.created_at.desc())
+                else:
+                    stmt = apply_sorting(stmt, table, sort_by, sort_order)
+
+                if limit is not None:
+                    offset = (page - 1) * limit if page and page > 1 else 0
+                    stmt = stmt.offset(offset).limit(limit)
+
+                result = sess.execute(stmt).fetchall()
+                if not result:
+                    return [] if deserialize else ([], 0)
+
+                eval_runs_raw = [dict(row._mapping) for row in result]
+                for r in eval_runs_raw:
+                    r["user_id"] = from_db_user_id(r.get("user_id"))
+
+                if not deserialize:
+                    return eval_runs_raw, total_count
+                return [EvalRunRecord.model_validate(row) for row in eval_runs_raw]
+        except Exception as e:
+            log_error(f"Exception getting eval runs: {str(e)}")
+            raise
 
     def rename_eval_run(
         self, eval_run_id: str, name: str, deserialize: Optional[bool] = True, user_id: Optional[str] = None
     ) -> Optional[Union[EvalRunRecord, Dict[str, Any]]]:
-        raise NotImplementedError("OracleDb eval methods are implemented in ticket 05.")
+        try:
+            table = self._get_table(table_type="evals")
+            if table is None:
+                return None
+            with self.Session() as sess, sess.begin():
+                stmt = (
+                    table.update().where(table.c.run_id == eval_run_id).values(name=name, updated_at=int(time.time()))
+                )
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == to_db_user_id(user_id))
+                sess.execute(stmt)
+
+            eval_run_raw = self.get_eval_run(eval_run_id=eval_run_id, deserialize=deserialize, user_id=user_id)
+            if not eval_run_raw or not deserialize:
+                return eval_run_raw
+            return EvalRunRecord.model_validate(eval_run_raw)
+        except Exception as e:
+            log_error(f"Error upserting eval run name {eval_run_id}: {str(e)}")
+            raise
+
+    def update_eval_run_user_id(self, eval_run_id: str, user_id: str) -> None:
+        try:
+            table = self._get_table(table_type="evals")
+            if table is None:
+                return
+            with self.Session() as sess, sess.begin():
+                sess.execute(table.update().where(table.c.run_id == eval_run_id).values(user_id=to_db_user_id(user_id)))
+        except Exception as e:
+            log_error(f"Error setting owner on eval run {eval_run_id}: {str(e)}")
+            raise
+
+    # -- Traces --
+    @staticmethod
+    def _trace_component_level(
+        workflow_id: Optional[str], team_id: Optional[str], agent_id: Optional[str], name: Optional[str]
+    ) -> int:
+        """Component priority for upsert_trace's name-preference rule.
+
+        Mirrors Postgres's SQL CASE expression of the same name, computed in
+        Python instead: this whole method exists only because upsert_trace
+        merges in Python rather than in SQL (see that method's docstring).
+        """
+        is_root_name = name is not None and (".run" in name or ".arun" in name)
+        if workflow_id is not None and is_root_name:
+            return 3
+        if team_id is not None and is_root_name:
+            return 2
+        if agent_id is not None and is_root_name:
+            return 1
+        return 0
 
     def upsert_trace(self, trace: Any) -> None:
-        raise NotImplementedError("OracleDb trace methods are implemented in ticket 05.")
+        """Create or update a single trace record.
+
+        Postgres does this merge in one SQL statement (ON CONFLICT DO UPDATE,
+        with GREATEST/LEAST for start/end time and EXTRACT(EPOCH FROM ...) for
+        duration). EXTRACT(EPOCH ...) has no Oracle equivalent over the string
+        columns start_time/end_time are stored as; read-modify-write in Python
+        under a row lock reproduces the same merge semantics -- earliest
+        start, latest end, recomputed duration, non-null context preserved,
+        name replaced only by a higher-priority component -- without needing
+        one.
+        """
+        try:
+            table = self._get_table(table_type="traces", create_table_if_not_found=True)
+            if table is None:
+                return
+
+            trace_dict = trace.to_dict()
+            trace_dict.pop("total_spans", None)
+            trace_dict.pop("error_count", None)
+            trace_dict["user_id"] = to_db_user_id(trace_dict.get("user_id"))
+
+            with self.Session() as sess, sess.begin():
+                existing = sess.execute(
+                    select(table).where(table.c.trace_id == trace_dict["trace_id"]).with_for_update()
+                ).fetchone()
+
+                if existing is None:
+                    merge_upsert(sess, table, key_columns=["trace_id"], values=trace_dict)
+                    return
+
+                existing_row = dict(existing._mapping)
+                new_start, new_end = trace_dict.get("start_time"), trace_dict.get("end_time")
+                # ISO 8601 strings compare correctly lexicographically.
+                merged_start = min(existing_row["start_time"], new_start) if new_start else existing_row["start_time"]
+                merged_end = max(existing_row["end_time"], new_end) if new_end else existing_row["end_time"]
+                try:
+                    start_dt = datetime.fromisoformat(merged_start.replace("Z", "+00:00"))
+                    end_dt = datetime.fromisoformat(merged_end.replace("Z", "+00:00"))
+                    duration_ms = int((end_dt - start_dt).total_seconds() * 1000)
+                except Exception:
+                    duration_ms = trace_dict.get("duration_ms", existing_row.get("duration_ms"))
+
+                new_level = self._trace_component_level(
+                    trace_dict.get("workflow_id"),
+                    trace_dict.get("team_id"),
+                    trace_dict.get("agent_id"),
+                    trace_dict.get("name"),
+                )
+                existing_level = self._trace_component_level(
+                    existing_row.get("workflow_id"),
+                    existing_row.get("team_id"),
+                    existing_row.get("agent_id"),
+                    existing_row.get("name"),
+                )
+                name = trace_dict.get("name") if new_level > existing_level else existing_row.get("name")
+
+                merged = {
+                    "trace_id": trace_dict["trace_id"],
+                    "name": name,
+                    "status": trace_dict.get("status"),
+                    "start_time": merged_start,
+                    "end_time": merged_end,
+                    "duration_ms": duration_ms,
+                    # COALESCE-equivalent: keep the existing non-null context
+                    # value, so a later upsert from an unrelated child span
+                    # cannot clobber the trace's already-correct context.
+                    "run_id": existing_row.get("run_id") or trace_dict.get("run_id"),
+                    "session_id": existing_row.get("session_id") or trace_dict.get("session_id"),
+                    "user_id": existing_row.get("user_id") or trace_dict.get("user_id"),
+                    "agent_id": existing_row.get("agent_id") or trace_dict.get("agent_id"),
+                    "team_id": existing_row.get("team_id") or trace_dict.get("team_id"),
+                    "workflow_id": existing_row.get("workflow_id") or trace_dict.get("workflow_id"),
+                    "created_at": existing_row.get("created_at"),
+                }
+                merge_upsert(sess, table, key_columns=["trace_id"], values=merged, preserve_on_conflict=["created_at"])
+        except Exception as e:
+            log_error(f"Error creating trace: {str(e)}")
+            # Don't raise -- tracing should not break the main application flow
+
+    def _traces_base_query(self, table: Table, spans_table: Optional[Table]):
+        from sqlalchemy import case as _case
+        from sqlalchemy import literal as _literal
+
+        if spans_table is not None:
+            return (
+                select(
+                    table,
+                    func.coalesce(func.count(spans_table.c.span_id), 0).label("total_spans"),
+                    func.coalesce(func.sum(_case((spans_table.c.status_code == "ERROR", 1), else_=0)), 0).label(
+                        "error_count"
+                    ),
+                )
+                .select_from(table.outerjoin(spans_table, table.c.trace_id == spans_table.c.trace_id))
+                # Group by every column of `table`, not just trace_id (the
+                # PK): Postgres allows grouping by a primary key alone and
+                # selecting the table's other columns unaggregated, inferring
+                # the functional dependency; Oracle has no such relaxation
+                # and raises ORA-00979 ("must appear in the GROUP BY clause")
+                # on any selected column that is not listed, confirmed
+                # against a live server. Grouping by every column is
+                # semantically identical here since trace_id is unique.
+                .group_by(*table.c)
+            )
+        return select(table, _literal(0).label("total_spans"), _literal(0).label("error_count"))
 
     def get_trace(self, trace_id: Optional[str] = None, run_id: Optional[str] = None):
-        raise NotImplementedError("OracleDb trace methods are implemented in ticket 05.")
+        try:
+            from agno.tracing.schemas import Trace
+
+            table = self._get_table(table_type="traces")
+            if table is None:
+                return None
+            spans_table = self._get_table(table_type="spans")
+
+            with self.Session() as sess:
+                stmt = self._traces_base_query(table, spans_table)
+                if trace_id:
+                    stmt = stmt.where(table.c.trace_id == trace_id)
+                elif run_id:
+                    stmt = stmt.where(table.c.run_id == run_id)
+                else:
+                    return None
+                stmt = stmt.order_by(table.c.start_time.desc()).limit(1)
+                result = sess.execute(stmt).fetchone()
+                if result is None:
+                    return None
+                row = dict(result._mapping)
+                row["user_id"] = from_db_user_id(row.get("user_id"))
+                return Trace.from_dict(row)
+        except Exception as e:
+            log_error(f"Error getting trace: {str(e)}")
+            return None
 
     def get_traces(
         self,
@@ -1820,7 +2108,61 @@ class OracleDb(BaseDb):
         page: Optional[int] = 1,
         filter_expr: Optional[Dict[str, Any]] = None,
     ) -> Tuple[List, int]:
-        raise NotImplementedError("OracleDb trace methods are implemented in ticket 05.")
+        try:
+            from agno.db.filter_converter import TRACE_COLUMNS, filter_expr_to_sqlalchemy
+            from agno.tracing.schemas import Trace
+
+            table = self._get_table(table_type="traces")
+            if table is None:
+                return [], 0
+            spans_table = self._get_table(table_type="spans")
+
+            with self.Session() as sess:
+                base_stmt = self._traces_base_query(table, spans_table)
+                if run_id:
+                    base_stmt = base_stmt.where(table.c.run_id == run_id)
+                if session_id:
+                    base_stmt = base_stmt.where(table.c.session_id == session_id)
+                if user_id is not None:
+                    base_stmt = base_stmt.where(table.c.user_id == to_db_user_id(user_id))
+                if agent_id:
+                    base_stmt = base_stmt.where(table.c.agent_id == agent_id)
+                if team_id:
+                    base_stmt = base_stmt.where(table.c.team_id == team_id)
+                if workflow_id:
+                    base_stmt = base_stmt.where(table.c.workflow_id == workflow_id)
+                if status:
+                    base_stmt = base_stmt.where(table.c.status == status)
+                if start_time:
+                    base_stmt = base_stmt.where(table.c.start_time >= start_time.isoformat())
+                if end_time:
+                    base_stmt = base_stmt.where(table.c.end_time <= end_time.isoformat())
+                if filter_expr:
+                    try:
+                        base_stmt = base_stmt.where(
+                            filter_expr_to_sqlalchemy(filter_expr, table, allowed_columns=TRACE_COLUMNS)
+                        )
+                    except ValueError:
+                        raise
+                    except (KeyError, TypeError) as e:
+                        raise ValueError(f"Invalid filter expression: {e}") from e
+
+                count_stmt = select(func.count()).select_from(base_stmt.alias())
+                total_count = sess.execute(count_stmt).scalar() or 0
+
+                offset = (page - 1) * limit if page and limit else 0
+                paginated_stmt = base_stmt.order_by(table.c.start_time.desc()).limit(limit).offset(offset)
+                results = sess.execute(paginated_stmt).fetchall()
+
+                traces = []
+                for row in results:
+                    row_dict = dict(row._mapping)
+                    row_dict["user_id"] = from_db_user_id(row_dict.get("user_id"))
+                    traces.append(Trace.from_dict(row_dict))
+                return traces, total_count
+        except Exception as e:
+            log_error(f"Error getting traces: {str(e)}")
+            return [], 0
 
     def get_trace_stats(
         self,
@@ -1835,21 +2177,204 @@ class OracleDb(BaseDb):
         filter_expr: Optional[Dict[str, Any]] = None,
         group_by: str = "session",
     ) -> Tuple[List[Dict[str, Any]], int]:
-        raise NotImplementedError("OracleDb trace methods are implemented in ticket 05.")
+        if group_by not in ("session", "agent", "team", "workflow", "endpoint"):
+            raise ValueError(f"Invalid group_by value: {group_by!r}. Allowed: session, agent, team, workflow, endpoint")
+        try:
+            from sqlalchemy import and_ as _and
+            from sqlalchemy import case as _case
+            from sqlalchemy import distinct as _distinct
 
+            from agno.db.filter_converter import TRACE_COLUMNS, filter_expr_to_sqlalchemy
+
+            table = self._get_table(table_type="traces")
+            if table is None:
+                return [], 0
+
+            with self.Session() as sess:
+                group_column = None
+                group_label = ""
+                if group_by == "session":
+                    base_stmt = (
+                        select(
+                            table.c.session_id,
+                            func.max(table.c.user_id).label("user_id"),
+                            func.max(table.c.agent_id).label("agent_id"),
+                            func.max(table.c.team_id).label("team_id"),
+                            func.max(table.c.workflow_id).label("workflow_id"),
+                            func.count(table.c.trace_id).label("total_traces"),
+                            func.min(table.c.created_at).label("first_trace_at"),
+                            func.max(table.c.created_at).label("last_trace_at"),
+                        )
+                        .where(table.c.session_id.is_not(None))
+                        .group_by(table.c.session_id)
+                    )
+                else:
+                    if group_by == "endpoint":
+                        group_column = table.c.name
+                        group_label = "name"
+                        group_filter = _and(
+                            table.c.agent_id.is_(None), table.c.team_id.is_(None), table.c.workflow_id.is_(None)
+                        )
+                    else:
+                        group_column = {
+                            "agent": table.c.agent_id,
+                            "team": table.c.team_id,
+                            "workflow": table.c.workflow_id,
+                        }[group_by]
+                        group_label = f"{group_by}_id"
+                        group_filter = group_column.is_not(None)
+                    base_stmt = (
+                        select(
+                            group_column.label(group_label),
+                            func.count(table.c.trace_id).label("total_traces"),
+                            func.count(_distinct(table.c.session_id)).label("total_sessions"),
+                            func.avg(table.c.duration_ms).label("avg_duration_ms"),
+                            func.percentile_cont(0.95).within_group(table.c.duration_ms).label("p95_duration_ms"),
+                            func.max(table.c.duration_ms).label("max_duration_ms"),
+                            func.sum(_case((table.c.status == "ERROR", 1), else_=0)).label("error_traces"),
+                            func.min(table.c.created_at).label("first_trace_at"),
+                            func.max(table.c.created_at).label("last_trace_at"),
+                        )
+                        .where(group_filter)
+                        .group_by(group_column)
+                    )
+
+                if user_id is not None:
+                    base_stmt = base_stmt.where(table.c.user_id == to_db_user_id(user_id))
+                if workflow_id:
+                    base_stmt = base_stmt.where(table.c.workflow_id == workflow_id)
+                if team_id:
+                    base_stmt = base_stmt.where(table.c.team_id == team_id)
+                if agent_id:
+                    base_stmt = base_stmt.where(table.c.agent_id == agent_id)
+                if start_time:
+                    base_stmt = base_stmt.where(table.c.created_at >= start_time.isoformat())
+                if end_time:
+                    base_stmt = base_stmt.where(table.c.created_at <= end_time.isoformat())
+                if filter_expr:
+                    try:
+                        base_stmt = base_stmt.where(
+                            filter_expr_to_sqlalchemy(filter_expr, table, allowed_columns=TRACE_COLUMNS)
+                        )
+                    except ValueError:
+                        raise
+                    except (KeyError, TypeError) as e:
+                        raise ValueError(f"Invalid filter expression: {e}") from e
+
+                count_stmt = select(func.count()).select_from(base_stmt.alias())
+                total_count = sess.execute(count_stmt).scalar() or 0
+
+                offset = (page - 1) * limit if page and limit else 0
+                order_by: List[Any] = (
+                    [func.max(table.c.created_at).desc()]
+                    if group_by == "session"
+                    else [func.count(table.c.trace_id).desc(), group_column]
+                )
+                paginated_stmt = base_stmt.order_by(*order_by).limit(limit).offset(offset)
+                results = sess.execute(paginated_stmt).fetchall()
+
+                stats_list = []
+                for row in results:
+                    first_trace_at = datetime.fromisoformat(str(row.first_trace_at).replace("Z", "+00:00"))
+                    last_trace_at = datetime.fromisoformat(str(row.last_trace_at).replace("Z", "+00:00"))
+                    if group_by == "session":
+                        stats_list.append(
+                            {
+                                "session_id": row.session_id,
+                                "user_id": from_db_user_id(row.user_id),
+                                "agent_id": row.agent_id,
+                                "team_id": row.team_id,
+                                "workflow_id": row.workflow_id,
+                                "total_traces": row.total_traces,
+                                "first_trace_at": first_trace_at,
+                                "last_trace_at": last_trace_at,
+                            }
+                        )
+                    else:
+                        stats_list.append(
+                            {
+                                group_label: getattr(row, group_label),
+                                "total_traces": row.total_traces,
+                                "total_sessions": row.total_sessions,
+                                "avg_duration_ms": round(float(row.avg_duration_ms), 1)
+                                if row.avg_duration_ms is not None
+                                else None,
+                                "p95_duration_ms": round(float(row.p95_duration_ms), 1)
+                                if row.p95_duration_ms is not None
+                                else None,
+                                "max_duration_ms": row.max_duration_ms,
+                                "error_traces": row.error_traces,
+                                "first_trace_at": first_trace_at,
+                                "last_trace_at": last_trace_at,
+                            }
+                        )
+                return stats_list, total_count
+        except Exception as e:
+            log_error(f"Error getting trace stats: {str(e)}")
+            return [], 0
+
+    # -- Spans --
     def create_span(self, span: Any) -> None:
-        raise NotImplementedError("OracleDb span methods are implemented in ticket 05.")
+        try:
+            table = self._get_table(table_type="spans", create_table_if_not_found=True)
+            if table is None:
+                return
+            with self.Session() as sess, sess.begin():
+                sess.execute(table.insert().values(span.to_dict()))
+        except Exception as e:
+            log_error(f"Error creating span: {str(e)}")
 
     def create_spans(self, spans: List) -> None:
-        raise NotImplementedError("OracleDb span methods are implemented in ticket 05.")
+        if not spans:
+            return
+        try:
+            table = self._get_table(table_type="spans", create_table_if_not_found=True)
+            if table is None:
+                return
+            with self.Session() as sess, sess.begin():
+                for span in spans:
+                    sess.execute(table.insert().values(span.to_dict()))
+        except Exception as e:
+            log_error(f"Error creating spans batch: {str(e)}")
 
     def get_span(self, span_id: str):
-        raise NotImplementedError("OracleDb span methods are implemented in ticket 05.")
+        try:
+            from agno.tracing.schemas import Span
+
+            table = self._get_table(table_type="spans")
+            if table is None:
+                return None
+            with self.Session() as sess:
+                result = sess.execute(select(table).where(table.c.span_id == span_id)).fetchone()
+                if result:
+                    return Span.from_dict(dict(result._mapping))
+                return None
+        except Exception as e:
+            log_error(f"Error getting span: {str(e)}")
+            return None
 
     def get_spans(
         self, trace_id: Optional[str] = None, parent_span_id: Optional[str] = None, limit: Optional[int] = 1000
     ) -> List:
-        raise NotImplementedError("OracleDb span methods are implemented in ticket 05.")
+        try:
+            from agno.tracing.schemas import Span
+
+            table = self._get_table(table_type="spans")
+            if table is None:
+                return []
+            with self.Session() as sess:
+                stmt = select(table)
+                if trace_id:
+                    stmt = stmt.where(table.c.trace_id == trace_id)
+                if parent_span_id:
+                    stmt = stmt.where(table.c.parent_span_id == parent_span_id)
+                if limit:
+                    stmt = stmt.limit(limit)
+                results = sess.execute(stmt).fetchall()
+                return [Span.from_dict(dict(row._mapping)) for row in results]
+        except Exception as e:
+            log_error(f"Error getting spans: {str(e)}")
+            return []
 
     def get_learning(
         self,

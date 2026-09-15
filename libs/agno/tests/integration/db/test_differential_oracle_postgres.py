@@ -12,13 +12,14 @@ introduces no new production boundary. Both modules skip cleanly (not error)
 when their server is unreachable, since no Oracle container exists in public
 CI (ADR 0009).
 
-Coverage in this file: the domains tickets 03 and 04 deliver (sessions, runs,
-memory, metrics, knowledge). Later tickets extend this file with their own
-domains as they land, rather than each inventing a separate differential
-suite.
+Coverage in this file: the domains tickets 03, 04 and 05 deliver (sessions,
+runs, memory, metrics, knowledge, eval runs, traces). Later tickets extend
+this file with their own domains as they land, rather than each inventing a
+separate differential suite.
 """
 
 import uuid
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict
 
 import pytest
@@ -30,6 +31,7 @@ from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
 from agno.run.agent import RunOutput
 from agno.session import AgentSession
+from agno.tracing.schemas import Trace
 
 PG_URL = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 ORACLE_URL = "oracle+oracledb://ai:ai@localhost:1523/?service_name=FREEPDB1"
@@ -76,6 +78,8 @@ def oracle_db(_servers_up):
         "memory_table": f"diff_mem_{suffix}",
         "metrics_table": f"diff_metrics_{suffix}",
         "knowledge_table": f"diff_know_{suffix}",
+        "eval_table": f"diff_eval_{suffix}",
+        "traces_table": f"diff_trace_{suffix}",
     }
     database = OracleDb(db_url=ORACLE_URL, id=f"diff-oracle-{suffix}", **tables)
     yield database
@@ -224,6 +228,97 @@ def test_memory_metrics_knowledge_owner_states_match_postgres(pg_db, oracle_db):
     """
     pg_result = _run_memory_metrics_knowledge_scenario(pg_db)
     oracle_result = _run_memory_metrics_knowledge_scenario(oracle_db)
+
+    assert oracle_result == pg_result, (
+        f"Oracle diverged from Postgres.\nPostgres: {pg_result}\nOracle:   {oracle_result}"
+    )
+
+
+def _run_eval_trace_scenario(db) -> Dict[str, Any]:
+    """Ticket 05's domains: eval runs (filtering, rename, ownership transfer)
+    and a merged trace (the one path with real cross-backend merge logic --
+    Postgres does it in one SQL statement, Oracle in Python; this is where a
+    divergence between the two approaches would actually show up).
+    """
+    from agno.db.schemas.evals import EvalRunRecord, EvalType
+
+    for i, (uid, eval_type) in enumerate(
+        [("alice", EvalType.ACCURACY), ("alice", EvalType.RELIABILITY), (None, EvalType.ACCURACY)]
+    ):
+        run = EvalRunRecord(
+            run_id=f"diff-eval-{i}", eval_type=eval_type, eval_data={"score": i}, eval_input={}, agent_id="diff-agent"
+        )
+        db.create_eval_run(run)
+        if uid is not None:
+            db.update_eval_run_user_id(f"diff-eval-{i}", uid)
+
+    _, alice_total = db.get_eval_runs(user_id="alice", deserialize=False)
+    db.rename_eval_run("diff-eval-0", "renamed")
+    renamed = db.get_eval_run("diff-eval-0", deserialize=False)
+    db.delete_eval_run("diff-eval-2")
+    _, remaining_total = db.get_eval_runs(deserialize=False)
+
+    trace_id = "diff-trace-1"
+    base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    trace_a = Trace(
+        trace_id=trace_id,
+        name="agent.run",
+        status="OK",
+        start_time=base,
+        end_time=base + timedelta(seconds=2),
+        duration_ms=2000,
+        total_spans=0,
+        error_count=0,
+        run_id="diff-run-a",
+        session_id=None,
+        user_id="alice",
+        agent_id="diff-agent",
+        team_id=None,
+        workflow_id=None,
+        created_at=base,
+    )
+    db.upsert_trace(trace_a)
+    # A wider, lower-priority (no agent/team/workflow) update: must widen the
+    # window and recompute duration, but not rename or clobber context.
+    trace_b = Trace(
+        trace_id=trace_id,
+        name="child.span",
+        status="OK",
+        start_time=base - timedelta(seconds=1),
+        end_time=base + timedelta(seconds=5),
+        duration_ms=1,
+        total_spans=0,
+        error_count=0,
+        run_id=None,
+        session_id=None,
+        user_id=None,
+        agent_id=None,
+        team_id=None,
+        workflow_id=None,
+        created_at=base,
+    )
+    db.upsert_trace(trace_b)
+    merged = db.get_trace(trace_id=trace_id)
+
+    return {
+        "alice_eval_total": alice_total,
+        "renamed_name": renamed["name"],
+        "remaining_eval_total": remaining_total,
+        "merged_trace_name": merged.name,
+        "merged_trace_run_id": merged.run_id,
+        "merged_trace_duration_ms": merged.duration_ms,
+    }
+
+
+def test_eval_and_trace_merge_matches_postgres(pg_db, oracle_db):
+    """The trace-merge comparison matters more than most: Postgres computes
+    the merge in one SQL statement (GREATEST/LEAST/EXTRACT EPOCH), Oracle
+    replicates it in Python under a row lock. Comparing the two backends'
+    actual merged output is what proves the two approaches agree, not just
+    that each one runs without error.
+    """
+    pg_result = _run_eval_trace_scenario(pg_db)
+    oracle_result = _run_eval_trace_scenario(oracle_db)
 
     assert oracle_result == pg_result, (
         f"Oracle diverged from Postgres.\nPostgres: {pg_result}\nOracle:   {oracle_result}"
