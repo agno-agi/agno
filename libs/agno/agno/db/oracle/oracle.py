@@ -15,7 +15,7 @@ files read side by side.
 import json
 import time
 from datetime import date, datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
 from uuid import uuid4
 
 from sqlalchemy import (
@@ -28,16 +28,33 @@ from sqlalchemy import (
     PrimaryKeyConstraint,
     Table,
     UniqueConstraint,
+    and_,
     create_engine,
     func,
     or_,
     select,
     text,
 )
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session as SQLASession
 from sqlalchemy.orm import scoped_session, sessionmaker
 
-from agno.db.base import BaseDb, SessionType
+from agno.db.base import (
+    DELETED_CONFIG_STAGE,
+    PIN_LINK_KINDS,
+    BaseDb,
+    ComponentArchivedError,
+    ComponentCycleError,
+    ComponentDependencyError,
+    ComponentDraftRequiredError,
+    ComponentLastConfigError,
+    ComponentType,
+    ComponentVersionConflictError,
+    SessionType,
+    current_version_guard_clause,
+    current_version_matches,
+    project_config_identity,
+)
 from agno.db.migrations.manager import MigrationManager
 from agno.db.oracle._version import OracleCapabilities, detect_capabilities
 from agno.db.oracle.engine import _engine_options
@@ -3339,3 +3356,1667 @@ class OracleDb(BaseDb):
         except Exception as e:
             log_debug(f"Error deleting auth token: {e}")
             return False
+
+    # --- Components ---
+    #
+    # user_id here is a plain nullable filter/owner column, the same
+    # knowledge/schedules precedent: "unowned (shared)" is user_id IS NULL,
+    # never "". No to_db_user_id/from_db_user_id translation applies.
+    def get_component(
+        self,
+        component_id: str,
+        component_type: Optional[ComponentType] = None,
+        user_id: Optional[str] = None,
+        include_deleted: bool = False,
+    ) -> Optional[Dict[str, Any]]:
+        try:
+            table = self._get_table(table_type="components")
+            if table is None:
+                return None
+
+            with self.Session() as sess:
+                stmt = select(table).where(table.c.component_id == component_id)
+                if not include_deleted:
+                    stmt = stmt.where(table.c.deleted_at.is_(None))
+
+                if component_type is not None:
+                    stmt = stmt.where(table.c.component_type == component_type.value)
+                if user_id is not None:
+                    stmt = stmt.where(
+                        or_(
+                            table.c.user_id == user_id,
+                            table.c.user_id.is_(None),
+                            and_(
+                                table.c.current_version.isnot(None),
+                                table.c.deleted_at.is_(None),
+                            ),
+                        )
+                    )
+
+                row = sess.execute(stmt).mappings().one_or_none()
+                return dict(row) if row else None
+
+        except Exception as e:
+            log_error(f"Error getting component: {str(e)}")
+            raise
+
+    def upsert_component(
+        self,
+        component_id: str,
+        component_type: Optional[ComponentType] = None,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        current_version: Optional[int] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        try:
+            table = self._get_table(table_type="components", create_table_if_not_found=True)
+            if table is None:
+                raise ValueError("Components table not found")
+
+            configs_table = self._get_table(table_type="component_configs") if current_version is not None else None
+
+            with self.Session() as sess, sess.begin():
+                existing_stmt = select(table).where(table.c.component_id == component_id)
+                if user_id is not None:
+                    existing_stmt = existing_stmt.where(table.c.user_id == user_id)
+                existing = sess.execute(existing_stmt).fetchone()
+                if existing is None:
+                    if user_id is not None:
+                        unscoped = sess.execute(
+                            select(table.c.component_id).where(table.c.component_id == component_id)
+                        ).fetchone()
+                        if unscoped is not None:
+                            raise ValueError(f"Component {component_id} not found")
+
+                    if component_type is None:
+                        raise ValueError("component_type is required when creating a new component")
+
+                    sess.execute(
+                        table.insert().values(
+                            component_id=component_id,
+                            component_type=component_type.value,
+                            name=name,
+                            user_id=user_id,
+                            description=description,
+                            current_version=None,
+                            metadata=metadata,
+                            created_at=int(time.time()),
+                        )
+                    )
+                    log_debug(f"Created component {component_id}")
+
+                elif existing.deleted_at is not None:
+                    raise ComponentArchivedError(
+                        f"Component {component_id} is archived; restore it explicitly before writing to it"
+                    )
+
+                else:
+                    updates: Dict[str, Any] = {"updated_at": int(time.time())}
+                    if component_type is not None:
+                        if str(existing.component_type) != str(component_type.value):
+                            raise ValueError(
+                                f"Cannot change component {component_id} from {existing.component_type} "
+                                f"to {component_type.value}; a component's type is fixed at creation."
+                            )
+                        updates["component_type"] = component_type.value
+                    if name is not None:
+                        updates["name"] = name
+                    if description is not None:
+                        updates["description"] = description
+                    if current_version is not None:
+                        if configs_table is not None:
+                            target_stage = sess.execute(
+                                select(configs_table.c.stage).where(
+                                    configs_table.c.component_id == component_id,
+                                    configs_table.c.version == current_version,
+                                )
+                            ).scalar()
+                            if target_stage == DELETED_CONFIG_STAGE:
+                                raise ValueError(
+                                    f"Cannot set deleted config {component_id} v{current_version} as current"
+                                )
+                            if target_stage is None:
+                                raise ValueError(
+                                    f"Cannot set missing config {component_id} v{current_version} as current"
+                                )
+                            if target_stage != "published":
+                                raise ValueError(
+                                    f"Cannot set draft config {component_id} v{current_version} as current. "
+                                    "Only published configs can be current."
+                                )
+                        updates["current_version"] = current_version
+                    if metadata is not None:
+                        updates["metadata"] = metadata
+
+                    update_result = sess.execute(
+                        table.update()
+                        .where(
+                            table.c.component_id == component_id,
+                            table.c.deleted_at.is_(None),
+                        )
+                        .values(**updates)
+                    )
+                    if update_result.rowcount == 0:
+                        raise ComponentArchivedError(
+                            f"Component {component_id} is archived; restore it explicitly before writing to it"
+                        )
+                    log_debug(f"Updated component {component_id}")
+
+                written = sess.execute(select(table).where(table.c.component_id == component_id)).fetchone()
+                if written is None:
+                    raise ValueError(f"Failed to get component {component_id} after upsert")
+                result = dict(written._mapping)
+
+            return result
+
+        except Exception as e:
+            log_error(f"Error upserting component: {str(e)}")
+            raise
+
+    def delete_component(
+        self,
+        component_id: str,
+        hard_delete: bool = False,
+        user_id: Optional[str] = None,
+        expected_current_version: Optional[int] = None,
+        require_no_dependents: bool = True,
+        cascade_stats: Optional[Dict[str, int]] = None,
+    ) -> bool:
+        try:
+            components_table = self._get_table(table_type="components")
+            configs_table = self._get_table(table_type="component_configs")
+            links_table = self._get_table(table_type="component_links")
+            schedules_table = self._get_table(table_type="schedules")
+
+            if components_table is None:
+                return False
+
+            if user_id is not None:
+                component = self.get_component(component_id, user_id=user_id, include_deleted=hard_delete)
+                if component is None or component.get("user_id") != user_id:
+                    return False
+
+            if require_no_dependents:
+                dependents = self.get_dependents(
+                    component_id, active_parents_only=not hard_delete, parent_user_id=user_id
+                )
+                if dependents:
+                    parents = sorted(
+                        {str(d["parent_component_id"]) for d in dependents if d.get("parent_component_id")}
+                    )
+                    raise ComponentDependencyError(
+                        f"Cannot delete {component_id}: referenced by {', '.join(str(x) for x in parents)}"
+                    )
+
+            with self.Session() as sess, sess.begin():
+                row = sess.execute(
+                    select(
+                        components_table.c.current_version,
+                        components_table.c.component_type,
+                        components_table.c.user_id,
+                    )
+                    .where(components_table.c.component_id == component_id)
+                    .with_for_update()
+                ).fetchone()
+                if row is None:
+                    return False
+                if user_id is not None and row.user_id != user_id:
+                    return False
+                component_type = str(row.component_type)
+                if expected_current_version is not None and not current_version_matches(
+                    row.current_version, expected_current_version
+                ):
+                    raise ComponentVersionConflictError(
+                        f"Component {component_id} current version is {row.current_version}, "
+                        f"expected {expected_current_version}"
+                    )
+
+                if hard_delete:
+                    if links_table is not None:
+                        sess.execute(links_table.delete().where(links_table.c.parent_component_id == component_id))
+                    if require_no_dependents:
+                        self._refuse_if_dependents(
+                            sess,
+                            links_table,
+                            components_table,
+                            configs_table,
+                            component_id,
+                            active_parents_only=False,
+                            parent_user_id=user_id,
+                        )
+                    if links_table is not None:
+                        sess.execute(links_table.delete().where(links_table.c.child_component_id == component_id))
+                    if configs_table is not None:
+                        sess.execute(configs_table.delete().where(configs_table.c.component_id == component_id))
+                    component_delete = components_table.delete().where(components_table.c.component_id == component_id)
+                    if user_id is not None:
+                        component_delete = component_delete.where(components_table.c.user_id == user_id)
+                    if expected_current_version is not None:
+                        component_delete = component_delete.where(
+                            current_version_guard_clause(components_table.c.current_version, expected_current_version)
+                        )
+                    result = sess.execute(component_delete)
+                    if result.rowcount == 0 and expected_current_version is not None:
+                        raise ComponentVersionConflictError(
+                            f"Component {component_id} current version changed; expected {expected_current_version}"
+                        )
+                else:
+                    now = int(time.time())
+                    archive_update = (
+                        components_table.update()
+                        .where(
+                            components_table.c.component_id == component_id,
+                            components_table.c.deleted_at.is_(None),
+                        )
+                        .values(deleted_at=now, updated_at=now)
+                    )
+                    if user_id is not None:
+                        archive_update = archive_update.where(components_table.c.user_id == user_id)
+                    if expected_current_version is not None:
+                        archive_update = archive_update.where(
+                            current_version_guard_clause(components_table.c.current_version, expected_current_version)
+                        )
+                    result = sess.execute(archive_update)
+                    if result.rowcount == 0 and expected_current_version is not None:
+                        still_live = sess.execute(
+                            select(components_table.c.component_id).where(
+                                components_table.c.component_id == component_id,
+                                components_table.c.deleted_at.is_(None),
+                            )
+                        ).scalar_one_or_none()
+                        if still_live is not None:
+                            raise ComponentVersionConflictError(
+                                f"Component {component_id} current version changed; expected {expected_current_version}"
+                            )
+
+                    if require_no_dependents and result.rowcount > 0:
+                        self._refuse_if_dependents(
+                            sess,
+                            links_table,
+                            components_table,
+                            configs_table,
+                            component_id,
+                            active_parents_only=True,
+                            parent_user_id=user_id,
+                        )
+
+                if result.rowcount > 0 and schedules_table is not None:
+                    disabled = self._disable_schedules_for_target_in_session(
+                        sess,
+                        schedules_table,
+                        target_type=component_type,
+                        target_id=component_id,
+                        reason=f"target_archived:{component_type}:{component_id}",
+                    )
+                    if cascade_stats is not None:
+                        cascade_stats["schedules_disabled"] = disabled
+                    if disabled:
+                        log_debug(f"Disabled {disabled} schedule(s) targeting {component_type} '{component_id}'")
+
+            return result.rowcount > 0
+
+        except Exception as e:
+            log_error(f"Error deleting component: {str(e)}")
+            raise
+
+    def restore_component(
+        self,
+        component_id: str,
+        user_id: Optional[str] = None,
+    ) -> bool:
+        try:
+            components_table = self._get_table(table_type="components")
+            if components_table is None:
+                return False
+
+            if user_id is not None:
+                component = self.get_component(component_id, user_id=user_id, include_deleted=True)
+                if component is None or component.get("user_id") != user_id:
+                    return False
+
+            links_table = self._get_table(table_type="component_links")
+
+            with self.Session() as sess, sess.begin():
+                row = sess.execute(
+                    select(components_table.c.current_version, components_table.c.user_id)
+                    .where(components_table.c.component_id == component_id)
+                    .with_for_update()
+                ).fetchone()
+                if row is None:
+                    return False
+                if user_id is not None and row.user_id != user_id:
+                    return False
+
+                restore_update = (
+                    components_table.update()
+                    .where(
+                        components_table.c.component_id == component_id,
+                        components_table.c.deleted_at.is_not(None),
+                    )
+                    .values(deleted_at=None, updated_at=int(time.time()))
+                )
+                if user_id is not None:
+                    restore_update = restore_update.where(components_table.c.user_id == user_id)
+                result = sess.execute(restore_update)
+                if result.rowcount == 0:
+                    return False
+
+                if row.current_version is not None and links_table is not None:
+                    link_rows = sess.execute(
+                        select(links_table.c.child_component_id).where(
+                            links_table.c.parent_component_id == component_id,
+                            links_table.c.parent_version == row.current_version,
+                            links_table.c.link_kind.in_(PIN_LINK_KINDS),
+                        )
+                    ).fetchall()
+                    child_ids = {link.child_component_id for link in link_rows if link.child_component_id}
+                    if child_ids:
+                        child_rows = sess.execute(
+                            select(components_table.c.component_id, components_table.c.deleted_at)
+                            .where(components_table.c.component_id.in_(child_ids))
+                            .with_for_update()
+                        ).fetchall()
+                        archived_children = sorted(
+                            str(child.component_id) for child in child_rows if child.deleted_at is not None
+                        )
+                        if archived_children:
+                            raise ComponentDependencyError(
+                                f"Cannot restore {component_id}: pinned child(ren) "
+                                f"{', '.join(archived_children)} are archived. Restore them first."
+                            )
+
+            return True
+
+        except Exception as e:
+            log_error(f"Error restoring component: {str(e)}")
+            raise
+
+    def list_components(
+        self,
+        component_type: Optional[ComponentType] = None,
+        include_deleted: bool = False,
+        limit: int = 20,
+        offset: int = 0,
+        exclude_component_ids: Optional[Set[str]] = None,
+        user_id: Optional[str] = None,
+        name: Optional[str] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        try:
+            table = self._get_table(table_type="components")
+            if table is None:
+                return [], 0
+
+            with self.Session() as sess:
+                where_clauses = []
+                if component_type is not None:
+                    where_clauses.append(table.c.component_type == component_type.value)
+                if user_id is not None:
+                    where_clauses.append(
+                        or_(
+                            table.c.user_id == user_id,
+                            table.c.user_id.is_(None),
+                            and_(
+                                table.c.current_version.isnot(None),
+                                table.c.deleted_at.is_(None),
+                            ),
+                        )
+                    )
+                if not include_deleted:
+                    where_clauses.append(table.c.deleted_at.is_(None))
+                if exclude_component_ids:
+                    where_clauses.append(table.c.component_id.notin_(exclude_component_ids))
+                if name is not None:
+                    where_clauses.append(table.c.name == name)
+
+                count_stmt = select(func.count()).select_from(table)
+                for clause in where_clauses:
+                    count_stmt = count_stmt.where(clause)
+                total_count = sess.execute(count_stmt).scalar() or 0
+
+                stmt = select(table).order_by(
+                    table.c.created_at.desc(),
+                    table.c.component_id,
+                )
+                for clause in where_clauses:
+                    stmt = stmt.where(clause)
+                stmt = stmt.limit(limit).offset(offset)
+
+                rows = sess.execute(stmt).mappings().all()
+                return [dict(r) for r in rows], total_count
+
+        except Exception as e:
+            log_error(f"Error listing components: {str(e)}")
+            raise
+
+    def create_component_with_config(
+        self,
+        component_id: str,
+        component_type: ComponentType,
+        name: Optional[str],
+        config: Dict[str, Any],
+        description: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        label: Optional[str] = None,
+        stage: str = "draft",
+        notes: Optional[str] = None,
+        links: Optional[List[Dict[str, Any]]] = None,
+        user_id: Optional[str] = None,
+    ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+        if stage not in {"draft", "published"}:
+            raise ValueError(f"Invalid stage: {stage}")
+
+        if links:
+            for link in links:
+                if link.get("child_version") is None:
+                    raise ValueError(f"child_version is required for link to {link['child_component_id']}")
+
+        try:
+            components_table = self._get_table(table_type="components", create_table_if_not_found=True)
+            configs_table = self._get_table(table_type="component_configs", create_table_if_not_found=True)
+            links_table = self._get_table(table_type="component_links", create_table_if_not_found=True)
+
+            if components_table is None:
+                raise ValueError("Components table not found")
+            if configs_table is None:
+                raise ValueError("Component configs table not found")
+
+            with self.Session() as sess, sess.begin():
+                existing = sess.execute(
+                    select(components_table.c.component_id).where(components_table.c.component_id == component_id)
+                ).scalar_one_or_none()
+
+                if existing is not None:
+                    raise ValueError(f"Component ID {component_id} is not available")
+
+                if links:
+                    self._validate_links_in_session(sess, component_id, links, components_table, links_table)
+
+                if stage == "published" and links:
+                    for link in links:
+                        if link.get("link_kind") not in PIN_LINK_KINDS:
+                            continue
+                        child_stage = sess.execute(
+                            select(configs_table.c.stage).where(
+                                configs_table.c.component_id == link["child_component_id"],
+                                configs_table.c.version == link["child_version"],
+                            )
+                        ).scalar()
+                        if child_stage != "published":
+                            raise ComponentDependencyError(
+                                f"Cannot create {component_id} as published: pinned "
+                                f"{link['link_kind']} '{link['child_component_id']}' "
+                                f"v{link['child_version']} is {child_stage or 'missing'}; "
+                                "publish the child first."
+                            )
+
+                if label is not None:
+                    existing_label = sess.execute(
+                        select(configs_table.c.version).where(
+                            configs_table.c.component_id == component_id,
+                            configs_table.c.label == label,
+                        )
+                    ).first()
+                    if existing_label:
+                        raise ValueError(f"Label '{label}' already exists for {component_id}")
+
+                now = int(time.time())
+                version = 1
+
+                sess.execute(
+                    components_table.insert().values(
+                        component_id=component_id,
+                        component_type=component_type.value,
+                        name=name,
+                        user_id=user_id,
+                        description=description,
+                        metadata=metadata,
+                        current_version=version if stage == "published" else None,
+                        created_at=now,
+                    )
+                )
+
+                sess.execute(
+                    configs_table.insert().values(
+                        component_id=component_id,
+                        version=version,
+                        label=label,
+                        stage=stage,
+                        config=config,
+                        notes=notes,
+                        created_at=now,
+                    )
+                )
+
+                if links and links_table is not None:
+                    for link in links:
+                        sess.execute(
+                            links_table.insert().values(
+                                parent_component_id=component_id,
+                                parent_version=version,
+                                link_kind=link["link_kind"],
+                                link_key=link["link_key"],
+                                child_component_id=link["child_component_id"],
+                                child_version=link["child_version"],
+                                position=link["position"],
+                                meta=link.get("meta"),
+                                created_at=now,
+                            )
+                        )
+
+                if stage == "published" and links and links_table is not None:
+                    for link in links:
+                        if link.get("link_kind") not in PIN_LINK_KINDS:
+                            continue
+                        child_deleted_at = sess.execute(
+                            select(components_table.c.deleted_at)
+                            .where(components_table.c.component_id == link["child_component_id"])
+                            .with_for_update()
+                        ).scalar()
+                        if child_deleted_at is not None:
+                            raise ComponentDependencyError(
+                                f"Cannot publish {component_id} v{version}: pinned "
+                                f"{link['link_kind']} '{link['child_component_id']}' is archived; "
+                                "restore it first."
+                            )
+
+                component_row = sess.execute(
+                    select(components_table).where(components_table.c.component_id == component_id)
+                ).fetchone()
+                config_row = sess.execute(
+                    select(configs_table).where(
+                        configs_table.c.component_id == component_id,
+                        configs_table.c.version == version,
+                    )
+                ).fetchone()
+
+                if component_row is None:
+                    raise ValueError(f"Failed to get component {component_id} after creation")
+                if config_row is None:
+                    raise ValueError(f"Failed to get config for {component_id} after creation")
+
+                component = dict(component_row._mapping)
+                config_result = dict(config_row._mapping)
+
+            return component, config_result
+
+        except Exception as e:
+            log_error(f"Error creating component with config: {str(e)}")
+            raise
+
+    # --- Component Configs ---
+    def get_config(
+        self,
+        component_id: str,
+        version: Optional[int] = None,
+        label: Optional[str] = None,
+        include_deleted: bool = False,
+    ) -> Optional[Dict[str, Any]]:
+        try:
+            configs_table = self._get_table(table_type="component_configs")
+            components_table = self._get_table(table_type="components")
+
+            if configs_table is None or components_table is None:
+                return None
+
+            with self.Session() as sess:
+                component_row = (
+                    sess.execute(
+                        select(components_table.c.component_id, components_table.c.current_version).where(
+                            components_table.c.component_id == component_id,
+                            components_table.c.deleted_at.is_(None),
+                        )
+                    )
+                    .mappings()
+                    .one_or_none()
+                )
+
+                if component_row is None:
+                    return None
+
+                current_version = component_row["current_version"]
+
+                if version is not None:
+                    stmt = select(configs_table).where(
+                        configs_table.c.component_id == component_id,
+                        configs_table.c.version == version,
+                    )
+                    if not include_deleted:
+                        stmt = stmt.where(configs_table.c.stage != DELETED_CONFIG_STAGE)
+                elif label is not None:
+                    stmt = select(configs_table).where(
+                        configs_table.c.component_id == component_id,
+                        configs_table.c.label == label,
+                        configs_table.c.stage != DELETED_CONFIG_STAGE,
+                    )
+                elif current_version is not None:
+                    stmt = select(configs_table).where(
+                        configs_table.c.component_id == component_id,
+                        configs_table.c.version == current_version,
+                        configs_table.c.stage != DELETED_CONFIG_STAGE,
+                    )
+                else:
+                    stmt = (
+                        select(configs_table)
+                        .where(
+                            configs_table.c.component_id == component_id,
+                            configs_table.c.stage != DELETED_CONFIG_STAGE,
+                        )
+                        .order_by(configs_table.c.version.desc())
+                        .limit(1)
+                    )
+
+                row = sess.execute(stmt).mappings().one_or_none()
+                return dict(row) if row else None
+
+        except Exception as e:
+            log_error(f"Error getting config: {str(e)}")
+            raise
+
+    def get_current_config(self, component_id: str) -> Optional[Dict[str, Any]]:
+        component = self.get_component(component_id)
+        if component is None or component.get("current_version") is None:
+            return None
+        return self.get_config(component_id, version=component["current_version"])
+
+    def get_latest_config(self, component_id: str) -> Optional[Dict[str, Any]]:
+        try:
+            configs_table = self._get_table(table_type="component_configs")
+            components_table = self._get_table(table_type="components")
+            if configs_table is None or components_table is None:
+                return None
+            with self.Session() as sess:
+                exists = sess.execute(
+                    select(components_table.c.component_id).where(
+                        components_table.c.component_id == component_id,
+                        components_table.c.deleted_at.is_(None),
+                    )
+                ).fetchone()
+                if exists is None:
+                    return None
+                result = sess.execute(
+                    select(configs_table)
+                    .where(
+                        configs_table.c.component_id == component_id,
+                        configs_table.c.stage != DELETED_CONFIG_STAGE,
+                    )
+                    .order_by(configs_table.c.version.desc())
+                    .limit(1)
+                ).fetchone()
+                return dict(result._mapping) if result else None
+        except Exception as e:
+            log_error(f"Error getting latest config: {str(e)}")
+            raise
+
+    def get_latest_configs(self, component_ids: Set[str]) -> Dict[str, Optional[Dict[str, Any]]]:
+        """Bulk get_latest_config in one query.
+
+        Postgres uses ``SELECT DISTINCT ON (component_id) ... ORDER BY
+        component_id, version DESC`` -- a Postgres-only extension with no
+        Oracle equivalent. Standard ANSI ``ROW_NUMBER() OVER (PARTITION BY
+        ... ORDER BY ... DESC)`` (analytic functions, supported since 8i)
+        does the same job portably: rank each component's visible configs by
+        version descending, then keep rank 1.
+        """
+        results: Dict[str, Optional[Dict[str, Any]]] = {component_id: None for component_id in component_ids}
+        if not component_ids:
+            return results
+        try:
+            configs_table = self._get_table(table_type="component_configs")
+            components_table = self._get_table(table_type="components")
+            if configs_table is None or components_table is None:
+                return results
+
+            with self.Session() as sess:
+                row_number = (
+                    func.row_number()
+                    .over(
+                        partition_by=configs_table.c.component_id,
+                        order_by=configs_table.c.version.desc(),
+                    )
+                    .label("rn")
+                )
+                ranked = (
+                    select(configs_table, row_number)
+                    .join(
+                        components_table,
+                        components_table.c.component_id == configs_table.c.component_id,
+                    )
+                    .where(
+                        configs_table.c.component_id.in_(component_ids),
+                        configs_table.c.stage != DELETED_CONFIG_STAGE,
+                        components_table.c.deleted_at.is_(None),
+                    )
+                    .subquery()
+                )
+                stmt = select(ranked).where(ranked.c.rn == 1)
+                for row in sess.execute(stmt).mappings().all():
+                    row_dict = dict(row)
+                    row_dict.pop("rn", None)
+                    results[row_dict["component_id"]] = row_dict
+            return results
+
+        except Exception as e:
+            log_error(f"Error getting latest configs: {str(e)}")
+            raise
+
+    def upsert_config(
+        self,
+        component_id: str,
+        config: Optional[Dict[str, Any]] = None,
+        version: Optional[int] = None,
+        label: Optional[str] = None,
+        stage: Optional[str] = None,
+        notes: Optional[str] = None,
+        links: Optional[List[Dict[str, Any]]] = None,
+        expected_latest_version: Optional[int] = None,
+        expected_current_version: Optional[int] = None,
+        user_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        if stage is not None and stage not in {"draft", "published"}:
+            raise ValueError(f"Invalid stage: {stage}")
+
+        try:
+            components_table = self._get_table(table_type="components")
+            configs_table = self._get_table(table_type="component_configs", create_table_if_not_found=True)
+            links_table = self._get_table(table_type="component_links", create_table_if_not_found=True)
+
+            if components_table is None:
+                raise ValueError("Components table not found")
+            if configs_table is None:
+                raise ValueError("Component configs table not found")
+
+            with self.Session() as sess, sess.begin():
+                component = sess.execute(
+                    select(components_table.c.component_id, components_table.c.deleted_at, components_table.c.user_id)
+                    .where(components_table.c.component_id == component_id)
+                    .with_for_update()
+                ).fetchone()
+
+                if component is None:
+                    raise ValueError(f"Component {component_id} not found")
+                if user_id is not None and component.user_id != user_id:
+                    raise ValueError(f"Component {component_id} not found")
+                if component.deleted_at is not None:
+                    raise ComponentArchivedError(
+                        f"Component {component_id} is archived; restore it explicitly before writing to it"
+                    )
+
+                if expected_latest_version is not None:
+                    latest_visible = sess.execute(
+                        select(configs_table.c.version)
+                        .where(
+                            configs_table.c.component_id == component_id,
+                            configs_table.c.stage != DELETED_CONFIG_STAGE,
+                        )
+                        .order_by(configs_table.c.version.desc())
+                        .limit(1)
+                    ).scalar()
+                    if latest_visible != expected_latest_version:
+                        raise ComponentVersionConflictError(
+                            f"Component {component_id} latest version is {latest_visible}, "
+                            f"expected {expected_latest_version}"
+                        )
+
+                if links:
+                    self._validate_links_in_session(sess, component_id, links, components_table, links_table)
+
+                if label is not None:
+                    label_query = select(configs_table.c.version).where(
+                        configs_table.c.component_id == component_id,
+                        configs_table.c.label == label,
+                        configs_table.c.stage != DELETED_CONFIG_STAGE,
+                    )
+                    if version is not None:
+                        label_query = label_query.where(configs_table.c.version != version)
+
+                    if sess.execute(label_query).first():
+                        raise ValueError(f"Label '{label}' already exists for {component_id}")
+
+                if links:
+                    for link in links:
+                        if link.get("child_version") is None:
+                            raise ValueError(f"child_version is required for link to {link['child_component_id']}")
+
+                if version is None:
+                    if config is None:
+                        raise ValueError("config is required when creating a new version")
+
+                    if stage is None:
+                        stage = "draft"
+
+                    max_version = sess.execute(
+                        select(configs_table.c.version)
+                        .where(configs_table.c.component_id == component_id)
+                        .order_by(configs_table.c.version.desc())
+                        .limit(1)
+                    ).scalar()
+
+                    final_version = (max_version or 0) + 1
+
+                    try:
+                        sess.execute(
+                            configs_table.insert().values(
+                                component_id=component_id,
+                                version=final_version,
+                                label=label,
+                                stage=stage,
+                                config=config,
+                                notes=notes,
+                                created_at=int(time.time()),
+                            )
+                        )
+                    except IntegrityError as exc:
+                        raise ComponentVersionConflictError(
+                            f"Concurrent append on {component_id}: version {final_version} was taken"
+                        ) from exc
+
+                    if expected_latest_version is not None:
+                        prior = sess.execute(
+                            select(configs_table.c.version)
+                            .where(
+                                configs_table.c.component_id == component_id,
+                                configs_table.c.stage != DELETED_CONFIG_STAGE,
+                                configs_table.c.version < final_version,
+                            )
+                            .order_by(configs_table.c.version.desc())
+                            .limit(1)
+                        ).scalar()
+                        if prior != expected_latest_version:
+                            sess.execute(
+                                configs_table.delete().where(
+                                    configs_table.c.component_id == component_id,
+                                    configs_table.c.version == final_version,
+                                )
+                            )
+                            raise ComponentVersionConflictError(
+                                f"Component {component_id} latest version is {prior}, "
+                                f"expected {expected_latest_version}"
+                            )
+                else:
+                    existing = (
+                        sess.execute(
+                            select(configs_table.c.version, configs_table.c.stage).where(
+                                configs_table.c.component_id == component_id,
+                                configs_table.c.version == version,
+                            )
+                        )
+                        .mappings()
+                        .one_or_none()
+                    )
+
+                    if existing is None or existing["stage"] == DELETED_CONFIG_STAGE:
+                        raise ValueError(f"Config {component_id} v{version} not found")
+
+                    if existing["stage"] == "published":
+                        raise ValueError(f"Cannot update published config {component_id} v{version}")
+
+                    updates: Dict[str, Any] = {"updated_at": int(time.time())}
+                    if label is not None:
+                        updates["label"] = label
+                    if stage is not None:
+                        updates["stage"] = stage
+                    if config is not None:
+                        updates["config"] = config
+                    if notes is not None:
+                        updates["notes"] = notes
+
+                    sess.execute(
+                        configs_table.update()
+                        .where(
+                            configs_table.c.component_id == component_id,
+                            configs_table.c.version == version,
+                        )
+                        .values(**updates)
+                    )
+                    final_version = version
+
+                archived_at = sess.execute(
+                    select(components_table.c.deleted_at).where(components_table.c.component_id == component_id)
+                ).scalar()
+                if archived_at is not None:
+                    raise ComponentArchivedError(
+                        f"Component {component_id} is archived; restore it explicitly before writing to it"
+                    )
+
+                if links is not None and links_table is not None:
+                    sess.execute(
+                        links_table.delete().where(
+                            links_table.c.parent_component_id == component_id,
+                            links_table.c.parent_version == final_version,
+                        )
+                    )
+                    for link in links:
+                        sess.execute(
+                            links_table.insert().values(
+                                parent_component_id=component_id,
+                                parent_version=final_version,
+                                link_kind=link["link_kind"],
+                                link_key=link["link_key"],
+                                child_component_id=link["child_component_id"],
+                                child_version=link["child_version"],
+                                position=link["position"],
+                                meta=link.get("meta"),
+                                created_at=int(time.time()),
+                            )
+                        )
+
+                final_stage = stage if stage is not None else (existing["stage"] if version is not None else "draft")
+
+                if final_stage == "published":
+                    if links_table is not None:
+                        link_rows = sess.execute(
+                            select(
+                                links_table.c.child_component_id,
+                                links_table.c.child_version,
+                                links_table.c.link_kind,
+                            ).where(
+                                links_table.c.parent_component_id == component_id,
+                                links_table.c.parent_version == final_version,
+                            )
+                        ).fetchall()
+                        for link_row in link_rows:
+                            if link_row.link_kind not in PIN_LINK_KINDS:
+                                continue
+                            child_stage = sess.execute(
+                                select(configs_table.c.stage).where(
+                                    configs_table.c.component_id == link_row.child_component_id,
+                                    configs_table.c.version == link_row.child_version,
+                                )
+                            ).scalar()
+                            if child_stage != "published":
+                                raise ComponentDependencyError(
+                                    f"Cannot publish {component_id} v{final_version}: pinned "
+                                    f"{link_row.link_kind} '{link_row.child_component_id}' "
+                                    f"v{link_row.child_version} is {child_stage or 'missing'}; "
+                                    "publish the child first."
+                                )
+                            child_deleted_at = sess.execute(
+                                select(components_table.c.deleted_at)
+                                .where(components_table.c.component_id == link_row.child_component_id)
+                                .with_for_update()
+                            ).scalar()
+                            if child_deleted_at is not None:
+                                raise ComponentDependencyError(
+                                    f"Cannot publish {component_id} v{final_version}: pinned "
+                                    f"{link_row.link_kind} '{link_row.child_component_id}' is archived; "
+                                    "restore it first."
+                                )
+                    projection: Dict[str, Any] = {"current_version": final_version, "updated_at": int(time.time())}
+                    published_config = config
+                    if published_config is None and version is not None:
+                        stored = sess.execute(
+                            select(configs_table.c.config).where(
+                                configs_table.c.component_id == component_id,
+                                configs_table.c.version == final_version,
+                            )
+                        ).scalar()
+                        published_config = stored if isinstance(stored, dict) else None
+                    if isinstance(published_config, dict):
+                        projection.update(project_config_identity(published_config))
+                    projection_update = (
+                        components_table.update()
+                        .where(
+                            components_table.c.component_id == component_id,
+                            components_table.c.deleted_at.is_(None),
+                        )
+                        .values(**projection)
+                    )
+                    if expected_current_version is not None:
+                        projection_update = projection_update.where(
+                            current_version_guard_clause(components_table.c.current_version, expected_current_version)
+                        )
+                    projection_result = sess.execute(projection_update)
+                    if projection_result.rowcount == 0:
+                        still_live = sess.execute(
+                            select(components_table.c.component_id).where(
+                                components_table.c.component_id == component_id,
+                                components_table.c.deleted_at.is_(None),
+                            )
+                        ).scalar_one_or_none()
+                        if still_live is None:
+                            raise ComponentArchivedError(
+                                f"Component {component_id} is archived; restore it explicitly before writing to it"
+                            )
+                        if expected_current_version is not None:
+                            raise ComponentVersionConflictError(
+                                f"Component {component_id} current version changed; expected {expected_current_version}"
+                            )
+
+                written = sess.execute(
+                    select(configs_table).where(
+                        configs_table.c.component_id == component_id,
+                        configs_table.c.version == final_version,
+                    )
+                ).fetchone()
+                if written is None:
+                    raise ValueError(f"Failed to get config {component_id} v{final_version} after upsert")
+                result = dict(written._mapping)
+
+            return result
+
+        except Exception as e:
+            log_error(f"Error upserting config: {str(e)}")
+            raise
+
+    def delete_config(
+        self,
+        component_id: str,
+        version: int,
+        user_id: Optional[str] = None,
+    ) -> bool:
+        try:
+            configs_table = self._get_table(table_type="component_configs")
+            links_table = self._get_table(table_type="component_links")
+            components_table = self._get_table(table_type="components")
+
+            if configs_table is None or components_table is None:
+                return False
+
+            with self.Session() as sess, sess.begin():
+                component_row = sess.execute(
+                    select(
+                        components_table.c.current_version,
+                        components_table.c.user_id,
+                        components_table.c.deleted_at,
+                    )
+                    .where(components_table.c.component_id == component_id)
+                    .with_for_update()
+                ).fetchone()
+
+                if user_id is not None and (component_row is None or component_row.user_id != user_id):
+                    return False
+
+                if component_row is not None and component_row.deleted_at is not None:
+                    raise ComponentArchivedError(
+                        f"Component {component_id} is archived; restore it explicitly before writing to it"
+                    )
+
+                config_row = sess.execute(
+                    select(configs_table.c.stage).where(
+                        configs_table.c.component_id == component_id,
+                        configs_table.c.version == version,
+                    )
+                ).scalar_one_or_none()
+
+                if config_row is None or config_row == DELETED_CONFIG_STAGE:
+                    return False
+
+                if config_row == "published":
+                    raise ComponentDraftRequiredError(
+                        f"Cannot delete published config {component_id} v{version}; only drafts are deletable"
+                    )
+
+                if component_row is not None and component_row.current_version == version:
+                    raise ValueError(f"Cannot delete current config {component_id} v{version}")
+
+                visible = sess.execute(
+                    select(func.count())
+                    .select_from(configs_table)
+                    .where(
+                        configs_table.c.component_id == component_id,
+                        configs_table.c.stage != DELETED_CONFIG_STAGE,
+                    )
+                ).scalar()
+                if (visible or 0) <= 1:
+                    raise ComponentLastConfigError(f"Cannot delete the last visible config of {component_id}")
+
+                pinned_stmt = None
+                if links_table is not None:
+                    archived_parent = (
+                        select(components_table.c.component_id)
+                        .where(
+                            components_table.c.component_id == links_table.c.parent_component_id,
+                            components_table.c.deleted_at.is_not(None),
+                        )
+                        .correlate(links_table)
+                        .exists()
+                    )
+                    tombstoned_parent_version = (
+                        select(configs_table.c.version)
+                        .where(
+                            configs_table.c.component_id == links_table.c.parent_component_id,
+                            configs_table.c.version == links_table.c.parent_version,
+                            configs_table.c.stage == DELETED_CONFIG_STAGE,
+                        )
+                        .correlate(links_table)
+                        .exists()
+                    )
+                    pinned_stmt = select(links_table.c.parent_component_id).where(
+                        links_table.c.child_component_id == component_id,
+                        links_table.c.child_version == version,
+                        ~archived_parent,
+                        ~tombstoned_parent_version,
+                    )
+                    pinned_by = sess.execute(pinned_stmt).fetchall()
+                    if pinned_by:
+                        parents = sorted({r.parent_component_id for r in pinned_by if r.parent_component_id})
+                        raise ComponentDependencyError(
+                            f"Cannot delete {component_id} v{version}: pinned by {', '.join(parents)}"
+                        )
+
+                result = sess.execute(
+                    configs_table.update()
+                    .where(
+                        configs_table.c.component_id == component_id,
+                        configs_table.c.version == version,
+                        configs_table.c.stage == "draft",
+                    )
+                    .values(stage=DELETED_CONFIG_STAGE, label=None, updated_at=int(time.time()))
+                )
+                if result.rowcount == 0:
+                    stage_now = sess.execute(
+                        select(configs_table.c.stage).where(
+                            configs_table.c.component_id == component_id,
+                            configs_table.c.version == version,
+                        )
+                    ).scalar_one_or_none()
+                    if stage_now is None or stage_now == DELETED_CONFIG_STAGE:
+                        return False
+                    raise ComponentDraftRequiredError(
+                        f"Cannot delete published config {component_id} v{version}; only drafts are deletable"
+                    )
+
+                current_after = sess.execute(
+                    select(components_table.c.current_version).where(components_table.c.component_id == component_id)
+                ).scalar_one_or_none()
+                if current_after == version:
+                    raise ValueError(f"Cannot delete current config {component_id} v{version}")
+
+                visible_after = sess.execute(
+                    select(func.count())
+                    .select_from(configs_table)
+                    .where(
+                        configs_table.c.component_id == component_id,
+                        configs_table.c.stage != DELETED_CONFIG_STAGE,
+                    )
+                ).scalar()
+                if (visible_after or 0) < 1:
+                    raise ComponentLastConfigError(f"Cannot delete the last visible config of {component_id}")
+
+                if pinned_stmt is not None:
+                    pinned_after = sess.execute(pinned_stmt).fetchall()
+                    if pinned_after:
+                        parents = sorted({r.parent_component_id for r in pinned_after if r.parent_component_id})
+                        raise ComponentDependencyError(
+                            f"Cannot delete {component_id} v{version}: pinned by {', '.join(parents)}"
+                        )
+
+                if links_table is not None:
+                    sess.execute(
+                        links_table.delete().where(
+                            links_table.c.parent_component_id == component_id,
+                            links_table.c.parent_version == version,
+                        )
+                    )
+
+            return True
+
+        except Exception as e:
+            log_error(f"Error deleting config: {str(e)}")
+            raise
+
+    def list_configs(
+        self,
+        component_id: str,
+        include_config: bool = False,
+        include_deleted: bool = False,
+    ) -> List[Dict[str, Any]]:
+        try:
+            configs_table = self._get_table(table_type="component_configs")
+            components_table = self._get_table(table_type="components")
+
+            if configs_table is None or components_table is None:
+                return []
+
+            with self.Session() as sess:
+                exists = sess.execute(
+                    select(components_table.c.component_id).where(
+                        components_table.c.component_id == component_id,
+                        components_table.c.deleted_at.is_(None),
+                    )
+                ).scalar_one_or_none()
+
+                if exists is None:
+                    return []
+
+                if include_config:
+                    stmt = select(configs_table)
+                else:
+                    stmt = select(
+                        configs_table.c.component_id,
+                        configs_table.c.version,
+                        configs_table.c.label,
+                        configs_table.c.stage,
+                        configs_table.c.notes,
+                        configs_table.c.created_at,
+                        configs_table.c.updated_at,
+                    )
+
+                stmt = stmt.where(configs_table.c.component_id == component_id)
+                if not include_deleted:
+                    stmt = stmt.where(configs_table.c.stage != DELETED_CONFIG_STAGE)
+                stmt = stmt.order_by(configs_table.c.version.desc())
+
+                results = sess.execute(stmt).mappings().all()
+                return [dict(row) for row in results]
+
+        except Exception as e:
+            log_error(f"Error listing configs: {str(e)}")
+            raise
+
+    def set_current_version(
+        self,
+        component_id: str,
+        version: int,
+        expected_current_version: Optional[int] = None,
+        user_id: Optional[str] = None,
+    ) -> bool:
+        try:
+            configs_table = self._get_table(table_type="component_configs")
+            components_table = self._get_table(table_type="components")
+            links_table = self._get_table(table_type="component_links")
+
+            if configs_table is None or components_table is None:
+                return False
+
+            with self.Session() as sess, sess.begin():
+                component_row = sess.execute(
+                    select(components_table.c.component_id, components_table.c.user_id).where(
+                        components_table.c.component_id == component_id,
+                        components_table.c.deleted_at.is_(None),
+                    )
+                ).fetchone()
+
+                if component_row is None:
+                    return False
+
+                if user_id is not None and component_row.user_id != user_id:
+                    return False
+
+                stage = sess.execute(
+                    select(configs_table.c.stage).where(
+                        configs_table.c.component_id == component_id,
+                        configs_table.c.version == version,
+                    )
+                ).scalar_one_or_none()
+
+                if stage is None:
+                    return False
+
+                if stage != "published":
+                    raise ValueError(
+                        f"Cannot set draft config {component_id} v{version} as current. "
+                        "Only published configs can be current."
+                    )
+
+                if expected_current_version is not None:
+                    pointer = sess.execute(
+                        select(components_table.c.current_version).where(
+                            components_table.c.component_id == component_id
+                        )
+                    ).scalar()
+                    if not current_version_matches(pointer, expected_current_version):
+                        raise ComponentVersionConflictError(
+                            f"Component {component_id} current version is {pointer}, "
+                            f"expected {expected_current_version}"
+                        )
+
+                pointer_update = (
+                    components_table.update()
+                    .where(
+                        components_table.c.component_id == component_id,
+                        components_table.c.deleted_at.is_(None),
+                    )
+                    .values(current_version=version, updated_at=int(time.time()))
+                )
+                if user_id is not None:
+                    pointer_update = pointer_update.where(components_table.c.user_id == user_id)
+                if expected_current_version is not None:
+                    pointer_update = pointer_update.where(
+                        current_version_guard_clause(components_table.c.current_version, expected_current_version)
+                    )
+                result = sess.execute(pointer_update)
+
+                if result.rowcount == 0:
+                    still_live_stmt = select(components_table.c.component_id).where(
+                        components_table.c.component_id == component_id,
+                        components_table.c.deleted_at.is_(None),
+                    )
+                    if user_id is not None:
+                        still_live_stmt = still_live_stmt.where(components_table.c.user_id == user_id)
+                    still_live = sess.execute(still_live_stmt).scalar_one_or_none()
+                    if still_live is None:
+                        return False
+                    raise ComponentVersionConflictError(
+                        f"Component {component_id} current version changed; expected {expected_current_version}"
+                    )
+
+                if links_table is not None:
+                    pinned = sess.execute(
+                        select(links_table.c.child_component_id).where(
+                            links_table.c.parent_component_id == component_id,
+                            links_table.c.parent_version == version,
+                            links_table.c.link_kind.in_(PIN_LINK_KINDS),
+                        )
+                    ).fetchall()
+                    child_ids = {row.child_component_id for row in pinned if row.child_component_id}
+                    if child_ids:
+                        child_rows = sess.execute(
+                            select(components_table.c.component_id, components_table.c.deleted_at)
+                            .where(components_table.c.component_id.in_(child_ids))
+                            .with_for_update()
+                        ).fetchall()
+                        archived_children = sorted(
+                            str(row.component_id) for row in child_rows if row.deleted_at is not None
+                        )
+                        if archived_children:
+                            raise ComponentDependencyError(
+                                f"Cannot make {component_id} v{version} current: pinned child(ren) "
+                                f"{', '.join(archived_children)} are archived. Restore them first."
+                            )
+
+            log_debug(f"Set {component_id} current version to {version}")
+            return True
+
+        except Exception as e:
+            log_error(f"Error setting current version: {str(e)}")
+            raise
+
+    # --- Component Links ---
+    def get_links(
+        self,
+        component_id: str,
+        version: int,
+        link_kind: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        try:
+            table = self._get_table(table_type="component_links")
+            if table is None:
+                return []
+
+            with self.Session() as sess:
+                stmt = (
+                    select(table)
+                    .where(
+                        table.c.parent_component_id == component_id,
+                        table.c.parent_version == version,
+                    )
+                    .order_by(table.c.position)
+                )
+                if link_kind is not None:
+                    stmt = stmt.where(table.c.link_kind == link_kind)
+
+                rows = sess.execute(stmt).mappings().all()
+                return [dict(r) for r in rows]
+
+        except Exception as e:
+            log_error(f"Error getting links: {str(e)}")
+            raise
+
+    def get_dependents(
+        self,
+        component_id: str,
+        version: Optional[int] = None,
+        active_parents_only: bool = False,
+        parent_user_id: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        try:
+            table = self._get_table(table_type="component_links")
+            if table is None:
+                return []
+            components_table = self._get_table(table_type="components")
+            configs_table = self._get_table(table_type="component_configs")
+
+            with self.Session() as sess:
+                return self._dependents_in_session(
+                    sess,
+                    table,
+                    components_table,
+                    configs_table,
+                    component_id,
+                    version=version,
+                    active_parents_only=active_parents_only,
+                    parent_user_id=parent_user_id,
+                )
+
+        except Exception as e:
+            log_error(f"Error getting dependents: {str(e)}")
+            raise
+
+    def _dependents_in_session(
+        self,
+        sess,
+        links_table,
+        components_table,
+        configs_table,
+        component_id: str,
+        version: Optional[int] = None,
+        active_parents_only: bool = False,
+        parent_user_id: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        if links_table is None:
+            return []
+        stmt = select(links_table).where(links_table.c.child_component_id == component_id)
+        if version is not None:
+            stmt = stmt.where(links_table.c.child_version == version)
+        if active_parents_only and components_table is not None and configs_table is not None:
+            stmt = (
+                stmt.join(
+                    components_table,
+                    components_table.c.component_id == links_table.c.parent_component_id,
+                )
+                .join(
+                    configs_table,
+                    and_(
+                        configs_table.c.component_id == links_table.c.parent_component_id,
+                        configs_table.c.version == links_table.c.parent_version,
+                    ),
+                )
+                .where(
+                    components_table.c.deleted_at.is_(None),
+                    configs_table.c.stage != DELETED_CONFIG_STAGE,
+                )
+            )
+            if parent_user_id is not None:
+                stmt = stmt.where(
+                    or_(
+                        components_table.c.user_id == parent_user_id,
+                        components_table.c.user_id.is_(None),
+                    )
+                )
+        elif parent_user_id is not None and components_table is not None:
+            stmt = stmt.join(
+                components_table,
+                components_table.c.component_id == links_table.c.parent_component_id,
+            ).where(
+                or_(
+                    components_table.c.user_id == parent_user_id,
+                    components_table.c.user_id.is_(None),
+                )
+            )
+
+        results = sess.execute(stmt).fetchall()
+        return [{k: v for k, v in row._mapping.items() if k in links_table.c.keys()} for row in results]
+
+    def _refuse_if_dependents(
+        self,
+        sess,
+        links_table,
+        components_table,
+        configs_table,
+        component_id: str,
+        active_parents_only: bool,
+        parent_user_id: Optional[str] = None,
+    ) -> None:
+        dependents = self._dependents_in_session(
+            sess,
+            links_table,
+            components_table,
+            configs_table,
+            component_id,
+            active_parents_only=active_parents_only,
+            parent_user_id=parent_user_id,
+        )
+        if dependents:
+            parents = sorted({str(d["parent_component_id"]) for d in dependents if d.get("parent_component_id")})
+            raise ComponentDependencyError(
+                f"Cannot delete {component_id}: referenced by {', '.join(str(x) for x in parents)}"
+            )
+
+    def _validate_links_in_session(
+        self,
+        sess,
+        parent_component_id: str,
+        links: List[Dict[str, Any]],
+        components_table,
+        links_table,
+    ) -> None:
+        if components_table is None:
+            return
+
+        child_ids = {link["child_component_id"] for link in links if link.get("child_component_id")}
+        if parent_component_id in child_ids:
+            raise ComponentCycleError(f"Component {parent_component_id} cannot reference itself")
+
+        if child_ids:
+            rows = sess.execute(
+                select(components_table.c.component_id, components_table.c.deleted_at).where(
+                    components_table.c.component_id.in_(child_ids)
+                )
+            ).fetchall()
+            found = {r.component_id: r.deleted_at for r in rows}
+            for child_id in sorted(child_ids):
+                if child_id not in found:
+                    continue
+                if found[child_id] is not None:
+                    raise ComponentArchivedError(f"Cannot link {parent_component_id} to archived component {child_id}")
+
+        if links_table is None or not child_ids:
+            return
+        visited: set = set()
+        frontier = list(child_ids)
+        while frontier:
+            current = frontier.pop()
+            if current in visited:
+                continue
+            visited.add(current)
+            rows = sess.execute(
+                select(links_table.c.child_component_id).where(links_table.c.parent_component_id == current)
+            ).fetchall()
+            for row in rows:
+                nxt = row.child_component_id
+                if nxt == parent_component_id:
+                    raise ComponentCycleError(
+                        f"Linking {parent_component_id} -> {current} would close a reference cycle"
+                    )
+                if nxt not in visited:
+                    frontier.append(nxt)
+
+    def _resolve_version(
+        self,
+        component_id: str,
+        version: Optional[int],
+    ) -> Optional[int]:
+        if version is not None:
+            return version
+
+        try:
+            components_table = self._get_table(table_type="components")
+            if components_table is None:
+                return None
+
+            with self.Session() as sess:
+                return sess.execute(
+                    select(components_table.c.current_version).where(
+                        components_table.c.component_id == component_id,
+                        components_table.c.deleted_at.is_(None),
+                    )
+                ).scalar_one_or_none()
+
+        except Exception as e:
+            log_error(f"Error resolving version: {str(e)}")
+            raise
+
+    def load_component_graph(
+        self,
+        component_id: str,
+        version: Optional[int] = None,
+        label: Optional[str] = None,
+        *,
+        _visited: Optional[Set[str]] = None,
+        _max_depth: int = 50,
+    ) -> Optional[Dict[str, Any]]:
+        try:
+            if _max_depth <= 0:
+                return None
+
+            if _visited is None:
+                _visited = set()
+            if component_id in _visited:
+                return {
+                    "component": {"component_id": component_id},
+                    "config": None,
+                    "children": [],
+                    "resolved_versions": {},
+                    "cycle_detected": True,
+                }
+            _visited = _visited | {component_id}
+
+            component = self.get_component(component_id)
+            if component is None:
+                return None
+
+            resolved_version = self._resolve_version(component_id, version)
+            if resolved_version is None:
+                return None
+
+            config = self.get_config(component_id, version=resolved_version)
+            if config is None:
+                return None
+
+            links = self.get_links(component_id, resolved_version)
+
+            children: List[Dict[str, Any]] = []
+            resolved_versions: Dict[str, Optional[int]] = {component_id: resolved_version}
+
+            for link in links:
+                child_id = link["child_component_id"]
+                child_ver = link.get("child_version")
+
+                resolved_child_ver = self._resolve_version(child_id, child_ver)
+                resolved_versions[child_id] = resolved_child_ver
+
+                if resolved_child_ver is None:
+                    children.append(
+                        {
+                            "link": link,
+                            "graph": None,
+                            "error": "child_version_unresolvable",
+                        }
+                    )
+                    continue
+
+                child_graph = self.load_component_graph(
+                    child_id,
+                    version=resolved_child_ver,
+                    _visited=_visited,
+                    _max_depth=_max_depth - 1,
+                )
+
+                if child_graph:
+                    resolved_versions.update(child_graph.get("resolved_versions", {}))
+
+                children.append({"link": link, "graph": child_graph})
+
+            return {
+                "component": component,
+                "config": config,
+                "children": children,
+                "resolved_versions": resolved_versions,
+            }
+
+        except Exception as e:
+            log_error(f"Error loading component graph: {str(e)}")
+            raise

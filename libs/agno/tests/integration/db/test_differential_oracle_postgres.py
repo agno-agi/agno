@@ -12,11 +12,11 @@ introduces no new production boundary. Both modules skip cleanly (not error)
 when their server is unreachable, since no Oracle container exists in public
 CI (ADR 0009).
 
-Coverage in this file: the domains tickets 03-08 deliver (sessions, runs,
+Coverage in this file: the domains tickets 03-09 deliver (sessions, runs,
 memory, metrics, knowledge, eval runs, traces, learnings, schedules,
-approvals, auth tokens). Later tickets extend this file with their own
-domains as they land, rather than each inventing a separate differential
-suite.
+approvals, auth tokens, the component catalog). Later tickets extend this
+file with their own domains as they land, rather than each inventing a
+separate differential suite.
 """
 
 import uuid
@@ -26,6 +26,15 @@ from typing import Any, Dict
 import pytest
 from sqlalchemy import create_engine, text
 
+from agno.db.base import (
+    ComponentArchivedError,
+    ComponentCycleError,
+    ComponentDependencyError,
+    ComponentDraftRequiredError,
+    ComponentLastConfigError,
+    ComponentType,
+    ComponentVersionConflictError,
+)
 from agno.db.oracle import OracleDb
 from agno.db.postgres import PostgresDb
 from agno.db.schemas.knowledge import KnowledgeRow
@@ -87,6 +96,9 @@ def oracle_db(_servers_up):
         "schedule_runs_table": f"diff_sched_runs_{suffix}",
         "approvals_table": f"diff_appr_{suffix}",
         "auth_tokens_table": f"diff_auth_{suffix}",
+        "components_table": f"diff_comp_{suffix}",
+        "component_configs_table": f"diff_comp_cfg_{suffix}",
+        "component_links_table": f"diff_comp_link_{suffix}",
     }
     database = OracleDb(db_url=ORACLE_URL, id=f"diff-oracle-{suffix}", **tables)
     yield database
@@ -641,6 +653,195 @@ def test_approvals_and_auth_tokens_match_postgres(pg_db, oracle_db):
     """One scenario covering ticket 08's domain, compared directly."""
     pg_result = _run_approvals_auth_tokens_scenario(pg_db)
     oracle_result = _run_approvals_auth_tokens_scenario(oracle_db)
+
+    assert oracle_result == pg_result, (
+        f"Oracle diverged from Postgres.\nPostgres: {pg_result}\nOracle:   {oracle_result}"
+    )
+
+
+def _run_components_scenario(db) -> Dict[str, Any]:
+    """Ticket 09's domain: the component catalog's optimistic concurrency
+    guard, all six typed exceptions, composite-key enforcement and cycle
+    detection -- compared directly against PostgreSQL, the only reference
+    implementation this domain has (no MySQL counterpart).
+    """
+    component_a, config_a = db.create_component_with_config(
+        component_id="diff-agent-a",
+        component_type=ComponentType.AGENT,
+        name="Agent A",
+        config={"model": "gpt-5.6-luna"},
+        stage="draft",
+    )
+    published_v1 = db.upsert_config("diff-agent-a", version=1, stage="published")
+    published_v2 = db.upsert_config("diff-agent-a", config={"model": "v2"}, stage="published")
+
+    version_conflict = False
+    try:
+        db.set_current_version("diff-agent-a", version=1, expected_current_version=99)
+    except ComponentVersionConflictError:
+        version_conflict = True
+    after_failed_cas = db.get_component("diff-agent-a")["current_version"]
+
+    rolled_back = db.set_current_version("diff-agent-a", version=1, expected_current_version=2)
+    after_rollback = db.get_component("diff-agent-a")["current_version"]
+
+    component_b, _ = db.create_component_with_config(
+        component_id="diff-agent-b", component_type=ComponentType.AGENT, name="B", config={"x": 1}, stage="draft"
+    )
+    db.delete_component("diff-agent-b", hard_delete=False)
+    archived_error = False
+    try:
+        db.upsert_config("diff-agent-b", config={"y": 2}, stage="draft")
+    except ComponentArchivedError:
+        archived_error = True
+    db.restore_component("diff-agent-b")
+    restored_deleted_at = db.get_component("diff-agent-b")["deleted_at"]
+
+    component_c, config_c = db.create_component_with_config(
+        component_id="diff-team-c",
+        component_type=ComponentType.TEAM,
+        name="Team C",
+        config={"members": ["diff-agent-a"]},
+        stage="published",
+        links=[
+            {
+                "link_kind": "member",
+                "link_key": "m0",
+                "child_component_id": "diff-agent-a",
+                "child_version": 2,
+                "position": 0,
+            }
+        ],
+    )
+    dependents = sorted(d["parent_component_id"] for d in db.get_dependents("diff-agent-a"))
+
+    dependency_error = False
+    try:
+        db.delete_component("diff-agent-a", hard_delete=False)
+    except ComponentDependencyError:
+        dependency_error = True
+
+    cycle_error = False
+    try:
+        db.upsert_config(
+            "diff-agent-a",
+            config={"model": "v3"},
+            stage="draft",
+            links=[
+                {
+                    "link_kind": "member",
+                    "link_key": "back",
+                    "child_component_id": "diff-team-c",
+                    "child_version": 1,
+                    "position": 0,
+                }
+            ],
+        )
+    except ComponentCycleError:
+        cycle_error = True
+
+    draft_required_error = False
+    try:
+        db.delete_config("diff-agent-a", version=1)
+    except ComponentDraftRequiredError:
+        draft_required_error = True
+
+    component_d, _ = db.create_component_with_config(
+        component_id="diff-agent-d", component_type=ComponentType.AGENT, name="D", config={"x": 1}, stage="draft"
+    )
+    last_config_error = False
+    try:
+        db.delete_config("diff-agent-d", version=1)
+    except ComponentLastConfigError:
+        last_config_error = True
+
+    db.upsert_config("diff-agent-d", config={"x": 2}, stage="draft")
+    deleted_config = db.delete_config("diff-agent-d", version=1)
+    remaining_configs = sorted(c["version"] for c in db.list_configs("diff-agent-d"))
+
+    pk_violation = False
+    try:
+        configs_table = db._get_table(table_type="component_configs")
+        with db.Session() as sess, sess.begin():
+            sess.execute(
+                configs_table.insert().values(
+                    component_id="diff-agent-d",
+                    version=2,
+                    label=None,
+                    stage="draft",
+                    config={},
+                    notes=None,
+                    created_at=0,
+                )
+            )
+    except Exception:
+        pk_violation = True
+
+    fk_violation = False
+    try:
+        links_table = db._get_table(table_type="component_links")
+        with db.Session() as sess, sess.begin():
+            sess.execute(
+                links_table.insert().values(
+                    parent_component_id="diff-agent-d",
+                    parent_version=999,
+                    link_kind="member",
+                    link_key="bad",
+                    child_component_id="diff-agent-a",
+                    child_version=2,
+                    position=0,
+                    meta=None,
+                    created_at=0,
+                )
+            )
+    except Exception:
+        fk_violation = True
+
+    graph = db.load_component_graph("diff-team-c")
+    graph_child_id = graph["children"][0]["graph"]["component"]["component_id"]
+
+    _, list_total = db.list_components(component_type=ComponentType.AGENT)
+
+    latest_bulk = db.get_latest_configs({"diff-agent-a", "diff-agent-d", "does-not-exist"})
+
+    hard_deleted = db.delete_component("diff-team-c", hard_delete=True, require_no_dependents=False)
+    team_c_gone = db.get_component("diff-team-c", include_deleted=True)
+
+    return {
+        "component_a_current_version": component_a["current_version"],
+        "config_a_stage": config_a["stage"],
+        "published_v1_stage": published_v1["stage"],
+        "published_v2_version": published_v2["version"],
+        "version_conflict_raised": version_conflict,
+        "after_failed_cas": after_failed_cas,
+        "rolled_back": rolled_back,
+        "after_rollback": after_rollback,
+        "archived_error_raised": archived_error,
+        "restored_deleted_at": restored_deleted_at,
+        "config_c_stage": config_c["stage"],
+        "dependents": dependents,
+        "dependency_error_raised": dependency_error,
+        "cycle_error_raised": cycle_error,
+        "draft_required_error_raised": draft_required_error,
+        "last_config_error_raised": last_config_error,
+        "deleted_config": deleted_config,
+        "remaining_configs": remaining_configs,
+        "pk_violation_raised": pk_violation,
+        "fk_violation_raised": fk_violation,
+        "graph_child_id": graph_child_id,
+        "list_total_at_least_three": list_total >= 3,
+        "latest_bulk_agent_a_version": latest_bulk["diff-agent-a"]["version"],
+        "latest_bulk_agent_d_version": latest_bulk["diff-agent-d"]["version"],
+        "latest_bulk_missing": latest_bulk["does-not-exist"],
+        "hard_deleted": hard_deleted,
+        "team_c_gone": team_c_gone,
+    }
+
+
+def test_components_match_postgres(pg_db, oracle_db):
+    """One scenario covering ticket 09's domain, compared directly."""
+    pg_result = _run_components_scenario(pg_db)
+    oracle_result = _run_components_scenario(oracle_db)
 
     assert oracle_result == pg_result, (
         f"Oracle diverged from Postgres.\nPostgres: {pg_result}\nOracle:   {oracle_result}"
