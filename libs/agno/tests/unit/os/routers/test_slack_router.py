@@ -407,7 +407,7 @@ class TestNonStreamingRoutes:
             patch("agno.os.interfaces.slack.router.verify_slack_signature", return_value=True),
             patch("agno.os.interfaces.slack.router.SlackTools", return_value=mock_slack),
             patch("agno.os.interfaces.slack.event_handler.AsyncWebClient", return_value=make_async_client_mock()),
-            patch("agno.os.interfaces.slack.helpers.httpx.AsyncClient", return_value=mock_httpx),
+            patch("agno.os.interfaces.slack.helpers.httpx2.AsyncClient", return_value=mock_httpx),
         ):
             app = build_app(agent_mock)
             from fastapi.testclient import TestClient
@@ -441,7 +441,7 @@ class TestNonStreamingRoutes:
             patch("agno.os.interfaces.slack.router.verify_slack_signature", return_value=True),
             patch("agno.os.interfaces.slack.router.SlackTools", return_value=mock_slack),
             patch("agno.os.interfaces.slack.event_handler.AsyncWebClient", return_value=make_async_client_mock()),
-            patch("agno.os.interfaces.slack.helpers.httpx.AsyncClient", return_value=mock_httpx),
+            patch("agno.os.interfaces.slack.helpers.httpx2.AsyncClient", return_value=mock_httpx),
         ):
             app = build_app(agent_mock)
             from fastapi.testclient import TestClient
@@ -588,7 +588,7 @@ class TestRouterWiring:
             patch("agno.os.interfaces.slack.router.verify_slack_signature", return_value=True),
             patch("agno.os.interfaces.slack.router.SlackTools", return_value=mock_slack),
             patch("agno.os.interfaces.slack.event_handler.AsyncWebClient", return_value=make_async_client_mock()),
-            patch("agno.os.interfaces.slack.helpers.httpx.AsyncClient", return_value=make_httpx_mock(b"file-data")),
+            patch("agno.os.interfaces.slack.helpers.httpx2.AsyncClient", return_value=make_httpx_mock(b"file-data")),
         ):
             app = build_app(agent_mock, reply_to_mentions_only=False)
             from fastapi.testclient import TestClient

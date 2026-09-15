@@ -16,7 +16,7 @@ import argparse
 import json
 from typing import Any
 
-import httpx
+import httpx2
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
@@ -93,7 +93,7 @@ def execute_pending_tools(requirements: list[dict[str, Any]]) -> None:
 
 def run_demo() -> None:
     """Pause for external execution, attach the result, and continue the run."""
-    with httpx.Client(base_url=BASE_URL, timeout=120.0) as client:
+    with httpx2.Client(base_url=BASE_URL, timeout=120.0) as client:
         response = client.post(
             f"/teams/{TEAM_ID}/runs",
             data={

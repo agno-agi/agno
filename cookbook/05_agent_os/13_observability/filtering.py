@@ -14,7 +14,7 @@ Try: Change the agent IDs in the OR expression and compare both result counts
 import asyncio
 import json
 
-import httpx
+import httpx2
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.filters import AND, EQ, OR
@@ -89,8 +89,8 @@ async def run_filtering_demo() -> None:
     if python_count < 2:
         raise RuntimeError("The Python FilterExpr query did not find both traces")
 
-    transport = httpx.ASGITransport(app=app)
-    async with httpx.AsyncClient(
+    transport = httpx2.ASGITransport(app=app)
+    async with httpx2.AsyncClient(
         transport=transport,
         base_url="http://agent-os",
     ) as client:

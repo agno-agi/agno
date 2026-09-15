@@ -12,7 +12,7 @@ import os
 import uuid
 from typing import Any, Dict
 
-import httpx
+import httpx2
 import pytest
 
 from .test_utils import REQUEST_TIMEOUT, generate_jwt_token
@@ -31,9 +31,9 @@ def test_chat_id() -> int:
 
 
 @pytest.fixture(scope="module")
-def client(gateway_url: str, test_user_id: str) -> httpx.Client:
+def client(gateway_url: str, test_user_id: str) -> httpx2.Client:
     """Create an HTTP client for the gateway server."""
-    return httpx.Client(
+    return httpx2.Client(
         base_url=gateway_url,
         timeout=REQUEST_TIMEOUT,
         headers={"Authorization": f"Bearer {generate_jwt_token(audience='gateway-os', user_id=test_user_id)}"},
@@ -137,11 +137,11 @@ def make_group_mention_update(text: str, chat_id: int, user_id: str, bot_usernam
 
 
 def post_telegram_webhook(
-    client: httpx.Client,
+    client: httpx2.Client,
     endpoint: str,
     body: Dict[str, Any],
     secret_token: str = None,
-) -> httpx.Response:
+) -> httpx2.Response:
     """Post a Telegram webhook update with optional secret token header."""
     headers = {"Content-Type": "application/json"}
     if secret_token:
@@ -157,25 +157,25 @@ def post_telegram_webhook(
 class TestTelegramStatus:
     """Test Telegram status endpoints."""
 
-    def test_status_local_agent(self, client: httpx.Client):
+    def test_status_local_agent(self, client: httpx2.Client):
         """Test status endpoint for local agent Telegram interface."""
         response = client.get("/telegram/local/status")
         assert response.status_code == 200
         assert response.json() == {"status": "available"}
 
-    def test_status_remote_agent(self, client: httpx.Client):
+    def test_status_remote_agent(self, client: httpx2.Client):
         """Test status endpoint for remote agent Telegram interface."""
         response = client.get("/telegram/remote/status")
         assert response.status_code == 200
         assert response.json() == {"status": "available"}
 
-    def test_status_team(self, client: httpx.Client):
+    def test_status_team(self, client: httpx2.Client):
         """Test status endpoint for team Telegram interface."""
         response = client.get("/telegram/team/status")
         assert response.status_code == 200
         assert response.json() == {"status": "available"}
 
-    def test_status_workflow(self, client: httpx.Client):
+    def test_status_workflow(self, client: httpx2.Client):
         """Test status endpoint for workflow Telegram interface."""
         response = client.get("/telegram/workflow/status")
         assert response.status_code == 200
@@ -191,7 +191,7 @@ class TestTelegramWebhookProcessing:
     """Test Telegram webhook event handling for agents, teams, and workflows."""
 
     def test_text_message_local_agent(
-        self, client: httpx.Client, telegram_secret_token: str, test_user_id: str, test_chat_id: int
+        self, client: httpx2.Client, telegram_secret_token: str, test_user_id: str, test_chat_id: int
     ):
         """Test text message processing for local agent."""
         body = make_text_update("Hello agent", test_chat_id, test_user_id)
@@ -202,7 +202,7 @@ class TestTelegramWebhookProcessing:
         assert data["status"] == "processing"
 
     def test_text_message_remote_agent(
-        self, client: httpx.Client, telegram_secret_token: str, test_user_id: str, test_chat_id: int
+        self, client: httpx2.Client, telegram_secret_token: str, test_user_id: str, test_chat_id: int
     ):
         """Test text message processing for remote agent."""
         body = make_text_update("Hello remote agent", test_chat_id, test_user_id)
@@ -213,7 +213,7 @@ class TestTelegramWebhookProcessing:
         assert data["status"] == "processing"
 
     def test_text_message_team(
-        self, client: httpx.Client, telegram_secret_token: str, test_user_id: str, test_chat_id: int
+        self, client: httpx2.Client, telegram_secret_token: str, test_user_id: str, test_chat_id: int
     ):
         """Test text message processing for team."""
         body = make_text_update("Hello team", test_chat_id, test_user_id)
@@ -224,7 +224,7 @@ class TestTelegramWebhookProcessing:
         assert data["status"] == "processing"
 
     def test_text_message_workflow(
-        self, client: httpx.Client, telegram_secret_token: str, test_user_id: str, test_chat_id: int
+        self, client: httpx2.Client, telegram_secret_token: str, test_user_id: str, test_chat_id: int
     ):
         """Test text message processing for workflow."""
         body = make_text_update("Run workflow", test_chat_id, test_user_id)
@@ -234,7 +234,7 @@ class TestTelegramWebhookProcessing:
         data = response.json()
         assert data["status"] == "processing"
 
-    def test_no_message_returns_ignored(self, client: httpx.Client, telegram_secret_token: str):
+    def test_no_message_returns_ignored(self, client: httpx2.Client, telegram_secret_token: str):
         """Test that updates without a message field are ignored."""
         body = {"update_id": uuid.uuid4().int % 10**9}
         response = post_telegram_webhook(client, "/telegram/local/webhook", body, telegram_secret_token)
@@ -242,7 +242,7 @@ class TestTelegramWebhookProcessing:
         assert response.status_code == 200
         assert response.json() == {"status": "ignored"}
 
-    def test_callback_query_ignored(self, client: httpx.Client, telegram_secret_token: str):
+    def test_callback_query_ignored(self, client: httpx2.Client, telegram_secret_token: str):
         """Test that callback queries are ignored."""
         body = {"update_id": uuid.uuid4().int % 10**9, "callback_query": {"id": "123", "data": "action"}}
         response = post_telegram_webhook(client, "/telegram/local/webhook", body, telegram_secret_token)
@@ -250,7 +250,7 @@ class TestTelegramWebhookProcessing:
         assert response.status_code == 200
         assert response.json() == {"status": "ignored"}
 
-    def test_bot_message_ignored(self, client: httpx.Client, telegram_secret_token: str, test_chat_id: int):
+    def test_bot_message_ignored(self, client: httpx2.Client, telegram_secret_token: str, test_chat_id: int):
         """Test that messages from bots are accepted at webhook level (filtered in background)."""
         body = make_bot_message_update(test_chat_id)
         response = post_telegram_webhook(client, "/telegram/local/webhook", body, telegram_secret_token)
@@ -270,7 +270,7 @@ class TestTelegramCommands:
     """Test built-in Telegram bot commands."""
 
     def test_start_command(
-        self, client: httpx.Client, telegram_secret_token: str, test_user_id: str, test_chat_id: int
+        self, client: httpx2.Client, telegram_secret_token: str, test_user_id: str, test_chat_id: int
     ):
         """Test /start command is processed."""
         body = make_text_update("/start", test_chat_id, test_user_id)
@@ -279,7 +279,9 @@ class TestTelegramCommands:
         assert response.status_code == 200
         assert response.json()["status"] == "processing"
 
-    def test_help_command(self, client: httpx.Client, telegram_secret_token: str, test_user_id: str, test_chat_id: int):
+    def test_help_command(
+        self, client: httpx2.Client, telegram_secret_token: str, test_user_id: str, test_chat_id: int
+    ):
         """Test /help command is processed."""
         body = make_text_update("/help", test_chat_id, test_user_id)
         response = post_telegram_webhook(client, "/telegram/local/webhook", body, telegram_secret_token)
@@ -287,7 +289,7 @@ class TestTelegramCommands:
         assert response.status_code == 200
         assert response.json()["status"] == "processing"
 
-    def test_new_command(self, client: httpx.Client, telegram_secret_token: str, test_user_id: str, test_chat_id: int):
+    def test_new_command(self, client: httpx2.Client, telegram_secret_token: str, test_user_id: str, test_chat_id: int):
         """Test /new command is processed."""
         body = make_text_update("/new", test_chat_id, test_user_id)
         response = post_telegram_webhook(client, "/telegram/local/webhook", body, telegram_secret_token)
@@ -305,7 +307,7 @@ class TestTelegramMedia:
     """Test Telegram media message handling."""
 
     def test_photo_message(
-        self, client: httpx.Client, telegram_secret_token: str, test_user_id: str, test_chat_id: int
+        self, client: httpx2.Client, telegram_secret_token: str, test_user_id: str, test_chat_id: int
     ):
         """Test photo message is accepted for processing."""
         body = make_photo_update(test_chat_id, test_user_id, caption="What is this?")
@@ -315,7 +317,7 @@ class TestTelegramMedia:
         assert response.json()["status"] == "processing"
 
     def test_document_message(
-        self, client: httpx.Client, telegram_secret_token: str, test_user_id: str, test_chat_id: int
+        self, client: httpx2.Client, telegram_secret_token: str, test_user_id: str, test_chat_id: int
     ):
         """Test document message is accepted for processing."""
         body = make_document_update(test_chat_id, test_user_id, file_name="report.pdf")
@@ -325,7 +327,7 @@ class TestTelegramMedia:
         assert response.json()["status"] == "processing"
 
     def test_unsupported_file_type(
-        self, client: httpx.Client, telegram_secret_token: str, test_user_id: str, test_chat_id: int
+        self, client: httpx2.Client, telegram_secret_token: str, test_user_id: str, test_chat_id: int
     ):
         """Test unsupported file type (.xls) is accepted (warning sent in background)."""
         body = make_document_update(
@@ -337,7 +339,7 @@ class TestTelegramMedia:
         assert response.json()["status"] == "processing"
 
     def test_oversized_file(
-        self, client: httpx.Client, telegram_secret_token: str, test_user_id: str, test_chat_id: int
+        self, client: httpx2.Client, telegram_secret_token: str, test_user_id: str, test_chat_id: int
     ):
         """Test oversized file (>20MB) is accepted (warning sent in background)."""
         body = make_document_update(
@@ -361,7 +363,7 @@ class TestTelegramMedia:
 class TestTelegramSecurity:
     """Test Telegram webhook security measures."""
 
-    def test_missing_secret_token_in_prod(self, client: httpx.Client):
+    def test_missing_secret_token_in_prod(self, client: httpx2.Client):
         """Test that requests without secret token are rejected in production mode."""
         # This test only applies when APP_ENV != development
         # The gateway may be running in development mode, so we test the response pattern
@@ -371,7 +373,7 @@ class TestTelegramSecurity:
         # In development mode: 200 (bypassed), in production mode: 403
         assert response.status_code in (200, 403)
 
-    def test_invalid_secret_token(self, client: httpx.Client):
+    def test_invalid_secret_token(self, client: httpx2.Client):
         """Test that requests with invalid secret token are rejected in production mode."""
         body = make_text_update("Hello", 12345, "67890")
         response = post_telegram_webhook(client, "/telegram/local/webhook", body, secret_token="wrong-secret")
@@ -388,7 +390,7 @@ class TestTelegramSecurity:
 class TestTelegramContextPreservation:
     """Test that conversation context is preserved across messages."""
 
-    def test_sequential_messages_same_chat(self, client: httpx.Client, telegram_secret_token: str, test_user_id: str):
+    def test_sequential_messages_same_chat(self, client: httpx2.Client, telegram_secret_token: str, test_user_id: str):
         """Test that multiple messages in the same private chat use the same session."""
         chat_id = uuid.uuid4().int % 10**9
 
@@ -403,7 +405,7 @@ class TestTelegramContextPreservation:
         assert resp2.status_code == 200
 
     def test_different_chats_have_separate_sessions(
-        self, client: httpx.Client, telegram_secret_token: str, test_user_id: str
+        self, client: httpx2.Client, telegram_secret_token: str, test_user_id: str
     ):
         """Test that different chats have separate sessions."""
         chat_id_1 = uuid.uuid4().int % 10**9
@@ -427,7 +429,7 @@ class TestTelegramMultiBot:
     """Test multiple Telegram interface instances on different prefixes."""
 
     def test_different_prefixes_both_respond(
-        self, client: httpx.Client, telegram_secret_token: str, test_user_id: str, test_chat_id: int
+        self, client: httpx2.Client, telegram_secret_token: str, test_user_id: str, test_chat_id: int
     ):
         """Test that two Telegram instances on different prefixes both work."""
         body = make_text_update("Hello", test_chat_id, test_user_id)

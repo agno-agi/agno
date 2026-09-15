@@ -14,7 +14,7 @@ import asyncio
 import os
 import sys
 
-import httpx
+import httpx2
 from agno.agent import Agent, AgentFactory
 from agno.db.sqlite import SqliteDb
 from agno.factory import RequestContext
@@ -77,7 +77,7 @@ def run_demo() -> None:
         raise RuntimeError("Factory callable kind detection is incorrect")
 
     runs: dict[str, dict] = {}
-    with httpx.Client(base_url=BASE_URL, timeout=90.0) as client:
+    with httpx2.Client(base_url=BASE_URL, timeout=90.0) as client:
         health = client.get("/health")
         health.raise_for_status()
         for factory in (sync_factory, async_factory):

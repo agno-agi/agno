@@ -14,7 +14,7 @@ Try: Inspect GET /traces?db_id=clickhouse-traces after the printed live run
 import asyncio
 import os
 
-import httpx
+import httpx2
 from agno.agent import Agent
 from agno.db.clickhouse import ClickhouseDb
 from agno.db.sqlite import SqliteDb
@@ -95,8 +95,8 @@ async def run_clickhouse_demo() -> None:
     if primary_db.get_session(SESSION_ID) is None:
         raise RuntimeError("The transactional session was not stored in SQLite")
 
-    transport = httpx.ASGITransport(app=app)
-    async with httpx.AsyncClient(
+    transport = httpx2.ASGITransport(app=app)
+    async with httpx2.AsyncClient(
         transport=transport,
         base_url="http://agent-os",
     ) as client:

@@ -5,7 +5,7 @@ import threading
 import time
 from contextlib import contextmanager
 
-import httpx
+import httpx2
 import pytest
 import uvicorn
 from fastapi.testclient import TestClient
@@ -160,7 +160,7 @@ def live_server(app):
 
 def test_default_output_limit_returns_complete_json_over_uvicorn_http():
     app, _ = application()
-    with live_server(app) as url, httpx.Client(base_url=url, timeout=10, trust_env=False) as client:
+    with live_server(app) as url, httpx2.Client(base_url=url, timeout=10, trust_env=False) as client:
         assert_complete_output_error(post_attachment(client))
         response = client.post(ROUTE, data={"message": "Hello again", "stream": "false"})
         assert response.status_code == 200 and response.json()["content"] == "Short answer."
@@ -211,7 +211,7 @@ def test_compressed_native_runs_over_http(team_mode, gzip_position, encoding):
     route = "/teams/support/runs" if team_mode else ROUTE
     with (
         live_server(app) as url,
-        httpx.Client(base_url=url, timeout=10, trust_env=False, headers={"Accept-Encoding": encoding}) as client,
+        httpx2.Client(base_url=url, timeout=10, trust_env=False, headers={"Accept-Encoding": encoding}) as client,
     ):
         response = client.post(route, data={"message": "Hello", "stream": "false"})
         assert response.status_code == 200, response.text
@@ -330,7 +330,7 @@ def test_encoded_sse_cannot_bypass_public_error_inspection(team_mode, gzip_posit
     if gzip_position == "outer":
         app = GZipMiddleware(app, minimum_size=500, **options)
     route = "/teams/support/runs" if team_mode else ROUTE
-    with live_server(app) as url, httpx.Client(base_url=url, timeout=10, trust_env=False) as client:
+    with live_server(app) as url, httpx2.Client(base_url=url, timeout=10, trust_env=False) as client:
         response = client.post(
             route, data={"message": "hi", "stream": "true"}, headers={"Accept-Encoding": "gzip", "Origin": ORIGIN}
         )

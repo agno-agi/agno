@@ -4,7 +4,7 @@ from os import getenv
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
-import httpx
+import httpx2
 
 from agno.media import Video
 from agno.tools import Toolkit
@@ -98,7 +98,7 @@ class MiniMaxTools(Toolkit):
         }
 
         try:
-            response = httpx.post(
+            response = httpx2.post(
                 self.base_url,
                 headers=self._headers,
                 json=payload,
@@ -115,7 +115,7 @@ class MiniMaxTools(Toolkit):
                 if remaining < MIN_POLL_REQUEST_SECONDS:
                     break
 
-                task_response = httpx.get(
+                task_response = httpx2.get(
                     f"{self._query_url}/{task_id}",
                     headers=self._headers,
                     timeout=min(self.request_timeout, remaining),
@@ -148,7 +148,7 @@ class MiniMaxTools(Toolkit):
                 time.sleep(min(self.poll_interval, remaining))
 
             return ToolResult(content=f"Video generation timed out after {self.max_wait_time} seconds")
-        except httpx.HTTPError as e:
+        except httpx2.HTTPError as e:
             log_error(f"MiniMax video generation request failed: {e}")
             return ToolResult(content=f"Error generating video: {e}")
         except Exception as e:
@@ -177,7 +177,7 @@ class MiniMaxTools(Toolkit):
         }
 
         try:
-            async with httpx.AsyncClient(timeout=self.request_timeout) as client:
+            async with httpx2.AsyncClient(timeout=self.request_timeout) as client:
                 response = await client.post(self.base_url, headers=self._headers, json=payload)
                 response.raise_for_status()
                 task_id = response.json().get("task_id")
@@ -223,7 +223,7 @@ class MiniMaxTools(Toolkit):
                     await asyncio.sleep(min(self.poll_interval, remaining))
 
             return ToolResult(content=f"Video generation timed out after {self.max_wait_time} seconds")
-        except httpx.HTTPError as e:
+        except httpx2.HTTPError as e:
             log_error(f"MiniMax video generation request failed: {e}")
             return ToolResult(content=f"Error generating video: {e}")
         except Exception as e:

@@ -9,7 +9,7 @@ data for temporal action detection.
 
 from typing import List
 
-import httpx
+import httpx2
 from agno.agent import Agent, RunOutput
 from agno.media import Video
 from pydantic import BaseModel, Field
@@ -55,7 +55,7 @@ agent = Agent(
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
     url = "https://agno-public.s3.amazonaws.com/demo/sample_seaview.mp4"
-    video_bytes = httpx.get(url).content
+    video_bytes = httpx2.get(url).content
     run: RunOutput = agent.run(
         "Detect events with timestamps.",
         videos=[Video(content=video_bytes, format="mp4")],

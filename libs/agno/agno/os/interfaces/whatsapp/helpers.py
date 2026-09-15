@@ -4,7 +4,7 @@ import os
 from dataclasses import dataclass
 from typing import Any, List, Optional, Tuple, Union
 
-import httpx
+import httpx2
 
 from agno.utils.audio import pcm_to_wav_bytes
 from agno.utils.log import log_error, log_info, log_warning
@@ -123,20 +123,20 @@ async def get_media_async(media_id: str, config: WhatsAppConfig) -> Union[dict, 
     timeout = config.media_timeout
 
     try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
+        async with httpx2.AsyncClient(timeout=timeout) as client:
             response = await client.get(url, headers=headers)
             response.raise_for_status()
             data = response.json()
         media_url = data.get("url")
-    except httpx.HTTPError as e:
+    except httpx2.HTTPError as e:
         return {"error": str(e)}
 
     try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
+        async with httpx2.AsyncClient(timeout=timeout) as client:
             response = await client.get(media_url, headers=headers)
             response.raise_for_status()
             return response.content
-    except httpx.HTTPError as e:
+    except httpx2.HTTPError as e:
         return {"error": str(e)}
 
 
@@ -154,23 +154,23 @@ async def _download_media(media_id: str, media_label: str, config: WhatsAppConfi
     mime_type: Optional[str] = None
 
     try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
+        async with httpx2.AsyncClient(timeout=timeout) as client:
             resp = await client.get(url, headers=headers)
             resp.raise_for_status()
             metadata = resp.json()
         media_url = metadata.get("url")
         mime_type = metadata.get("mime_type")
-    except httpx.HTTPError as e:
+    except httpx2.HTTPError as e:
         reason = f"{media_label} (metadata fetch failed: {e})"
         log_warning(f"Media download skipped: {reason}: {str(e)}")
         return _MediaResult(skip_reason=reason)
 
     try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
+        async with httpx2.AsyncClient(timeout=timeout) as client:
             resp = await client.get(media_url, headers=headers)
             resp.raise_for_status()
             return _MediaResult(content=resp.content, mime_type=mime_type)
-    except httpx.HTTPError as e:
+    except httpx2.HTTPError as e:
         reason = f"{media_label} (download failed: {e})"
         log_warning(f"Media download skipped: {reason}: {str(e)}")
         return _MediaResult(skip_reason=reason)
@@ -218,7 +218,7 @@ async def upload_media_async(
     try:
         file_data = io.BytesIO(media_data)
         files = {"file": (filename, file_data, mime_type)}
-        async with httpx.AsyncClient(timeout=config.media_timeout) as client:
+        async with httpx2.AsyncClient(timeout=config.media_timeout) as client:
             response = await client.post(url, headers=headers, data=data, files=files)
             response.raise_for_status()
             json_resp = response.json()
@@ -226,7 +226,7 @@ async def upload_media_async(
             if not result_id:
                 return {"error": "Media ID not found in response", "response": json_resp}
             return result_id
-    except httpx.HTTPError as e:
+    except httpx2.HTTPError as e:
         return {"error": str(e)}
     except Exception as e:
         return {"error": str(e)}
@@ -245,10 +245,10 @@ async def _send_text(recipient: str, text: str, config: WhatsAppConfig, preview_
     }
 
     try:
-        async with httpx.AsyncClient() as client:
+        async with httpx2.AsyncClient() as client:
             response = await client.post(url, headers=headers, json=data)
             response.raise_for_status()
-    except httpx.HTTPStatusError as e:
+    except httpx2.HTTPStatusError as e:
         log_error(f"Failed to send WhatsApp text message. Error response: {e.response.text}: {str(e)}")
         raise
     except Exception as e:
@@ -282,10 +282,10 @@ async def _send_media(
     }
 
     try:
-        async with httpx.AsyncClient() as client:
+        async with httpx2.AsyncClient() as client:
             response = await client.post(url, headers=headers, json=data)
             response.raise_for_status()
-    except httpx.HTTPStatusError as e:
+    except httpx2.HTTPStatusError as e:
         log_error(f"Failed to send WhatsApp {media_type} message. Error response: {e.response.text}: {str(e)}")
         raise
     except Exception as e:
@@ -307,7 +307,7 @@ async def typing_indicator_async(message_id: Optional[str], config: WhatsAppConf
     }
 
     try:
-        async with httpx.AsyncClient() as client:
+        async with httpx2.AsyncClient() as client:
             response = await client.post(url, headers=headers, json=data)
             response.raise_for_status()
     except Exception as e:

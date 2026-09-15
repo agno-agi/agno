@@ -2,7 +2,7 @@
 
 Discovery follows the sitemap protocol: the URL itself when it is a sitemap, the ``Sitemap:``
 lines in robots.txt, then the conventional locations. Pages are fetched through a
-``PageFetcher`` (Parallel's extraction API when available, the built-in httpx fetcher
+``PageFetcher`` (Parallel's extraction API when available, the built-in httpx2 fetcher
 otherwise) and returned as one whole-page ``Document`` per page, so the insert path lands one
 content row per page with its source URL kept.
 
@@ -15,7 +15,7 @@ from typing import Generator, List, Optional, Tuple
 from urllib.parse import urlparse
 from xml.etree import ElementTree
 
-import httpx
+import httpx2
 
 from agno.knowledge.chunking.fixed import FixedSizeChunking
 from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyType
@@ -293,7 +293,7 @@ class SitemapReader(Reader):
         event_hooks = {"request": [guard]} if guard else None
 
         discovery = self._discover(url, allowed_hosts)
-        with httpx.Client(timeout=self.timeout, event_hooks=event_hooks) as client:  # type: ignore[arg-type]
+        with httpx2.Client(timeout=self.timeout, event_hooks=event_hooks) as client:  # type: ignore[arg-type]
             try:
                 request_url = next(discovery)
                 while True:
@@ -318,7 +318,7 @@ class SitemapReader(Reader):
         event_hooks = {"request": [guard]} if guard else None
 
         discovery = self._discover(url, allowed_hosts)
-        async with httpx.AsyncClient(timeout=self.timeout, event_hooks=event_hooks) as client:  # type: ignore[arg-type]
+        async with httpx2.AsyncClient(timeout=self.timeout, event_hooks=event_hooks) as client:  # type: ignore[arg-type]
             try:
                 request_url = next(discovery)
                 while True:

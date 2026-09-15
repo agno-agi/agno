@@ -2,7 +2,7 @@ import json
 import os
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
-import httpx
+import httpx2
 import pytest
 from gitlab.exceptions import GitlabError
 
@@ -55,15 +55,15 @@ class TestGitlabTools:
 
     @pytest.mark.asyncio
     async def test_aget_uses_internal_async_client(self):
-        response_one = httpx.Response(
+        response_one = httpx2.Response(
             status_code=200,
             json={"ok": True},
-            request=httpx.Request("GET", "https://gitlab.com/api/v4/projects"),
+            request=httpx2.Request("GET", "https://gitlab.com/api/v4/projects"),
         )
-        response_two = httpx.Response(
+        response_two = httpx2.Response(
             status_code=200,
             json={"ok": "again"},
-            request=httpx.Request("GET", "https://gitlab.com/api/v4/projects"),
+            request=httpx2.Request("GET", "https://gitlab.com/api/v4/projects"),
         )
         mock_async_client = MagicMock()
         mock_async_client.get = AsyncMock(side_effect=[response_one, response_two])
@@ -72,7 +72,7 @@ class TestGitlabTools:
             mock_gitlab.return_value = MagicMock()
             tools = GitlabTools(access_token="token")
 
-        with patch("agno.tools.gitlab.httpx.AsyncClient", return_value=mock_async_client) as mock_async_client_factory:
+        with patch("agno.tools.gitlab.httpx2.AsyncClient", return_value=mock_async_client) as mock_async_client_factory:
             first_payload = await tools._aget("/projects", params={"page": 1})
             second_payload = await tools._aget("/projects", params={"page": 2})
 
@@ -429,16 +429,16 @@ class TestGitlabTools:
 
     @pytest.mark.asyncio
     async def test_aget_project_http_error(self):
-        response = httpx.Response(
+        response = httpx2.Response(
             status_code=404,
             json={"message": "404 Project Not Found"},
-            request=httpx.Request("GET", "https://gitlab.com/api/v4/projects/missing%2Fproject"),
+            request=httpx2.Request("GET", "https://gitlab.com/api/v4/projects/missing%2Fproject"),
         )
         with patch("agno.tools.gitlab.gitlab.Gitlab") as mock_gitlab:
             mock_gitlab.return_value = MagicMock()
             tools = GitlabTools()
 
-        error = httpx.HTTPStatusError("404 Project Not Found", request=response.request, response=response)
+        error = httpx2.HTTPStatusError("404 Project Not Found", request=response.request, response=response)
         with patch.object(tools, "_aget", AsyncMock(side_effect=error)):
             result = await tools.aget_project("missing/project")
         result_data = json.loads(result)

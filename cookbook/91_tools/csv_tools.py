@@ -10,7 +10,7 @@ Run: `uv pip install pandas` to install the dependencies
 
 from pathlib import Path
 
-import httpx
+import httpx2
 from agno.agent import Agent
 from agno.tools.csv_toolkit import CsvTools
 
@@ -21,7 +21,7 @@ from agno.tools.csv_toolkit import CsvTools
 
 # Download sample data
 url = "https://agno-public.s3.amazonaws.com/demo_data/IMDB-Movie-Data.csv"
-response = httpx.get(url)
+response = httpx2.get(url)
 
 imdb_csv = Path(__file__).parent.joinpath("imdb.csv")
 

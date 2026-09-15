@@ -8,12 +8,12 @@ from agno.utils.log import log_debug, log_error, logger
 
 try:
     import gitlab
-    import httpx
+    import httpx2
     from gitlab import Gitlab
     from gitlab.exceptions import GitlabAuthenticationError, GitlabError
 except ImportError:
     raise ImportError(
-        "`python-gitlab` and `httpx` not installed. Please install using `pip install python-gitlab httpx`"
+        "`python-gitlab` and `httpx2` not installed. Please install using `pip install python-gitlab httpx2`"
     )
 
 
@@ -34,7 +34,7 @@ class GitlabTools(Toolkit):
         self.base_url = (base_url or getenv("GITLAB_BASE_URL") or "https://gitlab.com").rstrip("/")
         self.timeout = timeout
         self.client: Gitlab = self._create_client()
-        self._async_client: Optional[httpx.AsyncClient] = None
+        self._async_client: Optional[httpx2.AsyncClient] = None
 
         tools: List[Any] = []
         async_tools: List[tuple[Any, str]] = []
@@ -97,7 +97,7 @@ class GitlabTools(Toolkit):
     def _encode_project_ref(project_id_or_path: str) -> str:
         return quote_plus(str(project_id_or_path), safe="")
 
-    def _http_error_message(self, response: httpx.Response) -> str:
+    def _http_error_message(self, response: httpx2.Response) -> str:
         detail: Optional[str] = None
         try:
             payload = response.json()
@@ -119,9 +119,9 @@ class GitlabTools(Toolkit):
 
         return f"{response.status_code}: {detail}"
 
-    def _get_async_client(self) -> httpx.AsyncClient:
+    def _get_async_client(self) -> httpx2.AsyncClient:
         if self._async_client is None:
-            self._async_client = httpx.AsyncClient(timeout=self.timeout)
+            self._async_client = httpx2.AsyncClient(timeout=self.timeout)
         return self._async_client
 
     async def _aget(self, endpoint: str, params: Optional[Dict[str, Any]] = None) -> Any:
@@ -260,11 +260,11 @@ class GitlabTools(Toolkit):
             projects = await self._aget("/projects", params=params)
             data = [self._serialize_project(project) for project in projects]
             return json.dumps({"data": data, "meta": self._build_meta(page, per_page, len(data))}, indent=2)
-        except httpx.HTTPStatusError as e:
+        except httpx2.HTTPStatusError as e:
             message = self._http_error_message(e.response)
             log_error(f"GitLab API error while listing projects: {message}: {str(e)}")
             return self._json_error(message)
-        except httpx.RequestError as e:
+        except httpx2.RequestError as e:
             logger.exception("GitLab request error while listing projects")
             return self._json_error(str(e))
         except Exception as e:
@@ -307,11 +307,11 @@ class GitlabTools(Toolkit):
             log_debug(f"Getting GitLab project: {project_id_or_path}")
             project = await self._aget(f"/projects/{project_ref}")
             return json.dumps(self._serialize_project(project), indent=2)
-        except httpx.HTTPStatusError as e:
+        except httpx2.HTTPStatusError as e:
             message = self._http_error_message(e.response)
             log_error(f"GitLab API error while getting project {project_id_or_path}: {message}: {str(e)}")
             return self._json_error(message)
-        except httpx.RequestError as e:
+        except httpx2.RequestError as e:
             logger.exception(f"GitLab request error while getting project {project_id_or_path}")
             return self._json_error(str(e))
         except Exception as e:
@@ -405,13 +405,13 @@ class GitlabTools(Toolkit):
             merge_requests = await self._aget(f"/projects/{project_ref}/merge_requests", params=params)
             data = [self._serialize_merge_request(mr) for mr in merge_requests]
             return json.dumps({"data": data, "meta": self._build_meta(page, per_page, len(data))}, indent=2)
-        except httpx.HTTPStatusError as e:
+        except httpx2.HTTPStatusError as e:
             message = self._http_error_message(e.response)
             log_error(
                 f"GitLab API error while listing merge requests for project {project_id_or_path}: {message}: {str(e)}"
             )
             return self._json_error(message)
-        except httpx.RequestError as e:
+        except httpx2.RequestError as e:
             logger.exception(f"GitLab request error while listing merge requests for project {project_id_or_path}")
             return self._json_error(str(e))
         except Exception as e:
@@ -457,11 +457,11 @@ class GitlabTools(Toolkit):
             log_debug(f"Getting merge request {merge_request_iid} from project {project_id_or_path}")
             merge_request = await self._aget(f"/projects/{project_ref}/merge_requests/{merge_request_iid}")
             return json.dumps(self._serialize_merge_request(merge_request), indent=2)
-        except httpx.HTTPStatusError as e:
+        except httpx2.HTTPStatusError as e:
             message = self._http_error_message(e.response)
             log_error(f"GitLab API error while getting merge request {merge_request_iid}: {message}: {str(e)}")
             return self._json_error(message)
-        except httpx.RequestError as e:
+        except httpx2.RequestError as e:
             logger.exception(f"GitLab request error while getting merge request {merge_request_iid}")
             return self._json_error(str(e))
         except Exception as e:
@@ -563,11 +563,11 @@ class GitlabTools(Toolkit):
             issues = await self._aget(f"/projects/{project_ref}/issues", params=params)
             data = [self._serialize_issue(issue) for issue in issues]
             return json.dumps({"data": data, "meta": self._build_meta(page, per_page, len(data))}, indent=2)
-        except httpx.HTTPStatusError as e:
+        except httpx2.HTTPStatusError as e:
             message = self._http_error_message(e.response)
             log_error(f"GitLab API error while listing issues for project {project_id_or_path}: {message}: {str(e)}")
             return self._json_error(message)
-        except httpx.RequestError as e:
+        except httpx2.RequestError as e:
             logger.exception(f"GitLab request error while listing issues for project {project_id_or_path}")
             return self._json_error(str(e))
         except Exception as e:

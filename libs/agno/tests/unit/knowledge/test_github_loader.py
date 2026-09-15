@@ -77,7 +77,7 @@ class TestBuildGitHubHeaders:
 
 
 class TestGetGitHubAppToken:
-    @patch("agno.knowledge.loaders.github.httpx.Client")
+    @patch("agno.knowledge.loaders.github.httpx2.Client")
     @patch("jwt.encode", return_value="fake_jwt_token")
     def test_generates_token(self, mock_jwt_encode, mock_client_cls, loader, app_config):
         """Test JWT generation and token exchange."""
@@ -102,7 +102,7 @@ class TestGetGitHubAppToken:
         assert call_args[0][0]["iss"] == "12345"
         assert call_args[1]["algorithm"] == "RS256"
 
-    @patch("agno.knowledge.loaders.github.httpx.Client")
+    @patch("agno.knowledge.loaders.github.httpx2.Client")
     @patch("jwt.encode", return_value="fake_jwt")
     def test_caches_token(self, mock_jwt_encode, mock_client_cls, loader, app_config):
         """Test that the token is cached and reused."""
@@ -128,7 +128,7 @@ class TestGetGitHubAppToken:
         # JWT should only be generated once
         assert mock_jwt_encode.call_count == 1
 
-    @patch("agno.knowledge.loaders.github.httpx.Client")
+    @patch("agno.knowledge.loaders.github.httpx2.Client")
     @patch("jwt.encode", return_value="fake_jwt")
     def test_refreshes_expired_token(self, mock_jwt_encode, mock_client_cls, loader, app_config):
         """Test that an expired cached token is refreshed."""

@@ -2,7 +2,7 @@
 Reconnect to background AgentOS SSE streams
 ===========================================
 
-Use raw ``httpx`` to track ``event_index``, deliberately disconnect, and POST
+Use raw ``httpx2`` to track ``event_index``, deliberately disconnect, and POST
 to the nested ``/resume`` route. The ``run`` demo resumes a new background
 stream. The ``continue`` demo first pauses on a confirmation tool, continues
 the run in the background, disconnects, and resumes that continued stream.
@@ -18,7 +18,7 @@ import json
 from collections.abc import AsyncIterator
 from typing import Any
 
-import httpx
+import httpx2
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
@@ -66,7 +66,7 @@ agent_os = AgentOS(
 app = agent_os.get_app()
 
 
-async def iter_sse(response: httpx.Response) -> AsyncIterator[dict[str, Any]]:
+async def iter_sse(response: httpx2.Response) -> AsyncIterator[dict[str, Any]]:
     """Yield JSON payloads from an SSE response."""
     event_name: str | None = None
     data_lines: list[str] = []
@@ -101,7 +101,7 @@ def show_event(label: str, event: dict[str, Any]) -> None:
 
 
 async def disconnect_after_events(
-    response: httpx.Response,
+    response: httpx2.Response,
     event_limit: int = EVENTS_BEFORE_DISCONNECT,
 ) -> dict[str, Any]:
     """Read a prefix of an SSE stream, then return the reconnect coordinates."""
@@ -131,7 +131,7 @@ async def disconnect_after_events(
 
 
 async def resume_stream(
-    client: httpx.AsyncClient,
+    client: httpx2.AsyncClient,
     run_id: str,
     session_id: str,
     last_event_index: int | None,
@@ -168,7 +168,7 @@ async def resume_stream(
 
 async def run_reconnect_demo() -> None:
     """Disconnect from a new background stream and resume it."""
-    async with httpx.AsyncClient(base_url=BASE_URL, timeout=120.0) as client:
+    async with httpx2.AsyncClient(base_url=BASE_URL, timeout=120.0) as client:
         async with client.stream(
             "POST",
             f"/agents/{AGENT_ID}/runs",
@@ -197,7 +197,7 @@ async def run_reconnect_demo() -> None:
         )
 
 
-async def start_paused_run(client: httpx.AsyncClient) -> dict[str, Any]:
+async def start_paused_run(client: httpx2.AsyncClient) -> dict[str, Any]:
     """Start a run that pauses at the confirmation-gated reservation tool."""
     paused_event: dict[str, Any] | None = None
 
@@ -228,7 +228,7 @@ async def start_paused_run(client: httpx.AsyncClient) -> dict[str, Any]:
 
 async def continue_reconnect_demo() -> None:
     """Continue a paused run in the background, disconnect, and resume it."""
-    async with httpx.AsyncClient(base_url=BASE_URL, timeout=120.0) as client:
+    async with httpx2.AsyncClient(base_url=BASE_URL, timeout=120.0) as client:
         paused = await start_paused_run(client)
         approved_tools = paused["tools"]
         for pending_tool in approved_tools:
