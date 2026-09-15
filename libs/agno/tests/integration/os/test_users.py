@@ -207,18 +207,18 @@ def test_users_api_crud_and_role_merge():
     # create a user
     r = client.post("/users", headers=_auth("alice"), json={"id": "bob", "email": "bob@co"})
     assert r.status_code == 200, r.text
-    assert r.json()["id"] == "bob" and r.json()["role"] is None and r.json()["status"] == "active"
+    assert r.json()["id"] == "bob" and r.json()["role_slug"] is None and r.json()["status"] == "active"
     assert r.json()["role_name"] is None  # no role -> no name either
 
     # give bob a role; the user view merges it in (singular: one role per user), with the display
     # name alongside the slug so a frontend needs no second request to /authz/roles
     roles.assign("bob", "viewer")
     got = client.get("/users/bob", headers=_auth("alice")).json()
-    assert got["email"] == "bob@co" and got["role"] == "viewer" and got["role_name"] == "Read-only viewer"
+    assert got["email"] == "bob@co" and got["role_slug"] == "viewer" and got["role_name"] == "Read-only viewer"
 
     # list is paginated ({data, meta}) and includes bob with his role and its name
     listed = client.get("/users", headers=_auth("alice")).json()["data"]
-    assert any(u["id"] == "bob" and u["role"] == "viewer" and u["role_name"] == "Read-only viewer" for u in listed)
+    assert any(u["id"] == "bob" and u["role_slug"] == "viewer" and u["role_name"] == "Read-only viewer" for u in listed)
 
     # fuzzy search filters by id/email/name, case-insensitive, before pagination
     found = client.get("/users?search=BOB", headers=_auth("alice")).json()
@@ -278,8 +278,8 @@ def test_user_metrics_api_with_a_role_store():
     assert [row["count"] for row in body["created_per_day"]] == [1, 3]
     # each role carries its display name; a role never given one (admin, scopes only) shows its slug
     assert body["by_role"] == [
-        {"role": "admin", "name": "admin", "count": 1},
-        {"role": "viewer", "name": "Read-only viewer", "count": 2},
+        {"role_slug": "admin", "role_name": "admin", "count": 1},
+        {"role_slug": "viewer", "role_name": "Read-only viewer", "count": 2},
     ]
 
     # the date range bounds the series only; the counts stay whole-directory
@@ -298,7 +298,7 @@ def test_user_metrics_api_with_a_role_store():
     client.delete("/users/carol", headers=_auth("alice"))
     after = client.get("/users/metrics", headers=_auth("alice")).json()
     assert after["total"] == 3
-    assert [(r["role"], r["count"]) for r in after["by_role"]] == [("admin", 1), ("viewer", 1)]
+    assert [(r["role_slug"], r["count"]) for r in after["by_role"]] == [("admin", 1), ("viewer", 1)]
 
 
 def test_user_metrics_api_without_a_role_store(tmp_path):

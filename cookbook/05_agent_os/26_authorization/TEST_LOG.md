@@ -252,6 +252,6 @@ only today's point with the total still 6. After deleting carol the total droppe
 5 and analyst to 1 on the very next read.
 
 Re-ran 2026-09-15 after role display names were added to the responses: each `by_role`
-entry now carries `name` ("Administrator", "Data analyst", and "viewer" for the role
-defined without one), and `GET /users/bob` returned `role analyst` with `role_name Data
-analyst`. Exit 0, same counts as above.
+entry now carries `role_slug` and `role_name` ("Administrator", "Data analyst", and "viewer"
+for the role defined without one), and `GET /users/bob` returned `role_slug analyst` with
+`role_name Data analyst`. Exit 0, same counts as above.

@@ -9,8 +9,8 @@ directory, computed live on every read (no cache, no refresh step):
     by_role                     users per role (slug and display name), when a role
                                 store is configured
 
-Every user in GET /users carries role_name next to role for the same reason: a page can
-show "Data analyst" without a second request to /authz/roles.
+Every user in GET /users carries role_name next to role_slug for the same reason: a page
+can show "Data analyst" without a second request to /authz/roles.
 
 It rides on the same router as /users, so it is admin-only and is mounted wherever
 user management is: AgentOS mounts /users whenever it has a user directory, with or
@@ -132,7 +132,10 @@ if __name__ == "__main__":
     # renders "Data analyst" without a second request to /authz/roles.
     bob_row = client.get("/users/bob", headers=auth("alice")).json()
     print(
-        "\nGET /users/bob -> role", bob_row["role"], "role_name", bob_row["role_name"]
+        "\nGET /users/bob -> role_slug",
+        bob_row["role_slug"],
+        "role_name",
+        bob_row["role_name"],
     )
 
     # The date range bounds the series only; the counts stay whole-directory.

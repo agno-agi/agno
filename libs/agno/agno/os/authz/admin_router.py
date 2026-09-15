@@ -147,7 +147,7 @@ class UserSchema(BaseModel):
     name: Optional[str] = None
     status: str = Field(description="'active' or 'disabled'")
     disabled: bool = False
-    role: Optional[str] = Field(None, description="The user's role slug (one role per user), or null")
+    role_slug: Optional[str] = Field(None, description="The user's role slug (one role per user), or null")
     role_name: Optional[str] = Field(
         None,
         description=(
@@ -167,7 +167,7 @@ class UserSchema(BaseModel):
             name=user.get("name"),
             status="disabled" if user.get("disabled") else "active",
             disabled=bool(user.get("disabled")),
-            role=role,
+            role_slug=role,
             role_name=(role_name or role) if role is not None else None,
             created_at=user.get("created_at"),
             updated_at=user.get("updated_at"),
@@ -249,8 +249,8 @@ class UsersCreatedOnDay(BaseModel):
 
 
 class UsersByRole(BaseModel):
-    role: str = Field(..., description="Role slug")
-    name: str = Field(..., description="Role display name (the slug when the role has no display name)")
+    role_slug: str = Field(..., description="Role slug")
+    role_name: str = Field(..., description="Role display name (the slug when the role has no display name)")
     count: int = Field(..., description="Users in the directory holding this role, disabled users included", ge=0)
 
 
@@ -604,7 +604,8 @@ def _build_user_management_metrics(
             for role in roles:
                 counts[role] = counts.get(role, 0) + 1
         by_role = [
-            UsersByRole(role=role, name=names.get(role) or role, count=count) for role, count in sorted(counts.items())
+            UsersByRole(role_slug=role, role_name=names.get(role) or role, count=count)
+            for role, count in sorted(counts.items())
         ]
     return UserManagementMetrics(
         total=total,
