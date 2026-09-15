@@ -77,6 +77,10 @@ from agno.db.oracle.utils import (
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
+from agno.db.schemas.service_accounts import (
+    resolve_service_account_sort_column,
+    validate_service_account_update,
+)
 from agno.db.utils import (
     SessionRunObjectCache,
     build_single_run_row,
@@ -772,12 +776,22 @@ class OracleDb(BaseDb):
 
     # -- Sessions --
     def _cascade_tool_results(self, session_ids: List[str]) -> None:
-        """Best-effort cleanup of offloaded tool results on session delete.
+        """Cascade result offloading on session delete: read the index rows,
+        delete their payloads, then the index rows.
 
-        Real tool-result offloading is a later ticket; until then this table
-        is always empty, so this is a safe, cheap no-op. Kept here (rather
-        than added later) so delete_session's behavior does not silently
-        change shape once offloading is turned on.
+        Best-effort and outside the session delete, so a cascade failure can
+        never poison or roll back the delete itself. Payloads are removed by
+        the exact (namespace, path) of each index row, through the
+        filesystems result stores registered on this db.
+
+        Postgres/SQLite additionally fall back to a default AgentFS payload
+        table (``agno.fs.db.DbFileSystem``) for a row with no registered
+        store. That fallback is deliberately not replicated here:
+        ``DbFileSystem`` declares its own supported-dialects list
+        (postgresql, sqlite only) and extending it is a separate, unrelated
+        undertaking from this ticket's scope (the tool_results INDEX table).
+        A row with no registered filesystem is reported, exactly as a row
+        whose registered filesystem lookup failed would be.
         """
         if not session_ids:
             return
@@ -785,10 +799,86 @@ class OracleDb(BaseDb):
             table = self._get_table(table_type="tool_results")
             if table is None:
                 return
-            with self.Session() as sess, sess.begin():
-                sess.execute(table.delete().where(table.c.session_id.in_(session_ids)))
-        except Exception:
-            log_debug("tool-result cascade failed; the primary session delete still succeeded", exc_info=True)
+            with self.Session() as sess:
+                rows = sess.execute(
+                    select(table.c.result_id, table.c.namespace, table.c.path).where(
+                        table.c.session_id.in_(session_ids)
+                    )
+                ).fetchall()
+            if not rows:
+                return
+            removed = set()
+            filesystems = list(getattr(self, "tool_result_filesystems", []) or [])
+            if filesystems:
+                from agno.fs import FileSystem
+
+                for _, namespace, path in rows:
+                    for fs in filesystems:
+                        try:
+                            if FileSystem(backend=fs.backend, namespace=str(namespace)).delete(str(path)):
+                                removed.add((str(namespace), str(path)))
+                        except Exception as e:
+                            log_warning(f"Tool-result payload delete failed for {namespace}/{path}: {e}")
+            missing = [
+                f"{namespace}/{path}" for _, namespace, path in rows if (str(namespace), str(path)) not in removed
+            ]
+            if missing:
+                log_warning(
+                    f"Tool-result cascade removed {len(rows) - len(missing)} of {len(rows)} payloads; "
+                    f"{len(missing)} live in a filesystem this process has no store for: {missing[:3]}"
+                )
+            result_ids = [str(row[0]) for row in rows]
+            for start in range(0, len(result_ids), 500):
+                with self.Session() as sess, sess.begin():
+                    sess.execute(table.delete().where(table.c.result_id.in_(result_ids[start : start + 500])))
+        except Exception as e:
+            log_warning(f"Tool-result cascade on session delete failed: {e}")
+
+    # -- Tool Results (result offloading index) --
+    def upsert_tool_result(self, row: Dict[str, Any]) -> None:
+        table = self._get_table(table_type="tool_results", create_table_if_not_found=True)
+        if table is None:
+            raise ValueError(f"Could not create table: {self.tool_results_table_name}")
+        with self.Session() as sess, sess.begin():
+            merge_upsert(sess, table, key_columns=["result_id"], values=row)
+
+    def get_tool_result(self, result_id: str) -> Optional[Dict[str, Any]]:
+        table = self._get_table(table_type="tool_results")
+        if table is None:
+            return None
+        with self.Session() as sess:
+            row = sess.execute(select(table).where(table.c.result_id == result_id)).fetchone()
+            return dict(row._mapping) if row is not None else None
+
+    def get_tool_results_for_session(self, session_id: str, limit: Optional[int] = None) -> List[Dict[str, Any]]:
+        table = self._get_table(table_type="tool_results")
+        if table is None:
+            return []
+        stmt = (
+            select(table).where(table.c.session_id == session_id).order_by(table.c.created_at.desc(), table.c.result_id)
+        )
+        if limit is not None:
+            stmt = stmt.limit(limit)
+        with self.Session() as sess:
+            return [dict(row._mapping) for row in sess.execute(stmt).fetchall()]
+
+    def delete_tool_results(self, result_ids: List[str]) -> int:
+        if not result_ids:
+            return 0
+        table = self._get_table(table_type="tool_results")
+        if table is None:
+            return 0
+        with self.Session() as sess, sess.begin():
+            result = sess.execute(table.delete().where(table.c.result_id.in_(result_ids)))
+        return result.rowcount or 0
+
+    def get_expired_tool_results(self, now: int) -> List[Dict[str, Any]]:
+        table = self._get_table(table_type="tool_results")
+        if table is None:
+            return []
+        stmt = select(table).where(table.c.expires_at.is_not(None)).where(table.c.expires_at <= now)
+        with self.Session() as sess:
+            return [dict(row._mapping) for row in sess.execute(stmt).fetchall()]
 
     def delete_session(self, session_id: str, user_id: Optional[str] = None) -> bool:
         try:
@@ -5519,3 +5609,134 @@ class OracleDb(BaseDb):
         except Exception as e:
             log_warning(f"Job queue store: retention cleanup failed: {e}")
             return 0
+
+    # -- Service Accounts methods --
+    def create_service_account(self, account_data: Dict[str, Any]) -> Dict[str, Any]:
+        try:
+            table = self._get_table(table_type="service_accounts", create_table_if_not_found=True)
+            if table is None:
+                raise RuntimeError("Failed to get or create service accounts table")
+            with self.Session() as sess, sess.begin():
+                sess.execute(table.insert().values(**account_data))
+            return account_data
+        except Exception as e:
+            log_error(f"Error creating service account: {str(e)}")
+            raise
+
+    def get_service_account(self, service_account_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        try:
+            table = self._get_table(table_type="service_accounts")
+            if table is None:
+                return None
+            with self.Session() as sess:
+                stmt = select(table).where(table.c.id == service_account_id)
+                if user_id is not None:
+                    stmt = stmt.where(or_(table.c.user_id == user_id, table.c.user_id.is_(None)))
+                result = sess.execute(stmt).fetchone()
+                return dict(result._mapping) if result else None
+        except Exception as e:
+            log_debug(f"Error getting service account: {e}")
+            return None
+
+    def get_service_account_by_token_hash(self, token_hash: str) -> Optional[Dict[str, Any]]:
+        """Get a service account by token hash.
+
+        Re-raises on database errors (instead of returning None) so callers can
+        distinguish an unknown token from an unavailable database.
+        """
+        table = self._get_table(table_type="service_accounts")
+        if table is None:
+            # _get_table swallows connectivity errors and returns None, which is
+            # indistinguishable from "table not created yet". Probe the connection so
+            # a real outage propagates (fail closed) instead of reading as an unknown
+            # token; a genuinely absent table returns None.
+            with self.Session() as sess:
+                sess.execute(text("SELECT 1 FROM dual"))
+            return None
+        try:
+            with self.Session() as sess:
+                result = sess.execute(select(table).where(table.c.token_hash == token_hash)).fetchone()
+                return dict(result._mapping) if result else None
+        except Exception as e:
+            log_error(f"Error getting service account by token hash: {e}")
+            raise
+
+    def get_service_account_by_name(self, name: str, include_revoked: bool = False) -> Optional[Dict[str, Any]]:
+        try:
+            table = self._get_table(table_type="service_accounts")
+            if table is None:
+                return None
+            with self.Session() as sess:
+                stmt = select(table).where(table.c.name == name)
+                if not include_revoked:
+                    stmt = stmt.where(table.c.revoked_at.is_(None))
+                stmt = stmt.order_by(table.c.created_at.desc())
+                result = sess.execute(stmt).fetchone()
+                return dict(result._mapping) if result else None
+        except Exception as e:
+            log_debug(f"Error getting service account by name: {e}")
+            return None
+
+    def get_service_accounts(
+        self,
+        include_revoked: bool = True,
+        limit: int = 20,
+        page: int = 1,
+        sort_by: str = "created_at",
+        sort_order: str = "desc",
+        user_id: Optional[str] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        try:
+            table = self._get_table(table_type="service_accounts")
+            if table is None:
+                return [], 0
+            with self.Session() as sess:
+                base_query = select(table)
+                if not include_revoked:
+                    base_query = base_query.where(table.c.revoked_at.is_(None))
+                if user_id is not None:
+                    base_query = base_query.where(or_(table.c.user_id == user_id, table.c.user_id.is_(None)))
+
+                count_stmt = select(func.count()).select_from(base_query.alias())
+                total_count = sess.execute(count_stmt).scalar() or 0
+
+                offset = (page - 1) * limit
+
+                sort_col = table.c[resolve_service_account_sort_column(sort_by)]
+                order_by = sort_col.asc() if sort_order == "asc" else sort_col.desc()
+
+                stmt = base_query.order_by(order_by).limit(limit).offset(offset)
+                results = sess.execute(stmt).fetchall()
+                return [dict(row._mapping) for row in results], total_count
+        except Exception as e:
+            log_debug(f"Error listing service accounts: {e}")
+            return [], 0
+
+    def update_service_account(
+        self, service_account_id: str, return_record: bool = True, **kwargs: Any
+    ) -> Optional[Dict[str, Any]]:
+        validate_service_account_update(kwargs)
+        try:
+            table = self._get_table(table_type="service_accounts")
+            if table is None:
+                return None
+            with self.Session() as sess, sess.begin():
+                sess.execute(table.update().where(table.c.id == service_account_id).values(**kwargs))
+            if not return_record:
+                return None
+            return self.get_service_account(service_account_id)
+        except Exception as e:
+            log_debug(f"Error updating service account: {e}")
+            return None
+
+    def delete_service_account(self, service_account_id: str) -> bool:
+        try:
+            table = self._get_table(table_type="service_accounts")
+            if table is None:
+                return False
+            with self.Session() as sess, sess.begin():
+                result = sess.execute(table.delete().where(table.c.id == service_account_id))
+                return result.rowcount > 0
+        except Exception as e:
+            log_debug(f"Error deleting service account: {e}")
+            return False

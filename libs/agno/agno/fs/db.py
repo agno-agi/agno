@@ -1,4 +1,4 @@
-"""DbFileSystem: the database backend for FileSystem (Postgres + SQLite)."""
+"""DbFileSystem: the database backend for FileSystem (Postgres + SQLite + Oracle)."""
 
 import threading
 import time
@@ -30,6 +30,7 @@ try:
     )
     from sqlalchemy import inspect as sa_inspect
     from sqlalchemy import text as sql_text
+    from sqlalchemy.dialects import oracle as oracle_dialect_module
     from sqlalchemy.engine import Engine, create_engine, make_url
     from sqlalchemy.exc import IntegrityError, OperationalError, ProgrammingError
     from sqlalchemy.sql import select
@@ -39,7 +40,30 @@ except ImportError:
 if TYPE_CHECKING:
     from agno.db.base import BaseDb
 
-SUPPORTED_DIALECTS = ("postgresql", "sqlite")
+SUPPORTED_DIALECTS = ("postgresql", "sqlite", "oracle")
+
+# namespace/path are bare, unbounded String on Postgres/SQLite (both allow
+# arbitrary-length text columns); Oracle's VARCHAR2 requires an explicit
+# length. .with_variant swaps in a bounded, CHAR-semantics VARCHAR2 for the
+# Oracle dialect only, leaving Postgres/SQLite's own (unbounded) behavior
+# unchanged. Widths mirror the tool_results index table's own namespace/path
+# columns (agno/db/oracle/schemas.py).
+_ORACLE_NAMESPACE_WIDTH = 255
+_ORACLE_PATH_WIDTH = 2000
+
+# append()'s Oracle path retries only on a lost first-insert race (see that
+# method's own docstring); a queue of legitimate concurrent first-appenders
+# for the SAME brand-new path is not expected to run this deep.
+_ORACLE_APPEND_MAX_RETRIES = 10
+
+
+def _namespace_column_type() -> String:
+    return String().with_variant(oracle_dialect_module.VARCHAR2(_ORACLE_NAMESPACE_WIDTH, "CHAR"), "oracle")
+
+
+def _path_column_type() -> String:
+    return String().with_variant(oracle_dialect_module.VARCHAR2(_ORACLE_PATH_WIDTH, "CHAR"), "oracle")
+
 
 DEFAULT_DB_SCHEMA = "fs"
 """Database schema for the agent's files, separate from agno's platform schema.
@@ -91,7 +115,7 @@ class DbFileSystem(BaseFS):
                 detail = "an async engine; DbFileSystem is sync" if borrowed is not None else "no db_engine"
                 raise ValueError(
                     f"DbFileSystem needs a SQL-backed sync agno db, got {type(db).__name__} ({detail}). "
-                    "Use SqliteDb or PostgresDb, or pass db_url/db_engine directly."
+                    "Use SqliteDb, PostgresDb or OracleDb, or pass db_url/db_engine directly."
                 )
             self.db_engine: Engine = borrowed
         elif db_engine is not None:
@@ -102,7 +126,7 @@ class DbFileSystem(BaseFS):
             if backend_name not in SUPPORTED_DIALECTS:
                 raise ValueError(
                     f"DbFileSystem supports dialects {SUPPORTED_DIALECTS}, got {backend_name!r}. "
-                    "Use a postgresql or sqlite db_url/db_engine."
+                    "Use a postgresql, sqlite or oracle db_url/db_engine."
                 )
             # Create the parent directory for a sqlite file path, since sqlite will not
             # create it and errors on connect. Matches SqliteDb (db/sqlite/sqlite.py),
@@ -114,7 +138,7 @@ class DbFileSystem(BaseFS):
         if self.dialect not in SUPPORTED_DIALECTS:
             raise ValueError(
                 f"DbFileSystem supports dialects {SUPPORTED_DIALECTS}, got {self.dialect!r}. "
-                "Use a postgresql or sqlite db_url/db_engine."
+                "Use a postgresql, sqlite or oracle db_url/db_engine."
             )
         if self.dialect == "sqlite":
             import sqlite3
@@ -132,9 +156,17 @@ class DbFileSystem(BaseFS):
         self.table = Table(
             self.table_name,
             self.metadata,
-            Column("namespace", String, primary_key=True),
-            Column("path", String, primary_key=True),
-            Column("content", Text, nullable=False),
+            Column("namespace", _namespace_column_type(), primary_key=True),
+            Column("path", _path_column_type(), primary_key=True),
+            # NOT NULL on Postgres/SQLite, where '' is a real, distinct value.
+            # Oracle folds an empty CLOB bind to NULL before it ever reaches
+            # the NOT NULL check (confirmed live: an empty-string insert
+            # against a NOT NULL CLOB column raises ORA-01400, not a stored
+            # ''), so the constraint would reject every empty-file write on
+            # Oracle outright. Nullable there instead; every read site
+            # coalesces NULL back to '' so callers see the same value on all
+            # three dialects.
+            Column("content", Text, nullable=(self.dialect == "oracle")),
             Column("size_bytes", BigInteger, nullable=False),
             Column("version", BigInteger, nullable=False),
             Column("created_at", BigInteger, nullable=False),
@@ -212,11 +244,38 @@ class DbFileSystem(BaseFS):
         """Write through a caller-owned transaction after trusted table setup."""
         t = self.table
         now = int(time.time())
+        size_bytes = len(content.encode("utf-8"))
+        if self.dialect == "oracle":
+            # Oracle has no INSERT ... ON CONFLICT (see the module's merge_upsert
+            # precedent in agno.db.oracle.utils, not reused here to keep this
+            # cross-backend module free of an agno.db.oracle import). MERGE
+            # covers the insert-or-update; it does not support RETURNING at
+            # all (unlike plain INSERT/UPDATE/DELETE, which Oracle's RETURNING
+            # INTO does support) -- see write()'s CAS branch, unchanged, for
+            # that distinction. So the version/size this write produced is
+            # read back with a plain SELECT in the same transaction: the
+            # MERGE's row lock is held until commit, so no concurrent writer
+            # can interleave between the two statements.
+            conn.execute(
+                sql_text(
+                    f"MERGE INTO {t.name} d USING (SELECT :ns AS ns, :p AS p FROM dual) s "
+                    "ON (d.namespace = s.ns AND d.path = s.p) "
+                    "WHEN MATCHED THEN UPDATE SET d.content = :content, d.size_bytes = :size_bytes, "
+                    "d.version = d.version + 1, d.updated_at = :now "
+                    "WHEN NOT MATCHED THEN INSERT (namespace, path, content, size_bytes, version, "
+                    "created_at, updated_at) VALUES (s.ns, s.p, :content, :size_bytes, 1, :now, :now)"
+                ),
+                {"ns": namespace, "p": path, "content": content, "size_bytes": size_bytes, "now": now},
+            )
+            row = conn.execute(
+                select(t.c.version, t.c.size_bytes).where(and_(t.c.namespace == namespace, t.c.path == path))
+            ).one()
+            return FileMeta(path=path, version=row[0], size_bytes=row[1], updated_at=now)
         stmt = self._insert()(t).values(
             namespace=namespace,
             path=path,
             content=content,
-            size_bytes=len(content.encode("utf-8")),
+            size_bytes=size_bytes,
             version=1,
             created_at=now,
             updated_at=now,
@@ -242,7 +301,13 @@ class DbFileSystem(BaseFS):
         t = self.table
         with self.db_engine.begin() as conn:
             row = conn.execute(select(t.c.content).where(and_(t.c.namespace == namespace, t.c.path == path))).first()
-        return None if row is None else row[0]
+        if row is None:
+            return None
+        # NULL != "no such row" here: content is nullable on Oracle only,
+        # standing in for '' (see the column's own comment -- even a bound ''
+        # parameter folds to NULL on Oracle, so this cannot be done in SQL
+        # via COALESCE(content, '') the way it could on another dialect).
+        return "" if row[0] is None else row[0]
 
     def write(self, namespace: str, path: str, content: str, *, expected_version: Optional[int] = None) -> FileMeta:
         self._ensure_table()
@@ -268,6 +333,26 @@ class DbFileSystem(BaseFS):
                         actual=actual,
                     )
             return FileMeta(path=path, size_bytes=row[1], version=row[0], updated_at=now)
+        if self.dialect == "oracle":
+            # See _write_on's docstring: MERGE has no RETURNING, so the
+            # resulting version/size is read back with a plain SELECT inside
+            # the same transaction, after the MERGE's row lock is taken.
+            with self.db_engine.begin() as conn:
+                conn.execute(
+                    sql_text(
+                        f"MERGE INTO {t.name} d USING (SELECT :ns AS ns, :p AS p FROM dual) s "
+                        "ON (d.namespace = s.ns AND d.path = s.p) "
+                        "WHEN MATCHED THEN UPDATE SET d.content = :content, d.size_bytes = :size_bytes, "
+                        "d.version = d.version + 1, d.updated_at = :now "
+                        "WHEN NOT MATCHED THEN INSERT (namespace, path, content, size_bytes, version, "
+                        "created_at, updated_at) VALUES (s.ns, s.p, :content, :size_bytes, 1, :now, :now)"
+                    ),
+                    {"ns": namespace, "p": path, "content": content, "size_bytes": size_bytes, "now": now},
+                )
+                oracle_row = conn.execute(
+                    select(t.c.version, t.c.size_bytes).where(and_(t.c.namespace == namespace, t.c.path == path))
+                ).one()
+            return FileMeta(path=path, size_bytes=oracle_row[1], version=oracle_row[0], updated_at=now)
         insert = self._insert()
         stmt = insert(t).values(
             namespace=namespace,
@@ -359,6 +444,73 @@ class DbFileSystem(BaseFS):
         t = self.table
         now = int(time.time())
         tail = self._tail_expression()
+
+        if self.dialect == "oracle":
+            # A MERGE whose UPDATE branch concatenates a CLOB bind server-side
+            # (d.content || ... || :chunk) raises ORA-22848 ("cannot use CLOB
+            # type as comparison key") -- confirmed live; Oracle's MERGE
+            # implementation cannot use a LOB bind inside a computed SET
+            # expression this way, unlike a plain UPDATE (see below). So the
+            # insert-or-update decision and the concatenation are split into
+            # two steps instead of MERGE's one: SELECT ... FOR UPDATE takes
+            # the row lock and reads the current content (or finds no row);
+            # the new content is computed in Python; a plain UPDATE (whose
+            # RETURNING, via SQLAlchemy's Core construct rather than raw
+            # text() -- confirmed live that raw-text RETURNING needs a manual
+            # INTO clause Core already handles -- works fine with a CLOB
+            # bind) writes the fully-computed value back. The row lock from
+            # the SELECT is held through the UPDATE in the same transaction,
+            # so a concurrent appender queued behind it reads THIS write's
+            # content once it acquires the lock, preserving "serializes on
+            # the row lock; all land; none lost" exactly as the MERGE-based
+            # Postgres/SQLite path does. The one gap a lock on an EXISTING
+            # row cannot cover is two concurrent FIRST appends both finding
+            # no row: one INSERT wins, the other's is caught below and
+            # retried, at which point it finds (and locks) the winner's row.
+            for _ in range(_ORACLE_APPEND_MAX_RETRIES):
+                with self.db_engine.begin() as conn:
+                    locked_row = conn.execute(
+                        select(t.c.content, t.c.size_bytes)
+                        .where(and_(t.c.namespace == namespace, t.c.path == path))
+                        .with_for_update()
+                    ).first()
+                    if locked_row is None:
+                        try:
+                            conn.execute(
+                                t.insert().values(
+                                    namespace=namespace,
+                                    path=path,
+                                    content=chunk,
+                                    size_bytes=chunk_bytes,
+                                    version=1,
+                                    created_at=now,
+                                    updated_at=now,
+                                )
+                            )
+                        except IntegrityError:
+                            continue  # lost the first-insert race; retry finds the winner's row
+                        return FileMeta(path=path, size_bytes=chunk_bytes, version=1, updated_at=now)
+
+                    locked_content = locked_row[0] or ""  # Oracle NULL stands in for '' (see the column's comment)
+                    needs_separator = bool(locked_content) and not locked_content.endswith("\n")
+                    new_size = locked_row[1] + (1 if needs_separator else 0) + chunk_bytes
+                    if max_file_bytes is not None and new_size > max_file_bytes:
+                        raise QuotaExceededError(
+                            f"{path} would be {new_size} bytes (limit {max_file_bytes} per file)",
+                            scope="file",
+                            current=new_size,
+                            limit=max_file_bytes,
+                        )
+                    new_content = locked_content + ("\n" if needs_separator else "") + chunk
+                    oracle_row = conn.execute(
+                        update(t)
+                        .where(and_(t.c.namespace == namespace, t.c.path == path))
+                        .values(content=new_content, size_bytes=new_size, version=t.c.version + 1, updated_at=now)
+                        .returning(t.c.version, t.c.size_bytes)
+                    ).one()
+                    return FileMeta(path=path, size_bytes=oracle_row[1], version=oracle_row[0], updated_at=now)
+            raise RuntimeError(f"append: exhausted retries on a concurrent first-insert race for {path}")
+
         # The content != '' arm is load-bearing: without it every new-from-empty
         # file starts with a blank line while size_bytes stays exact.
         needs_sep = and_(t.c.content != "", tail != "\n")
@@ -430,11 +582,14 @@ class DbFileSystem(BaseFS):
                 # pair is a single rollback unit on the overwrite path.
                 with conn.begin_nested():
                     if overwrite and src != dst:
-                        if self.dialect == "postgresql":
+                        if self.dialect in ("postgresql", "oracle"):
                             # Lock both rows in sorted order first: cyclic
                             # concurrent moves (a->b and b->a) would otherwise
                             # acquire the two row locks in opposite order and
-                            # deadlock.
+                            # deadlock. SQLite has no fine-grained row locks
+                            # (writers serialize at the database-file level),
+                            # so this only matters for real row-level-locking
+                            # backends.
                             for locked_path in sorted((src, dst)):
                                 conn.execute(
                                     select(t.c.path)
@@ -467,7 +622,10 @@ class DbFileSystem(BaseFS):
         with self.db_engine.begin() as conn:
             rows = conn.execute(stmt)
             for row in rows:
-                hit = remaining & set(row[0].split("\n"))
+                # content is nullable on Oracle only, standing in for '' (see
+                # the column's own comment); an empty file can hold no
+                # non-empty line anyway, so this only guards against a crash.
+                hit = remaining & set((row[0] or "").split("\n"))
                 found |= hit
                 remaining -= hit
                 if not remaining:
@@ -477,17 +635,19 @@ class DbFileSystem(BaseFS):
     def search(self, namespace: str, query: str, directory: str = "", limit: int = 10) -> List[SearchMatch]:
         """Case-insensitive substring search. Correctness is owned by Python; the
         SQL predicate only prefilters candidate rows. On Postgres ILIKE folds
-        every query; on SQLite, LIKE folds ASCII only, so the prefilter applies
-        to pure-ASCII queries and a non-ASCII query still scans every in-scope
-        row. One known gap remains on SQLite: content containing a non-ASCII
-        uppercase form whose lowercase is ASCII (the Kelvin sign, U+212A) is
-        excluded by the ASCII prefilter for the matching ASCII query."""
+        every query, and Oracle's LOWER()/LIKE prefilter (confirmed live) folds
+        full Unicode the same way, not just ASCII; on SQLite, LIKE folds ASCII
+        only, so the prefilter applies to pure-ASCII queries and a non-ASCII
+        query still scans every in-scope row. One known gap remains on SQLite:
+        content containing a non-ASCII uppercase form whose lowercase is ASCII
+        (the Kelvin sign, U+212A) is excluded by the ASCII prefilter for the
+        matching ASCII query."""
         self._ensure_table()
         if not query:
             return []
         t = self.table
         conditions = [t.c.namespace == namespace, self._directory_predicate(directory)]
-        if self.dialect == "postgresql":
+        if self.dialect in ("postgresql", "oracle"):
             conditions.append(t.c.content.icontains(query, autoescape=True))
         elif query.isascii():
             conditions.append(t.c.content.icontains(query, autoescape=True))

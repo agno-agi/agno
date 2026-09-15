@@ -12,11 +12,12 @@ introduces no new production boundary. Both modules skip cleanly (not error)
 when their server is unreachable, since no Oracle container exists in public
 CI (ADR 0009).
 
-Coverage in this file: the domains tickets 03-10 deliver (sessions, runs,
+Coverage in this file: the domains tickets 03-11 deliver (sessions, runs,
 memory, metrics, knowledge, eval runs, traces, learnings, schedules,
-approvals, auth tokens, the component catalog, the durable job queue).
-Later tickets extend this file with their own domains as they land, rather
-than each inventing a separate differential suite.
+approvals, auth tokens, the component catalog, the durable job queue, tool
+result offloading, service accounts). Later tickets extend this file with
+their own domains as they land, rather than each inventing a separate
+differential suite.
 """
 
 import uuid
@@ -100,12 +101,16 @@ def oracle_db(_servers_up):
         "component_configs_table": f"diff_comp_cfg_{suffix}",
         "component_links_table": f"diff_comp_link_{suffix}",
         "job_table": f"diff_jobs_{suffix}",
+        "service_accounts_table": f"diff_svcacct_{suffix}",
     }
     database = OracleDb(db_url=ORACLE_URL, id=f"diff-oracle-{suffix}", **tables)
     yield database
     database.Session.remove()
     with database.db_engine.begin() as conn:
-        for t in tables.values():
+        # tool_results has no name override (ticket 11: fixed, not
+        # configurable), so it is not in `tables` above and is dropped by
+        # its own fixed name instead.
+        for t in [*tables.values(), database.tool_results_table_name]:
             if database.table_exists(t):
                 conn.execute(text(f"DROP TABLE {t} CASCADE CONSTRAINTS"))
     database.db_engine.dispose()
@@ -968,6 +973,127 @@ def test_jobs_match_postgres(pg_db, oracle_db):
     """One scenario covering ticket 10's domain, compared directly."""
     pg_result = _run_jobs_scenario(pg_db)
     oracle_result = _run_jobs_scenario(oracle_db)
+
+    assert oracle_result == pg_result, (
+        f"Oracle diverged from Postgres.\nPostgres: {pg_result}\nOracle:   {oracle_result}"
+    )
+
+
+def _run_tool_results_and_service_accounts_scenario(db) -> Dict[str, Any]:
+    """Ticket 11's domain: the tool_results offloading index table and its
+    session-delete cascade, and service accounts' active-name partial
+    uniqueness (a revoked name frees itself for reuse).
+    """
+
+    def _tool_result(result_id, session_id, **overrides):
+        d = {
+            "result_id": result_id,
+            "namespace": "diff",
+            "path": f"/{result_id}",
+            "session_id": session_id,
+            "run_id": "diff-run-1",
+            "tool_call_id": "call-1",
+            "tool_name": "search",
+            "args_hash": "abc123",
+            "content_type": "text/plain",
+            "size_bytes": 1000,
+            "line_count": 10,
+            "preview": "preview text",
+            "user_id": None,
+            "created_at": 1700000000,
+            "expires_at": None,
+        }
+        d.update(overrides)
+        return d
+
+    db.upsert_tool_result(_tool_result("diff-r1", "diff-tr-session"))
+    db.upsert_tool_result(_tool_result("diff-r2", "diff-tr-session", created_at=1700000001))
+    db.upsert_tool_result(_tool_result("diff-r3", "diff-tr-session-2"))
+    db.upsert_tool_result(_tool_result("diff-r1", "diff-tr-session", tool_name="updated"))  # upsert_tool_result -> None
+    fetched_after_update = db.get_tool_result("diff-r1")
+
+    session_results = db.get_tool_results_for_session("diff-tr-session")
+    session_result_ids = [r["result_id"] for r in session_results]
+
+    deleted_count = db.delete_tool_results(["diff-r3"])
+
+    db.upsert_tool_result(_tool_result("diff-r-expired", "diff-tr-session", expires_at=1600000000))
+    expired = db.get_expired_tool_results(1650000000)
+    expired_ids = sorted(r["result_id"] for r in expired)
+
+    session = AgentSession(session_id="diff-tr-session", agent_id="diff-agent", created_at=1700000000)
+    db.upsert_session(session)
+    pre_delete_results = db.get_tool_results_for_session("diff-tr-session")
+    db.delete_session("diff-tr-session")
+    post_delete_results = db.get_tool_results_for_session("diff-tr-session")
+
+    sa1 = {
+        "id": "diff-sa-1",
+        "name": "diff-ci-bot",
+        "user_id": "alice",
+        "token_hash": "diff-hash-1",
+        "token_prefix": "sk_ab",
+        "scopes": ["read", "write"],
+        "created_at": 1700000000,
+        "expires_at": None,
+        "last_used_at": None,
+        "revoked_at": None,
+        "created_by": "alice",
+    }
+    db.create_service_account(sa1)
+    by_hash = db.get_service_account_by_token_hash("diff-hash-1")
+    by_name = db.get_service_account_by_name("diff-ci-bot")
+
+    same_name_rejected = False
+    try:
+        db.create_service_account(
+            {**sa1, "id": "diff-sa-2", "token_hash": "diff-hash-2", "user_id": "bob", "created_by": "bob"}
+        )
+    except Exception:
+        same_name_rejected = True
+
+    db.update_service_account("diff-sa-1", revoked_at=1700000100)
+    reused_ok = False
+    try:
+        db.create_service_account(
+            {**sa1, "id": "diff-sa-3", "token_hash": "diff-hash-3", "user_id": "carol", "created_by": "carol"}
+        )
+        reused_ok = True
+    except Exception:
+        pass
+    active_by_name = db.get_service_account_by_name("diff-ci-bot")
+
+    all_accounts, all_total = db.get_service_accounts(include_revoked=True)
+    active_accounts, active_total = db.get_service_accounts(include_revoked=False)
+    all_ids = sorted(a["id"] for a in all_accounts)
+    active_ids = sorted(a["id"] for a in active_accounts)
+
+    deleted_sa = db.delete_service_account("diff-sa-1")
+
+    return {
+        "fetched_after_update_tool_name": fetched_after_update["tool_name"],
+        "session_result_ids": sorted(session_result_ids),
+        "deleted_tool_results_count": deleted_count,
+        "expired_ids": expired_ids,
+        "pre_delete_result_count": len(pre_delete_results),
+        "post_delete_results": post_delete_results,
+        "by_hash_id": by_hash["id"],
+        "by_name_id": by_name["id"],
+        "same_name_rejected": same_name_rejected,
+        "reused_ok": reused_ok,
+        "active_by_name_id": active_by_name["id"],
+        "all_ids": all_ids,
+        "all_total": all_total,
+        "active_ids": active_ids,
+        "active_total": active_total,
+        "deleted_sa": deleted_sa,
+    }
+
+
+def test_tool_results_and_service_accounts_match_postgres(pg_db, oracle_db):
+    """One scenario covering ticket 11's domain, compared directly."""
+    pg_result = _run_tool_results_and_service_accounts_scenario(pg_db)
+    oracle_result = _run_tool_results_and_service_accounts_scenario(oracle_db)
 
     assert oracle_result == pg_result, (
         f"Oracle diverged from Postgres.\nPostgres: {pg_result}\nOracle:   {oracle_result}"
