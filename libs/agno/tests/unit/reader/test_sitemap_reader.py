@@ -162,6 +162,37 @@ def test_is_sitemap_url():
     assert is_sitemap_url("https://x.com/sitemap/page") is False
 
 
+@pytest.mark.parametrize("extension", ["html", "htm"])
+@pytest.mark.parametrize("directory", ["/", "/docs/"])
+def test_canonicalization_preserves_non_index_filenames(extension, directory):
+    path = f"{directory}myindex.{extension}"
+    url = f"https://example.com{path}?v=1#section"
+    assert canonical_page_url(url) == f"https://example.com{path}?v=1"
+    assert canonical_page_name(url) == f"example.com{path}?v=1"
+
+
+@pytest.mark.parametrize("extension", ["html", "htm"])
+@pytest.mark.parametrize("asynchronous", [False, True])
+def test_sitemap_preserves_pages_with_non_index_filenames(extension, asynchronous):
+    urls = [f"https://example.com/docs/myindex.{extension}", "https://example.com/docs/my"]
+    routes = {
+        "https://example.com/sitemap.xml": (urlset_xml(*urls), "application/xml"),
+        urls[0]: ("First page content", "text/plain"),
+        urls[1]: ("Second page content", "text/plain"),
+    }
+    reader = make_reader(chunk=False)
+    with mock_site(routes) as requested:
+        if asynchronous:
+            documents = asyncio.run(reader.async_read("https://example.com/sitemap.xml"))
+        else:
+            documents = reader.read("https://example.com/sitemap.xml")
+
+    assert [document.id for document in documents] == urls
+    assert [document.name for document in documents] == [url.removeprefix("https://") for url in urls]
+    assert [document.content for document in documents] == ["First page content", "Second page content"]
+    assert all(url in requested for url in urls)
+
+
 # ----------------------------------------------------------------------
 # Discovery
 # ----------------------------------------------------------------------
