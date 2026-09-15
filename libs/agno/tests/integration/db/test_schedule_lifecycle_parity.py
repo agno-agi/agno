@@ -4,6 +4,14 @@ One suite over table creation, the atomic-claim primitive and the ``user_id``
 read filter, run against every backend that ships schedules. SQLite always runs;
 Postgres, Mongo and Oracle need ``AGNO_TEST_POSTGRES_URL`` / ``AGNO_TEST_MONGO_URL``
 / ``AGNO_TEST_ORACLE_URL`` and skip otherwise.
+
+Note this file's Oracle fixture deliberately follows THIS FILE's own
+env-var-gated convention (matching its Postgres and Mongo siblings, all opt-in
+per backend), not the hardcoded-localhost auto-probe convention every other
+Oracle-specific test file in this suite uses. A CI environment that relies on
+the auto-probe convention alone (starts an Oracle container and sets no
+env vars) will silently skip this file's 4 Oracle tests while every other
+Oracle test runs -- set ``AGNO_TEST_ORACLE_URL`` explicitly to include them.
 """
 
 import time
