@@ -177,6 +177,7 @@ def _determine_tools_for_model(
 
     # Prepare tools
     _tools: List[Union[Toolkit, Callable, Function, Dict]] = []
+    user_tool_count = 0
 
     # Add provided tools
     if resolved_tools is not None:
@@ -187,6 +188,7 @@ def _determine_tools_for_model(
                 if check_mcp_tools and not tool.initialized:  # type: ignore
                     continue
             _tools.append(tool)
+        user_tool_count = len(_tools)
 
     if team.read_chat_history:
         _tools.append(_get_chat_history_function(team, session=session, async_mode=async_mode))
@@ -336,6 +338,23 @@ def _determine_tools_for_model(
     if len(_tools) > 0:
         log_debug("Processing tools for model")
 
+    def _tool_names(tool: Union[Toolkit, Callable, Function, Dict]) -> Set[str]:
+        if isinstance(tool, Function):
+            return {tool.name}
+        if isinstance(tool, Toolkit):
+            functions = tool.get_async_functions() if async_mode else tool.get_functions()
+            return {function.name for function in functions.values() if function.entrypoint}
+        if callable(tool):
+            return {tool.__name__}
+        if isinstance(tool, Dict):
+            name = tool.get("name")
+            return {name} if isinstance(name, str) else set()
+        return set()
+
+    framework_tool_names: Set[str] = set()
+    for tool in _tools[user_tool_count:]:
+        framework_tool_names.update(_tool_names(tool))
+
     _function_names = []
     _functions: List[Union[Function, dict]] = []
     _toolkit_instruction_keys: Set[ToolkitKey] = set()
@@ -384,6 +403,12 @@ def _determine_tools_for_model(
         strict = True
 
     for tool_index, tool in enumerate(_tools):
+        if tool_index < user_tool_count:
+            collisions = _tool_names(tool) & framework_tool_names
+            if collisions:
+                raise ValueError(
+                    f"Tool name(s) {sorted(collisions)} conflict with team framework tools; rename the user tool."
+                )
         # ComponentTool markers are rejected at the API boundary (Team __init__ /
         # set_tools / add_tool), so anything reaching here is already a real tool -- no
         # per-run guard, which would tax every run to catch a case the entry points own.
