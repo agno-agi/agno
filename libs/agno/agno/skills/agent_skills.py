@@ -29,6 +29,7 @@ class Skills:
     def __init__(self, loaders: List[SkillLoader]):
         self.loaders = loaders
         self._skills: Dict[str, Skill] = {}
+        self._instructions_provided: set = set()
         self._load_skills()
 
     def _load_skills(self) -> None:
@@ -58,6 +59,7 @@ class Skills:
             SkillValidationError: If any skill fails validation.
         """
         self._skills.clear()
+        self._instructions_provided.clear()
         self._load_skills()
 
     def get_skill(self, name: str) -> Optional[Skill]:
@@ -264,15 +266,23 @@ class Skills:
                 }
             )
 
-        return json.dumps(
-            {
-                "skill_name": skill.name,
-                "description": skill.description,
-                "instructions": skill.instructions,
-                "available_scripts": skill.scripts,
-                "available_references": skill.references,
-            }
-        )
+        already_provided = skill_name in self._instructions_provided
+        self._instructions_provided.add(skill_name)
+
+        result: Dict[str, object] = {
+            "skill_name": skill.name,
+            "description": skill.description,
+            "instructions": skill.instructions,
+            "available_scripts": skill.scripts,
+            "available_references": skill.references,
+        }
+        if already_provided:
+            result["instructions_already_provided"] = True
+            result["note"] = (
+                "Instructions for this skill were already loaded in this session. "
+                "Prefer using them instead of calling get_skill_instructions again unless you need a refresh."
+            )
+        return json.dumps(result)
 
     def _get_skill_reference(self, skill_name: str, reference_path: Optional[str] = None) -> str:
         """Load a reference document from a skill.

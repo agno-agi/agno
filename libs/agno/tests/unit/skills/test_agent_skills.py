@@ -724,3 +724,183 @@ def test_no_skills_have_scripts_or_references(minimal_skill: Skill) -> None:
     assert "get_skill_script" not in tool_names
     assert "get_skill_reference" not in tool_names
     assert "get_skill_instructions" in tool_names
+
+
+# --- System Prompt IMPORTANT Block Tests ---
+
+
+def test_no_assets_important_block_mentions_only_instructions(minimal_skill: Skill) -> None:
+    """When no skill has scripts or references, the IMPORTANT block tells the
+    model to only use get_skill_instructions."""
+    loader = MockSkillLoader([minimal_skill])
+    skills = Skills(loaders=[loader])
+    snippet = skills.get_system_prompt_snippet()
+
+    assert "Only use `get_skill_instructions`" in snippet
+    assert "unless the available skills metadata shows additional files" in snippet
+
+
+def test_no_assets_important_block_does_not_mention_script_or_reference(minimal_skill: Skill) -> None:
+    """In the all-no-assets case, the IMPORTANT block must not mention
+    get_skill_script or get_skill_reference."""
+    loader = MockSkillLoader([minimal_skill])
+    skills = Skills(loaders=[loader])
+    snippet = skills.get_system_prompt_snippet()
+
+    important_section = snippet.split("## IMPORTANT")[1].split("## Available Skills")[0]
+    assert "get_skill_script" not in important_section
+    assert "get_skill_reference" not in important_section
+
+
+def test_get_system_prompt_shows_none_for_all_skills_assets(minimal_skill: Skill) -> None:
+    """All-no-assets skills each render <scripts>none</scripts> and
+    <references>none</references>."""
+    loader = MockSkillLoader([minimal_skill])
+    skills = Skills(loaders=[loader])
+    snippet = skills.get_system_prompt_snippet()
+
+    assert snippet.count("<scripts>none</scripts>") == 1
+    assert snippet.count("<references>none</references>") == 1
+
+
+# --- LocalSkills Empty-Asset Normalization Tests ---
+
+
+def test_local_skills_skillmd_only_produces_empty_scripts_and_references(tmp_path: Path) -> None:
+    """A skill folder with only SKILL.md (no scripts/ or references/ dirs)
+    should produce Skill objects with empty-list scripts and references."""
+    skill_dir = tmp_path / "bare-skill"
+    skill_dir.mkdir()
+    (skill_dir / "SKILL.md").write_text(
+        """---
+name: bare-skill
+description: A skill with no assets
+---
+# Bare Skill
+
+Just instructions, no scripts or references.
+"""
+    )
+
+    loader = LocalSkills(str(skill_dir))
+    skills_list = loader.load()
+
+    assert len(skills_list) == 1
+    skill = skills_list[0]
+    assert skill.name == "bare-skill"
+    assert skill.scripts == []
+    assert skill.references == []
+    assert isinstance(skill.scripts, list)
+    assert isinstance(skill.references, list)
+
+
+def test_local_skills_empty_dirs_produce_empty_lists(tmp_path: Path) -> None:
+    """A skill folder with empty scripts/ and references/ dirs should
+    produce empty lists, not None."""
+    skill_dir = tmp_path / "empty-dirs-skill"
+    skill_dir.mkdir()
+    (skill_dir / "SKILL.md").write_text(
+        """---
+name: empty-dirs-skill
+description: Skill with empty asset dirs
+---
+Instructions here.
+"""
+    )
+    (skill_dir / "scripts").mkdir()
+    (skill_dir / "references").mkdir()
+
+    loader = LocalSkills(str(skill_dir))
+    skills_list = loader.load()
+
+    assert len(skills_list) == 1
+    skill = skills_list[0]
+    assert skill.scripts == []
+    assert skill.references == []
+
+
+def test_local_skills_skillmd_only_has_no_scripts_or_references_tools(tmp_path: Path) -> None:
+    """When loaded via LocalSkills, a SKILL.md-only skill should result in
+    only get_skill_instructions being exposed."""
+    skill_dir = tmp_path / "bare-skill"
+    skill_dir.mkdir()
+    (skill_dir / "SKILL.md").write_text(
+        """---
+name: bare-skill
+description: Minimal skill
+---
+Instructions.
+"""
+    )
+
+    loader = LocalSkills(str(skill_dir))
+    skills_obj = Skills(loaders=[loader])
+    tool_names = {t.name for t in skills_obj.get_tools()}
+
+    assert tool_names == {"get_skill_instructions"}
+    assert skills_obj._has_any_scripts() is False
+    assert skills_obj._has_any_references() is False
+
+
+# --- Dedup: get_skill_instructions Already-Provided Tests ---
+
+
+def test_get_skill_instructions_first_call_no_dedup_flag(mock_loader: MockSkillLoader) -> None:
+    """The first call for a skill should return full instructions with no
+    'instructions_already_provided' flag."""
+    skills = Skills(loaders=[mock_loader])
+    result = json.loads(skills._get_skill_instructions("test-skill"))
+
+    assert result["skill_name"] == "test-skill"
+    assert "instructions" in result
+    assert "instructions_already_provided" not in result
+    assert "note" not in result
+
+
+def test_get_skill_instructions_second_call_includes_dedup_flag(mock_loader: MockSkillLoader) -> None:
+    """A second call for the same skill should include
+    'instructions_already_provided': True and a note."""
+    skills = Skills(loaders=[mock_loader])
+
+    skills._get_skill_instructions("test-skill")
+
+    result = json.loads(skills._get_skill_instructions("test-skill"))
+    assert result["instructions_already_provided"] is True
+    assert "note" in result
+    assert "already loaded" in result["note"]
+    assert "instructions" in result
+    assert "Follow these instructions" in result["instructions"]
+
+
+def test_get_skill_instructions_different_skills_independent(mock_loader_multiple: MockSkillLoader) -> None:
+    """Dedup tracking is per-skill: calling one skill doesn't flag another."""
+    skills = Skills(loaders=[mock_loader_multiple])
+
+    skills._get_skill_instructions("test-skill")
+
+    result = json.loads(skills._get_skill_instructions("minimal-skill"))
+    assert "instructions_already_provided" not in result
+
+
+def test_get_skill_instructions_reload_clears_tracking(mock_loader: MockSkillLoader) -> None:
+    """reload() should clear the dedup tracking set."""
+    skills = Skills(loaders=[mock_loader])
+
+    skills._get_skill_instructions("test-skill")
+    result = json.loads(skills._get_skill_instructions("test-skill"))
+    assert result["instructions_already_provided"] is True
+
+    skills.reload()
+
+    result = json.loads(skills._get_skill_instructions("test-skill"))
+    assert "instructions_already_provided" not in result
+
+
+def test_get_skill_instructions_not_found_never_tracked(mock_loader: MockSkillLoader) -> None:
+    """A failed lookup (skill not found) should not be recorded as provided."""
+    skills = Skills(loaders=[mock_loader])
+
+    skills._get_skill_instructions("nonexistent")
+
+    result = json.loads(skills._get_skill_instructions("test-skill"))
+    assert "instructions_already_provided" not in result
