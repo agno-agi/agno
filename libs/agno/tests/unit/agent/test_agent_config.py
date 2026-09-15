@@ -1770,11 +1770,11 @@ class TestAgentVerifiersRoundTrip:
         """The check registers under the verify: prefix at AgentOS startup and resolves by
         name on load."""
         from agno.os.utils import collect_components_from_agent
-        from agno.verifiers import VerificationConfig, verifier
+        from agno.verifiers import VerificationConfig, check
 
         agent = Agent(
             id="verified-agent",
-            verifiers=[verifier(report_missing, stop_on_failure=True)],
+            verifiers=[check(report_missing, stop_on_failure=True)],
             verification=VerificationConfig(max_attempts=1),
             telemetry=False,
         )
@@ -1812,7 +1812,7 @@ class TestAgentVerifiersRoundTrip:
         assert wrapper.stop_on_failure is False
 
     def test_from_dict_turns_off_stop_on_unchanged_state_with_warning(self):
-        from agno.verifiers import VerificationConfig, verifier
+        from agno.verifiers import VerificationConfig, check
 
         class Fingerprint:
             def capture(self):
@@ -1820,7 +1820,7 @@ class TestAgentVerifiersRoundTrip:
 
         agent = Agent(
             id="unchanged-state-agent",
-            verifiers=[verifier(report_missing)],
+            verifiers=[check(report_missing)],
             verification=VerificationConfig(stop_on_unchanged_state=True, fingerprint=Fingerprint()),
             telemetry=False,
         )

@@ -1969,12 +1969,12 @@ class TestTeamVerifiersRoundTrip:
         """The check registers under the verify: prefix at AgentOS startup and resolves
         by name on load, with the saved policy re-applied to the restored wrapper."""
         from agno.os.utils import collect_components_from_team
-        from agno.verifiers import VerificationConfig, verifier
+        from agno.verifiers import VerificationConfig, check
 
         team = Team(
             id="verified-team",
             members=[],
-            verifiers=[verifier(report_missing, stop_on_failure=True)],
+            verifiers=[check(report_missing, stop_on_failure=True)],
             verification=VerificationConfig(max_attempts=1),
             telemetry=False,
         )

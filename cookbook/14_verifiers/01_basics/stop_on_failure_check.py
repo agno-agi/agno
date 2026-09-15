@@ -16,7 +16,7 @@ from typing import Union
 from agno.agent import Agent
 from agno.models.openai import OpenAIResponses
 from agno.run.agent import RunOutput
-from agno.verifiers import VerificationConfig, verifier
+from agno.verifiers import VerificationConfig, check
 
 # ---------------------------------------------------------------------------
 # Define Checks
@@ -38,7 +38,7 @@ def config_present(run_output: RunOutput) -> Union[bool, str]:
 
 agent = Agent(
     model=OpenAIResponses(id="gpt-5.6-luna"),
-    verifiers=[verifier(config_present, stop_on_failure=True)],
+    verifiers=[check(config_present, stop_on_failure=True)],
     verification=VerificationConfig(max_attempts=3),
 )
 

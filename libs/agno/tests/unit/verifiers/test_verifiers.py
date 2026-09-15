@@ -14,7 +14,7 @@ import pytest
 from agno.agent import Agent
 from agno.scorer import Score
 from agno.team import Team
-from agno.verifiers import MAX_REPORT_BYTES, ScorerVerifier, ShellVerifier, Verdict, verifier
+from agno.verifiers import MAX_REPORT_BYTES, ScorerVerifier, ShellVerifier, Verdict, check
 from agno.verifiers.base import coerce_verifier
 from agno.workflow import Workflow
 
@@ -43,7 +43,7 @@ async def _check(v, use_async, *args, **kwargs):
     ],
 )
 def test_adapter_return_mapping(returned, passed, report_has):
-    v = verifier(lambda run_output: returned, name="check")
+    v = check(lambda run_output: returned, name="check")
     verdict = v.verify(object())
     assert verdict.passed is passed
     assert verdict.name == "check"
@@ -51,10 +51,10 @@ def test_adapter_return_mapping(returned, passed, report_has):
 
 
 async def test_adapter_sync_callable_through_averify_runs_in_thread():
-    def check(run_output):
+    def probe(run_output):
         return True
 
-    assert (await verifier(check).averify(object())).passed is True
+    assert (await check(probe).averify(object())).passed is True
 
 
 # ---------------------------------------------------------------------------
@@ -114,19 +114,19 @@ def _owner(kind: str):
 
 
 def _declares_every_owner(seen):
-    def check(run_output, agent, team, workflow):
+    def probe(run_output, agent, team, workflow):
         seen.update(agent=agent, team=team, workflow=workflow)
         return True
 
-    return verifier(check)
+    return check(probe)
 
 
 def _catch_all(seen):
-    def check(**kwargs):
+    def probe(**kwargs):
         seen.update(kwargs)
         return True
 
-    return verifier(check)
+    return check(probe)
 
 
 @pytest.mark.parametrize("build", [_declares_every_owner, _catch_all], ids=["declared", "kwargs"])
@@ -202,7 +202,7 @@ def test_adapter_keyboard_interrupt_propagates():
         raise KeyboardInterrupt
 
     with pytest.raises(KeyboardInterrupt):
-        verifier(interrupt).verify(object())
+        check(interrupt).verify(object())
 
 
 # ---------------------------------------------------------------------------

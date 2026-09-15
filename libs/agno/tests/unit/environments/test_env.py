@@ -102,7 +102,7 @@ def test_env_fingerprint_covers_verifiers_and_loop_config():
     # Verifiers decide when an attempt is done, so they are environment: adding one,
     # renaming one, or changing the loop budget must each flip env_fingerprint, and
     # none of them touch the policy fingerprint.
-    from agno.verifiers import verifier
+    from agno.verifiers import check
     from agno.verifiers.types import VerificationConfig
 
     def report_exists(run_output):
@@ -118,7 +118,7 @@ def test_env_fingerprint_covers_verifiers_and_loop_config():
 
     base = _env()
     with_check = _env(agent=_agent(verifiers=[report_exists]))
-    renamed_check = _env(agent=_agent(verifiers=[verifier(report_exists, name="report")]))
+    renamed_check = _env(agent=_agent(verifiers=[check(report_exists, name="report")]))
     other_check = _env(agent=_agent(verifiers=[tests_pass]))
     with_budget = _env(agent=_agent(verifiers=[report_exists], verification=VerificationConfig(max_attempts=5)))
 

@@ -9,7 +9,7 @@ and a run that never passes within budget ends ``RunStatus.unverified`` with the
 the mount. Learning, memory and post-hooks are not gated: they run on the final output.
 """
 
-from agno.verifiers.base import GuardedVerifier, Verifier, verifier
+from agno.verifiers.base import GuardedVerifier, Verifier, check
 from agno.verifiers.fingerprints import (
     DEFAULT_EXCLUDES,
     CallableFingerprint,
@@ -48,5 +48,5 @@ __all__ = [
     "Verifier",
     "divergence_report",
     "verified_tool",
-    "verifier",
+    "check",
 ]

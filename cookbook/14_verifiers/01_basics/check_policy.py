@@ -21,7 +21,7 @@ from agno.models.openai import OpenAIResponses
 from agno.run.agent import RunOutput
 from agno.scorer import JudgeScorer
 from agno.tools.file import FileTools
-from agno.verifiers import ScorerVerifier, Verdict, verifier
+from agno.verifiers import ScorerVerifier, Verdict, check
 
 # ---------------------------------------------------------------------------
 # Setup
@@ -72,7 +72,7 @@ agent = Agent(
     tools=[FileTools(base_dir=WORKDIR)],
     verifiers=[
         summary_written,
-        verifier(short_enough, required=False),
+        check(short_enough, required=False),
         ScorerVerifier(judge, run_condition=required_passing),
     ],
 )

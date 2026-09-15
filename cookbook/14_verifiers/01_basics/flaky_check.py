@@ -15,7 +15,7 @@ from typing import Union
 from agno.agent import Agent
 from agno.models.openai import OpenAIResponses
 from agno.run.agent import RunOutput
-from agno.verifiers import verifier
+from agno.verifiers import check
 
 # ---------------------------------------------------------------------------
 # Define Checks
@@ -40,7 +40,7 @@ def service_ready(run_output: RunOutput) -> Union[bool, str]:
 
 agent = Agent(
     model=OpenAIResponses(id="gpt-5.6-luna"),
-    verifiers=[verifier(service_ready, max_retries=2)],
+    verifiers=[check(service_ready, max_retries=2)],
 )
 
 # ---------------------------------------------------------------------------

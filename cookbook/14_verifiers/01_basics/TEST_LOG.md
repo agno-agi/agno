@@ -66,7 +66,7 @@
 
 **Status:** PASS
 
-**Description:** verifier(service_ready, max_retries=2) over a probe that fails its first two calls.
+**Description:** check(service_ready, max_retries=2) over a probe that fails its first two calls.
 
 **Result:** Exit 0. `Verification: verified / passed`, `Model attempts: 1`, `Probe calls: 3`: the retries absorbed the probe failures without a model re-entry.
 
@@ -76,7 +76,7 @@
 
 **Status:** PASS
 
-**Description:** verifier(config_present, stop_on_failure=True) requiring a config file the agent has no tool to create, budget 3.
+**Description:** check(config_present, stop_on_failure=True) requiring a config file the agent has no tool to create, budget 3.
 
 **Result:** Exit 0. `Status: UNVERIFIED`, `Verification: unverified / fatal`, `Attempts: 1 of 3`.
 

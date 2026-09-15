@@ -10,6 +10,6 @@ The verification loop on a single agent: callable checks, outcomes, streaming an
 - `streamed.py`: `VerificationStarted` and `VerificationCompleted` events on a streamed run.
 - `async_verify.py`: `agent.arun` with a coroutine check awaited in place.
 - `check_policy.py`: Per-check policy: `required=False` for an advisory check, `run_condition` to gate a judge.
-- `flaky_check.py`: `verifier(fn, max_retries=2)` retries a flaky probe without spending a model attempt.
-- `stop_on_failure_check.py`: `verifier(fn, stop_on_failure=True)` ends the run on the first failure with stop reason `"fatal"`.
+- `flaky_check.py`: `check(fn, max_retries=2)` retries a flaky probe without spending a model attempt.
+- `stop_on_failure_check.py`: `check(fn, stop_on_failure=True)` ends the run on the first failure with stop reason `"fatal"`.
 - `budget_timeout.py`: `VerificationConfig(timeout=1.0)` ends the loop on the wall clock with stop reason `"timeout"`.

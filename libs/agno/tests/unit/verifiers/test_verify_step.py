@@ -30,7 +30,7 @@ from agno.run.workflow import (
 )
 from agno.tools.studio import StudioTools
 from agno.tools.studio_runner import StudioRunnerTools
-from agno.verifiers import VerificationConfig, verifier
+from agno.verifiers import VerificationConfig, check
 from agno.verifiers.types import Verification
 from agno.workflow import Condition, Loop, Parallel, Router, Step, Steps, Verify, Workflow
 from agno.workflow.step import UnresolvableCallableError
@@ -125,7 +125,7 @@ def test_stop_on_failure_stops_with_attempts_remaining():
         steps=[
             Step(name="writer", agent=Agent(name="writer", model=writer_model)),
             Verify(
-                [verifier(lambda run_output: "environment is broken", name="env_check", stop_on_failure=True)],
+                [check(lambda run_output: "environment is broken", name="env_check", stop_on_failure=True)],
                 on_fail="writer",
                 max_attempts=4,
             ),
@@ -404,7 +404,7 @@ def test_check_and_executor_sharing_a_name_do_not_collide_in_the_registry():
     def fix(run_output):
         return True
 
-    checked = Verify([verifier(fix, name="fix_it")], on_fail="fix", name="gate")
+    checked = Verify([check(fix, name="fix_it")], on_fail="fix", name="gate")
     workflow = Workflow(
         name="wf",
         steps=[
@@ -464,7 +464,7 @@ def test_serialization_round_trip_preserves_per_check_policy():
             return "state"
 
     original = Verify(
-        [verifier(advisory, required=False, max_retries=2), verifier(gatekeeper, stop_on_failure=True)],
+        [check(advisory, required=False, max_retries=2), check(gatekeeper, stop_on_failure=True)],
         on_fail=None,
         max_attempts=4,
         stop_on_unverified=True,
@@ -549,7 +549,7 @@ def test_workflow_listing_describes_the_gate():
         name="wf",
         steps=[
             Step(name="writer", executor=lambda step_input: StepOutput(content="draft")),
-            Verify([verifier(always_pass, name="ok")], on_fail="writer", max_attempts=4, stop_on_unverified=True),
+            Verify([check(always_pass, name="ok")], on_fail="writer", max_attempts=4, stop_on_unverified=True),
         ],
     )
     listed = workflow.to_dict_for_steps()["steps"]

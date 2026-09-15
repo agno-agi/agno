@@ -174,7 +174,7 @@ def _adopt_policy(target: "CoercedVerifier", source: Any) -> None:
 
 
 def validate_policy(max_retries: int, run_condition: Any, label: str) -> None:
-    """The per-check policy checks shared by `verifier()` and the shipped verifiers. Raises at
+    """The per-check policy checks shared by `check()` and the shipped verifiers. Raises at
     construction: a bad policy must not surface as a mid-run surprise."""
     if max_retries < 0:
         raise ValueError(f"{label}: max_retries must be a non-negative int, got {max_retries!r}")
@@ -184,7 +184,7 @@ def validate_policy(max_retries: int, run_condition: Any, label: str) -> None:
 
 
 class CallableVerifier:
-    """`verifier()` output: a plain callable adapted to the Verifier protocol.
+    """`check()` output: a plain callable adapted to the Verifier protocol.
 
     The callable's parameters are routed by name (run_output, run_context, agent, team,
     workflow, session); its signature is validated at construction. `verify` and `averify` accept the
@@ -301,9 +301,9 @@ def coerce_verifier(obj: Any) -> "CoercedVerifier":
 
     An object with `verify` and/or `averify` is used through `GuardedVerifier`, which calls
     its own methods and guards against exceptions. A callable with
-    neither is adapted via `verifier()`. Anything else is a programmer error. The result
+    neither is adapted via `check()`. Anything else is a programmer error. The result
     always exposes the `verify` and `averify` the run loop calls; a bare user object is never called
-    directly. Idempotent: an already-coerced wrapper (a `verifier()` result) passes through —
+    directly. Idempotent: an already-coerced wrapper (a `check()` result) passes through —
     re-wrapping one would route the loop's owner/session past the inner adapter.
     """
     if isinstance(obj, (CallableVerifier, GuardedVerifier)):
@@ -315,7 +315,7 @@ def coerce_verifier(obj: Any) -> "CoercedVerifier":
     raise ValueError(f"Pass a Verifier, a callable, or a Scorer wrapped in ScorerVerifier, got {type(obj).__name__}")
 
 
-def verifier(
+def check(
     target: Any,
     *,
     name: Optional[str] = None,

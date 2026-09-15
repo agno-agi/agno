@@ -71,7 +71,7 @@ Every example uses `OPENAI_API_KEY` (`gpt-5.6-luna`) and writes its scratch file
   `session`; it receives only what it declares). Return `True` to pass; a string or `False`
   to fail (the string becomes the evidence report); or a full `Verdict`. A coroutine is
   awaited on the async path.
-- **`verifier(fn, ...)`** — per-check policy on any callable or verifier; the shipped verifiers
+- **`check(fn, ...)`** — per-check policy on any callable or verifier; the shipped verifiers
   take the same kwargs directly. `required=False` makes the check advisory (reports, never
   gates). `run_condition=predicate` decides per attempt whether the check runs, from the verdicts
   so far. `max_retries=N` re-runs the check itself up to N extra times before a failure counts.

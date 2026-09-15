@@ -8,7 +8,7 @@ import pytest
 
 from agno.agent import Agent
 from agno.run.base import RunStatus
-from agno.verifiers import ShellVerifier, Verdict, VerificationConfig, verifier
+from agno.verifiers import ShellVerifier, Verdict, VerificationConfig, check
 from agno.verifiers._gate import run_checks
 
 from .conftest import ScriptedModel, _reports, _run_variant, _text
@@ -32,7 +32,7 @@ def test_advisory_failure_shows_as_warn_when_a_required_check_fails():
         return "3 style findings"
 
     model = ScriptedModel([_text("claimed"), _text("done")])
-    agent = Agent(model=model, verifiers=[report_missing, verifier(lint, required=False)])
+    agent = Agent(model=model, verifiers=[report_missing, check(lint, required=False)])
     out = agent.run("go")
     assert out.verification.status == "verified"
     reports = _reports(out)
@@ -44,7 +44,7 @@ def test_advisory_failure_shows_as_warn_when_a_required_check_fails():
 
 def test_all_advisory_verifies_with_warnings_on_record():
     model = ScriptedModel([_text("done")])
-    agent = Agent(model=model, verifiers=[verifier(lambda run_output: "meh", name="style", required=False)])
+    agent = Agent(model=model, verifiers=[check(lambda run_output: "meh", name="style", required=False)])
     out = agent.run("go")
     assert model.calls == 1
     assert out.status == RunStatus.completed
@@ -71,7 +71,7 @@ async def test_rerun_retries_a_flaky_check_within_one_attempt(mode, passes):
     model = ScriptedModel([_text("done")])
     agent = Agent(
         model=model,
-        verifiers=[verifier(flaky, max_retries=2)],
+        verifiers=[check(flaky, max_retries=2)],
         verification=VerificationConfig(max_attempts=1),
     )
     out = await _run_variant(agent, mode)
@@ -107,7 +107,7 @@ async def test_run_when_skips_and_records_without_gating(mode, cheap_passes):
     model = ScriptedModel([_text("done")])
     agent = Agent(
         model=model,
-        verifiers=[cheap, verifier(judge, run_condition=required_passing)],
+        verifiers=[cheap, check(judge, run_condition=required_passing)],
         verification=VerificationConfig(max_attempts=1),
     )
     out = await _run_variant(agent, mode)
@@ -135,7 +135,7 @@ def test_broken_run_when_runs_the_check():
         return True
 
     model = ScriptedModel([_text("done")])
-    agent = Agent(model=model, verifiers=[verifier(the_check, run_condition=boom)])
+    agent = Agent(model=model, verifiers=[check(the_check, run_condition=boom)])
     out = agent.run("go")
     assert ran["n"] == 1, "a broken predicate must not silently skip a gate"
     assert out.verification.status == "verified"
@@ -145,8 +145,8 @@ async def test_run_refuses_an_async_run_condition_and_arun_awaits_it():
     async def only_when_ready(verdicts):
         return True
 
-    check = verifier(lambda run_output: True, name="gated", run_condition=only_when_ready)
-    agent = Agent(model=ScriptedModel([_text("done")]), verifiers=[check])
+    gated = check(lambda run_output: True, name="gated", run_condition=only_when_ready)
+    agent = Agent(model=ScriptedModel([_text("done")]), verifiers=[gated])
     with pytest.raises(ValueError, match=r"Cannot use only_when_ready \(an async run_condition\) with `run\(\)`"):
         agent.run("go")
     assert (await agent.arun("go")).verification.status == "verified"
@@ -161,7 +161,7 @@ def test_shared_runner_stamps_skipped_false_on_a_verdict_the_check_returned():
     def self_skipping(run_output):
         return Verdict(passed=False, report="failing", skipped=True)
 
-    result = run_checks([verifier(self_skipping)], run_output=object())
+    result = run_checks([check(self_skipping)], run_output=object())
     assert result.passed is False
     assert result.verdicts[0].skipped is False
     assert result.verdicts[0].gates is True
@@ -176,7 +176,7 @@ def _repo_gone():
     def repo_gone(run_output):
         return "the repository no longer exists"
 
-    return verifier(repo_gone, stop_on_failure=True)
+    return check(repo_gone, stop_on_failure=True)
 
 
 @pytest.mark.parametrize(
@@ -204,10 +204,10 @@ async def test_stop_on_failure_ends_the_run_immediately(mode, build, fatal_verdi
 @pytest.mark.parametrize(
     "build, error, match",
     [
-        (lambda: verifier(lambda run_output: True, max_retries=-1), ValueError, None),
-        (lambda: verifier(lambda run_output: True, run_condition=lambda unknown_name: True), TypeError, None),
+        (lambda: check(lambda run_output: True, max_retries=-1), ValueError, None),
+        (lambda: check(lambda run_output: True, run_condition=lambda unknown_name: True), TypeError, None),
         (
-            lambda: verifier(ShellVerifier("exit 1", required=False), stop_on_failure=True),
+            lambda: check(ShellVerifier("exit 1", required=False), stop_on_failure=True),
             ValueError,
             "stop_on_failure=True contradicts required=False",
         ),
@@ -228,22 +228,22 @@ def test_check_wrapper_is_not_double_wrapped_by_the_agent():
         return True
 
     model = ScriptedModel([_text("done")])
-    a = Agent(model=model, verifiers=[verifier(probe, required=True)])
+    a = Agent(model=model, verifiers=[check(probe, required=True)])
     out = a.run("go")
     assert out.verification.status == "verified"
-    assert seen["agent"] is a, "owner routing must survive the verifier() wrapper"
+    assert seen["agent"] is a, "owner routing must survive the check() wrapper"
     assert seen["session"] is not None
 
 
 # ---------------------------------------------------------------------------
-# verifier() overrides only the knobs it was passed
+# check() overrides only the knobs it was passed
 # ---------------------------------------------------------------------------
 
 
 def test_check_preserves_declared_policy_for_knobs_not_passed():
     shell = ShellVerifier("exit 1", required=False, name="advisory shell")
-    wrapped = verifier(shell, max_retries=1)
-    assert wrapped.required is False, "a knob not passed to verifier() must keep the target's declaration"
+    wrapped = check(shell, max_retries=1)
+    assert wrapped.required is False, "a knob not passed to check() must keep the target's declaration"
     assert wrapped.max_retries == 1
     assert wrapped.stop_on_failure is False
 
@@ -255,11 +255,11 @@ def test_check_preserves_declared_policy_for_knobs_not_passed():
 
     lint.required = False
     lint.run_condition = predicate
-    wrapped = verifier(lint, max_retries=2)
+    wrapped = check(lint, max_retries=2)
     assert wrapped.required is False
     assert wrapped.run_condition is predicate
     assert wrapped.max_retries == 2
 
     # Explicit knobs still override the declared policy.
-    assert verifier(shell, required=True).required is True
-    assert verifier(shell, run_condition=None).run_condition is None
+    assert check(shell, required=True).required is True
+    assert check(shell, run_condition=None).run_condition is None

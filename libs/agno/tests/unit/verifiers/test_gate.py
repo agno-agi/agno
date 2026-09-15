@@ -21,7 +21,7 @@ from agno.models.message import Message
 from agno.models.response import ModelResponse, ModelResponseEvent
 from agno.run.base import RunStatus
 from agno.team import Team
-from agno.verifiers import VerificationConfig, verifier
+from agno.verifiers import VerificationConfig, check
 from agno.verifiers.fingerprints import CallableFingerprint
 from agno.verifiers.report import is_verification_report
 from agno.verifiers.types import Verdict
@@ -212,11 +212,11 @@ def test_output_schema_verifier_sees_parsed_content(kind):
 
     seen = {}
 
-    def check(run_output):
+    def gate_check(run_output):
         seen["content"] = run_output.content
         return True
 
-    owner = _gated(kind, ScriptedModel([_text('{"value": 41}')]), verifiers=[check], output_schema=Answer)
+    owner = _gated(kind, ScriptedModel([_text('{"value": 41}')]), verifiers=[gate_check], output_schema=Answer)
     out = owner.run("go")
     assert isinstance(seen["content"], Answer)
     assert isinstance(out.content, Answer)
@@ -286,7 +286,7 @@ async def test_reentry_with_no_text_drops_the_rejected_answer(kind, mode):
     'WRONGmember ok'."""
     seen: List[Any] = []
 
-    def check(run_output):
+    def gate_check(run_output):
         seen.append(copy.copy(run_output.content))
         return True if len(seen) > 1 else "wrong"
 
@@ -296,7 +296,7 @@ async def test_reentry_with_no_text_drops_the_rejected_answer(kind, mode):
         redo = _tool_call("delegate_task_to_member", "tc-redo", {"member_id": "member", "task": "redo it"})
         # Member deltas land on the leader's content only on the stream paths.
         script, answer = [_text("WRONG"), redo, _silent()], "member ok" if mode.endswith("stream") else ""
-    owner = _gated(kind, ScriptedModel(script), verifiers=[check])
+    owner = _gated(kind, ScriptedModel(script), verifiers=[gate_check])
     out = await _run_variant(owner, mode)
     assert out.status == RunStatus.completed
     assert seen == ["WRONG", answer]
@@ -328,14 +328,14 @@ async def test_reentry_restores_reasoning_to_its_pre_loop_value(kind, mode, monk
     rejected.reasoning_content = "first thoughts"
     seen: List[Any] = []
 
-    def check(run_output):
+    def gate_check(run_output):
         seen.append(run_output.reasoning_content)
         return True if len(seen) > 1 else "report.md is missing"
 
     owner = _gated(
         kind,
         ScriptedModel([rejected, _text("real")]),
-        verifiers=[check],
+        verifiers=[gate_check],
         reasoning_model=ScriptedModel([_text("unused")]),
     )
     out = await _run_variant(owner, mode)
@@ -359,7 +359,7 @@ async def test_reentry_resets_citations_and_keeps_media(use_async):
     )
     seen: List[int] = []
 
-    def check(run_output):
+    def gate_check(run_output):
         seen.append(len(run_output.images or []))
         if len(seen) == 1:
             run_output.files = ["rejected.pdf"]
@@ -368,7 +368,7 @@ async def test_reentry_resets_citations_and_keeps_media(use_async):
             return "not yet"
         return True
 
-    agent = Agent(model=model, verifiers=[check])
+    agent = Agent(model=model, verifiers=[gate_check])
     out = await agent.arun("go") if use_async else agent.run("go")
     assert model.calls == 2
     assert out.verification.status == "verified"
@@ -422,8 +422,8 @@ def test_check_names_are_the_declared_names_made_distinct():
     agent = Agent(
         model=ScriptedModel([_text("one"), _text("two")]),
         verifiers=[
-            verifier(lambda run_output: "first failed", name="tests"),
-            verifier(named, name="tests"),
+            check(lambda run_output: "first failed", name="tests"),
+            check(named, name="tests"),
         ],
         verification=VerificationConfig(max_attempts=2),
     )

@@ -60,7 +60,7 @@ class Verify:
 
     Args:
         checks: The checks to run — bare callables, shipped verifiers
-            (``ShellVerifier``/``ScorerVerifier``), protocol objects, or ``verifier()``
+            (``ShellVerifier``/``ScorerVerifier``), protocol objects, or ``check()``
             wrappers. Coerced once here, so a bad entry fails at construction.
         on_fail: The step to loop back to on failure — a step name or index from the same
             steps list, strictly before the Verify. Defaults to ``"previous"``, the immediately
