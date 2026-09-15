@@ -39,12 +39,16 @@ class JSONReader(Reader):
 
     def read(self, path: Union[Path, IO[Any]], name: Optional[str] = None) -> List[Document]:
         documents = self._read_documents(path, name)
-        if self.chunk:
+        if not self.chunk:
+            return documents
+        try:
             chunked_documents = []
             for document in documents:
                 chunked_documents.extend(self.chunk_document(document))
             return chunked_documents
-        return documents
+        except Exception as e:
+            log_error(f"Error reading: {path}: {str(e)}")
+            raise
 
     def _read_documents(self, path: Union[Path, IO[Any]], name: Optional[str] = None) -> List[Document]:
         """Read and parse JSON without applying a chunking strategy."""
@@ -85,6 +89,10 @@ class JSONReader(Reader):
     async def async_read(self, path: Union[Path, IO[Any]], name: Optional[str] = None) -> List[Document]:
         """Read JSON off the event loop and await the configured chunking strategy."""
         documents = await asyncio.to_thread(self._read_documents, path, name)
-        if self.chunk:
+        if not self.chunk:
+            return documents
+        try:
             return await self.chunk_documents_async(documents)
-        return documents
+        except Exception as e:
+            log_error(f"Error reading: {path}: {str(e)}")
+            raise

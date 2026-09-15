@@ -67,3 +67,34 @@ async def test_async_read_propagates_chunking_error():
     reader = JSONReader(chunking_strategy=FailingChunking())
     with pytest.raises(RuntimeError, match="chunking failed"):
         await reader.async_read(BytesIO(b'{"key": "value"}'))
+
+
+def test_read_logs_chunking_error(mocker):
+    class FailingSyncChunking(ChunkingStrategy):
+        def chunk(self, document):
+            raise RuntimeError("chunking failed")
+
+    log_error = mocker.patch("agno.knowledge.reader.json_reader.log_error")
+    reader = JSONReader(chunking_strategy=FailingSyncChunking())
+
+    with pytest.raises(RuntimeError, match="chunking failed"):
+        reader.read(BytesIO(b'{"key": "value"}'))
+
+    assert log_error.call_count == 1
+    assert "chunking failed" in log_error.call_args.args[0]
+
+
+@pytest.mark.asyncio
+async def test_async_read_logs_chunking_error(mocker):
+    class FailingChunking(AsyncOnlyChunking):
+        async def achunk(self, document):
+            raise RuntimeError("chunking failed")
+
+    log_error = mocker.patch("agno.knowledge.reader.json_reader.log_error")
+    reader = JSONReader(chunking_strategy=FailingChunking())
+
+    with pytest.raises(RuntimeError, match="chunking failed"):
+        await reader.async_read(BytesIO(b'{"key": "value"}'))
+
+    assert log_error.call_count == 1
+    assert "chunking failed" in log_error.call_args.args[0]
