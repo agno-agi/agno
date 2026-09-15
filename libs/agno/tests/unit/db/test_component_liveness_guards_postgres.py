@@ -23,6 +23,7 @@ from sqlalchemy import create_engine, select, text
 from agno.db.base import (
     DELETED_CONFIG_STAGE,
     ComponentDependencyError,
+    ComponentDraftRequiredError,
     ComponentType,
 )
 from agno.db.postgres import PostgresDb
@@ -260,3 +261,103 @@ def test_dependents_read_shares_one_query_with_the_public_reader(db):
 
     assert [d["parent_component_id"] for d in in_session] == ["root"]
     assert in_session == db.get_dependents("leaf", active_parents_only=True)
+
+
+# ---------------------------------------------------------------------------
+# Prompt links are dependencies (state-based mirror of the SQLite suite; the
+# interleaves stay there, see the module docstring).
+# ---------------------------------------------------------------------------
+
+
+def _prompt(db, component_id="support", content="one"):
+    db.create_component_with_config(
+        component_id=component_id,
+        component_type=ComponentType.PROMPT,
+        name=component_id,
+        config={"type": "prompt", "id": component_id, "content": content},
+        stage="published",
+    )
+
+
+def _prompt_link(child_id="support", version=1):
+    return {
+        "link_kind": "prompt",
+        "link_key": "instructions",
+        "child_component_id": child_id,
+        "child_version": version,
+        "position": 1,
+        "meta": {"fallback": ["Answer safely."]},
+    }
+
+
+def _prompt_state(db, prompt_id, parent_id, parent_version=1):
+    row = db.get_component(prompt_id, include_deleted=True)
+    configs = [(c["version"], c["stage"]) for c in db.list_configs(prompt_id, include_deleted=True)]
+    return (
+        None if row is None else (row["deleted_at"], row["current_version"]),
+        sorted(configs),
+        db.get_links(parent_id, version=parent_version),
+    )
+
+
+class TestPromptDependentsBlockDeletion:
+    @pytest.mark.parametrize("hard_delete", [False, True], ids=["archive", "hard-delete"])
+    @pytest.mark.parametrize("version", [1, None], ids=["pinned", "latest"])
+    def test_a_live_parent_blocks_the_delete_and_nothing_changes(self, db, version, hard_delete):
+        _prompt(db)
+        _team(db, "holder", links=[_prompt_link(version=version)])
+        before = _prompt_state(db, "support", "holder")
+        assert before[0] == (None, 1) and before[1] == [(1, "published")]
+        assert [link["child_version"] for link in before[2]] == [version]
+
+        with pytest.raises(ComponentDependencyError, match="Cannot delete support: referenced by holder"):
+            db.delete_component("support", hard_delete=hard_delete)
+
+        assert _prompt_state(db, "support", "holder") == before
+
+    def test_the_refusal_names_every_dependent_parent(self, db):
+        _prompt(db)
+        _team(db, "alpha", links=[_prompt_link(version=1)])
+        _team(db, "beta", stage="draft", links=[_prompt_link(version=None)])
+
+        with pytest.raises(ComponentDependencyError, match="referenced by alpha, beta"):
+            db.delete_component("support")
+
+    def test_deletion_succeeds_once_the_parent_is_saved_without_the_link(self, db):
+        _prompt(db)
+        _team(db, "holder", stage="draft", links=[_prompt_link()])
+        db.upsert_config("holder", version=1, config={"name": "holder"}, links=[])
+        assert db.get_links("holder", version=1) == []
+
+        assert db.delete_component("support") is True
+        assert db.delete_component("support", hard_delete=True) is True
+        assert db.get_component("support", include_deleted=True) is None
+
+    def test_a_published_version_keeps_its_link_until_the_parent_is_archived(self, db):
+        _prompt(db)
+        _team(db, "holder", links=[_prompt_link()])
+        db.upsert_config("holder", config={"name": "holder"}, stage="published", links=[])
+        with pytest.raises(ComponentDependencyError, match="holder"):
+            db.delete_component("support")
+
+        assert db.delete_component("holder") is True
+        assert db.delete_component("support") is True
+        with pytest.raises(ComponentDependencyError, match="holder"):
+            db.delete_component("support", hard_delete=True)
+        assert db.get_component("support", include_deleted=True) is not None
+
+
+class TestPublishedPromptVersionsCannotBeDeleted:
+    def test_delete_config_refuses_published_and_current_versions(self, db):
+        _prompt(db)
+        db.upsert_config("support", config={"type": "prompt", "id": "support", "content": "two"}, stage="published")
+        for version in (1, 2):
+            with pytest.raises(ComponentDraftRequiredError, match=f"Cannot delete published config support v{version}"):
+                db.delete_config("support", version)
+        assert db.get_component("support")["current_version"] == 2
+
+    def test_a_draft_version_is_still_deletable(self, db):
+        _prompt(db)
+        db.upsert_config("support", config={"type": "prompt", "id": "support", "content": "draft"})
+        assert db.delete_config("support", 2) is True
+        assert db.get_config("support", version=2, include_deleted=True)["stage"] == DELETED_CONFIG_STAGE

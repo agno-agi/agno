@@ -16,6 +16,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from agno.db.base import AsyncBaseDb, BaseDb
+from agno.db.base import ComponentDependencyError as DbComponentDependencyError
 from agno.db.base import ComponentType as DbComponentType
 from agno.db.sqlite import SqliteDb
 from agno.os.schema import ComponentType as ApiComponentType
@@ -362,3 +363,49 @@ class TestSaveRevalidation:
         with pytest.raises(ValueError):
             prompt.save(db=db)
         assert db.get_component("support") is None
+
+
+class TestDeleteIsBlockedBySavedConsumers:
+    """Generic dependency protection covers Prompt links, pinned or latest."""
+
+    def _consumer(self, db, selector):
+        from agno.agent.agent import Agent
+
+        _support_prompt().save(db=db)
+        Agent(id="helper", instructions=Prompt(id="support", version=selector)).save(db=db)
+        return Agent
+
+    @pytest.mark.parametrize("hard_delete", [False, True], ids=["archive", "hard-delete"])
+    @pytest.mark.parametrize("selector", [None, "latest"], ids=["pinned", "latest"])
+    def test_a_saved_consumer_blocks_the_delete(self, db, selector, hard_delete):
+        self._consumer(db, selector)
+
+        with pytest.raises(DbComponentDependencyError, match="Cannot delete support: referenced by helper"):
+            Prompt(id="support").delete(db=db, hard_delete=hard_delete)
+
+        assert Prompt.load("support", db=db).content == CONTENT
+        assert db.get_component("support")["current_version"] == 1
+        assert [link["child_component_id"] for link in db.get_links("helper", version=1)] == ["support"]
+
+    def test_the_delete_goes_through_once_the_consumer_is_gone(self, db):
+        Agent = self._consumer(db, None)
+        assert Agent(id="helper").delete(db=db) is True
+
+        assert Prompt(id="support").delete(db=db) is True
+        with pytest.raises(DbComponentDependencyError, match="helper"):
+            Prompt(id="support").delete(db=db, hard_delete=True)
+        assert Agent(id="helper").delete(db=db, hard_delete=True) is True
+        assert Prompt(id="support").delete(db=db, hard_delete=True) is True
+        assert db.get_component("support", include_deleted=True) is None
+
+    def test_a_team_consumer_blocks_the_delete_too(self, db):
+        from agno.agent.agent import Agent
+        from agno.team.team import Team
+
+        _support_prompt().save(db=db)
+        member = Agent(id="member", name="Member", instructions="Help the team.")
+        Team(id="crew", members=[member], instructions=Prompt(id="support")).save(db=db)
+
+        with pytest.raises(DbComponentDependencyError, match="referenced by crew"):
+            Prompt(id="support").delete(db=db)
+        assert Prompt.load("support", db=db).content == CONTENT
