@@ -965,3 +965,31 @@ def test_get_skill_instructions_not_found_never_tracked(mock_loader: MockSkillLo
 
     result = json.loads(skills._get_skill_instructions("test-skill"))
     assert "instructions_already_provided" not in result
+
+
+def test_get_skill_instructions_reset_for_run_restores_full_instructions(mock_loader: MockSkillLoader) -> None:
+    skills = Skills(loaders=[mock_loader])
+
+    result = json.loads(skills._get_skill_instructions("test-skill"))
+    assert "instructions" in result
+    assert "instructions_already_provided" not in result
+
+    result = json.loads(skills._get_skill_instructions("test-skill"))
+    assert result["instructions_already_provided"] is True
+    assert "instructions" not in result
+
+    skills.reset_for_run()
+
+    result = json.loads(skills._get_skill_instructions("test-skill"))
+    assert "instructions" in result
+    assert "instructions_already_provided" not in result
+
+
+def test_reset_for_run_safe_without_prior_calls(mock_loader: MockSkillLoader) -> None:
+    skills = Skills(loaders=[mock_loader])
+
+    skills.reset_for_run()
+
+    result = json.loads(skills._get_skill_instructions("test-skill"))
+    assert "instructions" in result
+    assert "instructions_already_provided" not in result

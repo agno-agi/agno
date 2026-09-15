@@ -62,6 +62,9 @@ class Skills:
         self._instructions_provided.clear()
         self._load_skills()
 
+    def reset_for_run(self) -> None:
+        self._instructions_provided.clear()
+
     def get_skill(self, name: str) -> Optional[Skill]:
         """Get a skill by name.
 
