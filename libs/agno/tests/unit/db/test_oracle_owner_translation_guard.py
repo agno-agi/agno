@@ -57,6 +57,7 @@ def db(_oracle_server):
         memory_table=f"test_owner_mem_{suffix}",
         metrics_table=f"test_owner_metrics_{suffix}",
         knowledge_table=f"test_owner_knowledge_{suffix}",
+        auth_tokens_table=f"test_owner_auth_{suffix}",
     )
     yield database
     database.Session.remove()
@@ -67,6 +68,7 @@ def db(_oracle_server):
             database.memory_table_name,
             database.metrics_table_name,
             database.knowledge_table_name,
+            database.auth_tokens_table_name,
         ):
             if database.table_exists(t):
                 conn.execute(text(f"DROP TABLE {t} CASCADE CONSTRAINTS"))
@@ -97,9 +99,9 @@ def _install_guard(engine):
 
 
 def test_owner_field_never_sent_as_bare_empty_string(db):
-    """Exercises every ticket 03/04 path that touches an owner field with the
-    unowned-bucket value, and fails if any bound parameter reaches the driver
-    as a bare "" instead of the translated sentinel.
+    """Exercises every ticket 03/04/08 path that touches an owner field with
+    the unowned-bucket value, and fails if any bound parameter reaches the
+    driver as a bare "" instead of the translated sentinel.
     """
     violations = _install_guard(db.db_engine)
 
@@ -127,6 +129,13 @@ def test_owner_field_never_sent_as_bare_empty_string(db):
     db.calculate_metrics()
     db.get_metrics(user_id="")
     db.delete_session("owner-guard-metrics")
+
+    # Auth tokens: an unowned token. user_id is NOT NULL on this table, so
+    # Postgres itself already stores "" for the unowned case -- exactly the
+    # value Oracle's empty-string-is-null folding would otherwise destroy.
+    db.upsert_auth_token({"provider": "owner-guard", "user_id": "", "service": "oauth", "token_data": {"t": "1"}})
+    db.get_auth_token("owner-guard", "", "oauth")
+    db.delete_auth_token("owner-guard", "", "oauth")
 
     # Knowledge: intentionally NOT exercised with user_id="" -- knowledge's
     # owner column has no unowned-bucket convention (None means shared, per

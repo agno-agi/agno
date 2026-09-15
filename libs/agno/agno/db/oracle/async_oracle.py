@@ -30,8 +30,11 @@ side by side.
 import json
 import time
 from datetime import date, datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 from uuid import uuid4
+
+if TYPE_CHECKING:
+    from agno.run.status_persist import RunPersistOutcome
 
 from sqlalchemy import (
     Column,
@@ -3396,3 +3399,196 @@ class AsyncOracleDb(AsyncBaseDb):
         except Exception as e:
             log_debug(f"Error deleting service account: {e}")
             return False
+
+    async def update_run_in_session(
+        self,
+        session_id: str,
+        run_id: str,
+        fields: Dict[str, Any],
+        expected_attempt: Optional[int] = None,
+        user_id: Optional[str] = None,
+        content_if_absent: Optional[str] = None,
+    ) -> "RunPersistOutcome":
+        """Atomically patch fields of ONE run, with attempt fencing and a
+        terminal-status guard. Mirrors ``OracleDb.update_run_in_session``
+        (sync) exactly, including the owner-scoping translation on
+        ``user_id`` -- without it, this primitive is exactly the atomic run
+        store ``agno.os.job_queue.warn_unfenced_session_stores`` checks for,
+        and its absence here previously left the durable job queue's
+        zombie/attempt fencing silently unfenced for AsyncOracleDb.
+        """
+        from agno.db.utils import canonical_run_status
+        from agno.run.status_persist import RunPersistOutcome
+        from agno.utils.string import sanitize_postgres_strings
+
+        if fields.get("status") is not None:
+            fields = {**fields, "status": canonical_run_status(fields["status"])}
+        try:
+            runs_table = await self._get_table(table_type="runs")
+            if runs_table is None:
+                return RunPersistOutcome.MISSING
+            db_user_id = to_db_user_id(user_id)
+            async with self.async_session_factory() as sess:
+                async with sess.begin():
+                    row = (
+                        await sess.execute(
+                            select(runs_table.c.run_data, runs_table.c.status)
+                            .where(runs_table.c.run_id == run_id)
+                            .where(runs_table.c.session_id == session_id)
+                            .where((runs_table.c.user_id == db_user_id) | (runs_table.c.user_id.is_(None)))
+                            .with_for_update()
+                        )
+                    ).fetchone()
+                    if row is None or row[0] is None:
+                        return RunPersistOutcome.MISSING
+                    run = dict(row[0])
+                    stored_attempt = run.get("queue_attempt")
+                    if (
+                        expected_attempt is not None
+                        and stored_attempt is not None
+                        and stored_attempt > expected_attempt
+                    ):
+                        return RunPersistOutcome.STALE_ATTEMPT  # zombie writer fenced out
+                    stored_status = str(run.get("status") or row[1] or "").lower()
+                    incoming_status = str(fields.get("status") or "").lower()
+                    if (
+                        stored_status in ("completed", "cancelled")
+                        and incoming_status
+                        and incoming_status != stored_status
+                    ):
+                        return RunPersistOutcome.TERMINAL_REFUSED  # terminal row wins
+                    run.update(fields)
+                    if content_if_absent is not None and not run.get("content"):
+                        run["content"] = content_if_absent
+                    if expected_attempt is not None:
+                        run["queue_attempt"] = expected_attempt
+                    values: Dict[str, Any] = {
+                        "run_data": sanitize_postgres_strings(run),
+                        "updated_at": int(time.time()),
+                    }
+                    if fields.get("status") is not None:
+                        values["status"] = fields["status"]
+                    await sess.execute(runs_table.update().where(runs_table.c.run_id == run_id).values(**values))
+                    return RunPersistOutcome.UPDATED
+        except Exception as e:
+            log_warning(f"Error updating run in runs table: {e}")
+            raise
+
+    async def append_run_to_session_if_absent(
+        self,
+        session_id: str,
+        run_dict: Dict[str, Any],
+        user_id: Optional[str] = None,
+    ) -> Optional[bool]:
+        """Atomically insert a run only if absent. Mirrors
+        ``OracleDb.append_run_to_session_if_absent`` (sync) exactly,
+        including the row-lock-on-the-session-row substitute for Postgres's
+        advisory lock during the run_index backfill, and the owner-scoping
+        translation on ``user_id``.
+        """
+        from sqlalchemy.exc import IntegrityError
+
+        from agno.utils.string import sanitize_postgres_strings
+
+        try:
+            runs_table = await self._get_table(table_type="runs", create_table_if_not_found=True)
+            if runs_table is None:
+                return None
+            row = build_single_run_row(run=run_dict, session_id=session_id, user_id=user_id, run_index=None)
+            row["run_data"] = sanitize_postgres_strings(row["run_data"])
+            row["user_id"] = to_db_user_id(row.get("user_id"))
+            try:
+                async with self.async_session_factory() as sess:
+                    async with sess.begin():
+                        if row.get("run_index") is None:
+                            # Same-session backfill serialization -- see upsert_run's
+                            # own comment: a row lock on the session substitutes for
+                            # Postgres's string-keyed advisory lock.
+                            sessions_table = await self._get_table(table_type="sessions")
+                            if sessions_table is not None:
+                                await sess.execute(
+                                    select(sessions_table.c.session_id)
+                                    .where(sessions_table.c.session_id == session_id)
+                                    .with_for_update()
+                                )
+                            current_max = (
+                                await sess.execute(
+                                    select(func.max(runs_table.c.run_index)).where(
+                                        runs_table.c.session_id == session_id
+                                    )
+                                )
+                            ).scalar()
+                            row["run_index"] = (current_max + 1) if current_max is not None else 0
+                        await sess.execute(runs_table.insert().values(**row))
+                        return True
+            except IntegrityError as exc:
+                # A duplicate run_id is absorbed (another writer's row is
+                # authoritative); any other integrity error (no session row
+                # yet) propagates to the outer handler, reported as a
+                # fallback signal.
+                if is_unique_violation(exc):
+                    return False
+                raise
+        except Exception as e:
+            log_warning(f"Error appending run to runs table (caller falls back): {e}")
+            return None
+
+    async def insert_session_if_absent(self, session: Session) -> Optional[bool]:
+        """Insert the session row only when no row with this session_id
+        exists. Mirrors ``OracleDb.insert_session_if_absent`` (sync) exactly:
+        the missing half of the atomic queued-run prepare, so
+        ``append_run_to_session_if_absent`` always has a session row to lock.
+        """
+        from sqlalchemy.exc import IntegrityError
+
+        from agno.utils.string import sanitize_postgres_strings
+
+        try:
+            table = await self._get_table(table_type="sessions", create_table_if_not_found=True)
+            if table is None:
+                return None
+            session_dict = session.to_dict()
+            for data_field in ("agent_data", "team_data", "workflow_data", "session_data", "summary", "metadata"):
+                if session_dict.get(data_field):
+                    session_dict[data_field] = sanitize_postgres_strings(session_dict[data_field])
+            values: Dict[str, Any] = dict(
+                session_id=session_dict.get("session_id"),
+                user_id=to_db_user_id(session_dict.get("user_id")),
+                session_data=session_dict.get("session_data"),
+                summary=session_dict.get("summary"),
+                metadata=session_dict.get("metadata"),
+                created_at=session_dict.get("created_at"),
+                updated_at=session_dict.get("created_at"),
+            )
+            if isinstance(session, AgentSession):
+                values.update(
+                    session_type=SessionType.AGENT.value,
+                    agent_id=session_dict.get("agent_id"),
+                    agent_data=session_dict.get("agent_data"),
+                )
+            elif isinstance(session, TeamSession):
+                values.update(
+                    session_type=SessionType.TEAM.value,
+                    team_id=session_dict.get("team_id"),
+                    team_data=session_dict.get("team_data"),
+                )
+            elif isinstance(session, WorkflowSession):
+                values.update(
+                    session_type=SessionType.WORKFLOW.value,
+                    workflow_id=session_dict.get("workflow_id"),
+                    workflow_data=session_dict.get("workflow_data"),
+                )
+            else:
+                return None
+            try:
+                async with self.async_session_factory() as sess:
+                    async with sess.begin():
+                        await sess.execute(table.insert().values(**values))
+                return True
+            except IntegrityError as exc:
+                if is_unique_violation(exc):
+                    return False
+                raise
+        except Exception as e:
+            log_warning(f"Error inserting session if absent (caller falls back): {e}")
+            return None

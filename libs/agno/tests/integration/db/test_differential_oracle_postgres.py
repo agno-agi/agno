@@ -639,6 +639,17 @@ def _run_approvals_auth_tokens_scenario(db) -> Dict[str, Any]:
     alice_token_after_delete = db.get_auth_token("github", "alice", "oauth")
     unowned_token_after_delete = db.get_auth_token("github", None, "oauth")
 
+    # A second, independent provider exercised with a literal "" user_id
+    # (not None) end to end -- the owner-scoping sentinel translation this
+    # domain is actually supposed to prove, distinct from the None-input path
+    # already covered above.
+    db.upsert_auth_token(
+        {"provider": "gitlab", "user_id": "", "service": "oauth", "token_data": {"access_token": "tok-empty"}}
+    )
+    empty_string_token = db.get_auth_token("gitlab", "", "oauth")
+    deleted_empty_string_token = db.delete_auth_token("gitlab", "", "oauth")
+    empty_string_token_after_delete = db.get_auth_token("gitlab", "", "oauth")
+
     return {
         "pending_total": pending_total,
         "pending_count": pending_count,
@@ -657,6 +668,10 @@ def _run_approvals_auth_tokens_scenario(db) -> Dict[str, Any]:
         "deleted_token": deleted_token,
         "alice_token_after_delete": alice_token_after_delete,
         "unowned_token_survives_alice_delete": unowned_token_after_delete is not None,
+        "empty_string_token_user_id": empty_string_token["user_id"],
+        "empty_string_token_access": empty_string_token["token_data"]["access_token"],
+        "deleted_empty_string_token": deleted_empty_string_token,
+        "empty_string_token_after_delete": empty_string_token_after_delete,
     }
 
 
