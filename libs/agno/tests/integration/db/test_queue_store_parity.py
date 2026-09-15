@@ -463,3 +463,728 @@ class TestSyncPostgresContinueJobStamps:
             with engine.begin() as conn:
                 conn.execute(sqlalchemy.text(f'DROP TABLE IF EXISTS {db.db_schema}."{db.job_table_name}"'))
             engine.dispose()
+
+
+class TestQueuePerSessionParity:
+    """queue_per_session: at most one live job per session, claimed in
+    submission order. A job is claimable only while it is the HEAD of its
+    session's line - the oldest non-terminal (queued/running/paused) job by
+    (created_at, id). Store-layer default is off; the worker passes
+    QueueConfig.queue_per_session (default on)."""
+
+    @pytest.mark.asyncio
+    async def test_second_submission_waits_for_running_head(self, store):
+        await store.enqueue_job(make_job("r1", session_id="s1", created_at=1000))
+        await store.enqueue_job(make_job("r2", session_id="s1", created_at=1001))
+        head = await store.claim_job("w1", queue_per_session=True)
+        assert head["id"] == "r1"
+        assert await store.claim_job("w2", queue_per_session=True) is None, (
+            "r2 must wait while its session's head is running"
+        )
+        assert await store.complete_job("r1", "w1", head["attempt"], "completed")
+        nxt = await store.claim_job("w2", queue_per_session=True)
+        assert nxt is not None and nxt["id"] == "r2"
+
+    @pytest.mark.asyncio
+    async def test_fifo_by_enqueue_order_not_created_at(self, store):
+        """Submission order is the store-assigned sequence. created_at is the
+        submitter's clock: with replicas skewed against each other it can
+        run backwards across consecutive submissions, and the earlier pin
+        (order by created_at) would have run a later submission first."""
+        await store.enqueue_job(make_job("r_first", session_id="s1", created_at=1002))
+        await store.enqueue_job(make_job("r_second", session_id="s1", created_at=1000))
+        await store.enqueue_job(make_job("r_third", session_id="s1", created_at=1001))
+        order = []
+        for worker in ("w1", "w2", "w3"):
+            job = await store.claim_job(worker, queue_per_session=True)
+            order.append(job["id"])
+            assert await store.complete_job(job["id"], worker, job["attempt"], "completed")
+        assert order == ["r_first", "r_second", "r_third"]
+
+    @pytest.mark.asyncio
+    async def test_paused_head_blocks_line_until_released(self, store):
+        await store.enqueue_job(make_job("r1", session_id="s1", created_at=1000))
+        head = await store.claim_job("w1", queue_per_session=True)
+        assert await store.complete_job("r1", "w1", head["attempt"], "paused")
+        await store.enqueue_job(make_job("r2", session_id="s1", created_at=1001))
+        assert await store.claim_job("w2", queue_per_session=True) is None, "a HITL pause holds the session's line"
+        assert await store.cancel_job("r1")
+        nxt = await store.claim_job("w2", queue_per_session=True)
+        assert nxt is not None and nxt["id"] == "r2"
+
+    @pytest.mark.asyncio
+    async def test_different_sessions_claim_concurrently(self, store):
+        await store.enqueue_job(make_job("r1", session_id="s1", created_at=1000))
+        await store.enqueue_job(make_job("r2", session_id="s2", created_at=1001))
+        first = await store.claim_job("w1", queue_per_session=True)
+        second = await store.claim_job("w2", queue_per_session=True)
+        assert first is not None and second is not None
+        assert {first["id"], second["id"]} == {"r1", "r2"}
+
+    @pytest.mark.asyncio
+    async def test_stale_running_head_is_reclaimed_not_bypassed(self, store):
+        await store.enqueue_job(make_job("r1", session_id="s1", created_at=1000, max_attempts=2))
+        await store.claim_job("w1", queue_per_session=True)
+        await store.enqueue_job(make_job("r2", session_id="s1", created_at=1001))
+        # grace=0 makes the fresh claim immediately stale; FIFO must reclaim
+        # the head, never skip past it to its successor
+        reclaimed = await store.claim_job("w2", 0, queue_per_session=True)
+        assert reclaimed is not None and reclaimed["id"] == "r1"
+
+    @pytest.mark.asyncio
+    async def test_same_second_submission_never_two_live(self, store):
+        """created_at has 1-second resolution, so same-second siblings tie and
+        the (created_at, id) tiebreak alone would elect a NEW head while an
+        earlier submission executes (a lexicographically smaller uuid wins
+        the tie). The running-sibling check must block the claim regardless
+        of head order."""
+        await store.enqueue_job(make_job("r_z", session_id="s1", created_at=1000))
+        head = await store.claim_job("w1", queue_per_session=True)
+        assert head["id"] == "r_z"
+        await store.enqueue_job(make_job("r_a", session_id="s1", created_at=1000))
+        assert await store.claim_job("w2", queue_per_session=True) is None, (
+            "a smaller-id same-second sibling must not run beside its running sibling"
+        )
+        assert await store.complete_job("r_z", "w1", head["attempt"], "completed")
+        nxt = await store.claim_job("w2", queue_per_session=True)
+        assert nxt is not None and nxt["id"] == "r_a"
+
+    @pytest.mark.asyncio
+    async def test_queue_per_session_off_claims_siblings_concurrently(self, store):
+        """The opt-out restores today's behavior - and doubles as the pin
+        that the store-layer default stays off (direct callers unaffected)."""
+        await store.enqueue_job(make_job("r1", session_id="s1", created_at=1000))
+        await store.enqueue_job(make_job("r2", session_id="s1", created_at=1001))
+        first = await store.claim_job("w1")
+        second = await store.claim_job("w2")
+        assert first is not None and second is not None
+        assert {first["id"], second["id"]} == {"r1", "r2"}
+
+
+@pytest.mark.skipif(not _PG_AVAILABLE, reason="Postgres not available on localhost:5532")
+class TestSyncPostgresQueuePerSession:
+    """The sync Postgres claim twin (the parity fixture runs the ASYNC
+    adapter, so the sync adapter's head-of-line gate needs its own pin)."""
+
+    def test_head_of_line_gate(self):
+        import sqlalchemy
+
+        from agno.db.postgres import PostgresDb
+
+        db = PostgresDb(db_url=PG_URL, job_table=f"parity_syncser_{uuid.uuid4().hex[:8]}")
+        try:
+            db.enqueue_job(make_job("r1", session_id="s1", created_at=1000))
+            db.enqueue_job(make_job("r2", session_id="s1", created_at=1001))
+            db.enqueue_job(make_job("r3", session_id="s2", created_at=1002))
+            head = db.claim_job("w1", queue_per_session=True)
+            assert head["id"] == "r1"
+            other = db.claim_job("w2", queue_per_session=True)
+            assert other is not None and other["id"] == "r3", "s2 must not be blocked by s1's line"
+            assert db.claim_job("w3", queue_per_session=True) is None
+            assert db.complete_job("r1", "w1", head["attempt"], "completed")
+            released = db.claim_job("w3", queue_per_session=True)
+            assert released is not None and released["id"] == "r2"
+        finally:
+            engine = sqlalchemy.create_engine(PG_URL)
+            with engine.begin() as conn:
+                conn.execute(sqlalchemy.text(f'DROP TABLE IF EXISTS {db.db_schema}."{db.job_table_name}"'))
+            engine.dispose()
+
+
+class TestSubmissionOrderParity:
+    """FIFO by submission must hold within a session even when created_at
+    ties: it has one-second resolution, and a random uuid tiebreak let a
+    later submission with a smaller id run first and read session history
+    the earlier one had not written yet. Stores now carry a monotonic
+    enqueue sequence and order same-second siblings by it."""
+
+    @pytest.mark.asyncio
+    async def test_same_second_fifo_holds_under_uuid_inversion(self, store):
+        # r_z submitted first, r_a second, both in the same second; the id
+        # order is the inverse of the submission order
+        await store.enqueue_job(make_job("r_z", session_id="s1", created_at=1000))
+        await store.enqueue_job(make_job("r_a", session_id="s1", created_at=1000))
+        head = await store.claim_job("w1", queue_per_session=True)
+        assert head is not None and head["id"] == "r_z", "the earlier submission must run first"
+        assert await store.claim_job("w2", queue_per_session=True) is None
+        assert await store.complete_job("r_z", "w1", head["attempt"], "completed")
+        nxt = await store.claim_job("w2", queue_per_session=True)
+        assert nxt is not None and nxt["id"] == "r_a"
+
+    @pytest.mark.asyncio
+    async def test_submission_order_beats_a_backdated_created_at(self, store):
+        """created_at is the accepting replica's clock. With two replicas
+        skewed by seconds, a LATER submission can carry a SMALLER created_at;
+        ordering by it would run the later one first, and would let a
+        backdated concurrent enqueue insert a new predecessor under an
+        in-flight claim. The store-assigned sequence is the submission order
+        and is the only thing the head-of-line rule consults."""
+        await store.enqueue_job(make_job("r_first", session_id="s1", created_at=1005))
+        await store.enqueue_job(make_job("r_second", session_id="s1", created_at=1000))
+        head = await store.claim_job("w1", queue_per_session=True)
+        assert head is not None and head["id"] == "r_first", "submission order wins over a backdated clock"
+        assert await store.claim_job("w2", queue_per_session=True) is None
+        assert await store.complete_job("r_first", "w1", head["attempt"], "completed")
+        nxt = await store.claim_job("w2", queue_per_session=True)
+        assert nxt is not None and nxt["id"] == "r_second"
+
+    @pytest.mark.asyncio
+    async def test_enqueue_returns_the_callers_dict_plus_seq(self, store):
+        """The accepted result carries the caller's own dict with the assigned
+        seq merged in, on every store. Returning the database-typed row
+        instead would hand Postgres callers a different shape from the other
+        stores: every column present, including ones they never passed."""
+        job = make_job("r1", session_id="s1", created_at=1000)
+        for optional in ("error", "updated_at", "completed_at"):
+            job.pop(optional)
+        result = await store.enqueue_job(dict(job))
+        assert result["accepted"]
+        assert set(result["job"]) == set(job) | {"seq"}
+        assert {k: v for k, v in result["job"].items() if k != "seq"} == job
+
+    @pytest.mark.asyncio
+    async def test_enqueue_sequence_is_monotonic_and_survives_round_trip(self, store):
+        first = (await store.enqueue_job(make_job("r1", session_id="s1", created_at=1000)))["job"]
+        second = (await store.enqueue_job(make_job("r2", session_id="s2", created_at=1000)))["job"]
+        assert first.get("seq") is not None and second.get("seq") is not None
+        assert first["seq"] < second["seq"]
+        stored = await store.get_job("r2")
+        assert stored is not None and stored.get("seq") == second["seq"]
+
+
+@pytest.mark.skipif(not _PG_AVAILABLE, reason="Postgres not available on localhost:5532")
+class TestSyncPostgresSubmissionOrder:
+    """Sync Postgres twin of the same-second FIFO pin, plus the upgrade path:
+    a jobs table created before the sequence column existed must gain it on
+    first use instead of failing schema validation or claiming out of order."""
+
+    @staticmethod
+    def _drop(db):
+        import sqlalchemy
+
+        engine = sqlalchemy.create_engine(PG_URL)
+        with engine.begin() as conn:
+            conn.execute(sqlalchemy.text(f'DROP TABLE IF EXISTS {db.db_schema}."{db.job_table_name}"'))
+        engine.dispose()
+
+    def test_same_second_fifo_holds_under_uuid_inversion(self):
+        from agno.db.postgres import PostgresDb
+
+        db = PostgresDb(db_url=PG_URL, job_table=f"parity_syncseq_{uuid.uuid4().hex[:8]}")
+        try:
+            db.enqueue_job(make_job("r_z", session_id="s1", created_at=1000))
+            db.enqueue_job(make_job("r_a", session_id="s1", created_at=1000))
+            head = db.claim_job("w1", queue_per_session=True)
+            assert head is not None and head["id"] == "r_z"
+            assert db.claim_job("w2", queue_per_session=True) is None
+            assert db.complete_job("r_z", "w1", head["attempt"], "completed")
+            nxt = db.claim_job("w2", queue_per_session=True)
+            assert nxt is not None and nxt["id"] == "r_a"
+        finally:
+            self._drop(db)
+
+    def test_unprovisioned_pre_sequence_table_surfaces_the_mismatch(self):
+        """Without the provisioning hook (auto_provision=False, an externally
+        managed database) nothing alters the table: first use raises the
+        standard schema mismatch, naming the missing column."""
+        import sqlalchemy
+
+        from agno.db.postgres import PostgresDb
+        from agno.db.utils import SchemaMismatchError
+
+        table_name = f"parity_unprov_{uuid.uuid4().hex[:8]}"
+        db = PostgresDb(db_url=PG_URL, job_table=table_name)
+        try:
+            db.ensure_jobs_table()
+            engine = sqlalchemy.create_engine(PG_URL)
+            with engine.begin() as conn:
+                conn.execute(sqlalchemy.text(f'ALTER TABLE {db.db_schema}."{table_name}" DROP COLUMN seq'))
+            engine.dispose()
+            reopened = PostgresDb(db_url=PG_URL, job_table=table_name)
+            with pytest.raises(SchemaMismatchError):
+                reopened.enqueue_job(make_job("r_new", session_id="s1", created_at=1000))
+        finally:
+            self._drop(db)
+
+    def test_pre_sequence_jobs_table_is_upgraded_on_first_use(self):
+        import sqlalchemy
+
+        from agno.db.postgres import PostgresDb
+
+        table_name = f"parity_upgrade_{uuid.uuid4().hex[:8]}"
+        db = PostgresDb(db_url=PG_URL, job_table=table_name)
+        try:
+            db.enqueue_job(make_job("r_old", session_id="s1", created_at=999))
+            # Simulate a table created before the column existed
+            engine = sqlalchemy.create_engine(PG_URL)
+            with engine.begin() as conn:
+                conn.execute(sqlalchemy.text(f'ALTER TABLE {db.db_schema}."{table_name}" DROP COLUMN seq'))
+            engine.dispose()
+
+            reopened = PostgresDb(db_url=PG_URL, job_table=table_name)
+            reopened.ensure_jobs_table()  # the worker's provisioning step at start
+            reopened.enqueue_job(make_job("r_z", session_id="s1", created_at=1000))
+            reopened.enqueue_job(make_job("r_a", session_id="s1", created_at=1000))
+            old = reopened.get_job("r_old")
+            assert old is not None and old.get("seq") is not None, "pre-existing rows are backfilled"
+            claimed = [reopened.claim_job("w1", queue_per_session=True)["id"]]
+            for _ in range(2):
+                reopened.complete_job(claimed[-1], "w1", 1, "completed")
+                claimed.append(reopened.claim_job("w1", queue_per_session=True)["id"])
+            assert claimed == ["r_old", "r_z", "r_a"]
+        finally:
+            self._drop(db)
+
+    @pytest.mark.asyncio
+    async def test_pre_sequence_jobs_table_is_upgraded_on_first_use_async(self):
+        """The async adapter's twin of the upgrade path."""
+        import sqlalchemy
+
+        from agno.db.postgres import AsyncPostgresDb
+
+        table_name = f"parity_aupgrade_{uuid.uuid4().hex[:8]}"
+        db = AsyncPostgresDb(db_url=PG_URL, job_table=table_name)
+        try:
+            await db.enqueue_job(make_job("r_old", session_id="s1", created_at=999))
+            engine = sqlalchemy.create_engine(PG_URL)
+            with engine.begin() as conn:
+                conn.execute(sqlalchemy.text(f'ALTER TABLE {db.db_schema}."{table_name}" DROP COLUMN seq'))
+            engine.dispose()
+
+            reopened = AsyncPostgresDb(db_url=PG_URL, job_table=table_name)
+            await reopened.ensure_jobs_table()  # the worker's provisioning step at start
+            await reopened.enqueue_job(make_job("r_z", session_id="s1", created_at=1000))
+            await reopened.enqueue_job(make_job("r_a", session_id="s1", created_at=1000))
+            old = await reopened.get_job("r_old")
+            assert old is not None and old.get("seq") is not None, "pre-existing rows are backfilled"
+            claimed = [(await reopened.claim_job("w1", queue_per_session=True))["id"]]
+            for _ in range(2):
+                await reopened.complete_job(claimed[-1], "w1", 1, "completed")
+                claimed.append((await reopened.claim_job("w1", queue_per_session=True))["id"])
+            assert claimed == ["r_old", "r_z", "r_a"]
+        finally:
+            self._drop(db)
+
+
+@pytest.mark.skipif(not _REDIS_AVAILABLE, reason="Redis not available on localhost:6379")
+class TestRedisSessionLineBackfill:
+    """A queue that predates the session-line index holds non-terminal jobs
+    that are in no line. Redis has no paused index (a paused job is removed
+    from both the queued and running sets and survives only in the `all`
+    index) and a paused job never heartbeats, so nothing would ever add it
+    back: a newer submission would sail straight past a HITL pause. The store
+    backfills every non-terminal job into its line before its first gated
+    claim. Postgres and in-memory read authoritative state and need none of
+    this."""
+
+    @staticmethod
+    def _db(prefix: str):
+        from redis import Redis
+
+        from agno.db.redis import RedisDb
+
+        return RedisDb(redis_client=Redis.from_url(REDIS_URL), db_prefix=prefix)
+
+    @staticmethod
+    def _line_members(db, session_id: str = "s1"):
+        raw = db.redis_client.zrange(f"{db.db_prefix}:jobs:line:{session_id}", 0, -1)
+        return {member.decode() if isinstance(member, bytes) else member for member in raw}
+
+    @staticmethod
+    def _strip_line(db, session_id: str = "s1") -> None:
+        """Reduce the store to the shape an upgrade inherits: the jobs exist
+        and are non-terminal, but no session line was ever maintained."""
+        db.redis_client.delete(f"{db.db_prefix}:jobs:line:{session_id}")
+
+    @staticmethod
+    def _cleanup(prefix: str) -> None:
+        from redis import Redis
+
+        client = Redis.from_url(REDIS_URL)
+        for key in client.scan_iter(f"{prefix}:*"):
+            client.delete(key)
+        client.close()
+
+    def test_pre_upgrade_paused_head_holds_the_line(self):
+        prefix = f"parity_bfpaused_{uuid.uuid4().hex[:6]}"
+        try:
+            db = self._db(prefix)
+            db.enqueue_job(make_job("r_head", session_id="s1", created_at=1000))
+            head = db.claim_job("w0", queue_per_session=True)
+            assert head is not None and head["id"] == "r_head"
+            assert db.complete_job("r_head", "w0", head["attempt"], "paused")
+            self._strip_line(db)
+
+            # A fresh instance is a freshly started replica: backfill pending
+            replica = self._db(prefix)
+            replica.enqueue_job(make_job("r_new", session_id="s1", created_at=1001))
+            assert replica.claim_job("w1", queue_per_session=True) is None, (
+                "a pre-upgrade paused head must hold its session's line, not be bypassed"
+            )
+            assert self._line_members(replica) == {"r_head", "r_new"}
+        finally:
+            self._cleanup(prefix)
+
+    def test_pre_upgrade_running_head_holds_the_line(self):
+        prefix = f"parity_bfrunning_{uuid.uuid4().hex[:6]}"
+        try:
+            db = self._db(prefix)
+            db.enqueue_job(make_job("r_head", session_id="s1", created_at=1000))
+            head = db.claim_job("w0", queue_per_session=True)
+            assert head is not None and head["id"] == "r_head"
+            self._strip_line(db)
+
+            replica = self._db(prefix)
+            replica.enqueue_job(make_job("r_new", session_id="s1", created_at=1001))
+            assert replica.claim_job("w1", queue_per_session=True) is None, (
+                "a pre-upgrade running head must hold its session's line"
+            )
+        finally:
+            self._cleanup(prefix)
+
+    def test_backfill_skips_terminal_jobs(self):
+        """The correction must not overshoot: backfilling terminal jobs would
+        wedge the session behind a job that can never be released."""
+        prefix = f"parity_bfterm_{uuid.uuid4().hex[:6]}"
+        try:
+            db = self._db(prefix)
+            db.enqueue_job(make_job("r_done", session_id="s1", created_at=900))
+            head = db.claim_job("w0", queue_per_session=True)
+            assert db.complete_job("r_done", "w0", head["attempt"], "completed")
+            self._strip_line(db)
+
+            replica = self._db(prefix)
+            replica.enqueue_job(make_job("r_new", session_id="s1", created_at=1001))
+            claimed = replica.claim_job("w1", queue_per_session=True)
+            assert claimed is not None and claimed["id"] == "r_new", (
+                "a completed pre-upgrade job must not hold the line"
+            )
+            assert "r_done" not in self._line_members(replica)
+        finally:
+            self._cleanup(prefix)
+
+    def test_backfill_is_idempotent_across_replicas(self):
+        prefix = f"parity_bfidem_{uuid.uuid4().hex[:6]}"
+        try:
+            db = self._db(prefix)
+            db.enqueue_job(make_job("r_head", session_id="s1", created_at=1000))
+            head = db.claim_job("w0", queue_per_session=True)
+            assert db.complete_job("r_head", "w0", head["attempt"], "paused")
+            self._strip_line(db)
+
+            first = self._db(prefix)
+            first.enqueue_job(make_job("r_new", session_id="s1", created_at=1001))
+            assert first.claim_job("w1", queue_per_session=True) is None
+            after_first = self._line_members(first)
+
+            second = self._db(prefix)
+            assert second.claim_job("w2", queue_per_session=True) is None
+            assert self._line_members(second) == after_first, "a second replica's backfill must change nothing"
+        finally:
+            self._cleanup(prefix)
+
+
+@pytest.mark.skipif(not _REDIS_AVAILABLE, reason="Redis not available on localhost:6379")
+class TestRedisSessionLineScanCost:
+    """The advisory pre-filter asks, per candidate, whether the session line
+    admits it - and each ask reloaded the whole line (range read, multi-get,
+    sort). Behind a blocked head every queued successor is a rejected
+    candidate, so the work was quadratic in that session's backlog and paid
+    again every poll tick. The view is loaded once per session per claim.
+
+    The verdict itself is NOT cacheable: "is this candidate the head" has a
+    different answer for every candidate. What is cached is the view, from
+    which each verdict is computed."""
+
+    @staticmethod
+    def _db(prefix: str):
+        from redis import Redis
+
+        from agno.db.redis import RedisDb
+
+        return RedisDb(redis_client=Redis.from_url(REDIS_URL), db_prefix=prefix)
+
+    @staticmethod
+    def _cleanup(prefix: str) -> None:
+        from redis import Redis
+
+        client = Redis.from_url(REDIS_URL)
+        for key in client.scan_iter(f"{prefix}:*"):
+            client.delete(key)
+        client.close()
+
+    @staticmethod
+    def _count_line_views(db) -> list:
+        loads: list = []
+        original = db._q_session_line_view
+
+        def counting(session_id: str):
+            loads.append(session_id)
+            return original(session_id)
+
+        db._q_session_line_view = counting
+        return loads
+
+    @staticmethod
+    def _pause_head(db, session_id: str, job_id: str, created_at: int) -> None:
+        db.enqueue_job(make_job(job_id, session_id=session_id, created_at=created_at))
+        head = db.claim_job("w0", queue_per_session=True)
+        assert head is not None and head["id"] == job_id
+        assert db.complete_job(job_id, "w0", head["attempt"], "paused")
+
+    def test_blocked_backlog_loads_the_line_once(self):
+        prefix = f"parity_scan1_{uuid.uuid4().hex[:6]}"
+        try:
+            db = self._db(prefix)
+            self._pause_head(db, "s1", "r_head", 1000)
+            for i in range(5):
+                db.enqueue_job(make_job(f"r_{i}", session_id="s1", created_at=1001 + i))
+
+            loads = self._count_line_views(db)
+            assert db.claim_job("w1", queue_per_session=True) is None
+            assert loads.count("s1") == 1, (
+                f"one line load per blocked session per claim, got {loads.count('s1')} for a backlog of 5"
+            )
+        finally:
+            self._cleanup(prefix)
+
+    def test_cache_is_scoped_per_session(self):
+        prefix = f"parity_scan2_{uuid.uuid4().hex[:6]}"
+        try:
+            db = self._db(prefix)
+            self._pause_head(db, "s1", "r1_head", 1000)
+            self._pause_head(db, "s2", "r2_head", 1001)
+            for i in range(3):
+                db.enqueue_job(make_job(f"r1_{i}", session_id="s1", created_at=1010 + i))
+                db.enqueue_job(make_job(f"r2_{i}", session_id="s2", created_at=1010 + i))
+
+            loads = self._count_line_views(db)
+            assert db.claim_job("w1", queue_per_session=True) is None
+            assert loads.count("s1") == 1 and loads.count("s2") == 1, (
+                f"each blocked session is loaded once, got {loads}"
+            )
+        finally:
+            self._cleanup(prefix)
+
+    def test_authoritative_check_inside_the_cas_is_never_cached(self):
+        """The pre-filter is advisory; the check under WATCH on the line key
+        is what makes a stale head decision uncommittable. Serving that one
+        from the scan's cache would reintroduce the snapshot-versus-CAS race
+        the gate was hardened against, so a successful claim must load the
+        view again inside the transaction."""
+        prefix = f"parity_scan3_{uuid.uuid4().hex[:6]}"
+        try:
+            db = self._db(prefix)
+            db.enqueue_job(make_job("r_only", session_id="s1", created_at=1000))
+
+            loads = self._count_line_views(db)
+            claimed = db.claim_job("w1", queue_per_session=True)
+            assert claimed is not None and claimed["id"] == "r_only"
+            assert loads.count("s1") == 2, (
+                f"expected one advisory load plus one authoritative load inside the CAS, got {loads.count('s1')}"
+            )
+        finally:
+            self._cleanup(prefix)
+
+
+@pytest.mark.skipif(not _PG_AVAILABLE, reason="Postgres not available on localhost:5532")
+class TestPostgresJobsTableUpgradeIsGuarded:
+    """The enqueue-sequence column is added to a pre-existing jobs table by
+    the provisioning hook, and only when it is actually missing. An
+    unconditional ADD COLUMN IF NOT EXISTS is not free even as a no-op: it
+    still takes an ACCESS EXCLUSIVE lock and still needs ALTER privilege
+    before the IF NOT EXISTS clause is evaluated, on every process start."""
+
+    @staticmethod
+    def _drop(db):
+        import sqlalchemy
+
+        engine = sqlalchemy.create_engine(PG_URL)
+        with engine.begin() as conn:
+            conn.execute(sqlalchemy.text(f'DROP TABLE IF EXISTS {db.db_schema}."{db.job_table_name}"'))
+        engine.dispose()
+
+    @staticmethod
+    def _record_ddl(db):
+        from sqlalchemy import event
+
+        statements: list = []
+
+        def _capture(conn, cursor, statement, parameters, context, executemany):
+            if "ALTER TABLE" in statement.upper():
+                statements.append(statement)
+
+        event.listen(db.db_engine, "before_cursor_execute", _capture)
+        return statements
+
+    def test_up_to_date_table_provokes_no_alter(self):
+        from agno.db.postgres import PostgresDb
+
+        table_name = f"parity_noalter_{uuid.uuid4().hex[:8]}"
+        first = PostgresDb(db_url=PG_URL, job_table=table_name)
+        try:
+            first.ensure_jobs_table()  # creates the table with the column
+            reopened = PostgresDb(db_url=PG_URL, job_table=table_name)
+            alters = self._record_ddl(reopened)
+            reopened.ensure_jobs_table()
+            reopened.enqueue_job(make_job("r1", session_id="s1", created_at=1000))
+            assert alters == [], f"a table that already has the column must not be altered: {alters}"
+        finally:
+            self._drop(first)
+
+    def test_missing_column_is_added_once_by_provisioning(self):
+        import sqlalchemy
+
+        from agno.db.postgres import PostgresDb
+
+        table_name = f"parity_addonce_{uuid.uuid4().hex[:8]}"
+        first = PostgresDb(db_url=PG_URL, job_table=table_name)
+        try:
+            first.ensure_jobs_table()
+            engine = sqlalchemy.create_engine(PG_URL)
+            with engine.begin() as conn:
+                conn.execute(sqlalchemy.text(f'ALTER TABLE {first.db_schema}."{table_name}" DROP COLUMN seq'))
+            engine.dispose()
+
+            reopened = PostgresDb(db_url=PG_URL, job_table=table_name)
+            alters = self._record_ddl(reopened)
+            reopened.ensure_jobs_table()
+            reopened.ensure_jobs_table()
+            assert len(alters) == 1, f"exactly one ALTER for a missing column, got {alters}"
+            reopened.enqueue_job(make_job("r1", session_id="s1", created_at=1000))
+            assert reopened.get_job("r1")["seq"] is not None
+        finally:
+            self._drop(first)
+
+
+@pytest.mark.skipif(not _PG_AVAILABLE, reason="Postgres not available on localhost:5532")
+class TestPostgresSessionSerialization:
+    """Enqueue and claim of one session are serialized by a transaction-scoped
+    advisory lock on the session id, in both Postgres adapters.
+
+    Why ordering alone is not enough: identity values are allocated at
+    insert, before commit. Insert A takes seq 1 and stays open; insert B
+    takes seq 2 and commits; a worker claims B; A commits; a second worker
+    sees A as the head and, with the first claim still uncommitted, no
+    running sibling. Both run. The predecessor was invisible, not misordered,
+    so no ORDER BY closes it. Holding the session lock from before the insert
+    to commit, and taking it in the claim before re-validating the head,
+    makes the uncommitted insert wait out the claim and the claim wait out
+    the insert."""
+
+    from agno.db.postgres.utils import JOBS_SESSION_LOCK_SQL as LOCK_SQL
+
+    @staticmethod
+    def _drop(db):
+        import sqlalchemy
+
+        engine = sqlalchemy.create_engine(PG_URL)
+        with engine.begin() as conn:
+            conn.execute(sqlalchemy.text(f'DROP TABLE IF EXISTS {db.db_schema}."{db.job_table_name}"'))
+        engine.dispose()
+
+    @staticmethod
+    def _run_in_thread(fn):
+        import threading
+
+        done = threading.Event()
+        result: dict = {}
+
+        def _target():
+            try:
+                result["value"] = fn()
+            except Exception as exc:  # pragma: no cover - surfaced by the assertion
+                result["error"] = exc
+            finally:
+                done.set()
+
+        threading.Thread(target=_target, daemon=True).start()
+        return done, result
+
+    def _held_session_lock(self, session_id: str):
+        """A connection holding the session's advisory lock in an open
+        transaction, standing in for an in-flight enqueue or claim."""
+        import sqlalchemy
+
+        engine = sqlalchemy.create_engine(PG_URL)
+        conn = engine.connect()
+        txn = conn.begin()
+        conn.execute(sqlalchemy.text(self.LOCK_SQL), {"sid": session_id})
+        return engine, conn, txn
+
+    @pytest.mark.parametrize("async_db", [False, True])
+    def test_enqueue_waits_for_an_in_flight_session_transaction(self, async_db):
+        import asyncio
+
+        from agno.db.postgres import AsyncPostgresDb, PostgresDb
+
+        db_type = AsyncPostgresDb if async_db else PostgresDb
+        db = db_type(db_url=PG_URL, job_table=f"parity_lockenq_{uuid.uuid4().hex[:8]}")
+        engine, conn, txn = self._held_session_lock("s1")
+        try:
+            if async_db:
+                asyncio.run(db.ensure_jobs_table())
+            else:
+                db.ensure_jobs_table()
+            job = make_job("r_b", session_id="s1", created_at=1000)
+            fn = (lambda: asyncio.run(db.enqueue_job(job))) if async_db else (lambda: db.enqueue_job(job))
+            done, result = self._run_in_thread(fn)
+            assert not done.wait(0.6), "enqueue must block while another transaction holds the session lock"
+            txn.commit()
+            assert done.wait(5), "enqueue must complete once the lock is released"
+            assert "error" not in result and result["value"]["accepted"]
+        finally:
+            conn.close()
+            engine.dispose()
+            self._drop(db)
+
+    @pytest.mark.parametrize("async_db", [False, True])
+    def test_claim_waits_for_an_in_flight_session_transaction(self, async_db):
+        import asyncio
+
+        from agno.db.postgres import AsyncPostgresDb, PostgresDb
+
+        db_type = AsyncPostgresDb if async_db else PostgresDb
+        db = db_type(db_url=PG_URL, job_table=f"parity_lockclaim_{uuid.uuid4().hex[:8]}")
+        try:
+            job = make_job("r_a", session_id="s1", created_at=1000)
+            if async_db:
+                asyncio.run(db.enqueue_job(job))
+            else:
+                db.enqueue_job(job)
+            engine, conn, txn = self._held_session_lock("s1")
+            try:
+                fn = (
+                    (lambda: asyncio.run(db.claim_job("w1", queue_per_session=True)))
+                    if async_db
+                    else (lambda: db.claim_job("w1", queue_per_session=True))
+                )
+                done, result = self._run_in_thread(fn)
+                assert not done.wait(0.6), "a gated claim must block while another transaction holds the session lock"
+                txn.commit()
+                assert done.wait(5), "the claim must complete once the lock is released"
+                assert "error" not in result and result["value"] is not None and result["value"]["id"] == "r_a"
+            finally:
+                conn.close()
+                engine.dispose()
+        finally:
+            self._drop(db)
+
+    def test_ungated_claim_does_not_take_the_session_lock(self):
+        """With queue_per_session off there is nothing to serialize against:
+        the claim must not wait on a session lock it has no use for."""
+        from agno.db.postgres import PostgresDb
+
+        db = PostgresDb(db_url=PG_URL, job_table=f"parity_lockoff_{uuid.uuid4().hex[:8]}")
+        try:
+            db.enqueue_job(make_job("r_a", session_id="s1", created_at=1000))
+            engine, conn, txn = self._held_session_lock("s1")
+            try:
+                done, result = self._run_in_thread(lambda: db.claim_job("w1"))
+                assert done.wait(5) and result["value"] is not None and result["value"]["id"] == "r_a"
+            finally:
+                txn.rollback()
+                conn.close()
+                engine.dispose()
+        finally:
+            self._drop(db)
