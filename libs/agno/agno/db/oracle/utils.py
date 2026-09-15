@@ -10,7 +10,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Sequence
 from uuid import uuid4
 
-from sqlalchemy import Table, bindparam, case, func
+from sqlalchemy import BigInteger, Table, bindparam, case, cast, func
 from sqlalchemy.dialects import oracle as oracle_dialect_module
 from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.inspection import inspect
@@ -87,6 +87,31 @@ def from_db_user_id(user_id: Optional[str]) -> Optional[str]:
     if user_id == UNOWNED_USER_ID:
         return ""
     return user_id
+
+
+# -- Database-clock epoch, for lease math --
+#
+# Postgres's job-queue adapter anchors claim/heartbeat/sweep lease decisions
+# to the DATABASE's own clock (its own ``_db_epoch()``, built on
+# ``EXTRACT(EPOCH FROM NOW())``), never each replica's local Python clock: a
+# replica whose clock runs fast would see healthy leases as expired and
+# sweep live runs, fencing out the victim's own eventual completion. Oracle's
+# ``EXTRACT`` has no "epoch" field -- unlike Postgres, it only extracts
+# calendar fields (YEAR/MONTH/DAY/HOUR/MINUTE/SECOND/TIMEZONE). The
+# DATE-arithmetic idiom below is the portable Oracle equivalent:
+# ``SYS_EXTRACT_UTC(SYSTIMESTAMP)`` gives the server's current instant in
+# UTC; ``CAST(... AS DATE)`` truncates to whole-second precision (Oracle
+# DATE has no sub-second component); Oracle DATE arithmetic is in whole
+# days, so the difference from the epoch date, times 86400, is seconds
+# since the Unix epoch -- confirmed against a live server to agree with
+# Python's own ``time.time()`` to the second.
+def db_epoch():
+    """A SQL expression evaluating to the Oracle server's current Unix
+    epoch second, for use in ``.values()`` on lease-bearing columns."""
+    return cast(
+        text("ROUND((CAST(SYS_EXTRACT_UTC(SYSTIMESTAMP) AS DATE) - DATE '1970-01-01') * 86400)"),
+        BigInteger,
+    )
 
 
 # -- Identifier length handling --

@@ -12,11 +12,11 @@ introduces no new production boundary. Both modules skip cleanly (not error)
 when their server is unreachable, since no Oracle container exists in public
 CI (ADR 0009).
 
-Coverage in this file: the domains tickets 03-09 deliver (sessions, runs,
+Coverage in this file: the domains tickets 03-10 deliver (sessions, runs,
 memory, metrics, knowledge, eval runs, traces, learnings, schedules,
-approvals, auth tokens, the component catalog). Later tickets extend this
-file with their own domains as they land, rather than each inventing a
-separate differential suite.
+approvals, auth tokens, the component catalog, the durable job queue).
+Later tickets extend this file with their own domains as they land, rather
+than each inventing a separate differential suite.
 """
 
 import uuid
@@ -99,6 +99,7 @@ def oracle_db(_servers_up):
         "components_table": f"diff_comp_{suffix}",
         "component_configs_table": f"diff_comp_cfg_{suffix}",
         "component_links_table": f"diff_comp_link_{suffix}",
+        "job_table": f"diff_jobs_{suffix}",
     }
     database = OracleDb(db_url=ORACLE_URL, id=f"diff-oracle-{suffix}", **tables)
     yield database
@@ -842,6 +843,131 @@ def test_components_match_postgres(pg_db, oracle_db):
     """One scenario covering ticket 09's domain, compared directly."""
     pg_result = _run_components_scenario(pg_db)
     oracle_result = _run_components_scenario(oracle_db)
+
+    assert oracle_result == pg_result, (
+        f"Oracle diverged from Postgres.\nPostgres: {pg_result}\nOracle:   {oracle_result}"
+    )
+
+
+def _run_jobs_scenario(db) -> Dict[str, Any]:
+    """Ticket 10's domain: the durable job queue's dedup rules, fenced
+    settlement, sweep family and retention. Wall-clock-derived fields
+    (locked_at/available_at/updated_at/completed_at) are DB-clock-anchored
+    on both backends (Postgres's _db_epoch, Oracle's db_epoch) and
+    deliberately excluded from the comparison below, for the same reason
+    ticket 07's schedule scenario excludes them: not guaranteed to land on
+    the identical second across two sequential backend runs.
+    """
+    now = 1700000000
+
+    def _job(job_id, **overrides):
+        d = {
+            "id": job_id,
+            "component_type": "agent",
+            "job_type": "run",
+            "deployment_id": None,
+            "component_id": "diff-agent",
+            "session_id": "diff-session",
+            "user_id": None,
+            "payload": {"message": "hi"},
+            "status": "queued",
+            "attempt": 0,
+            "max_attempts": 3,
+            "idempotency_key": None,
+            "available_at": now - 10,
+            "locked_by": None,
+            "locked_at": None,
+            "error": None,
+            "created_at": now,
+            "updated_at": None,
+            "completed_at": None,
+        }
+        d.update(overrides)
+        return d
+
+    r1 = db.enqueue_job(_job("diff-job-1"))
+
+    r2 = db.enqueue_job(_job("diff-job-2", user_id="alice", idempotency_key="k1"))
+    r2_dup = db.enqueue_job(_job("diff-job-2-retry", user_id="alice", idempotency_key="k1"))
+
+    r3 = db.enqueue_job(_job("diff-job-3", user_id=None, idempotency_key="k2"))
+    r3_dup = db.enqueue_job(_job("diff-job-3-retry", user_id=None, idempotency_key="k2"))
+
+    r4 = db.enqueue_job(_job("diff-job-4", user_id="alice", idempotency_key="k3"))
+    r5 = db.enqueue_job(_job("diff-job-5", user_id="bob", idempotency_key="k3"))
+
+    full = db.enqueue_job(_job("diff-job-full"), max_depth=1)
+
+    claimed = db.claim_job("worker-1")
+    heartbeat_count = db.heartbeat_jobs("worker-1", [claimed["id"]])
+    wrong_fence = db.complete_job(claimed["id"], "worker-1", attempt=99, status="completed")
+    completed = db.complete_job(claimed["id"], "worker-1", attempt=claimed["attempt"], status="completed")
+    completed_status = db.get_job(claimed["id"])["status"]
+
+    db.enqueue_job(_job("diff-job-retry"))
+    claim_r = db.claim_job("worker-2")
+    retry_status = db.retry_or_fail_job(claim_r["id"], "worker-2", claim_r["attempt"], "boom", retry_delay_seconds=0)
+    claim_r2 = db.claim_job("worker-2")
+    fail_status = db.retry_or_fail_job(claim_r2["id"], "worker-2", claim_r2["attempt"], "boom again")
+
+    db.enqueue_job(_job("diff-job-cancel"))
+    cancelled = db.cancel_job("diff-job-cancel")
+
+    db.enqueue_job(_job("diff-job-pause"))
+    claim_p = db.claim_job("worker-3")
+    db.complete_job(claim_p["id"], "worker-3", claim_p["attempt"], "paused")
+    continue_result = db.continue_job(claim_p["id"], {"answer": "42"})
+    continue_attach = db.continue_job(claim_p["id"], {"answer": "ignored"})
+    claim_p2 = db.claim_job("worker-3")
+    db.complete_job(claim_p2["id"], "worker-3", claim_p2["attempt"], "completed")
+    continue_conflict = db.continue_job(claim_p2["id"], {})
+
+    count_queued = db.count_queued_jobs()
+    _, list_total = db.list_jobs(status="queued")
+    stats = db.queue_stats()
+
+    requeued = db.requeue_job(claim_r2["id"])
+    requeued_status = db.get_job(claim_r2["id"])["status"]
+
+    return {
+        "r1_accepted": r1["accepted"],
+        "r2_accepted": r2["accepted"],
+        "r2_dup_accepted": r2_dup["accepted"],
+        "r2_dup_reason": r2_dup["reason"],
+        "r2_dup_id": r2_dup["job"]["id"],
+        "r3_accepted": r3["accepted"],
+        "r3_dup_accepted": r3_dup["accepted"],
+        "r3_dup_id": r3_dup["job"]["id"],
+        "r4_accepted": r4["accepted"],
+        "r5_accepted": r5["accepted"],
+        "full_accepted": full["accepted"],
+        "full_reason": full["reason"],
+        "claimed_status": claimed["status"],
+        "claimed_attempt": claimed["attempt"],
+        "heartbeat_count": heartbeat_count,
+        "wrong_fence": wrong_fence,
+        "completed": completed,
+        "completed_status": completed_status,
+        "retry_status": retry_status,
+        "fail_status": fail_status,
+        "cancelled": cancelled,
+        "continue_outcome": continue_result["outcome"],
+        "continue_payload": continue_result["job"]["payload"]["continue"],
+        "continue_max_attempts_delta": continue_result["job"]["max_attempts"] - claim_p["attempt"],
+        "continue_attach_outcome": continue_attach["outcome"],
+        "continue_conflict_outcome": continue_conflict["outcome"],
+        "count_queued": count_queued,
+        "list_total": list_total,
+        "stats_queued": stats["counts"].get("queued"),
+        "requeued": requeued,
+        "requeued_status": requeued_status,
+    }
+
+
+def test_jobs_match_postgres(pg_db, oracle_db):
+    """One scenario covering ticket 10's domain, compared directly."""
+    pg_result = _run_jobs_scenario(pg_db)
+    oracle_result = _run_jobs_scenario(oracle_db)
 
     assert oracle_result == pg_result, (
         f"Oracle diverged from Postgres.\nPostgres: {pg_result}\nOracle:   {oracle_result}"

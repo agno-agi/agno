@@ -62,6 +62,7 @@ from agno.db.oracle.schemas import get_table_schema_definition
 from agno.db.oracle.utils import (
     apply_sorting,
     calculate_date_metrics,
+    db_epoch,
     fetch_all_sessions_data,
     from_db_user_id,
     get_dates_to_calculate_metrics_for,
@@ -5020,3 +5021,501 @@ class OracleDb(BaseDb):
         except Exception as e:
             log_error(f"Error loading component graph: {str(e)}")
             raise
+
+    # -- Job queue methods --
+    #
+    # Durable background job queue: one row per accepted run. The duck-typed
+    # contract (agno.os.job_queue.resolve_queue_store) requires 13 methods;
+    # this section carries those plus the five extras PostgresDb ships
+    # (ensure_jobs_table, list_jobs, requeue_job, queue_stats, cleanup_jobs).
+    #
+    # user_id here is a plain nullable owner column (jobs never use "" for
+    # unowned), matching every other plain-nullable domain in this adapter;
+    # no to_db_user_id/from_db_user_id translation applies.
+    def ensure_jobs_table(self) -> None:
+        table = self._get_table(table_type="jobs", create_table_if_not_found=True)
+        if table is None:
+            raise RuntimeError("Job queue table is unavailable after provisioning")
+
+    def enqueue_job(self, job: Dict[str, Any], max_depth: int = 0) -> Dict[str, Any]:
+        table = self._get_table(table_type="jobs", create_table_if_not_found=True)
+        if table is None:
+            raise RuntimeError("Failed to get or create job queue table")
+        if not job.get("idempotency_key"):
+            job = {**job, "idempotency_key": None}
+        try:
+            with self.Session() as sess, sess.begin():
+                if job.get("idempotency_key"):
+                    row = sess.execute(
+                        select(table).where(
+                            table.c.idempotency_key == job["idempotency_key"],
+                            table.c.user_id.is_not_distinct_from(job.get("user_id")),
+                        )
+                    ).fetchone()
+                    if row is not None:
+                        return {"accepted": False, "reason": "duplicate", "job": dict(row._mapping)}
+                if max_depth and max_depth > 0:
+                    count_stmt = select(func.count()).select_from(table).where(table.c.status == "queued")
+                    queued = sess.execute(count_stmt).scalar() or 0
+                    if queued >= max_depth:
+                        return {"accepted": False, "reason": "queue_full", "job": None}
+                sess.execute(table.insert().values(**job))
+            return {"accepted": True, "reason": None, "job": job}
+        except IntegrityError:
+            if not job.get("idempotency_key"):
+                raise
+            with self.Session() as sess:
+                row = sess.execute(
+                    select(table).where(
+                        table.c.idempotency_key == job["idempotency_key"],
+                        table.c.user_id.is_not_distinct_from(job.get("user_id")),
+                    )
+                ).fetchone()
+                if row is not None:
+                    return {"accepted": False, "reason": "duplicate", "job": dict(row._mapping)}
+            raise
+
+    # See ticket 07's claim_due_schedule for the same restriction: Oracle
+    # raises ORA-02014 ("cannot select FOR UPDATE from view with DISTINCT,
+    # GROUP BY, etc.") when a row-limiting clause (.limit(1), which compiles
+    # to FETCH FIRST 1 ROWS ONLY) is combined with FOR UPDATE -- confirmed
+    # live, and Postgres's claim_job does exactly that (UPDATE ... WHERE id =
+    # (SELECT ... LIMIT 1 FOR UPDATE SKIP LOCKED) RETURNING *). FOR UPDATE
+    # SKIP LOCKED against a single row addressed by primary-key equality
+    # carries no such restriction, so this fetches a bounded list of oldest
+    # executable candidate ids with a plain query, then tries each in turn
+    # with a per-row FOR UPDATE SKIP LOCKED: the first still-executable,
+    # not-concurrently-locked one wins.
+    _CLAIM_CANDIDATE_BATCH = 20
+
+    def claim_job(
+        self, worker_id: str, lock_grace_seconds: int = 60, deployment_id: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        try:
+            table = self._get_table(table_type="jobs")
+            if table is None:
+                return None
+            now_expr = db_epoch()
+            with self.Session() as sess, sess.begin():
+                now = sess.execute(select(now_expr)).scalar()
+                stale = now - lock_grace_seconds
+
+                def executable(stmt):
+                    return stmt.where(
+                        table.c.available_at <= now,
+                        or_(table.c.deployment_id.is_(None), table.c.deployment_id == deployment_id),
+                        or_(
+                            table.c.status == "queued",
+                            and_(
+                                table.c.status == "running",
+                                table.c.locked_at <= stale,
+                                table.c.attempt < table.c.max_attempts,
+                            ),
+                        ),
+                    )
+
+                candidates_stmt = (
+                    executable(select(table.c.id)).order_by(table.c.created_at.asc()).limit(self._CLAIM_CANDIDATE_BATCH)
+                )
+                candidate_ids = [row[0] for row in sess.execute(candidates_stmt).fetchall()]
+                for candidate_id in candidate_ids:
+                    lock_stmt = executable(select(table.c.id).where(table.c.id == candidate_id)).with_for_update(
+                        skip_locked=True
+                    )
+                    if sess.execute(lock_stmt).scalar() is None:
+                        continue
+                    sess.execute(
+                        table.update()
+                        .where(table.c.id == candidate_id)
+                        .values(
+                            status="running",
+                            locked_by=worker_id,
+                            locked_at=now,
+                            attempt=table.c.attempt + 1,
+                            updated_at=now,
+                        )
+                    )
+                    result = sess.execute(select(table).where(table.c.id == candidate_id)).fetchone()
+                    return dict(result._mapping) if result else None
+                return None
+        except Exception as e:
+            log_error(f"Job queue store: claim failed for worker {worker_id} (deployment={deployment_id}): {e}")
+            return None
+
+    def heartbeat_jobs(self, worker_id: str, job_ids: List[str]) -> int:
+        if not job_ids:
+            return 0
+        try:
+            table = self._get_table(table_type="jobs")
+            if table is None:
+                return 0
+            with self.Session() as sess, sess.begin():
+                now = sess.execute(select(db_epoch())).scalar()
+                result = sess.execute(
+                    table.update()
+                    .where(
+                        table.c.id.in_(job_ids),
+                        table.c.locked_by == worker_id,
+                        table.c.status == "running",
+                    )
+                    .values(locked_at=now)
+                )
+                return result.rowcount or 0
+        except Exception as e:
+            log_error(
+                f"Job queue store: heartbeat failed for worker {worker_id} ({len(job_ids)} jobs, e.g. {job_ids[0]}): {e}"
+            )
+            return 0
+
+    def complete_job(self, job_id: str, worker_id: str, attempt: int, status: str, error: Optional[str] = None) -> bool:
+        try:
+            table = self._get_table(table_type="jobs")
+            if table is None:
+                return False
+            with self.Session() as sess, sess.begin():
+                now = sess.execute(select(db_epoch())).scalar()
+                result = sess.execute(
+                    table.update()
+                    .where(
+                        table.c.id == job_id,
+                        table.c.locked_by == worker_id,
+                        table.c.attempt == attempt,
+                        table.c.status == "running",
+                    )
+                    .values(
+                        status=status,
+                        error=error,
+                        locked_by=None,
+                        locked_at=None,
+                        completed_at=now,
+                        updated_at=now,
+                    )
+                )
+                return (result.rowcount or 0) > 0
+        except Exception as e:
+            log_error(
+                f"Job queue store: settle failed for job {job_id} (worker={worker_id}, attempt={attempt}, "
+                f"status={status!r}): {e}"
+            )
+            return False
+
+    def retry_or_fail_job(
+        self, job_id: str, worker_id: str, attempt: int, error: str, retry_delay_seconds: int = 30
+    ) -> Optional[str]:
+        try:
+            table = self._get_table(table_type="jobs")
+            if table is None:
+                return None
+            with self.Session() as sess, sess.begin():
+                now = sess.execute(select(db_epoch())).scalar()
+                fence = (
+                    select(table)
+                    .where(
+                        table.c.id == job_id,
+                        table.c.locked_by == worker_id,
+                        table.c.attempt == attempt,
+                        table.c.status == "running",
+                    )
+                    .with_for_update()
+                )
+                row = sess.execute(fence).fetchone()
+                if row is None:
+                    return None
+                job = dict(row._mapping)
+                if job["attempt"] < job["max_attempts"]:
+                    new_status = "queued"
+                    values: Dict[str, Any] = {
+                        "status": new_status,
+                        "error": error,
+                        "locked_by": None,
+                        "locked_at": None,
+                        "available_at": now + retry_delay_seconds,
+                        "updated_at": now,
+                    }
+                else:
+                    new_status = "failed"
+                    values = {
+                        "status": new_status,
+                        "error": error,
+                        "locked_by": None,
+                        "locked_at": None,
+                        "completed_at": now,
+                        "updated_at": now,
+                    }
+                sess.execute(table.update().where(table.c.id == job_id).values(**values))
+                return new_status
+        except Exception as e:
+            log_error(
+                f"Job queue store: retry-or-fail failed for job {job_id} (worker={worker_id}, attempt={attempt}): {e}"
+            )
+            return None
+
+    def settle_paused_job(self, job_id: str, status: str, error: Optional[str] = None) -> bool:
+        if status not in ("completed", "cancelled", "failed"):
+            return False
+        try:
+            table = self._get_table(table_type="jobs")
+            if table is None:
+                return False
+            with self.Session() as sess, sess.begin():
+                now = sess.execute(select(db_epoch())).scalar()
+                result = sess.execute(
+                    table.update()
+                    .where(table.c.id == job_id, table.c.status == "paused")
+                    .values(
+                        status=status,
+                        error=error,
+                        locked_by=None,
+                        locked_at=None,
+                        completed_at=now,
+                        updated_at=now,
+                    )
+                )
+                return (result.rowcount or 0) > 0
+        except Exception as e:
+            log_error(f"Job queue store: paused-settle failed for job {job_id} (status={status!r}): {e}")
+            return False
+
+    def cancel_job(self, job_id: str) -> bool:
+        try:
+            table = self._get_table(table_type="jobs")
+            if table is None:
+                return False
+            with self.Session() as sess, sess.begin():
+                now = sess.execute(select(db_epoch())).scalar()
+                result = sess.execute(
+                    table.update()
+                    .where(table.c.id == job_id, table.c.status.in_(["queued", "paused"]))
+                    .values(status="cancelled", completed_at=now, updated_at=now)
+                )
+                return (result.rowcount or 0) > 0
+        except Exception as e:
+            log_error(f"Job queue store: cancel failed for job {job_id}: {e}")
+            return False
+
+    def sweep_exhausted_jobs(self, lock_grace_seconds: int = 60, limit: int = 20) -> List[Dict[str, Any]]:
+        try:
+            table = self._get_table(table_type="jobs")
+            if table is None:
+                return []
+            with self.Session() as sess:
+                now = sess.execute(select(db_epoch())).scalar()
+                stale = now - lock_grace_seconds
+                result = sess.execute(
+                    select(table)
+                    .where(
+                        table.c.status == "running",
+                        table.c.locked_at <= stale,
+                        table.c.attempt >= table.c.max_attempts,
+                    )
+                    .order_by(table.c.locked_at.asc())
+                    .limit(limit)
+                )
+                return [dict(row._mapping) for row in result.fetchall()]
+        except Exception as e:
+            log_warning(f"Job queue store: sweep scan failed (lock_grace={lock_grace_seconds}s): {e}")
+            return []
+
+    def acquire_sweep(self, job_id: str, worker_id: str, lock_grace_seconds: int = 60) -> bool:
+        try:
+            table = self._get_table(table_type="jobs")
+            if table is None:
+                return False
+            with self.Session() as sess, sess.begin():
+                now = sess.execute(select(db_epoch())).scalar()
+                stale = now - lock_grace_seconds
+                result = sess.execute(
+                    table.update()
+                    .where(
+                        table.c.id == job_id,
+                        table.c.status == "running",
+                        table.c.locked_at <= stale,
+                        table.c.attempt >= table.c.max_attempts,
+                    )
+                    .values(locked_by=worker_id, locked_at=now, updated_at=now)
+                )
+                return (result.rowcount or 0) > 0
+        except Exception as e:
+            log_error(f"Job queue store: sweep-lock acquisition failed for job {job_id} (worker={worker_id}): {e}")
+            return False
+
+    def settle_swept_job(self, job_id: str, worker_id: str, status: str, error: Optional[str] = None) -> bool:
+        if status not in ("completed", "cancelled", "paused", "failed"):
+            return False
+        try:
+            table = self._get_table(table_type="jobs")
+            if table is None:
+                return False
+            with self.Session() as sess, sess.begin():
+                now = sess.execute(select(db_epoch())).scalar()
+                result = sess.execute(
+                    table.update()
+                    .where(
+                        table.c.id == job_id,
+                        table.c.status == "running",
+                        table.c.locked_by == worker_id,
+                    )
+                    .values(
+                        status=status,
+                        error=error,
+                        locked_by=None,
+                        locked_at=None,
+                        completed_at=now,
+                        updated_at=now,
+                    )
+                )
+                return (result.rowcount or 0) > 0
+        except Exception as e:
+            log_error(f"Job queue store: swept-job settle failed for job {job_id} (worker={worker_id}): {e}")
+            return False
+
+    def get_job(self, job_id: str, strict: bool = False) -> Optional[Dict[str, Any]]:
+        if strict:
+            table = self._get_table(table_type="jobs")
+            if table is None:
+                raise RuntimeError(f"Job queue store: jobs table unavailable for strict lookup of {job_id}")
+            with self.Session() as sess:
+                row = sess.execute(select(table).where(table.c.id == job_id)).fetchone()
+                return dict(row._mapping) if row is not None else None
+        try:
+            table = self._get_table(table_type="jobs")
+            if table is None:
+                return None
+            with self.Session() as sess:
+                row = sess.execute(select(table).where(table.c.id == job_id)).fetchone()
+                return dict(row._mapping) if row is not None else None
+        except Exception as e:
+            log_warning(f"Job queue store: get_job failed for job {job_id}: {e}")
+            return None
+
+    def count_queued_jobs(self) -> int:
+        try:
+            table = self._get_table(table_type="jobs")
+            if table is None:
+                return 0
+            with self.Session() as sess:
+                result = sess.execute(select(func.count()).select_from(table).where(table.c.status == "queued"))
+                return result.scalar() or 0
+        except Exception as e:
+            log_warning(f"Job queue store: queued-count failed: {e}")
+            return 0
+
+    def list_jobs(
+        self,
+        status: Optional[Union[str, List[str]]] = None,
+        limit: int = 20,
+        page: int = 1,
+        sort_by: Optional[str] = "created_at",
+        sort_order: Optional[str] = "desc",
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        try:
+            table = self._get_table(table_type="jobs")
+            if table is None:
+                return [], 0
+            stmt = select(table)
+            if status is not None:
+                statuses = [status] if isinstance(status, str) else list(status)
+                stmt = stmt.where(table.c.status.in_(statuses))
+            count_stmt = select(func.count()).select_from(stmt.alias())
+            stmt = apply_sorting(stmt, table, sort_by, sort_order)
+            stmt = stmt.order_by(table.c.id)
+            stmt = stmt.limit(limit).offset(max(page - 1, 0) * limit)
+            with self.Session() as sess:
+                total_count = sess.execute(count_stmt).scalar() or 0
+                result = sess.execute(stmt)
+                return [dict(row._mapping) for row in result.fetchall()], total_count
+        except Exception as e:
+            log_warning(f"Job queue store: list_jobs failed (status={status!r}): {e}")
+            return [], 0
+
+    def requeue_job(self, job_id: str) -> bool:
+        try:
+            table = self._get_table(table_type="jobs")
+            if table is None:
+                return False
+            with self.Session() as sess, sess.begin():
+                now = sess.execute(select(db_epoch())).scalar()
+                result = sess.execute(
+                    table.update()
+                    .where(table.c.id == job_id, table.c.status.in_(["failed", "cancelled"]))
+                    .values(
+                        status="queued",
+                        max_attempts=table.c.attempt + 1,
+                        available_at=now,
+                        locked_by=None,
+                        locked_at=None,
+                        completed_at=None,
+                        updated_at=now,
+                    )
+                )
+                return (result.rowcount or 0) > 0
+        except Exception as e:
+            log_error(f"Job queue store: requeue failed for job {job_id}: {e}")
+            return False
+
+    def continue_job(self, job_id: str, continue_payload: Dict[str, Any]) -> Dict[str, Any]:
+        table = self._get_table(table_type="jobs")
+        if table is None:
+            raise RuntimeError("Job queue table not found")
+        with self.Session() as sess, sess.begin():
+            now = sess.execute(select(db_epoch())).scalar()
+            row = sess.execute(select(table).where(table.c.id == job_id).with_for_update()).fetchone()
+            if row is None:
+                return {"outcome": "conflict", "job": None}
+            job = dict(row._mapping)
+            if job["status"] in ("completed", "failed", "cancelled"):
+                return {"outcome": "conflict", "job": job}
+            if job["status"] in ("queued", "running"):
+                return {"outcome": "attach", "job": job}
+            payload = dict(job.get("payload") or {})
+            payload["continue"] = dict(continue_payload)
+            values: Dict[str, Any] = {
+                "status": "queued",
+                "payload": payload,
+                "max_attempts": job["attempt"] + 1,
+                "available_at": now,
+                "locked_by": None,
+                "locked_at": None,
+                "completed_at": None,
+                "updated_at": now,
+            }
+            sess.execute(table.update().where(table.c.id == job_id).values(**values))
+            job.update(values)
+            return {"outcome": "queued", "job": job}
+
+    def queue_stats(self) -> Dict[str, Any]:
+        try:
+            table = self._get_table(table_type="jobs")
+            if table is None:
+                return {"counts": {}, "oldest_queued_age_seconds": None}
+            with self.Session() as sess:
+                now = sess.execute(select(db_epoch())).scalar()
+                counts_result = sess.execute(select(table.c.status, func.count()).group_by(table.c.status))
+                counts = {row[0]: row[1] for row in counts_result.fetchall()}
+                oldest_result = sess.execute(select(func.min(table.c.created_at)).where(table.c.status == "queued"))
+                oldest_created = oldest_result.scalar()
+                oldest_age = (now - oldest_created) if oldest_created is not None else None
+                return {"counts": counts, "oldest_queued_age_seconds": oldest_age}
+        except Exception as e:
+            log_warning(f"Job queue store: stats failed: {e}")
+            return {"counts": {}, "oldest_queued_age_seconds": None}
+
+    def cleanup_jobs(self, older_than_seconds: int = 86400) -> int:
+        try:
+            table = self._get_table(table_type="jobs")
+            if table is None:
+                return 0
+            with self.Session() as sess, sess.begin():
+                now = sess.execute(select(db_epoch())).scalar()
+                cutoff = now - older_than_seconds
+                result = sess.execute(
+                    table.delete().where(
+                        table.c.status.in_(["completed", "failed", "cancelled"]),
+                        table.c.completed_at.is_not(None),
+                        table.c.completed_at <= cutoff,
+                    )
+                )
+                return result.rowcount or 0
+        except Exception as e:
+            log_warning(f"Job queue store: retention cleanup failed: {e}")
+            return 0
