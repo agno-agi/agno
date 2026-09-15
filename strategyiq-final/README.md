@@ -103,6 +103,8 @@ Required Vercel env: `JWT_SECRET` (min 16 chars, must match backend), `UPSTASH_R
 
 Root `vercel.json` keeps Next Edge `/api/chat` and `/api/billing/*` on the frontend; FastAPI is routed at `/auth`, `/ai`, `/eqs`, `/port`, `/market`, `/billing`, `/health`.
 
+Middleware protects `/` (terminal), `/dashboard`, `/api/chat`, and `/api/billing`. Login sets an HttpOnly `token` cookie via `POST /api/auth/session`.
+
 ## Zip Distribution
 
 ```bash

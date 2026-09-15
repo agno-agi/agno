@@ -8,6 +8,18 @@ export interface AuthSession {
   tier: string;
 }
 
+function formatDetail(detail: unknown): string {
+  if (typeof detail === "string") return detail;
+  if (Array.isArray(detail)) {
+    return detail
+      .map((item) =>
+        typeof item === "object" && item && "msg" in item ? String((item as { msg: unknown }).msg) : String(item)
+      )
+      .join("; ");
+  }
+  return "Request failed";
+}
+
 export function getSession(): AuthSession | null {
   if (typeof window === "undefined") return null;
   const token = localStorage.getItem(TOKEN_KEY);
@@ -16,20 +28,36 @@ export function getSession(): AuthSession | null {
   return { token, tier: tier || "beginner" };
 }
 
-export function saveSession(token: string, tier: string): void {
+async function syncHttpOnlyCookie(token: string | null): Promise<void> {
+  try {
+    if (token) {
+      await fetch("/api/auth/session", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token }),
+      });
+    } else {
+      await fetch("/api/auth/session", { method: "DELETE" });
+    }
+  } catch {
+    // Cookie sync is best-effort; Bearer token in localStorage still works for API calls.
+  }
+}
+
+export async function saveSession(token: string, tier: string): Promise<void> {
   localStorage.setItem(TOKEN_KEY, token);
   localStorage.setItem(TIER_KEY, tier);
   localStorage.setItem("token", token);
   localStorage.setItem("tier", tier);
-  document.cookie = `token=${token}; path=/; max-age=86400; SameSite=Lax`;
+  await syncHttpOnlyCookie(token);
 }
 
-export function clearSession(): void {
+export async function clearSession(): Promise<void> {
   localStorage.removeItem(TOKEN_KEY);
   localStorage.removeItem(TIER_KEY);
   localStorage.removeItem("token");
   localStorage.removeItem("tier");
-  document.cookie = "token=; path=/; max-age=0";
+  await syncHttpOnlyCookie(null);
 }
 
 export async function register(email: string, password: string): Promise<AuthSession> {
@@ -39,8 +67,8 @@ export async function register(email: string, password: string): Promise<AuthSes
     body: JSON.stringify({ email, password }),
   });
   const data = await res.json();
-  if (!res.ok) throw new Error(data.detail || "Registration failed");
-  saveSession(data.access_token, data.tier);
+  if (!res.ok) throw new Error(formatDetail(data.detail) || "Registration failed");
+  await saveSession(data.access_token, data.tier);
   return { token: data.access_token, tier: data.tier };
 }
 
@@ -51,8 +79,8 @@ export async function login(email: string, password: string): Promise<AuthSessio
     body: JSON.stringify({ email, password }),
   });
   const data = await res.json();
-  if (!res.ok) throw new Error(data.detail || "Login failed");
-  saveSession(data.access_token, data.tier);
+  if (!res.ok) throw new Error(formatDetail(data.detail) || "Login failed");
+  await saveSession(data.access_token, data.tier);
   return { token: data.access_token, tier: data.tier };
 }
 

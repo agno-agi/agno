@@ -26,8 +26,8 @@ export function AuthBar() {
         {tier}
       </span>
       <button
-        onClick={() => {
-          clearSession();
+        onClick={async () => {
+          await clearSession();
           setTier(null);
         }}
         className="text-terminal-muted hover:text-terminal-text text-xs"
