@@ -16,6 +16,7 @@ from agno.vectordb.base import (
     is_rate_limit_error,
     raise_embedding_failures,
 )
+from agno.vectordb.filter_validation import validate_metadata_keys
 
 try:
     from acouchbase.bucket import AsyncBucket
@@ -1498,6 +1499,8 @@ class CouchbaseSearch(VectorDb):
             where_conditions = []
             named_parameters: Dict[str, Any] = {}
 
+            # Validate keys before interpolating into N1QL (see #8823).
+            validate_metadata_keys(metadata)
             for key, value in metadata.items():
                 if isinstance(value, (list, tuple)):
                     # For array values, use ARRAY_CONTAINS
