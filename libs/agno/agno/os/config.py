@@ -78,6 +78,31 @@ class MCPConfig(BaseModel):
     # host would otherwise be echoed into a publicly cacheable document.
     server_card_url: Optional[str] = None
 
+    # External transport path and optional legacy aliases. Policies use one native MCP route.
+    path: str = "/mcp"
+    path_aliases: List[str] = Field(default_factory=list)
+    # Serve / and /server-card on this exact Host; other REST paths are unaffected.
+    root_host: Optional[str] = None
+
+    @model_validator(mode="after")
+    def _validate_routing(self) -> "MCPConfig":
+        import re
+
+        for path in [self.path, *self.path_aliases]:
+            if not re.fullmatch(r"/(?:[A-Za-z0-9_-]+/)*[A-Za-z0-9_-]+", path):
+                raise ValueError("MCP paths must be non-root absolute paths with plain segments; use root_host for /")
+        paths = [self.path, *self.path_aliases]
+        if len(set(paths)) != len(paths) or any(p + "/server-card" in paths for p in paths):
+            raise ValueError("MCP transport and server-card paths must not overlap")
+        if self.root_host is not None:
+            if not re.fullmatch(
+                r"(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)*[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?",
+                self.root_host,
+            ):
+                raise ValueError("MCP root_host must be an exact hostname without a scheme, port or wildcard")
+            self.root_host = self.root_host.lower()
+        return self
+
     # The tool surface of this MCP server. Each entry may be:
     #
     #   - a plain callable or an Agno ``@tool``/``Function`` -- a custom tool
