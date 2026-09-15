@@ -11,7 +11,7 @@ from agno.metrics import RunMetrics
 from agno.models.message import Citations, Message
 from agno.models.response import ToolExecution
 from agno.reasoning.step import ReasoningStep
-from agno.run.base import BaseRunOutputEvent, MessageReferences, RunStatus
+from agno.run.base import BaseRunOutputEvent, MessageReferences, RunStatus, init_custom_event
 from agno.run.requirement import RunRequirement
 from agno.utils.log import log_error
 from agno.utils.media import (
@@ -517,9 +517,7 @@ class CustomEvent(BaseAgentRunEvent):
     tool_call_id: Optional[str] = None
 
     def __init__(self, **kwargs):
-        # Store arbitrary attributes directly on the instance
-        for key, value in kwargs.items():
-            setattr(self, key, value)
+        init_custom_event(self, kwargs)
 
 
 RunOutputEvent = Union[
