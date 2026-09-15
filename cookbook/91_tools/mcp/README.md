@@ -111,4 +111,4 @@ You can modify these examples to:
 ## More Information
 
 - Read more about [MCP](https://modelcontextprotocol.io/introduction)
-- Read about [Agno's MCP integration](https://docs.agno.com/tools/mcp)
+- Read about [Agno's MCP integration](https://docs.agno.com/mcp)
