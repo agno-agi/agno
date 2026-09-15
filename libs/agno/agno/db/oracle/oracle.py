@@ -30,6 +30,7 @@ from sqlalchemy import (
     UniqueConstraint,
     create_engine,
     func,
+    or_,
     select,
     text,
 )
@@ -48,6 +49,7 @@ from agno.db.oracle.utils import (
     from_db_user_id,
     get_dates_to_calculate_metrics_for,
     is_table_available,
+    is_unique_violation,
     is_valid_table,
     merge_upsert,
     partial_unique_index_elements,
@@ -2756,3 +2758,354 @@ class OracleDb(BaseDb):
         except Exception as e:
             log_error(f"Error getting learning user stats: {e}")
             raise
+
+    # -- Schedules --
+    #
+    # ``user_id`` here is a plain nullable owner column, not the three-state
+    # sentinel other domains carry: schedules never use "" for "unowned"
+    # (BaseDb.get_schedule_by_name's own docstring is explicit that
+    # ``user_id=None`` means the unowned bucket). No to_db_user_id/
+    # from_db_user_id translation applies, the same call made for
+    # knowledge.user_id.
+    def get_schedule(self, schedule_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        try:
+            table = self._get_table(table_type="schedules")
+            if table is None:
+                return None
+            with self.Session() as sess:
+                stmt = select(table).where(table.c.id == schedule_id)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
+                result = sess.execute(stmt).fetchone()
+                return dict(result._mapping) if result else None
+        except Exception as e:
+            log_debug(f"Error getting schedule: {e}")
+            return None
+
+    def get_schedule_by_name(self, name: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        try:
+            table = self._get_table(table_type="schedules")
+            if table is None:
+                return None
+            with self.Session() as sess:
+                stmt = select(table).where(table.c.name == name)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
+                else:
+                    stmt = stmt.where(table.c.user_id.is_(None))
+                result = sess.execute(stmt).fetchone()
+                return dict(result._mapping) if result else None
+        except Exception as e:
+            log_debug(f"Error getting schedule by name: {e}")
+            return None
+
+    def get_schedules(
+        self,
+        enabled: Optional[bool] = None,
+        limit: int = 100,
+        page: int = 1,
+        user_id: Optional[str] = None,
+        raise_on_error: bool = False,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        try:
+            table = self._get_table(table_type="schedules")
+            if table is None:
+                if raise_on_error:
+                    raise RuntimeError("schedules table unavailable (database error or table never created)")
+                return [], 0
+            with self.Session() as sess:
+                base_query = select(table)
+                if enabled is not None:
+                    base_query = base_query.where(table.c.enabled == enabled)
+                if user_id is not None:
+                    base_query = base_query.where(table.c.user_id == user_id)
+
+                count_stmt = select(func.count()).select_from(base_query.alias())
+                total_count = sess.execute(count_stmt).scalar() or 0
+
+                offset = (page - 1) * limit
+                stmt = base_query.order_by(table.c.created_at.desc(), table.c.id.desc()).limit(limit).offset(offset)
+                results = sess.execute(stmt).fetchall()
+                return [dict(row._mapping) for row in results], total_count
+        except Exception as e:
+            log_debug(f"Error listing schedules: {e}")
+            if raise_on_error:
+                raise
+            return [], 0
+
+    def create_schedule(self, schedule_data: Dict[str, Any]) -> Dict[str, Any]:
+        try:
+            table = self._get_table(table_type="schedules", create_table_if_not_found=True)
+            if table is None:
+                raise RuntimeError("Failed to get or create schedules table")
+            with self.Session() as sess, sess.begin():
+                sess.execute(table.insert().values(**schedule_data))
+            return schedule_data
+        except Exception as e:
+            log_error(f"Error creating schedule: {str(e)}")
+            raise
+
+    def update_schedule(
+        self, schedule_id: str, user_id: Optional[str] = None, **kwargs: Any
+    ) -> Optional[Dict[str, Any]]:
+        from agno.db.schemas.scheduler import validate_schedule_update
+
+        validate_schedule_update(kwargs)
+        try:
+            table = self._get_table(table_type="schedules")
+            if table is None:
+                return None
+            if kwargs.get("enabled") is True:
+                kwargs.setdefault("disabled_reason", None)
+            kwargs["updated_at"] = int(time.time())
+            with self.Session() as sess, sess.begin():
+                stmt = table.update().where(table.c.id == schedule_id)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
+                sess.execute(stmt.values(**kwargs))
+            return self.get_schedule(schedule_id, user_id=user_id)
+        except Exception as e:
+            # A rename onto a name already taken in the same owner bucket
+            # trips the uq_user_name/uq_unowned_name function-based unique
+            # index; let it propagate so the router maps it to 409, same as
+            # Postgres's on_conflict-free UPDATE hitting its partial index.
+            if is_unique_violation(e):
+                raise
+            log_debug(f"Error updating schedule: {e}")
+            return None
+
+    def delete_schedule(self, schedule_id: str, user_id: Optional[str] = None) -> bool:
+        try:
+            table = self._get_table(table_type="schedules")
+            if table is None:
+                return False
+            runs_table = self._get_table(table_type="schedule_runs")
+            with self.Session() as sess, sess.begin():
+                if runs_table is not None:
+                    runs_delete = runs_table.delete().where(runs_table.c.schedule_id == schedule_id)
+                    if user_id is not None:
+                        runs_delete = runs_delete.where(runs_table.c.user_id == user_id)
+                    sess.execute(runs_delete)
+                delete_stmt = table.delete().where(table.c.id == schedule_id)
+                if user_id is not None:
+                    delete_stmt = delete_stmt.where(table.c.user_id == user_id)
+                result = sess.execute(delete_stmt)
+                return result.rowcount > 0
+        except Exception as e:
+            log_debug(f"Error deleting schedule: {e}")
+            return False
+
+    def disable_schedules_for_target(
+        self,
+        target_type: str,
+        target_id: str,
+        reason: Optional[str] = None,
+    ) -> int:
+        try:
+            table = self._get_table(table_type="schedules")
+            if table is None:
+                return 0
+            with self.Session() as sess, sess.begin():
+                return self._disable_schedules_for_target_in_session(sess, table, target_type, target_id, reason)
+        except Exception as e:
+            log_error(f"Error disabling schedules for target: {e}")
+            raise
+
+    def _disable_schedules_for_target_in_session(
+        self,
+        sess,
+        table: Table,
+        target_type: str,
+        target_id: str,
+        reason: Optional[str] = None,
+    ) -> int:
+        from agno.db.schemas.scheduler import build_run_endpoint
+
+        endpoint = build_run_endpoint(target_type, target_id)
+        endpoints = [endpoint, endpoint + "/"]
+        result = sess.execute(
+            table.update()
+            .where(
+                or_(
+                    (table.c.target_type == target_type) & (table.c.target_id == target_id),
+                    table.c.endpoint.in_(endpoints),
+                ),
+                table.c.enabled == True,  # noqa: E712 -- .is_(True) miscompiles on OracleNativeBoolean
+            )
+            .values(enabled=False, disabled_reason=reason, updated_at=int(time.time()))
+        )
+        return int(result.rowcount or 0)
+
+    def stamp_schedule_provenance(self, schedule_id: str, **provenance: Any) -> bool:
+        allowed = {
+            "managed_by",
+            "target_type",
+            "target_id",
+            "created_by_run_id",
+            "created_by_session_id",
+            "updated_by_run_id",
+            "updated_by_session_id",
+        }
+        rejected = sorted(set(provenance) - allowed)
+        if rejected:
+            raise ValueError(f"stamp_schedule_provenance cannot write {rejected}")
+        try:
+            table = self._get_table(table_type="schedules")
+            if table is None:
+                return False
+            with self.Session() as sess, sess.begin():
+                result = sess.execute(
+                    table.update().where(table.c.id == schedule_id).values(updated_at=int(time.time()), **provenance)
+                )
+            return result.rowcount > 0
+        except Exception as e:
+            log_error(f"Error stamping schedule provenance: {e}")
+            raise
+
+    # How many earliest-due candidates to consider per claim attempt before
+    # giving up. Bounds the retry loop below; a queue with this many rows all
+    # claimed by other workers in the same instant is not a case worth an
+    # unbounded retry for -- the next scheduler tick tries again.
+    _CLAIM_CANDIDATE_BATCH = 20
+
+    def claim_due_schedule(self, worker_id: str, lock_grace_seconds: int = 300) -> Optional[Dict[str, Any]]:
+        """Atomically claim the earliest due, unlocked (or stale-locked) schedule.
+
+        Postgres does this in one UPDATE ... WHERE id = (SELECT ... FOR UPDATE
+        SKIP LOCKED) RETURNING *. Oracle rejects the equivalent outright:
+        combining a row-limiting clause (FETCH FIRST n ROWS ONLY, which a
+        single-row ``.limit()`` compiles to) with FOR UPDATE raises
+        ORA-02014 ("cannot select FOR UPDATE from view with DISTINCT, GROUP
+        BY, etc.") -- confirmed against a live server; the row-limiting
+        clause is implemented as a view under the hood, and FOR UPDATE
+        refuses to lock through one.
+
+        FOR UPDATE SKIP LOCKED against a single row addressed by primary key
+        equality has no such restriction. So this fetches a bounded list of
+        earliest-due candidate ids with a plain (lock-free) SELECT, then
+        tries them in order with a per-row FOR UPDATE SKIP LOCKED: the first
+        one that is still eligible and not concurrently locked wins. A
+        candidate already claimed by a concurrent worker either fails the
+        eligibility re-check or is skipped by SKIP LOCKED, and the loop moves
+        to the next candidate -- both are the expected outcome of losing a
+        race, not an error.
+        """
+        try:
+            table = self._get_table(table_type="schedules")
+            if table is None:
+                return None
+            now = int(time.time())
+            stale_lock_threshold = now - lock_grace_seconds
+
+            def eligible(stmt):
+                return stmt.where(
+                    table.c.enabled == True,  # noqa: E712 -- .is_(True) miscompiles on OracleNativeBoolean
+                    table.c.next_run_at <= now,
+                    or_(
+                        table.c.locked_by.is_(None),
+                        table.c.locked_at <= stale_lock_threshold,
+                    ),
+                )
+
+            with self.Session() as sess, sess.begin():
+                candidates_stmt = (
+                    eligible(select(table.c.id)).order_by(table.c.next_run_at.asc()).limit(self._CLAIM_CANDIDATE_BATCH)
+                )
+                candidate_ids = [row[0] for row in sess.execute(candidates_stmt).fetchall()]
+                for candidate_id in candidate_ids:
+                    lock_stmt = eligible(select(table.c.id).where(table.c.id == candidate_id)).with_for_update(
+                        skip_locked=True
+                    )
+                    if sess.execute(lock_stmt).scalar() is None:
+                        continue
+                    sess.execute(
+                        table.update().where(table.c.id == candidate_id).values(locked_by=worker_id, locked_at=now)
+                    )
+                    result = sess.execute(select(table).where(table.c.id == candidate_id)).fetchone()
+                    return dict(result._mapping) if result else None
+                return None
+        except Exception as e:
+            log_debug(f"Error claiming schedule: {e}")
+            return None
+
+    def release_schedule(self, schedule_id: str, next_run_at: Optional[int] = None) -> bool:
+        try:
+            table = self._get_table(table_type="schedules")
+            if table is None:
+                return False
+            updates: Dict[str, Any] = {"locked_by": None, "locked_at": None, "updated_at": int(time.time())}
+            if next_run_at is not None:
+                updates["next_run_at"] = next_run_at
+            with self.Session() as sess, sess.begin():
+                result = sess.execute(table.update().where(table.c.id == schedule_id).values(**updates))
+                return result.rowcount > 0
+        except Exception as e:
+            log_debug(f"Error releasing schedule: {e}")
+            return False
+
+    # -- Schedule runs --
+    def create_schedule_run(self, run_data: Dict[str, Any]) -> Dict[str, Any]:
+        try:
+            table = self._get_table(table_type="schedule_runs", create_table_if_not_found=True)
+            if table is None:
+                raise RuntimeError("Failed to get or create schedule_runs table")
+            with self.Session() as sess, sess.begin():
+                sess.execute(table.insert().values(**run_data))
+            return run_data
+        except Exception as e:
+            log_error(f"Error creating schedule run: {str(e)}")
+            raise
+
+    def update_schedule_run(self, schedule_run_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
+        try:
+            table = self._get_table(table_type="schedule_runs")
+            if table is None:
+                return None
+            with self.Session() as sess, sess.begin():
+                sess.execute(table.update().where(table.c.id == schedule_run_id).values(**kwargs))
+            return self.get_schedule_run(schedule_run_id)
+        except Exception as e:
+            log_debug(f"Error updating schedule run: {e}")
+            return None
+
+    def get_schedule_run(self, run_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        try:
+            table = self._get_table(table_type="schedule_runs")
+            if table is None:
+                return None
+            with self.Session() as sess:
+                stmt = select(table).where(table.c.id == run_id)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
+                result = sess.execute(stmt).fetchone()
+                return dict(result._mapping) if result else None
+        except Exception as e:
+            log_debug(f"Error getting schedule run: {e}")
+            return None
+
+    def get_schedule_runs(
+        self,
+        schedule_id: str,
+        limit: int = 20,
+        page: int = 1,
+        user_id: Optional[str] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        try:
+            table = self._get_table(table_type="schedule_runs")
+            if table is None:
+                return [], 0
+            with self.Session() as sess:
+                base_filter = table.c.schedule_id == schedule_id
+                if user_id is not None:
+                    base_filter = base_filter & (table.c.user_id == user_id)
+
+                count_stmt = select(func.count()).select_from(table).where(base_filter)
+                total_count = sess.execute(count_stmt).scalar() or 0
+
+                offset = (page - 1) * limit
+                stmt = select(table).where(base_filter).order_by(table.c.created_at.desc()).limit(limit).offset(offset)
+                results = sess.execute(stmt).fetchall()
+                return [dict(row._mapping) for row in results], total_count
+        except Exception as e:
+            log_debug(f"Error getting schedule runs: {e}")
+            return [], 0

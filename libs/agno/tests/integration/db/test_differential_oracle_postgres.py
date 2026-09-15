@@ -12,10 +12,10 @@ introduces no new production boundary. Both modules skip cleanly (not error)
 when their server is unreachable, since no Oracle container exists in public
 CI (ADR 0009).
 
-Coverage in this file: the domains tickets 03, 04 and 05 deliver (sessions,
-runs, memory, metrics, knowledge, eval runs, traces). Later tickets extend
-this file with their own domains as they land, rather than each inventing a
-separate differential suite.
+Coverage in this file: the domains tickets 03-07 deliver (sessions, runs,
+memory, metrics, knowledge, eval runs, traces, learnings, schedules).
+Later tickets extend this file with their own domains as they land, rather
+than each inventing a separate differential suite.
 """
 
 import uuid
@@ -81,6 +81,8 @@ def oracle_db(_servers_up):
         "eval_table": f"diff_eval_{suffix}",
         "traces_table": f"diff_trace_{suffix}",
         "learnings_table": f"diff_learn_{suffix}",
+        "schedules_table": f"diff_sched_{suffix}",
+        "schedule_runs_table": f"diff_sched_runs_{suffix}",
     }
     database = OracleDb(db_url=ORACLE_URL, id=f"diff-oracle-{suffix}", **tables)
     yield database
@@ -375,6 +377,161 @@ def test_learnings_match_postgres(pg_db, oracle_db):
     """One scenario covering ticket 06's domain, compared directly."""
     pg_result = _run_learnings_scenario(pg_db)
     oracle_result = _run_learnings_scenario(oracle_db)
+
+    assert oracle_result == pg_result, (
+        f"Oracle diverged from Postgres.\nPostgres: {pg_result}\nOracle:   {oracle_result}"
+    )
+
+
+def _run_schedules_scenario(db) -> Dict[str, Any]:
+    """Ticket 07's domain: schedules and schedule runs -- uniqueness across
+    the three owner-bucket states, generic update, provenance stamping,
+    target-cascade disable, claim/release, and cascade delete into
+    schedule_runs.
+
+    Concurrent claim's exactly-one-winner property is proven separately
+    (threaded, against a live Oracle server only, in
+    tests/integration/db/test_run_index_race.py's sibling script) since it
+    says nothing about cross-backend equivalence -- it doesn't belong in a
+    differential comparison. Wall-clock-derived fields the adapters set
+    internally (claim/release's own ``locked_at``/``updated_at`` via
+    ``int(time.time())``) are deliberately excluded from the comparison
+    below: they are not guaranteed to land on the identical second across
+    two sequential backend runs, and comparing them would test the clock,
+    not the adapter.
+    """
+    base = {
+        "description": None,
+        "method": "POST",
+        "payload": {"message": "hi"},
+        "cron_expr": "0 * * * *",
+        "timezone": "UTC",
+        "timeout_seconds": 60,
+        "max_retries": 0,
+        "retry_delay_seconds": 0,
+        "enabled": True,
+        "next_run_at": 1700000000,
+        "locked_by": None,
+        "locked_at": None,
+        "managed_by": None,
+        "target_type": None,
+        "target_id": None,
+        "created_by_run_id": None,
+        "created_by_session_id": None,
+        "updated_by_run_id": None,
+        "updated_by_session_id": None,
+        "disabled_reason": None,
+        "created_at": 1700000000,
+        "updated_at": 1700000000,
+    }
+    # Each schedule gets its own endpoint: disable_schedules_for_target also
+    # matches generically by endpoint (across owners, by design), and a
+    # shared endpoint across these rows would disable more than the
+    # provenance-tagged one the test below means to exercise.
+    db.create_schedule(
+        {"id": "diff-sched-1", "name": "daily-report", "user_id": "alice", "endpoint": "/agents/sched-1/runs", **base}
+    )
+    db.create_schedule(
+        {"id": "diff-sched-2", "name": "daily-report", "user_id": "bob", "endpoint": "/agents/sched-2/runs", **base}
+    )
+    db.create_schedule(
+        {"id": "diff-sched-3", "name": "daily-report", "user_id": None, "endpoint": "/agents/sched-3/runs", **base}
+    )
+    db.create_schedule(
+        {"id": "diff-sched-4", "name": "other-name", "user_id": "alice", "endpoint": "/agents/sched-4/runs", **base}
+    )
+
+    by_name_alice = db.get_schedule_by_name("daily-report", user_id="alice")["id"]
+    by_name_unowned = db.get_schedule_by_name("daily-report", user_id=None)["id"]
+
+    same_owner_collision = False
+    try:
+        db.create_schedule({"id": "diff-sched-1-dup", "name": "daily-report", "user_id": "alice", **base})
+    except Exception:
+        same_owner_collision = True
+
+    unowned_collision = False
+    try:
+        db.create_schedule({"id": "diff-sched-3-dup", "name": "daily-report", "user_id": None, **base})
+    except Exception:
+        unowned_collision = True
+
+    _, alice_total = db.get_schedules(user_id="alice")
+    _, all_total = db.get_schedules()
+
+    updated = db.update_schedule("diff-sched-1", cron_expr="0 0 * * *")
+
+    rename_collision = False
+    try:
+        db.update_schedule("diff-sched-4", name="daily-report", user_id="alice")
+    except Exception:
+        rename_collision = True
+
+    db.stamp_schedule_provenance("diff-sched-2", managed_by="system", target_type="agent", target_id="diff-agent")
+    disabled_count = db.disable_schedules_for_target("agent", "diff-agent")
+    after_disable = db.get_schedule("diff-sched-2")
+
+    claimed = db.claim_due_schedule("diff-worker-1")
+    claimed_locked_by = claimed["locked_by"] if claimed else None
+    claimed_has_lock_timestamp = claimed is not None and claimed["locked_at"] is not None
+    db.release_schedule(claimed["id"], next_run_at=1800000000)
+    after_release = db.get_schedule(claimed["id"])
+
+    db.create_schedule_run(
+        {
+            "id": "diff-run-1",
+            "schedule_id": "diff-sched-3",
+            "attempt": 1,
+            "triggered_at": 1700000000,
+            "completed_at": None,
+            "status": "pending",
+            "status_code": None,
+            "run_id": None,
+            "session_id": None,
+            "error": None,
+            "input": {"a": 1},
+            "output": None,
+            "requirements": None,
+            "user_id": None,
+            "created_at": 1700000000,
+        }
+    )
+    updated_run = db.update_schedule_run("diff-run-1", status="completed", output={"ok": True})
+    runs, run_total = db.get_schedule_runs("diff-sched-3")
+
+    deleted = db.delete_schedule("diff-sched-3")
+    remaining_run = db.get_schedule_run("diff-run-1")
+
+    return {
+        "by_name_alice": by_name_alice,
+        "by_name_unowned": by_name_unowned,
+        "same_owner_collision": same_owner_collision,
+        "unowned_collision": unowned_collision,
+        "alice_total": alice_total,
+        "all_total": all_total,
+        "updated_cron_expr": updated["cron_expr"],
+        "rename_collision": rename_collision,
+        "disabled_count": disabled_count,
+        "after_disable_enabled": after_disable["enabled"],
+        "after_disable_disabled_reason": after_disable["disabled_reason"],
+        "claimed_id": claimed["id"] if claimed else None,
+        "claimed_locked_by": claimed_locked_by,
+        "claimed_has_lock_timestamp": claimed_has_lock_timestamp,
+        "after_release_locked_by": after_release["locked_by"],
+        "after_release_next_run_at": after_release["next_run_at"],
+        "updated_run_status": updated_run["status"],
+        "updated_run_output": updated_run["output"],
+        "run_total": run_total,
+        "runs_ids": sorted(r["id"] for r in runs),
+        "deleted": deleted,
+        "remaining_run_after_cascade": remaining_run,
+    }
+
+
+def test_schedules_match_postgres(pg_db, oracle_db):
+    """One scenario covering ticket 07's domain, compared directly."""
+    pg_result = _run_schedules_scenario(pg_db)
+    oracle_result = _run_schedules_scenario(oracle_db)
 
     assert oracle_result == pg_result, (
         f"Oracle diverged from Postgres.\nPostgres: {pg_result}\nOracle:   {oracle_result}"

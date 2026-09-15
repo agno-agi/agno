@@ -2,8 +2,8 @@
 
 One suite over table creation, the atomic-claim primitive and the ``user_id``
 read filter, run against every backend that ships schedules. SQLite always runs;
-Postgres and Mongo need ``AGNO_TEST_POSTGRES_URL`` / ``AGNO_TEST_MONGO_URL`` and
-skip otherwise.
+Postgres, Mongo and Oracle need ``AGNO_TEST_POSTGRES_URL`` / ``AGNO_TEST_MONGO_URL``
+/ ``AGNO_TEST_ORACLE_URL`` and skip otherwise.
 """
 
 import time
@@ -110,10 +110,49 @@ def _mongo_db() -> Iterator:
             pass
 
 
+@contextmanager
+def _oracle_db() -> Iterator:
+    pytest.importorskip("sqlalchemy")
+    pytest.importorskip("oracledb")
+    import os
+
+    url = os.getenv("AGNO_TEST_ORACLE_URL")
+    if not url:
+        pytest.skip("AGNO_TEST_ORACLE_URL not set; skipping oracle lifecycle parity test")
+
+    from sqlalchemy import text
+
+    from agno.db.oracle import OracleDb
+
+    suffix = uuid.uuid4().hex[:8]
+    tables = {
+        "session_table": f"test_sessions_{suffix}",
+        "schedules_table": f"test_schedules_{suffix}",
+        "schedule_runs_table": f"test_schedule_runs_{suffix}",
+    }
+    db = OracleDb(db_url=url, **tables)
+    try:
+        yield db
+    finally:
+        # No drop_all on this adapter; drop the suffixed tables this
+        # instance actually created (schedule_runs first: it holds the FK
+        # to schedules).
+        for table_name in (tables["schedule_runs_table"], tables["schedules_table"], tables["session_table"]):
+            try:
+                if db.table_exists(table_name):
+                    with db.db_engine.begin() as conn:
+                        conn.execute(text(f"DROP TABLE {table_name} CASCADE CONSTRAINTS"))
+            except Exception:
+                pass
+        db.Session.remove()
+        db.db_engine.dispose()
+
+
 BACKENDS: list[tuple[str, Callable]] = [
     ("sqlite", _sqlite_db),
     ("postgres", _postgres_db),
     ("mongo", _mongo_db),
+    ("oracle", _oracle_db),
 ]
 
 
