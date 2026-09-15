@@ -8286,6 +8286,13 @@ class Workflow:
                 step_output = None
                 draining_after_cancel = False
                 try:
+                    extra_kwargs: Dict[str, Any] = {}
+                    if isinstance(step, Loop) and i == start_step_index:
+                        if kwargs.get("loop_resume_from_iteration"):
+                            extra_kwargs["resume_from_iteration"] = kwargs["loop_resume_from_iteration"]
+                        if kwargs.get("loop_previous_results"):
+                            extra_kwargs["previous_iteration_results"] = kwargs["loop_previous_results"]
+
                     for event in step.execute_stream(  # type: ignore[union-attr]
                         step_input,
                         session_id=session.session_id,
@@ -8303,6 +8310,7 @@ class Workflow:
                         else None,
                         num_history_runs=self.num_history_runs,
                         background_tasks=background_tasks,
+                        **extra_kwargs,
                     ):
                         is_bypass = isinstance(event, _EXECUTOR_CANCEL_BYPASS_EVENT_TYPES)
                         if not draining_after_cancel and not is_bypass:
@@ -10046,6 +10054,13 @@ class Workflow:
                 step_output = None
                 draining_after_cancel = False
                 try:
+                    extra_kwargs: Dict[str, Any] = {}
+                    if isinstance(step, Loop) and i == start_step_index:
+                        if kwargs.get("loop_resume_from_iteration"):
+                            extra_kwargs["resume_from_iteration"] = kwargs["loop_resume_from_iteration"]
+                        if kwargs.get("loop_previous_results"):
+                            extra_kwargs["previous_iteration_results"] = kwargs["loop_previous_results"]
+
                     async for event in step.aexecute_stream(  # type: ignore[union-attr]
                         step_input,
                         session_id=session.session_id,
@@ -10063,6 +10078,7 @@ class Workflow:
                         else None,
                         num_history_runs=self.num_history_runs,
                         background_tasks=background_tasks,
+                        **extra_kwargs,
                     ):
                         is_bypass = isinstance(event, _EXECUTOR_CANCEL_BYPASS_EVENT_TYPES)
                         if not draining_after_cancel and not is_bypass:
