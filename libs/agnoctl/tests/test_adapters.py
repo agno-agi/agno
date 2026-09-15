@@ -16,7 +16,12 @@ else:
     import tomli as tomllib
 
 import agnoctl.clients.base as base_module
-from agnoctl.clients.base import atomic_write_text
+from agnoctl.clients.base import (
+    atomic_write_text,
+    read_json_lenient,
+    read_json_strict,
+    write_servers_entry,
+)
 from agnoctl.clients.claude_code import ClaudeCodeAdapter
 from agnoctl.clients.claude_desktop import ClaudeDesktopAdapter
 from agnoctl.clients.codex import CodexAdapter
@@ -541,6 +546,21 @@ def test_atomic_write_text_direct_secure(tmp_path: Path, permissive_umask):
     atomic_write_text(target, "s3cr3t", secure=True)
     assert target.read_text() == "s3cr3t"
     assert _mode(target) == 0o600
+
+
+def test_json_helpers_use_utf8_text(tmp_path: Path):
+    path = tmp_path / ".cursor" / "mcp.json"
+    path.parent.mkdir()
+    path.write_text(json.dumps({"note": "cafe \u2615"}), encoding="utf-8")
+
+    assert read_json_lenient(path) == {"note": "cafe \u2615"}
+    assert read_json_strict(path) == {"note": "cafe \u2615"}
+
+    write_servers_entry(path, "agno", {"url": URL, "note": "cafe \u2615"}, secure=False)
+
+    config = json.loads(path.read_text(encoding="utf-8"))
+    assert config["note"] == "cafe \u2615"
+    assert config["mcpServers"]["agno"]["note"] == "cafe \u2615"
 
 
 # -- remove ------------------------------------------------------------------------------
