@@ -12,12 +12,13 @@ Sections below are ordered to match ``agno.db.postgres.postgres`` so the two
 files read side by side.
 """
 
+import json
 import time
-from datetime import date, datetime
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple, Union
+from uuid import uuid4
 
 from sqlalchemy import (
-    CheckConstraint,
     Column,
     Engine,
     ForeignKey,
@@ -39,13 +40,18 @@ from agno.db.base import BaseDb, SessionType
 from agno.db.migrations.manager import MigrationManager
 from agno.db.oracle._version import OracleCapabilities, detect_capabilities
 from agno.db.oracle.engine import _engine_options
-from agno.db.oracle.schemas import OracleClobJSON, get_table_schema_definition
+from agno.db.oracle.schemas import get_table_schema_definition
 from agno.db.oracle.utils import (
     apply_sorting,
+    calculate_date_metrics,
+    fetch_all_sessions_data,
+    from_db_user_id,
+    get_dates_to_calculate_metrics_for,
     is_table_available,
     is_valid_table,
     merge_upsert,
     partial_unique_index_elements,
+    to_db_user_id,
     truncate_identifier,
 )
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
@@ -57,6 +63,7 @@ from agno.db.utils import (
     deserialize_run,
     deserialize_session,
     deserialize_sessions,
+    metrics_starting_date_from_days,
     table_schema_mismatch_error,
     validate_pagination,
 )
@@ -326,9 +333,10 @@ class OracleDb(BaseDb):
           / ``__composite_indexes__``: structurally identical to Postgres.
         - ``_partial_unique_indexes``: becomes a unique function-based index
           (``partial_unique_index_elements``), since Oracle has no partial index.
-        - A column typed ``OracleClobJSON`` gets an out-of-line ``IS JSON``
-          check constraint, added here rather than inline in the column's own
-          DDL (Oracle rejects an inline check that names any column, ORA-02438).
+
+        A column typed ``OracleClobJSON`` gets no structural database-level
+        check: see that class's own docstring for why an ``IS JSON`` check,
+        inline or out-of-line, cannot be used here.
         """
         try:
             table_schema = get_table_schema_definition(
@@ -359,14 +367,11 @@ class OracleDb(BaseDb):
 
             columns: List[Column] = []
             single_indexes: List[str] = []
-            clob_json_columns: List[str] = []
 
             for col_name, col_config in table_schema.items():
                 column_args: List[Any] = [col_name, col_config["type"]()]
                 column_kwargs: Dict[str, Any] = {}
 
-                if col_config.get("type") is OracleClobJSON:
-                    clob_json_columns.append(col_name)
                 if col_config.get("primary_key", False) and schema_primary_key is None:
                     column_kwargs["primary_key"] = True
                 if "nullable" in col_config:
@@ -448,13 +453,6 @@ class OracleDb(BaseDb):
                     raise ValueError(f"Partial unique index references missing columns in {table_name}: {missing}")
                 elements = partial_unique_index_elements(table, idx_columns, idx_config["where"])
                 Index(truncate_identifier(f"{table_name}_{idx_config['name']}"), *elements, unique=True)
-
-            # Out-of-line IS JSON check per CLOB-backed JSON column -- see
-            # OracleClobJSON's docstring for why this cannot be inline.
-            for col_name in clob_json_columns:
-                table.append_constraint(
-                    CheckConstraint(f"{col_name} IS JSON", name=truncate_identifier(f"{table_name}_{col_name}_is_json"))
-                )
 
             table_created = False
             if not self.table_exists(table_name):
@@ -614,6 +612,7 @@ class OracleDb(BaseDb):
                 if result is None:
                     return None
                 run_row = dict(result._mapping)
+            run_row["user_id"] = from_db_user_id(run_row.get("user_id"))
             if not deserialize:
                 return run_row
             return deserialize_run(run_row.get("run_type"), run_row["run_data"])
@@ -634,6 +633,7 @@ class OracleDb(BaseDb):
                 return
 
             row = build_single_run_row(run=run, session_id=session_id, user_id=user_id, run_index=run_index)
+            row["user_id"] = to_db_user_id(row.get("user_id"))
 
             with self.Session() as sess, sess.begin():
                 if row.get("run_index") is None:
@@ -689,7 +689,7 @@ class OracleDb(BaseDb):
                 if session_id is not None:
                     stmt = stmt.where(table.c.session_id == session_id)
                 if user_id is not None:
-                    stmt = stmt.where(table.c.user_id == user_id)
+                    stmt = stmt.where(table.c.user_id == to_db_user_id(user_id))
                 if agent_id is not None:
                     stmt = stmt.where(table.c.agent_id == agent_id)
                 if team_id is not None:
@@ -714,6 +714,9 @@ class OracleDb(BaseDb):
 
                 records = sess.execute(stmt).fetchall()
                 run_rows = [dict(record._mapping) for record in records]
+
+            for r in run_rows:
+                r["user_id"] = from_db_user_id(r.get("user_id"))
 
             if not deserialize:
                 return run_rows, total_count
@@ -776,7 +779,7 @@ class OracleDb(BaseDb):
             with self.Session() as sess, sess.begin():
                 delete_stmt = table.delete().where(table.c.session_id == session_id)
                 if user_id is not None:
-                    delete_stmt = delete_stmt.where(table.c.user_id == user_id)
+                    delete_stmt = delete_stmt.where(table.c.user_id == to_db_user_id(user_id))
                 result = sess.execute(delete_stmt)
                 if result.rowcount == 0:
                     return False
@@ -800,7 +803,7 @@ class OracleDb(BaseDb):
             with self.Session() as sess, sess.begin():
                 select_stmt = select(table.c.session_id).where(table.c.session_id.in_(session_ids))
                 if user_id is not None:
-                    select_stmt = select_stmt.where(table.c.user_id == user_id)
+                    select_stmt = select_stmt.where(table.c.user_id == to_db_user_id(user_id))
                 deletable_ids = [row[0] for row in sess.execute(select_stmt)]
                 cascade_ids = session_ids if user_id is None else deletable_ids
 
@@ -809,7 +812,7 @@ class OracleDb(BaseDb):
                 if runs_table is not None:
                     runs_delete_stmt = runs_table.delete().where(runs_table.c.session_id.in_(session_ids))
                     if user_id is not None:
-                        runs_delete_stmt = runs_delete_stmt.where(runs_table.c.user_id == user_id)
+                        runs_delete_stmt = runs_delete_stmt.where(runs_table.c.user_id == to_db_user_id(user_id))
                     sess.execute(runs_delete_stmt)
 
             log_debug(f"Successfully deleted {result.rowcount} sessions")
@@ -837,12 +840,13 @@ class OracleDb(BaseDb):
             with self.Session() as sess:
                 stmt = select(table).where(table.c.session_id == session_id)
                 if user_id is not None:
-                    stmt = stmt.where(table.c.user_id == user_id)
+                    stmt = stmt.where(table.c.user_id == to_db_user_id(user_id))
                 result = sess.execute(stmt).fetchone()
                 if result is None:
                     return None
 
                 session = dict(result._mapping)
+                session["user_id"] = from_db_user_id(session.get("user_id"))
                 run_rows: Optional[List[Tuple[str, str]]] = None
 
                 if runs_table is None:
@@ -959,7 +963,7 @@ class OracleDb(BaseDb):
             with self.Session() as sess, sess.begin():
                 stmt = select(table)
                 if user_id is not None:
-                    stmt = stmt.where(table.c.user_id == user_id)
+                    stmt = stmt.where(table.c.user_id == to_db_user_id(user_id))
                 if component_id is not None:
                     if session_type == SessionType.AGENT:
                         stmt = stmt.where(table.c.agent_id == component_id)
@@ -995,6 +999,8 @@ class OracleDb(BaseDb):
 
                 records = sess.execute(stmt).fetchall()
                 sessions = [dict(record._mapping) for record in records]
+                for s in sessions:
+                    s["user_id"] = from_db_user_id(s.get("user_id"))
 
                 if session_name is not None:
                     needle = session_name.lower()
@@ -1053,7 +1059,7 @@ class OracleDb(BaseDb):
                 if session_type is not None:
                     stmt = stmt.where(table.c.session_type == session_type.value)
                 if user_id is not None:
-                    stmt = stmt.where(table.c.user_id == user_id)
+                    stmt = stmt.where(table.c.user_id == to_db_user_id(user_id))
                 row = sess.execute(stmt).fetchone()
                 if row is None:
                     return None
@@ -1070,6 +1076,7 @@ class OracleDb(BaseDb):
 
                 refreshed = sess.execute(select(table).where(table.c.session_id == session_id)).fetchone()
                 session = dict(refreshed._mapping)
+                session["user_id"] = from_db_user_id(session.get("user_id"))
 
             runs_table = self._get_table(table_type="runs")
             if runs_table is not None:
@@ -1127,7 +1134,7 @@ class OracleDb(BaseDb):
             now = int(time.time())
             values = {
                 "session_id": session_dict.get("session_id"),
-                "user_id": session_dict.get("user_id"),
+                "user_id": to_db_user_id(session_dict.get("user_id")),
                 "session_data": session_dict.get("session_data"),
                 "summary": session_dict.get("summary"),
                 "metadata": session_dict.get("metadata"),
@@ -1157,6 +1164,7 @@ class OracleDb(BaseDb):
                 if row is None:
                     return None
                 session_dict = dict(row._mapping)
+                session_dict["user_id"] = from_db_user_id(session_dict.get("user_id"))
 
             if not deserialize:
                 session_dict["runs"] = [run if isinstance(run, dict) else run.to_dict() for run in session.runs or []]
@@ -1218,22 +1226,96 @@ class OracleDb(BaseDb):
     # MySQL adapter already uses for its own learnings stubs
     # (mysql.py, "Learning methods (stubs)"), rather than a silent pass.
 
+    # -- Memory --
     def clear_memories(self) -> None:
-        raise NotImplementedError("OracleDb memory methods are implemented in ticket 04.")
+        try:
+            table = self._get_table(table_type="memories")
+            if table is None:
+                return
+            with self.Session() as sess, sess.begin():
+                sess.execute(table.delete())
+        except Exception as e:
+            log_error(f"Exception deleting all memories: {str(e)}")
+            raise
 
     def delete_user_memory(self, memory_id: str, user_id: Optional[str] = None) -> None:
-        raise NotImplementedError("OracleDb memory methods are implemented in ticket 04.")
+        try:
+            table = self._get_table(table_type="memories")
+            if table is None:
+                return
+            with self.Session() as sess, sess.begin():
+                stmt = table.delete().where(table.c.memory_id == memory_id)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == to_db_user_id(user_id))
+                sess.execute(stmt)
+        except Exception as e:
+            log_error(f"Error deleting user memory: {str(e)}")
+            raise
 
     def delete_user_memories(self, memory_ids: List[str], user_id: Optional[str] = None) -> None:
-        raise NotImplementedError("OracleDb memory methods are implemented in ticket 04.")
+        try:
+            table = self._get_table(table_type="memories")
+            if table is None:
+                return
+            with self.Session() as sess, sess.begin():
+                stmt = table.delete().where(table.c.memory_id.in_(memory_ids))
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == to_db_user_id(user_id))
+                sess.execute(stmt)
+        except Exception as e:
+            log_error(f"Error deleting user memories: {str(e)}")
+            raise
 
     def get_all_memory_topics(self, user_id: Optional[str] = None) -> List[str]:
-        raise NotImplementedError("OracleDb memory methods are implemented in ticket 04.")
+        """Distinct topics across memories, filtered by owner.
+
+        Postgres pushes this down with jsonb_array_elements_text, a
+        set-returning function with no cross-variant Oracle equivalent
+        (native JSON needs JSON_TABLE, the CLOB variant has no native JSON
+        function at all). ``topics`` already decodes to a Python list on
+        read, so this flattens and dedupes in Python instead -- one query,
+        no dialect-specific JSON array expansion.
+        """
+        try:
+            table = self._get_table(table_type="memories")
+            if table is None:
+                return []
+            with self.Session() as sess:
+                stmt = select(table.c.topics).where(table.c.topics.is_not(None))
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == to_db_user_id(user_id))
+                rows = sess.execute(stmt).fetchall()
+            topics: set = set()
+            for (row_topics,) in rows:
+                if isinstance(row_topics, list):
+                    topics.update(t for t in row_topics if t is not None)
+            return list(topics)
+        except Exception as e:
+            log_error(f"Exception reading from memory table: {str(e)}")
+            return []
 
     def get_user_memory(
         self, memory_id: str, deserialize: Optional[bool] = True, user_id: Optional[str] = None
     ) -> Optional[Union[UserMemory, Dict[str, Any]]]:
-        raise NotImplementedError("OracleDb memory methods are implemented in ticket 04.")
+        try:
+            table = self._get_table(table_type="memories")
+            if table is None:
+                return None
+            with self.Session() as sess, sess.begin():
+                stmt = select(table).where(table.c.memory_id == memory_id)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == to_db_user_id(user_id))
+                result = sess.execute(stmt).fetchone()
+                if not result:
+                    return None
+                memory_raw = dict(result._mapping)
+                memory_raw["user_id"] = from_db_user_id(memory_raw.get("user_id"))
+                if not deserialize:
+                    return memory_raw
+            return UserMemory.from_dict(memory_raw)
+        except Exception as e:
+            log_error(f"Exception reading from memory table: {str(e)}")
+            raise
 
     def get_user_memories(
         self,
@@ -1248,36 +1330,388 @@ class OracleDb(BaseDb):
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
     ) -> Union[List[UserMemory], Tuple[List[Dict[str, Any]], int]]:
-        raise NotImplementedError("OracleDb memory methods are implemented in ticket 04.")
+        """Get memories matching the given filters.
+
+        ``topics`` and ``search_content`` are matched in Python, not pushed
+        to SQL: Postgres matches both by casting the JSONB column to text and
+        substring-searching the raw serialized JSON, which has no single
+        cross-variant Oracle equivalent (CAST rejects a native JSON source --
+        ORA-22849 -- and JSON_SERIALIZE covers only that one variant). The
+        columns Oracle CAN filter in SQL (user_id, agent_id, team_id) still
+        are; only these two go through Python, after the SQL-filtered fetch.
+        """
+        validate_pagination(limit, page)
+        try:
+            table = self._get_table(table_type="memories")
+            if table is None:
+                return [] if deserialize else ([], 0)
+
+            with self.Session() as sess, sess.begin():
+                stmt = select(table)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == to_db_user_id(user_id))
+                if agent_id is not None:
+                    stmt = stmt.where(table.c.agent_id == agent_id)
+                if team_id is not None:
+                    stmt = stmt.where(table.c.team_id == team_id)
+                stmt = apply_sorting(stmt, table, sort_by, sort_order)
+                rows = sess.execute(stmt).fetchall()
+
+            memories_raw = [dict(record._mapping) for record in rows]
+            for m in memories_raw:
+                m["user_id"] = from_db_user_id(m.get("user_id"))
+
+            if topics:
+                memories_raw = [m for m in memories_raw if m.get("topics") and any(t in m["topics"] for t in topics)]
+            if search_content:
+                needle = search_content.lower()
+                memories_raw = [m for m in memories_raw if needle in json.dumps(m.get("memory") or {}).lower()]
+
+            total_count = len(memories_raw)
+            if limit is not None:
+                offset = (page - 1) * limit if page and page > 1 else 0
+                memories_raw = memories_raw[offset : offset + limit]
+
+            if not deserialize:
+                return memories_raw, total_count
+            return [UserMemory.from_dict(record) for record in memories_raw]
+        except Exception as e:
+            log_error(f"Exception reading from memory table: {str(e)}")
+            raise
 
     def get_user_memory_stats(
         self, limit: Optional[int] = None, page: Optional[int] = None, user_id: Optional[str] = None
     ) -> Tuple[List[Dict[str, Any]], int]:
-        raise NotImplementedError("OracleDb memory methods are implemented in ticket 04.")
+        validate_pagination(limit, page)
+        try:
+            table = self._get_table(table_type="memories")
+            if table is None:
+                return [], 0
+
+            with self.Session() as sess, sess.begin():
+                stmt = select(
+                    table.c.user_id,
+                    func.count(table.c.memory_id).label("total_memories"),
+                    func.max(table.c.updated_at).label("last_memory_updated_at"),
+                )
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == to_db_user_id(user_id))
+                else:
+                    stmt = stmt.where(table.c.user_id.is_not(None))
+                stmt = stmt.group_by(table.c.user_id).order_by(func.max(table.c.updated_at).desc())
+
+                count_stmt = select(func.count()).select_from(stmt.alias())
+                total_count = sess.execute(count_stmt).scalar()
+
+                if limit is not None:
+                    offset = (page - 1) * limit if page and page > 1 else 0
+                    stmt = stmt.offset(offset).limit(limit)
+
+                result = sess.execute(stmt).fetchall()
+            if not result:
+                return [], 0
+            return [
+                {
+                    "user_id": from_db_user_id(record.user_id),
+                    "total_memories": record.total_memories,
+                    "last_memory_updated_at": record.last_memory_updated_at,
+                }
+                for record in result
+            ], total_count
+        except Exception as e:
+            log_error(f"Exception getting user memory stats: {str(e)}")
+            raise
 
     def upsert_user_memory(
         self, memory: UserMemory, deserialize: Optional[bool] = True
     ) -> Optional[Union[UserMemory, Dict[str, Any]]]:
-        raise NotImplementedError("OracleDb memory methods are implemented in ticket 04.")
+        try:
+            table = self._get_table(table_type="memories", create_table_if_not_found=True)
+            if table is None:
+                return None
+
+            if memory.memory_id is None:
+                memory.memory_id = str(uuid4())
+            current_time = int(time.time())
+
+            values = {
+                "memory_id": memory.memory_id,
+                "memory": memory.memory,
+                "input": memory.input,
+                "user_id": to_db_user_id(memory.user_id),
+                "agent_id": memory.agent_id,
+                "team_id": memory.team_id,
+                "topics": memory.topics,
+                "feedback": memory.feedback,
+                "created_at": memory.created_at if memory.created_at is not None else current_time,
+                "updated_at": memory.updated_at if memory.updated_at is not None else current_time,
+            }
+
+            with self.Session() as sess, sess.begin():
+                merge_upsert(sess, table, key_columns=["memory_id"], values=values, preserve_on_conflict=["created_at"])
+                row = sess.execute(select(table).where(table.c.memory_id == memory.memory_id)).fetchone()
+                if row is None:
+                    return None
+                memory_raw = dict(row._mapping)
+                memory_raw["user_id"] = from_db_user_id(memory_raw.get("user_id"))
+
+            if not deserialize:
+                return memory_raw
+            return UserMemory.from_dict(memory_raw)
+        except Exception as e:
+            log_error(f"Exception upserting user memory: {str(e)}")
+            raise
 
     def upsert_memories(
         self, memories: List[UserMemory], deserialize: Optional[bool] = True, preserve_updated_at: bool = False
     ) -> List[Union[UserMemory, Dict[str, Any]]]:
-        raise NotImplementedError("OracleDb memory methods are implemented in ticket 04.")
+        """Bulk upsert, implemented as a loop over upsert_user_memory -- see
+        the equivalent note on upsert_sessions for why."""
+        if not memories:
+            return []
+        results: List[Union[UserMemory, Dict[str, Any]]] = []
+        for memory in memories:
+            saved_updated_at = memory.updated_at if preserve_updated_at else None
+            result = self.upsert_user_memory(memory, deserialize=deserialize)
+            if result is None:
+                continue
+            if preserve_updated_at and saved_updated_at is not None:
+                table = self._get_table(table_type="memories")
+                if table is not None:
+                    with self.Session() as sess, sess.begin():
+                        sess.execute(
+                            table.update()
+                            .where(table.c.memory_id == memory.memory_id)
+                            .values(updated_at=saved_updated_at)
+                        )
+                    if isinstance(result, dict):
+                        result["updated_at"] = saved_updated_at
+                    else:
+                        result.updated_at = saved_updated_at  # type: ignore[union-attr]
+            results.append(result)
+        return results
+
+    # -- Metrics --
+    def _get_all_sessions_for_metrics_calculation(
+        self, start_timestamp: Optional[int] = None, end_timestamp: Optional[int] = None
+    ) -> List[Dict[str, Any]]:
+        table = self._get_table(table_type="sessions")
+        if table is None:
+            return []
+        runs_table = self._get_table(table_type="runs")
+
+        stmt = select(
+            table.c.session_id, table.c.user_id, table.c.session_data, table.c.created_at, table.c.session_type
+        )
+        if start_timestamp is not None:
+            stmt = stmt.where(table.c.created_at >= start_timestamp)
+        if end_timestamp is not None:
+            stmt = stmt.where(table.c.created_at <= end_timestamp)
+
+        with self.Session() as sess:
+            result = sess.execute(stmt).fetchall()
+            sessions = [dict(record._mapping) for record in result]
+
+            if runs_table is not None and sessions:
+                session_ids = [s["session_id"] for s in sessions]
+                # run_data->model/model_provider read in Python: it already
+                # decodes to a dict, so there is no need for a JSON-path SQL
+                # operator (Postgres's ->> has no portable Oracle equivalent
+                # across both storage variants).
+                runs_stmt = select(runs_table.c.session_id, runs_table.c.run_data).where(
+                    runs_table.c.session_id.in_(session_ids)
+                )
+                runs_by_session: Dict[str, List[Dict[str, Any]]] = {}
+                for session_id, run_data in sess.execute(runs_stmt).fetchall():
+                    run_data = run_data or {}
+                    runs_by_session.setdefault(session_id, []).append(
+                        {"model": run_data.get("model"), "model_provider": run_data.get("model_provider")}
+                    )
+                for s in sessions:
+                    s["runs"] = runs_by_session.get(s["session_id"], [])
+            return sessions
+
+    def _get_metrics_calculation_starting_date(self, table: Table) -> Optional[date]:
+        # == True/False, not .is_(True/False): the latter compiles to Oracle's
+        # "IS <literal>" operator, which only accepts the keywords NULL, TRUE
+        # or FALSE, not a bind parameter -- and OracleNativeBoolean, wrapping
+        # Boolean in a TypeDecorator, does not get SQLAlchemy's usual
+        # dialect-aware IS TRUE/FALSE rewriting for that comparison. Plain
+        # equality binds normally on both the native and emulated variants.
+        with self.Session() as sess:
+            latest_completed = sess.execute(select(func.max(table.c.date)).where(table.c.completed == True)).scalar()  # noqa: E712
+
+            incomplete_stmt = select(func.min(table.c.date)).where(table.c.completed == False)  # noqa: E712
+            if latest_completed is not None:
+                incomplete_stmt = incomplete_stmt.where(table.c.date > latest_completed)
+            earliest_incomplete = sess.execute(incomplete_stmt).scalar()
+
+            starting_date = metrics_starting_date_from_days(latest_completed, earliest_incomplete)
+            if starting_date is not None:
+                return starting_date
+
+        first_session, _ = self.get_sessions(sort_by="created_at", sort_order="asc", limit=1, deserialize=False)
+        first_session_date = first_session[0]["created_at"] if first_session else None  # type: ignore[index]
+        if first_session_date is None:
+            return None
+        return datetime.fromtimestamp(first_session_date, tz=timezone.utc).date()
+
+    def calculate_metrics(self) -> Optional[List[dict]]:
+        try:
+            self._metrics_refreshed_at = time.time()
+
+            table = self._get_table(table_type="metrics", create_table_if_not_found=True)
+            if table is None:
+                return None
+
+            starting_date = self._get_metrics_calculation_starting_date(table)
+            if starting_date is None:
+                log_debug("No session data found. Won't calculate metrics.")
+                return None
+
+            dates_to_process = get_dates_to_calculate_metrics_for(starting_date)
+            if not dates_to_process:
+                log_debug("Metrics already calculated for all relevant dates.")
+                return None
+
+            start_timestamp = int(
+                datetime.combine(dates_to_process[0], datetime.min.time()).replace(tzinfo=timezone.utc).timestamp()
+            )
+            end_timestamp = int(
+                datetime.combine(dates_to_process[-1] + timedelta(days=1), datetime.min.time())
+                .replace(tzinfo=timezone.utc)
+                .timestamp()
+            )
+
+            sessions = self._get_all_sessions_for_metrics_calculation(
+                start_timestamp=start_timestamp, end_timestamp=end_timestamp
+            )
+            all_sessions_data = fetch_all_sessions_data(
+                sessions=sessions, dates_to_process=dates_to_process, start_timestamp=start_timestamp
+            )
+            if not all_sessions_data:
+                log_debug("No new session data found. Won't calculate metrics.")
+                return None
+
+            metrics_records = []
+            for date_to_process in dates_to_process:
+                sessions_for_date = all_sessions_data.get(date_to_process.isoformat(), {})
+                if not any(len(v) > 0 for v in sessions_for_date.values()):
+                    continue
+                metrics_records.extend(calculate_date_metrics(date_to_process, sessions_for_date))
+
+            if not metrics_records:
+                return None
+
+            results: List[dict] = []
+            with self.Session() as sess, sess.begin():
+                for record in metrics_records:
+                    # Translate the empty-owner bucket to the sentinel before
+                    # it reaches Oracle -- "" folds to NULL there, colliding
+                    # with the unique constraint's NULL-is-distinct behavior
+                    # for every other unowned row (see ADR 0005 / utils.py).
+                    db_record = dict(record)
+                    db_record["user_id"] = to_db_user_id(db_record.get("user_id"))
+                    merge_upsert(
+                        sess,
+                        table,
+                        key_columns=["user_id", "date", "aggregation_period"],
+                        values=db_record,
+                        preserve_on_conflict=["id", "created_at"],
+                    )
+                for record in metrics_records:
+                    row = sess.execute(
+                        select(table).where(
+                            table.c.user_id == to_db_user_id(record["user_id"]),
+                            table.c.date == record["date"],
+                            table.c.aggregation_period == record["aggregation_period"],
+                        )
+                    ).fetchone()
+                    if row is not None:
+                        results.append(dict(row._mapping))
+
+            log_debug("Updated metrics calculations")
+            return results
+        except Exception as e:
+            log_error(f"Exception refreshing metrics: {str(e)}")
+            raise
 
     def get_metrics(
         self, starting_date: Optional[date] = None, ending_date: Optional[date] = None, user_id: Optional[str] = None
     ) -> Tuple[List[Dict[str, Any]], Optional[int]]:
-        raise NotImplementedError("OracleDb metrics methods are implemented in ticket 04.")
+        try:
+            if time.time() - self._metrics_refreshed_at >= 60:
+                try:
+                    self.calculate_metrics()
+                except Exception as e:
+                    log_warning(f"Could not refresh metrics before reading them: {str(e)}")
 
-    def calculate_metrics(self) -> Optional[Any]:
-        raise NotImplementedError("OracleDb metrics methods are implemented in ticket 04.")
+            table = self._get_table(table_type="metrics", create_table_if_not_found=True)
+            if table is None:
+                return [], None
 
+            with self.Session() as sess, sess.begin():
+                stmt = select(table)
+                if starting_date:
+                    stmt = stmt.where(table.c.date >= starting_date)
+                if ending_date:
+                    stmt = stmt.where(table.c.date <= ending_date)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == to_db_user_id(user_id))
+                result = sess.execute(stmt).fetchall()
+                if not result:
+                    return [], None
+
+                latest_stmt = select(func.max(table.c.updated_at))
+                if user_id is not None:
+                    latest_stmt = latest_stmt.where(table.c.user_id == to_db_user_id(user_id))
+                latest_updated_at = sess.execute(latest_stmt).scalar()
+
+            rows: List[dict] = []
+            for row in result:
+                row_dict = dict(row._mapping)
+                # Mirrors Postgres's own display convention for this method:
+                # the unowned bucket is shown to API consumers as None, not
+                # as the empty string it round-trips to via from_db_user_id.
+                translated = from_db_user_id(row_dict.get("user_id"))
+                row_dict["user_id"] = None if translated == "" else translated
+                rows.append(row_dict)
+            return rows, latest_updated_at
+        except Exception as e:
+            log_error(f"Exception getting metrics: {str(e)}")
+            raise
+
+    # -- Knowledge --
     def delete_knowledge_content(self, id: str, user_id: Optional[str] = None):
-        raise NotImplementedError("OracleDb knowledge methods are implemented in ticket 04.")
+        try:
+            table = self._get_table(table_type="knowledge")
+            if table is None:
+                return
+            with self.Session() as sess, sess.begin():
+                stmt = table.delete().where(table.c.id == id)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
+                sess.execute(stmt)
+        except Exception as e:
+            log_error(f"Exception deleting knowledge content: {str(e)}")
+            raise
 
     def get_knowledge_content(self, id: str, user_id: Optional[str] = None) -> Optional[KnowledgeRow]:
-        raise NotImplementedError("OracleDb knowledge methods are implemented in ticket 04.")
+        try:
+            table = self._get_table(table_type="knowledge")
+            if table is None:
+                return None
+            with self.Session() as sess, sess.begin():
+                stmt = select(table).where(table.c.id == id)
+                if user_id is not None:
+                    stmt = stmt.where((table.c.user_id == user_id) | (table.c.user_id.is_(None)))
+                result = sess.execute(stmt).fetchone()
+                if result is None:
+                    return None
+                return KnowledgeRow.model_validate(result._mapping)
+        except Exception as e:
+            log_error(f"Exception getting knowledge content: {str(e)}")
+            raise
 
     def get_knowledge_contents(
         self,
@@ -1288,10 +1722,49 @@ class OracleDb(BaseDb):
         linked_to: Optional[str] = None,
         user_id: Optional[str] = None,
     ) -> Tuple[List[KnowledgeRow], int]:
-        raise NotImplementedError("OracleDb knowledge methods are implemented in ticket 04.")
+        validate_pagination(limit, page)
+        try:
+            table = self._get_table(table_type="knowledge")
+            if table is None:
+                return [], 0
+
+            with self.Session() as sess, sess.begin():
+                stmt = select(table)
+                if linked_to is not None:
+                    stmt = stmt.where(table.c.linked_to == linked_to)
+                if user_id is not None:
+                    stmt = stmt.where((table.c.user_id == user_id) | (table.c.user_id.is_(None)))
+                stmt = apply_sorting(stmt, table, sort_by, sort_order)
+
+                count_stmt = select(func.count()).select_from(stmt.alias())
+                total_count = sess.execute(count_stmt).scalar()
+
+                if limit is not None:
+                    offset = (page - 1) * limit if page and page > 1 else 0
+                    stmt = stmt.offset(offset).limit(limit)
+
+                result = sess.execute(stmt).fetchall()
+                return [KnowledgeRow.model_validate(record._mapping) for record in result], total_count
+        except Exception as e:
+            log_error(f"Exception getting knowledge contents: {str(e)}")
+            raise
 
     def upsert_knowledge_content(self, knowledge_row: KnowledgeRow):
-        raise NotImplementedError("OracleDb knowledge methods are implemented in ticket 04.")
+        try:
+            table = self._get_table(table_type="knowledge", create_table_if_not_found=True)
+            if table is None:
+                return None
+
+            values = {key: value for key, value in knowledge_row.model_dump().items() if key in table.c}
+            with self.Session() as sess, sess.begin():
+                merge_upsert(sess, table, key_columns=["id"], values=values, preserve_on_conflict=["created_at"])
+                row = sess.execute(select(table).where(table.c.id == knowledge_row.id)).fetchone()
+            if row is None:
+                return None
+            return KnowledgeRow.model_validate(row._mapping)
+        except Exception as e:
+            log_error(f"Exception upserting knowledge content: {str(e)}")
+            raise
 
     def create_eval_run(self, eval_run: EvalRunRecord) -> Optional[EvalRunRecord]:
         raise NotImplementedError("OracleDb eval methods are implemented in ticket 05.")

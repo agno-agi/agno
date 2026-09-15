@@ -12,9 +12,10 @@ introduces no new production boundary. Both modules skip cleanly (not error)
 when their server is unreachable, since no Oracle container exists in public
 CI (ADR 0009).
 
-Coverage in this file: the domains ticket 03 delivers (sessions and runs).
-Later tickets extend this file with their own domains as they land, rather
-than each inventing a separate differential suite.
+Coverage in this file: the domains tickets 03 and 04 deliver (sessions, runs,
+memory, metrics, knowledge). Later tickets extend this file with their own
+domains as they land, rather than each inventing a separate differential
+suite.
 """
 
 import uuid
@@ -25,6 +26,8 @@ from sqlalchemy import create_engine, text
 
 from agno.db.oracle import OracleDb
 from agno.db.postgres import PostgresDb
+from agno.db.schemas.knowledge import KnowledgeRow
+from agno.db.schemas.memory import UserMemory
 from agno.run.agent import RunOutput
 from agno.session import AgentSession
 
@@ -67,15 +70,18 @@ def pg_db(_servers_up):
 @pytest.fixture
 def oracle_db(_servers_up):
     suffix = uuid.uuid4().hex[:8]
-    session_table = f"diff_sess_{suffix}"
-    runs_table = f"diff_runs_{suffix}"
-    database = OracleDb(
-        db_url=ORACLE_URL, session_table=session_table, runs_table=runs_table, id=f"diff-oracle-{suffix}"
-    )
+    tables = {
+        "session_table": f"diff_sess_{suffix}",
+        "runs_table": f"diff_runs_{suffix}",
+        "memory_table": f"diff_mem_{suffix}",
+        "metrics_table": f"diff_metrics_{suffix}",
+        "knowledge_table": f"diff_know_{suffix}",
+    }
+    database = OracleDb(db_url=ORACLE_URL, id=f"diff-oracle-{suffix}", **tables)
     yield database
     database.Session.remove()
     with database.db_engine.begin() as conn:
-        for t in (runs_table, session_table):
+        for t in tables.values():
             if database.table_exists(t):
                 conn.execute(text(f"DROP TABLE {t} CASCADE CONSTRAINTS"))
     database.db_engine.dispose()
@@ -156,3 +162,69 @@ def test_owner_collision_guard_matches_postgres(pg_db, oracle_db):
         assert result is None, f"{type(db).__name__} allowed a different owner to overwrite the session"
         still_alice = db.get_session("diff-owner-collision")
         assert still_alice.user_id == "alice", f"{type(db).__name__} lost the original owner"
+
+
+def _run_memory_metrics_knowledge_scenario(db) -> Dict[str, Any]:
+    """All three owner states (None, "", a name), across memory, metrics and
+    knowledge -- the domains where the owner-scoping sentinel decision
+    (ADR 0005) is actually exercised, per ticket 04's own DoD.
+    """
+    for uid in ("alice", "", None):
+        db.upsert_user_memory(UserMemory(memory=f"memory for {uid!r}", user_id=uid, agent_id="diff-agent"))
+
+    memories_by_state = {}
+    for uid in ("alice", ""):
+        rows, total = db.get_user_memories(user_id=uid, deserialize=False)
+        memories_by_state[repr(uid)] = total
+    # user_id=None means "every owner": all three memories, unfiltered.
+    _, memories_by_state["None"] = db.get_user_memories(user_id=None, deserialize=False)
+
+    stats, stats_total = db.get_user_memory_stats()
+    stats_user_ids = sorted((s["user_id"] for s in stats), key=lambda v: (v is None, v))
+
+    # Metrics: one session per owner state, then calculate and read back.
+    for i, uid in enumerate(("alice", "", None)):
+        session = AgentSession(
+            session_id=f"diff-metrics-{i}", agent_id="diff-agent", user_id=uid, created_at=1700000010 + i
+        )
+        db.upsert_session(session, deserialize=False)
+        db.upsert_run(
+            RunOutput(run_id=f"diff-metrics-run-{i}", agent_id="diff-agent", status="COMPLETED"),
+            session_id=f"diff-metrics-{i}",
+            user_id=uid,
+            run_index=0,
+        )
+    db.calculate_metrics()
+    metrics_rows, _ = db.get_metrics()
+    metrics_user_ids = sorted((r["user_id"] for r in metrics_rows), key=lambda v: (v is None, v))
+
+    # Knowledge: None means shared (visible to everyone), unlike memory/metrics
+    # where "" is the unowned-but-distinct bucket -- this is the one domain
+    # where the two states are NOT symmetric, and the harness checks that
+    # asymmetry holds identically on both backends.
+    db.upsert_knowledge_content(KnowledgeRow(name="diff-doc-alice", description="d", user_id="alice"))
+    db.upsert_knowledge_content(KnowledgeRow(name="diff-doc-shared", description="d", user_id=None))
+    _, alice_knowledge_total = db.get_knowledge_contents(user_id="alice")
+    _, bob_knowledge_total = db.get_knowledge_contents(user_id="bob")
+
+    return {
+        "memories_by_state": memories_by_state,
+        "memory_stats_total": stats_total,
+        "memory_stats_user_ids": stats_user_ids,
+        "metrics_user_ids": metrics_user_ids,
+        "alice_knowledge_total": alice_knowledge_total,
+        "bob_knowledge_total": bob_knowledge_total,
+    }
+
+
+def test_memory_metrics_knowledge_owner_states_match_postgres(pg_db, oracle_db):
+    """One scenario exercising every owner state across the three domains
+    ticket 04 delivers, run against both backends with the results compared
+    directly -- the same design as the sessions/runs scenario above.
+    """
+    pg_result = _run_memory_metrics_knowledge_scenario(pg_db)
+    oracle_result = _run_memory_metrics_knowledge_scenario(oracle_db)
+
+    assert oracle_result == pg_result, (
+        f"Oracle diverged from Postgres.\nPostgres: {pg_result}\nOracle:   {oracle_result}"
+    )

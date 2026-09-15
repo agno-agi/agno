@@ -94,11 +94,31 @@ def _replace_decimals(value: Any) -> Any:
     return value
 
 
-def _decode_json(value: Any) -> Any:
+def _decode_native_json(value: Any) -> Any:
+    """Decode a value read from a native Oracle JSON column.
+
+    python-oracledb's thin driver fully decodes a native JSON scalar to its
+    Python equivalent -- not just dict/list, but str, int, float, bool and
+    None too -- so a plain Python string here is already the decoded value,
+    never JSON-encoded text still awaiting ``json.loads``. Confirmed against
+    a live server: a memory's ``memory`` field (a bare string) came back as
+    exactly that string, and calling ``json.loads`` on it raised
+    (``Expecting value: line 1 column 1``), because unquoted text is not
+    valid JSON on its own. This is the opposite of ``OracleClobJSON``, whose
+    physical column really is text and must always be parsed.
+    """
+    return _replace_decimals(value)
+
+
+def _decode_clob_json(value: Any) -> Any:
+    """Decode a value read from the CLOB + IS JSON check column variant.
+
+    Unlike the native JSON column, this physical column is always text (or a
+    LOB proxy for content the driver did not inline), so it always needs
+    ``json.loads`` -- there is no driver-side auto-decoding here.
+    """
     if value is None:
         return None
-    if isinstance(value, (dict, list)):
-        return _replace_decimals(value)
     if hasattr(value, "read"):  # a LOB proxy, when the driver does not inline small CLOBs
         value = value.read()
     return _replace_decimals(json.loads(value))
@@ -114,7 +134,7 @@ class OracleNativeJSON(TypeDecorator):
         return None if value is None else json_serializer(value)
 
     def process_result_value(self, value: Any, dialect: Any) -> Any:
-        return _decode_json(value)
+        return _decode_native_json(value)
 
 
 @compiles(OracleNativeJSON, "oracle")
@@ -125,20 +145,21 @@ def _compile_oracle_native_json(element: Any, compiler: Any, **kw: Any) -> str:
 class OracleClobJSON(TypeDecorator):
     """CLOB storage for JSON, used below 21c where no native JSON type exists.
 
-    Renders as bare CLOB -- deliberately without an inline ``IS JSON`` check.
-    Oracle rejects a column-level (inline) CHECK constraint that names any
-    column, including the column it is declared on (ORA-02438: "Column check
-    constraint cannot reference other columns" -- confirmed against a live
-    18c server; SQLAlchemy's compiled DDL for an inline check looks valid as
-    text but Oracle refuses it at execution). The IS JSON constraint that
-    keeps this genuinely validated as JSON must instead be added as an
-    out-of-line, table-level CHECK constraint, which is the table-builder's
-    responsibility (it has the table object to attach the constraint to,
-    which a column type's compiler does not) -- detect columns typed
-    ``OracleClobJSON`` and add ``CheckConstraint(f"{col} IS JSON")`` per such
-    column when building the table. Unquoted: the column itself is created
-    unquoted and Oracle folds its stored name to uppercase, so a quoted
-    lowercase reference in the check would name a column that does not exist.
+    Renders as bare CLOB, with no ``IS JSON`` check constraint at all -- not
+    merely as a workaround for the inline-check restriction (Oracle rejects a
+    column-level CHECK that names any column, including itself: ORA-02438,
+    "Column check constraint cannot reference other columns"), but because an
+    out-of-line one is not usable here either. Oracle's ``IS JSON`` on these
+    releases predates RFC 7159 and accepts only a JSON object or array at the
+    top level; agno stores plain scalars in some columns typed as JSON here
+    (a memory's ``memory`` field is a bare string), and every one of those
+    inserts would be rejected outright (ORA-02290, confirmed against a live
+    18c server: an array and an object both pass ``IS JSON``, a quoted string
+    does not, with no parameter -- ``STRICT``, ``LAX`` -- that changes this).
+    Validation for this storage variant is therefore the adapter's own
+    serialize/deserialize round trip, not a database-level structural check;
+    the native JSON variant (21c and later) does not have this gap, since the
+    column's own type enforces JSON-ness for any value, scalars included.
     """
 
     impl = Text
@@ -148,7 +169,7 @@ class OracleClobJSON(TypeDecorator):
         return None if value is None else json_serializer(value)
 
     def process_result_value(self, value: Any, dialect: Any) -> Any:
-        return _decode_json(value)
+        return _decode_clob_json(value)
 
 
 class OracleNativeBoolean(TypeDecorator):

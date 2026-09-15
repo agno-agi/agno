@@ -5,9 +5,13 @@ length handling, unique-violation detection, and upsert via MERGE with retry.
 """
 
 import hashlib
+import time
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Sequence
+from uuid import uuid4
 
 from sqlalchemy import Table, bindparam, case, func
+from sqlalchemy.dialects import oracle as oracle_dialect_module
 from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.inspection import inspect
 from sqlalchemy.orm import Session
@@ -15,6 +19,30 @@ from sqlalchemy.sql import text
 from sqlalchemy.sql.elements import ColumnElement
 
 from agno.utils.log import log_error, log_warning
+
+# A dialect instance purely for identifier quoting decisions (reserved-word
+# lookup and quote-or-not), never for a live connection. Module-level:
+# quoting rules are static, not connection-specific.
+_ORACLE_IDENTIFIER_PREPARER = oracle_dialect_module.dialect().identifier_preparer
+
+
+def quote_column(table: Table, column: str) -> str:
+    """The correct SQL reference for ``column`` on ``table`` -- quoted only
+    when Oracle requires it (a reserved word, most commonly), matching
+    exactly what the table's own DDL compiler already did when the table was
+    created.
+
+    Blanket-uppercasing every column reference is not a safe substitute:
+    SQLAlchemy's Oracle DDL compiler quotes a reserved-word column name
+    automatically, preserving its original (typically lowercase) spelling,
+    while every other column is left unquoted and thus folded to uppercase by
+    Oracle itself. A column named ``date`` -- the metrics table has one --
+    is therefore stored as literally lowercase ``date``, not ``DATE``; a
+    reference using either bare case or a forced-uppercase quoted form both
+    raise ORA-00904, confirmed against a live server.
+    """
+    return _ORACLE_IDENTIFIER_PREPARER.format_column(table.c[column])
+
 
 # -- Owner-id (user_id) translation --
 #
@@ -281,7 +309,12 @@ def _qualified_table_name(table: Table) -> str:
     return table.fullname if table.schema else table.name
 
 
-def build_merge_statement(table: Table, key_columns: Sequence[str], value_columns: Sequence[str]):
+def build_merge_statement(
+    table: Table,
+    key_columns: Sequence[str],
+    value_columns: Sequence[str],
+    preserve_on_conflict: Sequence[str] = (),
+):
     """Build a MERGE INTO statement upserting ``table`` on ``key_columns``.
 
     ``value_columns`` is every bind-parameter column the statement accepts,
@@ -289,6 +322,11 @@ def build_merge_statement(table: Table, key_columns: Sequence[str], value_column
     reassigned by the UPDATE branch, since a key never changes on upsert (this
     mirrors the Postgres helper excluding ``user_id`` and other key columns
     from ``on_conflict_do_update``'s SET clause).
+
+    ``preserve_on_conflict`` names columns that are written on a fresh INSERT
+    but left untouched on an UPDATE -- for example ``created_at``, which a
+    second upsert of the same row must not overwrite. Equivalent to a Postgres
+    ``on_conflict_do_update`` simply omitting that column from ``set_=``.
 
     Returns a SQLAlchemy ``TextClause`` with named bind parameters matching
     ``value_columns``, each explicitly typed via ``bindparams(type_=...)``
@@ -300,20 +338,38 @@ def build_merge_statement(table: Table, key_columns: Sequence[str], value_column
     (``DPY-3002: Python value of type "dict" is not supported``), confirmed
     against a live server. Execute the returned statement with a dict of
     ``value_columns`` names to values.
+
+    Every column *reference* (not the bind parameter names, which follow
+    their own, separate naming rules) goes through ``quote_column``, which
+    defers to SQLAlchemy's own Oracle identifier preparer rather than
+    guessing. This matters because a blanket transform is not safe: the
+    metrics table's ``date`` column collides with the DATE type name, and
+    SQLAlchemy's DDL compiler already quotes such reserved-word columns at
+    creation time, preserving their original (lowercase) spelling, while
+    every other column is left unquoted and folded to uppercase by Oracle
+    itself. An unquoted reference to ``date`` here raises ORA-00923 ("FROM
+    keyword not found"); a forced-uppercase quoted one raises ORA-00904
+    ("invalid identifier", since the stored name really is lowercase) --
+    both confirmed against a live server. ``quote_column`` produces whatever
+    the table's own DDL already committed to, for every column.
     """
     key_set = set(key_columns)
-    update_columns = [c for c in value_columns if c not in key_set]
+    preserve_set = set(preserve_on_conflict)
+    update_columns = [c for c in value_columns if c not in key_set and c not in preserve_set]
 
-    on_clause = " AND ".join(f"t.{c} = s.{c}" for c in key_columns)
-    using_select = ", ".join(f":{c} AS {c}" for c in value_columns)
-    insert_columns = ", ".join(value_columns)
-    insert_values = ", ".join(f"s.{c}" for c in value_columns)
+    def q(col: str) -> str:
+        return quote_column(table, col)
+
+    on_clause = " AND ".join(f"t.{q(c)} = s.{q(c)}" for c in key_columns)
+    using_select = ", ".join(f":{c} AS {q(c)}" for c in value_columns)
+    insert_columns = ", ".join(q(c) for c in value_columns)
+    insert_values = ", ".join(f"s.{q(c)}" for c in value_columns)
 
     merge_sql = (
         f"MERGE INTO {_qualified_table_name(table)} t USING (SELECT {using_select} FROM dual) s ON ({on_clause})"
     )
     if update_columns:
-        update_set = ", ".join(f"t.{c} = s.{c}" for c in update_columns)
+        update_set = ", ".join(f"t.{q(c)} = s.{q(c)}" for c in update_columns)
         merge_sql += f" WHEN MATCHED THEN UPDATE SET {update_set}"
     merge_sql += f" WHEN NOT MATCHED THEN INSERT ({insert_columns}) VALUES ({insert_values})"
 
@@ -327,6 +383,7 @@ def merge_upsert(
     key_columns: Sequence[str],
     values: Dict[str, Any],
     max_attempts: int = DEFAULT_MERGE_RETRY_ATTEMPTS,
+    preserve_on_conflict: Sequence[str] = (),
 ) -> None:
     """Execute a MERGE-based upsert of ``values`` into ``table``, keyed on
     ``key_columns``, retrying on a concurrent ORA-00001 (see module docstring).
@@ -335,7 +392,7 @@ def merge_upsert(
     -- an ORM ``Session`` or a Core ``Connection`` both work. Does not commit;
     the caller controls the transaction.
     """
-    stmt = build_merge_statement(table, key_columns, list(values.keys()))
+    stmt = build_merge_statement(table, key_columns, list(values.keys()), preserve_on_conflict=preserve_on_conflict)
     attempt = 0
     while True:
         attempt += 1
@@ -354,6 +411,7 @@ def merge_upsert_many(
     key_columns: Sequence[str],
     records: Sequence[Dict[str, Any]],
     max_attempts: int = DEFAULT_MERGE_RETRY_ATTEMPTS,
+    preserve_on_conflict: Sequence[str] = (),
 ) -> None:
     """Batch variant of ``merge_upsert``: one MERGE statement, many parameter sets.
 
@@ -362,7 +420,7 @@ def merge_upsert_many(
     """
     if not records:
         return
-    stmt = build_merge_statement(table, key_columns, list(records[0].keys()))
+    stmt = build_merge_statement(table, key_columns, list(records[0].keys()), preserve_on_conflict=preserve_on_conflict)
     attempt = 0
     while True:
         attempt += 1
@@ -373,3 +431,147 @@ def merge_upsert_many(
             if is_unique_violation(e) and attempt < max_attempts:
                 continue
             raise
+
+
+# -- Metrics calculation --
+#
+# Not shared cross-backend code despite being identical logic everywhere:
+# every SQL and NoSQL adapter in the repository (Postgres, MySQL, SQLite,
+# Mongo, Redis, Valkey, Firestore, DynamoDB, ...) keeps its own copy of these
+# three functions in its own utils.py, rather than one shared implementation
+# -- an established repository convention, not an Oracle-specific choice.
+# Copied verbatim from postgres/utils.py: pure Python over already-decoded
+# session/run dicts, nothing dialect-specific.
+def calculate_date_metrics(date_to_process: date, sessions_data: dict) -> List[Dict[str, Any]]:
+    """Calculate metrics for the given single date, bucketed per user.
+
+    Args:
+        date_to_process: The date to calculate metrics for.
+        sessions_data: The sessions data to calculate metrics for.
+
+    Returns:
+        One record per user. Sessions without a ``user_id`` are bucketed
+        under ``""``.
+    """
+
+    def _empty_metric_record() -> Dict[str, Any]:
+        return {
+            "users_count": 0,
+            "agent_sessions_count": 0,
+            "team_sessions_count": 0,
+            "workflow_sessions_count": 0,
+            "agent_runs_count": 0,
+            "team_runs_count": 0,
+            "workflow_runs_count": 0,
+            "token_metrics": {
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "total_tokens": 0,
+                "audio_total_tokens": 0,
+                "audio_input_tokens": 0,
+                "audio_output_tokens": 0,
+                "cache_read_tokens": 0,
+                "cache_write_tokens": 0,
+                "reasoning_tokens": 0,
+            },
+            "model_counts": {},
+        }
+
+    session_types = [
+        ("agent", "agent_sessions_count", "agent_runs_count"),
+        ("team", "team_sessions_count", "team_runs_count"),
+        ("workflow", "workflow_sessions_count", "workflow_runs_count"),
+    ]
+
+    per_user: Dict[str, Dict[str, Any]] = {}
+
+    for session_type, sessions_count_key, runs_count_key in session_types:
+        sessions = sessions_data.get(session_type, []) or []
+
+        for session in sessions:
+            bucket_key = session.get("user_id") or ""
+            bucket = per_user.setdefault(bucket_key, _empty_metric_record())
+            bucket[sessions_count_key] += 1
+
+            runs = session.get("runs", []) or []
+            bucket[runs_count_key] += len(runs)
+            for run in runs:
+                if model_id := run.get("model"):
+                    model_provider = run.get("model_provider", "")
+                    key = f"{model_id}:{model_provider}"
+                    bucket["model_counts"][key] = bucket["model_counts"].get(key, 0) + 1
+
+            session_data = session.get("session_data", {}) or {}
+            session_metrics = session_data.get("session_metrics", {}) or {}
+            for field in bucket["token_metrics"]:
+                bucket["token_metrics"][field] += session_metrics.get(field, 0)
+
+    current_time = int(time.time())
+    completed = date_to_process < datetime.now(timezone.utc).date()
+
+    records: List[Dict[str, Any]] = []
+    for user_id, bucket in per_user.items():
+        model_metrics = []
+        for model, count in bucket["model_counts"].items():
+            model_id, model_provider = model.rsplit(":", 1)
+            model_metrics.append({"model_id": model_id, "model_provider": model_provider, "count": count})
+
+        # One distinct user per bucket, and none for the unowned one, so summed counts stay correct.
+        users_count = 0 if user_id == "" else 1
+
+        records.append(
+            {
+                "id": str(uuid4()),
+                "date": date_to_process,
+                "completed": completed,
+                "token_metrics": bucket["token_metrics"],
+                "model_metrics": model_metrics,
+                "created_at": current_time,
+                "updated_at": current_time,
+                "aggregation_period": "daily",
+                "user_id": user_id,
+                "users_count": users_count,
+                "agent_sessions_count": bucket["agent_sessions_count"],
+                "team_sessions_count": bucket["team_sessions_count"],
+                "workflow_sessions_count": bucket["workflow_sessions_count"],
+                "agent_runs_count": bucket["agent_runs_count"],
+                "team_runs_count": bucket["team_runs_count"],
+                "workflow_runs_count": bucket["workflow_runs_count"],
+            }
+        )
+
+    return records
+
+
+def fetch_all_sessions_data(
+    sessions: List[Dict[str, Any]], dates_to_process: List[date], start_timestamp: int
+) -> Optional[Dict[str, Any]]:
+    """Return all session data for the given dates, for all session types.
+
+    Returns a dict keyed by ISO date, each value ``{"agent": [...], "team":
+    [...], "workflow": [...]}``.
+    """
+    if not dates_to_process:
+        return None
+
+    all_sessions_data: Dict[str, Dict[str, List[Dict[str, Any]]]] = {
+        date_to_process.isoformat(): {"agent": [], "team": [], "workflow": []} for date_to_process in dates_to_process
+    }
+
+    for session in sessions:
+        session_date = (
+            datetime.fromtimestamp(session.get("created_at", start_timestamp), tz=timezone.utc).date().isoformat()
+        )
+        if session_date in all_sessions_data:
+            all_sessions_data[session_date][session["session_type"]].append(session)
+
+    return all_sessions_data
+
+
+def get_dates_to_calculate_metrics_for(starting_date: date) -> List[date]:
+    """The list of dates to calculate metrics for, from ``starting_date`` through today."""
+    today = datetime.now(timezone.utc).date()
+    days_diff = (today - starting_date).days + 1
+    if days_diff <= 0:
+        return []
+    return [starting_date + timedelta(days=x) for x in range(days_diff)]
