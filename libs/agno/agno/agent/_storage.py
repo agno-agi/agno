@@ -719,10 +719,7 @@ async def aread_or_create_session(
     agent_session = None
     if agent.db is not None and agent.team_id is None and agent.workflow_id is None:
         log_debug(f"Reading AgentSession: {session_id}")
-        if _init.has_async_db(agent):
-            agent_session = cast(AgentSession, await aread_session(agent, session_id=session_id, user_id=user_id))
-        else:
-            agent_session = cast(AgentSession, read_session(agent, session_id=session_id, user_id=user_id))
+        agent_session = cast(AgentSession, await aread_session(agent, session_id=session_id, user_id=user_id))
 
     if agent_session is None:
         # Creating new session if none found
