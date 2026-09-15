@@ -8,8 +8,40 @@ class DocumentChunking(ChunkingStrategy):
     """A chunking strategy that splits text based on document structure like paragraphs and sections"""
 
     def __init__(self, chunk_size: int = 5000, overlap: int = 0):
+        # chunk_size must be positive, otherwise splitting oversized text could never advance
+        if chunk_size < 1:
+            raise ValueError(f"Invalid parameters: chunk size ({chunk_size}) must be a positive integer.")
+
         self.chunk_size = chunk_size
         self.overlap = overlap
+
+    def _split_oversized_text(self, text: str) -> List[str]:
+        """Split text that has no usable sentence boundary into pieces no longer than chunk_size.
+
+        Pieces are cut at the last whitespace before the limit so words stay intact. A single
+        token longer than chunk_size is hard-cut, matching FixedSizeChunking.
+        """
+        pieces: List[str] = []
+        start = 0
+        text_length = len(text)
+        while start < text_length:
+            # Skip leading whitespace so a hard cut can use the full chunk_size
+            while start < text_length and text[start].isspace():
+                start += 1
+            if start >= text_length:
+                break
+            end = min(start + self.chunk_size, text_length)
+            if end < text_length:
+                cut = end
+                while cut > start and not text[cut].isspace():
+                    cut -= 1
+                if cut > start:
+                    end = cut
+            piece = text[start:end].strip()
+            if piece:
+                pieces.append(piece)
+            start = end
+        return pieces
 
     def chunk(self, document: Document) -> List[Document]:
         """Split document into chunks based on document structure"""
@@ -49,16 +81,26 @@ class DocumentChunking(ChunkingStrategy):
                 # Split oversized paragraph by sentences
                 import re
 
-                sentences = re.split(r"(?<=[.!?])\s+", para)
-                for sentence in sentences:
+                sentences: List[str] = []
+                for sentence in re.split(r"(?<=[.!?])\s+", para):
                     sentence = sentence.strip()
                     if not sentence:
                         continue
-                    sentence_size = len(sentence)
+                    # A single sentence (or a paragraph with no sentence boundaries) can still be
+                    # larger than chunk_size, so split it further at word boundaries.
+                    if len(sentence) > self.chunk_size:
+                        sentences.extend(self._split_oversized_text(sentence))
+                    else:
+                        sentences.append(sentence)
 
-                    if current_size + sentence_size <= self.chunk_size:
+                for sentence in sentences:
+                    sentence_size = len(sentence)
+                    # Sentences are joined with a single space, so count it towards the limit
+                    separator_size = 1 if current_chunk else 0
+
+                    if current_size + separator_size + sentence_size <= self.chunk_size:
                         current_chunk.append(sentence)
-                        current_size += sentence_size
+                        current_size += separator_size + sentence_size
                     else:
                         if current_chunk:
                             meta_data = chunk_meta_data.copy()
@@ -77,6 +119,19 @@ class DocumentChunking(ChunkingStrategy):
                             chunk_number += 1
                         current_chunk = [sentence]
                         current_size = sentence_size
+
+                # Sentence pieces were sized for a single-space join, so emit them here instead of
+                # letting them fall through to the paragraph join ("\n\n"), which would exceed chunk_size.
+                if current_chunk:
+                    meta_data = chunk_meta_data.copy()
+                    meta_data["chunk"] = chunk_number
+                    chunk_content = " ".join(current_chunk)
+                    chunk_id = self._generate_chunk_id(document, chunk_number, chunk_content)
+                    meta_data["chunk_size"] = len(chunk_content)
+                    chunks.append(Document(id=chunk_id, name=document.name, meta_data=meta_data, content=chunk_content))
+                    chunk_number += 1
+                    current_chunk = []
+                    current_size = 0
 
             elif current_size + para_size <= self.chunk_size:
                 current_chunk.append(para)
