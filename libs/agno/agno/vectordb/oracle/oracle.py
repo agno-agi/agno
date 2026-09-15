@@ -1,26 +1,31 @@
-"""OracleVector: documents stored in Oracle Database, retrieved by vector similarity.
+"""OracleVector: documents stored in Oracle Database, retrieved by vector,
+keyword, or hybrid similarity.
 
-Reference implementation: ``agno.vectordb.pgvector.PgVector``. This ticket
-(17) delivers the vector-similarity path only -- keyword/hybrid search,
-metadata filters and index tuning (``optimize()``) are ticket 18's scope, and
-raise ``NotImplementedError`` naming it explicitly here, the same MySQL-stub
-precedent the storage adapter side of this effort already follows for its own
-not-yet-implemented domains.
+Reference implementation: ``agno.vectordb.pgvector.PgVector``. Vector search
+(ticket 17) uses the native ``VECTOR(n, FLOAT32)`` type and ``VECTOR_DISTANCE()``.
+Keyword search (ticket 18) uses Oracle Text (``CTXSYS.CONTEXT``); hybrid search
+is a weighted sum of both, computed in SQL rather than rank fusion, so the
+weight parameter actually controls the outcome the same way on every backend.
 
 Requires Oracle Database 23ai or later: the native ``VECTOR`` type and the
 ``VECTOR_DISTANCE`` function do not exist on earlier releases. The version
 floor is enforced eagerly, in ``create()``, before any DDL is attempted --
 never in ``__init__``, which (like PgVector's) does no I/O at all, so the
 store can be instantiated without a live connection.
+
+Every async method offloads to a thread (``asyncio.to_thread``), deliberately
+mirroring PgVector's own approach rather than the genuinely-async storage
+adapter (ticket 13's ``AsyncOracleDb``) -- see ``async_search``'s own
+docstring for why, and for the recorded follow-up.
 """
 
 import array
 import asyncio
 import json as json_module
 from hashlib import md5
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union, cast
 
-from sqlalchemy import and_, bindparam, func, literal_column, or_, select
+from sqlalchemy import and_, bindparam, func, literal_column, not_, or_, select, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import NoSuchTableError
 from sqlalchemy.ext.compiler import compiles
@@ -48,6 +53,7 @@ from agno.vectordb.base import (
     retrievable_documents,
 )
 from agno.vectordb.distance import Distance
+from agno.vectordb.oracle.index import HNSW, IVF
 from agno.vectordb.score import normalize_score, score_to_distance_threshold
 from agno.vectordb.search import SearchType
 
@@ -198,7 +204,11 @@ class OracleVector(VectorDb):
         db_url: Optional[str] = None,
         db_engine: Optional[Engine] = None,
         embedder: Optional[Embedder] = None,
+        search_type: SearchType = SearchType.vector,
+        vector_index: Optional[Union[IVF, HNSW]] = None,
         distance: Distance = Distance.cosine,
+        prefix_match: bool = False,
+        vector_score_weight: float = 0.5,
         reranker: Optional[Reranker] = None,
         create_schema: bool = True,
         similarity_threshold: Optional[float] = None,
@@ -217,7 +227,16 @@ class OracleVector(VectorDb):
             db: Borrow a synchronous OracleDb's engine. Cannot be combined with
                 db_url or db_engine; does not transfer ownership.
             embedder: Embedder instance for creating embeddings.
+            search_type: Type of search to perform (vector, keyword, or hybrid).
+            vector_index: Vector index configuration for ``optimize()`` (an
+                :class:`IVF` or :class:`HNSW` instance, ``agno.vectordb.oracle.index``).
+                Defaults to :class:`IVF` (Oracle's partition-based organization) when
+                ``optimize()`` is called with none configured -- the graph-based
+                :class:`HNSW` organization requires ``vector_memory_size`` configured
+                on the server (see ``HNSW``'s own docstring).
             distance: Distance metric for vector comparisons.
+            prefix_match: Enable prefix matching for keyword/hybrid search.
+            vector_score_weight: Weight for vector similarity in hybrid search (0.0-1.0).
             reranker: Reranker instance for reranking search results.
             create_schema: Accepted for interface parity with PgVector; has no
                 effect (see OracleDb's own create_schema docstring -- Oracle has
@@ -279,7 +298,13 @@ class OracleVector(VectorDb):
         if self.dimensions is None:
             raise ValueError("Embedder.dimensions must be set.")
 
+        self.search_type: SearchType = search_type
+        self.vector_index: Optional[Union[IVF, HNSW]] = vector_index
         self.distance: Distance = distance
+        self.prefix_match: bool = prefix_match
+        if not 0 <= vector_score_weight <= 1:
+            raise ValueError("vector_score_weight must be between 0 and 1")
+        self.vector_score_weight: float = vector_score_weight
         self.reranker: Optional[Reranker] = reranker
         self.create_schema: bool = create_schema
 
@@ -754,7 +779,15 @@ class OracleVector(VectorDb):
         user_id: Optional[str] = None,
     ) -> List[Document]:
         self._require_owner_column(user_id)
-        return self.vector_search(query=query, limit=limit, filters=filters, user_id=user_id)
+        if self.search_type == SearchType.vector:
+            return self.vector_search(query=query, limit=limit, filters=filters, user_id=user_id)
+        elif self.search_type == SearchType.keyword:
+            return self.keyword_search(query=query, limit=limit, filters=filters, user_id=user_id)
+        elif self.search_type == SearchType.hybrid:
+            return self.hybrid_search(query=query, limit=limit, filters=filters, user_id=user_id)
+        else:
+            log_error(f"Invalid search type '{self.search_type}'.")
+            return []
 
     async def async_search(
         self,
@@ -763,6 +796,18 @@ class OracleVector(VectorDb):
         filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         user_id: Optional[str] = None,
     ) -> List[Document]:
+        """Search asynchronously by running in a thread.
+
+        Deliberate parity with PgVector's own approach, not an oversight: every
+        async method on this store offloads the synchronous call to a thread,
+        the same way PgVector's own async_search/async_insert/async_upsert do,
+        rather than reimplementing genuine asyncio I/O the way ticket 13's
+        storage-adapter AsyncOracleDb does. Diverging from the reference store's
+        own async strategy inside the PR that introduces this backend would be
+        review friction with no immediate benefit -- a genuinely async
+        OracleVector (an async SQLAlchemy engine, non-blocking VECTOR_DISTANCE/
+        CONTAINS queries) is a real follow-up, not implemented here.
+        """
         return await asyncio.to_thread(self.search, query, limit, filters, user_id)
 
     def _apply_user_scope(self, stmt, user_id: Optional[str]):
@@ -772,23 +817,62 @@ class OracleVector(VectorDb):
         return stmt.where(or_(self.table.c.user_id == _to_db_user_id(user_id), self.table.c.user_id.is_(None)))
 
     def _apply_metadata_filter(self, stmt, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]]):
-        """Simple top-level key/value equality on ``meta_data``, sufficient for the
-        common single-value RAG filter case. The FilterExpr DSL (AND/OR/NOT,
-        comparison operators) is ticket 18's scope -- raise rather than silently
-        ignore an expression this ticket does not evaluate.
+        """A plain dict of top-level key/value equality filters, or a list of
+        ``FilterExpr`` DSL expressions ANDed together.
         """
         if filters is None:
             return stmt
-        if not isinstance(filters, dict):
-            raise NotImplementedError(
-                "FilterExpr-based metadata filtering is not yet implemented for OracleVector (ticket 18). "
-                "Pass a plain dict of key/value equality filters, or None."
-            )
-        conditions = [
-            func.json_value(self.table.c.meta_data, literal_column(_json_path_literal(key))) == str(value)
-            for key, value in filters.items()
+        if isinstance(filters, dict):
+            conditions = [
+                func.json_value(self.table.c.meta_data, literal_column(_json_path_literal(key))) == str(value)
+                for key, value in filters.items()
+            ]
+            return stmt.where(and_(*conditions))
+        sqlalchemy_conditions = [
+            self._dsl_to_sql(f.to_dict() if hasattr(f, "to_dict") else cast(Dict[str, Any], f)) for f in filters
         ]
-        return stmt.where(and_(*conditions))
+        return stmt.where(and_(*sqlalchemy_conditions))
+
+    def _json_numeric(self, key: str) -> Any:
+        """``JSON_VALUE(meta_data, path RETURNING NUMBER)``: without an explicit
+        numeric return type, JSON_VALUE returns a string and a GT/LT comparison
+        becomes lexicographic ("9" > "10") -- the exact defect this ticket calls
+        out as a known mistake in an existing third-party Oracle vector store,
+        confirmed live to matter (string '9' > '10' but 9 < 10 as numbers).
+        """
+        path_with_return: Any = literal_column(f"{_json_path_literal(key)} RETURNING NUMBER")
+        return func.json_value(self.table.c.meta_data, path_with_return)
+
+    def _dsl_to_sql(self, filter_expr: Dict[str, Any]):
+        """Translate one FilterExpr DSL node to a SQLAlchemy boolean expression.
+
+        Exactly the operator set PgVector's own ``_dsl_to_sqlalchemy`` supports
+        -- EQ, IN, GT, LT, NOT, AND, OR -- and nothing else: NEQ, GTE, LTE,
+        CONTAINS and STARTSWITH are defined by the broader FilterExpr language
+        but not by the reference store, so they raise here too, rather than
+        behaving differently per backend.
+        """
+        op = filter_expr["op"]
+        if op == "EQ":
+            return func.json_value(
+                self.table.c.meta_data, literal_column(_json_path_literal(filter_expr["key"]))
+            ) == str(filter_expr["value"])
+        elif op == "IN":
+            return func.json_value(self.table.c.meta_data, literal_column(_json_path_literal(filter_expr["key"]))).in_(
+                [str(v) for v in filter_expr["values"]]
+            )
+        elif op == "GT":
+            return self._json_numeric(filter_expr["key"]) > filter_expr["value"]
+        elif op == "LT":
+            return self._json_numeric(filter_expr["key"]) < filter_expr["value"]
+        elif op == "NOT":
+            return not_(self._dsl_to_sql(filter_expr["condition"]))
+        elif op == "AND":
+            return and_(*[self._dsl_to_sql(cond) for cond in filter_expr["conditions"]])
+        elif op == "OR":
+            return or_(*[self._dsl_to_sql(cond) for cond in filter_expr["conditions"]])
+        else:
+            raise ValueError(f"Unknown filter operator: {op}")
 
     def vector_search(
         self,
@@ -871,11 +955,58 @@ class OracleVector(VectorDb):
 
             log_info(f"Found {len(search_results)} documents")
             return search_results
-        except EmbeddingError:
+        except (EmbeddingError, ValueError):
+            # ValueError here is a filter-validation failure (an unsupported
+            # operator, or an out-of-range parameter): a programming error the
+            # caller must see, never silently reported as "no results".
             raise
         except Exception as e:
             log_error(f"Error during vector search: {str(e)}")
             return []
+
+    def _build_ctx_query(self, query: str) -> Optional[str]:
+        """Build an Oracle Text CONTAINS() query string for keyword/hybrid search.
+
+        Oracle Text does not stem by default the way Postgres's
+        ``websearch_to_tsquery`` does ("mammal" does not match "mammals"
+        without help) -- confirmed live. Tokens are combined with the ``$``
+        stem operator (default) or the ``%`` wildcard operator (when
+        ``prefix_match`` is set, mirroring PgVector's own prefix-mode split),
+        ANDed together -- the same implicit-AND-of-terms default
+        ``websearch_to_tsquery`` uses for plain space-separated words, so the
+        two backends agree on what counts as a match for the same query text.
+
+        Returns None for a query with no usable tokens (caller treats as "no
+        text hit"), matching PgVector's own ``_build_ts_query`` contract.
+        """
+        import re as _re
+
+        tokens = _re.findall(r"\w+", query)
+        if not tokens:
+            return None
+        operator = "%" if self.prefix_match else "$"
+        if self.prefix_match:
+            return " AND ".join(f"{t}{operator}" for t in tokens)
+        return " AND ".join(f"{operator}{t}" for t in tokens)
+
+    @staticmethod
+    def _raise_if_text_search_unavailable(error: Exception, table_fullname: str) -> None:
+        """Re-raise a CONTAINS()/Oracle Text failure as an actionable error.
+
+        A missing or not-yet-created CTXSYS.CONTEXT index surfaces as a DRG-*
+        (Oracle Text) error or ORA-29902 ("error in executing
+        ODCIIndexStart() routine"), not a message that names the real
+        problem. Recognized by error-code prefix, not message text search,
+        so a genuinely unrelated failure still propagates unchanged.
+        """
+        message = str(error)
+        if "DRG-" in message or "ORA-29902" in message or "ORA-20000" in message:
+            raise ValueError(
+                f"Keyword/hybrid search requires an Oracle Text CONTEXT index on "
+                f"'{table_fullname}'.content. Call optimize() to create it, and confirm "
+                f"Oracle Text (CTXSYS) is installed on the server."
+            ) from error
+        raise error
 
     def keyword_search(
         self,
@@ -884,7 +1015,85 @@ class OracleVector(VectorDb):
         filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         user_id: Optional[str] = None,
     ) -> List[Document]:
-        raise NotImplementedError("Keyword search is not yet implemented for OracleVector (ticket 18).")
+        """Keyword search on the ``content`` column via Oracle Text.
+
+        Applies neither a similarity threshold nor a reranker, matching
+        PgVector's own ``keyword_search`` -- both are vector-search concepts
+        that do not carry over to a pure text-relevance ranking.
+
+        PgVector's own ``keyword_search`` never filters by whether a row
+        actually matches the query at all -- confirmed by reading it: it
+        computes ``ts_rank_cd`` (near-zero for a non-match) for every row and
+        returns the top-``limit`` by that rank, unconditionally. Oracle's
+        CONTAINS() cannot score a non-matching row directly (it can only
+        appear in a WHERE clause, unlike ``ts_rank_cd``), so the same
+        every-row-ranked behavior is reproduced with the LEFT JOIN technique
+        ``hybrid_search`` already uses: a subquery scores only the rows that
+        match, and every other row's score defaults to 0 through the join.
+        """
+        try:
+            ctx_query = self._build_ctx_query(query)
+            if ctx_query is None:
+                # No usable tokens (e.g. an empty query): PgVector's own
+                # keyword_search returns [] for this case rather than ranking
+                # every row at zero relevance.
+                return []
+
+            columns = [
+                self.table.c.id,
+                self.table.c.name,
+                self.table.c.meta_data,
+                self.table.c.content,
+                self.table.c.embedding,
+                self.table.c.usage,
+            ]
+            stmt = select(*columns)
+
+            text_score_subquery = (
+                select(
+                    self.table.c.id.label("id"),
+                    func.score(literal_column("1")).label("raw_text_score"),
+                )
+                .where(func.contains(self.table.c.content, bindparam("ctx_query", ctx_query), literal_column("1")) > 0)
+                .subquery("text_score_subquery")
+            )
+            score_expr = func.coalesce(text_score_subquery.c.raw_text_score, 0)
+            stmt = stmt.outerjoin(text_score_subquery, self.table.c.id == text_score_subquery.c.id)
+
+            stmt = self._apply_user_scope(stmt, user_id)
+            stmt = self._apply_metadata_filter(stmt, filters)
+            stmt = stmt.order_by(score_expr.desc()).limit(limit)
+
+            log_debug(f"Keyword search query: {stmt}")
+
+            try:
+                with self.Session() as sess, sess.begin():
+                    results = sess.execute(stmt).fetchall()
+            except Exception as e:
+                self._raise_if_text_search_unavailable(e, self.table.fullname)
+                return []
+
+            search_results: List[Document] = []
+            for result in results:
+                search_results.append(
+                    Document(
+                        id=result.id,
+                        name=result.name,
+                        meta_data=result.meta_data,
+                        content=result.content,
+                        embedder=self.embedder,
+                        embedding=result.embedding,
+                        usage=result.usage,
+                    )
+                )
+
+            log_info(f"Found {len(search_results)} documents")
+            return search_results
+        except ValueError:
+            raise
+        except Exception as e:
+            log_error(f"Error during keyword search: {str(e)}")
+            return []
 
     def hybrid_search(
         self,
@@ -893,7 +1102,127 @@ class OracleVector(VectorDb):
         filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         user_id: Optional[str] = None,
     ) -> List[Document]:
-        raise NotImplementedError("Hybrid search is not yet implemented for OracleVector (ticket 18).")
+        """Hybrid search: a weighted sum of vector similarity and text
+        relevance, computed in SQL -- not rank fusion, so the weight
+        parameter actually controls the outcome rather than being discarded
+        (rank fusion would rank the same corpus/query differently purely
+        because of the backend). At ``vector_score_weight=1`` this must equal
+        pure vector search; at ``vector_score_weight=0``, pure keyword search.
+
+        Oracle's text SCORE() is not bounded to [0, 1] the way the reference
+        store's ``ts_rank_cd`` effectively is once combined into its formula
+        -- it is documented as roughly 0-100 -- so it is explicitly divided
+        by 100 and clamped before use in the weighted sum. A row with no text
+        match gets a text score of 0 via LEFT JOIN (Oracle's CONTAINS() can
+        only appear in a WHERE clause to produce a SCORE(), unlike Postgres's
+        ts_rank_cd, which scores every row whether or not it matches): the
+        text-scoring subquery filters to CONTAINS()-matching rows, and every
+        other row's text contribution defaults to 0 through the join,
+        reproducing PgVector's own ts_rank_cd-for-every-row semantics rather
+        than silently narrowing the candidate set to text matches only.
+        """
+        try:
+            query_embedding = self.embedder.get_embedding(query)
+            if query_embedding is None:
+                log_error(f"Error getting embedding for Query: {query}")
+                return []
+
+            metric = _DISTANCE_METRIC.get(self.distance)
+            if metric is None:
+                log_error(f"Unknown distance metric: {self.distance}")
+                return []
+            assert self.dimensions is not None  # validated in __init__
+            query_vec_param = bindparam("query_vec", query_embedding, type_=OracleVectorType(self.dimensions))
+            distance_expr = func.vector_distance(self.table.c.embedding, query_vec_param, literal_column(metric))
+            vector_score: Any
+            if self.distance == Distance.max_inner_product:
+                vector_score = func.greatest(0.0, func.least(1.0, (-distance_expr + 1) / 2))
+            elif self.distance == Distance.l2:
+                vector_score = 1 / (1 + distance_expr)
+            else:
+                vector_score = func.greatest(0.0, 1 - distance_expr)
+
+            if not 0 <= self.vector_score_weight <= 1:
+                raise ValueError("vector_score_weight must be between 0 and 1")
+            text_rank_weight = 1 - self.vector_score_weight
+
+            ctx_query = self._build_ctx_query(query)
+            text_score_subquery = None
+            if ctx_query is not None:
+                text_score_subquery = (
+                    select(
+                        self.table.c.id.label("id"),
+                        func.score(literal_column("1")).label("raw_text_score"),
+                    )
+                    .where(
+                        func.contains(self.table.c.content, bindparam("ctx_query", ctx_query), literal_column("1")) > 0
+                    )
+                    .subquery("text_score_subquery")
+                )
+                text_score = func.coalesce(text_score_subquery.c.raw_text_score, 0.0) / 100.0
+            else:
+                # No usable tokens: every row's text contribution is 0, so the
+                # vector score alone drives the ranking (no join needed).
+                text_score = literal_column("0.0")
+
+            hybrid_score = (self.vector_score_weight * vector_score) + (text_rank_weight * text_score)
+
+            columns = [
+                self.table.c.id,
+                self.table.c.name,
+                self.table.c.meta_data,
+                self.table.c.content,
+                self.table.c.embedding,
+                self.table.c.usage,
+                hybrid_score.label("hybrid_score"),
+            ]
+            stmt = select(*columns)
+            if text_score_subquery is not None:
+                stmt = stmt.outerjoin(text_score_subquery, self.table.c.id == text_score_subquery.c.id)
+            stmt = self._apply_user_scope(stmt, user_id)
+            stmt = self._apply_metadata_filter(stmt, filters)
+
+            if self.similarity_threshold is not None:
+                stmt = stmt.where(hybrid_score >= self.similarity_threshold)
+
+            stmt = stmt.order_by(literal_column("hybrid_score").desc()).limit(limit)
+
+            log_debug(f"Hybrid search query: {stmt}")
+
+            try:
+                with self.Session() as sess, sess.begin():
+                    results = sess.execute(stmt).fetchall()
+            except Exception as e:
+                self._raise_if_text_search_unavailable(e, self.table.fullname)
+                return []
+
+            search_results: List[Document] = []
+            for result in results:
+                meta_data = dict(result.meta_data) if result.meta_data else {}
+                meta_data["similarity_score"] = float(result.hybrid_score)
+
+                search_results.append(
+                    Document(
+                        id=result.id,
+                        name=result.name,
+                        meta_data=meta_data,
+                        content=result.content,
+                        embedder=self.embedder,
+                        embedding=result.embedding,
+                        usage=result.usage,
+                    )
+                )
+
+            if self.reranker:
+                search_results = self.reranker.rerank(query=query, documents=search_results)
+
+            log_info(f"Found {len(search_results)} documents")
+            return search_results
+        except (EmbeddingError, ValueError):
+            raise
+        except Exception as e:
+            log_error(f"Error during hybrid search: {str(e)}")
+            return []
 
     # -- Lifecycle / introspection --
 
@@ -928,6 +1257,101 @@ class OracleVector(VectorDb):
         except Exception as e:
             log_error(f"Error getting count from table '{self.table.fullname}': {str(e)}")
             return 0
+
+    # -- Index creation (optimize) --
+    #
+    # The knowledge layer never calls optimize(): a developer who wants an ANN
+    # vector index or Oracle Text CONTEXT index for keyword/hybrid search must
+    # call it explicitly, exactly as PgVector's own users must for its HNSW/
+    # Ivfflat and GIN indexes. Without it, vector search still returns correct
+    # results (VECTOR_DISTANCE needs no index for exact nearest-neighbor), but
+    # keyword/hybrid search fails with an actionable error (see
+    # ``_raise_if_text_search_unavailable``) until optimize() creates the text
+    # index.
+
+    def optimize(self, force_recreate: bool = False) -> None:
+        """Create the configured vector index (IVF or HNSW; see
+        ``agno.vectordb.oracle.index``, defaulting to IVF) and the Oracle Text
+        CONTEXT index keyword/hybrid search needs.
+        """
+        log_debug("==== Optimizing Vector DB ====")
+        self._create_vector_index(force_recreate=force_recreate)
+        self._create_text_index(force_recreate=force_recreate)
+        log_debug("==== Optimized Vector DB ====")
+
+    def _index_exists(self, index_name: str) -> bool:
+        inspector = inspect(self.db_engine)
+        indexes = inspector.get_indexes(self.table.name, schema=self.schema)
+        return any((idx["name"] or "").upper() == index_name.upper() for idx in indexes)
+
+    def _drop_index(self, index_name: str) -> None:
+        try:
+            with self.Session() as sess, sess.begin():
+                sess.execute(text(f"DROP INDEX {index_name}"))
+        except Exception as e:
+            log_error(f"Error dropping index '{index_name}': {str(e)}")
+            raise
+
+    def _create_vector_index(self, force_recreate: bool = False) -> None:
+        vector_index = self.vector_index or IVF()
+        index_name = vector_index.name or f"{self.table_name}_vec_idx"
+
+        if self._index_exists(index_name):
+            log_info(f"Vector index '{index_name}' already exists.")
+            if force_recreate:
+                log_info(f"Force recreating vector index '{index_name}'. Dropping existing index.")
+                self._drop_index(index_name)
+            else:
+                log_info(f"Skipping vector index creation as index '{index_name}' already exists.")
+                return
+
+        organization = "INMEMORY NEIGHBOR GRAPH" if isinstance(vector_index, HNSW) else "NEIGHBOR PARTITIONS"
+        metric = _DISTANCE_METRIC.get(self.distance, "COSINE")
+        params_clause = ""
+        if vector_index.parameters:
+            params_text = ", ".join(f"{k} {v}" for k, v in vector_index.parameters.items())
+            params_clause = f" PARAMETERS ('{params_text}')"
+
+        create_index_sql = text(
+            f"CREATE VECTOR INDEX {index_name} ON {self.table.fullname} (embedding) "
+            f"ORGANIZATION {organization} DISTANCE {metric} "
+            f"WITH TARGET ACCURACY {vector_index.target_accuracy}{params_clause}"
+        )
+        try:
+            with self.Session() as sess, sess.begin():
+                log_debug(f"Creating vector index '{index_name}' ({organization}) on '{self.table.fullname}'")
+                sess.execute(create_index_sql)
+        except Exception as e:
+            if isinstance(vector_index, HNSW) and "ORA-51962" in str(e):
+                raise ValueError(
+                    "Creating an HNSW (INMEMORY NEIGHBOR GRAPH) vector index requires the server's "
+                    "vector_memory_size initialization parameter to be configured (a static parameter, "
+                    "needing an instance restart). Use IVF (NEIGHBOR PARTITIONS) instead, or configure "
+                    "vector_memory_size."
+                ) from e
+            log_error(f"Error creating vector index '{index_name}': {str(e)}")
+            raise
+
+    def _create_text_index(self, force_recreate: bool = False) -> None:
+        index_name = f"{self.table_name}_ctx_idx"
+
+        if self._index_exists(index_name):
+            log_info(f"Text index '{index_name}' already exists.")
+            if force_recreate:
+                log_info(f"Force recreating text index '{index_name}'. Dropping existing index.")
+                self._drop_index(index_name)
+            else:
+                log_info(f"Skipping text index creation as index '{index_name}' already exists.")
+                return
+
+        try:
+            with self.Session() as sess, sess.begin():
+                log_debug(f"Creating Oracle Text index '{index_name}' on '{self.table.fullname}'.content")
+                sess.execute(
+                    text(f"CREATE INDEX {index_name} ON {self.table.fullname}(content) INDEXTYPE IS CTXSYS.CONTEXT")
+                )
+        except Exception as e:
+            self._raise_if_text_search_unavailable(e, self.table.fullname)
 
     # -- Delete --
 
@@ -1043,4 +1467,4 @@ class OracleVector(VectorDb):
         return copied_obj
 
     def get_supported_search_types(self) -> List[str]:
-        return [SearchType.vector]
+        return [SearchType.vector, SearchType.keyword, SearchType.hybrid]

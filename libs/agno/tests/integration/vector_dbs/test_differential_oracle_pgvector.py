@@ -151,3 +151,65 @@ def test_similarity_scores_are_close_across_backends(pg_db, oracle_db):
     pg_score = pg_top.meta_data["similarity_score"]
     oracle_score = oracle_top.meta_data["similarity_score"]
     assert abs(pg_score - oracle_score) < 1e-6, f"similarity scores diverged: pg={pg_score} oracle={oracle_score}"
+
+
+def _ensure_keyword_index(db) -> None:
+    """Create the text/keyword index Oracle strictly requires; skip index
+    creation for Postgres entirely.
+
+    Unlike Oracle Text (CONTAINS() cannot run at all without a CTXSYS.CONTEXT
+    index), Postgres's ``to_tsvector``/``to_tsquery`` need no index for
+    correctness -- only for performance -- and PgVector's own index-creation
+    helpers have pre-existing bugs unrelated to this ticket that make calling
+    them here counter-productive: ``_create_vector_index`` (HNSW/Ivfflat)
+    binds a parameter inside a DDL ``WITH (...)`` clause, invalid syntax under
+    psycopg3's extended protocol (confirmed live: "syntax error at or near
+    '$1'"); ``_create_gin_index`` interpolates ``content_language`` as a bare
+    unquoted SQL identifier instead of a string literal (confirmed live:
+    "column 'english' does not exist"). Neither is exercised by this
+    ranking-correctness differential, which needs no index on either backend.
+    """
+    if not isinstance(db, PgVector):
+        db.optimize()
+
+
+def _run_keyword_ranking_scenario(db) -> Dict[str, Any]:
+    """Ticket 18's keyword-search differential: same corpus, same query, same
+    text-relevance ordering. Query terms are chosen to appear verbatim (after
+    each backend's own stemming) in more than one document, so the ordering
+    comparison is meaningful rather than trivial.
+    """
+    db.insert(content_hash="corpus-kw", documents=[Document(name=d.name, content=d.content) for d in CORPUS])
+    _ensure_keyword_index(db)
+    matches = db.keyword_search("furry mammals", limit=5)
+    return {"order": [m.name for m in matches], "count": len(matches)}
+
+
+def test_keyword_search_ranking_matches_postgres(pg_db, oracle_db):
+    pg_result = _run_keyword_ranking_scenario(pg_db)
+    oracle_result = _run_keyword_ranking_scenario(oracle_db)
+
+    assert oracle_result == pg_result, (
+        f"OracleVector keyword search diverged from PgVector.\nPostgres: {pg_result}\nOracle:   {oracle_result}"
+    )
+
+
+def _run_hybrid_ranking_scenario(db) -> Dict[str, Any]:
+    db.insert(content_hash="corpus-hy", documents=[Document(name=d.name, content=d.content) for d in CORPUS])
+    _ensure_keyword_index(db)
+    db.vector_score_weight = 0.5
+    matches = db.hybrid_search("furry mammals pets", limit=5)
+    return {"order": [m.name for m in matches], "count": len(matches)}
+
+
+def test_hybrid_search_ranking_matches_postgres(pg_db, oracle_db):
+    """Same corpus/query, same vector_score_weight: hybrid's weighted-sum-in-SQL
+    design (not rank fusion) means the ordering should agree across backends,
+    not merely happen to overlap.
+    """
+    pg_result = _run_hybrid_ranking_scenario(pg_db)
+    oracle_result = _run_hybrid_ranking_scenario(oracle_db)
+
+    assert oracle_result == pg_result, (
+        f"OracleVector hybrid search diverged from PgVector.\nPostgres: {pg_result}\nOracle:   {oracle_result}"
+    )

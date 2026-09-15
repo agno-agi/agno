@@ -142,6 +142,30 @@ class TestSearchScope:
         assert "shared-doc" in alice_results
         assert "bob-doc" not in alice_results
 
+    def test_owner_scoping_applies_to_keyword_and_hybrid_too(self, db):
+        """Ticket 18: owner scoping is applied before filters on all three
+        search paths, not just vector_search.
+        """
+        db.insert(
+            content_hash="ka",
+            documents=[Document(name="alice-secret", content="Alice keeps a secret furry pet journal.")],
+            user_id="alice",
+        )
+        db.insert(
+            content_hash="kb",
+            documents=[Document(name="bob-journal", content="Bob keeps a furry pet journal too.")],
+            user_id="bob",
+        )
+        db.optimize()
+
+        bob_keyword_names = {r.name for r in db.keyword_search("furry pet journal", limit=10, user_id="bob")}
+        assert "alice-secret" not in bob_keyword_names
+        assert "bob-journal" in bob_keyword_names
+
+        bob_hybrid_names = {r.name for r in db.hybrid_search("furry pet journal", limit=10, user_id="bob")}
+        assert "alice-secret" not in bob_hybrid_names
+        assert "bob-journal" in bob_hybrid_names
+
 
 class TestUpsertDedupScope:
     """Upsert dedup keys on content_hash scoped by owner: it clears only the
