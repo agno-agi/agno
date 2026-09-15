@@ -1,0 +1,3 @@
+agno==3.0.9
+pushary==2.1.1
+SQLAlchemy==2.0.53
