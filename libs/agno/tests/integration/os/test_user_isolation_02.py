@@ -871,7 +871,7 @@ class TestCustomAdminScopeListings:
         resp = custom_admin_client.get("/agents", headers=auth_header(token))
         assert resp.status_code == 200, resp.text
         # The fixture has a single agent registered; admin must see it.
-        ids = [a.get("id") for a in resp.json()]
+        ids = [a.get("id") for a in resp.json()["data"]]
         assert "test-agent" in ids
 
 

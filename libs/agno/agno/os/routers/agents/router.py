@@ -67,6 +67,8 @@ from agno.os.schema import (
     BadRequestResponse,
     InternalServerErrorResponse,
     NotFoundResponse,
+    PaginatedResponse,
+    PaginationInfo,
     UnauthenticatedResponse,
     ValidationErrorResponse,
 )
@@ -1786,13 +1788,13 @@ def get_agent_router(
 
     @router.get(
         "/agents",
-        response_model=List[AgentResponse],
+        response_model=PaginatedResponse[AgentResponse],
         response_model_exclude_none=True,
         tags=["Agents"],
         operation_id="get_agents",
-        summary="List All Agents",
+        summary="List Agents",
         description=(
-            "Retrieve a comprehensive list of all agents configured in this OS instance.\n\n"
+            "Retrieve a paginated list of agents configured in this OS instance.\n\n"
             "**Returns:**\n"
             "- Agent metadata (ID, name, description)\n"
             "- Model configuration and capabilities\n"
@@ -1805,25 +1807,32 @@ def get_agent_router(
                 "description": "List of agents retrieved successfully",
                 "content": {
                     "application/json": {
-                        "example": [
-                            {
-                                "id": "main-agent",
-                                "name": "Main Agent",
-                                "db_id": "c6bf0644-feb8-4930-a305-380dae5ad6aa",
-                                "model": {"name": "OpenAIChat", "model": "gpt-4o", "provider": "OpenAI"},
-                                "tools": None,
-                                "sessions": {"session_table": "agno_sessions"},
-                                "knowledge": {"knowledge_table": "main_knowledge"},
-                                "system_message": {"markdown": True, "add_datetime_to_context": True},
-                            }
-                        ]
+                        "example": {
+                            "data": [
+                                {
+                                    "id": "main-agent",
+                                    "name": "Main Agent",
+                                    "db_id": "c6bf0644-feb8-4930-a305-380dae5ad6aa",
+                                    "model": {"name": "OpenAIChat", "model": "gpt-4o", "provider": "OpenAI"},
+                                    "tools": None,
+                                    "sessions": {"session_table": "agno_sessions"},
+                                    "knowledge": {"knowledge_table": "main_knowledge"},
+                                    "system_message": {"markdown": True, "add_datetime_to_context": True},
+                                }
+                            ],
+                            "meta": {"page": 1, "limit": 20, "total_pages": 1, "total_count": 1},
+                        }
                     }
                 },
             }
         },
     )
-    async def get_agents(request: Request) -> List[AgentResponse]:
-        """Return the list of all Agents present in the contextual OS"""
+    async def get_agents(
+        request: Request,
+        limit: int = Query(20, ge=1, le=1000),
+        page: int = Query(1, ge=1),
+    ) -> PaginatedResponse[AgentResponse]:
+        """Return a paginated list of Agents present in the contextual OS."""
         # Filter agents based on user's scopes (only if authorization is enabled)
         if getattr(request.state, "authorization_enabled", False):
             from agno.os.auth import (
@@ -1846,32 +1855,7 @@ def get_agent_router(
         else:
             accessible_agents = os.agents or []
 
-        agents: List[AgentResponse] = []
-        if accessible_agents:
-            for agent in accessible_agents:
-                if isinstance(agent, Agent):
-                    agents.append(await AgentResponse.from_agent(agent=agent, is_component=False))
-                elif isinstance(agent, AgentFactory):
-                    agents.append(AgentResponse.from_factory(agent))
-                elif isinstance(agent, RemoteAgent):
-                    agents.append(await agent.get_agent_config())
-                else:
-                    # External framework adapter: build a minimal response
-                    agent_db = getattr(agent, "db", None)
-                    session_table = (
-                        agent_db.session_table_name if agent_db and hasattr(agent_db, "session_table_name") else None
-                    )
-                    sessions = {"session_table": session_table} if session_table else None
-                    agents.append(
-                        AgentResponse(
-                            id=agent.id,
-                            name=agent.name,
-                            description=getattr(agent, "description", None),
-                            db_id=agent_db.id if agent_db else None,
-                            sessions=sessions,
-                            metadata={"framework": getattr(agent, "framework", "external")},
-                        )
-                    )
+        available_agents = [(agent, False) for agent in accessible_agents]
 
         if os.db and isinstance(os.db, BaseDb):
             from agno.agent.agent import get_agents
@@ -1891,11 +1875,48 @@ def get_agent_router(
                 # Apply the same RBAC filtering to DB-loaded agents
                 if getattr(request.state, "authorization_enabled", False):
                     db_agents = filter_resources_by_access(request, db_agents, "agents")
-                for db_agent in db_agents:
-                    agent_response = await AgentResponse.from_agent(agent=db_agent, is_component=True)
-                    agents.append(agent_response)
+                available_agents.extend((agent, True) for agent in db_agents)
 
-        return agents
+        total_count = len(available_agents)
+        total_pages = (total_count + limit - 1) // limit if total_count > 0 else 0
+        start = (page - 1) * limit
+        paginated_agents = available_agents[start : start + limit]
+
+        agents: List[AgentResponse] = []
+        for agent, is_component in paginated_agents:
+            if isinstance(agent, Agent):
+                agents.append(await AgentResponse.from_agent(agent=agent, is_component=is_component))
+            elif isinstance(agent, AgentFactory):
+                agents.append(AgentResponse.from_factory(agent))
+            elif isinstance(agent, RemoteAgent):
+                agents.append(await agent.get_agent_config())
+            else:
+                # External framework adapter: build a minimal response
+                agent_db = getattr(agent, "db", None)
+                session_table = (
+                    agent_db.session_table_name if agent_db and hasattr(agent_db, "session_table_name") else None
+                )
+                sessions = {"session_table": session_table} if session_table else None
+                agents.append(
+                    AgentResponse(
+                        id=agent.id,
+                        name=agent.name,
+                        description=getattr(agent, "description", None),
+                        db_id=agent_db.id if agent_db else None,
+                        sessions=sessions,
+                        metadata={"framework": getattr(agent, "framework", "external")},
+                    )
+                )
+
+        return PaginatedResponse(
+            data=agents,
+            meta=PaginationInfo(
+                page=page,
+                limit=limit,
+                total_pages=total_pages,
+                total_count=total_count,
+            ),
+        )
 
     @router.get(
         "/agents/{agent_id}",
