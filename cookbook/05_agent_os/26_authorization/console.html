@@ -487,7 +487,7 @@ async function loadPlayground() {
   const { data } = await api("GET", "/users?limit=100");
   $("p-personas").innerHTML = "<span class='dim'>become:</span>" + data.map((u) => `
     <button data-sub="${esc(u.id)}" ${state.persona?.id === u.id ? "class='primary'" : ""}>
-      ${u.disabled ? "🚫" : "🧑"} ${esc(u.id)} <span class="dim">· ${esc(u.role ?? "no role")}</span>
+      ${u.disabled ? "🚫" : "🧑"} ${esc(u.id)} <span class="dim">· ${esc(u.role_name ?? "no role")}</span>
     </button>`).join("");
   $("p-personas").querySelectorAll("button").forEach((b) => b.onclick = () =>
     become(data.find((u) => u.id === b.dataset.sub)));
@@ -503,12 +503,12 @@ async function become(user) {
   $("p-stage").style.display = "block";
   $("p-banner").innerHTML = `you are now <b class="mono" style="color:rgb(var(--brand))">${esc(user.id)}</b> 🎫`;
   $("p-role").innerHTML = ["<option value=''>— no role —</option>",
-    ...state.roles.map((r) => `<option ${r === user.role ? "selected" : ""}>${esc(r)}</option>`)].join("");
+    ...state.roles.map((r) => `<option ${r === user.role_slug ? "selected" : ""}>${esc(r)}</option>`)].join("");
   $("p-role").onchange = async (e) => {
     if (e.target.value) await api("POST", `/authz/subjects/${user.id}/roles`, { role: e.target.value });
-    else if (user.role) await api("DELETE", `/authz/subjects/${user.id}/roles/${user.role}`);
-    user.role = e.target.value || null;
-    plog("🎭", `${user.id} is now ${user.role ?? "role-less"} — same token, new powers`, "", "");
+    else if (user.role_slug) await api("DELETE", `/authz/subjects/${user.id}/roles/${user.role_slug}`);
+    user.role_slug = e.target.value || null;
+    plog("🎭", `${user.id} is now ${user.role_slug ?? "role-less"} — same token, new powers`, "", "");
     loadPlayground();
   };
   plog("🎫", `minted a token for ${user.id} — go rattle some gates`, "", "");
@@ -553,7 +553,7 @@ async function loadUsers() {
     const row = table.insertRow();
     const options = ["<option value=''>— no role —</option>",
       ...state.roles.map((r) =>
-        `<option ${r === u.role ? "selected" : ""}>${esc(r)}</option>`)].join("");
+        `<option ${r === u.role_slug ? "selected" : ""}>${esc(r)}</option>`)].join("");
     row.innerHTML = `
       <td class="id">${esc(u.id)}</td><td class="dim dim-mono">${esc(u.email ?? "")}</td>
       <td class="dim">${esc(u.name ?? "")}</td>

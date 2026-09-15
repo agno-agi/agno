@@ -250,3 +250,8 @@ and got total 6, active 5, disabled 1, without_role 2, a three-day series (2, 1,
 and the role breakdown admin 1, analyst 2, viewer 1. `starting_date=today` returned
 only today's point with the total still 6. After deleting carol the total dropped to
 5 and analyst to 1 on the very next read.
+
+Re-ran 2026-09-15 after role display names were added to the responses: each `by_role`
+entry now carries `role_slug` and `role_name` ("Administrator", "Data analyst", and "viewer"
+for the role defined without one), and `GET /users/bob` returned `role_slug analyst` with
+`role_name Data analyst`. Exit 0, same counts as above.

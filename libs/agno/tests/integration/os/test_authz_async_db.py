@@ -265,9 +265,13 @@ def test_user_management_metrics_async_on_async_db(tmp_path):
             "bob": ["viewer"],
             "nobody": [],
         }
+        assert await roles.arole_names() == {"admin": "admin", "viewer": "viewer"}  # no display names set
         metrics = await acollect_user_management_metrics(users, roles)
         assert (metrics.total, metrics.active, metrics.disabled, metrics.without_role) == (4, 3, 1, 1)
-        assert [(r.role, r.count) for r in metrics.by_role] == [("admin", 1), ("viewer", 2)]
+        assert [(r.role_slug, r.role_name, r.count) for r in metrics.by_role] == [
+            ("admin", "admin", 1),
+            ("viewer", "viewer", 2),
+        ]
 
     asyncio.run(seed())
 
@@ -294,7 +298,10 @@ def test_user_management_metrics_async_on_async_db(tmp_path):
     assert client.get("/users/metrics", headers=_auth("bob")).status_code == 403
     body = client.get("/users/metrics", headers=_auth("alice")).json()
     assert body["total"] == 4 and body["disabled"] == 1 and body["without_role"] == 1
-    assert body["by_role"] == [{"role": "admin", "count": 1}, {"role": "viewer", "count": 2}]
+    assert body["by_role"] == [
+        {"role_slug": "admin", "role_name": "admin", "count": 1},
+        {"role_slug": "viewer", "role_name": "viewer", "count": 2},
+    ]
 
     # parity: the sync collector on a sync DB produces the same numbers the async one does
     sdb = SqliteDb(db_file=str(tmp_path / "metrics_sync.db"))

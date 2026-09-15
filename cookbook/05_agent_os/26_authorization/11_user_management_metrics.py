@@ -6,7 +6,11 @@ directory, computed live on every read (no cache, no refresh step):
 
     total / active / disabled   the directory as it is now, plus without_role
     created_per_day             users created per UTC day (a line chart)
-    by_role                     users per role, when a role store is configured
+    by_role                     users per role (slug and display name), when a role
+                                store is configured
+
+Every user in GET /users carries role_name next to role_slug for the same reason: a page
+can show "Data analyst" without a second request to /authz/roles.
 
 It rides on the same router as /users, so it is admin-only and is mounted wherever
 user management is: AgentOS mounts /users whenever it has a user directory, with or
@@ -50,9 +54,9 @@ authz = Authorization(
     verify_audience=True,
     audience=OS_ID,
 )
-authz.define_role("admin", ["agent_os:admin"])
-authz.define_role("analyst", ["agents:*:read"])
-authz.define_role("viewer", ["agents:*:read"])
+authz.define_role("admin", ["agent_os:admin"], name="Administrator")
+authz.define_role("analyst", ["agents:*:read"], name="Data analyst")
+authz.define_role("viewer", ["agents:*:read"])  # no display name: shows its slug
 authz.seed(admin="alice")
 authz.assign("bob", "analyst")
 authz.assign("carol", "analyst")
@@ -123,6 +127,16 @@ if __name__ == "__main__":
     print("\nbob (analyst):   ", bob, "(expected 403)")
     print("alice (admin):   ", response.status_code, "(expected 200)")
     print("\n" + json.dumps(response.json(), indent=2))
+
+    # GET /users carries the role's display name next to its slug, so a directory page
+    # renders "Data analyst" without a second request to /authz/roles.
+    bob_row = client.get("/users/bob", headers=auth("alice")).json()
+    print(
+        "\nGET /users/bob -> role_slug",
+        bob_row["role_slug"],
+        "role_name",
+        bob_row["role_name"],
+    )
 
     # The date range bounds the series only; the counts stay whole-directory.
     today = datetime.now(timezone.utc).date().isoformat()
