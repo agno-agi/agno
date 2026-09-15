@@ -1,11 +1,15 @@
 """Async Oracle Database adapter.
 
-Covers the same domains sync tickets 03-05 cover: schema versions, sessions,
-runs, memory, metrics, knowledge content, eval runs, traces and spans.
-Everything else (learnings, schedules, jobs, tool results, approvals, auth
-tokens, service accounts, components, MCP OAuth) is out of scope here --
-either a later ticket's async surface, or -- for components and MCP OAuth --
-not supported by the async base class at all, matching AsyncPostgresDb.
+Covers the same domains sync tickets 03-05 cover (schema versions, sessions,
+runs, memory, metrics, knowledge content, eval runs, traces and spans) plus
+the AgentOS domains sync tickets 06-08 and 11 cover: learnings, schedules and
+schedule runs, tool results, approvals, auth tokens and service accounts.
+Components, MCP OAuth and the durable job queue remain out of scope: the
+first two are not supported by the async base class at all (matching
+AsyncPostgresDb), and the job queue is already served for async callers
+generically, through ``_SyncStoreAdapter`` wrapping the sync ``OracleDb``
+(``agno.os.job_queue``) -- a second, native async implementation here would
+be redundant.
 
 Three constraints shape every method below:
 
@@ -23,6 +27,7 @@ Sections are ordered to match ``agno.db.oracle.oracle`` so the two files read
 side by side.
 """
 
+import json
 import time
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple, Union
@@ -38,6 +43,7 @@ from sqlalchemy import (
     Table,
     UniqueConstraint,
     func,
+    or_,
     select,
     text,
 )
@@ -57,6 +63,7 @@ from agno.db.oracle.utils import (
     fetch_all_sessions_data,
     from_db_user_id,
     get_dates_to_calculate_metrics_for,
+    is_unique_violation,
     partial_unique_index_elements,
     to_db_user_id,
     truncate_identifier,
@@ -64,12 +71,17 @@ from agno.db.oracle.utils import (
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
+from agno.db.schemas.service_accounts import (
+    resolve_service_account_sort_column,
+    validate_service_account_update,
+)
 from agno.db.utils import (
     SessionRunObjectCache,
     build_single_run_row,
     deserialize_run,
     deserialize_session,
     deserialize_sessions,
+    learning_search_patterns,
     metrics_starting_date_from_days,
     table_schema_mismatch_error,
     validate_pagination,
@@ -265,6 +277,13 @@ class AsyncOracleDb(AsyncBaseDb):
             "evals": self.eval_table_name,
             "knowledge": self.knowledge_table_name,
             "versions": self.versions_table_name,
+            "learnings": self.learnings_table_name,
+            "schedules": self.schedules_table_name,
+            "schedule_runs": self.schedule_runs_table_name,
+            "tool_results": self.tool_results_table_name,
+            "approvals": self.approvals_table_name,
+            "auth_tokens": self.auth_tokens_table_name,
+            "service_accounts": self.service_accounts_table_name,
         }
         return table_map.get(logical_name, logical_name)
 
@@ -712,13 +731,14 @@ class AsyncOracleDb(AsyncBaseDb):
 
     # -- Sessions --
     async def _cascade_tool_results(self, session_ids: List[str]) -> None:
-        """Placeholder pending ticket 14's async tool-result offloading: no
-        async upsert_tool_result exists yet on this adapter, so the table
-        cannot hold rows this path would need to cascade. Kept here (rather
-        than added later) so delete_session's behavior does not silently
-        change shape once offloading is turned on, matching the identical
-        precedent OracleDb.delete_session set for the sync adapter in
-        ticket 03.
+        """Cascade result offloading on session delete: read the index rows,
+        delete their payloads, then the index rows.
+
+        Best-effort and outside the session delete, so a cascade failure can
+        never poison or roll back the delete itself. Mirrors
+        ``OracleDb._cascade_tool_results`` (sync, ticket 11) exactly,
+        including the deliberate absence of the Postgres/SQLite
+        ``DbFileSystem`` default-payload-table fallback.
         """
         if not session_ids:
             return
@@ -726,10 +746,90 @@ class AsyncOracleDb(AsyncBaseDb):
             table = await self._get_table(table_type="tool_results")
             if table is None:
                 return
-            async with self.async_session_factory() as sess, sess.begin():
-                await sess.execute(table.delete().where(table.c.session_id.in_(session_ids)))
-        except Exception:
-            log_debug("tool-result cascade failed; the primary session delete still succeeded", exc_info=True)
+            async with self.async_session_factory() as sess:
+                result = await sess.execute(
+                    select(table.c.result_id, table.c.namespace, table.c.path).where(
+                        table.c.session_id.in_(session_ids)
+                    )
+                )
+                rows = result.fetchall()
+            if not rows:
+                return
+            removed = set()
+            filesystems = list(getattr(self, "tool_result_filesystems", []) or [])
+            if filesystems:
+                from agno.fs import FileSystem
+
+                for _, namespace, path in rows:
+                    for fs in filesystems:
+                        try:
+                            if FileSystem(backend=fs.backend, namespace=str(namespace)).delete(str(path)):
+                                removed.add((str(namespace), str(path)))
+                        except Exception as e:
+                            log_warning(f"Tool-result payload delete failed for {namespace}/{path}: {e}")
+            missing = [
+                f"{namespace}/{path}" for _, namespace, path in rows if (str(namespace), str(path)) not in removed
+            ]
+            if missing:
+                log_warning(
+                    f"Tool-result cascade removed {len(rows) - len(missing)} of {len(rows)} payloads; "
+                    f"{len(missing)} live in a filesystem this process has no store for: {missing[:3]}"
+                )
+            result_ids = [str(row[0]) for row in rows]
+            for start in range(0, len(result_ids), 500):
+                async with self.async_session_factory() as sess, sess.begin():
+                    await sess.execute(table.delete().where(table.c.result_id.in_(result_ids[start : start + 500])))
+        except Exception as e:
+            log_warning(f"Tool-result cascade on session delete failed: {e}")
+
+    # -- Tool Results (result offloading index) --
+    async def upsert_tool_result(self, row: Dict[str, Any]) -> None:
+        table = await self._get_table(table_type="tool_results", create_table_if_not_found=True)
+        if table is None:
+            raise ValueError(f"Could not create table: {self.tool_results_table_name}")
+        async with self.async_session_factory() as sess, sess.begin():
+            await amerge_upsert(sess, table, key_columns=["result_id"], values=row)
+
+    async def get_tool_result(self, result_id: str) -> Optional[Dict[str, Any]]:
+        table = await self._get_table(table_type="tool_results")
+        if table is None:
+            return None
+        async with self.async_session_factory() as sess:
+            result = await sess.execute(select(table).where(table.c.result_id == result_id))
+            row = result.fetchone()
+            return dict(row._mapping) if row is not None else None
+
+    async def get_tool_results_for_session(self, session_id: str, limit: Optional[int] = None) -> List[Dict[str, Any]]:
+        table = await self._get_table(table_type="tool_results")
+        if table is None:
+            return []
+        stmt = (
+            select(table).where(table.c.session_id == session_id).order_by(table.c.created_at.desc(), table.c.result_id)
+        )
+        if limit is not None:
+            stmt = stmt.limit(limit)
+        async with self.async_session_factory() as sess:
+            result = await sess.execute(stmt)
+            return [dict(row._mapping) for row in result.fetchall()]
+
+    async def delete_tool_results(self, result_ids: List[str]) -> int:
+        if not result_ids:
+            return 0
+        table = await self._get_table(table_type="tool_results")
+        if table is None:
+            return 0
+        async with self.async_session_factory() as sess, sess.begin():
+            result = await sess.execute(table.delete().where(table.c.result_id.in_(result_ids)))
+        return result.rowcount or 0  # type: ignore
+
+    async def get_expired_tool_results(self, now: int) -> List[Dict[str, Any]]:
+        table = await self._get_table(table_type="tool_results")
+        if table is None:
+            return []
+        stmt = select(table).where(table.c.expires_at.is_not(None)).where(table.c.expires_at <= now)
+        async with self.async_session_factory() as sess:
+            result = await sess.execute(stmt)
+            return [dict(row._mapping) for row in result.fetchall()]
 
     async def delete_session(self, session_id: str, user_id: Optional[str] = None) -> bool:
         try:
@@ -2226,12 +2326,7 @@ class AsyncOracleDb(AsyncBaseDb):
             log_error(f"Error getting spans: {str(e)}")
             return []
 
-    # -- Learnings (not yet implemented: ticket 14's scope) --
-    #
-    # Abstract on AsyncBaseDb, so the class must override all four to be
-    # instantiable at all -- explicit NotImplementedError, never a silent
-    # gap, matching the sync MySQL adapter's own precedent for the same
-    # situation (mysql.py's "Learning methods (stubs)").
+    # -- Learnings --
     async def get_learning(
         self,
         learning_type: str,
@@ -2243,7 +2338,54 @@ class AsyncOracleDb(AsyncBaseDb):
         entity_id: Optional[str] = None,
         entity_type: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
-        raise NotImplementedError("Learning methods not yet implemented for AsyncOracleDb (ticket 14)")
+        try:
+            table = await self._get_table(table_type="learnings")
+            if table is None:
+                return None
+            async with self.async_session_factory() as sess:
+                stmt = select(table).where(table.c.learning_type == learning_type)
+                stmt = self._apply_learning_filters(
+                    stmt, table, user_id, agent_id, team_id, None, session_id, namespace, entity_id, entity_type
+                )
+                result = await sess.execute(stmt)
+                row = result.fetchone()
+                if row is None:
+                    return None
+                return {"content": dict(row._mapping).get("content")}
+        except Exception as e:
+            log_debug(f"Error retrieving learning: {e}")
+            return None
+
+    def _apply_learning_filters(
+        self,
+        stmt: Any,
+        table: Table,
+        user_id: Optional[str],
+        agent_id: Optional[str],
+        team_id: Optional[str],
+        workflow_id: Optional[str],
+        session_id: Optional[str],
+        namespace: Optional[str],
+        entity_id: Optional[str],
+        entity_type: Optional[str],
+    ) -> Any:
+        if user_id is not None:
+            stmt = stmt.where(table.c.user_id == to_db_user_id(user_id))
+        if agent_id is not None:
+            stmt = stmt.where(table.c.agent_id == agent_id)
+        if team_id is not None:
+            stmt = stmt.where(table.c.team_id == team_id)
+        if workflow_id is not None:
+            stmt = stmt.where(table.c.workflow_id == workflow_id)
+        if session_id is not None:
+            stmt = stmt.where(table.c.session_id == session_id)
+        if namespace is not None:
+            stmt = stmt.where(table.c.namespace == namespace)
+        if entity_id is not None:
+            stmt = stmt.where(table.c.entity_id == entity_id)
+        if entity_type is not None:
+            stmt = stmt.where(table.c.entity_type == entity_type)
+        return stmt
 
     async def upsert_learning(
         self,
@@ -2259,12 +2401,208 @@ class AsyncOracleDb(AsyncBaseDb):
         entity_type: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> None:
-        raise NotImplementedError("Learning methods not yet implemented for AsyncOracleDb (ticket 14)")
+        try:
+            table = await self._get_table(table_type="learnings", create_table_if_not_found=True)
+            if table is None:
+                return
+            current_time = int(time.time())
+            values = {
+                "learning_id": id,
+                "learning_type": learning_type,
+                "namespace": namespace,
+                "user_id": to_db_user_id(user_id),
+                "agent_id": agent_id,
+                "team_id": team_id,
+                "session_id": session_id,
+                "entity_id": entity_id,
+                "entity_type": entity_type,
+                "content": content,
+                "metadata": metadata,
+                "created_at": current_time,
+                "updated_at": current_time,
+            }
+            async with self.async_session_factory() as sess, sess.begin():
+                await amerge_upsert(
+                    sess, table, key_columns=["learning_id"], values=values, preserve_on_conflict=["created_at"]
+                )
+            log_debug(f"Upserted learning: {id}")
+        except Exception as e:
+            log_debug(f"Error upserting learning: {e}")
 
     async def delete_learning(self, id: str) -> bool:
-        raise NotImplementedError("Learning methods not yet implemented for AsyncOracleDb (ticket 14)")
+        try:
+            table = await self._get_table(table_type="learnings")
+            if table is None:
+                return False
+            async with self.async_session_factory() as sess, sess.begin():
+                result = await sess.execute(table.delete().where(table.c.learning_id == id))
+                return result.rowcount > 0  # type: ignore
+        except Exception as e:
+            log_debug(f"Error deleting learning: {e}")
+            return False
+
+    async def update_learning(
+        self, id: str, content: Dict[str, Any], metadata: Optional[Dict[str, Any]] = None
+    ) -> bool:
+        try:
+            table = await self._get_table(table_type="learnings")
+            if table is None:
+                return False
+            async with self.async_session_factory() as sess, sess.begin():
+                stmt = (
+                    table.update()
+                    .where(table.c.learning_id == id)
+                    .values(content=content, metadata=metadata, updated_at=int(time.time()))
+                )
+                result = await sess.execute(stmt)
+                return (result.rowcount or 0) > 0  # type: ignore
+        except Exception as e:
+            log_error(f"Error updating learning: {e}")
+            raise
+
+    async def delete_user_learnings(self, user_id: str, learning_type: Optional[str] = None) -> int:
+        try:
+            table = await self._get_table(table_type="learnings")
+            if table is None:
+                return 0
+            async with self.async_session_factory() as sess, sess.begin():
+                stmt = table.delete().where(table.c.user_id == to_db_user_id(user_id))
+                if learning_type is not None:
+                    stmt = stmt.where(table.c.learning_type == learning_type)
+                result = await sess.execute(stmt)
+                return result.rowcount or 0  # type: ignore
+        except Exception as e:
+            log_error(f"Error deleting user learnings: {e}")
+            raise
 
     async def get_learnings(
+        self,
+        learning_type: Optional[str] = None,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        namespace: Optional[str] = None,
+        entity_id: Optional[str] = None,
+        entity_type: Optional[str] = None,
+        limit: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        try:
+            table = await self._get_table(table_type="learnings")
+            if table is None:
+                return []
+            async with self.async_session_factory() as sess:
+                stmt = select(table)
+                if learning_type is not None:
+                    stmt = stmt.where(table.c.learning_type == learning_type)
+                stmt = self._apply_learning_filters(
+                    stmt, table, user_id, agent_id, team_id, workflow_id, session_id, namespace, entity_id, entity_type
+                )
+                stmt = stmt.order_by(table.c.updated_at.desc())
+                if limit is not None:
+                    stmt = stmt.limit(limit)
+                result = await sess.execute(stmt)
+                rows = [dict(row._mapping) for row in result.fetchall()]
+                for r in rows:
+                    r["user_id"] = from_db_user_id(r.get("user_id"))
+                return rows
+        except Exception as e:
+            log_debug(f"Error getting learnings: {e}")
+            return []
+
+    async def search_learnings(
+        self,
+        query: str,
+        learning_type: Optional[str] = None,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        namespace: Optional[str] = None,
+        entity_id: Optional[str] = None,
+        entity_type: Optional[str] = None,
+        limit: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        """Search learning records by text query.
+
+        Contract (base.py): a database error MUST raise, never come back as
+        an empty list. Matching happens in Python, mirroring
+        ``OracleDb.search_learnings`` (sync, ticket 06) exactly, for the same
+        reason: content is a JSON column and CAST rejects a native JSON
+        source (ORA-22849).
+        """
+        patterns = learning_search_patterns(query)
+        if not patterns:
+            return []
+        regexes = [self._like_pattern_to_regex(p) for p in patterns]
+
+        table = await self._get_table(table_type="learnings")
+        if table is None:
+            return []
+
+        stmt = select(table)
+        if learning_type is not None:
+            stmt = stmt.where(table.c.learning_type == learning_type)
+        stmt = self._apply_learning_filters(
+            stmt, table, user_id, agent_id, team_id, workflow_id, session_id, namespace, entity_id, entity_type
+        )
+
+        async with self.async_session_factory() as sess:
+            result = await sess.execute(stmt)  # no try/except: a broken query must raise
+            rows = result.fetchall()
+
+        results = [dict(row._mapping) for row in rows]
+        matched = [r for r in results if any(rx.search(json.dumps(r.get("content") or {})) for rx in regexes)]
+        matched.sort(key=lambda r: r.get("updated_at") or 0, reverse=True)
+        for r in matched:
+            r["user_id"] = from_db_user_id(r.get("user_id"))
+        if limit is not None:
+            matched = matched[:limit]
+        return matched
+
+    @staticmethod
+    def _like_pattern_to_regex(pattern: str):
+        """Translate one SQL LIKE pattern (%, _, backslash-escaped) from
+        learning_search_patterns into a compiled, case-insensitive regex."""
+        import re as _re
+
+        out = []
+        i = 0
+        while i < len(pattern):
+            c = pattern[i]
+            if c == "\\" and i + 1 < len(pattern):
+                out.append(_re.escape(pattern[i + 1]))
+                i += 2
+                continue
+            if c == "%":
+                out.append(".*")
+            elif c == "_":
+                out.append(".")
+            else:
+                out.append(_re.escape(c))
+            i += 1
+        return _re.compile("".join(out), _re.IGNORECASE | _re.DOTALL)
+
+    async def get_learning_by_id(self, id: str) -> Optional[Dict[str, Any]]:
+        try:
+            table = await self._get_table(table_type="learnings")
+            if table is None:
+                return None
+            async with self.async_session_factory() as sess:
+                result = await sess.execute(select(table).where(table.c.learning_id == id))
+                row = result.fetchone()
+                if row is None:
+                    return None
+                data = dict(row._mapping)
+                data["user_id"] = from_db_user_id(data.get("user_id"))
+                return data
+        except Exception as e:
+            log_error(f"Error getting learning by id: {e}")
+            raise
+
+    async def list_learnings(
         self,
         learning_type: Optional[str] = None,
         user_id: Optional[str] = None,
@@ -2274,6 +2612,787 @@ class AsyncOracleDb(AsyncBaseDb):
         namespace: Optional[str] = None,
         entity_id: Optional[str] = None,
         entity_type: Optional[str] = None,
+        include_global: bool = False,
+        limit: int = 100,
+        page: int = 1,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        try:
+            table = await self._get_table(table_type="learnings")
+            if table is None:
+                return [], 0
+            async with self.async_session_factory() as sess:
+                stmt = select(table)
+                if learning_type is not None:
+                    stmt = stmt.where(table.c.learning_type == learning_type)
+                if user_id is not None:
+                    db_user_id = to_db_user_id(user_id)
+                    if include_global:
+                        stmt = stmt.where((table.c.user_id == db_user_id) | (table.c.user_id.is_(None)))
+                    else:
+                        stmt = stmt.where(table.c.user_id == db_user_id)
+                if agent_id is not None:
+                    stmt = stmt.where(table.c.agent_id == agent_id)
+                if team_id is not None:
+                    stmt = stmt.where(table.c.team_id == team_id)
+                if session_id is not None:
+                    stmt = stmt.where(table.c.session_id == session_id)
+                if namespace is not None:
+                    stmt = stmt.where(table.c.namespace == namespace)
+                if entity_id is not None:
+                    stmt = stmt.where(table.c.entity_id == entity_id)
+                if entity_type is not None:
+                    stmt = stmt.where(table.c.entity_type == entity_type)
+
+                count_stmt = select(func.count()).select_from(stmt.alias())
+                total_count = (await sess.execute(count_stmt)).scalar() or 0
+
+                stmt = apply_sorting(stmt, table, sort_by or "updated_at", sort_order or "desc")
+                stmt = stmt.limit(limit).offset((page - 1) * limit)
+                result = await sess.execute(stmt)
+                rows = [dict(row._mapping) for row in result.fetchall()]
+                for r in rows:
+                    r["user_id"] = from_db_user_id(r.get("user_id"))
+                return rows, int(total_count)
+        except Exception as e:
+            log_error(f"Error listing learnings: {e}")
+            raise
+
+    async def get_learnings_user_stats(
+        self,
+        learning_type: Optional[str] = None,
         limit: Optional[int] = None,
-    ) -> List[Dict[str, Any]]:
-        raise NotImplementedError("Learning methods not yet implemented for AsyncOracleDb (ticket 14)")
+        page: Optional[int] = None,
+        user_id: Optional[str] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        validate_pagination(limit, page)
+        try:
+            table = await self._get_table(table_type="learnings")
+            if table is None:
+                return [], 0
+            async with self.async_session_factory() as sess:
+                last_updated_col = func.max(table.c.updated_at)
+                stmt = select(table.c.user_id, last_updated_col.label("last_learning_updated_at"))
+                if learning_type is not None:
+                    stmt = stmt.where(table.c.learning_type == learning_type)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == to_db_user_id(user_id))
+                else:
+                    stmt = stmt.where(table.c.user_id.is_not(None))
+                stmt = stmt.group_by(table.c.user_id)
+
+                sort_columns = {"user_id": table.c.user_id, "last_learning_updated_at": last_updated_col}
+                sort_col = sort_columns.get(sort_by or "last_learning_updated_at", last_updated_col)
+                stmt = stmt.order_by(sort_col.asc() if sort_order == "asc" else sort_col.desc())
+
+                count_stmt = select(func.count()).select_from(stmt.alias())
+                total_count = (await sess.execute(count_stmt)).scalar() or 0
+
+                if limit is not None:
+                    stmt = stmt.limit(limit)
+                    if page is not None:
+                        stmt = stmt.offset((page - 1) * limit)
+
+                result = await sess.execute(stmt)
+                return [
+                    {"user_id": from_db_user_id(row.user_id), "last_learning_updated_at": row.last_learning_updated_at}
+                    for row in result.fetchall()
+                ], int(total_count)
+        except Exception as e:
+            log_error(f"Error getting learning user stats: {e}")
+            raise
+
+    # -- Schedules --
+    #
+    # ``user_id`` here is a plain nullable owner column, not the three-state
+    # sentinel other domains carry -- see ``OracleDb``'s own comment on this
+    # (sync, ticket 07).
+    async def get_schedule(self, schedule_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        try:
+            table = await self._get_table(table_type="schedules")
+            if table is None:
+                return None
+            async with self.async_session_factory() as sess:
+                stmt = select(table).where(table.c.id == schedule_id)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
+                result = await sess.execute(stmt)
+                row = result.fetchone()
+                return dict(row._mapping) if row else None
+        except Exception as e:
+            log_debug(f"Error getting schedule: {e}")
+            return None
+
+    async def get_schedule_by_name(self, name: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        try:
+            table = await self._get_table(table_type="schedules")
+            if table is None:
+                return None
+            async with self.async_session_factory() as sess:
+                stmt = select(table).where(table.c.name == name)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
+                else:
+                    stmt = stmt.where(table.c.user_id.is_(None))
+                result = await sess.execute(stmt)
+                row = result.fetchone()
+                return dict(row._mapping) if row else None
+        except Exception as e:
+            log_debug(f"Error getting schedule by name: {e}")
+            return None
+
+    async def get_schedules(
+        self,
+        enabled: Optional[bool] = None,
+        limit: int = 100,
+        page: int = 1,
+        user_id: Optional[str] = None,
+        raise_on_error: bool = False,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        try:
+            table = await self._get_table(table_type="schedules")
+            if table is None:
+                if raise_on_error:
+                    raise RuntimeError("schedules table unavailable (database error or table never created)")
+                return [], 0
+            async with self.async_session_factory() as sess:
+                base_query = select(table)
+                if enabled is not None:
+                    base_query = base_query.where(table.c.enabled == enabled)
+                if user_id is not None:
+                    base_query = base_query.where(table.c.user_id == user_id)
+
+                count_stmt = select(func.count()).select_from(base_query.alias())
+                total_count = (await sess.execute(count_stmt)).scalar() or 0
+
+                offset = (page - 1) * limit
+                stmt = base_query.order_by(table.c.created_at.desc(), table.c.id.desc()).limit(limit).offset(offset)
+                result = await sess.execute(stmt)
+                return [dict(row._mapping) for row in result.fetchall()], total_count
+        except Exception as e:
+            log_debug(f"Error listing schedules: {e}")
+            if raise_on_error:
+                raise
+            return [], 0
+
+    async def create_schedule(self, schedule_data: Dict[str, Any]) -> Dict[str, Any]:
+        try:
+            table = await self._get_table(table_type="schedules", create_table_if_not_found=True)
+            if table is None:
+                raise RuntimeError("Failed to get or create schedules table")
+            async with self.async_session_factory() as sess, sess.begin():
+                await sess.execute(table.insert().values(**schedule_data))
+            return schedule_data
+        except Exception as e:
+            log_error(f"Error creating schedule: {str(e)}")
+            raise
+
+    async def update_schedule(
+        self, schedule_id: str, user_id: Optional[str] = None, **kwargs: Any
+    ) -> Optional[Dict[str, Any]]:
+        from agno.db.schemas.scheduler import validate_schedule_update
+
+        validate_schedule_update(kwargs)
+        try:
+            table = await self._get_table(table_type="schedules")
+            if table is None:
+                return None
+            if kwargs.get("enabled") is True:
+                kwargs.setdefault("disabled_reason", None)
+            kwargs["updated_at"] = int(time.time())
+            async with self.async_session_factory() as sess, sess.begin():
+                stmt = table.update().where(table.c.id == schedule_id)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
+                await sess.execute(stmt.values(**kwargs))
+            return await self.get_schedule(schedule_id, user_id=user_id)
+        except Exception as e:
+            # A rename onto a name already taken in the same owner bucket
+            # trips the uq_user_name/uq_unowned_name function-based unique
+            # index; let it propagate so the router maps it to 409.
+            if is_unique_violation(e):
+                raise
+            log_debug(f"Error updating schedule: {e}")
+            return None
+
+    async def delete_schedule(self, schedule_id: str, user_id: Optional[str] = None) -> bool:
+        try:
+            table = await self._get_table(table_type="schedules")
+            if table is None:
+                return False
+            runs_table = await self._get_table(table_type="schedule_runs")
+            async with self.async_session_factory() as sess, sess.begin():
+                if runs_table is not None:
+                    runs_delete = runs_table.delete().where(runs_table.c.schedule_id == schedule_id)
+                    if user_id is not None:
+                        runs_delete = runs_delete.where(runs_table.c.user_id == user_id)
+                    await sess.execute(runs_delete)
+                delete_stmt = table.delete().where(table.c.id == schedule_id)
+                if user_id is not None:
+                    delete_stmt = delete_stmt.where(table.c.user_id == user_id)
+                result = await sess.execute(delete_stmt)
+                return result.rowcount > 0  # type: ignore
+        except Exception as e:
+            log_debug(f"Error deleting schedule: {e}")
+            return False
+
+    async def disable_schedules_for_target(
+        self,
+        target_type: str,
+        target_id: str,
+        reason: Optional[str] = None,
+    ) -> int:
+        from agno.db.schemas.scheduler import build_run_endpoint
+
+        try:
+            table = await self._get_table(table_type="schedules")
+            if table is None:
+                return 0
+            endpoint = build_run_endpoint(target_type, target_id)
+            endpoints = [endpoint, endpoint + "/"]
+            async with self.async_session_factory() as sess, sess.begin():
+                result = await sess.execute(
+                    table.update()
+                    .where(
+                        or_(
+                            (table.c.target_type == target_type) & (table.c.target_id == target_id),
+                            table.c.endpoint.in_(endpoints),
+                        ),
+                        table.c.enabled == True,  # noqa: E712 -- .is_(True) miscompiles on OracleNativeBoolean
+                    )
+                    .values(enabled=False, disabled_reason=reason, updated_at=int(time.time()))
+                )
+                return int(result.rowcount or 0)  # type: ignore
+        except Exception as e:
+            log_error(f"Error disabling schedules for target: {e}")
+            raise
+
+    async def stamp_schedule_provenance(self, schedule_id: str, **provenance: Any) -> bool:
+        allowed = {
+            "managed_by",
+            "target_type",
+            "target_id",
+            "created_by_run_id",
+            "created_by_session_id",
+            "updated_by_run_id",
+            "updated_by_session_id",
+        }
+        rejected = sorted(set(provenance) - allowed)
+        if rejected:
+            raise ValueError(f"stamp_schedule_provenance cannot write {rejected}")
+        try:
+            table = await self._get_table(table_type="schedules")
+            if table is None:
+                return False
+            async with self.async_session_factory() as sess, sess.begin():
+                result = await sess.execute(
+                    table.update().where(table.c.id == schedule_id).values(updated_at=int(time.time()), **provenance)
+                )
+            return result.rowcount > 0  # type: ignore
+        except Exception as e:
+            log_error(f"Error stamping schedule provenance: {e}")
+            raise
+
+    # See ``OracleDb._CLAIM_CANDIDATE_BATCH`` (sync, ticket 07): how many
+    # earliest-due candidates to consider per claim attempt.
+    _CLAIM_CANDIDATE_BATCH = 20
+
+    async def claim_due_schedule(self, worker_id: str, lock_grace_seconds: int = 300) -> Optional[Dict[str, Any]]:
+        """Atomically claim the earliest due, unlocked (or stale-locked) schedule.
+
+        Mirrors ``OracleDb.claim_due_schedule`` (sync, ticket 07): Oracle
+        rejects FOR UPDATE combined with a row-limiting clause (ORA-02014),
+        so this fetches a bounded list of earliest-due candidate ids with a
+        plain SELECT, then tries them in order with a per-row FOR UPDATE
+        SKIP LOCKED by primary-key equality, which carries no such
+        restriction.
+        """
+        try:
+            table = await self._get_table(table_type="schedules")
+            if table is None:
+                return None
+            now = int(time.time())
+            stale_lock_threshold = now - lock_grace_seconds
+
+            def eligible(stmt):
+                return stmt.where(
+                    table.c.enabled == True,  # noqa: E712 -- .is_(True) miscompiles on OracleNativeBoolean
+                    table.c.next_run_at <= now,
+                    or_(
+                        table.c.locked_by.is_(None),
+                        table.c.locked_at <= stale_lock_threshold,
+                    ),
+                )
+
+            async with self.async_session_factory() as sess, sess.begin():
+                candidates_stmt = (
+                    eligible(select(table.c.id)).order_by(table.c.next_run_at.asc()).limit(self._CLAIM_CANDIDATE_BATCH)
+                )
+                candidates_result = await sess.execute(candidates_stmt)
+                candidate_ids = [row[0] for row in candidates_result.fetchall()]
+                for candidate_id in candidate_ids:
+                    lock_stmt = eligible(select(table.c.id).where(table.c.id == candidate_id)).with_for_update(
+                        skip_locked=True
+                    )
+                    lock_result = await sess.execute(lock_stmt)
+                    if lock_result.scalar() is None:
+                        continue
+                    await sess.execute(
+                        table.update().where(table.c.id == candidate_id).values(locked_by=worker_id, locked_at=now)
+                    )
+                    fetched = await sess.execute(select(table).where(table.c.id == candidate_id))
+                    row = fetched.fetchone()
+                    return dict(row._mapping) if row else None
+                return None
+        except Exception as e:
+            log_debug(f"Error claiming schedule: {e}")
+            return None
+
+    async def release_schedule(self, schedule_id: str, next_run_at: Optional[int] = None) -> bool:
+        try:
+            table = await self._get_table(table_type="schedules")
+            if table is None:
+                return False
+            updates: Dict[str, Any] = {"locked_by": None, "locked_at": None, "updated_at": int(time.time())}
+            if next_run_at is not None:
+                updates["next_run_at"] = next_run_at
+            async with self.async_session_factory() as sess, sess.begin():
+                result = await sess.execute(table.update().where(table.c.id == schedule_id).values(**updates))
+                return result.rowcount > 0  # type: ignore
+        except Exception as e:
+            log_debug(f"Error releasing schedule: {e}")
+            return False
+
+    # -- Schedule runs --
+    async def create_schedule_run(self, run_data: Dict[str, Any]) -> Dict[str, Any]:
+        try:
+            table = await self._get_table(table_type="schedule_runs", create_table_if_not_found=True)
+            if table is None:
+                raise RuntimeError("Failed to get or create schedule_runs table")
+            async with self.async_session_factory() as sess, sess.begin():
+                await sess.execute(table.insert().values(**run_data))
+            return run_data
+        except Exception as e:
+            log_error(f"Error creating schedule run: {str(e)}")
+            raise
+
+    async def update_schedule_run(self, schedule_run_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
+        try:
+            table = await self._get_table(table_type="schedule_runs")
+            if table is None:
+                return None
+            async with self.async_session_factory() as sess, sess.begin():
+                await sess.execute(table.update().where(table.c.id == schedule_run_id).values(**kwargs))
+            return await self.get_schedule_run(schedule_run_id)
+        except Exception as e:
+            log_debug(f"Error updating schedule run: {e}")
+            return None
+
+    async def get_schedule_run(self, run_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        try:
+            table = await self._get_table(table_type="schedule_runs")
+            if table is None:
+                return None
+            async with self.async_session_factory() as sess:
+                stmt = select(table).where(table.c.id == run_id)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
+                result = await sess.execute(stmt)
+                row = result.fetchone()
+                return dict(row._mapping) if row else None
+        except Exception as e:
+            log_debug(f"Error getting schedule run: {e}")
+            return None
+
+    async def get_schedule_runs(
+        self,
+        schedule_id: str,
+        limit: int = 20,
+        page: int = 1,
+        user_id: Optional[str] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        try:
+            table = await self._get_table(table_type="schedule_runs")
+            if table is None:
+                return [], 0
+            async with self.async_session_factory() as sess:
+                base_filter = table.c.schedule_id == schedule_id
+                if user_id is not None:
+                    base_filter = base_filter & (table.c.user_id == user_id)
+
+                count_stmt = select(func.count()).select_from(table).where(base_filter)
+                total_count = (await sess.execute(count_stmt)).scalar() or 0
+
+                offset = (page - 1) * limit
+                stmt = select(table).where(base_filter).order_by(table.c.created_at.desc()).limit(limit).offset(offset)
+                result = await sess.execute(stmt)
+                return [dict(row._mapping) for row in result.fetchall()], total_count
+        except Exception as e:
+            log_debug(f"Error getting schedule runs: {e}")
+            return [], 0
+
+    # -- Approvals --
+    async def create_approval(self, approval_data: Dict[str, Any]) -> Dict[str, Any]:
+        try:
+            table = await self._get_table(table_type="approvals", create_table_if_not_found=True)
+            if table is None:
+                raise RuntimeError("Failed to get or create approvals table")
+            data = {**approval_data}
+            now = int(time.time())
+            data.setdefault("created_at", now)
+            data.setdefault("updated_at", now)
+            async with self.async_session_factory() as sess, sess.begin():
+                await sess.execute(table.insert().values(**data))
+            return data
+        except Exception as e:
+            log_error(f"Error creating approval: {str(e)}")
+            raise
+
+    async def get_approval(self, approval_id: str) -> Optional[Dict[str, Any]]:
+        try:
+            table = await self._get_table(table_type="approvals")
+            if table is None:
+                return None
+            async with self.async_session_factory() as sess:
+                result = await sess.execute(select(table).where(table.c.id == approval_id))
+                row = result.fetchone()
+                return dict(row._mapping) if row else None
+        except Exception as e:
+            log_debug(f"Error getting approval: {e}")
+            return None
+
+    async def get_approvals(
+        self,
+        status: Optional[str] = None,
+        source_type: Optional[str] = None,
+        approval_type: Optional[str] = None,
+        pause_type: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        schedule_id: Optional[str] = None,
+        run_id: Optional[str] = None,
+        limit: int = 100,
+        page: int = 1,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        try:
+            table = await self._get_table(table_type="approvals")
+            if table is None:
+                return [], 0
+            async with self.async_session_factory() as sess:
+                stmt = select(table)
+                count_stmt = select(func.count()).select_from(table)
+                if status is not None:
+                    stmt = stmt.where(table.c.status == status)
+                    count_stmt = count_stmt.where(table.c.status == status)
+                if source_type is not None:
+                    stmt = stmt.where(table.c.source_type == source_type)
+                    count_stmt = count_stmt.where(table.c.source_type == source_type)
+                if approval_type is not None:
+                    stmt = stmt.where(table.c.approval_type == approval_type)
+                    count_stmt = count_stmt.where(table.c.approval_type == approval_type)
+                if pause_type is not None:
+                    stmt = stmt.where(table.c.pause_type == pause_type)
+                    count_stmt = count_stmt.where(table.c.pause_type == pause_type)
+                if agent_id is not None:
+                    stmt = stmt.where(table.c.agent_id == agent_id)
+                    count_stmt = count_stmt.where(table.c.agent_id == agent_id)
+                if team_id is not None:
+                    stmt = stmt.where(table.c.team_id == team_id)
+                    count_stmt = count_stmt.where(table.c.team_id == team_id)
+                if workflow_id is not None:
+                    stmt = stmt.where(table.c.workflow_id == workflow_id)
+                    count_stmt = count_stmt.where(table.c.workflow_id == workflow_id)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
+                    count_stmt = count_stmt.where(table.c.user_id == user_id)
+                if schedule_id is not None:
+                    stmt = stmt.where(table.c.schedule_id == schedule_id)
+                    count_stmt = count_stmt.where(table.c.schedule_id == schedule_id)
+                if run_id is not None:
+                    stmt = stmt.where(table.c.run_id == run_id)
+                    count_stmt = count_stmt.where(table.c.run_id == run_id)
+                total = (await sess.execute(count_stmt)).scalar() or 0
+
+                offset = (page - 1) * limit
+                stmt = stmt.order_by(table.c.created_at.desc()).limit(limit).offset(offset)
+                result = await sess.execute(stmt)
+                return [dict(row._mapping) for row in result.fetchall()], total
+        except Exception as e:
+            log_debug(f"Error listing approvals: {e}")
+            return [], 0
+
+    async def update_approval(
+        self, approval_id: str, expected_status: Optional[str] = None, **kwargs: Any
+    ) -> Optional[Dict[str, Any]]:
+        try:
+            table = await self._get_table(table_type="approvals")
+            if table is None:
+                return None
+            kwargs["updated_at"] = int(time.time())
+            async with self.async_session_factory() as sess, sess.begin():
+                stmt = table.update().where(table.c.id == approval_id)
+                if expected_status is not None:
+                    stmt = stmt.where(table.c.status == expected_status)
+                result = await sess.execute(stmt.values(**kwargs))
+                if result.rowcount == 0:  # type: ignore
+                    return None
+            return await self.get_approval(approval_id)
+        except Exception as e:
+            log_debug(f"Error updating approval: {e}")
+            return None
+
+    async def delete_approval(self, approval_id: str) -> bool:
+        try:
+            table = await self._get_table(table_type="approvals")
+            if table is None:
+                return False
+            async with self.async_session_factory() as sess, sess.begin():
+                result = await sess.execute(table.delete().where(table.c.id == approval_id))
+                return result.rowcount > 0  # type: ignore
+        except Exception as e:
+            log_debug(f"Error deleting approval: {e}")
+            return False
+
+    async def get_pending_approval_count(self, user_id: Optional[str] = None) -> int:
+        try:
+            table = await self._get_table(table_type="approvals")
+            if table is None:
+                return 0
+            async with self.async_session_factory() as sess:
+                stmt = select(func.count()).select_from(table).where(table.c.status == "pending")
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
+                return (await sess.execute(stmt)).scalar() or 0
+        except Exception as e:
+            log_debug(f"Error counting approvals: {e}")
+            return 0
+
+    async def update_approval_run_status(self, run_id: str, run_status: RunStatus) -> int:
+        try:
+            table = await self._get_table(table_type="approvals")
+            if table is None:
+                return 0
+            async with self.async_session_factory() as sess, sess.begin():
+                stmt = (
+                    table.update()
+                    .where(table.c.run_id == run_id)
+                    .values(run_status=run_status.value, updated_at=int(time.time()))
+                )
+                result = await sess.execute(stmt)
+                return result.rowcount  # type: ignore
+        except Exception as e:
+            log_debug(f"Error updating approval run_status: {e}")
+            return 0
+
+    # -- Auth tokens --
+    #
+    # auth_tokens.user_id is NOT NULL; see ``OracleDb``'s own comment on this
+    # column (sync, ticket 08) for why the owner-scoping sentinel
+    # (to_db_user_id/from_db_user_id) applies here.
+    async def get_auth_token(self, provider: str, user_id: Optional[str], service: str) -> Optional[Dict[str, Any]]:
+        try:
+            table = await self._get_table(table_type="auth_tokens")
+            if table is None:
+                return None
+            effective_user_id = to_db_user_id(user_id if user_id is not None else "")
+            async with self.async_session_factory() as sess:
+                result = await sess.execute(
+                    select(table).where(
+                        table.c.provider == provider,
+                        table.c.user_id == effective_user_id,
+                        table.c.service == service,
+                    )
+                )
+                row = result.fetchone()
+                if not row:
+                    return None
+                data = dict(row._mapping)
+                data["user_id"] = from_db_user_id(data.get("user_id"))
+                return data
+        except Exception as e:
+            log_debug(f"Error getting auth token: {e}")
+            return None
+
+    async def upsert_auth_token(self, token: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        try:
+            table = await self._get_table(table_type="auth_tokens", create_table_if_not_found=True)
+            if table is None:
+                raise RuntimeError("Failed to get or create auth_tokens table")
+            data = {**token}
+            data["id"] = str(uuid4())
+            data["user_id"] = data.get("user_id") or ""
+            now = int(time.time())
+            data.setdefault("created_at", now)
+            data["updated_at"] = now
+            values = {**data, "user_id": to_db_user_id(data["user_id"])}
+            async with self.async_session_factory() as sess, sess.begin():
+                await amerge_upsert(
+                    sess,
+                    table,
+                    key_columns=["provider", "user_id", "service"],
+                    values=values,
+                    preserve_on_conflict=["id", "created_at"],
+                )
+            return data
+        except Exception as e:
+            log_debug(f"Error upserting auth token: {e}")
+            return None
+
+    async def delete_auth_token(self, provider: str, user_id: Optional[str], service: str) -> bool:
+        try:
+            table = await self._get_table(table_type="auth_tokens")
+            if table is None:
+                return False
+            effective_user_id = to_db_user_id(user_id if user_id is not None else "")
+            async with self.async_session_factory() as sess, sess.begin():
+                result = await sess.execute(
+                    table.delete().where(
+                        table.c.provider == provider,
+                        table.c.user_id == effective_user_id,
+                        table.c.service == service,
+                    )
+                )
+                return result.rowcount > 0  # type: ignore
+        except Exception as e:
+            log_debug(f"Error deleting auth token: {e}")
+            return False
+
+    # -- Service Accounts --
+    async def create_service_account(self, account_data: Dict[str, Any]) -> Dict[str, Any]:
+        try:
+            table = await self._get_table(table_type="service_accounts", create_table_if_not_found=True)
+            if table is None:
+                raise RuntimeError("Failed to get or create service accounts table")
+            async with self.async_session_factory() as sess, sess.begin():
+                await sess.execute(table.insert().values(**account_data))
+            return account_data
+        except Exception as e:
+            log_error(f"Error creating service account: {str(e)}")
+            raise
+
+    async def get_service_account(
+        self, service_account_id: str, user_id: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        try:
+            table = await self._get_table(table_type="service_accounts")
+            if table is None:
+                return None
+            async with self.async_session_factory() as sess:
+                stmt = select(table).where(table.c.id == service_account_id)
+                if user_id is not None:
+                    stmt = stmt.where(or_(table.c.user_id == user_id, table.c.user_id.is_(None)))
+                result = await sess.execute(stmt)
+                row = result.fetchone()
+                return dict(row._mapping) if row else None
+        except Exception as e:
+            log_debug(f"Error getting service account: {e}")
+            return None
+
+    async def get_service_account_by_token_hash(self, token_hash: str) -> Optional[Dict[str, Any]]:
+        """Get a service account by token hash.
+
+        Re-raises on database errors (instead of returning None) so callers can
+        distinguish an unknown token from an unavailable database.
+        """
+        table = await self._get_table(table_type="service_accounts")
+        if table is None:
+            # A genuinely absent table returns None; a real outage propagates
+            # (fail closed) instead of reading as an unknown token. Mirrors
+            # OracleDb.get_service_account_by_token_hash (sync, ticket 11).
+            async with self.async_session_factory() as sess:
+                await sess.execute(text("SELECT 1 FROM dual"))
+            return None
+        try:
+            async with self.async_session_factory() as sess:
+                result = await sess.execute(select(table).where(table.c.token_hash == token_hash))
+                row = result.fetchone()
+                return dict(row._mapping) if row else None
+        except Exception as e:
+            log_error(f"Error getting service account by token hash: {e}")
+            raise
+
+    async def get_service_account_by_name(self, name: str, include_revoked: bool = False) -> Optional[Dict[str, Any]]:
+        try:
+            table = await self._get_table(table_type="service_accounts")
+            if table is None:
+                return None
+            async with self.async_session_factory() as sess:
+                stmt = select(table).where(table.c.name == name)
+                if not include_revoked:
+                    stmt = stmt.where(table.c.revoked_at.is_(None))
+                stmt = stmt.order_by(table.c.created_at.desc())
+                result = await sess.execute(stmt)
+                row = result.fetchone()
+                return dict(row._mapping) if row else None
+        except Exception as e:
+            log_debug(f"Error getting service account by name: {e}")
+            return None
+
+    async def get_service_accounts(
+        self,
+        include_revoked: bool = True,
+        limit: int = 20,
+        page: int = 1,
+        sort_by: str = "created_at",
+        sort_order: str = "desc",
+        user_id: Optional[str] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        try:
+            table = await self._get_table(table_type="service_accounts")
+            if table is None:
+                return [], 0
+            async with self.async_session_factory() as sess:
+                base_query = select(table)
+                if not include_revoked:
+                    base_query = base_query.where(table.c.revoked_at.is_(None))
+                if user_id is not None:
+                    base_query = base_query.where(or_(table.c.user_id == user_id, table.c.user_id.is_(None)))
+
+                count_stmt = select(func.count()).select_from(base_query.alias())
+                total_count = (await sess.execute(count_stmt)).scalar() or 0
+
+                offset = (page - 1) * limit
+
+                sort_col = table.c[resolve_service_account_sort_column(sort_by)]
+                order_by = sort_col.asc() if sort_order == "asc" else sort_col.desc()
+
+                stmt = base_query.order_by(order_by).limit(limit).offset(offset)
+                result = await sess.execute(stmt)
+                return [dict(row._mapping) for row in result.fetchall()], total_count
+        except Exception as e:
+            log_debug(f"Error listing service accounts: {e}")
+            return [], 0
+
+    async def update_service_account(
+        self, service_account_id: str, return_record: bool = True, **kwargs: Any
+    ) -> Optional[Dict[str, Any]]:
+        validate_service_account_update(kwargs)
+        try:
+            table = await self._get_table(table_type="service_accounts")
+            if table is None:
+                return None
+            async with self.async_session_factory() as sess, sess.begin():
+                await sess.execute(table.update().where(table.c.id == service_account_id).values(**kwargs))
+            if not return_record:
+                return None
+            return await self.get_service_account(service_account_id)
+        except Exception as e:
+            log_debug(f"Error updating service account: {e}")
+            return None
+
+    async def delete_service_account(self, service_account_id: str) -> bool:
+        try:
+            table = await self._get_table(table_type="service_accounts")
+            if table is None:
+                return False
+            async with self.async_session_factory() as sess, sess.begin():
+                result = await sess.execute(table.delete().where(table.c.id == service_account_id))
+                return result.rowcount > 0  # type: ignore
+        except Exception as e:
+            log_debug(f"Error deleting service account: {e}")
+            return False

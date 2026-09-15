@@ -9,6 +9,15 @@ the async Postgres adapter, not the sync one, since the async base class
 carries less (no batch upserts, no components, no MCP OAuth) -- comparing
 against AsyncPostgresDb is what actually pins the right contract.
 
+Ticket 14 extends this file with its own domains (learnings, schedules and
+schedule runs, tool results, approvals, auth tokens, service accounts),
+mirroring the sync harness's own scenarios for tickets 06-08 and 11 --
+concurrent claim's exactly-one-winner property is proven separately (see
+validate_ticket14.py's genuine ``asyncio.gather`` check), not here, for the
+same reason the sync harness excludes it: a differential comparison says
+nothing about a race, only about whether both backends agree on a
+deterministic scenario.
+
 Both modules skip cleanly (not error) when their server is unreachable,
 matching the sync harness's own convention (ADR 0009: no Oracle container in
 public CI).
@@ -28,6 +37,7 @@ from agno.db.schemas.evals import EvalRunRecord
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
 from agno.run.agent import RunOutput
+from agno.run.base import RunStatus
 from agno.session import AgentSession
 from agno.tracing.schemas import Span, Trace
 
@@ -80,6 +90,12 @@ async def oracle_db(_servers_up):
         "traces_table": f"adiff_trace_{suffix}",
         "spans_table": f"adiff_span_{suffix}",
         "versions_table": f"adiff_ver_{suffix}",
+        "learnings_table": f"adiff_learn_{suffix}",
+        "schedules_table": f"adiff_sched_{suffix}",
+        "schedule_runs_table": f"adiff_schedrun_{suffix}",
+        "approvals_table": f"adiff_appr_{suffix}",
+        "auth_tokens_table": f"adiff_auth_{suffix}",
+        "service_accounts_table": f"adiff_svcacct_{suffix}",
     }
     database = AsyncOracleDb(db_url=ORACLE_ASYNC_URL, id=f"adiff-oracle-{suffix}", **tables)
     yield database
@@ -88,7 +104,7 @@ async def oracle_db(_servers_up):
     # engine for the reachability probe above.
     sync_engine = create_engine(ORACLE_SYNC_URL)
     with sync_engine.begin() as conn:
-        for t in tables.values():
+        for t in [*tables.values(), database.tool_results_table_name]:
             exists = conn.execute(text(f"select count(*) from user_tables where table_name = upper('{t}')")).scalar()
             if exists:
                 conn.execute(text(f"DROP TABLE {t} CASCADE CONSTRAINTS"))
@@ -313,6 +329,437 @@ async def _run_eval_trace_span_scenario(db) -> Dict[str, Any]:
 async def test_async_eval_trace_span_matches_postgres(pg_db, oracle_db):
     pg_result = await _run_eval_trace_span_scenario(pg_db)
     oracle_result = await _run_eval_trace_span_scenario(oracle_db)
+
+    assert oracle_result == pg_result, (
+        f"AsyncOracleDb diverged from AsyncPostgresDb.\nPostgres: {pg_result}\nOracle:   {oracle_result}"
+    )
+
+
+async def _run_learnings_scenario(db) -> Dict[str, Any]:
+    """Ticket 06/14's domain: search matching (Python-side regex translation
+    of Postgres's CAST+ILIKE) and per-owner listing/stats.
+    """
+    await db.upsert_learning(
+        id="adiff-learning-1",
+        learning_type="user_profile",
+        content={"summary": "alice_chen likes tea"},
+        user_id="alice",
+    )
+    await db.upsert_learning(
+        id="adiff-learning-2",
+        learning_type="session_context",
+        content={"note": "bob prefers dark mode"},
+        user_id="bob",
+    )
+    await db.upsert_learning(
+        id="adiff-learning-3", learning_type="user_profile", content={"summary": "shared note"}, user_id=None
+    )
+
+    space_underscore_match = sorted(r["learning_id"] for r in await db.search_learnings(query="alice chen"))
+    case_insensitive_match = sorted(r["learning_id"] for r in await db.search_learnings(query="DARK MODE"))
+    no_match = await db.search_learnings(query="nonexistent-zzz")
+
+    alice_learnings = sorted(r["learning_id"] for r in await db.get_learnings(user_id="alice"))
+    _, list_total = await db.list_learnings(user_id="alice", include_global=True)
+
+    stats, stats_total = await db.get_learnings_user_stats()
+    stats_user_ids = sorted(s["user_id"] for s in stats)
+
+    await db.update_learning("adiff-learning-1", content={"summary": "updated"})
+    updated = await db.get_learning_by_id("adiff-learning-1")
+
+    deleted_count = await db.delete_user_learnings("bob")
+    _, remaining_total = await db.list_learnings()
+
+    return {
+        "space_underscore_match": space_underscore_match,
+        "case_insensitive_match": case_insensitive_match,
+        "no_match": no_match,
+        "alice_learnings": alice_learnings,
+        "list_total": list_total,
+        "stats_total": stats_total,
+        "stats_user_ids": stats_user_ids,
+        "updated_summary": updated["content"]["summary"],
+        "deleted_count": deleted_count,
+        "remaining_total": remaining_total,
+    }
+
+
+async def test_async_learnings_match_postgres(pg_db, oracle_db):
+    """One scenario covering ticket 14's learnings domain, compared directly."""
+    pg_result = await _run_learnings_scenario(pg_db)
+    oracle_result = await _run_learnings_scenario(oracle_db)
+
+    assert oracle_result == pg_result, (
+        f"AsyncOracleDb diverged from AsyncPostgresDb.\nPostgres: {pg_result}\nOracle:   {oracle_result}"
+    )
+
+
+async def _run_schedules_scenario(db) -> Dict[str, Any]:
+    """Ticket 07/14's domain: schedules and schedule runs -- uniqueness
+    across the three owner-bucket states, generic update, provenance
+    stamping, target-cascade disable, claim/release, and cascade delete into
+    schedule_runs.
+
+    Concurrent claim's exactly-one-winner property is proven separately
+    (validate_ticket14.py's own genuine asyncio.gather check against a live
+    server), not here -- a differential comparison says nothing about a
+    race. Wall-clock-derived fields the adapters set internally are
+    deliberately excluded from the comparison below, for the same reason the
+    sync scenario excludes them.
+    """
+    base = {
+        "description": None,
+        "method": "POST",
+        "payload": {"message": "hi"},
+        "cron_expr": "0 * * * *",
+        "timezone": "UTC",
+        "timeout_seconds": 60,
+        "max_retries": 0,
+        "retry_delay_seconds": 0,
+        "enabled": True,
+        "next_run_at": 1700000000,
+        "locked_by": None,
+        "locked_at": None,
+        "managed_by": None,
+        "target_type": None,
+        "target_id": None,
+        "created_by_run_id": None,
+        "created_by_session_id": None,
+        "updated_by_run_id": None,
+        "updated_by_session_id": None,
+        "disabled_reason": None,
+        "created_at": 1700000000,
+        "updated_at": 1700000000,
+    }
+    await db.create_schedule(
+        {"id": "adiff-sched-1", "name": "daily-report", "user_id": "alice", "endpoint": "/agents/sched-1/runs", **base}
+    )
+    await db.create_schedule(
+        {"id": "adiff-sched-2", "name": "daily-report", "user_id": "bob", "endpoint": "/agents/sched-2/runs", **base}
+    )
+    await db.create_schedule(
+        {"id": "adiff-sched-3", "name": "daily-report", "user_id": None, "endpoint": "/agents/sched-3/runs", **base}
+    )
+    await db.create_schedule(
+        {"id": "adiff-sched-4", "name": "other-name", "user_id": "alice", "endpoint": "/agents/sched-4/runs", **base}
+    )
+
+    by_name_alice = (await db.get_schedule_by_name("daily-report", user_id="alice"))["id"]
+    by_name_unowned = (await db.get_schedule_by_name("daily-report", user_id=None))["id"]
+
+    same_owner_collision = False
+    try:
+        await db.create_schedule({"id": "adiff-sched-1-dup", "name": "daily-report", "user_id": "alice", **base})
+    except Exception:
+        same_owner_collision = True
+
+    unowned_collision = False
+    try:
+        await db.create_schedule({"id": "adiff-sched-3-dup", "name": "daily-report", "user_id": None, **base})
+    except Exception:
+        unowned_collision = True
+
+    _, alice_total = await db.get_schedules(user_id="alice")
+    _, all_total = await db.get_schedules()
+
+    updated = await db.update_schedule("adiff-sched-1", cron_expr="0 0 * * *")
+
+    rename_collision = False
+    try:
+        await db.update_schedule("adiff-sched-4", name="daily-report", user_id="alice")
+    except Exception:
+        rename_collision = True
+
+    await db.stamp_schedule_provenance(
+        "adiff-sched-2", managed_by="system", target_type="agent", target_id="adiff-agent"
+    )
+    disabled_count = await db.disable_schedules_for_target("agent", "adiff-agent")
+    after_disable = await db.get_schedule("adiff-sched-2")
+
+    claimed = await db.claim_due_schedule("adiff-worker-1")
+    claimed_locked_by = claimed["locked_by"] if claimed else None
+    claimed_has_lock_timestamp = claimed is not None and claimed["locked_at"] is not None
+    await db.release_schedule(claimed["id"], next_run_at=1800000000)
+    after_release = await db.get_schedule(claimed["id"])
+
+    await db.create_schedule_run(
+        {
+            "id": "adiff-run-1",
+            "schedule_id": "adiff-sched-3",
+            "attempt": 1,
+            "triggered_at": 1700000000,
+            "completed_at": None,
+            "status": "pending",
+            "status_code": None,
+            "run_id": None,
+            "session_id": None,
+            "error": None,
+            "input": {"a": 1},
+            "output": None,
+            "requirements": None,
+            "user_id": None,
+            "created_at": 1700000000,
+        }
+    )
+    updated_run = await db.update_schedule_run("adiff-run-1", status="completed", output={"ok": True})
+    runs, run_total = await db.get_schedule_runs("adiff-sched-3")
+
+    deleted = await db.delete_schedule("adiff-sched-3")
+    remaining_run = await db.get_schedule_run("adiff-run-1")
+
+    return {
+        "by_name_alice": by_name_alice,
+        "by_name_unowned": by_name_unowned,
+        "same_owner_collision": same_owner_collision,
+        "unowned_collision": unowned_collision,
+        "alice_total": alice_total,
+        "all_total": all_total,
+        "updated_cron_expr": updated["cron_expr"],
+        "rename_collision": rename_collision,
+        "disabled_count": disabled_count,
+        "after_disable_enabled": after_disable["enabled"],
+        "after_disable_disabled_reason": after_disable["disabled_reason"],
+        "claimed_id": claimed["id"] if claimed else None,
+        "claimed_locked_by": claimed_locked_by,
+        "claimed_has_lock_timestamp": claimed_has_lock_timestamp,
+        "after_release_locked_by": after_release["locked_by"],
+        "after_release_next_run_at": after_release["next_run_at"],
+        "updated_run_status": updated_run["status"],
+        "updated_run_output": updated_run["output"],
+        "run_total": run_total,
+        "runs_ids": sorted(r["id"] for r in runs),
+        "deleted": deleted,
+        "remaining_run_after_cascade": remaining_run,
+    }
+
+
+async def test_async_schedules_match_postgres(pg_db, oracle_db):
+    """One scenario covering ticket 14's schedules domain, compared directly."""
+    pg_result = await _run_schedules_scenario(pg_db)
+    oracle_result = await _run_schedules_scenario(oracle_db)
+
+    assert oracle_result == pg_result, (
+        f"AsyncOracleDb diverged from AsyncPostgresDb.\nPostgres: {pg_result}\nOracle:   {oracle_result}"
+    )
+
+
+async def _run_approvals_auth_tokens_scenario(db) -> Dict[str, Any]:
+    """Ticket 08/14's domain: the compare-and-swap update guard on
+    approvals, and the owner-scoping sentinel exercised for real on
+    auth_tokens.user_id.
+    """
+
+    def _approval(id_, **overrides):
+        d = {
+            "id": id_,
+            "run_id": "adiff-run-1",
+            "session_id": "adiff-session-1",
+            "status": "pending",
+            "source_type": "tool_call",
+            "approval_type": "confirmation",
+            "pause_type": "before_call",
+            "tool_name": "delete_file",
+            "tool_args": {"path": "/tmp/x"},
+            "expires_at": None,
+            "agent_id": "adiff-agent",
+            "team_id": None,
+            "workflow_id": None,
+            "user_id": "alice",
+            "schedule_id": None,
+            "schedule_run_id": None,
+            "source_name": None,
+            "requirements": None,
+            "context": None,
+            "resolution_data": None,
+            "resolved_by": None,
+            "resolved_at": None,
+            "run_status": None,
+        }
+        d.update(overrides)
+        return d
+
+    await db.create_approval(_approval("adiff-appr-1"))
+    await db.create_approval(_approval("adiff-appr-2", user_id="bob", run_id="adiff-run-2"))
+
+    _, pending_total = await db.get_approvals(status="pending")
+    pending_count = await db.get_pending_approval_count()
+
+    matched_update = await db.update_approval("adiff-appr-1", expected_status="pending", status="approved")
+    diverged_update = await db.update_approval("adiff-appr-1", expected_status="pending", status="rejected")
+    after_cas = await db.get_approval("adiff-appr-1")
+
+    run_status_count = await db.update_approval_run_status("adiff-run-1", RunStatus.completed)
+    after_run_status = await db.get_approval("adiff-appr-1")
+
+    deleted = await db.delete_approval("adiff-appr-2")
+    _, remaining_total = await db.get_approvals()
+
+    await db.upsert_auth_token(
+        {"provider": "github", "user_id": None, "service": "oauth", "token_data": {"access_token": "tok-1"}}
+    )
+    await db.upsert_auth_token(
+        {"provider": "github", "user_id": "alice", "service": "oauth", "token_data": {"access_token": "tok-alice"}}
+    )
+    unowned_token = await db.get_auth_token("github", None, "oauth")
+    alice_token = await db.get_auth_token("github", "alice", "oauth")
+    alice_token_id_before = alice_token["id"]
+
+    await db.upsert_auth_token(
+        {"provider": "github", "user_id": "alice", "service": "oauth", "token_data": {"access_token": "tok-alice-v2"}}
+    )
+    alice_token_after = await db.get_auth_token("github", "alice", "oauth")
+
+    deleted_token = await db.delete_auth_token("github", "alice", "oauth")
+    alice_token_after_delete = await db.get_auth_token("github", "alice", "oauth")
+    unowned_token_after_delete = await db.get_auth_token("github", None, "oauth")
+
+    return {
+        "pending_total": pending_total,
+        "pending_count": pending_count,
+        "matched_update_status": matched_update["status"] if matched_update else None,
+        "diverged_update": diverged_update,
+        "after_cas_status": after_cas["status"],
+        "run_status_count": run_status_count,
+        "after_run_status": after_run_status["run_status"],
+        "deleted_approval": deleted,
+        "remaining_approval_total": remaining_total,
+        "unowned_token_user_id": unowned_token["user_id"],
+        "unowned_token_access": unowned_token["token_data"]["access_token"],
+        "alice_token_access": alice_token["token_data"]["access_token"],
+        "alice_token_id_stable": alice_token_after["id"] == alice_token_id_before,
+        "alice_token_access_after_upsert": alice_token_after["token_data"]["access_token"],
+        "deleted_token": deleted_token,
+        "alice_token_after_delete": alice_token_after_delete,
+        "unowned_token_survives_alice_delete": unowned_token_after_delete is not None,
+    }
+
+
+async def test_async_approvals_and_auth_tokens_match_postgres(pg_db, oracle_db):
+    """One scenario covering ticket 14's approvals/auth_tokens domain, compared directly."""
+    pg_result = await _run_approvals_auth_tokens_scenario(pg_db)
+    oracle_result = await _run_approvals_auth_tokens_scenario(oracle_db)
+
+    assert oracle_result == pg_result, (
+        f"AsyncOracleDb diverged from AsyncPostgresDb.\nPostgres: {pg_result}\nOracle:   {oracle_result}"
+    )
+
+
+async def _run_tool_results_and_service_accounts_scenario(db) -> Dict[str, Any]:
+    """Ticket 11/14's domain: the tool_results offloading index table and
+    its session-delete cascade, and service accounts' active-name partial
+    uniqueness (a revoked name frees itself for reuse).
+    """
+
+    def _tool_result(result_id, session_id, **overrides):
+        d = {
+            "result_id": result_id,
+            "namespace": "adiff",
+            "path": f"/{result_id}",
+            "session_id": session_id,
+            "run_id": "adiff-run-1",
+            "tool_call_id": "call-1",
+            "tool_name": "search",
+            "args_hash": "abc123",
+            "content_type": "text/plain",
+            "size_bytes": 1000,
+            "line_count": 10,
+            "preview": "preview text",
+            "user_id": None,
+            "created_at": 1700000000,
+            "expires_at": None,
+        }
+        d.update(overrides)
+        return d
+
+    await db.upsert_tool_result(_tool_result("adiff-r1", "adiff-tr-session"))
+    await db.upsert_tool_result(_tool_result("adiff-r2", "adiff-tr-session", created_at=1700000001))
+    await db.upsert_tool_result(_tool_result("adiff-r3", "adiff-tr-session-2"))
+    await db.upsert_tool_result(_tool_result("adiff-r1", "adiff-tr-session", tool_name="updated"))
+    fetched_after_update = await db.get_tool_result("adiff-r1")
+
+    session_results = await db.get_tool_results_for_session("adiff-tr-session")
+    session_result_ids = [r["result_id"] for r in session_results]
+
+    deleted_count = await db.delete_tool_results(["adiff-r3"])
+
+    await db.upsert_tool_result(_tool_result("adiff-r-expired", "adiff-tr-session", expires_at=1600000000))
+    expired = await db.get_expired_tool_results(1650000000)
+    expired_ids = sorted(r["result_id"] for r in expired)
+
+    session = AgentSession(session_id="adiff-tr-session", agent_id="adiff-agent", created_at=1700000000)
+    await db.upsert_session(session)
+    pre_delete_results = await db.get_tool_results_for_session("adiff-tr-session")
+    await db.delete_session("adiff-tr-session")
+    post_delete_results = await db.get_tool_results_for_session("adiff-tr-session")
+
+    sa1 = {
+        "id": "adiff-sa-1",
+        "name": "adiff-ci-bot",
+        "user_id": "alice",
+        "token_hash": "adiff-hash-1",
+        "token_prefix": "sk_ab",
+        "scopes": ["read", "write"],
+        "created_at": 1700000000,
+        "expires_at": None,
+        "last_used_at": None,
+        "revoked_at": None,
+        "created_by": "alice",
+    }
+    await db.create_service_account(sa1)
+    by_hash = await db.get_service_account_by_token_hash("adiff-hash-1")
+    by_name = await db.get_service_account_by_name("adiff-ci-bot")
+
+    same_name_rejected = False
+    try:
+        await db.create_service_account(
+            {**sa1, "id": "adiff-sa-2", "token_hash": "adiff-hash-2", "user_id": "bob", "created_by": "bob"}
+        )
+    except Exception:
+        same_name_rejected = True
+
+    await db.update_service_account("adiff-sa-1", revoked_at=1700000100)
+    reused_ok = False
+    try:
+        await db.create_service_account(
+            {**sa1, "id": "adiff-sa-3", "token_hash": "adiff-hash-3", "user_id": "carol", "created_by": "carol"}
+        )
+        reused_ok = True
+    except Exception:
+        pass
+    active_by_name = await db.get_service_account_by_name("adiff-ci-bot")
+
+    all_accounts, all_total = await db.get_service_accounts(include_revoked=True)
+    active_accounts, active_total = await db.get_service_accounts(include_revoked=False)
+    all_ids = sorted(a["id"] for a in all_accounts)
+    active_ids = sorted(a["id"] for a in active_accounts)
+
+    deleted_sa = await db.delete_service_account("adiff-sa-1")
+
+    return {
+        "fetched_after_update_tool_name": fetched_after_update["tool_name"],
+        "session_result_ids": sorted(session_result_ids),
+        "deleted_tool_results_count": deleted_count,
+        "expired_ids": expired_ids,
+        "pre_delete_result_count": len(pre_delete_results),
+        "post_delete_results": post_delete_results,
+        "by_hash_id": by_hash["id"],
+        "by_name_id": by_name["id"],
+        "same_name_rejected": same_name_rejected,
+        "reused_ok": reused_ok,
+        "active_by_name_id": active_by_name["id"],
+        "all_ids": all_ids,
+        "all_total": all_total,
+        "active_ids": active_ids,
+        "active_total": active_total,
+        "deleted_sa": deleted_sa,
+    }
+
+
+async def test_async_tool_results_and_service_accounts_match_postgres(pg_db, oracle_db):
+    """One scenario covering ticket 14's tool_results/service_accounts domain, compared directly."""
+    pg_result = await _run_tool_results_and_service_accounts_scenario(pg_db)
+    oracle_result = await _run_tool_results_and_service_accounts_scenario(oracle_db)
 
     assert oracle_result == pg_result, (
         f"AsyncOracleDb diverged from AsyncPostgresDb.\nPostgres: {pg_result}\nOracle:   {oracle_result}"
