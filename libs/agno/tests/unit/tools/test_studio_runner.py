@@ -4471,3 +4471,124 @@ class TestEndToEndSelfDispatchOnce:
         assert model.recorder["finals"] == ["saw-refusal", "saw-success"]
         assert output.content == "saw-success"
         assert model.recorder["provider_calls"] == 4
+
+
+# ----------------------------------------------------------------------
+# Prompt-backed agents
+# ----------------------------------------------------------------------
+
+
+def _build_offline_model():
+    from typing import AsyncIterator, Iterator
+
+    from agno.models.base import Model
+    from agno.models.message import Message, MessageMetrics
+    from agno.models.response import ModelResponse
+
+    class OfflineModel(Model):
+        """Answers offline and records the messages of every call."""
+
+        def __init__(self):
+            super().__init__(id="offline-test", name="offline-test", provider="test")
+            self.calls: List[List[Message]] = []
+
+        def __deepcopy__(self, memo):
+            return self
+
+        def _respond(self, messages) -> ModelResponse:
+            self.calls.append(list(messages or []))
+            return ModelResponse(content="ok", role="assistant", response_usage=MessageMetrics())
+
+        def invoke(self, messages=None, *args, **kwargs) -> ModelResponse:
+            return self._respond(messages)
+
+        async def ainvoke(self, messages=None, *args, **kwargs) -> ModelResponse:
+            return self._respond(messages)
+
+        def invoke_stream(self, messages=None, *args, **kwargs) -> Iterator[ModelResponse]:
+            yield self._respond(messages)
+
+        async def ainvoke_stream(self, messages=None, *args, **kwargs) -> AsyncIterator[ModelResponse]:
+            yield self._respond(messages)
+
+        def parse_args(self, *args, **kwargs):
+            return {}
+
+        def _parse_provider_response(self, response, **kwargs) -> ModelResponse:
+            return response
+
+        def _parse_provider_response_delta(self, response) -> ModelResponse:
+            return response
+
+    return OfflineModel()
+
+
+class TestPromptBackedAgents:
+    """A persisted agent whose instructions reference a Prompt component
+    resolves the published text on load, so dispatch runs that wording and a
+    pin that no longer exists is refused instead of running with no text."""
+
+    def _registry(self, db, model):
+        return Registry(name="Prompt Registry", dbs=[db], models=[model])
+
+    def _save(self, db, model, **selector):
+        from agno.agent.agent import Agent
+        from agno.prompt import Prompt
+
+        Agent(id="prompted", name="Prompted", model=model, instructions=Prompt(id="support", **selector)).save(db=db)
+
+    def test_dispatch_runs_the_published_prompt_text(self, db):
+        from agno.prompt import Prompt
+
+        model = _build_offline_model()
+        Prompt(id="support", content="Be concise.").save(db=db)
+        self._save(db, model)
+        runner = StudioRunnerTools(registry=self._registry(db, model), db=db)
+        assert runner._load_agent_from_db("prompted", for_dispatch=True).instructions == "Be concise."
+        payload = _loads(runner.run_agent("prompted", "hi", _agno_run_context=_context()))
+        assert payload["agent_id"] == "prompted"
+        [system] = [message for message in model.calls[-1] if message.role == "system"]
+        assert "Be concise." in system.content
+
+    def test_a_missing_pin_is_refused_for_dispatch_and_lenient_for_reads(self, db):
+        from agno.prompt import Prompt
+
+        model = _build_offline_model()
+        Prompt(id="support", content="one").save(db=db)
+        Prompt(id="support", content="two").save(db=db)
+        self._save(db, model, version=2)
+        db.delete_component("support", hard_delete=True, require_no_dependents=False)
+        Prompt(id="support", content="fresh").save(db=db)
+        runner = StudioRunnerTools(registry=self._registry(db, model), db=db)
+        error = _loads(runner.run_agent("prompted", "hi", _agno_run_context=_context()))["error"]
+        assert "version 2" in error
+        assert model.calls == []
+        assert runner._load_agent_from_db("prompted").instructions == "fresh"
+
+    def test_the_refusal_rebuild_mirrors_the_load_call(self, db, monkeypatch):
+        from agno.agent.agent import Agent
+        from agno.prompt import Prompt
+
+        model = _build_offline_model()
+        Prompt(id="support", content="one").save(db=db)
+        self._save(db, model, version="latest", fallback="Answer safely.")
+        db.delete_component("support", require_no_dependents=False)
+        runner = StudioRunnerTools(registry=self._registry(db, model), db=db)
+        seen: List[Dict[str, Any]] = []
+        original = Agent.from_dict.__func__
+
+        def spy(cls, data, **kwargs):
+            if data.get("id") == "prompted":
+                seen.append(kwargs)
+            return original(cls, data, **kwargs)
+
+        monkeypatch.setattr(Agent, "from_dict", classmethod(spy))
+        error = _loads(runner.run_agent("prompted", "hi", _agno_run_context=_context()))["error"]
+        assert "support" in error
+        assert model.calls == []
+        assert [call["strict"] for call in seen] == [True, False]
+        for call in seen:
+            assert call["db"] is db
+            assert [(link["link_kind"], link["meta"]) for link in call["links"]] == [
+                ("prompt", {"fallback": "Answer safely."})
+            ]
