@@ -15,8 +15,11 @@ files read side by side.
 import json
 import time
 from datetime import date, datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional, Set, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple, Union
 from uuid import uuid4
+
+if TYPE_CHECKING:
+    from agno.run.status_persist import RunPersistOutcome
 
 from sqlalchemy import (
     Column,
@@ -39,6 +42,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session as SQLASession
 from sqlalchemy.orm import scoped_session, sessionmaker
 
+from agno.db import mcp_oauth_store
 from agno.db.base import (
     DELETED_CONFIG_STAGE,
     PIN_LINK_KINDS,
@@ -76,6 +80,13 @@ from agno.db.oracle.utils import (
 )
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
+from agno.db.schemas.mcp_oauth import (
+    MCP_OAUTH_CLIENTS,
+    MCP_OAUTH_CODES,
+    MCP_OAUTH_KEYS,
+    MCP_OAUTH_REFRESH_TOKENS,
+    MCP_OAUTH_TRANSACTIONS,
+)
 from agno.db.schemas.memory import UserMemory
 from agno.db.schemas.service_accounts import (
     resolve_service_account_sort_column,
@@ -269,6 +280,17 @@ class OracleDb(BaseDb):
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "OracleDb":
+        # PostgresDb's own from_dict omits job_table, auth_tokens_table and
+        # the five mcp_oauth_*_table overrides, even though its to_dict (via
+        # BaseDb.to_dict) already serializes all of them -- a round-trip
+        # defect: a custom name for any of those seven tables is silently
+        # dropped on reconstruction, falling back to the default name.
+        # Deliberately NOT mirrored here (ticket 12's own explicit choice
+        # point): OracleDb is a new adapter with no deployed behavior a fix
+        # could break, to_dict already emits every one of these keys, and
+        # every other table override already round-trips -- there is no
+        # reason for these seven to be the exception. A caller who never
+        # customizes these table names sees no difference either way.
         return cls(
             db_url=data.get("db_url"),
             db_schema=data.get("db_schema"),
@@ -287,8 +309,15 @@ class OracleDb(BaseDb):
             learnings_table=data.get("learnings_table"),
             schedules_table=data.get("schedules_table"),
             schedule_runs_table=data.get("schedule_runs_table"),
+            job_table=data.get("job_table"),
             approvals_table=data.get("approvals_table"),
+            auth_tokens_table=data.get("auth_tokens_table"),
             service_accounts_table=data.get("service_accounts_table"),
+            mcp_oauth_clients_table=data.get("mcp_oauth_clients_table"),
+            mcp_oauth_transactions_table=data.get("mcp_oauth_transactions_table"),
+            mcp_oauth_codes_table=data.get("mcp_oauth_codes_table"),
+            mcp_oauth_refresh_tokens_table=data.get("mcp_oauth_refresh_tokens_table"),
+            mcp_oauth_keys_table=data.get("mcp_oauth_keys_table"),
             id=data.get("id"),
         )
 
@@ -5740,3 +5769,272 @@ class OracleDb(BaseDb):
         except Exception as e:
             log_debug(f"Error deleting service account: {e}")
             return False
+
+    # --- Built-in MCP OAuth server store ---
+    # Thin delegations to agno.db.mcp_oauth_store (shared with SqliteDb and
+    # PostgresDb): every function there is built on plain SQLAlchemy Core
+    # select/insert/update/delete with an explicit conn.commit(), no
+    # dialect-specific construct anywhere (no ON CONFLICT, no RETURNING) --
+    # already written portable across sqlite/Postgres/MySQL (see its own
+    # module docstring and the derived-table DELETE trick), and confirmed
+    # unchanged-and-working on Oracle by the differential harness below. No
+    # async counterpart exists for any of this domain; the async base class
+    # declares none.
+    def get_mcp_oauth_client(self, client_id: str) -> Optional[str]:
+        table = self._get_table(table_type=MCP_OAUTH_CLIENTS, create_table_if_not_found=True)
+        return mcp_oauth_store.get_client(self.db_engine, table, client_id)
+
+    def create_mcp_oauth_client(
+        self, *, client_id: str, client_metadata: str, now: int, unconsumed_ttl: int, max_clients: int
+    ) -> bool:
+        table = self._get_table(table_type=MCP_OAUTH_CLIENTS, create_table_if_not_found=True)
+        return mcp_oauth_store.create_client(
+            self.db_engine,
+            table,
+            client_id=client_id,
+            client_metadata=client_metadata,
+            now=now,
+            unconsumed_ttl=unconsumed_ttl,
+            max_clients=max_clients,
+        )
+
+    def mark_mcp_oauth_client_consumed(self, client_id: str, now: int) -> None:
+        table = self._get_table(table_type=MCP_OAUTH_CLIENTS, create_table_if_not_found=True)
+        mcp_oauth_store.mark_client_consumed(self.db_engine, table, client_id, now)
+
+    def store_mcp_oauth_transaction(
+        self, *, txn_id: str, client_id: str, params: str, expires_at: int, now: int, max_pending: int
+    ) -> None:
+        table = self._get_table(table_type=MCP_OAUTH_TRANSACTIONS, create_table_if_not_found=True)
+        mcp_oauth_store.store_transaction(
+            self.db_engine,
+            table,
+            txn_id=txn_id,
+            client_id=client_id,
+            params=params,
+            expires_at=expires_at,
+            now=now,
+            max_pending=max_pending,
+        )
+
+    def get_mcp_oauth_transaction(self, txn_id: str) -> Optional[tuple]:
+        table = self._get_table(table_type=MCP_OAUTH_TRANSACTIONS, create_table_if_not_found=True)
+        return mcp_oauth_store.get_transaction(self.db_engine, table, txn_id)
+
+    def consume_mcp_oauth_transaction(self, txn_id: str, now: int) -> Optional[tuple]:
+        table = self._get_table(table_type=MCP_OAUTH_TRANSACTIONS, create_table_if_not_found=True)
+        return mcp_oauth_store.consume_transaction(self.db_engine, table, txn_id, now)
+
+    def store_mcp_oauth_code(self, *, code_hash: str, payload: str, expires_at: int, now: int) -> None:
+        table = self._get_table(table_type=MCP_OAUTH_CODES, create_table_if_not_found=True)
+        mcp_oauth_store.store_code(
+            self.db_engine, table, code_hash=code_hash, payload=payload, expires_at=expires_at, now=now
+        )
+
+    def get_mcp_oauth_code(self, code_hash: str) -> Optional[tuple]:
+        table = self._get_table(table_type=MCP_OAUTH_CODES, create_table_if_not_found=True)
+        return mcp_oauth_store.get_code(self.db_engine, table, code_hash)
+
+    def delete_mcp_oauth_code(self, code_hash: str) -> bool:
+        table = self._get_table(table_type=MCP_OAUTH_CODES, create_table_if_not_found=True)
+        return mcp_oauth_store.delete_code(self.db_engine, table, code_hash)
+
+    def store_mcp_oauth_refresh(
+        self, *, token_hash: str, client_id: str, scopes: str, expires_at: int, now: int, family_id: str
+    ) -> None:
+        table = self._get_table(table_type=MCP_OAUTH_REFRESH_TOKENS, create_table_if_not_found=True)
+        mcp_oauth_store.store_refresh(
+            self.db_engine,
+            table,
+            token_hash=token_hash,
+            client_id=client_id,
+            scopes=scopes,
+            expires_at=expires_at,
+            now=now,
+            family_id=family_id,
+        )
+
+    def get_mcp_oauth_refresh(self, token_hash: str) -> Optional[tuple]:
+        table = self._get_table(table_type=MCP_OAUTH_REFRESH_TOKENS, create_table_if_not_found=True)
+        return mcp_oauth_store.get_refresh(self.db_engine, table, token_hash)
+
+    def delete_mcp_oauth_refresh(self, token_hash: str) -> bool:
+        table = self._get_table(table_type=MCP_OAUTH_REFRESH_TOKENS, create_table_if_not_found=True)
+        return mcp_oauth_store.delete_refresh(self.db_engine, table, token_hash)
+
+    def delete_mcp_oauth_refresh_family(self, family_id: str) -> int:
+        table = self._get_table(table_type=MCP_OAUTH_REFRESH_TOKENS, create_table_if_not_found=True)
+        return mcp_oauth_store.delete_refresh_family(self.db_engine, table, family_id)
+
+    def get_mcp_oauth_keys(self) -> List[tuple]:
+        table = self._get_table(table_type=MCP_OAUTH_KEYS, create_table_if_not_found=True)
+        return mcp_oauth_store.get_keys(self.db_engine, table)
+
+    def insert_mcp_oauth_key(self, *, kid: str, secret: str, created_at: int) -> bool:
+        table = self._get_table(table_type=MCP_OAUTH_KEYS, create_table_if_not_found=True)
+        return mcp_oauth_store.insert_key(self.db_engine, table, kid=kid, secret=secret, created_at=created_at)
+
+    # -- Queue-driven run persistence --
+    #
+    # Sync twins of the async adapter's atomic-prepare primitives, ported to
+    # the denormalized runs table (v3.0). Used by a queue worker holding a
+    # sync store (agno.os.job_queue._SyncStoreAdapter) to create/update a
+    # run's content without a whole-session read-check-save race window.
+    def update_run_in_session(
+        self,
+        session_id: str,
+        run_id: str,
+        fields: Dict[str, Any],
+        expected_attempt: Optional[int] = None,
+        user_id: Optional[str] = None,
+        content_if_absent: Optional[str] = None,
+    ) -> "RunPersistOutcome":
+        from agno.db.utils import canonical_run_status
+        from agno.run.status_persist import RunPersistOutcome
+        from agno.utils.string import sanitize_postgres_strings
+
+        if fields.get("status") is not None:
+            fields = {**fields, "status": canonical_run_status(fields["status"])}
+        try:
+            runs_table = self._get_table(table_type="runs")
+            if runs_table is None:
+                return RunPersistOutcome.MISSING
+            db_user_id = to_db_user_id(user_id)
+            with self.Session() as sess, sess.begin():
+                row = sess.execute(
+                    select(runs_table.c.run_data, runs_table.c.status)
+                    .where(runs_table.c.run_id == run_id)
+                    .where(runs_table.c.session_id == session_id)
+                    .where((runs_table.c.user_id == db_user_id) | (runs_table.c.user_id.is_(None)))
+                    .with_for_update()
+                ).fetchone()
+                if row is None or row[0] is None:
+                    return RunPersistOutcome.MISSING
+                run = dict(row[0])
+                stored_attempt = run.get("queue_attempt")
+                if expected_attempt is not None and stored_attempt is not None and stored_attempt > expected_attempt:
+                    return RunPersistOutcome.STALE_ATTEMPT  # zombie writer fenced out
+                stored_status = str(run.get("status") or row[1] or "").lower()
+                incoming_status = str(fields.get("status") or "").lower()
+                if stored_status in ("completed", "cancelled") and incoming_status and incoming_status != stored_status:
+                    return RunPersistOutcome.TERMINAL_REFUSED  # terminal row wins
+                run.update(fields)
+                if content_if_absent is not None and not run.get("content"):
+                    run["content"] = content_if_absent
+                if expected_attempt is not None:
+                    run["queue_attempt"] = expected_attempt
+                values: Dict[str, Any] = {
+                    "run_data": sanitize_postgres_strings(run),
+                    "updated_at": int(time.time()),
+                }
+                if fields.get("status") is not None:
+                    values["status"] = fields["status"]
+                sess.execute(runs_table.update().where(runs_table.c.run_id == run_id).values(**values))
+                return RunPersistOutcome.UPDATED
+        except Exception as e:
+            log_warning(f"Error updating run in runs table: {e}")
+            raise
+
+    def append_run_to_session_if_absent(
+        self,
+        session_id: str,
+        run_dict: Dict[str, Any],
+        user_id: Optional[str] = None,
+    ) -> Optional[bool]:
+        from agno.utils.string import sanitize_postgres_strings
+
+        try:
+            runs_table = self._get_table(table_type="runs", create_table_if_not_found=True)
+            if runs_table is None:
+                return None
+            row = build_single_run_row(run=run_dict, session_id=session_id, user_id=user_id, run_index=None)
+            row["run_data"] = sanitize_postgres_strings(row["run_data"])
+            row["user_id"] = to_db_user_id(row.get("user_id"))
+            try:
+                with self.Session() as sess, sess.begin():
+                    if row.get("run_index") is None:
+                        # Same-session backfill serialization -- see upsert_run's
+                        # own comment: a row lock on the session substitutes for
+                        # Postgres's string-keyed advisory lock.
+                        sessions_table = self._get_table(table_type="sessions")
+                        if sessions_table is not None:
+                            sess.execute(
+                                select(sessions_table.c.session_id)
+                                .where(sessions_table.c.session_id == session_id)
+                                .with_for_update()
+                            ).first()
+                        current_max = sess.execute(
+                            select(func.max(runs_table.c.run_index)).where(runs_table.c.session_id == session_id)
+                        ).scalar()
+                        row["run_index"] = (current_max + 1) if current_max is not None else 0
+                    sess.execute(runs_table.insert().values(**row))
+                    return True
+            except IntegrityError as exc:
+                # A duplicate run_id is absorbed (another writer's row is
+                # authoritative, same as Postgres's ON CONFLICT DO NOTHING);
+                # any other integrity error (no session row yet) propagates
+                # to the outer handler, which reports it as a fallback signal.
+                if is_unique_violation(exc):
+                    return False
+                raise
+        except Exception as e:
+            log_warning(f"Error appending run to runs table (caller falls back): {e}")
+            return None
+
+    def insert_session_if_absent(self, session: Session) -> Optional[bool]:
+        """Insert the session row only when no row with this session_id exists.
+
+        Mirrors PostgresDb's own docstring: the missing half of the atomic
+        queued-run prepare, so append_run_to_session_if_absent always has a
+        session row to lock.
+        """
+        from agno.utils.string import sanitize_postgres_strings
+
+        try:
+            table = self._get_table(table_type="sessions", create_table_if_not_found=True)
+            if table is None:
+                return None
+            session_dict = session.to_dict()
+            for data_field in ("agent_data", "team_data", "workflow_data", "session_data", "summary", "metadata"):
+                if session_dict.get(data_field):
+                    session_dict[data_field] = sanitize_postgres_strings(session_dict[data_field])
+            values: Dict[str, Any] = dict(
+                session_id=session_dict.get("session_id"),
+                user_id=to_db_user_id(session_dict.get("user_id")),
+                session_data=session_dict.get("session_data"),
+                summary=session_dict.get("summary"),
+                metadata=session_dict.get("metadata"),
+                created_at=session_dict.get("created_at"),
+                updated_at=session_dict.get("created_at"),
+            )
+            if isinstance(session, AgentSession):
+                values.update(
+                    session_type=SessionType.AGENT.value,
+                    agent_id=session_dict.get("agent_id"),
+                    agent_data=session_dict.get("agent_data"),
+                )
+            elif isinstance(session, TeamSession):
+                values.update(
+                    session_type=SessionType.TEAM.value,
+                    team_id=session_dict.get("team_id"),
+                    team_data=session_dict.get("team_data"),
+                )
+            elif isinstance(session, WorkflowSession):
+                values.update(
+                    session_type=SessionType.WORKFLOW.value,
+                    workflow_id=session_dict.get("workflow_id"),
+                    workflow_data=session_dict.get("workflow_data"),
+                )
+            else:
+                return None
+            try:
+                with self.Session() as sess, sess.begin():
+                    sess.execute(table.insert().values(**values))
+                return True
+            except IntegrityError as exc:
+                if is_unique_violation(exc):
+                    return False
+                raise
+        except Exception as e:
+            log_warning(f"Error inserting session if absent (caller falls back): {e}")
+            return None

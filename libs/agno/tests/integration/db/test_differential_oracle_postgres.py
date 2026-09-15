@@ -12,12 +12,12 @@ introduces no new production boundary. Both modules skip cleanly (not error)
 when their server is unreachable, since no Oracle container exists in public
 CI (ADR 0009).
 
-Coverage in this file: the domains tickets 03-11 deliver (sessions, runs,
+Coverage in this file: the domains tickets 03-12 deliver (sessions, runs,
 memory, metrics, knowledge, eval runs, traces, learnings, schedules,
 approvals, auth tokens, the component catalog, the durable job queue, tool
-result offloading, service accounts). Later tickets extend this file with
-their own domains as they land, rather than each inventing a separate
-differential suite.
+result offloading, service accounts, the MCP OAuth store). Later tickets
+extend this file with their own domains as they land, rather than each
+inventing a separate differential suite.
 """
 
 import uuid
@@ -102,6 +102,11 @@ def oracle_db(_servers_up):
         "component_links_table": f"diff_comp_link_{suffix}",
         "job_table": f"diff_jobs_{suffix}",
         "service_accounts_table": f"diff_svcacct_{suffix}",
+        "mcp_oauth_clients_table": f"diff_mcpc_{suffix}",
+        "mcp_oauth_transactions_table": f"diff_mcpt_{suffix}",
+        "mcp_oauth_codes_table": f"diff_mcpco_{suffix}",
+        "mcp_oauth_refresh_tokens_table": f"diff_mcpr_{suffix}",
+        "mcp_oauth_keys_table": f"diff_mcpk_{suffix}",
     }
     database = OracleDb(db_url=ORACLE_URL, id=f"diff-oracle-{suffix}", **tables)
     yield database
@@ -1094,6 +1099,95 @@ def test_tool_results_and_service_accounts_match_postgres(pg_db, oracle_db):
     """One scenario covering ticket 11's domain, compared directly."""
     pg_result = _run_tool_results_and_service_accounts_scenario(pg_db)
     oracle_result = _run_tool_results_and_service_accounts_scenario(oracle_db)
+
+    assert oracle_result == pg_result, (
+        f"Oracle diverged from Postgres.\nPostgres: {pg_result}\nOracle:   {oracle_result}"
+    )
+
+
+def _run_mcp_oauth_scenario(db) -> Dict[str, Any]:
+    """Ticket 12's domain: the shared, dialect-agnostic agno.db.mcp_oauth_store
+    module (already portable across sqlite/Postgres/MySQL) exercised through
+    OracleDb -- client registration caps, pending-transaction cap and expiry,
+    single-use consume/code/refresh, and refresh-family revocation.
+    """
+    now = 1700000000
+
+    ok1 = db.create_mcp_oauth_client(
+        client_id="diff-client-1", client_metadata='{"name": "a"}', now=now, unconsumed_ttl=3600, max_clients=1
+    )
+    capped = db.create_mcp_oauth_client(
+        client_id="diff-client-2", client_metadata='{"name": "b"}', now=now, unconsumed_ttl=3600, max_clients=1
+    )
+    db.mark_mcp_oauth_client_consumed("diff-client-1", now=now)
+    freed = db.create_mcp_oauth_client(
+        client_id="diff-client-3", client_metadata='{"name": "c"}', now=now, unconsumed_ttl=3600, max_clients=1
+    )
+    client_metadata = db.get_mcp_oauth_client("diff-client-1")
+
+    db.store_mcp_oauth_transaction(
+        txn_id="diff-txn-1", client_id="diff-client-1", params='{"p":1}', expires_at=now + 600, now=now, max_pending=1
+    )
+    db.store_mcp_oauth_transaction(
+        txn_id="diff-txn-2", client_id="diff-client-1", params='{"p":2}', expires_at=now + 700, now=now, max_pending=1
+    )
+    txn1_after_evict = db.get_mcp_oauth_transaction("diff-txn-1")
+    consumed = db.consume_mcp_oauth_transaction("diff-txn-2", now=now)
+    consumed_again = db.consume_mcp_oauth_transaction("diff-txn-2", now=now)
+
+    db.store_mcp_oauth_code(code_hash="diff-hash-1", payload='{"c":1}', expires_at=now + 600, now=now)
+    code = db.get_mcp_oauth_code("diff-hash-1")
+    deleted_once = db.delete_mcp_oauth_code("diff-hash-1")
+    deleted_twice = db.delete_mcp_oauth_code("diff-hash-1")
+
+    db.store_mcp_oauth_refresh(
+        token_hash="diff-rt-1",
+        client_id="diff-client-1",
+        scopes="read",
+        expires_at=now + 3600,
+        now=now,
+        family_id="diff-fam-1",
+    )
+    db.store_mcp_oauth_refresh(
+        token_hash="diff-rt-2",
+        client_id="diff-client-1",
+        scopes="read",
+        expires_at=now + 3600,
+        now=now,
+        family_id="diff-fam-1",
+    )
+    refresh = db.get_mcp_oauth_refresh("diff-rt-1")
+    family_revoked_count = db.delete_mcp_oauth_refresh_family("diff-fam-1")
+    refresh_after_revoke = db.get_mcp_oauth_refresh("diff-rt-1")
+
+    db.insert_mcp_oauth_key(kid="diff-kid-1", secret="s1", created_at=now)
+    dup_key = db.insert_mcp_oauth_key(kid="diff-kid-1", secret="s1-again", created_at=now)
+    db.insert_mcp_oauth_key(kid="diff-kid-2", secret="s2", created_at=now + 1)
+    keys = db.get_mcp_oauth_keys()
+
+    return {
+        "ok1": ok1,
+        "capped": capped,
+        "freed": freed,
+        "client_metadata": client_metadata,
+        "evicted_txn1_after_evict": txn1_after_evict,
+        "consumed": consumed,
+        "consumed_again": consumed_again,
+        "code": code,
+        "deleted_once": deleted_once,
+        "deleted_twice": deleted_twice,
+        "refresh": refresh,
+        "family_revoked_count": family_revoked_count,
+        "refresh_after_revoke": refresh_after_revoke,
+        "dup_key": dup_key,
+        "keys": keys,
+    }
+
+
+def test_mcp_oauth_matches_postgres(pg_db, oracle_db):
+    """One scenario covering ticket 12's domain, compared directly."""
+    pg_result = _run_mcp_oauth_scenario(pg_db)
+    oracle_result = _run_mcp_oauth_scenario(oracle_db)
 
     assert oracle_result == pg_result, (
         f"Oracle diverged from Postgres.\nPostgres: {pg_result}\nOracle:   {oracle_result}"
