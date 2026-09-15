@@ -12,10 +12,11 @@ introduces no new production boundary. Both modules skip cleanly (not error)
 when their server is unreachable, since no Oracle container exists in public
 CI (ADR 0009).
 
-Coverage in this file: the domains tickets 03-07 deliver (sessions, runs,
-memory, metrics, knowledge, eval runs, traces, learnings, schedules).
-Later tickets extend this file with their own domains as they land, rather
-than each inventing a separate differential suite.
+Coverage in this file: the domains tickets 03-08 deliver (sessions, runs,
+memory, metrics, knowledge, eval runs, traces, learnings, schedules,
+approvals, auth tokens). Later tickets extend this file with their own
+domains as they land, rather than each inventing a separate differential
+suite.
 """
 
 import uuid
@@ -30,6 +31,7 @@ from agno.db.postgres import PostgresDb
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
 from agno.run.agent import RunOutput
+from agno.run.base import RunStatus
 from agno.session import AgentSession
 from agno.tracing.schemas import Trace
 
@@ -83,6 +85,8 @@ def oracle_db(_servers_up):
         "learnings_table": f"diff_learn_{suffix}",
         "schedules_table": f"diff_sched_{suffix}",
         "schedule_runs_table": f"diff_sched_runs_{suffix}",
+        "approvals_table": f"diff_appr_{suffix}",
+        "auth_tokens_table": f"diff_auth_{suffix}",
     }
     database = OracleDb(db_url=ORACLE_URL, id=f"diff-oracle-{suffix}", **tables)
     yield database
@@ -532,6 +536,111 @@ def test_schedules_match_postgres(pg_db, oracle_db):
     """One scenario covering ticket 07's domain, compared directly."""
     pg_result = _run_schedules_scenario(pg_db)
     oracle_result = _run_schedules_scenario(oracle_db)
+
+    assert oracle_result == pg_result, (
+        f"Oracle diverged from Postgres.\nPostgres: {pg_result}\nOracle:   {oracle_result}"
+    )
+
+
+def _run_approvals_auth_tokens_scenario(db) -> Dict[str, Any]:
+    """Ticket 08's domain: the compare-and-swap update guard on approvals,
+    and the owner-scoping sentinel exercised for real on auth_tokens.user_id
+    -- a NOT NULL column where Postgres itself already stores "" for the
+    unowned case (to satisfy its own unique constraint), which is exactly
+    the value Oracle's empty-string-is-null folding would otherwise destroy.
+    """
+
+    def _approval(id_, **overrides):
+        d = {
+            "id": id_,
+            "run_id": "diff-run-1",
+            "session_id": "diff-session-1",
+            "status": "pending",
+            "source_type": "tool_call",
+            "approval_type": "confirmation",
+            "pause_type": "before_call",
+            "tool_name": "delete_file",
+            "tool_args": {"path": "/tmp/x"},
+            "expires_at": None,
+            "agent_id": "diff-agent",
+            "team_id": None,
+            "workflow_id": None,
+            "user_id": "alice",
+            "schedule_id": None,
+            "schedule_run_id": None,
+            "source_name": None,
+            "requirements": None,
+            "context": None,
+            "resolution_data": None,
+            "resolved_by": None,
+            "resolved_at": None,
+            "run_status": None,
+        }
+        d.update(overrides)
+        return d
+
+    db.create_approval(_approval("diff-appr-1"))
+    db.create_approval(_approval("diff-appr-2", user_id="bob", run_id="diff-run-2"))
+
+    _, pending_total = db.get_approvals(status="pending")
+    pending_count = db.get_pending_approval_count()
+
+    matched_update = db.update_approval("diff-appr-1", expected_status="pending", status="approved")
+    diverged_update = db.update_approval("diff-appr-1", expected_status="pending", status="rejected")
+    after_cas = db.get_approval("diff-appr-1")
+
+    run_status_count = db.update_approval_run_status("diff-run-1", RunStatus.completed)
+    after_run_status = db.get_approval("diff-appr-1")
+
+    deleted = db.delete_approval("diff-appr-2")
+    _, remaining_total = db.get_approvals()
+
+    # auth_tokens: None owner, a named owner, and an upsert-in-place that must
+    # not create a second row nor change the stored id.
+    db.upsert_auth_token(
+        {"provider": "github", "user_id": None, "service": "oauth", "token_data": {"access_token": "tok-1"}}
+    )
+    db.upsert_auth_token(
+        {"provider": "github", "user_id": "alice", "service": "oauth", "token_data": {"access_token": "tok-alice"}}
+    )
+    unowned_token = db.get_auth_token("github", None, "oauth")
+    alice_token = db.get_auth_token("github", "alice", "oauth")
+    alice_token_id_before = alice_token["id"]
+
+    db.upsert_auth_token(
+        {"provider": "github", "user_id": "alice", "service": "oauth", "token_data": {"access_token": "tok-alice-v2"}}
+    )
+    alice_token_after = db.get_auth_token("github", "alice", "oauth")
+
+    deleted_token = db.delete_auth_token("github", "alice", "oauth")
+    alice_token_after_delete = db.get_auth_token("github", "alice", "oauth")
+    unowned_token_after_delete = db.get_auth_token("github", None, "oauth")
+
+    return {
+        "pending_total": pending_total,
+        "pending_count": pending_count,
+        "matched_update_status": matched_update["status"] if matched_update else None,
+        "diverged_update": diverged_update,
+        "after_cas_status": after_cas["status"],
+        "run_status_count": run_status_count,
+        "after_run_status": after_run_status["run_status"],
+        "deleted_approval": deleted,
+        "remaining_approval_total": remaining_total,
+        "unowned_token_user_id": unowned_token["user_id"],
+        "unowned_token_access": unowned_token["token_data"]["access_token"],
+        "alice_token_access": alice_token["token_data"]["access_token"],
+        "alice_token_id_stable": alice_token_after["id"] == alice_token_id_before,
+        "alice_token_access_after_upsert": alice_token_after["token_data"]["access_token"],
+        "deleted_token": deleted_token,
+        "alice_token_after_delete": alice_token_after_delete,
+        "unowned_token_survives_alice_delete": unowned_token_after_delete is not None,
+    }
+
+
+def test_approvals_and_auth_tokens_match_postgres(pg_db, oracle_db):
+    """One scenario covering ticket 08's domain, compared directly."""
+    pg_result = _run_approvals_auth_tokens_scenario(pg_db)
+    oracle_result = _run_approvals_auth_tokens_scenario(oracle_db)
 
     assert oracle_result == pg_result, (
         f"Oracle diverged from Postgres.\nPostgres: {pg_result}\nOracle:   {oracle_result}"
