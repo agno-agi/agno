@@ -148,11 +148,19 @@ class UserSchema(BaseModel):
     status: str = Field(description="'active' or 'disabled'")
     disabled: bool = False
     role: Optional[str] = Field(None, description="The user's role slug (one role per user), or null")
+    role_name: Optional[str] = Field(
+        None,
+        description=(
+            "Display name of the user's role, so a directory view needs no second request to "
+            "/authz/roles. Falls back to the slug when the role has no display name; null when the "
+            "user has no role"
+        ),
+    )
     created_at: Optional[int] = None
     updated_at: Optional[int] = None
 
     @classmethod
-    def from_user(cls, user: dict, role: Optional[str]) -> "UserSchema":
+    def from_user(cls, user: dict, role: Optional[str], role_name: Optional[str] = None) -> "UserSchema":
         return cls(
             id=user["id"],
             email=user.get("email"),
@@ -160,6 +168,7 @@ class UserSchema(BaseModel):
             status="disabled" if user.get("disabled") else "active",
             disabled=bool(user.get("disabled")),
             role=role,
+            role_name=(role_name or role) if role is not None else None,
             created_at=user.get("created_at"),
             updated_at=user.get("updated_at"),
         )
@@ -241,7 +250,8 @@ class UsersCreatedOnDay(BaseModel):
 
 class UsersByRole(BaseModel):
     role: str = Field(..., description="Role slug")
-    count: int = Field(..., description="Users in the directory holding this role", ge=0)
+    name: str = Field(..., description="Role display name (the slug when the role has no display name)")
+    count: int = Field(..., description="Users in the directory holding this role, disabled users included", ge=0)
 
 
 class UserManagementMetrics(BaseModel):
@@ -572,8 +582,11 @@ def _build_user_management_metrics(
     status: Dict[str, int],
     created_rows: List[Dict[str, int]],
     roles_of: Optional[Dict[str, List[str]]],
+    role_names: Optional[Dict[str, str]] = None,
 ) -> UserManagementMetrics:
-    """Turn the three store reads into the response; shared by the sync and async collectors."""
+    """Turn the store reads into the response; shared by the sync and async collectors.
+    ``role_names`` maps slug to display name; a slug not in it is shown as itself."""
+    names = role_names or {}
     total, disabled = status["total"], status["disabled"]
     created = [
         UsersCreatedOnDay(date=datetime.fromtimestamp(row["date"], tz=timezone.utc).date(), count=row["count"])
@@ -590,7 +603,9 @@ def _build_user_management_metrics(
                 continue
             for role in roles:
                 counts[role] = counts.get(role, 0) + 1
-        by_role = [UsersByRole(role=role, count=count) for role, count in sorted(counts.items())]
+        by_role = [
+            UsersByRole(role=role, name=names.get(role) or role, count=count) for role, count in sorted(counts.items())
+        ]
     return UserManagementMetrics(
         total=total,
         active=total - disabled,
@@ -619,7 +634,8 @@ def collect_user_management_metrics(
     status = user_store.count_by_status()
     created_rows = user_store.created_by_day(starting_at=starting_at, ending_before=ending_before)
     roles_of = role_store.roles_of_many(user_store.ids()) if role_store is not None else None
-    return _build_user_management_metrics(status, created_rows, roles_of)
+    role_names = role_store.role_names() if role_store is not None else None
+    return _build_user_management_metrics(status, created_rows, roles_of, role_names)
 
 
 async def acollect_user_management_metrics(
@@ -633,7 +649,8 @@ async def acollect_user_management_metrics(
     status = await user_store.acount_by_status()
     created_rows = await user_store.acreated_by_day(starting_at=starting_at, ending_before=ending_before)
     roles_of = await role_store.aroles_of_many(await user_store.aids()) if role_store is not None else None
-    return _build_user_management_metrics(status, created_rows, roles_of)
+    role_names = await role_store.arole_names() if role_store is not None else None
+    return _build_user_management_metrics(status, created_rows, roles_of, role_names)
 
 
 def get_users_router(
@@ -664,8 +681,18 @@ def get_users_router(
         roles = role_store.roles_of(subject)
         return roles[0] if roles else None
 
-    def _user(user: dict) -> UserSchema:
-        return UserSchema.from_user(user, _role_of(user["id"]))
+    def _role_names() -> Dict[str, str]:
+        """Slug to display name for every role, one metadata read. Read once per request and
+        shared across a page of users, so the list view does not do one read per row."""
+        return role_store.role_names() if role_store is not None else {}
+
+    def _user(user: dict, names: Optional[Dict[str, str]] = None) -> UserSchema:
+        role = _role_of(user["id"])
+        if role is None:
+            return UserSchema.from_user(user, None)
+        if names is None:
+            names = _role_names()
+        return UserSchema.from_user(user, role, names.get(role))
 
     @router.get("", response_model=PaginatedResponse[UserSchema])
     def list_users(
@@ -691,8 +718,9 @@ def get_users_router(
             order=sort_order.value,
         )
         total = user_store.count(include_disabled=include_disabled, search=search)
+        names = _role_names()
         return _paginated(
-            [_user(u) for u in rows],
+            [_user(u, names) for u in rows],
             page,
             limit,
             total,

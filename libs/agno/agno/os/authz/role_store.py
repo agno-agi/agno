@@ -370,6 +370,15 @@ class RoleStore:
             slugs |= {row["slug"] for row in self._meta_db.list_authz_role_meta()}
         return sorted(slugs)
 
+    def role_names(self) -> Dict[str, str]:
+        """``{slug: display name}`` for every role with a metadata row, from one read. A role
+        whose name was never set maps to its slug. Roles with no metadata row (defined through
+        the raw engine) are absent, so callers fall back to the slug. Lets a directory view
+        show names without one metadata read per user. Empty when no metadata db is bound."""
+        if self._meta_db is None:
+            return {}
+        return {slug: row.get("name") or slug for slug, row in self._meta_get_all().items()}
+
     def list_roles_detailed(self) -> List[dict]:
         """Every role as a full record (metadata + scope entries).
 
@@ -739,6 +748,12 @@ class RoleStore:
         if self._meta_db is not None:
             slugs |= {row["slug"] for row in await self._ameta_call("list_authz_role_meta")}
         return sorted(slugs)
+
+    async def arole_names(self) -> Dict[str, str]:
+        """Async twin of :meth:`role_names`."""
+        if self._meta_db is None:
+            return {}
+        return {slug: row.get("name") or slug for slug, row in (await self._ameta_get_all()).items()}
 
     async def alist_roles_detailed(self) -> List[dict]:
         """Async twin of :meth:`list_roles_detailed`."""
