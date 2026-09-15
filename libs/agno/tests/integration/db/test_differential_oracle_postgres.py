@@ -80,6 +80,7 @@ def oracle_db(_servers_up):
         "knowledge_table": f"diff_know_{suffix}",
         "eval_table": f"diff_eval_{suffix}",
         "traces_table": f"diff_trace_{suffix}",
+        "learnings_table": f"diff_learn_{suffix}",
     }
     database = OracleDb(db_url=ORACLE_URL, id=f"diff-oracle-{suffix}", **tables)
     yield database
@@ -319,6 +320,61 @@ def test_eval_and_trace_merge_matches_postgres(pg_db, oracle_db):
     """
     pg_result = _run_eval_trace_scenario(pg_db)
     oracle_result = _run_eval_trace_scenario(oracle_db)
+
+    assert oracle_result == pg_result, (
+        f"Oracle diverged from Postgres.\nPostgres: {pg_result}\nOracle:   {oracle_result}"
+    )
+
+
+def _run_learnings_scenario(db) -> Dict[str, Any]:
+    """Ticket 06's domain: search matching (the one path Oracle implements
+    via Python-side regex translation of Postgres's CAST+ILIKE, per that
+    ticket's own design decision) and per-owner listing/stats.
+    """
+    db.upsert_learning(
+        id="diff-learning-1", learning_type="user_profile", content={"summary": "alice_chen likes tea"}, user_id="alice"
+    )
+    db.upsert_learning(
+        id="diff-learning-2", learning_type="session_context", content={"note": "bob prefers dark mode"}, user_id="bob"
+    )
+    db.upsert_learning(
+        id="diff-learning-3", learning_type="user_profile", content={"summary": "shared note"}, user_id=None
+    )
+
+    space_underscore_match = sorted(r["learning_id"] for r in db.search_learnings(query="alice chen"))
+    case_insensitive_match = sorted(r["learning_id"] for r in db.search_learnings(query="DARK MODE"))
+    no_match = db.search_learnings(query="nonexistent-zzz")
+
+    alice_learnings = sorted(r["learning_id"] for r in db.get_learnings(user_id="alice"))
+    _, list_total = db.list_learnings(user_id="alice", include_global=True)
+
+    stats, stats_total = db.get_learnings_user_stats()
+    stats_user_ids = sorted(s["user_id"] for s in stats)
+
+    db.update_learning("diff-learning-1", content={"summary": "updated"})
+    updated = db.get_learning_by_id("diff-learning-1")
+
+    deleted_count = db.delete_user_learnings("bob")
+    _, remaining_total = db.list_learnings()
+
+    return {
+        "space_underscore_match": space_underscore_match,
+        "case_insensitive_match": case_insensitive_match,
+        "no_match": no_match,
+        "alice_learnings": alice_learnings,
+        "list_total": list_total,
+        "stats_total": stats_total,
+        "stats_user_ids": stats_user_ids,
+        "updated_summary": updated["content"]["summary"],
+        "deleted_count": deleted_count,
+        "remaining_total": remaining_total,
+    }
+
+
+def test_learnings_match_postgres(pg_db, oracle_db):
+    """One scenario covering ticket 06's domain, compared directly."""
+    pg_result = _run_learnings_scenario(pg_db)
+    oracle_result = _run_learnings_scenario(oracle_db)
 
     assert oracle_result == pg_result, (
         f"Oracle diverged from Postgres.\nPostgres: {pg_result}\nOracle:   {oracle_result}"

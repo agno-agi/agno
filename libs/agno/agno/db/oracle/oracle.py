@@ -63,6 +63,7 @@ from agno.db.utils import (
     deserialize_run,
     deserialize_session,
     deserialize_sessions,
+    learning_search_patterns,
     metrics_starting_date_from_days,
     table_schema_mismatch_error,
     validate_pagination,
@@ -2387,7 +2388,53 @@ class OracleDb(BaseDb):
         entity_id: Optional[str] = None,
         entity_type: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
-        raise NotImplementedError("OracleDb learning methods are implemented in ticket 06.")
+        try:
+            table = self._get_table(table_type="learnings")
+            if table is None:
+                return None
+            with self.Session() as sess:
+                stmt = select(table).where(table.c.learning_type == learning_type)
+                stmt = self._apply_learning_filters(
+                    stmt, table, user_id, agent_id, team_id, None, session_id, namespace, entity_id, entity_type
+                )
+                result = sess.execute(stmt).fetchone()
+                if result is None:
+                    return None
+                return {"content": dict(result._mapping).get("content")}
+        except Exception as e:
+            log_debug(f"Error retrieving learning: {e}")
+            return None
+
+    def _apply_learning_filters(
+        self,
+        stmt: Any,
+        table: Table,
+        user_id: Optional[str],
+        agent_id: Optional[str],
+        team_id: Optional[str],
+        workflow_id: Optional[str],
+        session_id: Optional[str],
+        namespace: Optional[str],
+        entity_id: Optional[str],
+        entity_type: Optional[str],
+    ) -> Any:
+        if user_id is not None:
+            stmt = stmt.where(table.c.user_id == to_db_user_id(user_id))
+        if agent_id is not None:
+            stmt = stmt.where(table.c.agent_id == agent_id)
+        if team_id is not None:
+            stmt = stmt.where(table.c.team_id == team_id)
+        if workflow_id is not None:
+            stmt = stmt.where(table.c.workflow_id == workflow_id)
+        if session_id is not None:
+            stmt = stmt.where(table.c.session_id == session_id)
+        if namespace is not None:
+            stmt = stmt.where(table.c.namespace == namespace)
+        if entity_id is not None:
+            stmt = stmt.where(table.c.entity_id == entity_id)
+        if entity_type is not None:
+            stmt = stmt.where(table.c.entity_type == entity_type)
+        return stmt
 
     def upsert_learning(
         self,
@@ -2403,12 +2450,211 @@ class OracleDb(BaseDb):
         entity_type: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> None:
-        raise NotImplementedError("OracleDb learning methods are implemented in ticket 06.")
+        try:
+            table = self._get_table(table_type="learnings", create_table_if_not_found=True)
+            if table is None:
+                return
+            current_time = int(time.time())
+            values = {
+                "learning_id": id,
+                "learning_type": learning_type,
+                "namespace": namespace,
+                "user_id": to_db_user_id(user_id),
+                "agent_id": agent_id,
+                "team_id": team_id,
+                "session_id": session_id,
+                "entity_id": entity_id,
+                "entity_type": entity_type,
+                "content": content,
+                "metadata": metadata,
+                "created_at": current_time,
+                "updated_at": current_time,
+            }
+            with self.Session() as sess, sess.begin():
+                merge_upsert(
+                    sess, table, key_columns=["learning_id"], values=values, preserve_on_conflict=["created_at"]
+                )
+            log_debug(f"Upserted learning: {id}")
+        except Exception as e:
+            log_debug(f"Error upserting learning: {e}")
 
     def delete_learning(self, id: str) -> bool:
-        raise NotImplementedError("OracleDb learning methods are implemented in ticket 06.")
+        try:
+            table = self._get_table(table_type="learnings")
+            if table is None:
+                return False
+            with self.Session() as sess, sess.begin():
+                result = sess.execute(table.delete().where(table.c.learning_id == id))
+                return result.rowcount > 0
+        except Exception as e:
+            log_debug(f"Error deleting learning: {e}")
+            return False
+
+    def update_learning(self, id: str, content: Dict[str, Any], metadata: Optional[Dict[str, Any]] = None) -> bool:
+        try:
+            table = self._get_table(table_type="learnings")
+            if table is None:
+                return False
+            with self.Session() as sess, sess.begin():
+                stmt = (
+                    table.update()
+                    .where(table.c.learning_id == id)
+                    .values(content=content, metadata=metadata, updated_at=int(time.time()))
+                )
+                result = sess.execute(stmt)
+                return (result.rowcount or 0) > 0
+        except Exception as e:
+            log_error(f"Error updating learning: {e}")
+            raise
+
+    def delete_user_learnings(self, user_id: str, learning_type: Optional[str] = None) -> int:
+        try:
+            table = self._get_table(table_type="learnings")
+            if table is None:
+                return 0
+            with self.Session() as sess, sess.begin():
+                stmt = table.delete().where(table.c.user_id == to_db_user_id(user_id))
+                if learning_type is not None:
+                    stmt = stmt.where(table.c.learning_type == learning_type)
+                result = sess.execute(stmt)
+                return result.rowcount or 0
+        except Exception as e:
+            log_error(f"Error deleting user learnings: {e}")
+            raise
 
     def get_learnings(
+        self,
+        learning_type: Optional[str] = None,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        namespace: Optional[str] = None,
+        entity_id: Optional[str] = None,
+        entity_type: Optional[str] = None,
+        limit: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        try:
+            table = self._get_table(table_type="learnings")
+            if table is None:
+                return []
+            with self.Session() as sess:
+                stmt = select(table)
+                if learning_type is not None:
+                    stmt = stmt.where(table.c.learning_type == learning_type)
+                stmt = self._apply_learning_filters(
+                    stmt, table, user_id, agent_id, team_id, workflow_id, session_id, namespace, entity_id, entity_type
+                )
+                stmt = stmt.order_by(table.c.updated_at.desc())
+                if limit is not None:
+                    stmt = stmt.limit(limit)
+                result = sess.execute(stmt).fetchall()
+                rows = [dict(row._mapping) for row in result]
+                for r in rows:
+                    r["user_id"] = from_db_user_id(r.get("user_id"))
+                return rows
+        except Exception as e:
+            log_debug(f"Error getting learnings: {e}")
+            return []
+
+    def search_learnings(
+        self,
+        query: str,
+        learning_type: Optional[str] = None,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        namespace: Optional[str] = None,
+        entity_id: Optional[str] = None,
+        entity_type: Optional[str] = None,
+        limit: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        """Search learning records by text query.
+
+        Contract (base.py): a database error MUST raise, never come back as
+        an empty list -- a broken query must not be mistaken for an empty
+        store. Nothing below catches or suppresses; a failure from
+        sess.execute() propagates as-is.
+
+        Matching happens in Python, not via Postgres's CAST-to-text ILIKE:
+        content is a JSON column, and CAST rejects a native JSON source
+        (ORA-22849, the same restriction get_user_memories' search_content
+        works around). learning_search_patterns already returns SQL LIKE
+        syntax (%, _, backslash-escaped); _like_pattern_to_regex translates
+        that same pattern language to a compiled, case-insensitive regex
+        instead of reimplementing the matching rules from scratch.
+        """
+        patterns = learning_search_patterns(query)
+        if not patterns:
+            return []
+        regexes = [self._like_pattern_to_regex(p) for p in patterns]
+
+        table = self._get_table(table_type="learnings")
+        if table is None:
+            return []
+
+        stmt = select(table)
+        if learning_type is not None:
+            stmt = stmt.where(table.c.learning_type == learning_type)
+        stmt = self._apply_learning_filters(
+            stmt, table, user_id, agent_id, team_id, workflow_id, session_id, namespace, entity_id, entity_type
+        )
+
+        with self.Session() as sess:
+            rows = sess.execute(stmt).fetchall()  # no try/except: a broken query must raise
+
+        results = [dict(row._mapping) for row in rows]
+        matched = [r for r in results if any(rx.search(json.dumps(r.get("content") or {})) for rx in regexes)]
+        matched.sort(key=lambda r: r.get("updated_at") or 0, reverse=True)
+        for r in matched:
+            r["user_id"] = from_db_user_id(r.get("user_id"))
+        if limit is not None:
+            matched = matched[:limit]
+        return matched
+
+    @staticmethod
+    def _like_pattern_to_regex(pattern: str):
+        """Translate one SQL LIKE pattern (%, _, backslash-escaped) from
+        learning_search_patterns into a compiled, case-insensitive regex."""
+        import re as _re
+
+        out = []
+        i = 0
+        while i < len(pattern):
+            c = pattern[i]
+            if c == "\\" and i + 1 < len(pattern):
+                out.append(_re.escape(pattern[i + 1]))
+                i += 2
+                continue
+            if c == "%":
+                out.append(".*")
+            elif c == "_":
+                out.append(".")
+            else:
+                out.append(_re.escape(c))
+            i += 1
+        return _re.compile("".join(out), _re.IGNORECASE | _re.DOTALL)
+
+    def get_learning_by_id(self, id: str) -> Optional[Dict[str, Any]]:
+        try:
+            table = self._get_table(table_type="learnings")
+            if table is None:
+                return None
+            with self.Session() as sess:
+                result = sess.execute(select(table).where(table.c.learning_id == id)).fetchone()
+                if result is None:
+                    return None
+                row = dict(result._mapping)
+                row["user_id"] = from_db_user_id(row.get("user_id"))
+                return row
+        except Exception as e:
+            log_error(f"Error getting learning by id: {e}")
+            raise
+
+    def list_learnings(
         self,
         learning_type: Optional[str] = None,
         user_id: Optional[str] = None,
@@ -2418,6 +2664,95 @@ class OracleDb(BaseDb):
         namespace: Optional[str] = None,
         entity_id: Optional[str] = None,
         entity_type: Optional[str] = None,
+        include_global: bool = False,
+        limit: int = 100,
+        page: int = 1,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        try:
+            table = self._get_table(table_type="learnings")
+            if table is None:
+                return [], 0
+            with self.Session() as sess:
+                stmt = select(table)
+                if learning_type is not None:
+                    stmt = stmt.where(table.c.learning_type == learning_type)
+                if user_id is not None:
+                    db_user_id = to_db_user_id(user_id)
+                    if include_global:
+                        stmt = stmt.where((table.c.user_id == db_user_id) | (table.c.user_id.is_(None)))
+                    else:
+                        stmt = stmt.where(table.c.user_id == db_user_id)
+                if agent_id is not None:
+                    stmt = stmt.where(table.c.agent_id == agent_id)
+                if team_id is not None:
+                    stmt = stmt.where(table.c.team_id == team_id)
+                if session_id is not None:
+                    stmt = stmt.where(table.c.session_id == session_id)
+                if namespace is not None:
+                    stmt = stmt.where(table.c.namespace == namespace)
+                if entity_id is not None:
+                    stmt = stmt.where(table.c.entity_id == entity_id)
+                if entity_type is not None:
+                    stmt = stmt.where(table.c.entity_type == entity_type)
+
+                count_stmt = select(func.count()).select_from(stmt.alias())
+                total_count = sess.execute(count_stmt).scalar() or 0
+
+                stmt = apply_sorting(stmt, table, sort_by or "updated_at", sort_order or "desc")
+                stmt = stmt.limit(limit).offset((page - 1) * limit)
+                result = sess.execute(stmt).fetchall()
+                rows = [dict(row._mapping) for row in result]
+                for r in rows:
+                    r["user_id"] = from_db_user_id(r.get("user_id"))
+                return rows, int(total_count)
+        except Exception as e:
+            log_error(f"Error listing learnings: {e}")
+            raise
+
+    def get_learnings_user_stats(
+        self,
+        learning_type: Optional[str] = None,
         limit: Optional[int] = None,
-    ) -> List[Dict[str, Any]]:
-        raise NotImplementedError("OracleDb learning methods are implemented in ticket 06.")
+        page: Optional[int] = None,
+        user_id: Optional[str] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        validate_pagination(limit, page)
+        try:
+            table = self._get_table(table_type="learnings")
+            if table is None:
+                return [], 0
+            with self.Session() as sess:
+                last_updated_col = func.max(table.c.updated_at)
+                stmt = select(table.c.user_id, last_updated_col.label("last_learning_updated_at"))
+                if learning_type is not None:
+                    stmt = stmt.where(table.c.learning_type == learning_type)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == to_db_user_id(user_id))
+                else:
+                    stmt = stmt.where(table.c.user_id.is_not(None))
+                stmt = stmt.group_by(table.c.user_id)
+
+                sort_columns = {"user_id": table.c.user_id, "last_learning_updated_at": last_updated_col}
+                sort_col = sort_columns.get(sort_by or "last_learning_updated_at", last_updated_col)
+                stmt = stmt.order_by(sort_col.asc() if sort_order == "asc" else sort_col.desc())
+
+                count_stmt = select(func.count()).select_from(stmt.alias())
+                total_count = sess.execute(count_stmt).scalar() or 0
+
+                if limit is not None:
+                    stmt = stmt.limit(limit)
+                    if page is not None:
+                        stmt = stmt.offset((page - 1) * limit)
+
+                result = sess.execute(stmt).fetchall()
+                return [
+                    {"user_id": from_db_user_id(row.user_id), "last_learning_updated_at": row.last_learning_updated_at}
+                    for row in result
+                ], int(total_count)
+        except Exception as e:
+            log_error(f"Error getting learning user stats: {e}")
+            raise
