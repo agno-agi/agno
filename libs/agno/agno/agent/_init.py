@@ -231,6 +231,61 @@ def set_result_store(agent: Agent) -> None:
     agent._result_store_setting = agent.offload_tool_results
 
 
+def set_filesystem(agent: Agent) -> None:
+    """Resolve the filesystem shorthand or attach an explicitly provided instance."""
+    if agent.filesystem is None or agent.filesystem is False:
+        agent._filesystem = None
+        return
+    if agent._filesystem is not None:
+        return
+
+    from agno.fs import FileSystem
+    from agno.fs.toolkit import FileSystemTools
+
+    existing_filesystem = (
+        next(
+            (tool for tool in agent.tools if isinstance(tool, FileSystemTools)),
+            None,
+        )
+        if isinstance(agent.tools, list)
+        else None
+    )
+    if existing_filesystem is not None:
+        raise ValueError(
+            "filesystem manages its own FileSystemTools. Remove the manually configured "
+            "FileSystemTools or disable the filesystem setting."
+        )
+
+    if isinstance(agent.filesystem, FileSystem):
+        agent._filesystem = agent.filesystem
+    elif agent.filesystem is True:
+        if agent.db is None:
+            raise ValueError("filesystem=True requires a database on the agent or AgentOS")
+        if isinstance(agent.db, AsyncBaseDb):
+            raise ValueError("filesystem=True currently requires a synchronous database")
+        if not agent.id:
+            raise ValueError("filesystem=True requires the agent to have a stable id")
+        namespace = "users/{user_id}/{agent_id}" if agent._filesystem_user_isolation else "{agent_id}"
+        agent._filesystem = FileSystem(agent.db, namespace=namespace).resolve(agent_id=agent.id)
+    else:
+        raise TypeError("filesystem must be True, False, None, or a FileSystem instance")
+
+
+def set_filesystem_user_isolation(agent: Agent, enabled: bool) -> None:
+    """Apply AgentOS isolation policy and rebuild the managed filesystem if it changed."""
+    enabled = bool(enabled)
+    if agent._filesystem_user_isolation == enabled:
+        return
+    if agent.filesystem is not True:
+        # An explicitly supplied FileSystem owns its namespace policy. AgentOS must
+        # not replace or rewrite it when its managed isolation setting changes.
+        agent._filesystem_user_isolation = enabled
+        return
+
+    agent._filesystem = None
+    agent._filesystem_user_isolation = enabled
+
+
 def _initialize_session_state(
     session_state: Dict[str, Any],
     user_id: Optional[str] = None,
@@ -290,6 +345,8 @@ def initialize_agent(agent: Agent, debug_mode: Optional[bool] = None) -> None:
     set_id(agent)
     set_telemetry(agent)
     set_checkpoint(agent)
+    if agent.filesystem or agent._filesystem is not None:
+        set_filesystem(agent)
     if agent.update_memory_on_run or agent.enable_agentic_memory or agent.memory_manager is not None:
         set_memory_manager(agent)
     if agent.enable_session_summaries or agent.session_summary_manager is not None:

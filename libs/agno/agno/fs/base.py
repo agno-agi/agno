@@ -10,7 +10,7 @@ from typing import List, Optional, Sequence, Set
 
 from agno.fs._paths import build_chunk, path_sort_key
 from agno.fs.errors import QuotaExceededError
-from agno.fs.types import FileMeta, NamespaceUsage, SearchMatch
+from agno.fs.types import FileData, FileMeta, NamespaceUsage, SearchMatch
 
 
 def _build_match(
@@ -79,6 +79,21 @@ class BaseFS(ABC):
         ...
 
     # ---- capability-gated; base emulations provided ----
+
+    def read_with_meta(self, namespace: str, path: str) -> Optional[FileData]:
+        """Read content and metadata from one backend snapshot when supported.
+
+        The portable fallback derives size from the content returned by the one
+        read instead of issuing a second metadata lookup that could observe a
+        different version. Backends with versions or timestamps override this.
+        """
+        content = self.read(namespace, path)
+        if content is None:
+            return None
+        return FileData(
+            content=content,
+            meta=FileMeta(path=path, size_bytes=len(content.encode("utf-8"))),
+        )
 
     def append(self, namespace: str, path: str, content: str, *, max_file_bytes: Optional[int] = None) -> FileMeta:
         """Append line-oriented content, creating the file if missing.
@@ -184,6 +199,10 @@ class BaseFS(ABC):
     async def aread(self, namespace: str, path: str) -> Optional[str]:
         """Async variant of ``read``."""
         return await asyncio.to_thread(self.read, namespace, path)
+
+    async def aread_with_meta(self, namespace: str, path: str) -> Optional[FileData]:
+        """Async variant of ``read_with_meta``."""
+        return await asyncio.to_thread(self.read_with_meta, namespace, path)
 
     async def awrite(
         self, namespace: str, path: str, content: str, *, expected_version: Optional[int] = None

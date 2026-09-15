@@ -13,6 +13,14 @@ class FileMeta:
 
 
 @dataclass
+class FileData:
+    """One consistent read of file content and its metadata."""
+
+    content: str
+    meta: FileMeta
+
+
+@dataclass
 class SearchMatch:
     """One file matching a content search."""
 

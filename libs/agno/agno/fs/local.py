@@ -9,7 +9,7 @@ from agno.exceptions import PathSecurityError
 from agno.fs._paths import build_chunk, path_in_directory
 from agno.fs.base import BaseFS
 from agno.fs.errors import InvalidPathError, QuotaExceededError, UnsupportedOperationError
-from agno.fs.types import FileMeta
+from agno.fs.types import FileData, FileMeta
 from agno.utils.path_safety import safe_join_relative_path
 
 
@@ -133,6 +133,22 @@ class LocalFileSystem(BaseFS):
         return True
 
     # ---- native overrides ----
+
+    def read_with_meta(self, namespace: str, path: str) -> Optional[FileData]:
+        target = self._target(namespace, path)
+        try:
+            # Capture the size from the opened file, then read exactly that
+            # snapshot. Writes replace the inode and appends only extend it, so
+            # neither can make the returned content disagree with this metadata.
+            with target.open("rb") as f:
+                stat = os.fstat(f.fileno())
+                content = f.read(stat.st_size).decode("utf-8")
+        except (FileNotFoundError, IsADirectoryError):
+            return None
+        return FileData(
+            content=content,
+            meta=FileMeta(path=path, size_bytes=stat.st_size, version=None, updated_at=int(stat.st_mtime)),
+        )
 
     def append(self, namespace: str, path: str, content: str, *, max_file_bytes: Optional[int] = None) -> FileMeta:
         chunk = build_chunk(content)

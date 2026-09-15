@@ -27,6 +27,30 @@ class TestEdgeBehaviors:
         fs.write("empty.md", "")
         assert fs.read("empty.md") == ""
 
+    def test_read_with_meta_keeps_content_and_size_consistent_during_append(self, fs, monkeypatch):
+        import os
+
+        fs.write("notes.md", "before")
+        target = fs.backend._target(fs.namespace, "notes.md")
+        real_fstat = os.fstat
+        appended = False
+
+        def append_before_stat(fd):
+            nonlocal appended
+            if not appended:
+                appended = True
+                with target.open("ab") as writer:
+                    writer.write(b"-after")
+            return real_fstat(fd)
+
+        monkeypatch.setattr(os, "fstat", append_before_stat)
+
+        result = fs.read_with_meta("notes.md")
+
+        assert result is not None
+        assert result.content == "before-after"
+        assert result.meta.size_bytes == len(result.content.encode("utf-8"))
+
     def test_usage_of_empty_namespace(self, fs):
         result = fs.usage()
         assert result.file_count == 0
@@ -400,12 +424,13 @@ class TestNamespaceSanitization:
         FileSystem(local_backend, namespace="bank").write("secret.md", "TOPSECRET")
         assert FileSystem(local_backend, namespace="other").read("secret.md") is None
 
-    def test_multi_segment_and_templates_fold(self, local_backend):
+    def test_multi_segment_literals_fold_but_template_values_do_not(self, local_backend):
         assert FileSystem(local_backend, namespace="Radar/User-42").namespace == "radar/user-42"
         templated = FileSystem(local_backend, namespace="Radar/{user_id}")
         assert templated.namespace == "radar/{user_id}"
-        assert templated.resolve(user_id="Alice").namespace == "radar/alice"
+        assert templated.resolve(user_id="Alice").namespace == "radar/%41lice"
         assert templated.resolve(user_id="alice").namespace == "radar/alice"
+        assert templated.resolve(user_id="Alice").namespace != templated.resolve(user_id="alice").namespace
 
     @pytest.mark.parametrize(
         "raw,encoded",
@@ -438,10 +463,16 @@ class TestNamespaceCharset:
         # Ids are commonly emails; rejecting them would break the documented
         # namespace="radar/{user_id}" idiom on day one.
         fs = FileSystem(local_backend, namespace="radar/{user_id}")
-        assert fs.resolve(user_id="Alice+Tag@X.com").namespace == "radar/alice+tag@x.com"
+        assert fs.resolve(user_id="Alice+Tag@X.com").namespace == "radar/%41lice+%54ag@%58.com"
 
     @pytest.mark.parametrize(
-        "raw,encoded", [("Ünal", "radar/%c3%bcnal"), ("a b", "radar/a%20b"), ("100%", "radar/100%25")]
+        "raw,encoded",
+        [
+            ("Ünal", "radar/%c3%9cnal"),
+            ("a b", "radar/a%20b"),
+            ("100%", "radar/100%25"),
+            ("A~Z", "radar/%41%7e%5a"),
+        ],
     )
     def test_template_values_are_encoded_not_rejected(self, local_backend, raw, encoded):
         fs = FileSystem(local_backend, namespace="radar/{user_id}")
