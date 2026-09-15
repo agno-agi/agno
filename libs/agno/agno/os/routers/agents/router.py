@@ -59,6 +59,7 @@ from agno.os.middleware.user_scope import (
     caller_is_admin,
     get_scoped_user_id,
     run_matches_component,
+    sync_directory_from_request,
     verify_run_in_session,
     verify_run_in_session_via_db,
 )
@@ -696,6 +697,9 @@ def get_agent_router(
             if user_id and user_id != state_user_id:
                 log_warning("User ID parameter passed in both request state and kwargs, using request state")
             user_id = state_user_id
+        # No-auth roster: an unauthenticated run's user_id still registers the person in the
+        # directory (no-op when auth is on -- the middleware already provisioned/enforced).
+        sync_directory_from_request(request, user_id)
         if hasattr(request.state, "session_id") and request.state.session_id is not None:
             if session_id and session_id != request.state.session_id:
                 log_warning("Session ID parameter passed in both request state and kwargs, using request state")
@@ -1827,13 +1831,13 @@ def get_agent_router(
         # Filter agents based on user's scopes (only if authorization is enabled)
         if getattr(request.state, "authorization_enabled", False):
             from agno.os.auth import (
+                afilter_resources_by_access,
+                aget_accessible_resources,
                 build_insufficient_permissions_detail,
-                filter_resources_by_access,
-                get_accessible_resources,
             )
 
             # Check if user has any agent scopes at all
-            accessible_ids = get_accessible_resources(request, "agents")
+            accessible_ids = await aget_accessible_resources(request, "agents")
             if not accessible_ids:
                 required_scopes = getattr(request.state, "required_scopes", None)
                 raise HTTPException(
@@ -1842,7 +1846,7 @@ def get_agent_router(
                 )
 
             # Limit results based on the user's access/scopes
-            accessible_agents = filter_resources_by_access(request, os.agents or [], "agents")
+            accessible_agents = await afilter_resources_by_access(request, os.agents or [], "agents")
         else:
             accessible_agents = os.agents or []
 
@@ -1890,7 +1894,7 @@ def get_agent_router(
             if db_agents:
                 # Apply the same RBAC filtering to DB-loaded agents
                 if getattr(request.state, "authorization_enabled", False):
-                    db_agents = filter_resources_by_access(request, db_agents, "agents")
+                    db_agents = await afilter_resources_by_access(request, db_agents, "agents")
                 for db_agent in db_agents:
                     agent_response = await AgentResponse.from_agent(agent=db_agent, is_component=True)
                     agents.append(agent_response)
