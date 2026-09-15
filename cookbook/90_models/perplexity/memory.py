@@ -6,9 +6,11 @@ Steps:
 3. Run: `python cookbook/agents/personalized_memories_and_summaries.py` to run the agent
 """
 
+import os
+
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
-from agno.models.perplexity import Perplexity
+from agno.models.openai import OpenAIResponses
 from rich.pretty import pprint
 
 # ---------------------------------------------------------------------------
@@ -17,7 +19,11 @@ from rich.pretty import pprint
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 agent = Agent(
-    model=Perplexity(id="sonar-pro"),
+    model=OpenAIResponses(
+        id="openai/gpt-5.6-luna",
+        base_url="https://api.perplexity.ai/v1",
+        api_key=os.environ["PERPLEXITY_API_KEY"],
+    ),
     # Store the memories and summary in a database
     db=PostgresDb(db_url=db_url),
     update_memory_on_run=True,

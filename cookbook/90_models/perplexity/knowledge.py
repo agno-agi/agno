@@ -1,9 +1,11 @@
 """Run `uv pip install ddgs sqlalchemy pgvector pypdf openai google.generativeai` to install dependencies."""
 
+import os
+
 from agno.agent import Agent
 from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
-from agno.models.perplexity import Perplexity
+from agno.models.openai import OpenAIResponses
 from agno.vectordb.pgvector import PgVector
 
 # ---------------------------------------------------------------------------
@@ -22,7 +24,14 @@ knowledge = Knowledge(
 # Add content to the knowledge
 knowledge.insert(url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf")
 
-agent = Agent(model=Perplexity(id="sonar-pro"), knowledge=knowledge)
+agent = Agent(
+    model=OpenAIResponses(
+        id="openai/gpt-5.6-luna",
+        base_url="https://api.perplexity.ai/v1",
+        api_key=os.environ["PERPLEXITY_API_KEY"],
+    ),
+    knowledge=knowledge,
+)
 agent.print_response("How to make Thai curry?", markdown=True)
 
 # ---------------------------------------------------------------------------
