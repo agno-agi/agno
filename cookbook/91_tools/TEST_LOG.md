@@ -1,5 +1,15 @@
 # Test Log
 
+### eurostat_tools.py (new EurostatTools toolkit)
+
+**Status:** PASS
+
+**Description:** Added `EurostatTools`, a new toolkit for querying live EU official statistics from Eurostat's public dissemination API (no API key or registration required). Exposes `list_indicators` (friendly names for common indicators), `get_indicator` (unemployment_rate, inflation_rate, gdp, population by geo code, resolved to the underlying Eurostat dataset + default dimension filters), and `get_dataset` (any raw Eurostat dataset code with `geo`/`since`/`filters` dimension overrides) — each with sync and async variants. Eurostat returns data in JSON-stat format (a flat, index-addressed value map plus separate dimension/category metadata); `_parse_jsonstat` walks the dimension sizes to unpack it into a plain list of `{dimension: label, ..., "value": ...}` records, which is far more usable for a model than the raw JSON-stat shape. Checked for prior art first: zero existing issues or PRs in this repo mention Eurostat or ECB before this change.
+
+**Result:** Before writing any code, verified live against the real Eurostat API (not just documentation) that `une_rt_m` (unemployment), `prc_hicp_manr` (inflation/HICP), `nama_10_gdp` (GDP), and `demo_pjan` (population) all return real, current data for Germany with the filter values used in `KNOWN_INDICATORS`. 13 new unit tests pass (`pytest libs/agno/tests/unit/tools/test_eurostat.py`), covering JSON-stat unpacking against a hand-built payload, selective tool registration, geo/since/filters parameter passthrough, empty-result handling, unknown-indicator rejection (no network call made), HTTP error mapping (404/429/generic), a non-HTTP exception path, and async/sync parity for all three tools. `ruff format` and `ruff check` clean on the new files. `mypy` clean on `eurostat.py` itself (the full run surfaces 453 pre-existing errors across 80 unrelated files in this repo; none reference eurostat.py). Ran the full `libs/agno/tests/unit/tools/` suite (`--continue-on-collection-errors`, since ~40 files fail to collect in this environment due to optional provider SDKs like `zep-cloud` not being installed): 3226 passed, 35 failed, 255 errors — zero of which mention eurostat; all pre-existing and unrelated (e.g. `test_visualization.py` failures). Not verified: `cookbook/91_tools/eurostat_tools.py`'s `Agent` example was not run end-to-end, because no LLM provider API key (OpenAI/Anthropic/etc.) is available in this sandbox — only `EurostatTools`'s own methods were exercised, against both mocks and the real live Eurostat endpoints.
+
+---
+
 ### atomic_mail_tools.py (AtomicMailTools + workflow)
 
 **Status:** PASS
