@@ -11,8 +11,9 @@ from agno.models.openai.responses import OpenAIResponses
 
 
 class _FakeError:
-    def __init__(self, message: str):
+    def __init__(self, message: str, code: str = "server_error"):
         self.message = message
+        self.code = code
 
 
 class _FakeResponse:
@@ -265,6 +266,96 @@ def test_invoke_raises_on_failed_status():
                 messages=[Message(role="user", content="hi")],
                 assistant_message=assistant,
             )
+
+
+# ---------------------------------------------------------------------------
+# Failed-status error code and status mapping
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "code,expected_status",
+    [
+        ("server_error", 502),
+        ("rate_limit_exceeded", 429),
+        ("vector_store_timeout", 504),
+        ("invalid_prompt", 400),
+        ("image_content_policy_violation", 400),
+    ],
+)
+def test_invoke_failed_status_maps_error_code(code, expected_status):
+    """Failed responses carry the provider error code and an HTTP-equivalent status.
+
+    Also guards against the error being re-wrapped by the generic exception handler,
+    which would flatten it back to a codeless 502.
+    """
+    model = OpenAIResponses(id="gpt-4.1-mini", background=True, background_poll_interval=0.01)
+
+    fake_client = _make_fake_client()
+    fake_client.responses.create.return_value = _FakeResponse(
+        _id="resp_1",
+        status="failed",
+        error=_FakeError("response failed", code=code),
+    )
+    model.client = fake_client
+
+    assistant = _make_assistant_message()
+    with patch.object(model, "_format_messages", return_value=[]):
+        with pytest.raises(ModelProviderError) as exc_info:
+            model.invoke(
+                messages=[Message(role="user", content="hi")],
+                assistant_message=assistant,
+            )
+
+    assert exc_info.value.code == code
+    assert exc_info.value.status_code == expected_status
+
+
+def test_invoke_failed_status_without_error_object():
+    """A failed response with no error object still raises with the 502 default."""
+    model = OpenAIResponses(id="gpt-4.1-mini", background=True, background_poll_interval=0.01)
+
+    fake_client = _make_fake_client()
+    fake_client.responses.create.return_value = _FakeResponse(_id="resp_1", status="failed", error=None)
+    model.client = fake_client
+
+    assistant = _make_assistant_message()
+    with patch.object(model, "_format_messages", return_value=[]):
+        with pytest.raises(ModelProviderError) as exc_info:
+            model.invoke(
+                messages=[Message(role="user", content="hi")],
+                assistant_message=assistant,
+            )
+
+    assert exc_info.value.code is None
+    assert exc_info.value.status_code == 502
+
+
+@pytest.mark.asyncio
+async def test_ainvoke_failed_status_maps_error_code():
+    """Async failed responses carry the provider error code and an HTTP-equivalent status."""
+    model = OpenAIResponses(id="gpt-4.1-mini", background=True, background_poll_interval=0.01)
+
+    fake_client = _make_fake_client()
+    fake_client.responses.create = AsyncMock(
+        return_value=_FakeResponse(
+            _id="resp_1",
+            status="failed",
+            error=_FakeError("Invalid prompt: flagged by usage policy", code="invalid_prompt"),
+        )
+    )
+    model.async_client = fake_client
+
+    assistant = _make_assistant_message()
+    with patch.object(model, "_format_messages", return_value=[]):
+        with pytest.raises(ModelProviderError) as exc_info:
+            await model.ainvoke(
+                messages=[Message(role="user", content="hi")],
+                assistant_message=assistant,
+            )
+
+    assert exc_info.value.code == "invalid_prompt"
+    assert exc_info.value.status_code == 400
 
 
 @pytest.mark.asyncio
