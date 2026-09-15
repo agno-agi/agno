@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 from agno.models.base import Model
 from agno.models.utils import get_model
 from agno.run.agent import Message
-from agno.utils.log import log_debug, log_warning
+from agno.utils.log import log_debug, log_info, log_warning
 
 # TODO: Look into moving all managers into a separate dir
 if TYPE_CHECKING:
@@ -93,6 +93,15 @@ class SessionSummaryManager:
     # Maximum number of messages to include in the summary conversation. None means no limit.
     conversation_limit: Optional[int] = None
 
+    # Only create/update a summary when run token usage reaches this fraction of token_limit.
+    # None preserves the default Agno behavior: summarize whenever called.
+    token_limit: Optional[int] = None
+    token_limit_ratio: float = 0.8
+
+    # Remove older runs after a summary is created, keeping recent unsummarized context.
+    compact_history_after_summary: bool = False
+    compact_history_keep_last_n_runs: int = 1
+
     def __post_init__(self) -> None:
         if self.id is None:
             self.id = f"session_summary_manager_{uuid4().hex[:8]}"
@@ -100,6 +109,56 @@ class SessionSummaryManager:
             raise ValueError(f"last_n_runs must be a positive integer, got {self.last_n_runs}")
         if self.conversation_limit is not None and self.conversation_limit <= 0:
             raise ValueError(f"conversation_limit must be a positive integer, got {self.conversation_limit}")
+        if self.token_limit is not None and self.token_limit <= 0:
+            raise ValueError(f"token_limit must be a positive integer, got {self.token_limit}")
+        if not 0 < self.token_limit_ratio <= 1:
+            raise ValueError(f"token_limit_ratio must be > 0 and <= 1, got {self.token_limit_ratio}")
+        if self.compact_history_keep_last_n_runs <= 0:
+            raise ValueError(
+                "compact_history_keep_last_n_runs must be a positive integer, "
+                f"got {self.compact_history_keep_last_n_runs}"
+            )
+
+    def should_create_session_summary(self, run_metrics: Optional["RunMetrics"] = None) -> bool:
+        """Return whether the current run is large enough to update the session summary."""
+        if self.token_limit is None:
+            log_debug("Session summary token gate disabled; creating summary whenever requested")
+            return True
+        if run_metrics is None:
+            log_info("Skipping session summary: no run metrics available for token-limit check")
+            return False
+
+        input_tokens = getattr(run_metrics, "input_tokens", 0) or 0
+        total_tokens = getattr(run_metrics, "total_tokens", 0) or 0
+        tokens = max(input_tokens, total_tokens)
+        threshold = int(self.token_limit * self.token_limit_ratio)
+
+        if tokens < threshold:
+            log_info(
+                f"Skipping session summary: token usage {tokens} < threshold {threshold} "
+                f"(limit={self.token_limit}, ratio={self.token_limit_ratio})"
+            )
+            return False
+
+        log_info(
+            f"Creating session summary: token usage {tokens} >= threshold {threshold} "
+            f"(limit={self.token_limit}, ratio={self.token_limit_ratio})"
+        )
+        return True
+
+    def compact_session_history(self, session: Union["AgentSession", "TeamSession"]) -> None:
+        """Keep only recent runs after older context has been summarized."""
+        if not self.compact_history_after_summary:
+            return
+        if session is None or not getattr(session, "runs", None):
+            return
+
+        original_run_count = len(session.runs)
+        session.runs = session.runs[-self.compact_history_keep_last_n_runs :]
+        log_info(
+            f"Compacted session history after summary; kept last {self.compact_history_keep_last_n_runs} run(s)"
+            f" out of {original_run_count}"
+        )
 
     def get_response_format(self, model: "Model") -> Union[Dict[str, Any], Type[BaseModel]]:  # type: ignore
         if model.supports_native_structured_outputs:
@@ -245,6 +304,9 @@ class SessionSummaryManager:
         run_metrics: Optional["RunMetrics"] = None,
     ) -> Optional[SessionSummary]:
         """Creates a summary of the session"""
+        if not self.should_create_session_summary(run_metrics):
+            return None
+
         log_debug("Creating session summary", center=True)
         self.model = get_model(self.model)
         if self.model is None:
@@ -272,6 +334,7 @@ class SessionSummaryManager:
         if session is not None and session_summary is not None:
             session.summary = session_summary
             self.summaries_updated = True
+            self.compact_session_history(session)
 
         return session_summary
 
@@ -281,6 +344,9 @@ class SessionSummaryManager:
         run_metrics: Optional["RunMetrics"] = None,
     ) -> Optional[SessionSummary]:
         """Creates a summary of the session"""
+        if not self.should_create_session_summary(run_metrics):
+            return None
+
         log_debug("Creating session summary", center=True)
         self.model = get_model(self.model)
         if self.model is None:
@@ -308,5 +374,6 @@ class SessionSummaryManager:
         if session is not None and session_summary is not None:
             session.summary = session_summary
             self.summaries_updated = True
+            self.compact_session_history(session)
 
         return session_summary
