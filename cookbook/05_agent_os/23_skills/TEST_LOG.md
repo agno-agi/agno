@@ -66,3 +66,28 @@ directory first.
   violations.
 - Targeted Ruff format and check, Python compilation, inventory parity, local
   Markdown links, legacy deletion, and `git diff --check` passed.
+
+---
+
+## 2026-08-04: Skills REST lesson
+
+Tested against Agno source commit
+`80429698d1005897bc87485312da77abc85dcdba`.
+
+### rest_api.py
+
+**Status:** PASS
+
+**Test mode:** LIVE
+
+**Description:** Started the standalone AgentOS on port `8901` with a
+SQLite-backed skills agent, then drove the five `/skills` endpoints with the
+`--demo` client: create, duplicate create, list, detail, version-guarded
+update, stale update, delete, and get-after-delete. No model call is involved.
+
+**Result:** Ran twice back to back; both runs passed every assertion. `POST`
+returned `201` with version `1`; the duplicate `POST` returned `409`; the list
+contained `release-notes` with no content fields; the detail returned the
+stored references; `PATCH` bumped version `1` to `2`; a stale `PATCH` returned
+`409` naming current version `2`; `DELETE` returned `204` and the follow-up
+`GET` returned `404`.
