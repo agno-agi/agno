@@ -346,7 +346,7 @@ def check(
     validate_policy(
         max_retries if max_retries is not None else 0,
         run_condition,
-        label=f"verifier {label!r}",
+        label=f"check {label!r}",
     )
     coerced = coerce_verifier(target)
     if coerced is target:
@@ -365,7 +365,7 @@ def check(
         coerced.stop_on_failure = bool(stop_on_failure)
     # On the merged policy, not just the passed knobs: stop_on_failure=True over a target
     # declared advisory is as contradictory as passing both at once.
-    validate_required_stop_on_failure(coerced.required, coerced.stop_on_failure, label=f"verifier {label!r}")
+    validate_required_stop_on_failure(coerced.required, coerced.stop_on_failure, label=f"check {label!r}")
     return coerced
 
 

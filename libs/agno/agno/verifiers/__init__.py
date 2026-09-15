@@ -5,8 +5,9 @@ verifiers run; a failure goes back to the model as an evidence report inside the
 and a run that never passes within budget ends ``RunStatus.unverified`` with the record on
 ``RunOutput.verification``. The same checks mount on ``Agent(verifiers=...)``,
 ``Team(verifiers=...)`` and the ``Verify`` workflow step; per-check policy rides the check
-(``required``, ``max_retries``, ``run_condition``, ``stop_on_failure``) and only the shared re-entry loop rides
-the mount. Learning, memory and post-hooks are not gated: they run on the final output.
+(``required``, ``max_retries``, ``run_condition``, ``stop_on_failure``; ``check()`` gives a plain callable the
+same knobs) and only the shared re-entry loop rides the mount. Learning, memory and post-hooks are not gated:
+they run on the final output.
 """
 
 from agno.verifiers.base import GuardedVerifier, Verifier, check
