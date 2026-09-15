@@ -16,6 +16,39 @@ No tests recorded yet.
 
 ---
 
+## 05_integrations/vector_dbs
+
+### 06_oracle.py
+
+**Status:** PARTIAL
+
+**Description:** `OracleVector` against a live Oracle 23ai server (vector
+search requires 23ai or later; see
+`cookbook/06_storage/oracle/README.md`'s version matrix for the storage-vs-
+vector floor distinction). Three `Knowledge` configs: basic vector search,
+hybrid search with Cohere reranking, and vector search with a similarity
+threshold. `OracleVector`'s own correctness (record identity, owner scoping,
+upsert dedup, all five delete paths, numeric filter comparisons, the exact
+FilterExpr operator set, keyword/hybrid ranking parity with PgVector) was
+verified directly and exhaustively — see
+`libs/agno/tests/unit/vectordb/test_oracle_user_isolation.py`,
+`test_oracle_filters_and_search_types.py`, and the differential ranking
+harness at
+`libs/agno/tests/integration/vector_dbs/test_differential_oracle_pgvector.py`.
+
+**Result:** Run in `.venvs/demo` against a live server (port substituted for
+the dedicated test container, since port 1521 was occupied by an unrelated
+container in this environment): all three `OracleVector` instances create
+their tables correctly, the PDF is fetched and chunked, and
+`vector_db_hybrid.optimize()` successfully creates both the ANN vector index
+and the Oracle Text `CONTEXT` index (confirmed by inspecting the tables
+directly afterward). Every insert and every agent response fails only at the
+embedding/model call (`OPENAI_API_KEY not set`), which is expected — no LLM
+API key was available in this environment. Re-run with a real API key to
+confirm the retrieval and response content end to end.
+
+---
+
 ## 09_archive/filters
 
 ### filtering_elasticsearch.py
