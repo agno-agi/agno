@@ -35,6 +35,9 @@ The Agent-as-Config feature allows you to:
 | `auto_populate_registry.py` | Inspect how AgentOS auto-discovers components from teams and workflows |
 | `auto_populate_registry_os.py` | Serve an AgentOS and see the auto-discovered components over the API |
 | `user_isolation_os.py` | Serve an AgentOS with per-user component isolation |
+| `save_prompt.py` | Publish a reusable Prompt and load current and earlier versions |
+| `prompt_version_selection.py` | Pin a Prompt version at save time, pin explicitly, or follow latest on load |
+| `shared_prompt.py` | Reuse one Prompt across Agents and a Team, with a consumer-owned fallback |
 
 ---
 
@@ -337,6 +340,56 @@ Details:
 
 See `auto_populate_registry.py` (offline inspection) and
 `auto_populate_registry_os.py` (served app).
+
+---
+
+## Prompts
+
+A `Prompt` is one reusable text block stored in the component catalogue with
+immutable published versions. Agents and Teams reference it from
+`instructions` or `system_message`.
+
+```python
+from agno.db.sqlite import SqliteDb
+from agno.prompt import Prompt
+
+db = SqliteDb(db_file="tmp/prompts.db", id="prompts-db")
+
+version = Prompt(id="support", content=["Be concise."]).save(db=db)  # publishes version 1
+current = Prompt.load("support", db=db)  # current published version
+```
+
+Selecting a version from a consumer:
+
+```python
+Agent(instructions=Prompt(id="support"))                    # pin the current version when the Agent is saved
+Agent(instructions=Prompt(id="support", version=3))         # pin version 3
+Agent(instructions=Prompt(id="support", version="latest"))  # follow the current version on each load
+```
+
+- Every `Prompt.save()` publishes a new version, identical content included.
+  Saving an Agent or Team never publishes Prompt text.
+- Omitted is not floating: the pin is resolved once at save time and stored in
+  the saved reference and its link row. Only `version="latest"` floats.
+- Resolution happens when a consumer is loaded. A loaded object keeps its text
+  until you load it again, so publishing a Prompt does not change objects
+  already in memory.
+- A `fallback` on a consumer's `Prompt(...)` is that consumer's own backup text,
+  stored on its link row. Lenient loading (the default) uses the requested
+  version, then the current published version, then the fallback; strict
+  loading raises instead. This is Prompt resolution, not model fallback.
+- A Prompt in `Team.system_message` completely replaces the generated Team
+  context, including the member roster and delegation instructions.
+- A Prompt cannot be deleted while a saved Agent or Team references it.
+
+The three Prompt examples use a local SQLite file, call no model, and can be
+re-run; each run publishes further versions.
+
+```bash
+python cookbook/93_components/save_prompt.py
+python cookbook/93_components/prompt_version_selection.py
+python cookbook/93_components/shared_prompt.py
+```
 
 ---
 
