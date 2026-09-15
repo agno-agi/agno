@@ -1,0 +1,23 @@
+name: agno-filesystem-demo
+
+services:
+  agent-os:
+    build:
+      context: ../../..
+      dockerfile: cookbook/05_agent_os/27_filesystem/docker_filesystem.Dockerfile
+    environment:
+      OPENAI_API_KEY: ${OPENAI_API_KEY:?Set OPENAI_API_KEY before starting}
+    ports:
+      - "127.0.0.1:7777:7777"
+    volumes:
+      - filesystem-data:/data
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  filesystem-data:

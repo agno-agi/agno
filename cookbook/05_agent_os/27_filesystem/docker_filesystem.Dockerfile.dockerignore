@@ -1,0 +1,16 @@
+**
+!README.md
+!libs/
+!libs/agno/
+!libs/agno/pyproject.toml
+!libs/agno/README.md
+!libs/agno/LICENSE
+!libs/agno/agno/
+!libs/agno/agno/**
+!cookbook/
+!cookbook/05_agent_os/
+!cookbook/05_agent_os/27_filesystem/
+!cookbook/05_agent_os/27_filesystem/docker_filesystem.py
+**/__pycache__/
+**/*.pyc
+**/.env*

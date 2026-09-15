@@ -11,17 +11,26 @@ Try: Connect Agno OS to http://localhost:7777 and open File System
 """
 
 from agno.agent import Agent
+from agno.db.postgres.postgres import PostgresDb
 from agno.db.sqlite import SqliteDb
 from agno.fs import FileSystem
 from agno.fs.local import LocalFileSystem
 from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS
+from agno.knowledge import Knowledge
+from agno.vectordb.pgvector import PgVector
 
 db = SqliteDb(
     id="filesystem-db",
     db_file="tmp/filesystem.db",
 )
-
+db_postgres = PostgresDb(
+    db_url="postgresql+psycopg://ai:ai@localhost:5532/ai",
+)
+knowledge = Knowledge(
+    vector_db=PgVector(table_name="recipes", db_url="postgresql+psycopg://ai:ai@localhost:5532/ai"),
+  content_db=db_postgres,
+)
 
 fs = FileSystem(
     backend=LocalFileSystem(root="./tmp/agent-files"),
@@ -58,10 +67,11 @@ custom_filesystem_agent = Agent(
     id="custom-filesystem-agent",
     name="Custom File System Agent",
     model=OpenAIResponses(id="gpt-5.6-luna"),
-    db=db,
+    db=db_postgres,
     filesystem=True,
     instructions="Keep durable working notes in your custom filesystem.",
     markdown=True,
+    knowledge=knowledge
 )
 agent_os = AgentOS(
     id="filesystem-os",
