@@ -20,6 +20,7 @@ from typing import Optional
 
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
+from sqlalchemy.ext.asyncio import AsyncEngine
 
 # PRODUCT_COMPONENT_VERSION, not V$INSTANCE: the latter requires a privilege
 # application users frequently do not have. See module docstring.
@@ -108,4 +109,38 @@ def detect_capabilities(engine: Engine) -> OracleCapabilities:
     major = int(str(version_value).split(".")[0])
     capabilities = OracleCapabilities.from_version(major, str(version_full))
     _capabilities_cache[engine] = capabilities
+    return capabilities
+
+
+# Separate cache keyed by AsyncEngine: a sync Engine and an AsyncEngine are
+# different objects even when they wrap the same connection pool, so the two
+# caches never collide and never need to agree on a key type.
+_async_capabilities_cache: "weakref.WeakKeyDictionary[AsyncEngine, OracleCapabilities]" = weakref.WeakKeyDictionary()
+
+
+async def adetect_capabilities(engine: AsyncEngine) -> OracleCapabilities:
+    """Async twin of ``detect_capabilities``. Never opens a sync engine or
+    connection -- the async adapter's whole reason to resolve capabilities
+    this way rather than reusing the sync detector directly.
+    """
+    cached = _async_capabilities_cache.get(engine)
+    if cached is not None:
+        return cached
+
+    async with engine.connect() as conn:
+        result = await conn.execute(_VERSION_QUERY)
+        row = result.first()
+
+    if row is None:
+        raise RuntimeError(
+            "Could not determine the Oracle Database version from PRODUCT_COMPONENT_VERSION. "
+            "This can happen if the connecting user lacks SELECT on that view, or if it is "
+            "empty on this installation. Pass json_storage explicitly to AsyncOracleDb "
+            "to skip detection."
+        )
+
+    version_value, version_full = row[0], row[1] or row[0]
+    major = int(str(version_value).split(".")[0])
+    capabilities = OracleCapabilities.from_version(major, str(version_full))
+    _async_capabilities_cache[engine] = capabilities
     return capabilities

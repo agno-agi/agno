@@ -13,6 +13,7 @@ from uuid import uuid4
 from sqlalchemy import BigInteger, Table, bindparam, case, cast, func
 from sqlalchemy.dialects import oracle as oracle_dialect_module
 from sqlalchemy.engine import Connection, Engine
+from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, AsyncSession
 from sqlalchemy.inspection import inspect
 from sqlalchemy.orm import Session
 from sqlalchemy.sql import text
@@ -223,6 +224,57 @@ def is_valid_table(
         existing_columns_info = inspector.get_columns(table_name, schema=db_schema)
         existing = {col["name"] for col in existing_columns_info}
 
+        missing = expected - existing
+        if missing:
+            log_warning(
+                f"Missing columns {missing} in table {db_schema}.{table_name}"
+                if db_schema
+                else f"Missing columns {missing} in table {table_name}"
+            )
+            return False
+        return True
+    except Exception as e:
+        log_error(f"Error validating table schema for {table_name}: {str(e)}")
+        raise
+
+
+async def ais_table_available(session: AsyncSession, table_name: str, db_schema: Optional[str] = None) -> bool:
+    """Async twin of ``is_table_available``; identical query and semantics."""
+    try:
+        if db_schema is None:
+            query = text("SELECT 1 FROM user_tables WHERE table_name = UPPER(:table_name)")
+            params: Dict[str, Any] = {"table_name": table_name}
+        else:
+            query = text("SELECT 1 FROM all_tables WHERE owner = UPPER(:db_schema) AND table_name = UPPER(:table_name)")
+            params = {"db_schema": db_schema, "table_name": table_name}
+        result = await session.execute(query, params)
+        return result.first() is not None
+    except Exception as e:
+        log_error(f"Error checking if table exists: {str(e)}")
+        return False
+
+
+def _sync_get_columns(conn: Any, table_name: str, db_schema: Optional[str]) -> set:
+    """Run inside ``AsyncConnection.run_sync``: Inspector is a sync-style API,
+    even against the sync proxy connection ``run_sync`` provides."""
+    return {col["name"] for col in inspect(conn).get_columns(table_name, schema=db_schema)}
+
+
+async def ais_valid_table(
+    db_engine: AsyncEngine,
+    table_name: str,
+    expected_columns: Any,
+    db_schema: Optional[str] = None,
+) -> bool:
+    """Async twin of ``is_valid_table``; same contract, same exception
+    behavior. Inspection has no native asyncio form (SQLAlchemy's Inspector
+    is sync-only), so it runs through ``AsyncConnection.run_sync``, mirroring
+    ``agno.db.postgres.utils.ais_valid_table``'s own ``_get_table_columns`` helper.
+    """
+    try:
+        expected = {name for name in expected_columns if not str(name).startswith("_")}
+        async with db_engine.connect() as conn:
+            existing = await conn.run_sync(_sync_get_columns, table_name, db_schema)
         missing = expected - existing
         if missing:
             log_warning(
@@ -451,6 +503,54 @@ def merge_upsert_many(
         attempt += 1
         try:
             connection.execute(stmt, records)
+            return
+        except Exception as e:
+            if is_unique_violation(e) and attempt < max_attempts:
+                continue
+            raise
+
+
+async def amerge_upsert(
+    connection: "AsyncSession | AsyncConnection",
+    table: Table,
+    key_columns: Sequence[str],
+    values: Dict[str, Any],
+    max_attempts: int = DEFAULT_MERGE_RETRY_ATTEMPTS,
+    preserve_on_conflict: Sequence[str] = (),
+) -> None:
+    """Async twin of ``merge_upsert``. ``build_merge_statement`` builds pure
+    SQL text with no I/O, so it is reused unchanged; only the execute+retry
+    loop needs an async form."""
+    stmt = build_merge_statement(table, key_columns, list(values.keys()), preserve_on_conflict=preserve_on_conflict)
+    attempt = 0
+    while True:
+        attempt += 1
+        try:
+            await connection.execute(stmt, values)
+            return
+        except Exception as e:
+            if is_unique_violation(e) and attempt < max_attempts:
+                continue
+            raise
+
+
+async def amerge_upsert_many(
+    connection: "AsyncSession | AsyncConnection",
+    table: Table,
+    key_columns: Sequence[str],
+    records: Sequence[Dict[str, Any]],
+    max_attempts: int = DEFAULT_MERGE_RETRY_ATTEMPTS,
+    preserve_on_conflict: Sequence[str] = (),
+) -> None:
+    """Async twin of ``merge_upsert_many``."""
+    if not records:
+        return
+    stmt = build_merge_statement(table, key_columns, list(records[0].keys()), preserve_on_conflict=preserve_on_conflict)
+    attempt = 0
+    while True:
+        attempt += 1
+        try:
+            await connection.execute(stmt, records)
             return
         except Exception as e:
             if is_unique_violation(e) and attempt < max_attempts:
