@@ -19,9 +19,10 @@ from routers.screener import router as screener_router
 
 app = FastAPI(title="StrategyIQ", version="1.0.0")
 
+# Browsers reject Access-Control-Allow-Origin: * when credentials are enabled.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=settings.parsed_cors_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

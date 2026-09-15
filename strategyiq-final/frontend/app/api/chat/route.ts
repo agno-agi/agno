@@ -5,6 +5,7 @@ import { jwtVerify } from "jose";
 import { Ratelimit } from "@upstash/ratelimit";
 import { Redis } from "@upstash/redis";
 import { getJwtSecretKey, isJwtConfigured, JWT_MISCONFIGURED_MESSAGE } from "@/lib/jwt";
+import { getServerApiUrl } from "@/lib/serverApi";
 
 type Tier = "beginner" | "pro" | "elite";
 
@@ -96,7 +97,7 @@ export async function POST(request: Request) {
       }
     }
 
-    const fastApiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+    const fastApiUrl = getServerApiUrl();
     const upstreamHeaders: Record<string, string> = {
       "Content-Type": "application/json",
       Authorization: `Bearer ${token}`,

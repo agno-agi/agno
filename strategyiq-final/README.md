@@ -99,7 +99,9 @@ Required secrets: `VERCEL_TOKEN`, `ORG_ID`, `PROJECT_ID`, `AWS_ROLE_TO_ASSUME`, 
 | `/api/billing/checkout` | Edge | Proxy to Stripe checkout |
 | `middleware.ts` | Edge | Protects `/dashboard`, `/api/chat`, `/api/billing` |
 
-Required Vercel env: `JWT_SECRET` (min 16 chars, must match backend), `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN`, `NEXT_PUBLIC_API_URL`
+Required Vercel env: `JWT_SECRET` (min 16 chars, must match backend), `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN`, `NEXT_PUBLIC_API_URL`, `FASTAPI_URL` (server-side FastAPI base URL), `CORS_ORIGINS` (backend, comma-separated)
+
+Root `vercel.json` keeps Next Edge `/api/chat` and `/api/billing/*` on the frontend; FastAPI is routed at `/auth`, `/ai`, `/eqs`, `/port`, `/market`, `/billing`, `/health`.
 
 ## Zip Distribution
 
