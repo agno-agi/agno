@@ -104,6 +104,8 @@ StepExecutor = Callable[
     [StepInput],
     Union[
         StepOutput,
+        RunOutput,
+        TeamRunOutput,
         Iterator[StepOutput],
         Iterator[Any],
         Awaitable[StepOutput],
@@ -132,6 +134,32 @@ class UnresolvableCallableError(RuntimeError):
     Container evaluators that tolerate ordinary callable failures re-raise
     this one: running with the reference missing is not a recoverable error.
     """
+
+
+class MissingHitlExecutorError(ValueError):
+    """Raised when a custom function returns a paused response without hitl_executor configured."""
+
+
+class MissingHitlExecutorResponseError(ValueError):
+    """Raised when a custom function returns a paused StepOutput without a recoverable RunOutput/TeamRunOutput."""
+
+
+class HitlExecutorMismatchError(ValueError):
+    """Raised when the configured hitl_executor ID does not match the returned response."""
+
+
+class HitlExecutorTypeMismatchError(TypeError):
+    """Raised when the configured hitl_executor type does not match the returned response."""
+
+
+_FATAL_STEP_EXCEPTIONS = (
+    RunCancelledException,
+    UnresolvableCallableError,
+    MissingHitlExecutorError,
+    MissingHitlExecutorResponseError,
+    HitlExecutorMismatchError,
+    HitlExecutorTypeMismatchError,
+)
 
 
 def _unresolvable_callable_placeholder(kind: str, ref: str) -> Callable[..., Any]:
@@ -188,6 +216,11 @@ class Step:
     team: Optional[Team] = None
     executor: Optional[StepExecutor] = None
     workflow: Optional["Workflow"] = None  # Nested workflow support
+    hitl_executor: Optional[Union[Agent, Team]] = (
+        None  # Inner agent/team target for HITL routing with function executor
+    )
+    _unresolved_hitl_team_id: Optional[str] = None
+    _unresolved_hitl_agent_id: Optional[str] = None
 
     step_id: Optional[str] = None
     description: Optional[str] = None
@@ -223,6 +256,7 @@ class Step:
         add_workflow_history: Optional[bool] = None,
         num_history_runs: int = 3,
         human_review: Optional[HumanReview] = None,
+        hitl_executor: Optional[Union[Agent, Team]] = None,
     ):
         # Auto-detect HITL metadata from @pause decorator on executor function.
         # An explicit human_review= kwarg always wins over decorator metadata.
@@ -253,8 +287,17 @@ class Step:
         self.team = team
         self.executor = executor
         self.workflow = workflow
+        self.hitl_executor = hitl_executor
 
         self._validate_executor_config()
+
+        if self.hitl_executor is not None:
+            if self.executor is None:
+                raise ValueError("hitl_executor is only valid with a function executor")
+            if not isinstance(self.hitl_executor, (Agent, Team)) and not _is_team_instance(self.hitl_executor):
+                raise TypeError(
+                    f"hitl_executor must be an instance of Agent or Team, got {type(self.hitl_executor).__name__}"
+                )
 
         self.step_id = step_id
         self.description = description
@@ -263,6 +306,8 @@ class Step:
         self.strict_input_validation = strict_input_validation
         self.add_workflow_history = add_workflow_history
         self.num_history_runs = num_history_runs
+        self._unresolved_hitl_team_id = None
+        self._unresolved_hitl_agent_id = None
 
         self.human_review = human_review or decorator_review or HumanReview()
 
@@ -274,6 +319,83 @@ class Step:
             self.step_id = str(uuid4())
 
         self._set_active_executor()
+
+    def _get_hitl_executor(self) -> Optional[Union[Agent, Team]]:
+        if self._executor_type in ("agent", "team"):
+            return self.active_executor
+        if self._executor_type == "function":
+            return self.hitl_executor
+        return None
+
+    def _extract_executor_run_response(self, response: Any) -> Optional[Union[RunOutput, TeamRunOutput]]:
+        """Extract underlying RunOutput or TeamRunOutput from response if present."""
+        if isinstance(response, (RunOutput, TeamRunOutput)):
+            return response
+        candidate = getattr(response, "_executor_run_response", None)
+        if isinstance(candidate, (RunOutput, TeamRunOutput)):
+            return candidate
+        return None
+
+    def _validate_custom_executor_paused_response(self, response: Any) -> None:
+        """Validate paused executor response from a custom function step.
+
+        Ensures that if a custom function returns or yields a paused response:
+        1. hitl_executor is explicitly configured (never silently swallowed).
+        2. A recoverable RunOutput or TeamRunOutput is provided for resumption.
+        3. hitl_executor type matches the returned response (Agent vs Team).
+        4. hitl_executor ID matches the response's executor ID if specified.
+        """
+        exec_resp = self._extract_executor_run_response(response)
+        is_paused = (
+            getattr(response, "is_paused", False)
+            or getattr(response, "status", None) == RunStatus.paused
+            or (
+                exec_resp is not None
+                and (getattr(exec_resp, "is_paused", False) or getattr(exec_resp, "status", None) == RunStatus.paused)
+            )
+        )
+        if not is_paused:
+            return
+
+        if self.hitl_executor is None:
+            raise MissingHitlExecutorError(
+                f"Step '{self.name}' returned a paused executor response, but no 'hitl_executor' "
+                "was configured on the Step. Please set Step(..., hitl_executor=...) to enable HITL resumption."
+            )
+
+        if exec_resp is None:
+            raise MissingHitlExecutorResponseError(
+                f"Step '{self.name}' returned a paused StepOutput with is_paused=True, but did not "
+                "provide a recoverable RunOutput or TeamRunOutput for hitl_executor. To pause a "
+                "custom function step for executor HITL, return the paused RunOutput or "
+                "TeamRunOutput directly."
+            )
+
+        if isinstance(self.hitl_executor, Agent):
+            if isinstance(exec_resp, TeamRunOutput):
+                raise HitlExecutorTypeMismatchError(
+                    f"Step '{self.name}' configured hitl_executor of type Agent, but returned TeamRunOutput"
+                )
+            if hasattr(exec_resp, "agent_id") and exec_resp.agent_id:
+                agent_id = getattr(self.hitl_executor, "id", None) or getattr(self.hitl_executor, "agent_id", None)
+                if agent_id and agent_id != exec_resp.agent_id:
+                    raise HitlExecutorMismatchError(
+                        f"Step '{self.name}' hitl_executor agent ID '{agent_id}' does not match "
+                        f"returned response agent_id '{exec_resp.agent_id}'"
+                    )
+
+        elif isinstance(self.hitl_executor, Team) or _is_team_instance(self.hitl_executor):
+            if isinstance(exec_resp, RunOutput):
+                raise HitlExecutorTypeMismatchError(
+                    f"Step '{self.name}' configured hitl_executor of type Team, but returned RunOutput"
+                )
+            if hasattr(exec_resp, "team_id") and exec_resp.team_id:
+                team_id = getattr(self.hitl_executor, "id", None)
+                if team_id and team_id != exec_resp.team_id:
+                    raise HitlExecutorMismatchError(
+                        f"Step '{self.name}' hitl_executor team ID '{team_id}' does not match "
+                        f"returned response team_id '{exec_resp.team_id}'"
+                    )
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert step to a dictionary representation."""
@@ -296,6 +418,18 @@ class Step:
             result["team_id"] = self.team.id
         if self.workflow is not None:
             result["workflow_id"] = self.workflow.id
+        if self.hitl_executor is not None:
+            if isinstance(self.hitl_executor, Team) or _is_team_instance(self.hitl_executor):
+                result["hitl_team_id"] = self.hitl_executor.id
+            else:
+                result["hitl_agent_id"] = getattr(self.hitl_executor, "id", None) or getattr(
+                    self.hitl_executor, "agent_id", None
+                )
+        else:
+            if getattr(self, "_unresolved_hitl_team_id", None) is not None:
+                result["hitl_team_id"] = self._unresolved_hitl_team_id
+            elif getattr(self, "_unresolved_hitl_agent_id", None) is not None:
+                result["hitl_agent_id"] = self._unresolved_hitl_agent_id
         if self.executor is not None:
             unresolved = getattr(self.executor, "__agno_unresolved__", None)
             if unresolved is not None:
@@ -737,6 +871,213 @@ class Step:
                 )
                 executor = _unresolvable_ref_placeholder(config, "executor function", executor_ref)
 
+        # --- Handle hitl_executor reconstruction ---
+        hitl_executor: Optional[Union[Agent, Team]] = None
+        unresolved_hitl_team_id: Optional[str] = None
+        unresolved_hitl_agent_id: Optional[str] = None
+
+        if "hitl_team_id" in config and config["hitl_team_id"]:
+            hitl_team_id = config.get("hitl_team_id")
+            pinned = _pinned_version(hitl_team_id, "step_team")
+
+            if pinned is None and registry and hitl_team_id:
+                registry_team = registry.get_team(hitl_team_id)
+                if registry_team is not None:
+                    try:
+                        hitl_executor = registry_team.deep_copy()
+                        if strict and hitl_executor is registry_team:
+                            raise ComponentRehydrationError(
+                                f"Registry hitl team '{hitl_team_id}' deep_copy returned the shared "
+                                "instance; a strict load requires an isolated copy."
+                            )
+                        if strict and type(hitl_executor).__name__ != "Team" and not _is_team_instance(hitl_executor):
+                            raise ComponentRehydrationError(
+                                f"Registry hitl team '{hitl_team_id}' deep_copy returned a "
+                                f"{type(hitl_executor).__name__}, not a Team; a strict load refuses it."
+                            )
+                        if strict:
+                            from agno.utils.copies import copy_divergence
+
+                            divergence = copy_divergence(registry_team, hitl_executor)
+                            if divergence is not None:
+                                raise ComponentRehydrationError(
+                                    f"Registry hitl team '{hitl_team_id}' deep_copy lost state: {divergence}. "
+                                    "A strict load refuses a copy that does not serialize like its "
+                                    "original; give the subclass a faithful deep_copy."
+                                )
+                    except ComponentRehydrationError:
+                        raise
+                    except Exception as e:
+                        if strict:
+                            raise ComponentRehydrationError(
+                                f"Registry hitl team '{hitl_team_id}' could not be copied (deep_copy "
+                                f"failed: {e}); a strict load refuses the shared registry instance."
+                            ) from e
+                        log_warning(
+                            f"deep_copy() failed for registry hitl team '{hitl_team_id}', using shared instance: {e}",
+                        )
+                        hitl_executor = registry_team
+
+            if hitl_executor is None and db is not None and hitl_team_id is not None:
+                from agno.team.team import get_team_by_id
+                from agno.utils.component_scope import get_component_owner_scope
+
+                try:
+                    hitl_executor = get_team_by_id(
+                        db=db,
+                        id=hitl_team_id,
+                        version=pinned,
+                        registry=registry,
+                        strict=strict,
+                        user_id=get_component_owner_scope(),
+                    )
+                except ComponentRehydrationError as step_member_error:
+                    if pinned is not None:
+                        raise ComponentPinError(
+                            f"Step '{config.get('name')}' pins hitl team '{hitl_team_id}' at version {pinned}, "
+                            f"which failed to rebuild: {step_member_error} "
+                            "Re-save the workflow to pin the team's current version."
+                        ) from step_member_error
+                    raise
+                if hitl_executor is None and pinned is not None:
+                    if strict:
+                        raise ComponentPinError(
+                            f"Step '{config.get('name')}' pins hitl team '{hitl_team_id}' at version {pinned}, "
+                            "which was not found in the db. Restore that version, or re-save the "
+                            "workflow to pin the team's current version."
+                        )
+                    log_warning(
+                        f"Step '{config.get('name')}' pins hitl team '{hitl_team_id}' at version {pinned}, which "
+                        "was not found in the db; loading the team's current version instead."
+                    )
+                    hitl_executor = get_team_by_id(
+                        db=db, id=hitl_team_id, registry=registry, strict=False, user_id=get_component_owner_scope()
+                    )
+
+            if hitl_executor is None and pinned is not None and registry and hitl_team_id:
+                registry_team = registry.get_team(hitl_team_id)
+                if registry_team is not None:
+                    try:
+                        hitl_executor = registry_team.deep_copy()
+                    except Exception as e:
+                        log_warning(
+                            f"deep_copy() failed for registry hitl team '{hitl_team_id}', using shared instance: {e}",
+                        )
+                        hitl_executor = registry_team
+
+            if hitl_executor is None and hitl_team_id:
+                if strict:
+                    raise ComponentRehydrationError(
+                        f"Step '{config.get('name')}' references hitl team '{hitl_team_id}' which was not "
+                        "found in the registry or db. Restore the team, or pass strict=False to "
+                        "load the workflow without it."
+                    )
+                log_warning(
+                    f"Could not resolve hitl_team_id='{hitl_team_id}' from registry or DB for step '{config.get('name')}'"
+                )
+                unresolved_hitl_team_id = hitl_team_id
+
+        elif "hitl_agent_id" in config and config["hitl_agent_id"]:
+            hitl_agent_id = config.get("hitl_agent_id")
+            pinned = _pinned_version(hitl_agent_id, "step_agent")
+
+            if pinned is None and registry and hitl_agent_id:
+                registry_agent = registry.get_agent(hitl_agent_id)
+                if registry_agent is not None:
+                    try:
+                        hitl_executor = registry_agent.deep_copy()
+                        if strict and hitl_executor is registry_agent:
+                            raise ComponentRehydrationError(
+                                f"Registry hitl agent '{hitl_agent_id}' deep_copy returned the shared "
+                                "instance; a strict load requires an isolated copy."
+                            )
+                        if strict and not isinstance(hitl_executor, Agent):
+                            raise ComponentRehydrationError(
+                                f"Registry hitl agent '{hitl_agent_id}' deep_copy returned a "
+                                f"{type(hitl_executor).__name__}, not an Agent; a strict load refuses it."
+                            )
+                        if strict:
+                            from agno.utils.copies import copy_divergence
+
+                            divergence = copy_divergence(registry_agent, hitl_executor)
+                            if divergence is not None:
+                                raise ComponentRehydrationError(
+                                    f"Registry hitl agent '{hitl_agent_id}' deep_copy lost state: {divergence}. "
+                                    "A strict load refuses a copy that does not serialize like its "
+                                    "original; give the subclass a faithful deep_copy."
+                                )
+                    except ComponentRehydrationError:
+                        raise
+                    except Exception as e:
+                        if strict:
+                            raise ComponentRehydrationError(
+                                f"Registry hitl agent '{hitl_agent_id}' could not be copied (deep_copy "
+                                f"failed: {e}); a strict load refuses the shared registry instance."
+                            ) from e
+                        log_warning(
+                            f"deep_copy() failed for registry hitl agent '{hitl_agent_id}', using shared instance: {e}",
+                        )
+                        hitl_executor = registry_agent
+
+            if hitl_executor is None and db is not None and hitl_agent_id is not None:
+                from agno.agent.agent import get_agent_by_id
+                from agno.utils.component_scope import get_component_owner_scope
+
+                try:
+                    hitl_executor = get_agent_by_id(
+                        db=db,
+                        id=hitl_agent_id,
+                        version=pinned,
+                        registry=registry,
+                        strict=strict,
+                        user_id=get_component_owner_scope(),
+                    )
+                except ComponentRehydrationError as step_member_error:
+                    if pinned is not None:
+                        raise ComponentPinError(
+                            f"Step '{config.get('name')}' pins hitl agent '{hitl_agent_id}' at version {pinned}, "
+                            f"which failed to rebuild: {step_member_error} "
+                            "Re-save the workflow to pin the agent's current version."
+                        ) from step_member_error
+                    raise
+                if hitl_executor is None and pinned is not None:
+                    if strict:
+                        raise ComponentPinError(
+                            f"Step '{config.get('name')}' pins hitl agent '{hitl_agent_id}' at version {pinned}, "
+                            "which was not found in the db. Restore that version, or re-save the "
+                            "workflow to pin the agent's current version."
+                        )
+                    log_warning(
+                        f"Step '{config.get('name')}' pins hitl agent '{hitl_agent_id}' at version {pinned}, which "
+                        "was not found in the db; loading the agent's current version instead."
+                    )
+                    hitl_executor = get_agent_by_id(
+                        db=db, id=hitl_agent_id, registry=registry, strict=False, user_id=get_component_owner_scope()
+                    )
+
+            if hitl_executor is None and pinned is not None and registry and hitl_agent_id:
+                registry_agent = registry.get_agent(hitl_agent_id)
+                if registry_agent is not None:
+                    try:
+                        hitl_executor = registry_agent.deep_copy()
+                    except Exception as e:
+                        log_warning(
+                            f"deep_copy() failed for registry hitl agent '{hitl_agent_id}', using shared instance: {e}",
+                        )
+                        hitl_executor = registry_agent
+
+            if hitl_executor is None and hitl_agent_id:
+                if strict:
+                    raise ComponentRehydrationError(
+                        f"Step '{config.get('name')}' references hitl agent '{hitl_agent_id}' which was not "
+                        "found in the registry or db. Restore the agent, or pass strict=False to "
+                        "load the workflow without it."
+                    )
+                log_warning(
+                    f"Could not resolve hitl_agent_id='{hitl_agent_id}' from registry or DB for step '{config.get('name')}'"
+                )
+                unresolved_hitl_agent_id = hitl_agent_id
+
         if config.get("human_review"):
             human_review = HumanReview.from_dict(config["human_review"])
         else:
@@ -745,7 +1086,7 @@ class Step:
             drop_legacy_hitl_keys(config, StepType.STEP)
             human_review = HumanReview()
 
-        return cls(
+        reconstructed_step = cls(
             name=config.get("name"),
             step_id=config.get("step_id"),
             description=config.get("description"),
@@ -759,7 +1100,13 @@ class Step:
             team=team,
             executor=executor,
             workflow=workflow,
+            hitl_executor=hitl_executor,
         )
+        if unresolved_hitl_team_id is not None:
+            reconstructed_step._unresolved_hitl_team_id = unresolved_hitl_team_id
+        if unresolved_hitl_agent_id is not None:
+            reconstructed_step._unresolved_hitl_agent_id = unresolved_hitl_agent_id
+        return reconstructed_step
 
     def get_links(self, position: int = 0) -> List[Dict[str, Any]]:
         """Get links for this step's agent/team/workflow.
@@ -805,6 +1152,20 @@ class Step:
                     "position": position,
                 }
             )
+
+        if self.hitl_executor is not None:
+            child_id = getattr(self.hitl_executor, "id", None) or getattr(self.hitl_executor, "agent_id", None)
+            if child_id:
+                link_kind = "step_team" if isinstance(self.hitl_executor, Team) else "step_agent"
+                links.append(
+                    {
+                        "link_kind": link_kind,
+                        "link_key": link_key,
+                        "child_component_id": child_id,
+                        "child_version": None,
+                        "position": position,
+                    }
+                )
 
         return links
 
@@ -1111,10 +1472,11 @@ class Step:
                                             content += str(chunk.content)
                                 elif isinstance(chunk, (RunOutput, TeamRunOutput)):
                                     # This is the final response from the agent/team
+                                    final_response = self._process_step_output(chunk)
                                     content = chunk.content  # type: ignore[assignment]
                                 # If the chunk is a StepOutput, use it as the final response
                                 elif isinstance(chunk, StepOutput):
-                                    final_response = chunk
+                                    final_response = self._process_step_output(chunk)
                                     break
                                 # Non Agent/Team data structure that was yielded
                                 else:
@@ -1122,16 +1484,20 @@ class Step:
 
                         except StopIteration as e:
                             if hasattr(e, "value") and isinstance(e.value, StepOutput):
-                                final_response = e.value
+                                final_response = self._process_step_output(e.value)
 
                         # Merge session_state changes back
                         if run_context is None and session_state is not None:
                             merge_dictionaries(session_state, session_state_copy)
 
                         if final_response is not None:
-                            response = final_response
+                            response = self._process_step_output(final_response)
                         else:
                             response = StepOutput(content=content)
+                            response.executor_type = self._executor_type
+                            response.executor_name = self.executor_name
+                            response.step_name = self.name or "unnamed_step"
+                            response.step_id = self.step_id
                     else:
                         # Execute function with signature inspection for run_context support
                         result = self._call_custom_function(
@@ -1144,13 +1510,25 @@ class Step:
                         if run_context is None and session_state is not None:
                             merge_dictionaries(session_state, session_state_copy)
 
-                        # If function returns StepOutput, use it directly
-                        if isinstance(result, StepOutput):
-                            response = result
-                        elif isinstance(result, (RunOutput, TeamRunOutput)):
-                            response = StepOutput(content=result.content)
+                        # Normalize function execution result to StepOutput
+                        if isinstance(result, (StepOutput, RunOutput, TeamRunOutput)):
+                            response = self._process_step_output(result)
                         else:
                             response = StepOutput(content=str(result))
+                            response.executor_type = self._executor_type
+                            response.executor_name = self.executor_name
+                            response.step_name = self.name or "unnamed_step"
+                            response.step_id = self.step_id
+
+                    self._validate_custom_executor_paused_response(response)
+
+                    if store_executor_outputs and workflow_run_response is not None:
+                        exec_resp = getattr(response, "_executor_run_response", None)
+                        if exec_resp is not None:
+                            self._store_executor_response(workflow_run_response, exec_resp)
+
+                    if getattr(response, "is_paused", False):
+                        return response
                 else:
                     # For agents and teams, prepare message with context
                     message = self._prepare_message(
@@ -1277,12 +1655,7 @@ class Step:
 
                 return step_output
 
-            except RunCancelledException:
-                # Don't retry a cancelled run
-                raise
-            except UnresolvableCallableError:
-                # A placeholder for an unresolved reference can never succeed:
-                # retrying or skipping it would complete a run that did no work.
+            except _FATAL_STEP_EXCEPTIONS:
                 raise
             except Exception as e:
                 # Do not replay a nested workflow after a guardrail rejection,
@@ -1453,9 +1826,10 @@ class Step:
                                         )
                                         yield enriched_event  # type: ignore[misc]
                                 elif isinstance(event, (RunOutput, TeamRunOutput)):
+                                    final_response = self._process_step_output(event)
                                     content = event.content  # type: ignore[assignment]
                                 elif isinstance(event, StepOutput):
-                                    final_response = event
+                                    final_response = self._process_step_output(event)
                                     break
                                 else:
                                     content += str(event)
@@ -1466,9 +1840,13 @@ class Step:
 
                             if not final_response:
                                 final_response = StepOutput(content=content)
+                                final_response.executor_type = self._executor_type
+                                final_response.executor_name = self.executor_name
+                                final_response.step_name = self.name or "unnamed_step"
+                                final_response.step_id = self.step_id
                         except StopIteration as e:
                             if hasattr(e, "value") and isinstance(e.value, StepOutput):
-                                final_response = e.value
+                                final_response = self._process_step_output(e.value)
 
                     else:
                         result = self._call_custom_function(
@@ -1481,13 +1859,29 @@ class Step:
                         if run_context is None and session_state is not None:
                             merge_dictionaries(session_state, session_state_copy)
 
-                        if isinstance(result, StepOutput):
-                            final_response = result
-                        elif isinstance(result, (RunOutput, TeamRunOutput)):
-                            final_response = StepOutput(content=result.content)
+                        if isinstance(result, (StepOutput, RunOutput, TeamRunOutput)):
+                            final_response = self._process_step_output(result)
                         else:
                             final_response = StepOutput(content=str(result))
+                            final_response.executor_type = self._executor_type
+                            final_response.executor_name = self.executor_name
+                            final_response.step_name = self.name or "unnamed_step"
+                            final_response.step_id = self.step_id
                         log_debug("Function returned non-iterable, created StepOutput", log_level=2)
+
+                    self._validate_custom_executor_paused_response(final_response)
+
+                    if store_executor_outputs and workflow_run_response is not None:
+                        exec_resp = getattr(final_response, "_executor_run_response", None)
+                        if exec_resp is not None:
+                            self._store_executor_response(workflow_run_response, exec_resp)
+
+                    if final_response is not None and getattr(final_response, "is_paused", False):
+                        use_workflow_logger()
+                        paused_output = self._process_step_output(final_response)
+                        paused_output.is_paused = True
+                        yield paused_output
+                        return
                 else:
                     # For agents and teams, prepare message with context
                     message = self._prepare_message(
@@ -1676,12 +2070,7 @@ class Step:
                     )
 
                 return
-            except RunCancelledException:
-                # Don't retry a cancelled run
-                raise
-            except UnresolvableCallableError:
-                # A placeholder for an unresolved reference can never succeed:
-                # retrying or skipping it would complete a run that did no work.
+            except _FATAL_STEP_EXCEPTIONS:
                 raise
             except Exception as e:
                 # Do not replay a nested workflow after a guardrail rejection,
@@ -1773,9 +2162,10 @@ class Step:
                                             else:
                                                 content = str(chunk.content)
                                     elif isinstance(chunk, (RunOutput, TeamRunOutput)):
+                                        final_response = self._process_step_output(chunk)
                                         content = chunk.content  # type: ignore[assignment]
                                     elif isinstance(chunk, StepOutput):
-                                        final_response = chunk
+                                        final_response = self._process_step_output(chunk)
                                         break
                                     else:
                                         content += str(chunk)
@@ -1800,25 +2190,30 @@ class Step:
                                                 else:
                                                     content = str(chunk.content)
                                         elif isinstance(chunk, (RunOutput, TeamRunOutput)):
+                                            final_response = self._process_step_output(chunk)
                                             content = chunk.content  # type: ignore[assignment]
                                         elif isinstance(chunk, StepOutput):
-                                            final_response = chunk
+                                            final_response = self._process_step_output(chunk)
                                             break
                                         else:
                                             content += str(chunk)
 
                         except StopIteration as e:
                             if hasattr(e, "value") and isinstance(e.value, StepOutput):
-                                final_response = e.value
+                                final_response = self._process_step_output(e.value)
 
                         # Merge session_state changes back
                         if run_context is None and session_state is not None:
                             merge_dictionaries(session_state, session_state_copy)
 
                         if final_response is not None:
-                            response = final_response
+                            response = self._process_step_output(final_response)
                         else:
                             response = StepOutput(content=content)
+                            response.executor_type = self._executor_type
+                            response.executor_name = self.executor_name
+                            response.step_name = self.name or "unnamed_step"
+                            response.step_id = self.step_id
                     else:
                         if _is_async_callable(self.active_executor):
                             result = await self._acall_custom_function(
@@ -1837,13 +2232,25 @@ class Step:
                         if run_context is None and session_state is not None:
                             merge_dictionaries(session_state, session_state_copy)
 
-                        # If function returns StepOutput, use it directly
-                        if isinstance(result, StepOutput):
-                            response = result
-                        elif isinstance(result, (RunOutput, TeamRunOutput)):
-                            response = StepOutput(content=result.content)
+                        # Normalize function execution result to StepOutput
+                        if isinstance(result, (StepOutput, RunOutput, TeamRunOutput)):
+                            response = self._process_step_output(result)
                         else:
                             response = StepOutput(content=str(result))
+                            response.executor_type = self._executor_type
+                            response.executor_name = self.executor_name
+                            response.step_name = self.name or "unnamed_step"
+                            response.step_id = self.step_id
+
+                    self._validate_custom_executor_paused_response(response)
+
+                    if store_executor_outputs and workflow_run_response is not None:
+                        exec_resp = getattr(response, "_executor_run_response", None)
+                        if exec_resp is not None:
+                            self._store_executor_response(workflow_run_response, exec_resp)
+
+                    if getattr(response, "is_paused", False):
+                        return response
 
                 else:
                     # For agents and teams, prepare message with context
@@ -1979,12 +2386,7 @@ class Step:
 
                 return step_output
 
-            except RunCancelledException:
-                # Don't retry a cancelled run
-                raise
-            except UnresolvableCallableError:
-                # A placeholder for an unresolved reference can never succeed:
-                # retrying or skipping it would complete a run that did no work.
+            except _FATAL_STEP_EXCEPTIONS:
                 raise
             except Exception as e:
                 # Do not replay a nested workflow after a guardrail rejection,
@@ -2096,14 +2498,19 @@ class Step:
                                     )
                                     yield enriched_event  # type: ignore[misc]
                             elif isinstance(event, (RunOutput, TeamRunOutput)):
+                                final_response = self._process_step_output(event)
                                 content = event.content  # type: ignore[assignment]
                             elif isinstance(event, StepOutput):
-                                final_response = event
+                                final_response = self._process_step_output(event)
                                 break
                             else:
                                 content += str(event)
                         if not final_response:
                             final_response = StepOutput(content=content)
+                            final_response.executor_type = self._executor_type
+                            final_response.executor_name = self.executor_name
+                            final_response.step_name = self.name or "unnamed_step"
+                            final_response.step_id = self.step_id
                     elif _is_async_callable(self.active_executor):
                         # It's a regular async function - await it
                         result = await self._acall_custom_function(
@@ -2111,12 +2518,14 @@ class Step:
                             step_input,
                             run_context,
                         )
-                        if isinstance(result, StepOutput):
-                            final_response = result
-                        elif isinstance(result, (RunOutput, TeamRunOutput)):
-                            final_response = StepOutput(content=result.content)
+                        if isinstance(result, (StepOutput, RunOutput, TeamRunOutput)):
+                            final_response = self._process_step_output(result)
                         else:
                             final_response = StepOutput(content=str(result))
+                            final_response.executor_type = self._executor_type
+                            final_response.executor_name = self.executor_name
+                            final_response.step_name = self.name or "unnamed_step"
+                            final_response.step_id = self.step_id
                     elif _is_generator_function(self.active_executor):
                         content = ""
                         # It's a regular generator function - iterate over it
@@ -2145,9 +2554,10 @@ class Step:
                                     )
                                     yield enriched_event  # type: ignore[misc]
                             elif isinstance(event, (RunOutput, TeamRunOutput)):
+                                final_response = self._process_step_output(event)
                                 content = event.content  # type: ignore[assignment]
                             elif isinstance(event, StepOutput):
-                                final_response = event
+                                final_response = self._process_step_output(event)
                                 break
                             else:
                                 if isinstance(content, str):
@@ -2156,6 +2566,10 @@ class Step:
                                     content = str(event)
                         if not final_response:
                             final_response = StepOutput(content=content)
+                            final_response.executor_type = self._executor_type
+                            final_response.executor_name = self.executor_name
+                            final_response.step_name = self.name or "unnamed_step"
+                            final_response.step_id = self.step_id
                     else:
                         # It's a regular function - call it directly
                         result = self._call_custom_function(
@@ -2163,16 +2577,32 @@ class Step:
                             step_input,
                             run_context,
                         )
-                        if isinstance(result, StepOutput):
-                            final_response = result
-                        elif isinstance(result, (RunOutput, TeamRunOutput)):
-                            final_response = StepOutput(content=result.content)
+                        if isinstance(result, (StepOutput, RunOutput, TeamRunOutput)):
+                            final_response = self._process_step_output(result)
                         else:
                             final_response = StepOutput(content=str(result))
+                            final_response.executor_type = self._executor_type
+                            final_response.executor_name = self.executor_name
+                            final_response.step_name = self.name or "unnamed_step"
+                            final_response.step_id = self.step_id
 
                     # Merge session_state changes back
                     if run_context is None and session_state is not None:
                         merge_dictionaries(session_state, session_state_copy)
+
+                    self._validate_custom_executor_paused_response(final_response)
+
+                    if store_executor_outputs and workflow_run_response is not None:
+                        exec_resp = getattr(final_response, "_executor_run_response", None)
+                        if exec_resp is not None:
+                            self._store_executor_response(workflow_run_response, exec_resp)
+
+                    if final_response is not None and getattr(final_response, "is_paused", False):
+                        use_workflow_logger()
+                        paused_output = self._process_step_output(final_response)
+                        paused_output.is_paused = True
+                        yield paused_output
+                        return
                 else:
                     # For agents and teams, prepare message with context
                     message = self._prepare_message(
@@ -2369,12 +2799,7 @@ class Step:
                     )
                 return
 
-            except RunCancelledException:
-                # Don't retry a cancelled run
-                raise
-            except UnresolvableCallableError:
-                # A placeholder for an unresolved reference can never succeed:
-                # retrying or skipping it would complete a run that did no work.
+            except _FATAL_STEP_EXCEPTIONS:
                 raise
             except Exception as e:
                 # Do not replay a nested workflow after a guardrail rejection,
@@ -2496,18 +2921,19 @@ class Step:
         if executor_run_response is None:
             log_warning(f"Step '{self.name}': executor produced no response to store")
             return
-        if self._executor_type in ["agent", "team"]:
+        hitl_executor = self._get_hitl_executor()
+        if hitl_executor is not None:
             # propagate the workflow run id as parent run id to the executor response
             executor_run_response.parent_run_id = workflow_run_response.run_id
             executor_run_response.workflow_step_id = self.step_id
 
             # Scrub the executor response based on the executor's storage flags before storing
-            if (
-                not self.active_executor.store_media
-                or not self.active_executor.store_tool_messages
-                or not self.active_executor.store_history_messages
-            ):  # type: ignore
-                self.active_executor.scrub_run_output_for_storage(executor_run_response)  # type: ignore
+            store_media = getattr(hitl_executor, "store_media", True)
+            store_tool_messages = getattr(hitl_executor, "store_tool_messages", True)
+            store_history_messages = getattr(hitl_executor, "store_history_messages", True)
+            if not store_media or not store_tool_messages or not store_history_messages:
+                if hasattr(hitl_executor, "scrub_run_output_for_storage"):
+                    hitl_executor.scrub_run_output_for_storage(executor_run_response)  # type: ignore
 
             # Get the raw response from the step's active executor
             raw_response = executor_run_response
@@ -2520,9 +2946,7 @@ class Step:
                 workflow_run_response.step_executor_runs.append(raw_response)
 
                 # Add direct member agent runs (in case of a team we force store_member_responses=True here)
-                if isinstance(raw_response, TeamRunOutput) and getattr(
-                    self.active_executor, "store_member_responses", False
-                ):
+                if isinstance(raw_response, TeamRunOutput) and getattr(hitl_executor, "store_member_responses", False):
                     for member_response in raw_response.member_responses or []:
                         if isinstance(member_response, RunOutput):
                             workflow_run_response.step_executor_runs.append(member_response)
@@ -2581,9 +3005,10 @@ class Step:
         This propagates tool-level HITL requirements from the executor up to the workflow level,
         similar to how teams propagate member pauses via _propagate_member_pause().
         """
-        executor_id = getattr(self.active_executor, "id", None) or getattr(self.active_executor, "agent_id", None)
-        executor_name = getattr(self.active_executor, "name", None)
-        executor_type = ExecutorType.TEAM if isinstance(self.active_executor, Team) else ExecutorType.AGENT
+        executor = self._get_hitl_executor() or self.active_executor
+        executor_id = getattr(executor, "id", None) or getattr(executor, "agent_id", None)
+        executor_name = getattr(executor, "name", None)
+        executor_type = ExecutorType.TEAM if isinstance(executor, Team) else ExecutorType.AGENT
 
         # Serialize requirements for transport.
         # Only include UNRESOLVED requirements — the agent's requirements list
@@ -2621,6 +3046,11 @@ class Step:
                 response.step_type = StepType.STEP
             response.executor_type = self._executor_type
             response.executor_name = self.executor_name
+            exec_resp = self._extract_executor_run_response(response)
+            if exec_resp is not None:
+                response._executor_run_response = exec_resp
+                if getattr(exec_resp, "is_paused", False):
+                    response.is_paused = True
             return response
 
         # Extract media from response
@@ -2640,7 +3070,7 @@ class Step:
         success = response_status not in (RunStatus.cancelled, RunStatus.error)
         error = response.content if not success else None
 
-        return StepOutput(
+        out = StepOutput(
             step_name=self.name or "unnamed_step",
             step_id=self.step_id,
             step_type=step_type,
@@ -2655,7 +3085,11 @@ class Step:
             metrics=metrics,
             success=success,
             error=error,
+            is_paused=getattr(response, "is_paused", False),
         )
+        if isinstance(response, (RunOutput, TeamRunOutput)):
+            out._executor_run_response = response
+        return out
 
     def _convert_function_result_to_response(self, result: Any) -> RunOutput:
         """Convert function execution result to RunOutput"""

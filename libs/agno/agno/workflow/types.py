@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field as dc_field
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple, Union
@@ -572,6 +572,10 @@ class StepOutput:
     # This is a transient flag — NOT serialized. It is cleared after the workflow
     # processes it.
     requires_iteration_review_pause: bool = False
+
+    # Internal transient reference to underlying RunOutput/TeamRunOutput.
+    # Excluded from dataclass init/repr/compare to preserve positional signatures and equality semantics.
+    _executor_run_response: Optional[Any] = dc_field(default=None, init=False, repr=False, compare=False)
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary"""
