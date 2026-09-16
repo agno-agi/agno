@@ -1,5 +1,6 @@
 import asyncio
-from io import BytesIO
+from contextlib import ExitStack
+from io import BytesIO, StringIO
 from pathlib import Path
 from typing import List
 from unittest.mock import patch
@@ -37,6 +38,35 @@ def test_read_text_bytesio():
     assert len(documents) == 1
     assert documents[0].name == "test"
     assert documents[0].content == test_data
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("use_async", [False, True], ids=["sync", "async"])
+@pytest.mark.parametrize("chunk", [False, True], ids=["whole", "chunked"])
+@pytest.mark.parametrize("stream_type", ["stringio", "text_file", "utf8_bytes", "latin1_bytes"])
+async def test_read_text_and_binary_streams(tmp_path, use_async, chunk, stream_type):
+    content = "Agent notes: café." if stream_type == "latin1_bytes" else "Agent notes: café 中文."
+    encoding = None if stream_type == "utf8_bytes" else "latin-1"
+
+    with ExitStack() as stack:
+        if stream_type == "text_file":
+            path = tmp_path / "notes.txt"
+            path.write_text(content, encoding="utf-8")
+            stream = stack.enter_context(path.open(encoding="utf-8"))
+        elif stream_type == "stringio":
+            stream = stack.enter_context(StringIO(content))
+        else:
+            stream = stack.enter_context(BytesIO(content.encode(encoding or "utf-8")))
+
+        # Reading must rewind the input; text streams are already decoded.
+        stream.read(3)
+        reader = TextReader(chunk=chunk, encoding=encoding)
+        documents = await reader.async_read(stream, name="notes") if use_async else reader.read(stream, name="notes")
+
+        assert len(documents) == 1
+        assert documents[0].content == content
+        assert documents[0].name == "notes"
+        assert not stream.closed
 
 
 def test_chunking():
