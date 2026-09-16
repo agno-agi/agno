@@ -17,7 +17,13 @@ from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.knowledge.reranker.base import Reranker
 from agno.utils.log import log_debug, log_info, logger
-from agno.vectordb.base import VectorDb, aembed_before_replace, embed_before_replace, is_rate_limit_error, raise_embedding_failures
+from agno.vectordb.base import (
+    VectorDb,
+    aembed_before_replace,
+    embed_before_replace,
+    is_rate_limit_error,
+    raise_embedding_failures,
+)
 from agno.vectordb.distance import Distance
 from agno.vectordb.opensearch.index import Engine, SpaceType
 from agno.vectordb.search import SearchType

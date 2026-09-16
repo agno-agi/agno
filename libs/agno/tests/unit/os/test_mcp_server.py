@@ -14,6 +14,7 @@ import pytest
 pytest.importorskip("fastmcp")
 
 import asyncio  # noqa: E402
+import inspect  # noqa: E402
 import re  # noqa: E402
 import time  # noqa: E402
 from contextlib import asynccontextmanager  # noqa: E402
@@ -1209,6 +1210,64 @@ async def test_assigning_config_to_mcp_server_attribute_applies_config():
     assert await _tool_names(os) == {"ping"}
 
 
+# ----------------------------- stateless transport -----------------------------
+
+
+def _captured_http_app_kwargs(monkeypatch, os_instance) -> dict:
+    """Build the MCP app, returning the kwargs handed to fastmcp's ``http_app``."""
+    captured: dict = {}
+    real_build = mcp_mod.build_mcp_server
+
+    def _spy_build(os_arg):
+        server = real_build(os_arg)
+        real_http_app = server.http_app
+
+        def _spy_http_app(**kwargs):
+            captured.update(kwargs)
+            return real_http_app(**kwargs)
+
+        # functools.wraps keeps the signature that get_mcp_server introspects.
+        _spy_http_app.__signature__ = inspect.signature(real_http_app)  # type: ignore[attr-defined]
+        monkeypatch.setattr(server, "http_app", _spy_http_app)
+        return server
+
+    monkeypatch.setattr(mcp_mod, "build_mcp_server", _spy_build)
+    get_mcp_server(os_instance)
+    return captured
+
+
+def test_stateless_defaults_off_and_is_not_passed(monkeypatch):
+    """Default config leaves fastmcp's own default in place rather than forcing False."""
+    os = AgentOS(agents=[_agent()], mcp=MCPConfig())
+
+    kwargs = _captured_http_app_kwargs(monkeypatch, os)
+
+    assert "stateless_http" not in kwargs
+
+
+def test_stateless_true_is_passed_to_http_app(monkeypatch):
+    """``MCPConfig(stateless=True)`` reaches fastmcp as ``stateless_http=True``."""
+    os = AgentOS(agents=[_agent()], mcp=MCPConfig(stateless=True))
+
+    kwargs = _captured_http_app_kwargs(monkeypatch, os)
+
+    assert kwargs["stateless_http"] is True
+
+
+def test_stateless_is_not_passed_for_plain_mcp_true(monkeypatch):
+    """``mcp=True`` builds no MCPConfig, so the flag is simply absent."""
+    os = AgentOS(agents=[_agent()], mcp=True)
+
+    kwargs = _captured_http_app_kwargs(monkeypatch, os)
+
+    assert "stateless_http" not in kwargs
+
+
+def test_stateless_config_field_defaults_to_false():
+    assert MCPConfig().stateless is False
+    assert MCPConfig(stateless=True).stateless is True
+
+
 # ----------------------------- server identity -----------------------------
 
 
@@ -1296,7 +1355,9 @@ def test_card_name_is_reverse_dns_and_slugged():
 
 async def test_server_card_describes_the_server_and_its_endpoint(monkeypatch):
     monkeypatch.setattr(mcp_mod, "_mcp_server_is_open", lambda os: True)
-    app = get_mcp_server(_docs_os())
+    os = _docs_os()
+    os.description = "Search the docs — café."
+    app = get_mcp_server(os)
 
     async with _mcp_client(app) as client:
         response = await client.get("/mcp/server-card", headers={"accept": "application/mcp-server-card+json"})
@@ -1305,6 +1366,9 @@ async def test_server_card_describes_the_server_and_its_endpoint(monkeypatch):
     assert response.headers["content-type"].startswith("application/mcp-server-card+json")
     assert response.headers["access-control-allow-origin"] == "*"
     assert response.headers["cache-control"] == "public, max-age=300"
+    assert response.text.startswith('{\n  "$schema": ')
+    assert "Search the docs — café." in response.text
+    assert int(response.headers["content-length"]) == len(response.content)
     card = response.json()
     # The tool entries have their own tests; everything else is pinned exactly.
     assert {key: value for key, value in card.items() if key != "tools"} == {
@@ -1312,7 +1376,7 @@ async def test_server_card_describes_the_server_and_its_endpoint(monkeypatch):
         "name": "com.example/agno-docs",
         "title": "Agno Docs",
         "version": "1.0.0",
-        "description": "Search the docs.",
+        "description": "Search the docs — café.",
         "remotes": [{"type": "streamable-http", "url": "http://example.com/mcp"}],
     }
 

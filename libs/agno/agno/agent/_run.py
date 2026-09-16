@@ -139,7 +139,13 @@ _CANCEL_BYPASS_EVENT_TYPES = (
 # ---------------------------------------------------------------------------
 
 
-def resolve_run_dependencies(agent: Agent, run_context: RunContext) -> None:
+def resolve_run_dependencies(
+    agent: Agent,
+    run_context: RunContext,
+    *,
+    run_input: Optional[RunInput] = None,
+    session: Optional[AgentSession] = None,
+) -> None:
     from inspect import iscoroutine, iscoroutinefunction, signature
 
     # Dependencies should already be resolved in run() method
@@ -162,6 +168,10 @@ def resolve_run_dependencies(agent: Agent, run_context: RunContext) -> None:
                     kwargs["agent"] = agent
                 if "run_context" in sig.parameters:
                     kwargs["run_context"] = run_context
+                if "run_input" in sig.parameters:
+                    kwargs["run_input"] = run_input
+                if "session" in sig.parameters:
+                    kwargs["session"] = session
 
                 # Run the function
                 result = value(**kwargs)
@@ -176,7 +186,13 @@ def resolve_run_dependencies(agent: Agent, run_context: RunContext) -> None:
             run_context.dependencies[key] = value
 
 
-async def aresolve_run_dependencies(agent: Agent, run_context: RunContext) -> None:
+async def aresolve_run_dependencies(
+    agent: Agent,
+    run_context: RunContext,
+    *,
+    run_input: Optional[RunInput] = None,
+    session: Optional[AgentSession] = None,
+) -> None:
     from inspect import iscoroutine, signature
 
     log_debug("Resolving context (async)")
@@ -197,6 +213,10 @@ async def aresolve_run_dependencies(agent: Agent, run_context: RunContext) -> No
                 kwargs["agent"] = agent
             if "run_context" in sig.parameters:
                 kwargs["run_context"] = run_context
+            if "run_input" in sig.parameters:
+                kwargs["run_input"] = run_input
+            if "session" in sig.parameters:
+                kwargs["session"] = session
 
             # Run the function
             result = value(**kwargs)
@@ -437,7 +457,9 @@ def _run(
 
                 # 3. Resolve dependencies
                 if run_context.dependencies is not None:
-                    resolve_run_dependencies(agent, run_context=run_context)
+                    resolve_run_dependencies(
+                        agent, run_context=run_context, run_input=run_response.input, session=agent_session
+                    )
 
                 raise_if_cancelled(run_response.run_id)  # type: ignore
 
@@ -840,7 +862,9 @@ def _run_stream(
 
                 # 3. Resolve dependencies
                 if run_context.dependencies is not None:
-                    resolve_run_dependencies(agent, run_context=run_context)
+                    resolve_run_dependencies(
+                        agent, run_context=run_context, run_input=run_response.input, session=agent_session
+                    )
 
                 raise_if_cancelled(run_response.run_id)  # type: ignore
 
@@ -1566,7 +1590,9 @@ async def _arun(
 
                 # 3. Resolve dependencies
                 if run_context.dependencies is not None:
-                    await aresolve_run_dependencies(agent, run_context=run_context)
+                    await aresolve_run_dependencies(
+                        agent, run_context=run_context, run_input=run_response.input, session=agent_session
+                    )
 
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
 
@@ -2323,7 +2349,9 @@ async def _arun_stream(
 
                 # 3. Resolve dependencies
                 if run_context.dependencies is not None:
-                    await aresolve_run_dependencies(agent, run_context=run_context)
+                    await aresolve_run_dependencies(
+                        agent, run_context=run_context, run_input=run_response.input, session=agent_session
+                    )
 
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
 
@@ -3423,8 +3451,8 @@ def continue_run_dispatch(
 
         background_tasks: BackgroundTasks = background_tasks  # type: ignore
 
-    session_id = run_response.session_id if run_response else session_id
-    run_id: str = run_response.run_id if run_response else run_id  # type: ignore
+    session_id = run_response.session_id if run_response is not None else session_id
+    run_id: str = run_response.run_id if run_response is not None else run_id  # type: ignore
 
     session_id, user_id = initialize_session(
         agent,
@@ -3496,10 +3524,6 @@ def continue_run_dispatch(
         user_id=user_id,
     )
 
-    # Resolve dependencies
-    if run_context.dependencies is not None:
-        resolve_run_dependencies(agent, run_context=run_context)
-
     # Run can be continued from previous run response or from passed run_response context
     if run_response is not None:
         if run_response.status == RunStatus.cancelled:
@@ -3537,8 +3561,7 @@ def continue_run_dispatch(
         input_messages = run_response.messages or []
     elif run_id is not None:
         # The run is continued from a run_id.
-        runs = agent_session.runs or []
-        run_response = next((r for r in runs if r.run_id == run_id), None)  # type: ignore
+        run_response = cast(Optional[RunOutput], _stored_run)
         if run_response is None:
             raise RunNotFoundError(f"No runs found for run ID {run_id}")
         if run_response.status == RunStatus.cancelled:
@@ -3631,6 +3654,20 @@ def continue_run_dispatch(
             # else: nothing to resolve — fall through to resume from current state
     else:
         raise ValueError("Either run_response or run_id must be provided.")
+
+    if run_context.session_state is None:
+        run_context.session_state = {}
+    _initialize_session_state(
+        run_context.session_state, user_id=user_id, session_id=session_id, run_id=run_context.run_id
+    )
+    # Resolve dependencies
+    if run_context.dependencies is not None:
+        resolve_run_dependencies(
+            agent,
+            run_context=run_context,
+            run_input=_stored_run.input if isinstance(_stored_run, RunOutput) else None,
+            session=agent_session,
+        )
 
     # If the caller supplied a new user-message string (unified /continue body
     # field ``input``), append it to run_response.messages before building
@@ -3977,7 +4014,9 @@ def _continue_run_stream(
             try:
                 # 1. Resolve dependencies
                 if run_context.dependencies is not None:
-                    resolve_run_dependencies(agent, run_context=run_context)
+                    resolve_run_dependencies(
+                        agent, run_context=run_context, run_input=run_response.input, session=session
+                    )
 
                 # Start the Run by yielding a RunContinued event
                 if stream_events:
@@ -4307,8 +4346,8 @@ def acontinue_run_dispatch(  # type: ignore
 
         background_tasks: BackgroundTasks = background_tasks  # type: ignore
 
-    session_id = run_response.session_id if run_response else session_id
-    run_id: str = run_response.run_id if run_response else run_id  # type: ignore
+    session_id = run_response.session_id if run_response is not None else session_id
+    run_id: str = run_response.run_id if run_response is not None else run_id  # type: ignore
 
     session_id, user_id = initialize_session(
         agent,
@@ -4793,17 +4832,23 @@ async def _acontinue_run(
                     if user_id is not None:
                         run_context.user_id = user_id
 
+                dependency_run = (
+                    run_response
+                    if run_response is not None
+                    else next((r for r in agent_session.runs or [] if r.run_id == run_id), None)
+                )
                 # A resumed run keeps its runtime-owned metadata (dispatch
                 # lineage, hop count, version stamp); on the async path the
                 # session may only be readable here, so the restore happens at
                 # the load point. Idempotent with the dispatch-time restore.
                 _restore_continue_context_metadata(
-                    run_context, run_response=run_response, run_id=run_id, session=agent_session
+                    run_context,
+                    run_response=cast(Optional[RunOutput], dependency_run),
+                    run_id=run_id,
+                    session=agent_session,
                 )
 
                 # 2. Resolve dependencies
-                if run_context.dependencies is not None:
-                    await aresolve_run_dependencies(agent, run_context=run_context)
 
                 # 3. Update metadata and session state
                 update_metadata(agent, session=agent_session)
@@ -4854,8 +4899,7 @@ async def _acontinue_run(
                     input_messages = run_response.messages or []
                 elif run_id is not None:
                     # The run is continued from a run_id.
-                    runs = agent_session.runs or []
-                    run_response = next((r for r in runs if r.run_id == run_id), None)  # type: ignore
+                    run_response = cast(Optional[RunOutput], dependency_run)
                     if run_response is None:
                         raise RunNotFoundError(f"No runs found for run ID {run_id}")
                     if run_response.status == RunStatus.cancelled:
@@ -4946,6 +4990,14 @@ async def _acontinue_run(
                 # If the caller supplied a new user-message string (unified /continue
                 # body field ``input``), append it to run_response.messages before
                 # building run_messages.
+                if run_context.dependencies is not None:
+                    await aresolve_run_dependencies(
+                        agent,
+                        run_context=run_context,
+                        run_input=dependency_run.input if isinstance(dependency_run, RunOutput) else None,
+                        session=agent_session,
+                    )
+
                 if input:
                     _maybe_append_input_message(run_response, input, agent)
                     input_messages = run_response.messages or []
@@ -5302,12 +5354,20 @@ async def _acontinue_run_stream(
                     if user_id is not None:
                         run_context.user_id = user_id
 
+                dependency_run = (
+                    run_response
+                    if run_response is not None
+                    else next((r for r in agent_session.runs or [] if r.run_id == run_id), None)
+                )
                 # A resumed run keeps its runtime-owned metadata (dispatch
                 # lineage, hop count, version stamp); on the async path the
                 # session may only be readable here, so the restore happens at
                 # the load point. Idempotent with the dispatch-time restore.
                 _restore_continue_context_metadata(
-                    run_context, run_response=run_response, run_id=run_id, session=agent_session
+                    run_context,
+                    run_response=cast(Optional[RunOutput], dependency_run),
+                    run_id=run_id,
+                    session=agent_session,
                 )
 
                 # 2. Update session state and metadata
@@ -5327,8 +5387,6 @@ async def _acontinue_run_stream(
                 )
 
                 # 3. Resolve dependencies
-                if run_context.dependencies is not None:
-                    await aresolve_run_dependencies(agent, run_context=run_context)
 
                 # 4. Prepare run response
                 if run_response is not None:
@@ -5364,8 +5422,7 @@ async def _acontinue_run_stream(
 
                 elif run_id is not None:
                     # The run is continued from a run_id.
-                    runs = agent_session.runs or []
-                    run_response = next((r for r in runs if r.run_id == run_id), None)  # type: ignore
+                    run_response = cast(Optional[RunOutput], dependency_run)
                     if run_response is None:
                         raise RunNotFoundError(f"No runs found for run ID {run_id}")
                     if run_response.status == RunStatus.cancelled:
@@ -5456,6 +5513,14 @@ async def _acontinue_run_stream(
                 # If the caller supplied a new user-message string (unified /continue
                 # body field ``input``), append it to run_response.messages before
                 # building run_messages.
+                if run_context.dependencies is not None:
+                    await aresolve_run_dependencies(
+                        agent,
+                        run_context=run_context,
+                        run_input=dependency_run.input if isinstance(dependency_run, RunOutput) else None,
+                        session=agent_session,
+                    )
+
                 if input:
                     _maybe_append_input_message(run_response, input, agent)
                     input_messages = run_response.messages or []
