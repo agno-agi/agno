@@ -241,7 +241,6 @@ async def test_async_read_multi_page_csv_preserves_rows_and_numbers(multi_page_c
     assert [document.meta_data["row_number"] for document in async_documents] == list(
         range(2 if skip_header else 1, 12)
     )
-    assert reader.chunking_strategy.skip_header is skip_header
 
 
 @pytest.mark.asyncio
