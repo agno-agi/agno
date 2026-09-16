@@ -598,6 +598,17 @@ def test_run_shell_blocks_metacharacters():
         assert "Error" in result
         assert "<" in result
 
+        # Bare & (background) chaining — shlex flattens it into an ordinary token
+        result = tools.run_shell("echo hello & echo pwned")
+        assert "Error" in result
+        assert "&" in result
+
+        # Newline / carriage-return chaining
+        result = tools.run_shell("echo hello\necho pwned")
+        assert "Error" in result
+        result = tools.run_shell("echo hello\rmkdir escaped")
+        assert "Error" in result
+
 
 def test_run_shell_blocks_disallowed_commands():
     """Test that commands not in the allowlist are blocked."""

@@ -268,8 +268,12 @@ class CodingTools(Toolkit):
                 pass
         self._temp_files.clear()
 
-    # Shell operators that enable command chaining or substitution
-    _DANGEROUS_PATTERNS: List[str] = ["&&", "||", ";", "|", "$(", "`", ">", ">>", "<"]
+    # Shell operators that enable command chaining or substitution. A bare "&"
+    # (background) and newline / carriage return are separators too: shlex.split
+    # flattens them into ordinary tokens, so without them here a second,
+    # non-allowlisted command after "&" / "\n" / "\r" would pass validation yet
+    # still run under shell=True.
+    _DANGEROUS_PATTERNS: List[str] = ["&&", "||", ";", "|", "&", "\n", "\r", "$(", "`", ">", ">>", "<"]
 
     # Interpreters that can execute arbitrary inline code, bypassing the allowlist
     # and path checks. Matched by basename prefix (python, python3, python3.12, ...).
