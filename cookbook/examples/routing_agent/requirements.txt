@@ -1,0 +1,3 @@
+agno[os,openai]==3.0.8
+pydantic
+httpx

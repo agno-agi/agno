@@ -1,6 +1,53 @@
 # Examples refresh validation
 
-## Current requirements setup — September 16
+## Use-case companions — September 16
+
+Seven additional starters cover the remaining entries in the documentation's
+use-case navigation: Message Routing, Release Agent, Docs Agent, Task Agent,
+Feedback Labeler, Analytics Agent, and Account Review. The collection now has
+13 examples. Each new directory uses only `requirements.txt` for dependencies,
+with Python 3.14 setup instructions; no project manifest, lockfile, or environment
+template was added.
+
+| New check | Published Agno 3.0.8 | Local source Agno 3.0.9 |
+| --- | --- | --- |
+| Fresh Python 3.14.5 per-example requirements installs | 7 passed | Uses those installed dependencies |
+| Routing, ownership, page access, SQL and workflow contracts | 11 passed | 11 passed |
+| Four AgentOS startup and health checks | 4 passed | 4 passed |
+| Five CLI live-model demos | 5 passed | Not repeated |
+| Routing live HTTP caller | Passed | Not repeated |
+| Release Agent live MCP caller | Passed | Not repeated |
+
+Source checks explicitly selected the framework at
+`37fc4121e3cf8863a2957b838fbad7c920bffe0f`. Published live checks used OpenAI
+3.14.1 and `gpt-5.6`; Release Agent used FastMCP 4.0.4 and MCP 2.2.0.
+Each live run used synthetic inputs and an isolated copy with its own environment
+and storage. These are bounded smoke checks, not accuracy or hosted evaluations.
+
+The documentation's introductory Python examples supplied the routing, release,
+task, labeling, analytics, and account-review implementations. Changes add
+cookbook presentation and demos, rename the task action agent to avoid colliding
+with Product Agent, guard the seed script's execution, and clarify the labeling
+policy for inputs matching multiple categories. Docs Agent is a new small local
+search/read example; it does not claim the full application's published-page
+indexing or synchronization.
+
+Live observations: routing selected `billing-support`; task tools completed
+Alice's task and rejected access to Bob's; documentation answers read source
+pages and acknowledged the missing residency policy; analytics returned $2,000
+active MRR and acknowledged the missing cancellation reason; approval paused
+before saving the account review. The initial labeling run chose bug for mixed
+praise and a bug; the clarified policy produced `needs_review` on rerun. The MCP
+client was updated for SDK 2 and successfully called the release tool.
+
+The 11 local contracts exercise queue fallback, task ownership/idempotence,
+page-path restrictions, database-enforced write rejection, and workflow
+confirmation/rejection. The workflow test replaces only drafting with a fixture
+executor. Health checks use real ASGI lifespans. Per-example logs record details.
+The repository format/validation scripts and example Ruff checks passed. The
+docs checkout remained read-only. No hosted service or production action was run.
+
+## Original six examples: requirements setup — September 16
 
 All six examples now use `requirements.txt` with `uv venv --python 3.14` and
 `uv pip install -r requirements.txt`. There are no per-example project manifests,
@@ -38,7 +85,7 @@ Base and tested framework source:
 `37fc4121e3cf8863a2957b838fbad7c920bffe0f` (Agno **3.0.9**).
 The original five examples were tested with published Agno **3.0.8**, Python
 3.12.8, OpenAI 3.13.0, and FastMCP 4.0.3 for the two MCP examples. The dependency
-setup has since been simplified; see the September 16 results below. Existing shared demo environment was
+setup has since been simplified; see the September 16 results above. Existing shared demo environment was
 Agno 3.0.1 and was not silently used as the implementation under test.
 
 ## Results
@@ -124,7 +171,7 @@ PYTHONPATH=../../../libs/agno python -m pytest ../test_mcp.py -q
 
 The original September 10 CLI checks used the former per-example project setup.
 Their outcomes are historical; the Python 3.14 requirements checks are recorded
-separately below.
+separately above.
 
 Repository gates:
 

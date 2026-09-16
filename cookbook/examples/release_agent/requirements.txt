@@ -1,0 +1,2 @@
+agno[os,mcp,openai,sqlite]==3.0.8
+mcp>=2,<3

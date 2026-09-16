@@ -1,0 +1,1 @@
+agno[openai,sqlite]==3.0.8
