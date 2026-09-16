@@ -62,7 +62,7 @@ async def _async_tool_message(return_value: Any) -> Message:
 
 @pytest.mark.parametrize(
     "return_value, expected",
-    [(0, "0"), (0.0, "0.0"), (False, "False"), ([], "[]"), ({}, "{}"), (1, "1"), ("text", "text")],
+    [(0, "0"), (0.0, "0.0"), (False, "False"), ([], "[]"), ({}, "{}"), (None, "None"), (1, "1"), ("text", "text")],
 )
 def test_sync_tool_result_keeps_falsy_values(return_value, expected):
     message = _sync_tool_message(return_value)
@@ -82,6 +82,6 @@ async def test_async_tool_result_keeps_falsy_values(return_value, expected):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("return_value", [0, False, [], "text"])
+@pytest.mark.parametrize("return_value", [0, False, [], None, "text"])
 async def test_sync_and_async_tool_results_match(return_value):
     assert _sync_tool_message(return_value).content == (await _async_tool_message(return_value)).content
