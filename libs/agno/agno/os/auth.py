@@ -22,6 +22,48 @@ from agno.os.settings import AgnoAPISettings
 security = HTTPBearer(auto_error=False)
 
 
+def verify_internal_service_request(request: Request) -> bool:
+    """Verify the scheduler credential before granting internal request handling."""
+    headers = request.headers.getlist("authorization")
+    if len(headers) != 1 or not headers[0].lower().startswith("bearer "):
+        return False
+    token = headers[0][7:]
+    internal = getattr(request.app.state, "internal_service_token", None)
+    if not internal or not hmac.compare_digest(token, internal):
+        return False
+    request.state.authenticated = True
+    request.state.user_id = INTERNAL_SCHEDULER_USER_ID
+    request.state.scopes = list(INTERNAL_SERVICE_SCOPES)
+    request.state._agno_verified_internal = True
+    return True
+
+
+async def require_verified_public_workflow(request: Request, settings: AgnoAPISettings, workflow_id: str) -> None:
+    """Require real bearer verification on selected workflows, including open instances."""
+    headers = request.headers.getlist("authorization")
+    if len(headers) != 1 or not headers[0].lower().startswith("bearer ") or not headers[0][7:]:
+        raise HTTPException(status_code=401, detail="Authorization required")
+    token = headers[0][7:]
+    if verify_internal_service_request(request):
+        return
+    if not getattr(request.state, "authenticated", False):
+        if token.startswith(SERVICE_ACCOUNT_TOKEN_PREFIX):
+            await _authenticate_service_account(request, token, treat_unverifiable_as_anonymous=False)
+        elif get_effective_auth_mode(settings, app=request.app) == "security_key" and hmac.compare_digest(
+            token, settings.os_security_key or ""
+        ):
+            request.state.authenticated = True
+        else:
+            raise HTTPException(status_code=401, detail="Invalid authentication token")
+    if not getattr(request.state, "authenticated", False):
+        raise HTTPException(status_code=401, detail="Invalid authentication token")
+    if getattr(request.state, "authorization_enabled", False):
+        action = "read" if request.method == "GET" else "run"
+        if not check_resource_access(request, workflow_id, "workflows", action):
+            raise HTTPException(status_code=403, detail="Insufficient permissions")
+    request.state._agno_public_workflow = True
+
+
 @lru_cache(maxsize=1)
 def _default_scope_mappings() -> Dict[str, List[str]]:
     """The default route→scope mappings, built once (they are static data) so the
@@ -526,7 +568,16 @@ def require_resource_access(resource_type: str, action: str, resource_id_param: 
 
         # Get the resource_id from path parameters
         resource_id = request.path_params.get(resource_id_param)
-        if resource_id and not check_resource_access(request, resource_id, resource_type, action):
+        effective_action = (
+            "read"
+            if (
+                getattr(request.state, "_agno_public_workflow", False)
+                and resource_type == "workflows"
+                and request.method == "GET"
+            )
+            else action
+        )
+        if resource_id and not check_resource_access(request, resource_id, resource_type, effective_action):
             raise HTTPException(status_code=403, detail=f"Access denied to {action} this {resource_singular}")
 
     return dependency
