@@ -809,3 +809,115 @@ def test_configured_sources_collects_and_labels(tmp_path):
         {"cursor": CursorAdapter(home=tmp_path, cwd=tmp_path), "codex": CodexAdapter(home=tmp_path)}
     )
     assert sources == [("https://prod.example.com", "client-config", "Cursor, Codex")]
+
+
+# -- Config file encoding ----------------------------------------------------------
+#
+# Client config files are UTF-8: JSON by definition (RFC 8259 8.1) and TOML by spec.
+# Reading or writing them without an explicit encoding= uses the host's locale codec,
+# which on a non-UTF-8 Windows code page either raises UnicodeDecodeError or silently
+# mojibakes the server names and filesystem paths -- and since the write paths are
+# read-modify-write, a mojibake read corrupts the user's whole config on save.
+#
+# `narrow_locale` forces that situation on every platform so these tests are not silent
+# no-ops on UTF-8 CI runners.
+
+NON_ASCII_PATH = "D:/资料/客户文档"
+
+
+@pytest.fixture
+def narrow_locale(monkeypatch, tmp_path):
+    """Give text opens that do not name an encoding a narrow one, as a narrow locale would.
+
+    Patches ``io.open`` rather than ``builtins.open`` because that is the entry point
+    ``pathlib.Path.read_text`` actually reaches -- patching only ``builtins.open`` would
+    leave it untouched and make these tests pass vacuously. ``Path.read_text`` resolves an
+    absent encoding to the sentinel ``"locale"`` before it gets here, so that spelling
+    counts as absent too. ``os.fdopen`` is wrapped separately since it is handed a file
+    descriptor, which carries no path to scope on.
+
+    Scoped to ``tmp_path`` so nothing else the test process reads is affected.
+    """
+    import io
+
+    real_open = io.open
+    real_fdopen = os.fdopen
+
+    def narrow(mode, encoding):
+        return "b" not in mode and encoding in (None, "locale")
+
+    def open_with_narrow_locale(file, mode="r", buffering=-1, encoding=None, *args, **kwargs):
+        if narrow(mode, encoding) and isinstance(file, (str, os.PathLike)) and str(file).startswith(str(tmp_path)):
+            encoding = "ascii"
+        return real_open(file, mode, buffering, encoding, *args, **kwargs)
+
+    def fdopen_with_narrow_locale(fd, mode="r", buffering=-1, encoding=None, *args, **kwargs):
+        if narrow(mode, encoding):
+            encoding = "ascii"
+        return real_fdopen(fd, mode, buffering, encoding, *args, **kwargs)
+
+    monkeypatch.setattr(io, "open", open_with_narrow_locale)
+    monkeypatch.setattr(os, "fdopen", fdopen_with_narrow_locale)
+
+
+def test_read_json_preserves_non_ascii(tmp_path: Path, narrow_locale):
+    """Both JSON readers must decode as UTF-8 regardless of the host locale."""
+    from agnoctl.clients.base import read_json_lenient, read_json_strict
+
+    path = tmp_path / "mcp.json"
+    config = {"mcpServers": {"文件系统": {"command": "npx", "args": ["-y", NON_ASCII_PATH]}}}
+    path.write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    assert read_json_lenient(path) == config
+    assert read_json_strict(path) == config
+
+
+def test_atomic_write_text_writes_utf8(tmp_path: Path, narrow_locale):
+    """Written bytes must be UTF-8 so the next reader -- ours or the client's -- can parse them."""
+    path = tmp_path / "config.toml"
+    text = 'root = "' + NON_ASCII_PATH + '"\n'
+
+    atomic_write_text(path, text, secure=False)
+
+    # Compare decoded text, not raw bytes: the newline translation is platform-dependent,
+    # the encoding is what this asserts.
+    assert path.read_text(encoding="utf-8") == text
+    assert NON_ASCII_PATH.encode("utf-8") in path.read_bytes()
+
+
+def test_codex_write_preserves_non_ascii_config(tmp_path: Path, narrow_locale):
+    """Codex writes are read-modify-write, so unrelated non-ASCII entries must survive."""
+    (tmp_path / ".codex").mkdir()
+    config_path = tmp_path / ".codex" / "config.toml"
+    original = (
+        'model = "gpt-5"\n\n'
+        "[mcp_servers.filesystem]\n"
+        'command = "npx"\n'
+        'args = ["-y", "' + NON_ASCII_PATH + '"]\n\n'
+        '[projects."' + NON_ASCII_PATH + '"]\n'
+        'trust_level = "trusted"\n'
+    )
+    config_path.write_text(original, encoding="utf-8")
+
+    result = CodexAdapter(home=tmp_path).write("agno", "http://localhost:7777/mcp", None)
+
+    assert result.method == "file"
+    parsed = tomllib.loads(config_path.read_text(encoding="utf-8"))
+    # The entry we added, plus every pre-existing one, byte-for-byte.
+    assert parsed["mcp_servers"]["agno"]["url"] == "http://localhost:7777/mcp"
+    assert parsed["mcp_servers"]["filesystem"]["args"][-1] == NON_ASCII_PATH
+    assert NON_ASCII_PATH in parsed["projects"]
+
+
+def test_codex_read_of_undecodable_config_does_not_crash(tmp_path: Path):
+    """A config that is not valid UTF-8 is a bad file, not a traceback."""
+    (tmp_path / ".codex").mkdir()
+    config_path = tmp_path / ".codex" / "config.toml"
+    # Latin-1 bytes that are not legal UTF-8.
+    config_path.write_bytes(b'[mcp_servers.x]\nurl = "http://h/mcp"  # caf\xe9\n')
+
+    adapter = CodexAdapter(home=tmp_path)
+
+    assert adapter.list_entries() == {}
+    with pytest.raises(CLIError):
+        adapter.write("agno", "http://localhost:7777/mcp", None)
