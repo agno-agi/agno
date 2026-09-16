@@ -8,15 +8,17 @@ From the repository root:
 
 ```bash
 cd cookbook/examples/research_agent
-uv sync --locked
+uv venv --python 3.14
+source .venv/bin/activate
+uv pip install -r requirements.txt
 export OPENAI_API_KEY="your-openai-api-key"
-uv run --no-sync demo.py
+python demo.py
 ```
 
-Each directory is a standalone uv project; a downloaded directory uses the same
-commands after changing into it. `.env.example` is a template and is not loaded
-automatically. Export variables explicitly. The lock pins published Agno 3.0.8;
-Python 3.12 or newer is required. Model calls use `openai:gpt-5.6`.
+A downloaded example uses the same commands after changing into its directory.
+`requirements.txt` lists the runtime dependencies; no uv project is needed. Export
+credentials in your shell. On Windows, activate with `.venv\Scripts\Activate.ps1`.
+Model calls use `openai:gpt-5.6`.
 
 ## Fixture and live modes
 
@@ -28,7 +30,7 @@ and survey evidence leads to a qualified recommendation.
 For a completely offline, deterministic run with scripted model responses:
 
 ```bash
-uv run --no-sync demo.py --fixture
+python demo.py --fixture
 ```
 
 The same Agent executes search and read tools, parses its output schema, and
@@ -39,8 +41,8 @@ and whether the model was scripted.
 For real web research:
 
 ```bash
-RESEARCH_MODE=live uv run --no-sync demo.py
-RESEARCH_MODE=live uv run --no-sync research_agent.py
+RESEARCH_MODE=live python demo.py
+RESEARCH_MODE=live python research_agent.py
 ```
 
 Live search uses Agno's `WebSearchTools` (DDGS) and `WebsiteTools` to read pages;
@@ -74,7 +76,8 @@ publishers. Review source quality and any disagreement before sharing a brief.
 From this example directory:
 
 ```bash
-uv run --no-sync pytest test_contracts.py -q
+uv pip install pytest pytest-asyncio
+python -m pytest test_contracts.py -q
 ```
 
 See [TEST_LOG.md](TEST_LOG.md) for measured results and limitations. To check the

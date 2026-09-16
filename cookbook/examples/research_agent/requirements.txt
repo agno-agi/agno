@@ -1,0 +1,5 @@
+agno[os,sqlite]==3.0.8
+openai
+ddgs
+beautifulsoup4
+httpx

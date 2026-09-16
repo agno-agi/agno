@@ -1,11 +1,44 @@
 # Examples refresh validation
 
+## Current requirements setup — September 16
+
+All six examples now use `requirements.txt` with `uv venv --python 3.14` and
+`uv pip install -r requirements.txt`. There are no per-example project manifests,
+lockfiles, or environment templates. Test dependencies are installed separately.
+
+Fresh environments used Python 3.14.5, published Agno 3.0.8, OpenAI 3.14.1,
+FastMCP 4.0.4 for the brains, and ChromaDB 1.5.9 for Product Agent. Source checks
+selected Agno 3.0.9 at the base revision recorded below.
+
+| Current check | Published package | Exact local source |
+| --- | --- | --- |
+| Six per-example contract suites | 9 passed | 9 passed |
+| Two-brain HTTP/MCP suite | 2 passed | 2 passed |
+| Six server startups and /health | 6 passed | 6 passed |
+| Research/Support offline fixture demos | 2 passed | 2 passed |
+| Product live embedding loader, HTTP demo, SSE and restart follow-up | Not run | Passed |
+
+Pip's Python fence and all three demo prompts still match the current first-agent
+page; its source-input hash was refreshed. Its README now follows the current
+Slack → Railway journey. Product Agent follows the working Agents as API example
+with consistent product naming, ChromaDB hybrid retrieval, a local document loader,
+SQLite history, and HTTP/SSE calls. Its two tests verify index reopen/update and
+real API retrieval/history/reference persistence using deterministic model bounds.
+Its separate live smoke used real embeddings and model calls. The older five
+agents' live-model results below remain historical, not newly repeated runs.
+
+Formatting and full repository validation were rerun for this change. The docs
+checkout was read-only. The removed files eliminate approximately 8,000 lines of
+packaging metadata while retaining runtime dependencies and documented commands.
+
+## Original September 10 validation
+
 Validated 2026-09-10 in an isolated worktree on `codex/refresh-agent-examples`.
 Base and tested framework source:
 `37fc4121e3cf8863a2957b838fbad7c920bffe0f` (Agno **3.0.9**).
-Each standalone project declares and locks published Agno **3.0.8**. Tests used
-Python 3.12.8; lockfiles record every transitive version (including OpenAI 3.13.0
-and FastMCP 4.0.3 for the two MCP examples). Existing shared demo environment was
+The original five examples were tested with published Agno **3.0.8**, Python
+3.12.8, OpenAI 3.13.0, and FastMCP 4.0.3 for the two MCP examples. The dependency
+setup has since been simplified; see the September 16 results below. Existing shared demo environment was
 Agno 3.0.1 and was not silently used as the implementation under test.
 
 ## Results
@@ -69,38 +102,29 @@ All live checks used the existing local test API key, isolated temporary databas
 and bounded runs. No user databases, real support tickets, external accounts,
 deployments, releases, pushes, or PRs were created.
 
-## Reproduce
+## Reproduce with the current requirements setup
 
-From any example directory, `uv sync --locked` creates its isolated environment.
-The README commands export credentials explicitly; `.env.example` is not loaded.
-Published contract tests:
+From any example directory:
 
 ```bash
-uv run --no-sync pytest test_contracts.py -q
+uv venv --python 3.14
+source .venv/bin/activate
+uv pip install -r requirements.txt
+uv pip install pytest pytest-asyncio
+python -m pytest test_contracts.py -q
+PYTHONPATH=../../../libs/agno python -m pytest test_contracts.py -q
 ```
 
-Source contract tests, from that same directory in a checkout:
+From `cookbook/examples/team_brain`, also run:
 
 ```bash
-PYTHONPATH=../../../libs/agno uv run --no-sync pytest test_contracts.py -q
+python -m pytest ../test_mcp.py -q
+PYTHONPATH=../../../libs/agno python -m pytest ../test_mcp.py -q
 ```
 
-From `cookbook/examples/team_brain`, the two-brain HTTP/MCP suite:
-
-```bash
-uv run --no-sync pytest ../test_mcp.py -q
-PYTHONPATH=../../../libs/agno uv run --no-sync pytest ../test_mcp.py -q
-```
-
-Clean-command checks copied each example's tracked inputs into a new temporary
-directory and reused its freshly installed isolated environment through
-`UV_PROJECT_ENVIRONMENT`. They ran `uv run --no-sync <example>.py`, verified
-`/health` on a temporary loopback port via `AGENT_OS_PORT`, and stopped every
-server. Research and Support also ran `uv run --no-sync demo.py --fixture` there.
-Serving the two brains used generated test RSA verification keys. The five live
-model demos used each project's environment and exact local source; the three
-brain restart checks ran `demo.py --recall-only` in their existing test data
-directories. The additional research run used `RESEARCH_MODE=live`.
+The original September 10 CLI checks used the former per-example project setup.
+Their outcomes are historical; the Python 3.14 requirements checks are recorded
+separately below.
 
 Repository gates:
 
@@ -118,8 +142,9 @@ files rather than runnable cookbook lessons.
 
 ## Scope and remaining limits
 
-The five directories contain main agents, demos, README/TEST_LOG files, independent
-pyproject/lock files, environment templates, and focused contracts. Research adds
+The six directories now contain main agents, demos, README/TEST_LOG files,
+requirements.txt files, and focused contracts. Product Agent adds a document
+loader and fictional sample product documentation. Research adds
 fictional sources and a scripted model; Support adds fictional Markdown product
 docs and a scripted model. Shared code exists only in the HTTP test harness; there
 is no shared application framework.

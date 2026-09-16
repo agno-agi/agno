@@ -8,15 +8,17 @@ From the repository root:
 
 ```bash
 cd cookbook/examples/personal_agent
-uv sync --locked
+uv venv --python 3.14
+source .venv/bin/activate
+uv pip install -r requirements.txt
 export OPENAI_API_KEY="your-openai-api-key"
-uv run --no-sync demo.py
+python demo.py
 ```
 
-Each directory is a standalone uv project; a downloaded directory uses the same
-commands after changing into it. `.env.example` is a template and is not loaded
-automatically. Export variables explicitly. The lock pins published Agno 3.0.8;
-Python 3.12 or newer is required. Model calls use `openai:gpt-5.6`.
+A downloaded example uses the same commands after changing into its directory.
+`requirements.txt` lists the runtime dependencies; no uv project is needed. Export
+credentials in your shell. On Windows, activate with `.venv\Scripts\Activate.ps1`.
+Model calls use `openai:gpt-5.6`.
 
 ## Try the tutorial story
 
@@ -28,8 +30,8 @@ Expect the user test to remain outstanding and the draft task to remain complete
 The demo prints the actual saved files, so recall can be checked against notes.
 
 ```bash
-uv run --no-sync demo.py --recall-only
-uv run --no-sync personal_agent.py
+python demo.py --recall-only
+python personal_agent.py
 ```
 
 The second command starts the tutorial's AgentOS at `http://localhost:7777`;
@@ -56,7 +58,7 @@ conversation content to OpenAI. Traces can contain this content too.
 ## Extend it
 
 Continue the [personal-agent tutorial](https://docs.agno.com/first-agent) through
-Slack, Railway, and authenticated MCP when you need those interfaces. For learning
+Slack and Railway when you need an everyday interface and a hosted service. For learning
 about people and preferences automatically across conversations, move to
 [Second Brain](../second_brain). This starter deliberately keeps learning stores out.
 
@@ -65,7 +67,8 @@ about people and preferences automatically across conversations, move to
 From this example directory:
 
 ```bash
-uv run --no-sync pytest test_contracts.py -q
+uv pip install pytest pytest-asyncio
+python -m pytest test_contracts.py -q
 ```
 
 See [TEST_LOG.md](TEST_LOG.md) for measured results and limitations. To check the

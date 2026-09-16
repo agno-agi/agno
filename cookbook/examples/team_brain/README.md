@@ -8,15 +8,17 @@ From the repository root:
 
 ```bash
 cd cookbook/examples/team_brain
-uv sync --locked
+uv venv --python 3.14
+source .venv/bin/activate
+uv pip install -r requirements.txt
 export OPENAI_API_KEY="your-openai-api-key"
-uv run --no-sync demo.py
+python demo.py
 ```
 
-Each directory is a standalone uv project; a downloaded directory uses the same
-commands after changing into it. `.env.example` is a template and is not loaded
-automatically. Export variables explicitly. The lock pins published Agno 3.0.8;
-Python 3.12 or newer is required. Model calls use `openai:gpt-5.6`.
+A downloaded example uses the same commands after changing into its directory.
+`requirements.txt` lists the runtime dependencies; no uv project is needed. Export
+credentials in your shell. On Windows, activate with `.venv\Scripts\Activate.ps1`.
+Model calls use `openai:gpt-5.6`.
 
 ## What to try
 
@@ -26,7 +28,7 @@ log and answers with both authors. Each saved JSON record contains an ID, projec
 decision, reasoning, author, and timestamp.
 
 ```bash
-uv run --no-sync demo.py --recall-only
+python demo.py --recall-only
 ```
 
 This fresh process recalls the persisted log. Try "What did we decide for
@@ -51,7 +53,7 @@ adds new timestamped records. Relevant records are sent to OpenAI for answers.
 Export `JWT_VERIFICATION_KEY` as your trusted issuer's PEM RSA public key, then:
 
 ```bash
-uv run --no-sync team_brain.py
+python team_brain.py
 ```
 
 Use `http://127.0.0.1:7777/mcp` with a client that sends
@@ -80,7 +82,8 @@ team-wide decision. Preserve server-assigned authorship in either extension.
 From this example directory:
 
 ```bash
-uv run --no-sync pytest test_contracts.py -q
+uv pip install pytest pytest-asyncio
+python -m pytest test_contracts.py -q
 ```
 
 See [TEST_LOG.md](TEST_LOG.md) for measured results and limitations. To check the

@@ -1,8 +1,0 @@
-[project]
-name = "personal-agent-example"
-version = "0.1.0"
-requires-python = ">=3.12"
-dependencies = ["agno[os,sqlite]==3.0.8", "openai"]
-
-[dependency-groups]
-dev = ["pytest", "pytest-asyncio"]
