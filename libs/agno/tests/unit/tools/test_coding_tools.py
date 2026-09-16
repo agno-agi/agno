@@ -666,13 +666,27 @@ def test_run_shell_blocks_inline_interpreter_code():
         base_dir = Path(tmp_dir)
         tools = CodingTools(base_dir=base_dir)
 
-        # -c inline code
+        # -c inline code (space-separated)
         result = tools.run_shell("python3 -c \"print(__import__('os').environ)\"")
         assert "Error" in result
-        assert "Inline code execution flag" in result
+        assert "Inline code execution" in result
 
-        # -m arbitrary module
+        # -c with an attached argument (no space) — CPython accepts this
+        result = tools.run_shell("python3 -c'print(__import__(\"os\").environ)'")
+        assert "Error" in result
+
+        # short options clustered before -c (e.g. -Ic)
+        result = tools.run_shell("python3 -Ic 'print(1)'")
+        assert "Error" in result
+
+        # -m arbitrary module, both spaced and attached
         result = tools.run_shell("python3 -m http.server")
+        assert "Error" in result
+        result = tools.run_shell("python3 -mhttp.server")
+        assert "Error" in result
+
+        # reading a program from stdin
+        result = tools.run_shell("python3 -")
         assert "Error" in result
 
         # versioned interpreter basename is still matched
@@ -682,6 +696,11 @@ def test_run_shell_blocks_inline_interpreter_code():
         # a plain script invocation (no code-exec flag) is still allowed
         (base_dir / "ok.py").write_text("print('ok')\n")
         result = tools.run_shell("python3 ok.py")
+        assert "Exit code: 0" in result
+        assert "ok" in result
+
+        # an arg-taking option whose value happens to be 'c' is not code execution
+        result = tools.run_shell("python3 -W c ok.py")
         assert "Exit code: 0" in result
         assert "ok" in result
 

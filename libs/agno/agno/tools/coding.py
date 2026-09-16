@@ -275,8 +275,38 @@ class CodingTools(Toolkit):
     # and path checks. Matched by basename prefix (python, python3, python3.12, ...).
     _CODE_EXEC_INTERPRETER_PREFIXES: tuple = ("python",)
 
-    # Flags that make an interpreter run inline code or an arbitrary module/stdin.
-    _CODE_EXEC_FLAGS: set = {"-c", "-m", "-e", "-"}
+    # CPython short options that execute arbitrary inline code (-c cmd, -m module).
+    _CODE_EXEC_SHORT_OPTS: set = {"c", "m"}
+
+    # CPython short options that consume the rest of the token as their argument, so
+    # a following 'c'/'m' is a value, not the code-exec flag (e.g. -W c, -X c).
+    _ARG_TAKING_SHORT_OPTS: set = {"W", "X", "Q"}
+
+    def _has_interpreter_code_exec(self, args: List[str]) -> bool:
+        """Detect inline code execution in a Python interpreter's arguments.
+
+        Handles attached and clustered short options the way CPython does, e.g.
+        ``-c``, ``-c'code'``, ``-mmod``, ``-Ic 'code'``. Option parsing stops at
+        the first non-option argument (the script path), and short options that
+        take a value (-W, -X, -Q) consume the remainder of their token, so a 'c'
+        or 'm' appearing as such a value is not treated as code execution.
+        """
+        for token in args:
+            if token == "-":  # program read from stdin
+                return True
+            if not token.startswith("-"):
+                # First positional is the script path; CPython stops parsing options here.
+                break
+            if token.startswith("--"):
+                # No CPython long option executes inline code.
+                continue
+            for ch in token[1:]:
+                if ch in self._CODE_EXEC_SHORT_OPTS:
+                    return True
+                if ch in self._ARG_TAKING_SHORT_OPTS:
+                    # Remainder of this token is the option's argument, not more flags.
+                    break
+        return False
 
     def _check_command(self, command: str) -> Optional[str]:
         """Check if a shell command is safe to execute.
@@ -314,13 +344,12 @@ class CodingTools(Toolkit):
         # This is harm reduction, not a boundary: an interpreter can still escape by
         # running a script file. Do not expose run_shell to untrusted input.
         if cmd_base.startswith(self._CODE_EXEC_INTERPRETER_PREFIXES):
-            for token in tokens[1:]:
-                if token in self._CODE_EXEC_FLAGS:
-                    return (
-                        f"Error: Inline code execution flag '{token}' is not allowed in "
-                        "restricted mode. Run a script file instead, or set "
-                        "restrict_to_base_dir=False for an unsupervised interpreter."
-                    )
+            if self._has_interpreter_code_exec(tokens[1:]):
+                return (
+                    "Error: Inline code execution (-c/-m or reading from stdin) is not "
+                    "allowed in restricted mode. Run a script file instead, or set "
+                    "restrict_to_base_dir=False for an unsupervised interpreter."
+                )
 
         for i, token in enumerate(tokens):
             # Skip the command itself (already validated by allowlist above)
