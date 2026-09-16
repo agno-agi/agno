@@ -24,7 +24,7 @@ from agno.agent import Agent  # noqa: E402
 from agno.db.in_memory import InMemoryDb  # noqa: E402
 from agno.db.sqlite import SqliteDb  # noqa: E402
 from agno.os import AgentOS  # noqa: E402
-from agno.os.authz import Authorization, RoleStore  # noqa: E402
+from agno.os.authz import Authorization, RoleStore, UserStore  # noqa: E402
 from agno.os.authz._db import supports_authz  # noqa: E402
 
 SECRET = "collection-transposition-secret-at-least-256-bits-long-xx"
@@ -171,3 +171,13 @@ def test_supports_authz_rejects_a_non_database_object(tmp_path):
     # a real backend whose probe fails for a reason other than the contract is still supported
     with patch.object(SqliteDb, "authz_name_is_role", side_effect=ConnectionError("db is down")):
         assert supports_authz(real) is True
+
+    # every store refuses a non-database at construction, not on the first served request
+    with pytest.raises(RuntimeError, match="does not support authorization storage"):
+        RoleStore(db=object())
+    with pytest.raises(RuntimeError, match="does not support authorization storage"):
+        UserStore(db=object())
+    # and a store built without a db does not adopt one that cannot store it
+    unbound = UserStore()
+    unbound.attach_db(object())
+    assert unbound.is_bound is False

@@ -80,7 +80,7 @@ class UserStore:
         """
         self._audit = audit
         self._mem: Optional[Dict[str, dict]] = None
-        from agno.os.authz._db import is_async_authz_db, resolve_authz_db
+        from agno.os.authz._db import is_async_authz_db, require_authz_db, resolve_authz_db
 
         self._db: Any = resolve_authz_db(db, db_url)
         self._db_is_async: bool = is_async_authz_db(self._db)
@@ -89,6 +89,10 @@ class UserStore:
             # upgrades it in place via attach_db() when it has a usable db -- see the
             # guard there for why a live one must not stay in-memory.
             self._mem = {}
+        else:
+            # A db that cannot store the directory fails here, at construction, the way the role
+            # store's engine does, rather than on the first read or write of a served request.
+            require_authz_db(self._db)
 
     @property
     def is_bound(self) -> bool:
