@@ -16,12 +16,7 @@ else:
     import tomli as tomllib
 
 import agnoctl.clients.base as base_module
-from agnoctl.clients.base import (
-    atomic_write_text,
-    read_json_lenient,
-    read_json_strict,
-    write_servers_entry,
-)
+from agnoctl.clients.base import atomic_write_text
 from agnoctl.clients.claude_code import ClaudeCodeAdapter
 from agnoctl.clients.claude_desktop import ClaudeDesktopAdapter
 from agnoctl.clients.codex import CodexAdapter
@@ -548,19 +543,40 @@ def test_atomic_write_text_direct_secure(tmp_path: Path, permissive_umask):
     assert _mode(target) == 0o600
 
 
-def test_json_helpers_use_utf8_text(tmp_path: Path):
-    path = tmp_path / ".cursor" / "mcp.json"
-    path.parent.mkdir()
-    path.write_text(json.dumps({"note": "cafe \u2615"}), encoding="utf-8")
+@pytest.fixture
+def cp1252_default_encoding(monkeypatch):
+    """Run the test as if on a Windows machine whose default text encoding is cp1252, so a
+    config read or write that does not name an encoding would mangle non-ASCII text."""
+    read_text = Path.read_text
+    fdopen = os.fdopen
 
-    assert read_json_lenient(path) == {"note": "cafe \u2615"}
-    assert read_json_strict(path) == {"note": "cafe \u2615"}
+    def read_text_cp1252(self, encoding=None, **kwargs):
+        return read_text(self, encoding=encoding or "cp1252", **kwargs)
 
-    write_servers_entry(path, "agno", {"url": URL, "note": "cafe \u2615"}, secure=False)
+    def fdopen_cp1252(fd, mode="r", *args, encoding=None, **kwargs):
+        if encoding is None and "b" not in mode:
+            encoding = "cp1252"
+        return fdopen(fd, mode, *args, encoding=encoding, **kwargs)
 
-    config = json.loads(path.read_text(encoding="utf-8"))
-    assert config["note"] == "cafe \u2615"
-    assert config["mcpServers"]["agno"]["note"] == "cafe \u2615"
+    monkeypatch.setattr(Path, "read_text", read_text_cp1252)
+    monkeypatch.setattr(base_module.os, "fdopen", fdopen_cp1252)
+
+
+def test_writes_keep_non_ascii_config_text(tmp_path: Path, cp1252_default_encoding):
+    """Client configs are UTF-8 on disk. Merging an entry must not re-encode the user's
+    existing non-ASCII text through the platform's default encoding."""
+    for adapter, path in _file_writing_adapters(tmp_path):
+        seed = "# José\n" if path.suffix == ".toml" else json.dumps({"note": "José"}, ensure_ascii=False)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(seed.encode("utf-8"))
+
+        adapter.write("agno", URL, TOKEN)
+
+        text = path.read_bytes().decode("utf-8")
+        if path.suffix == ".toml":
+            assert text.startswith("# José\n"), adapter.key
+        else:
+            assert json.loads(text)["note"] == "José", adapter.key
 
 
 # -- remove ------------------------------------------------------------------------------
