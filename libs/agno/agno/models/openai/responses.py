@@ -1288,7 +1288,7 @@ class OpenAIResponses(Model):
         Parse the streaming response from the model provider into a ModelResponse object.
 
         Args:
-            response: Raw response chunk from the model provider
+            stream_event: Raw streaming event from the model provider
 
         Returns:
             ModelResponse: Parsed response delta
