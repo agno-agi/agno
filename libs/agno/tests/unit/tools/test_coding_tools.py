@@ -714,7 +714,8 @@ def test_run_shell_blocks_command_separators():
     the tokens entirely.
     """
     with tempfile.TemporaryDirectory() as tmp_dir:
-        tools = CodingTools(base_dir=Path(tmp_dir))
+        base_dir = Path(tmp_dir)
+        tools = CodingTools(base_dir=base_dir)
 
         # id is not in the allowlist and must not run after any of these
         for command in ("echo ok\nid", "echo ok & id", "echo ok;id", "echo ok && id"):
@@ -724,6 +725,12 @@ def test_run_shell_blocks_command_separators():
 
         # substitution expands even inside double quotes, so it stays blocked
         for command in ("echo $(id)", "echo `id`"):
+            result = tools.run_shell(command)
+            assert "Error" in result, command
+            assert "uid=" not in result, command
+
+        # a quoted argument carrying its own line breaks must not mask a separator
+        for command in ('git commit -m "fix\nBody"\nid', "echo 'a\nb'\nid"):
             result = tools.run_shell(command)
             assert "Error" in result, command
             assert "uid=" not in result, command
@@ -744,8 +751,59 @@ def test_run_shell_allows_operators_inside_quotes():
         assert "Exit code: 0" in result
         assert "Tom & Jerry" in result
 
-        # a newline carried inside an argument is not a separator either
-        assert tools._check_command('echo "first\nsecond"') is None
+        # line breaks carried inside an argument are not separators
+        result = tools.run_shell('echo "first\nsecond"')
+        assert "Exit code: 0" in result
+        assert "first" in result
+
+        # trailing whitespace separates nothing
+        result = tools.run_shell("echo hello\n")
+        assert "Exit code: 0" in result
+        assert "hello" in result
+
+
+def test_run_shell_blocks_shell_expansion():
+    """An argument the shell expands is rejected, because its value is never checked.
+
+    The path check resolves "~/x" inside base_dir, while the shell expands it to the
+    home directory, so the path that is validated is not the path that is opened.
+    """
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base_dir = Path(tmp_dir)
+        tools = CodingTools(base_dir=base_dir)
+        (base_dir / "f.txt").write_text("$100\n")
+
+        for command in (
+            "cat ~/.ssh/config",
+            "cat $HOME/x",
+            "echo $PATH",
+            'echo "$PATH"',
+            "echo ${PATH}",
+            "cat {/etc,}/passwd",  # braces build a path the path check never resolves
+            "cp f.txt{,.bak}",
+        ):
+            result = tools.run_shell(command)
+            assert "Error" in result, command
+            assert "Shell expansion" in result, command
+
+        # single quotes stop the expansion, so the token is ordinary text
+        result = tools.run_shell("echo '$PATH'")
+        assert "Exit code: 0" in result
+        assert "$PATH" in result
+
+        result = tools.run_shell("grep '$100' f.txt")
+        assert "Exit code: 0" in result
+        assert "$100" in result
+
+        # a tilde only expands at the start of an unquoted word
+        result = tools.run_shell('echo "~"')
+        assert "Exit code: 0" in result
+        assert "~" in result
+
+        # braces expand in neither quote, and a list needs a comma to expand at all
+        for command in ('echo "{a,b}"', "echo {a}"):
+            result = tools.run_shell(command)
+            assert "Exit code: 0" in result, command
 
 
 def test_run_shell_inline_code_allowed_when_unrestricted():

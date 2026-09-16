@@ -277,9 +277,13 @@ class CodingTools(Toolkit):
 
         Only the first token is validated against the allowlist, so anything the shell
         would run as a further command has to be rejected here. Quoting is honoured:
-        an operator inside a quoted argument is ordinary text. A newline separates
-        commands but parses as whitespace, so it counts only when no token carries it.
+        an operator inside a quoted argument is ordinary text. A line break separates
+        commands but parses as whitespace, so line breaks are counted rather than
+        matched: one the tokens cannot account for sits between two commands.
         """
+        # Leading and trailing whitespace separates nothing, so it never counts below
+        command = command.strip()
+
         for pattern in self._SUBSTITUTION_PATTERNS:
             if pattern in command:
                 return pattern
@@ -299,9 +303,40 @@ class CodingTools(Toolkit):
             if token and all(char in lexer.punctuation_chars for char in token):
                 return token
 
-        for newline, label in (("\n", "\\n"), ("\r", "\\r")):
-            if newline in command and not any(newline in token for token in tokens):
+        # A quoted argument may legitimately carry line breaks, so compare counts rather
+        # than presence: one the tokens cannot account for is separating commands.
+        for line_break, label in (("\n", "\\n"), ("\r", "\\r")):
+            if command.count(line_break) > sum(token.count(line_break) for token in tokens):
                 return label
+
+        return None
+
+    def _find_shell_expansion(self, command: str) -> Optional[str]:
+        """Find an argument the shell expands after this check has read it.
+
+        A variable, a leading ~ or a brace list is replaced once the command reaches
+        the shell, so the path a token names is not the path that gets opened:
+        "cat ~/x" and "cat {/etc,}/passwd" both resolve inside base_dir here and read
+        elsewhere there. posix=False keeps the quote characters, so a token the shell
+        would leave alone can be told apart from one it rewrites. Globbing needs no
+        entry here: a glob that reaches outside base_dir carries "/" or ".." in the
+        token itself, which the path check below already resolves.
+        """
+        try:
+            tokens = shlex.split(command, posix=False)
+        except ValueError:
+            return None  # unbalanced quotes; shlex.split reports it below
+
+        for token in tokens:
+            # Braces expand in neither quote, a variable expands in double quotes
+            quoted = token.startswith(("'", '"'))
+            if "{" in token and "," in token and not quoted:
+                return token
+            if token.startswith("'"):
+                continue
+            # A tilde only expands at the start of a word, a variable anywhere in it
+            if "$" in token or token.startswith("~"):
+                return token
 
         return None
 
@@ -347,9 +382,10 @@ class CodingTools(Toolkit):
 
         When restrict_to_base_dir is True, this method:
         1. Blocks shell metacharacters that enable chaining/substitution.
-        2. Validates the command name against the allowed_commands list (if set).
-        3. Blocks inline code-execution flags on interpreters (e.g. python3 -c).
-        4. Checks that path-like tokens don't escape the base directory.
+        2. Blocks arguments the shell expands ($VAR, ~), whose value it never sees.
+        3. Validates the command name against the allowed_commands list (if set).
+        4. Blocks inline code-execution flags on interpreters (e.g. python3 -c).
+        5. Checks that path-like tokens don't escape the base directory.
 
         These are harm-reduction heuristics, not a security sandbox. Returns an
         error message if a violation is found, None if safe.
@@ -361,6 +397,11 @@ class CodingTools(Toolkit):
         operator = self._find_shell_operator(command)
         if operator is not None:
             return f"Error: Shell operator '{operator}' is not allowed in restricted mode."
+
+        # Block expansions, whose value the path check below would never see
+        expansion = self._find_shell_expansion(command)
+        if expansion is not None:
+            return f"Error: Shell expansion '{expansion}' is not allowed in restricted mode."
 
         try:
             tokens = shlex.split(command)
