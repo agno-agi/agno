@@ -425,7 +425,7 @@ class StepInput:
 
         content_parts = []
         for step_name, output in self.previous_step_outputs.items():
-            if output.content:
+            if output.content is not None:
                 content_parts.append(f"=== {step_name} ===\n{output.content}")
 
         return "\n\n".join(content_parts)
