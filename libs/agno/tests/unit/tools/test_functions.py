@@ -2061,6 +2061,48 @@ def test_bare_media_typed_param_stays_model_fillable_on_the_plain_callable_path(
     assert result.result == "cats|http://x/b.png"
 
 
+def test_variadic_params_are_never_advertised_as_model_arguments():
+    """*args and **kwargs take no keyword bind, so listing either as a property
+    describes a call that cannot be made: `collect(label, *items)` raises on the
+    `items` argument the schema asks for, and `update(task_id, **fields)` nests
+    the real payload one level too deep under a `fields` key."""
+
+    def collect(label: str, *items: str) -> str:
+        """Collect items under a label.
+
+        Args:
+            label: The label.
+            items: The items to collect.
+        """
+        return f"{label}:{items}"
+
+    def update(task_id: str, **fields: str) -> str:
+        """Update a task.
+
+        Args:
+            task_id: The task to update.
+        """
+        return f"{task_id}:{fields}"
+
+    collect_func = Function(name="collect", entrypoint=collect)
+    collect_func.process_entrypoint()
+    assert set(collect_func.parameters["properties"]) == {"label"}
+    assert collect_func.parameters["required"] == ["label"]
+
+    update_func = Function(name="update", entrypoint=update)
+    update_func.process_entrypoint()
+    assert set(update_func.parameters["properties"]) == {"task_id"}
+    assert update_func.parameters["required"] == ["task_id"]
+
+    collected = FunctionCall(function=collect_func, arguments={"label": "x"}).execute()
+    assert collected.status == "success", collected.error
+    assert collected.result == "x:()"
+
+    updated = FunctionCall(function=update_func, arguments={"task_id": "abc", "name": "New title"}).execute()
+    assert updated.status == "success", updated.error
+    assert updated.result == "abc:{'name': 'New title'}"
+
+
 def test_variadic_identity_params_are_never_keyword_bound():
     """*args/**kwargs annotated with an identity type can never take a keyword
     bind: Python rejects `rest=None` outright and validate_call rejects
