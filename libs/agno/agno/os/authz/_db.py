@@ -86,8 +86,14 @@ def supports_authz(db: Any) -> bool:
 
     if isinstance(db, AsyncBaseDb):
         return type(db).authz_name_is_role is not AsyncBaseDb.authz_name_is_role
+    probe = getattr(db, "authz_name_is_role", None)
+    if not callable(probe):
+        # Not a BaseDb at all: there is no contract to implement, so this is "unsupported", not
+        # "reachable but down". Without this check the AttributeError below passed as supported
+        # and the object failed on the first request instead of at boot.
+        return False
     try:
-        db.authz_name_is_role("__agno_authz_probe__")
+        probe("__agno_authz_probe__")
     except NotImplementedError:
         return False
     except Exception:

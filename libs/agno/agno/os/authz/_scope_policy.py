@@ -69,9 +69,9 @@ def resource_matches(pattern: str, request: str) -> bool:
     (``"*"`` / ``"type/*"`` / ``"type/id"``):
 
     - ``"*"``        matches anything (admin),
-    - ``"type/*"``   matches ``"type/<id>"`` but NOT the bare collection
-      ``"type"`` (a collection request is handled via accessible-ids, not the
-      route gate),
+    - ``"type/*"``   matches ``"type/<id>"`` and the collection key ``"type/*"``
+      itself (what a create or list request is evaluated as), but never the bare
+      string ``"type"``, which no policy writes,
     - otherwise an exact match.
     """
     if pattern == "*":
