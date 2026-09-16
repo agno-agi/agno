@@ -161,14 +161,13 @@ def test_admin_api_turns_the_transposed_call_into_a_400(tmp_path):
 
 # ------------------------------------------------------------------ 3. supports_authz probe
 def test_supports_authz_rejects_a_non_database_object(tmp_path):
-    class _Down:
-        """A real backend whose probe fails for a reason other than the contract: still supported."""
+    from unittest.mock import patch
 
-        def authz_name_is_role(self, name):
-            raise ConnectionError("db is down")
-
-    assert supports_authz(object()) is False
+    assert supports_authz(object()) is False  # not an agno database: no contract to implement
     assert supports_authz(None) is False
     assert supports_authz(InMemoryDb()) is False  # inherits the NotImplementedError stubs
-    assert supports_authz(_Down()) is True
-    assert supports_authz(SqliteDb(db_file=str(tmp_path / "s.db"))) is True
+    real = SqliteDb(db_file=str(tmp_path / "s.db"))
+    assert supports_authz(real) is True
+    # a real backend whose probe fails for a reason other than the contract is still supported
+    with patch.object(SqliteDb, "authz_name_is_role", side_effect=ConnectionError("db is down")):
+        assert supports_authz(real) is True
