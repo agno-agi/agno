@@ -191,10 +191,14 @@ class Authorization:
         """Define a role's scopes, if it does not already exist. ``default=True`` marks it the role a
         JIT-provisioned user gets. Applied now if a db is bound, else buffered until AgentOS lends one.
 
-        BOOTSTRAP semantics: an existing role is left untouched, so re-running this on every start
-        never overwrites scope changes an admin made at runtime through the ``/authz`` API. To change
-        a role's scopes after first boot, use the admin API (or ``RoleStore.set_role_scopes``
-        directly for a declarative, code-owns-the-role model). Chainable."""
+        BOOTSTRAP semantics for scopes: an existing role's scopes are left untouched, so re-running
+        this on every start never overwrites scope changes an admin made at runtime through the
+        ``/authz`` API. To change a role's scopes after first boot, use the admin API (or
+        ``RoleStore.set_role_scopes`` directly for a declarative, code-owns-the-role model).
+
+        ``default=True`` is applied on every boot, existing role or not: it is the provisioning
+        policy, and moving it to another role in code must take effect. Omitting ``default`` never
+        clears an existing default. Chainable."""
         self._roles_defined = True
         if self._bound:
             self._apply_role_def(slug, scopes, default, name, description)
@@ -315,10 +319,16 @@ class Authorization:
 
         The check is on SCOPES, not mere existence: a role that exists only because someone was
         assigned to it (an assignment-only role, e.g. seeded before its define_role) still has no
-        scopes, so this must define them rather than skip it as 'already there'."""
+        scopes, so this must define them rather than skip it as 'already there'.
+
+        ``default=True`` is a provisioning policy, not part of the definition, so it is applied on
+        every boot even when the role exists; setting it clears the flag from the previous holder.
+        Omitting ``default`` never clears an existing default: that is left to the admin API."""
         self._require_sync_setup()
         store = self._ensure_role_store()
         if store.get_role_scopes(slug):  # already has scopes -> a definition/edit to preserve
+            if default and store.default_role() != slug:  # no write, and no audit event, when unchanged
+                store.set_role_meta(slug, is_default=True)
             return
         store.set_role_scopes(slug, scopes, name=name, description=description, is_default=default)
 
