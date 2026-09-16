@@ -17,7 +17,7 @@ db = PostgresDb(db_url=db_url, session_table="agent_metrics_sessions")
 # Create Agent
 # ---------------------------------------------------------------------------
 agent = Agent(
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     db=db,
     session_id="session_metrics_demo",
     add_history_to_context=True,

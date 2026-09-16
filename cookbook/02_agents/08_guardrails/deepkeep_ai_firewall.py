@@ -23,7 +23,6 @@ from agno.agent import Agent
 from agno.models.openai import OpenAIResponses
 from agno_deepkeep import DeepKeepGuardrail
 
-
 agent = Agent(
     name="DeepKeep Protected Agent",
     model=OpenAIResponses(id="gpt-5.2"),

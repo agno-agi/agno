@@ -15,7 +15,13 @@ from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.knowledge.reranker.base import Reranker
 from agno.utils.log import log_error, log_info, log_warning, logger
-from agno.vectordb.base import VectorDb
+from agno.vectordb.base import (
+    VectorDb,
+    aembed_before_replace,
+    embed_before_replace,
+    is_rate_limit_error,
+    raise_embedding_failures,
+)
 
 DEFAULT_NAMESPACE = ""
 
@@ -313,6 +319,9 @@ class UpstashVectorDb(VectorDb):
         _namespace = self.namespace if namespace is None else namespace
 
         # Scoped dedup: re-upserting replaces this owner's chunks and leaves other owners' alone
+        # Embed before the delete below: clearing the old chunks first would destroy
+        # retrievable content if the embedder then fails.
+        embed_before_replace(documents, self.embedder)
         if self.content_hash_exists(content_hash, user_id=user_id):
             self._delete_by_content_hash(content_hash, user_id=user_id)
 
@@ -630,6 +639,9 @@ class UpstashVectorDb(VectorDb):
         _namespace = self.namespace if namespace is None else namespace
 
         # Scoped dedup: re-upserting replaces this owner's chunks and leaves other owners' alone
+        # Embed before the delete below: clearing the old chunks first would destroy
+        # retrievable content if the embedder then fails.
+        await aembed_before_replace(documents, self.embedder)
         if self.content_hash_exists(content_hash, user_id=user_id):
             self._delete_by_content_hash(content_hash, user_id=user_id)
 
@@ -658,12 +670,8 @@ class UpstashVectorDb(VectorDb):
                         logger.exception(f"Error assigning batch embedding to document '{doc.name}'")
 
             except Exception as e:
-                # Check if this is a rate limit error - don't fall back as it would make things worse
-                error_str = str(e).lower()
-                is_rate_limit = any(
-                    phrase in error_str
-                    for phrase in ["rate limit", "too many requests", "429", "trial key", "api calls / minute"]
-                )
+                # A throttle must not fall back to per-item calls, which would throttle harder.
+                is_rate_limit = is_rate_limit_error(e)
 
                 if is_rate_limit:
                     logger.exception("Rate limit detected during batch embedding.")
@@ -672,11 +680,12 @@ class UpstashVectorDb(VectorDb):
                     log_warning(f"Async batch embedding failed, falling back to individual embeddings: {str(e)}")
                     # Fall back to individual embedding
                     embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in documents]
-                    await asyncio.gather(*embed_tasks, return_exceptions=True)
-        else:
-            # Use individual embedding
+                    results = await asyncio.gather(*embed_tasks, return_exceptions=True)
+                    raise_embedding_failures(results)
+        elif not self.use_upstash_embeddings and self.embedder is not None:
             embed_tasks = [document.async_embed(embedder=self.embedder) for document in documents]
-            await asyncio.gather(*embed_tasks, return_exceptions=True)
+            results = await asyncio.gather(*embed_tasks, return_exceptions=True)
+            raise_embedding_failures(results)
 
         for i, document in enumerate(documents):
             # A Document carries no id unless the caller set one, and dropping it here loses
@@ -802,21 +811,32 @@ class UpstashVectorDb(VectorDb):
         # Ownership is set at write time; a caller must not reassign it via metadata.
         metadata = {k: v for k, v in metadata.items() if k != self.USER_ID_KEY}
         try:
-            # Query for vectors with the given content_id
-            query_response = self.index.query(
-                filter=f'content_id = "{content_id}"',
-                top_k=1000,  # Get all matching vectors
-                include_metadata=True,
-                namespace=self.namespace,
-            )
+            # Walk the namespace with range() rather than query(): a query needs a vector or
+            # data, and upstash-vector >= 0.7.0 rejects one carrying only a filter, which
+            # would fail every ingest that updates metadata. Matching is done client-side.
+            matches = []
+            cursor = ""
+            while True:
+                page = self.index.range(
+                    cursor=cursor,
+                    limit=1000,
+                    include_metadata=True,
+                    namespace=self.namespace,
+                )
+                for vector in getattr(page, "vectors", []) or []:
+                    if (getattr(vector, "metadata", None) or {}).get("content_id") == content_id:
+                        matches.append(vector)
+                cursor = getattr(page, "next_cursor", "") or ""
+                if not cursor:
+                    break
 
-            if not query_response or not hasattr(query_response, "__iter__"):
+            if not matches:
                 logger.debug(f"No documents found with content_id: {content_id}")
                 return
 
             # Update each matching vector
             updated_count = 0
-            for result in query_response:
+            for result in matches:
                 if hasattr(result, "id") and hasattr(result, "metadata"):
                     vector_id = result.id
                     current_metadata = result.metadata or {}

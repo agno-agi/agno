@@ -9,6 +9,7 @@ and non-streaming modes.
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import (
@@ -103,26 +104,63 @@ class ReasoningManager:
         self.config = config
         self._reasoning_agent: Optional["Agent"] = None
         self._model_type: Optional[str] = None
+        self._model_type_key: Optional[Tuple[str, str]] = None
 
     @property
     def reasoning_model(self) -> Optional[Model]:
         return self.config.reasoning_model
 
     def _detect_model_type(self, model: Model) -> Optional[str]:
-        """Detect the type of reasoning model."""
+        """Detect the type of reasoning model.
+
+        Detection can hit the provider API, and it runs on every reasoning entry point, so the
+        result is memoized per model for the life of this manager.
+        """
+        cache_key = (model.__class__.__name__, model.id)
+        if self._model_type_key == cache_key:
+            return self._model_type
+
+        model_type = self._detect_model_type_uncached(model)
+        self._model_type_key = cache_key
+        self._model_type = model_type
+        return model_type
+
+    async def _adetect_model_type(self, model: Model) -> Optional[str]:
+        """Async variant of _detect_model_type.
+
+        Some detectors call the provider API synchronously, which would block the event loop for
+        the length of the request, so the uncached detection runs in a worker thread.
+        """
+        cache_key = (model.__class__.__name__, model.id)
+        if self._model_type_key == cache_key:
+            return self._model_type
+
+        model_type = await asyncio.to_thread(self._detect_model_type_uncached, model)
+        self._model_type_key = cache_key
+        self._model_type = model_type
+        return model_type
+
+    def _detect_model_type_uncached(self, model: Model) -> Optional[str]:
         from agno.reasoning.anthropic import is_anthropic_reasoning_model
         from agno.reasoning.azure_ai_foundry import is_ai_foundry_reasoning_model
         from agno.reasoning.deepseek import is_deepseek_reasoning_model
         from agno.reasoning.gemini import is_gemini_reasoning_model
         from agno.reasoning.groq import is_groq_reasoning_model
+        from agno.reasoning.moonshot import is_moonshot_reasoning_model
         from agno.reasoning.ollama import is_ollama_reasoning_model
         from agno.reasoning.openai import is_openai_reasoning_model
+        from agno.reasoning.openrouter import is_openrouter_reasoning_model
         from agno.reasoning.vertexai import is_vertexai_reasoning_model
 
         if is_deepseek_reasoning_model(model):
             return "deepseek"
         if is_anthropic_reasoning_model(model):
             return "anthropic"
+        # OpenRouter and Moonshot are OpenAILike subclasses, so they must be checked before the OpenAI detector.
+        if is_openrouter_reasoning_model(model):
+            return "openrouter"
+        if is_moonshot_reasoning_model(model):
+            return "moonshot"
         if is_openai_reasoning_model(model):
             return "openai"
         if is_groq_reasoning_model(model):
@@ -159,6 +197,13 @@ class ReasoningManager:
             return False
         return self._detect_model_type(model) is not None
 
+    async def ais_native_reasoning_model(self, model: Optional[Model] = None) -> bool:
+        """Check if the model is a native reasoning model, without blocking the event loop."""
+        model = model or self.config.reasoning_model
+        if model is None:
+            return False
+        return await self._adetect_model_type(model) is not None
+
     # =========================================================================
     # Native Model Reasoning (Non-Streaming)
     # =========================================================================
@@ -180,13 +225,19 @@ class ReasoningManager:
                 log_debug("Starting DeepSeek Reasoning", center=True, symbol="=")
                 reasoning_message = get_deepseek_reasoning(reasoning_agent, messages, run_metrics=run_metrics)
 
+            elif model_type == "moonshot":
+                from agno.reasoning.moonshot import get_moonshot_reasoning
+
+                log_debug("Starting Kimi Reasoning", center=True, symbol="=")
+                reasoning_message = get_moonshot_reasoning(reasoning_agent, messages, run_metrics=run_metrics)
+
             elif model_type == "anthropic":
                 from agno.reasoning.anthropic import get_anthropic_reasoning
 
                 log_debug("Starting Anthropic Claude Reasoning", center=True, symbol="=")
                 reasoning_message = get_anthropic_reasoning(reasoning_agent, messages, run_metrics=run_metrics)
 
-            elif model_type == "openai":
+            elif model_type in ("openai", "openrouter"):
                 from agno.reasoning.openai import get_openai_reasoning
 
                 log_debug("Starting OpenAI Reasoning", center=True, symbol="=")
@@ -241,7 +292,7 @@ class ReasoningManager:
 
     async def aget_native_reasoning(self, model: Model, messages: List[Message]) -> ReasoningResult:
         """Get reasoning from a native reasoning model asynchronously (non-streaming)."""
-        model_type = self._detect_model_type(model)
+        model_type = await self._adetect_model_type(model)
         if model_type is None:
             return ReasoningResult(success=False, error="Not a native reasoning model")
 
@@ -256,13 +307,19 @@ class ReasoningManager:
                 log_debug("Starting DeepSeek Reasoning", center=True, symbol="=")
                 reasoning_message = await aget_deepseek_reasoning(reasoning_agent, messages, run_metrics=run_metrics)
 
+            elif model_type == "moonshot":
+                from agno.reasoning.moonshot import aget_moonshot_reasoning
+
+                log_debug("Starting Kimi Reasoning", center=True, symbol="=")
+                reasoning_message = await aget_moonshot_reasoning(reasoning_agent, messages, run_metrics=run_metrics)
+
             elif model_type == "anthropic":
                 from agno.reasoning.anthropic import aget_anthropic_reasoning
 
                 log_debug("Starting Anthropic Claude Reasoning", center=True, symbol="=")
                 reasoning_message = await aget_anthropic_reasoning(reasoning_agent, messages, run_metrics=run_metrics)
 
-            elif model_type == "openai":
+            elif model_type in ("openai", "openrouter"):
                 from agno.reasoning.openai import aget_openai_reasoning
 
                 log_debug("Starting OpenAI Reasoning", center=True, symbol="=")
@@ -362,6 +419,30 @@ class ReasoningManager:
             else:
                 yield (None, ReasoningResult(success=False, error="No reasoning content"))
 
+        elif model_type == "moonshot":
+            from agno.reasoning.moonshot import get_moonshot_reasoning_stream
+
+            log_debug("Starting Kimi Reasoning (streaming)", center=True, symbol="=")
+            final_message = None
+            for reasoning_delta, message in get_moonshot_reasoning_stream(reasoning_agent, messages):
+                if reasoning_delta is not None:
+                    yield (reasoning_delta, None)
+                if message is not None:
+                    final_message = message
+
+            if final_message:
+                yield (
+                    None,
+                    ReasoningResult(
+                        message=final_message,
+                        steps=[ReasoningStep(result=final_message.content)],
+                        reasoning_messages=[final_message],
+                        success=True,
+                    ),
+                )
+            else:
+                yield (None, ReasoningResult(success=False, error="No reasoning content"))
+
         elif model_type == "anthropic":
             from agno.reasoning.anthropic import get_anthropic_reasoning_stream
 
@@ -410,7 +491,7 @@ class ReasoningManager:
             else:
                 yield (None, ReasoningResult(success=False, error="No reasoning content"))
 
-        elif model_type == "openai":
+        elif model_type in ("openai", "openrouter"):
             from agno.reasoning.openai import get_openai_reasoning_stream
 
             log_debug("Starting OpenAI Reasoning (streaming)", center=True, symbol="=")
@@ -546,7 +627,7 @@ class ReasoningManager:
             - During streaming: (reasoning_content_delta, None)
             - At the end: (None, ReasoningResult)
         """
-        model_type = self._detect_model_type(model)
+        model_type = await self._adetect_model_type(model)
         if model_type is None:
             yield (None, ReasoningResult(success=False, error="Not a native reasoning model"))
             return
@@ -560,6 +641,30 @@ class ReasoningManager:
             log_debug("Starting DeepSeek Reasoning (streaming)", center=True, symbol="=")
             final_message: Optional[Message] = None
             async for reasoning_delta, message in aget_deepseek_reasoning_stream(reasoning_agent, messages):
+                if reasoning_delta is not None:
+                    yield (reasoning_delta, None)
+                if message is not None:
+                    final_message = message
+
+            if final_message:
+                yield (
+                    None,
+                    ReasoningResult(
+                        message=final_message,
+                        steps=[ReasoningStep(result=final_message.content)],
+                        reasoning_messages=[final_message],
+                        success=True,
+                    ),
+                )
+            else:
+                yield (None, ReasoningResult(success=False, error="No reasoning content"))
+
+        elif model_type == "moonshot":
+            from agno.reasoning.moonshot import aget_moonshot_reasoning_stream
+
+            log_debug("Starting Kimi Reasoning (streaming)", center=True, symbol="=")
+            final_message = None
+            async for reasoning_delta, message in aget_moonshot_reasoning_stream(reasoning_agent, messages):
                 if reasoning_delta is not None:
                     yield (reasoning_delta, None)
                 if message is not None:
@@ -626,7 +731,7 @@ class ReasoningManager:
             else:
                 yield (None, ReasoningResult(success=False, error="No reasoning content"))
 
-        elif model_type == "openai":
+        elif model_type in ("openai", "openrouter"):
             from agno.reasoning.openai import aget_openai_reasoning_stream
 
             log_debug("Starting OpenAI Reasoning (streaming)", center=True, symbol="=")
@@ -831,7 +936,7 @@ class ReasoningManager:
         yield ReasoningEvent(event_type=ReasoningEventType.started)
 
         # Use streaming for native models when stream is enabled
-        if reasoning_model_provided and self.is_native_reasoning_model(reasoning_model):
+        if reasoning_model_provided and await self.ais_native_reasoning_model(reasoning_model):
             if stream:
                 async for event in self._astream_native_reasoning_events(reasoning_model, run_messages):
                     yield event

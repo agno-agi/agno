@@ -67,6 +67,22 @@ BASELINE_CODE = (
     "}\n"
 )
 
+# Removes the bash cell magic from a running kernel. IPython 9.17 registers the
+# script magics lazily and recreates one on lookup, so dropping the name from the
+# live registry alone is not enough: the provider is materialised first (loading
+# it later would re-register bash), then the name goes from the lazy table too.
+STRIP_BASH_MAGIC = (
+    "_cm_ip = get_ipython()\n"
+    "try:\n"
+    "    _cm_ip.find_cell_magic('sh')\n"
+    "except Exception:\n"
+    "    pass\n"
+    "_cm_mm = _cm_ip.magics_manager\n"
+    "getattr(_cm_mm, 'lazy_magics', {}).pop('bash', None)\n"
+    "_cm_mm.magics['cell'].pop('bash', None)\n"
+    "del _cm_ip, _cm_mm\n"
+)
+
 
 def _strip_ansi(text: str) -> str:
     return _ANSI_RE.sub("", text)
@@ -400,7 +416,7 @@ class KernelSession:
             if not self.allow_shell:
                 # Footgun reducer, not a boundary: remove the bash cell magic so a
                 # cell cannot reach it through run_cell_magic either.
-                await self._run_silent("get_ipython().magics_manager.magics['cell'].pop('bash', None)")
+                await self._run_silent(STRIP_BASH_MAGIC)
             if self.startup_code:
                 await self._run_silent(self.startup_code)
             await self._run_silent(BASELINE_CODE)

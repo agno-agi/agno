@@ -1,9 +1,95 @@
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
 
+from agno.exceptions import EmbeddingError
 from agno.knowledge.document import Document
-from agno.utils.log import log_warning
+from agno.utils.log import log_error, log_warning
 from agno.utils.string import generate_id
+
+
+def raise_embedding_failures(results: List[Any]) -> None:
+    """Re-raise the first real embedding failure among gathered per-document results."""
+    first_error: Optional[BaseException] = None
+
+    for i, result in enumerate(results):
+        if not isinstance(result, BaseException):
+            continue
+
+        if "Event loop is closed" in str(result):
+            log_warning(
+                f"Event loop closure during embedding for document {i}, but operation may have succeeded: {result}"
+            )
+            continue
+
+        log_error(f"Error embedding document {i}: {result}")
+        if first_error is None:
+            first_error = result
+
+    if first_error is not None:
+        raise first_error
+
+
+def embed_before_replace(documents: List[Document], embedder: Any) -> None:
+    """Embed ``documents`` in place before an upsert deletes the chunks they replace."""
+    if embedder is None:
+        return
+    for document in documents:
+        if document.embedding is None:
+            document.embed(embedder=embedder)
+
+
+async def aembed_before_replace(documents: List[Document], embedder: Any) -> None:
+    """Asynchronous twin of ``embed_before_replace``."""
+    import asyncio
+
+    if embedder is None:
+        return
+    pending = [d for d in documents if d.embedding is None]
+    if not pending:
+        return
+
+    # Use the batch API where the embedder has one, so guarding the delete does not
+    # turn one batched call into one call per document.
+    if getattr(embedder, "enable_batch", False) is True and hasattr(embedder, "async_get_embeddings_batch_and_usage"):
+        embeddings, usages = await embedder.async_get_embeddings_batch_and_usage([d.content for d in pending])
+        for index, document in enumerate(pending):
+            if index < len(embeddings):
+                document.embedding = embeddings[index]
+                document.usage = usages[index] if index < len(usages) else None
+        return
+
+    results = await asyncio.gather(*[d.async_embed(embedder=embedder) for d in pending], return_exceptions=True)
+    raise_embedding_failures(results)
+
+
+def retrievable_documents(documents: List[Document]) -> List[Document]:
+    """Drop documents that carry no embedding, so the rest of the batch can still be written.
+
+    A vector store rejects an empty vector outright ("vector must have at least 1
+    dimension"), which fails the whole write and discards the chunks that did embed.
+    Skipping the unembedded ones lets the good chunks land; ingestion counts the
+    shortfall and reports it as PARTIAL.
+    """
+    keep, dropped = [], 0
+    for document in documents:
+        if document.embedding is None or len(document.embedding) == 0:
+            dropped += 1
+            continue
+        keep.append(document)
+    if dropped:
+        log_warning(f"Skipping {dropped} of {len(documents)} chunks with no embedding; they are not retrievable")
+    return keep
+
+
+def is_rate_limit_error(error: BaseException) -> bool:
+    """Whether ``error`` is a provider throttle, which must not fall back to per-item calls."""
+    if isinstance(error, EmbeddingError):
+        # The embedder already classified this; prefer that over matching text.
+        return error.reason == "rate_limit"
+    error_str = str(error).lower()
+    return any(
+        phrase in error_str for phrase in ["rate limit", "too many requests", "429", "trial key", "api calls / minute"]
+    )
 
 
 class VectorDb(ABC):

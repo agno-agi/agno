@@ -409,6 +409,8 @@ class Toolkit:
         f = Function(
             name=tool_name,
             description=function.description,
+            title=function.title,
+            annotations=function.annotations,
             parameters=function.parameters,
             strict=function.strict,
             instructions=function.instructions,

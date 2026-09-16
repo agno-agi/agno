@@ -27,7 +27,7 @@ sync_db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 sync_db = PostgresDb(db_url=sync_db_url)
 
 sync_agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     instructions="You are a technical writer. Explain concepts clearly and concisely.",
     db=sync_db,
 )
@@ -47,7 +47,7 @@ sync_evaluation = AgentAsJudgeEval(
 async_db = AsyncSqliteDb(db_file="tmp/agent_as_judge_async.db")
 
 async_agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     instructions="Provide helpful and informative answers.",
     db=async_db,
 )

@@ -66,7 +66,7 @@ full_e2b_tools = E2BTools(
 basic_agent = Agent(
     name="Basic Code Execution Sandbox",
     id="e2b-basic-sandbox",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[basic_e2b_tools],
     markdown=True,
     instructions=[
@@ -78,7 +78,7 @@ basic_agent = Agent(
 agent = Agent(
     name="Full Code Execution Sandbox",
     id="e2b-sandbox",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[full_e2b_tools],
     markdown=True,
     instructions=[

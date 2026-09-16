@@ -24,7 +24,7 @@ uv pip install -U openai 'litellm[proxy]' ddgs duckdb yfinance agno
 ### 4. Start the proxy server
 
 ```shell
-litellm --model gpt-4o --host 127.0.0.1 --port 4000
+litellm --model gpt-5.6-luna --host 127.0.0.1 --port 4000
 ```
 or, if you want to use some other model like from Anthropic
 ```shell

@@ -15,7 +15,7 @@ Example prompts to try:
 Run: `uv pip install agno mcp openai` to install the dependencies
 Environment variables needed:
 - Create a GitHub personal access token following these steps:
-    - https://github.com/modelcontextprotocol/servers/tree/main/src/github#setup
+    - https://github.com/modelcontextprotocol/servers-archived/tree/main/src/github#setup
 - export GITHUB_TOKEN: Your GitHub personal access token
 """
 

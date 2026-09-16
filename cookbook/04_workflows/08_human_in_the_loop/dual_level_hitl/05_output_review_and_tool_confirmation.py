@@ -44,7 +44,7 @@ def query_database(query: str) -> str:
 
 analyst_agent = Agent(
     name="DataAnalyst",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[query_database],
     instructions=(
         "You are a data analyst. You MUST always use the query_database tool to fetch data. "

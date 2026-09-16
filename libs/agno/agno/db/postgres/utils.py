@@ -68,7 +68,7 @@ def create_schema(session: Session, db_schema: str) -> None:
         db_schema (str): The definition of the database schema to create
     """
     try:
-        log_debug(f"Creating schema if not exists: {db_schema}")
+        log_debug(f"Ensuring schema {db_schema}", log_level=2)
         session.execute(text(f"CREATE SCHEMA IF NOT EXISTS {db_schema};"))
     except Exception as e:
         log_warning(f"Could not create schema {db_schema}: {str(e)}")
@@ -82,7 +82,7 @@ async def acreate_schema(session: AsyncSession, db_schema: str) -> None:
         db_schema (str): The definition of the database schema to create
     """
     try:
-        log_debug(f"Creating schema if not exists: {db_schema}")
+        log_debug(f"Ensuring schema {db_schema}", log_level=2)
         await session.execute(text(f"CREATE SCHEMA IF NOT EXISTS {db_schema};"))
     except Exception as e:
         log_warning(f"Could not create schema {db_schema}: {str(e)}")

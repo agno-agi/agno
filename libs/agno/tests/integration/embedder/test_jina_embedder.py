@@ -1,5 +1,6 @@
 import pytest
 
+from agno.exceptions import EmbeddingError
 from agno.knowledge.embedder.jina import JinaEmbedder
 
 
@@ -116,17 +117,20 @@ def test_late_chunking_feature():
 
 
 def test_api_key_validation():
-    """Test that missing API key is handled gracefully"""
+    """A missing API key must raise, not yield an empty vector."""
     embedder_no_key = JinaEmbedder(api_key=None)
 
-    # The embedder should return empty list when API key is missing
-    # (since the error is caught and logged as warning)
-    embeddings = embedder_no_key.get_embedding("Test text")
-    assert embeddings == []
+    with pytest.raises(EmbeddingError) as excinfo:
+        embedder_no_key.get_embedding("Test text")
+
+    assert excinfo.value.reason == "authentication"
 
 
 def test_empty_text_handling(embedder):
-    """Test handling of empty text"""
-    embeddings = embedder.get_embedding("")
-    # Should return empty list or handle gracefully
+    """Empty input either embeds or is rejected, but never yields a silent empty vector."""
+    try:
+        embeddings = embedder.get_embedding("")
+    except EmbeddingError:
+        return
     assert isinstance(embeddings, list)
+    assert embeddings, "an empty vector is indistinguishable from a successful embedding"

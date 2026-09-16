@@ -139,7 +139,13 @@ _CANCEL_BYPASS_EVENT_TYPES = (
 # ---------------------------------------------------------------------------
 
 
-def resolve_run_dependencies(agent: Agent, run_context: RunContext) -> None:
+def resolve_run_dependencies(
+    agent: Agent,
+    run_context: RunContext,
+    *,
+    run_input: Optional[RunInput] = None,
+    session: Optional[AgentSession] = None,
+) -> None:
     from inspect import iscoroutine, iscoroutinefunction, signature
 
     # Dependencies should already be resolved in run() method
@@ -162,6 +168,10 @@ def resolve_run_dependencies(agent: Agent, run_context: RunContext) -> None:
                     kwargs["agent"] = agent
                 if "run_context" in sig.parameters:
                     kwargs["run_context"] = run_context
+                if "run_input" in sig.parameters:
+                    kwargs["run_input"] = run_input
+                if "session" in sig.parameters:
+                    kwargs["session"] = session
 
                 # Run the function
                 result = value(**kwargs)
@@ -176,7 +186,13 @@ def resolve_run_dependencies(agent: Agent, run_context: RunContext) -> None:
             run_context.dependencies[key] = value
 
 
-async def aresolve_run_dependencies(agent: Agent, run_context: RunContext) -> None:
+async def aresolve_run_dependencies(
+    agent: Agent,
+    run_context: RunContext,
+    *,
+    run_input: Optional[RunInput] = None,
+    session: Optional[AgentSession] = None,
+) -> None:
     from inspect import iscoroutine, signature
 
     log_debug("Resolving context (async)")
@@ -197,6 +213,10 @@ async def aresolve_run_dependencies(agent: Agent, run_context: RunContext) -> No
                 kwargs["agent"] = agent
             if "run_context" in sig.parameters:
                 kwargs["run_context"] = run_context
+            if "run_input" in sig.parameters:
+                kwargs["run_input"] = run_input
+            if "session" in sig.parameters:
+                kwargs["session"] = session
 
             # Run the function
             result = value(**kwargs)
@@ -437,7 +457,9 @@ def _run(
 
                 # 3. Resolve dependencies
                 if run_context.dependencies is not None:
-                    resolve_run_dependencies(agent, run_context=run_context)
+                    resolve_run_dependencies(
+                        agent, run_context=run_context, run_input=run_response.input, session=agent_session
+                    )
 
                 raise_if_cancelled(run_response.run_id)  # type: ignore
 
@@ -840,7 +862,9 @@ def _run_stream(
 
                 # 3. Resolve dependencies
                 if run_context.dependencies is not None:
-                    resolve_run_dependencies(agent, run_context=run_context)
+                    resolve_run_dependencies(
+                        agent, run_context=run_context, run_input=run_response.input, session=agent_session
+                    )
 
                 raise_if_cancelled(run_response.run_id)  # type: ignore
 
@@ -1362,11 +1386,16 @@ def run_dispatch(
         files=file_artifacts,
     )
 
-    # Read existing session and update metadata BEFORE resolving run options,
-    # so that session-stored metadata is visible to resolve_run_options.
+    # Read the existing session so session-stored metadata is visible to
+    # resolve_run_options via session_metadata.
+    from copy import deepcopy
+
     from agno.agent._storage import read_or_create_session, update_metadata
 
     agent_session = read_or_create_session(agent, session_id=session_id, user_id=user_id)
+    # Snapshot BEFORE update_metadata merges agent.metadata into the session dict,
+    # so the session layer keeps the session's own values (agent < session < call-site).
+    session_metadata = deepcopy(agent_session.metadata)
     update_metadata(agent, session=agent_session)
 
     # Resolve all run options centrally
@@ -1381,6 +1410,7 @@ def run_dispatch(
         dependencies=dependencies,
         knowledge_filters=knowledge_filters,
         metadata=metadata,
+        session_metadata=session_metadata,
         output_schema=output_schema,
     )
 
@@ -1560,7 +1590,9 @@ async def _arun(
 
                 # 3. Resolve dependencies
                 if run_context.dependencies is not None:
-                    await aresolve_run_dependencies(agent, run_context=run_context)
+                    await aresolve_run_dependencies(
+                        agent, run_context=run_context, run_input=run_response.input, session=agent_session
+                    )
 
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
 
@@ -2317,7 +2349,9 @@ async def _arun_stream(
 
                 # 3. Resolve dependencies
                 if run_context.dependencies is not None:
-                    await aresolve_run_dependencies(agent, run_context=run_context)
+                    await aresolve_run_dependencies(
+                        agent, run_context=run_context, run_input=run_response.input, session=agent_session
+                    )
 
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
 
@@ -2867,18 +2901,25 @@ def arun_dispatch(  # type: ignore
         files=file_artifacts,
     )
 
-    # Read existing session and update metadata BEFORE resolving run options,
-    # so that session-stored metadata is visible to resolve_run_options.
+    # Read the existing session so session-stored metadata is visible to
+    # resolve_run_options via session_metadata.
     # Note: arun_dispatch is NOT async, so we can only pre-read with a sync DB.
-    # For async DB, _arun/_arun_stream will handle the session read themselves.
+    # For async DB, _arun/_arun_stream read the session AFTER options are resolved,
+    # so session metadata does not reach this run's resolved options there.
+    from copy import deepcopy
+
     from agno.agent._init import has_async_db
     from agno.agent._storage import update_metadata
 
     _pre_session: Optional[AgentSession] = None
+    _session_metadata: Optional[Dict[str, Any]] = None
     if not has_async_db(agent):
         from agno.agent._storage import read_or_create_session
 
         _pre_session = read_or_create_session(agent, session_id=session_id, user_id=user_id)
+        # Snapshot BEFORE update_metadata merges agent.metadata into the session dict,
+        # so the session layer keeps the session's own values (agent < session < call-site).
+        _session_metadata = deepcopy(_pre_session.metadata)
         update_metadata(agent, session=_pre_session)
 
     # Resolve all run options centrally
@@ -2893,6 +2934,7 @@ def arun_dispatch(  # type: ignore
         dependencies=dependencies,
         knowledge_filters=knowledge_filters,
         metadata=metadata,
+        session_metadata=_session_metadata,
         output_schema=output_schema,
     )
 
@@ -3409,8 +3451,8 @@ def continue_run_dispatch(
 
         background_tasks: BackgroundTasks = background_tasks  # type: ignore
 
-    session_id = run_response.session_id if run_response else session_id
-    run_id: str = run_response.run_id if run_response else run_id  # type: ignore
+    session_id = run_response.session_id if run_response is not None else session_id
+    run_id: str = run_response.run_id if run_response is not None else run_id  # type: ignore
 
     session_id, user_id = initialize_session(
         agent,
@@ -3421,7 +3463,12 @@ def continue_run_dispatch(
     agent.initialize_agent(debug_mode=debug_mode)
 
     # Read existing session from storage
+    from copy import deepcopy
+
     agent_session = read_or_create_session(agent, session_id=session_id, user_id=user_id)
+    # Snapshot BEFORE update_metadata merges agent.metadata into the session dict,
+    # so the session layer keeps the session's own values (agent < session < call-site).
+    session_metadata = deepcopy(agent_session.metadata)
     update_metadata(agent, session=agent_session)
 
     # Fall back to the owner the run paused with, so the resume retrieves under the same scope
@@ -3455,6 +3502,7 @@ def continue_run_dispatch(
         dependencies=dependencies,
         knowledge_filters=knowledge_filters,
         metadata=metadata,
+        session_metadata=session_metadata,
     )
 
     # Initialize run context
@@ -3475,10 +3523,6 @@ def continue_run_dispatch(
         metadata_provided=metadata is not None,
         user_id=user_id,
     )
-
-    # Resolve dependencies
-    if run_context.dependencies is not None:
-        resolve_run_dependencies(agent, run_context=run_context)
 
     # Run can be continued from previous run response or from passed run_response context
     if run_response is not None:
@@ -3517,8 +3561,7 @@ def continue_run_dispatch(
         input_messages = run_response.messages or []
     elif run_id is not None:
         # The run is continued from a run_id.
-        runs = agent_session.runs or []
-        run_response = next((r for r in runs if r.run_id == run_id), None)  # type: ignore
+        run_response = cast(Optional[RunOutput], _stored_run)
         if run_response is None:
             raise RunNotFoundError(f"No runs found for run ID {run_id}")
         if run_response.status == RunStatus.cancelled:
@@ -3611,6 +3654,20 @@ def continue_run_dispatch(
             # else: nothing to resolve — fall through to resume from current state
     else:
         raise ValueError("Either run_response or run_id must be provided.")
+
+    if run_context.session_state is None:
+        run_context.session_state = {}
+    _initialize_session_state(
+        run_context.session_state, user_id=user_id, session_id=session_id, run_id=run_context.run_id
+    )
+    # Resolve dependencies
+    if run_context.dependencies is not None:
+        resolve_run_dependencies(
+            agent,
+            run_context=run_context,
+            run_input=_stored_run.input if isinstance(_stored_run, RunOutput) else None,
+            session=agent_session,
+        )
 
     # If the caller supplied a new user-message string (unified /continue body
     # field ``input``), append it to run_response.messages before building
@@ -3957,7 +4014,9 @@ def _continue_run_stream(
             try:
                 # 1. Resolve dependencies
                 if run_context.dependencies is not None:
-                    resolve_run_dependencies(agent, run_context=run_context)
+                    resolve_run_dependencies(
+                        agent, run_context=run_context, run_input=run_response.input, session=session
+                    )
 
                 # Start the Run by yielding a RunContinued event
                 if stream_events:
@@ -4287,8 +4346,8 @@ def acontinue_run_dispatch(  # type: ignore
 
         background_tasks: BackgroundTasks = background_tasks  # type: ignore
 
-    session_id = run_response.session_id if run_response else session_id
-    run_id: str = run_response.run_id if run_response else run_id  # type: ignore
+    session_id = run_response.session_id if run_response is not None else session_id
+    run_id: str = run_response.run_id if run_response is not None else run_id  # type: ignore
 
     session_id, user_id = initialize_session(
         agent,
@@ -4299,16 +4358,24 @@ def acontinue_run_dispatch(  # type: ignore
     # Initialize the Agent
     agent.initialize_agent(debug_mode=debug_mode)
 
-    # Read existing session and update metadata BEFORE resolving run options,
-    # so that session-stored metadata is visible to resolve_run_options.
+    # Pre-read the session so session-stored metadata is visible to
+    # resolve_run_options via session_metadata. Only possible with a sync DB:
+    # with an async DB the session is read inside _arun AFTER options are
+    # resolved, so session metadata does not reach this run's resolved options.
     from agno.agent._init import has_async_db
 
     _session_state: Dict[str, Any] = {}
     _pre_session: Optional[AgentSession] = None
+    _session_metadata: Optional[Dict[str, Any]] = None
     if not has_async_db(agent):
+        from copy import deepcopy
+
         from agno.agent._storage import load_session_state, read_or_create_session, update_metadata
 
         _pre_session = read_or_create_session(agent, session_id=session_id, user_id=user_id)
+        # Snapshot BEFORE update_metadata merges agent.metadata into the session dict,
+        # so the session layer keeps the session's own values (agent < session < call-site).
+        _session_metadata = deepcopy(_pre_session.metadata)
         update_metadata(agent, session=_pre_session)
         _session_state = load_session_state(agent, session=_pre_session, session_state={})
 
@@ -4326,6 +4393,7 @@ def acontinue_run_dispatch(  # type: ignore
         dependencies=dependencies,
         knowledge_filters=knowledge_filters,
         metadata=metadata,
+        session_metadata=_session_metadata,
     )
 
     # Prepare arguments for the model
@@ -4764,17 +4832,23 @@ async def _acontinue_run(
                     if user_id is not None:
                         run_context.user_id = user_id
 
+                dependency_run = (
+                    run_response
+                    if run_response is not None
+                    else next((r for r in agent_session.runs or [] if r.run_id == run_id), None)
+                )
                 # A resumed run keeps its runtime-owned metadata (dispatch
                 # lineage, hop count, version stamp); on the async path the
                 # session may only be readable here, so the restore happens at
                 # the load point. Idempotent with the dispatch-time restore.
                 _restore_continue_context_metadata(
-                    run_context, run_response=run_response, run_id=run_id, session=agent_session
+                    run_context,
+                    run_response=cast(Optional[RunOutput], dependency_run),
+                    run_id=run_id,
+                    session=agent_session,
                 )
 
                 # 2. Resolve dependencies
-                if run_context.dependencies is not None:
-                    await aresolve_run_dependencies(agent, run_context=run_context)
 
                 # 3. Update metadata and session state
                 update_metadata(agent, session=agent_session)
@@ -4825,8 +4899,7 @@ async def _acontinue_run(
                     input_messages = run_response.messages or []
                 elif run_id is not None:
                     # The run is continued from a run_id.
-                    runs = agent_session.runs or []
-                    run_response = next((r for r in runs if r.run_id == run_id), None)  # type: ignore
+                    run_response = cast(Optional[RunOutput], dependency_run)
                     if run_response is None:
                         raise RunNotFoundError(f"No runs found for run ID {run_id}")
                     if run_response.status == RunStatus.cancelled:
@@ -4917,6 +4990,14 @@ async def _acontinue_run(
                 # If the caller supplied a new user-message string (unified /continue
                 # body field ``input``), append it to run_response.messages before
                 # building run_messages.
+                if run_context.dependencies is not None:
+                    await aresolve_run_dependencies(
+                        agent,
+                        run_context=run_context,
+                        run_input=dependency_run.input if isinstance(dependency_run, RunOutput) else None,
+                        session=agent_session,
+                    )
+
                 if input:
                     _maybe_append_input_message(run_response, input, agent)
                     input_messages = run_response.messages or []
@@ -5273,12 +5354,20 @@ async def _acontinue_run_stream(
                     if user_id is not None:
                         run_context.user_id = user_id
 
+                dependency_run = (
+                    run_response
+                    if run_response is not None
+                    else next((r for r in agent_session.runs or [] if r.run_id == run_id), None)
+                )
                 # A resumed run keeps its runtime-owned metadata (dispatch
                 # lineage, hop count, version stamp); on the async path the
                 # session may only be readable here, so the restore happens at
                 # the load point. Idempotent with the dispatch-time restore.
                 _restore_continue_context_metadata(
-                    run_context, run_response=run_response, run_id=run_id, session=agent_session
+                    run_context,
+                    run_response=cast(Optional[RunOutput], dependency_run),
+                    run_id=run_id,
+                    session=agent_session,
                 )
 
                 # 2. Update session state and metadata
@@ -5298,8 +5387,6 @@ async def _acontinue_run_stream(
                 )
 
                 # 3. Resolve dependencies
-                if run_context.dependencies is not None:
-                    await aresolve_run_dependencies(agent, run_context=run_context)
 
                 # 4. Prepare run response
                 if run_response is not None:
@@ -5335,8 +5422,7 @@ async def _acontinue_run_stream(
 
                 elif run_id is not None:
                     # The run is continued from a run_id.
-                    runs = agent_session.runs or []
-                    run_response = next((r for r in runs if r.run_id == run_id), None)  # type: ignore
+                    run_response = cast(Optional[RunOutput], dependency_run)
                     if run_response is None:
                         raise RunNotFoundError(f"No runs found for run ID {run_id}")
                     if run_response.status == RunStatus.cancelled:
@@ -5427,6 +5513,14 @@ async def _acontinue_run_stream(
                 # If the caller supplied a new user-message string (unified /continue
                 # body field ``input``), append it to run_response.messages before
                 # building run_messages.
+                if run_context.dependencies is not None:
+                    await aresolve_run_dependencies(
+                        agent,
+                        run_context=run_context,
+                        run_input=dependency_run.input if isinstance(dependency_run, RunOutput) else None,
+                        session=agent_session,
+                    )
+
                 if input:
                     _maybe_append_input_message(run_response, input, agent)
                     input_messages = run_response.messages or []

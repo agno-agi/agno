@@ -3,9 +3,9 @@
 Last updated: 2026-08-07
 
 Server verification used `.venvs/demo` with the pinned worktree library on
-`PYTHONPATH`. The nine local server examples (`basic_scopes.py`,
+`PYTHONPATH`. The ten local server examples (`basic_scopes.py`,
 `asymmetric_keys.py`, `per_resource_scopes.py`, `custom_scope_mappings.py`,
-`cookie_auth.py`, `jwt_claims.py`, `user_isolation.py`,
+`excluded_routes.py`, `cookie_auth.py`, `jwt_claims.py`, `user_isolation.py`,
 `user_isolation_knowledge.py`, and `service_accounts.py`) were started through
 `AgentOS.serve()`: all returned 200 from `/health` and 401 from an
 unauthenticated `/config` request before clean termination.
@@ -64,6 +64,22 @@ wildcard token exposed both agents plus the registered team and workflow.
 
 **Result:** `app:read` received 200 from `/config`; a token with only
 `agents:read` received 403.
+
+---
+
+### excluded_routes.py
+
+**Status:** PASS
+
+**Test mode:** SMOKE
+
+**Description:** Configured `AuthorizationConfig.excluded_route_paths` with
+`/public/*` pattern, then verified custom and default exclusions work while
+protected routes still require JWT.
+
+**Result:** Custom exclusion (`/public/status`) returned 200 without auth.
+Default exclusion (`/health`) still worked. Protected route (`/agents`)
+returned 401 without auth and 200 with a valid token.
 
 ---
 

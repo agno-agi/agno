@@ -138,7 +138,7 @@ def build_agent_with_memory(task: str) -> Agent:
         else "No prior memories for this user."
     )
     return Agent(
-        model=OpenAIChat(id="gpt-4o"),
+        model=OpenAIChat(id="gpt-5.6-luna"),
         description="You are a helpful AI assistant with persistent memory about the user.",
         instructions=memory_context,
     )
