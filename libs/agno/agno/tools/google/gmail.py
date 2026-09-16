@@ -1499,10 +1499,10 @@ class GmailTools(GoogleToolkit):
         Args:
             query: Gmail search query string. Supports all Gmail operators like from:, to:, subject:, is:unread, etc.
             count: Maximum number of threads to return (default 10, max 500).
-            page_token: Token for pagination.
+            page_token: Token from a previous response to fetch the next page.
 
         Returns:
-            JSON string with list of matching threads and next_page_token if more results exist.
+            JSON string with list of matching threads and nextPageToken if more results exist.
         """
         try:
             service = self.service
@@ -1621,10 +1621,10 @@ class GmailTools(GoogleToolkit):
 
         Args:
             count: Maximum number of drafts to return (default 10, max 500).
-            page_token: Token for pagination.
+            page_token: Token from a previous response to fetch the next page.
 
         Returns:
-            JSON string with list of draft IDs and next_page_token if more results exist.
+            JSON string with list of draft IDs and nextPageToken if more results exist.
         """
         try:
             service = self.service
