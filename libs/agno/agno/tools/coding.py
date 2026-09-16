@@ -347,8 +347,9 @@ class CodingTools(Toolkit):
             if self._has_interpreter_code_exec(tokens[1:]):
                 return (
                     "Error: Inline code execution (-c/-m or reading from stdin) is not "
-                    "allowed in restricted mode. Run a script file instead, or set "
-                    "restrict_to_base_dir=False for an unsupervised interpreter."
+                    "allowed in restricted mode. Run a script file instead. Setting "
+                    "restrict_to_base_dir=False lifts all checks and should only be used "
+                    "for trusted, supervised execution."
                 )
 
         for i, token in enumerate(tokens):
