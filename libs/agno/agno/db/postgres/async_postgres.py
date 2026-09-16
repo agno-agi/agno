@@ -9,6 +9,7 @@ if TYPE_CHECKING:
 
 from agno.db.base import AsyncBaseDb, SessionType
 from agno.db.migrations.manager import MigrationManager
+from agno.db.postgres.engine import _engine_options
 from agno.db.postgres.schemas import get_table_schema_definition
 from agno.db.postgres.utils import (
     abulk_upsert_metrics,
@@ -35,7 +36,6 @@ from agno.db.utils import (
     deserialize_session,
     deserialize_sessions,
     filter_context_runs,
-    json_serializer,
     learning_search_patterns,
     merge_runs_table_with_legacy_blob,
     metrics_starting_date_from_days,
@@ -187,9 +187,7 @@ class AsyncPostgresDb(AsyncBaseDb):
         if _engine is None and db_url is not None:
             _engine = create_async_engine(
                 db_url,
-                pool_pre_ping=True,
-                pool_recycle=3600,
-                json_serializer=json_serializer,
+                **_engine_options(),
             )
         if _engine is None:
             raise ValueError("One of db_url or db_engine must be provided")
@@ -375,10 +373,10 @@ class AsyncPostgresDb(AsyncBaseDb):
             if not await self.table_exists(table_name):
                 async with self.db_engine.begin() as conn:
                     await conn.run_sync(table.create, checkfirst=True)
-                log_debug(f"Successfully created table '{table_name}'")
+                log_debug(f"Created table {self.db_schema}.{table_name}")
                 table_created = True
             else:
-                log_debug(f"Table '{self.db_schema}.{table_name}' already exists, skipping creation")
+                log_debug(f"Table {self.db_schema}.{table_name} already exists", log_level=2)
 
             # Create indexes
             for idx in table.indexes:
@@ -405,14 +403,22 @@ class AsyncPostgresDb(AsyncBaseDb):
                 # Also store the schema version for the created table
                 latest_schema_version = MigrationManager(self).latest_schema_version
                 await self.upsert_schema_version(table_name=table_name, version=latest_schema_version.public)
-                log_info(
-                    f"Successfully stored version {latest_schema_version.public} in database for table {table_name}"
+                log_debug(
+                    f"Stored schema version {latest_schema_version.public}: {self.db_schema}.{table_name}", log_level=2
                 )
 
             return table
 
         except Exception as e:
-            log_error(f"Could not create table {self.db_schema}.{table_name}: {str(e)}")
+            # Concurrent CREATE TABLE may lose the catalog's uniqueness race.
+            # The caller still receives the exception and decides whether it can
+            # resolve the winner; an existing winner is not a database outage.
+            cause = getattr(e, "orig", e)
+            sqlstate = getattr(cause, "sqlstate", getattr(cause, "pgcode", None))
+            if sqlstate in ("42P07", "23505") and await self.table_exists(table_name):
+                log_debug(f"Concurrent table creation: {self.db_schema}.{table_name}", log_level=2)
+            else:
+                log_error(f"Could not create table {self.db_schema}.{table_name}: {str(e)}")
             raise
 
     async def _get_table(self, table_type: str, create_table_if_not_found: Optional[bool] = False) -> Optional[Table]:
@@ -4731,6 +4737,25 @@ class AsyncPostgresDb(AsyncBaseDb):
         except Exception as e:
             log_warning(f"Error inserting session if absent (caller falls back): {e}")
             return None
+
+    async def ensure_jobs_table(self) -> None:
+        """Prepare durable queue storage before polling or accepting continuations.
+
+        Stores without this optional hook retain lazy initialization. Propagate
+        provisioning failures so the worker can report unavailable storage.
+        """
+        try:
+            table = await self._get_table(table_type="jobs", create_table_if_not_found=True)
+        except Exception as exc:
+            # Another replica may have completed the first-time DDL meanwhile.
+            cause = getattr(exc, "orig", exc)
+            sqlstate = getattr(cause, "sqlstate", getattr(cause, "pgcode", None))
+            if sqlstate not in ("42P07", "23505") or not await self.table_exists(self.job_table_name):
+                raise
+            self._invalidate_table_cache(self.job_table_name)
+            table = await self._get_table(table_type="jobs")
+        if table is None:
+            raise RuntimeError("Job queue table is unavailable after provisioning")
 
     async def enqueue_job(self, job: Dict[str, Any], max_depth: int = 0) -> Dict[str, Any]:
         """Insert an accepted run job.

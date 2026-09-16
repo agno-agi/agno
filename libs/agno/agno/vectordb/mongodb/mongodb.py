@@ -6,11 +6,12 @@ from typing import Any, Dict, List, Optional, Union
 
 from bson import ObjectId
 
+from agno.exceptions import EmbeddingError
 from agno.filters import FilterExpr
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.utils.log import log_debug, log_error, log_info, log_warning, logger
-from agno.vectordb.base import VectorDb
+from agno.vectordb.base import VectorDb, embed_before_replace, is_rate_limit_error, raise_embedding_failures
 from agno.vectordb.distance import Distance
 from agno.vectordb.search import SearchType
 
@@ -603,6 +604,9 @@ class MongoDb(VectorDb):
             filters (Optional[Dict[str, Any]]): Metadata merged into every document.
             user_id (Optional[str]): Owner of these chunks for per-user isolation.
         """
+        # Embed before the delete below: clearing the old chunks first would destroy
+        # retrievable content if the embedder then fails.
+        embed_before_replace(documents, self.embedder)
         log_info(f"Upserting {len(documents)} documents")
         collection = self._get_collection()
 
@@ -622,6 +626,8 @@ class MongoDb(VectorDb):
                     upsert=True,
                 )
                 log_info(f"Upserted document: {doc_data['_id']}")
+            except EmbeddingError:
+                raise
             except Exception:
                 logger.exception(f"Error upserting document '{document.name}'")
 
@@ -1168,12 +1174,8 @@ class MongoDb(VectorDb):
                         logger.exception(f"Error assigning batch embedding to document '{doc.name}'")
 
             except Exception as e:
-                # Check if this is a rate limit error - don't fall back as it would make things worse
-                error_str = str(e).lower()
-                is_rate_limit = any(
-                    phrase in error_str
-                    for phrase in ["rate limit", "too many requests", "429", "trial key", "api calls / minute"]
-                )
+                # A throttle must not fall back to per-item calls, which would throttle harder.
+                is_rate_limit = is_rate_limit_error(e)
 
                 if is_rate_limit:
                     logger.exception("Rate limit detected during batch embedding.")
@@ -1182,11 +1184,13 @@ class MongoDb(VectorDb):
                     log_warning(f"Async batch embedding failed, falling back to individual embeddings: {str(e)}")
                     # Fall back to individual embedding
                     embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in documents]
-                    await asyncio.gather(*embed_tasks, return_exceptions=True)
+                    results = await asyncio.gather(*embed_tasks, return_exceptions=True)
+                    raise_embedding_failures(results)
         else:
             # Use individual embedding
             embed_tasks = [document.async_embed(embedder=self.embedder) for document in documents]
-            await asyncio.gather(*embed_tasks, return_exceptions=True)
+            results = await asyncio.gather(*embed_tasks, return_exceptions=True)
+            raise_embedding_failures(results)
 
         prepared_docs = []
         for document in documents:
@@ -1249,12 +1253,8 @@ class MongoDb(VectorDb):
                         logger.exception(f"Error assigning batch embedding to document '{doc.name}'")
 
             except Exception as e:
-                # Check if this is a rate limit error - don't fall back as it would make things worse
-                error_str = str(e).lower()
-                is_rate_limit = any(
-                    phrase in error_str
-                    for phrase in ["rate limit", "too many requests", "429", "trial key", "api calls / minute"]
-                )
+                # A throttle must not fall back to per-item calls, which would throttle harder.
+                is_rate_limit = is_rate_limit_error(e)
 
                 if is_rate_limit:
                     logger.exception("Rate limit detected during batch embedding.")
@@ -1263,11 +1263,13 @@ class MongoDb(VectorDb):
                     log_warning(f"Async batch embedding failed, falling back to individual embeddings: {str(e)}")
                     # Fall back to individual embedding
                     embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in documents]
-                    await asyncio.gather(*embed_tasks, return_exceptions=True)
+                    results = await asyncio.gather(*embed_tasks, return_exceptions=True)
+                    raise_embedding_failures(results)
         else:
             # Use individual embedding
             embed_tasks = [document.async_embed(embedder=self.embedder) for document in documents]
-            await asyncio.gather(*embed_tasks, return_exceptions=True)
+            results = await asyncio.gather(*embed_tasks, return_exceptions=True)
+            raise_embedding_failures(results)
 
         for document in documents:
             try:

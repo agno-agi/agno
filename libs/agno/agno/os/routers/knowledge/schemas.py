@@ -12,6 +12,7 @@ class ContentStatus(str, Enum):
 
     PROCESSING = "processing"
     COMPLETED = "completed"
+    PARTIAL = "partial"
     FAILED = "failed"
 
 
@@ -44,10 +45,15 @@ class ContentResponseSchema(BaseModel):
             try:
                 status = ContentStatus(status.lower())
             except ValueError:
-                # Handle legacy or unknown statuses gracefully
-                if "failed" in status.lower():
+                # Handle legacy or unknown statuses gracefully. "partial" is checked
+                # before "failed"/"completed" so a compound legacy value such as
+                # "partially_failed" is not reported as a total failure.
+                lowered = status.lower()
+                if "partial" in lowered:
+                    status = ContentStatus.PARTIAL
+                elif "failed" in lowered:
                     status = ContentStatus.FAILED
-                elif "completed" in status.lower():
+                elif "completed" in lowered:
                     status = ContentStatus.COMPLETED
                 else:
                     status = ContentStatus.PROCESSING

@@ -1,7 +1,7 @@
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
-from agno.tools.file_generation import FileGenerationTools
+from agno.tools.file import FileGenerationTools
 from agno.workflow.step import Step
 from agno.workflow.workflow import Workflow
 
