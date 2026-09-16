@@ -1,6 +1,5 @@
 """The default role is a provisioning policy, so ``define_role(..., default=True)`` applies on every
-boot, not only when the role is first created. Scopes stay bootstrap-only. And the directory names
-where ``default_role`` went instead of failing with a bare TypeError.
+boot, not only when the role is first created. Scopes stay bootstrap-only.
 """
 
 import pytest
@@ -8,7 +7,7 @@ import pytest
 pytest.importorskip("sqlalchemy")
 
 from agno.db.sqlite import SqliteDb  # noqa: E402
-from agno.os.authz import Authorization, UserDirectory  # noqa: E402
+from agno.os.authz import Authorization  # noqa: E402
 
 SECRET = "default-role-boot-secret-at-least-256-bits-long-xxxxxx"
 
@@ -62,10 +61,3 @@ def test_a_default_role_set_in_the_admin_api_is_overridden_by_code(tmp_path):
     store.set_role_meta("member", is_default=True)  # what PATCH /authz/roles/member does
     assert store.default_role() == "member"
     assert _boot(db, default="viewer").default_role() == "viewer"
-
-
-def test_user_directory_points_default_role_at_define_role():
-    with pytest.raises(TypeError, match="define_role\\(slug, scopes, default=True\\)"):
-        UserDirectory(auto_provision=True, default_role="viewer")  # type: ignore[call-arg]
-    with pytest.raises(TypeError, match="unexpected keyword argument\\(s\\): nope"):
-        UserDirectory(nope=1)  # type: ignore[call-arg]

@@ -59,17 +59,7 @@ class UserDirectory:
         email_claim: str = "email",
         name_claim: str = "name",
         fail_closed: bool = False,
-        **unknown: Any,
     ):
-        if "default_role" in unknown:
-            # The one setting people reach for here that lives elsewhere. Name where it went
-            # rather than leave a bare "unexpected keyword argument".
-            raise TypeError(
-                "UserDirectory has no default_role: the role a provisioned user gets is set on the role "
-                "itself, with Authorization.define_role(slug, scopes, default=True)."
-            )
-        if unknown:
-            raise TypeError(f"UserDirectory got unexpected keyword argument(s): {', '.join(sorted(unknown))}")
         if user_store is not None and (db is not None or db_url is not None):
             raise ValueError("UserDirectory takes either user_store= or db=/db_url=, not both.")
         self.auto_provision = auto_provision

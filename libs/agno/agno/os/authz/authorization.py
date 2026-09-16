@@ -321,15 +321,13 @@ class Authorization:
         assigned to it (an assignment-only role, e.g. seeded before its define_role) still has no
         scopes, so this must define them rather than skip it as 'already there'.
 
-        ``default=True`` is different: it is a provisioning policy, not a definition, and the code
-        that says it means it on every boot. So it is applied even when the role already exists,
-        which also clears the flag from whichever role held it before (one default at a time).
-        A ``define_role`` without ``default`` never clears an existing default: code can assert a
-        default but not un-assert one by omission; that is left to the admin API."""
+        ``default=True`` is a provisioning policy, not part of the definition, so it is applied on
+        every boot even when the role exists; setting it clears the flag from the previous holder.
+        Omitting ``default`` never clears an existing default: that is left to the admin API."""
         self._require_sync_setup()
         store = self._ensure_role_store()
         if store.get_role_scopes(slug):  # already has scopes -> a definition/edit to preserve
-            if default and store.default_role() != slug:
+            if default and store.default_role() != slug:  # no write, and no audit event, when unchanged
                 store.set_role_meta(slug, is_default=True)
             return
         store.set_role_scopes(slug, scopes, name=name, description=description, is_default=default)
