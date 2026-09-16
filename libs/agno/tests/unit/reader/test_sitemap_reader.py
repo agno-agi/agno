@@ -569,8 +569,8 @@ def test_source_header_lands_in_first_chunk_only():
         documents = reader.read("https://example.com/sitemap.xml")
 
     assert len(documents) >= 2
-    # FixedSizeChunking collapses whitespace, so the header's newlines become spaces
-    assert documents[0].content.startswith("# Page A Source: https://example.com/a ")
+    # FixedSizeChunking collapses repeated newlines, so the header's blank line becomes a single newline
+    assert documents[0].content.startswith("# Page A\nSource: https://example.com/a\n")
     for later in documents[1:]:
         assert "# Page A" not in later.content
         assert "Source:" not in later.content
