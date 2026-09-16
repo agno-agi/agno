@@ -552,51 +552,86 @@ def test_all_flag():
 # --- shell sandbox tests ---
 
 
-def test_run_shell_blocks_metacharacters():
-    """Test that shell metacharacters are blocked in restricted mode."""
+def test_run_shell_rejects_control_operators():
+    """Standalone control operators are rejected as unsupported in restricted mode.
+
+    Restricted mode runs without a shell, so these cannot chain anyway; rejecting the
+    common spaced form gives a clear error instead of a confusing literal run.
+    """
     with tempfile.TemporaryDirectory() as tmp_dir:
         base_dir = Path(tmp_dir)
         tools = CodingTools(base_dir=base_dir)
 
-        # Command chaining with &&
-        result = tools.run_shell("echo hello && cat /etc/passwd")
-        assert "Error" in result
-        assert "&&" in result
+        for op, cmd in (
+            ("&&", "echo hello && cat /etc/passwd"),
+            ("||", "false || cat /etc/passwd"),
+            (";", "echo hello ; cat /etc/passwd"),
+            ("|", "echo hello | cat"),
+            ("&", "echo hello & echo pwned"),
+            (">", "echo hello > escaped.txt"),
+            (">>", "echo hello >> escaped.txt"),
+            ("<", "cat < /etc/passwd"),
+        ):
+            result = tools.run_shell(cmd)
+            assert "Error" in result
+            assert "not supported in restricted mode" in result
+            assert op in result
 
-        # Command chaining with ||
-        result = tools.run_shell("false || cat /etc/passwd")
-        assert "Error" in result
-        assert "||" in result
 
-        # Command chaining with ;
-        result = tools.run_shell("echo hello; cat /etc/passwd")
-        assert "Error" in result
-        assert ";" in result
+def test_run_shell_operators_are_inert_without_a_shell():
+    """Chaining, substitution, redirection, and globbing must not execute.
 
-        # Pipe
-        result = tools.run_shell("echo hello | cat")
-        assert "Error" in result
-        assert "|" in result
+    Restricted mode runs the tokenized command directly (shell=False), so operators
+    are passed as literal arguments. Proven by side effects that never happen.
+    """
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base_dir = Path(tmp_dir)
+        tools = CodingTools(base_dir=base_dir)
 
-        # Command substitution with $()
-        result = tools.run_shell("echo $(cat /etc/passwd)")
-        assert "Error" in result
-        assert "$(" in result
+        # Command substitution does not run: touch is never executed.
+        for cmd in (
+            "echo $(touch pwned.txt)",
+            'echo "$(touch pwned.txt)"',
+            "echo `touch pwned.txt`",
+        ):
+            result = tools.run_shell(cmd)
+            assert not (base_dir / "pwned.txt").exists()
 
-        # Command substitution with backticks
-        result = tools.run_shell("echo `cat /etc/passwd`")
-        assert "Error" in result
-        assert "`" in result
+        # Glued chaining does not run a second command: only echo executes.
+        result = tools.run_shell("echo hello;touch chained.txt")
+        assert not (base_dir / "chained.txt").exists()
 
-        # Output redirection
-        result = tools.run_shell("echo hello > /tmp/evil.txt")
-        assert "Error" in result
-        assert ">" in result
+        # Globs are not expanded: the literal pattern is passed through.
+        (base_dir / "a.py").write_text("x\n")
+        result = tools.run_shell("echo *.py")
+        assert "*.py" in result
 
-        # Input redirection
-        result = tools.run_shell("cat < /etc/passwd")
-        assert "Error" in result
-        assert "<" in result
+
+def test_run_shell_allows_quoted_operators():
+    """Operators inside quotes are ordinary characters and must not be rejected.
+
+    These are valid commands (e.g. a commit message containing '&') that a raw
+    substring check wrongly blocked.
+    """
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base_dir = Path(tmp_dir)
+        tools = CodingTools(base_dir=base_dir)
+
+        for cmd in (
+            "echo 'A & B'",  # single-quoted separator
+            'echo "A & B"',  # double-quoted separator
+            "echo 'a;b'",
+            "echo 'a|b'",
+            "echo 'a>b'",
+            "echo 'a<b'",
+        ):
+            result = tools.run_shell(cmd)
+            assert "Exit code: 0" in result
+            assert "not supported in restricted mode" not in result
+
+        # A backslash-escaped operator is also an ordinary character.
+        result = tools.run_shell("echo a\\&b")
+        assert "Exit code: 0" in result
 
 
 def test_run_shell_blocks_disallowed_commands():
