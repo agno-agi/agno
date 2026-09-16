@@ -68,6 +68,10 @@ WORKFLOW_ID_REQUIRED_RECONNECT = "workflow_id is required to reconnect to a work
 SESSION_ID_REQUIRED_RECONNECT = "session_id is required to reconnect to a workflow run"
 INSUFFICIENT_PERMISSIONS_WS_RECONNECT = "Insufficient permissions to reconnect to this workflow"
 MISSING_USER_IDENTITY = "Authenticated request is missing a user identity"
+MISSING_SELF_ASSERTED_USER_ID = (
+    "user_id is required: this AgentOS runs with user_isolation on and no authorization, so every "
+    "request must say whose data it is for. Pass ?user_id=<id> (or the user_id form field on a run)."
+)
 SESSION_NOT_FOUND = "Session not found"
 
 
@@ -170,9 +174,15 @@ def get_scoped_user_id(request: Request) -> Optional[str]:
         return None
 
     if not user_id:
-        # An agno auth middleware ran (nothing else sets ``user_isolation_enabled``)
-        # and produced no identity — fail closed instead of falling through to unscoped.
-        raise HTTPException(status_code=403, detail=MISSING_USER_IDENTITY)
+        if getattr(request.state, "authenticated", False):
+            # An agno auth middleware ran and produced no identity -- fail closed instead of
+            # falling through to unscoped.
+            raise HTTPException(status_code=403, detail=MISSING_USER_IDENTITY)
+        # No auth, isolation on, and the caller named nobody. Isolation means every request says
+        # whose data it is for; a request that omits the id would otherwise read everyone's, which
+        # made omission a bypass. The id is self-asserted, so this is a contract on the caller,
+        # not a security boundary: 400, not 403.
+        raise HTTPException(status_code=400, detail=MISSING_SELF_ASSERTED_USER_ID)
 
     # The sentinel identifies the caller, not an owner: scope to the schedule owner the
     # executor forwarded. An unowned (system) schedule forwards none and stays unscoped.
@@ -182,6 +192,25 @@ def get_scoped_user_id(request: Request) -> Optional[str]:
         return _schedule_owner_from_header(request)
 
     return user_id
+
+
+def adopt_self_asserted_user_id(request: Request, user_id: Optional[str]) -> None:
+    """No-auth path only: take a run's ``user_id`` form field as the caller's identity.
+
+    The no-auth identity middleware reads only the query string (it never parses a body), so a
+    run that names its user in the form and not the query reaches the handler with no identity
+    on ``request.state``. Under ``user_isolation`` that would be refused as an id-less request,
+    so the run routes call this first: when nothing authenticated the caller and the state has no
+    id yet, the form value becomes the id every later :func:`get_scoped_user_id` scopes to.
+    A reserved principal is refused, as it is everywhere else a self-asserted id arrives.
+    A no-op whenever an auth middleware ran or the query already named the user."""
+    if not user_id or getattr(request.state, "authenticated", False) or getattr(request.state, "user_id", None):
+        return
+    from agno.os.middleware.jwt import is_reserved_principal
+
+    if is_reserved_principal(user_id):
+        raise HTTPException(status_code=403, detail="Client-supplied user_id may not claim a reserved principal")
+    request.state.user_id = user_id
 
 
 def sync_directory_from_request(request: Request, user_id: Optional[str]) -> None:
