@@ -1059,9 +1059,7 @@ class Claude(Model):
                     tool_name = block.name
                     tool_input = block.input
 
-                    function_def = {"name": tool_name}
-                    if tool_input:
-                        function_def["arguments"] = json.dumps(tool_input)
+                    function_def = {"name": tool_name, "arguments": json.dumps(tool_input)}
 
                     model_response.extra = model_response.extra or {}
 
@@ -1162,9 +1160,7 @@ class Claude(Model):
                 tool_name = tool_use.name  # type: ignore
                 tool_input = tool_use.input  # type: ignore
 
-                function_def = {"name": tool_name}
-                if tool_input:
-                    function_def["arguments"] = json.dumps(tool_input)
+                function_def = {"name": tool_name, "arguments": json.dumps(tool_input)}
 
                 model_response.extra = model_response.extra or {}
 
