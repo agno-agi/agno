@@ -50,6 +50,7 @@ from agno.os.job_queue import (
 )
 from agno.os.middleware.user_scope import (
     SESSION_ID_REQUIRED,
+    adopt_self_asserted_user_id,
     assert_session_matches_component,
     assert_session_writable,
     caller_is_admin,
@@ -642,6 +643,8 @@ def get_team_router(
 
         files_metadata_list = parse_files_metadata(files_metadata)
 
+        # No auth: the form user_id is the caller's identity (the middleware reads only the query).
+        adopt_self_asserted_user_id(request, user_id)
         # Scoped non-admin callers always get their JWT sub as user_id.
         # Admins and unscoped callers fall through to middleware/form values.
         scoped_user_id = get_scoped_user_id(request)
@@ -1351,6 +1354,8 @@ def get_team_router(
     ):
         kwargs = await get_request_kwargs(request, continue_team_run)
 
+        # No auth: the form user_id is the caller's identity (the middleware reads only the query).
+        adopt_self_asserted_user_id(request, user_id)
         if hasattr(request.state, "user_id") and request.state.user_id is not None:
             user_id = request.state.user_id
         if hasattr(request.state, "session_id") and request.state.session_id is not None:
