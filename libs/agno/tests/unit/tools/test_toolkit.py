@@ -8,7 +8,6 @@ from pathlib import Path
 import pytest
 
 from agno.agent import Agent
-from agno.knowledge.reader.pdf_reader import _clean_page_numbers
 from agno.tools import Toolkit, tool
 from agno.tools.function import Function, FunctionCall
 from agno.tools.searxng import Searxng
@@ -1013,8 +1012,7 @@ def test_toolkit_default_tools_is_not_shared_between_instances():
     t1 = Toolkit(name="t1")
     t2 = Toolkit(name="t2")
     assert t1.tools is not t2.tools, (
-        "Toolkit instances are sharing the default `tools` list — "
-        "mutable default argument (B006) regression."
+        "Toolkit instances are sharing the default `tools` list — mutable default argument (B006) regression."
     )
     # Mutation on one must not be visible on the other.
     list(t1.tools).append("sentinel")  # also confirms tools is a real list
@@ -1024,8 +1022,7 @@ def test_toolkit_init_signature_uses_none_default_for_tools():
     """`Toolkit.__init__(tools=...)` must default to `None`, not `[]`."""
     sig = inspect.signature(Toolkit.__init__)
     assert sig.parameters["tools"].default is None, (
-        "Toolkit.__init__(tools=...) must default to None to avoid B006; "
-        f"got {sig.parameters['tools'].default!r}."
+        f"Toolkit.__init__(tools=...) must default to None to avoid B006; got {sig.parameters['tools'].default!r}."
     )
 
 
@@ -1033,22 +1030,30 @@ def test_searxng_default_engines_is_not_shared_between_instances():
     """Two Searxng instances created without `engines` must NOT share a list."""
     s1 = Searxng(host="https://example.invalid")
     s2 = Searxng(host="https://example.invalid")
-    assert s1.engines is not s2.engines, (
-        "Searxng instances are sharing the default `engines` list — B006."
-    )
+    assert s1.engines is not s2.engines, "Searxng instances are sharing the default `engines` list — B006."
 
 
 def test_searxng_init_signature_uses_none_default_for_engines():
     """`Searxng.__init__(engines=...)` must default to `None`, not `[]`."""
     sig = inspect.signature(Searxng.__init__)
     assert sig.parameters["engines"].default is None, (
-        "Searxng.__init__(engines=...) must default to None to avoid B006; "
-        f"got {sig.parameters['engines'].default!r}."
+        f"Searxng.__init__(engines=...) must default to None to avoid B006; got {sig.parameters['engines'].default!r}."
     )
 
 
 def test_clean_page_numbers_signature_uses_none_default_for_extra_content():
-    """`_clean_page_numbers(extra_content=...)` must default to `None`."""
+    """`_clean_page_numbers(extra_content=...)` must default to `None`.
+
+    Importing this pulls in the PDF reader module, which requires the
+    optional `pypdf` dependency. Skip rather than fail the whole test
+    module's collection if it's not installed locally.
+    """
+    try:
+        from agno.knowledge.reader.pdf_reader import _clean_page_numbers
+    except ImportError:
+        pytest.skip("pypdf not installed - skipping _clean_page_numbers B006 check")
+        return
+
     sig = inspect.signature(_clean_page_numbers)
     assert sig.parameters["extra_content"].default is None, (
         "_clean_page_numbers(extra_content=...) must default to None to "
@@ -1084,6 +1089,5 @@ def test_mcp_toolbox_methods_use_none_defaults_for_auth_and_bound_params():
         sig = inspect.signature(method)
         actual = sig.parameters[param_name].default
         assert actual is None, (
-            f"MCPToolbox.{method_name}({param_name}=...) must default to "
-            f"None to avoid B006; got {actual!r}."
+            f"MCPToolbox.{method_name}({param_name}=...) must default to None to avoid B006; got {actual!r}."
         )
