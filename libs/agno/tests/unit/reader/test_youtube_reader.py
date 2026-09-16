@@ -40,7 +40,7 @@ def test_read_video_with_chunking(mock_transcript):
     video_url = "https://www.youtube.com/watch?v=test_video_id"
 
     with patch("agno.knowledge.reader.youtube_reader.YouTubeTranscriptApi") as mock_api:
-        mock_api.get_transcript.return_value = mock_transcript
+        mock_api.return_value.fetch.return_value = mock_transcript
 
         reader = YouTubeReader()
         reader.chunk = True
@@ -67,22 +67,25 @@ def test_read_video_with_chunking(mock_transcript):
 def test_read_invalid_video_url():
     video_url = "invalid_url"
 
-    reader = YouTubeReader()
-    documents = reader.read(video_url)
+    with patch("agno.knowledge.reader.youtube_reader.YouTubeTranscriptApi") as mock_api:
+        mock_api.return_value.fetch.side_effect = ValueError("Invalid video ID")
 
-    assert len(documents) == 0
+        reader = YouTubeReader()
+        documents = reader.read(video_url)
+
+        assert documents == []
 
 
 def test_read_video_api_error():
     video_url = "https://www.youtube.com/watch?v=test_video_id"
 
     with patch("agno.knowledge.reader.youtube_reader.YouTubeTranscriptApi") as mock_api:
-        mock_api.get_transcript.side_effect = Exception("API Error")
+        mock_api.return_value.fetch.side_effect = Exception("API Error")
 
         reader = YouTubeReader()
         documents = reader.read(video_url)
 
-        assert len(documents) == 1
+        assert documents == []
 
 
 def test_read_large_transcript():
@@ -110,10 +113,10 @@ def test_read_large_transcript():
 def test_read_video_with_params():
     video_url = "https://www.youtube.com/watch?v=test_video_id&t=30s"
 
-    mock_transcript = [{"text": "Test content", "start": 0.0, "duration": 2.0}]
+    mock_transcript = [MagicMock(text="Test content", start=0.0, duration=2.0)]
 
     with patch("agno.knowledge.reader.youtube_reader.YouTubeTranscriptApi") as mock_api:
-        mock_api.get_transcript.return_value = mock_transcript
+        mock_api.return_value.fetch.return_value = mock_transcript
 
         reader = YouTubeReader()
         reader.chunk = False
@@ -169,7 +172,7 @@ async def test_async_read_video_with_chunking(mock_transcript):
     video_url = "https://www.youtube.com/watch?v=test_video_id"
 
     with patch("agno.knowledge.reader.youtube_reader.YouTubeTranscriptApi") as mock_api:
-        mock_api.get_transcript.return_value = mock_transcript
+        mock_api.return_value.fetch.return_value = mock_transcript
 
         reader = YouTubeReader()
         reader.chunk = True
@@ -197,10 +200,13 @@ async def test_async_read_video_with_chunking(mock_transcript):
 async def test_async_read_invalid_video_url():
     video_url = "invalid_url"
 
-    reader = YouTubeReader()
-    documents = await reader.async_read(video_url)
+    with patch("agno.knowledge.reader.youtube_reader.YouTubeTranscriptApi") as mock_api:
+        mock_api.return_value.fetch.side_effect = ValueError("Invalid video ID")
 
-    assert len(documents) == 0
+        reader = YouTubeReader()
+        documents = await reader.async_read(video_url)
+
+        assert documents == []
 
 
 @pytest.mark.asyncio
@@ -208,12 +214,12 @@ async def test_async_read_video_api_error():
     video_url = "https://www.youtube.com/watch?v=test_video_id"
 
     with patch("agno.knowledge.reader.youtube_reader.YouTubeTranscriptApi") as mock_api:
-        mock_api.get_transcript.side_effect = Exception("API Error")
+        mock_api.return_value.fetch.side_effect = Exception("API Error")
 
         reader = YouTubeReader()
         documents = await reader.async_read(video_url)
 
-        assert len(documents) == 1
+        assert documents == []
 
 
 @pytest.mark.asyncio
@@ -243,10 +249,10 @@ async def test_async_read_large_transcript():
 async def test_async_read_video_with_params():
     video_url = "https://www.youtube.com/watch?v=test_video_id&t=30s"
 
-    mock_transcript = [{"text": "Test content", "start": 0.0, "duration": 2.0}]
+    mock_transcript = [MagicMock(text="Test content", start=0.0, duration=2.0)]
 
     with patch("agno.knowledge.reader.youtube_reader.YouTubeTranscriptApi") as mock_api:
-        mock_api.get_transcript.return_value = mock_transcript
+        mock_api.return_value.fetch.return_value = mock_transcript
 
         reader = YouTubeReader()
         reader.chunk = False
@@ -296,3 +302,36 @@ def test_youtube_reader_default_chunk_size():
     assert reader.chunk_size == 5000
     assert reader.chunking_strategy.chunk_size == 5000
     assert isinstance(reader.chunking_strategy, RecursiveChunking)
+
+
+@pytest.mark.parametrize("use_async", [False, True], ids=["sync", "async"])
+@pytest.mark.parametrize(
+    "video_url",
+    [
+        "dQw4w9WgXcQ",
+        "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+        "https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=30s",
+        "https://www.youtube.com/watch?t=30&v=dQw4w9WgXcQ#t=30",
+        "https://www.youtube.com/watch?preview=other&v=dQw4w9WgXcQ",
+        "https://youtu.be/dQw4w9WgXcQ",
+        "https://youtu.be/dQw4w9WgXcQ?si=share123&t=30#t=30",
+        "https://youtu.be/dQw4w9WgXcQ?v=other",
+        "https://www.youtube.com/shorts/dQw4w9WgXcQ?feature=share",
+        "https://m.youtube.com/shorts/dQw4w9WgXcQ#t=30",
+    ],
+)
+@pytest.mark.asyncio
+async def test_read_video_url_formats(video_url, use_async, mock_transcript):
+    reader = YouTubeReader(chunk=False)
+
+    with patch("agno.knowledge.reader.youtube_reader.YouTubeTranscriptApi") as mock_api:
+        mock_api.return_value.fetch.return_value = mock_transcript
+
+        documents = await reader.async_read(video_url) if use_async else reader.read(video_url)
+
+        mock_api.return_value.fetch.assert_called_once_with("dQw4w9WgXcQ")
+        assert len(documents) == 1
+        assert documents[0].id == "youtube_dQw4w9WgXcQ"
+        assert documents[0].name == "youtube_dQw4w9WgXcQ"
+        assert documents[0].meta_data == {"video_url": video_url, "video_id": "dQw4w9WgXcQ"}
+        assert documents[0].content == "First segment Second segment Third segment"
