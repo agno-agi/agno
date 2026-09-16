@@ -268,8 +268,42 @@ class CodingTools(Toolkit):
                 pass
         self._temp_files.clear()
 
-    # Shell operators that enable command chaining or substitution
-    _DANGEROUS_PATTERNS: List[str] = ["&&", "||", ";", "|", "$(", "`", ">", ">>", "<"]
+    # Substitutions the shell expands even inside double quotes, so they are matched
+    # against the raw command text.
+    _SUBSTITUTION_PATTERNS: List[str] = ["$(", "`"]
+
+    def _find_shell_operator(self, command: str) -> Optional[str]:
+        """Find a shell operator that would chain, redirect or substitute.
+
+        Only the first token is validated against the allowlist, so anything the shell
+        would run as a further command has to be rejected here. Quoting is honoured:
+        an operator inside a quoted argument is ordinary text. A newline separates
+        commands but parses as whitespace, so it counts only when no token carries it.
+        """
+        for pattern in self._SUBSTITUTION_PATTERNS:
+            if pattern in command:
+                return pattern
+
+        # punctuation_chars splits operators into tokens of their own, leaving the same
+        # characters inside a quoted argument as part of that argument.
+        lexer = shlex.shlex(command, posix=True, punctuation_chars=True)
+        lexer.whitespace_split = True
+        try:
+            tokens = list(lexer)
+        except ValueError:
+            return None  # unbalanced quotes; shlex.split reports it below
+
+        # A token built only from punctuation is an operator, whatever its length, so
+        # combined forms (<<, &>, >&, >|) are covered without listing each one.
+        for token in tokens:
+            if token and all(char in lexer.punctuation_chars for char in token):
+                return token
+
+        for newline, label in (("\n", "\\n"), ("\r", "\\r")):
+            if newline in command and not any(newline in token for token in tokens):
+                return label
+
+        return None
 
     # Interpreters that can execute arbitrary inline code, bypassing the allowlist
     # and path checks. Matched by basename prefix (python, python3, python3.12, ...).
@@ -324,9 +358,9 @@ class CodingTools(Toolkit):
             return None
 
         # Block shell operators that enable chaining/substitution
-        for pattern in self._DANGEROUS_PATTERNS:
-            if pattern in command:
-                return f"Error: Shell operator '{pattern}' is not allowed in restricted mode."
+        operator = self._find_shell_operator(command)
+        if operator is not None:
+            return f"Error: Shell operator '{operator}' is not allowed in restricted mode."
 
         try:
             tokens = shlex.split(command)

@@ -4,7 +4,7 @@
 
 **Status:** PASS
 
-**Description:** Agent with 4 core tools (read_file, edit_file, write_file, run_shell) asked to list files and read README.md. Agent used run_shell to list directory and read_file to display the README with line numbers.
+**Description:** Agent with the 3 core tools (read_file, edit_file, write_file) plus opt-in run_shell, asked to list files and read README.md. Agent used run_shell to list directory and read_file to display the README with line numbers.
 
 **Result:** Agent successfully used both tools, displayed directory listing and full README contents. Response completed in ~15s.
 

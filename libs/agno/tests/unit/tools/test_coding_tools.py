@@ -705,6 +705,49 @@ def test_run_shell_blocks_inline_interpreter_code():
         assert "ok" in result
 
 
+def test_run_shell_blocks_command_separators():
+    """A command chained after any separator is blocked in restricted mode.
+
+    Only the first token is checked against the allowlist, so a second command would
+    otherwise reach the shell unvalidated. A newline and a bare '&' separate commands
+    just as ';' does, and shlex treats a newline as whitespace so it disappears from
+    the tokens entirely.
+    """
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tools = CodingTools(base_dir=Path(tmp_dir))
+
+        # id is not in the allowlist and must not run after any of these
+        for command in ("echo ok\nid", "echo ok & id", "echo ok;id", "echo ok && id"):
+            result = tools.run_shell(command)
+            assert "Error" in result, command
+            assert "uid=" not in result, command
+
+        # substitution expands even inside double quotes, so it stays blocked
+        for command in ("echo $(id)", "echo `id`"):
+            result = tools.run_shell(command)
+            assert "Error" in result, command
+            assert "uid=" not in result, command
+
+
+def test_run_shell_allows_operators_inside_quotes():
+    """An operator inside a quoted argument is ordinary text, not a separator."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base_dir = Path(tmp_dir)
+        tools = CodingTools(base_dir=base_dir)
+        (base_dir / "f.txt").write_text("a|b\nTom & Jerry\n")
+
+        result = tools.run_shell('grep "a|b" f.txt')
+        assert "Exit code: 0" in result
+        assert "a|b" in result
+
+        result = tools.run_shell('grep "Tom & Jerry" f.txt')
+        assert "Exit code: 0" in result
+        assert "Tom & Jerry" in result
+
+        # a newline carried inside an argument is not a separator either
+        assert tools._check_command('echo "first\nsecond"') is None
+
+
 def test_run_shell_inline_code_allowed_when_unrestricted():
     """restrict_to_base_dir=False disables the inline-code block along with everything else."""
     with tempfile.TemporaryDirectory() as tmp_dir:
