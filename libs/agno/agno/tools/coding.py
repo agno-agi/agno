@@ -268,12 +268,16 @@ class CodingTools(Toolkit):
                 pass
         self._temp_files.clear()
 
-    # Shell operators that enable command chaining or substitution. A bare "&"
-    # (background) and newline / carriage return are separators too: shlex.split
-    # flattens them into ordinary tokens, so without them here a second,
-    # non-allowlisted command after "&" / "\n" / "\r" would pass validation yet
-    # still run under shell=True.
-    _DANGEROUS_PATTERNS: List[str] = ["&&", "||", ";", "|", "&", "\n", "\r", "$(", "`", ">", ">>", "<"]
+    # Separator / redirect operators that chain or redirect commands. These only
+    # take effect when unquoted: the shell treats them literally inside quotes, so
+    # `git commit -m "A & B"` is safe. Detected quote-aware (see _find_shell_operator).
+    _SEPARATOR_OPERATORS: tuple = ("&&", "||", ">>", ";", "|", "&", "<", ">", "\n", "\r")
+
+    # Command-substitution operators. Unlike separators, these still expand inside
+    # double quotes (`"$(cmd)"`, `` "`cmd`" ``), and shlex cannot distinguish double
+    # from single quotes, so they are only safe inside single quotes. Detected in
+    # every context except single-quoted spans.
+    _SUBSTITUTION_OPERATORS: tuple = ("$(", "`")
 
     # Interpreters that can execute arbitrary inline code, bypassing the allowlist
     # and path checks. Matched by basename prefix (python, python3, python3.12, ...).
@@ -285,6 +289,60 @@ class CodingTools(Toolkit):
     # CPython short options that consume the rest of the token as their argument, so
     # a following 'c'/'m' is a value, not the code-exec flag (e.g. -W c, -X c).
     _ARG_TAKING_SHORT_OPTS: set = {"W", "X", "Q"}
+
+    def _find_shell_operator(self, command: str) -> Optional[str]:
+        """Return a shell operator that would take effect, or None if the string is inert.
+
+        Walks the raw command tracking quote state, because it is executed via a shell
+        (shell=True) and quoting decides what is an operator versus literal text:
+
+        - Single quotes: everything inside is literal.
+        - Double quotes: separators/redirects are literal, but $(...) and backticks
+          still expand.
+        - Unquoted: everything is active; a backslash escapes the next character.
+
+        Erring toward blocking: unrecognized escapes and edge cases fall through to a
+        match rather than being treated as safe.
+        """
+        i, n = 0, len(command)
+        quote: Optional[str] = None  # None, "'" or '"'
+        while i < n:
+            ch = command[i]
+            two = command[i : i + 2]
+            if quote == "'":
+                if ch == "'":
+                    quote = None
+                i += 1
+                continue
+            if quote == '"':
+                # Substitution still expands inside double quotes.
+                if two == "$(":
+                    return "$("
+                if ch == "`":
+                    return "`"
+                if ch == "\\" and i + 1 < n:
+                    i += 2
+                    continue
+                if ch == '"':
+                    quote = None
+                i += 1
+                continue
+            # Unquoted context.
+            if ch == "\\" and i + 1 < n:
+                i += 2  # Escaped character is literal.
+                continue
+            if ch == "'" or ch == '"':
+                quote = ch
+                i += 1
+                continue
+            for op in self._SUBSTITUTION_OPERATORS:
+                if command.startswith(op, i):
+                    return op
+            for op in self._SEPARATOR_OPERATORS:
+                if command.startswith(op, i):
+                    return op
+            i += 1
+        return None
 
     def _has_interpreter_code_exec(self, args: List[str]) -> bool:
         """Detect inline code execution in a Python interpreter's arguments.
@@ -327,10 +385,13 @@ class CodingTools(Toolkit):
         if not self.restrict_to_base_dir:
             return None
 
-        # Block shell operators that enable chaining/substitution
-        for pattern in self._DANGEROUS_PATTERNS:
-            if pattern in command:
-                return f"Error: Shell operator '{pattern}' is not allowed in restricted mode."
+        # Block shell operators that enable chaining/substitution, but only where the
+        # shell would actually act on them (unquoted separators; substitution outside
+        # single quotes), so legitimate quoted arguments like `-m "A & B"` are allowed.
+        operator = self._find_shell_operator(command)
+        if operator is not None:
+            display = operator.replace("\n", "\\n").replace("\r", "\\r")
+            return f"Error: Shell operator '{display}' is not allowed in restricted mode."
 
         try:
             tokens = shlex.split(command)

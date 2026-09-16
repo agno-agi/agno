@@ -609,6 +609,60 @@ def test_run_shell_blocks_metacharacters():
         result = tools.run_shell("echo hello\rmkdir escaped")
         assert "Error" in result
 
+        # No-space unquoted chaining still triggers under shell=True
+        result = tools.run_shell("echo hello&echo pwned")
+        assert "Error" in result
+
+
+def test_run_shell_allows_quoted_operators():
+    """Operators inside quotes are literal to the shell and must not be rejected.
+
+    These are valid commands (e.g. a commit message containing '&') that the raw
+    substring check wrongly blocked.
+    """
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base_dir = Path(tmp_dir)
+        tools = CodingTools(base_dir=base_dir)
+
+        for cmd in (
+            "echo 'A & B'",  # single-quoted separator
+            'echo "A & B"',  # double-quoted separator
+            "echo 'a;b'",
+            "echo 'a|b'",
+            "echo 'a>b'",
+            "echo 'a<b'",
+        ):
+            result = tools.run_shell(cmd)
+            assert "Exit code: 0" in result
+            assert "not allowed in restricted mode" not in result
+
+        # A backslash-escaped operator is also literal
+        result = tools.run_shell("echo a\\&b")
+        assert "Exit code: 0" in result
+
+
+def test_run_shell_blocks_substitution_inside_double_quotes():
+    """Command substitution expands inside double quotes, so it must stay blocked there.
+
+    shlex cannot tell double- from single-quoting; single quotes make substitution
+    literal (allowed), double quotes do not (blocked).
+    """
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base_dir = Path(tmp_dir)
+        tools = CodingTools(base_dir=base_dir)
+
+        # Double-quoted substitution WOULD execute under the shell -> blocked
+        result = tools.run_shell('echo "$(whoami)"')
+        assert "Error" in result
+        assert "$(" in result
+        result = tools.run_shell('echo "`whoami`"')
+        assert "Error" in result
+
+        # Single-quoted substitution is literal -> allowed
+        result = tools.run_shell("echo '$(whoami)'")
+        assert "Exit code: 0" in result
+        assert "not allowed in restricted mode" not in result
+
 
 def test_run_shell_blocks_disallowed_commands():
     """Test that commands not in the allowlist are blocked."""
