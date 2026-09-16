@@ -442,27 +442,6 @@ text.
   without the reference, or with it set to `null`, removes the relationship;
   a `PATCH` without a `config` body leaves it unchanged.
 
-### Lifecycle
-
-```mermaid
-flowchart TD
-    save["Prompt.save()"] --> version["immutable published version N<br/>current-version pointer moves to N"]
-    version --> ref["Agent or Team references the Prompt<br/>from instructions or system_message"]
-    ref --> selector{"version selector"}
-    selector -->|omitted| pin["pin the current version<br/>when the Agent or Team is saved"]
-    selector -->|integer| exact["pin that exact version"]
-    selector -->|latest| follow["resolve the current version<br/>when the component is loaded"]
-    pin --> load["component load<br/>strict or lenient"]
-    exact --> load
-    follow --> load
-    load -->|requested version published| text["resolved Prompt text<br/>in the effective field"]
-    load -->|missing and strict| fail["load fails"]
-    load -->|missing and lenient| fallback["current published version,<br/>else inline fallback,<br/>else load fails"]
-    fallback --> text
-    text --> run["system message sent to the model"]
-    run --> meta["run metadata agno_prompt_versions:<br/>prompt_id, field, selection,<br/>requested_version, resolved_version,<br/>source, fallback, fallback_reason"]
-```
-
 ### Out of scope for v1
 
 These are separate follow-ups, not part of this release:
