@@ -502,6 +502,49 @@ class TestAgentPersistence:
         assert listed.save(db=db) == 2
         assert db.get_links("plain", version=2) == []
 
+    def test_assigning_none_to_a_loaded_agent_clears_the_prompt(self, db):
+        _publish(db, content="one")
+        Agent(id="a", instructions=Prompt(id="support")).save(db=db)
+        loaded = Agent.load("a", db=db)
+        assert loaded.instructions == "one"
+        loaded.instructions = None
+        assert loaded.save(db=db) == 2
+        assert "instructions" not in db.get_config("a", version=2)["config"]
+        assert db.get_links("a", version=2) == []
+        reloaded = Agent.load("a", db=db, strict=True)
+        assert reloaded.instructions is None
+        assert not reloaded._prompt_handles
+
+    def test_assigning_none_to_a_listed_agent_keeps_the_prompt(self, db):
+        """A listing view already reads None for an unresolved field, so None is not a clear there."""
+        _publish(db, content="one")
+        Agent(id="a", instructions=Prompt(id="support", version="latest", fallback=["Answer safely."])).save(db=db)
+        [listed] = get_agents(db=db)
+        assert listed.instructions is None
+        assert not _handle(listed, "instructions").resolved
+        listed.instructions = None
+        assert listed.save(db=db) == 2
+        assert db.get_config("a", version=2)["config"]["instructions"] == {"prompt_id": "support", "version": "latest"}
+        [link] = db.get_links("a", version=2)
+        assert (link["link_kind"], link["child_version"], link["meta"]) == (
+            "prompt",
+            None,
+            {"fallback": ["Answer safely."]},
+        )
+        assert Agent.load("a", db=db, strict=True).instructions == "one"
+
+    def test_deep_copy_with_none_clears_a_listed_agents_prompt(self, db):
+        _publish(db, content="one")
+        Agent(id="a", instructions=Prompt(id="support")).save(db=db)
+        [listed] = get_agents(db=db)
+        cleared = listed.deep_copy(update={"instructions": None})
+        assert not cleared._prompt_handles
+        assert "instructions" not in cleared.to_dict()
+        assert cleared.save(db=db) == 2
+        assert "instructions" not in db.get_config("a", version=2)["config"]
+        assert db.get_links("a", version=2) == []
+        assert Agent.load("a", db=db, strict=True).instructions is None
+
     def test_in_place_edits_after_load_drop_the_reference(self, db):
         _publish(db, content=list(BLOCKS))
         Agent(id="a", instructions=Prompt(id="support")).save(db=db)
@@ -949,6 +992,51 @@ class TestTeamPersistence:
             Team(id="t", members=[_plain_member()], instructions=Prompt(id="support")).save(db=db)
         assert db.get_component("t") is None
         assert db.get_component("member") is None
+
+    def test_assigning_none_to_a_loaded_team_clears_the_prompt(self, db):
+        _publish(db, content="one")
+        Team(id="t", members=[_plain_member()], instructions=Prompt(id="support")).save(db=db)
+        loaded = Team.load("t", db=db)
+        assert loaded.instructions == "one"
+        loaded.instructions = None
+        assert loaded.save(db=db) == 2
+        assert "instructions" not in db.get_config("t", version=2)["config"]
+        assert [(link["link_kind"], link["link_key"]) for link in db.get_links("t", version=2)] == [
+            ("member", "member_0")
+        ]
+        reloaded = Team.load("t", db=db, strict=True)
+        assert reloaded.instructions is None
+        assert [m.id for m in reloaded.members] == ["member"]
+
+    def test_assigning_none_to_a_listed_team_keeps_the_prompt(self, db):
+        """A listing view already reads None for an unresolved field, so None is not a clear there."""
+        _publish(db, content="one")
+        Team(
+            id="t", members=[_plain_member()], instructions=Prompt(id="support", version=1, fallback="Answer safely.")
+        ).save(db=db)
+        [listed] = get_teams(db=db)
+        assert listed.instructions is None
+        assert not _handle(listed, "instructions").resolved
+        listed.instructions = None
+        assert listed.save(db=db) == 2
+        assert db.get_config("t", version=2)["config"]["instructions"] == {"prompt_id": "support", "version": 1}
+        links = {link["link_kind"]: link for link in db.get_links("t", version=2)}
+        assert set(links) == {"member", "prompt"}
+        assert (links["prompt"]["child_version"], links["prompt"]["meta"]) == (1, {"fallback": "Answer safely."})
+        assert Team.load("t", db=db, strict=True).instructions == "one"
+
+    def test_deep_copy_with_none_clears_a_listed_teams_prompt(self, db):
+        _publish(db, content="one")
+        Team(id="t", members=[_plain_member()], instructions=Prompt(id="support")).save(db=db)
+        [listed] = get_teams(db=db)
+        cleared = listed.deep_copy(update={"instructions": None})
+        assert not cleared._prompt_handles
+        assert cleared.save(db=db) == 2
+        assert "instructions" not in db.get_config("t", version=2)["config"]
+        assert [link["link_kind"] for link in db.get_links("t", version=2)] == ["member"]
+        reloaded = Team.load("t", db=db, strict=True)
+        assert reloaded.instructions is None
+        assert [m.id for m in reloaded.members] == ["member"]
 
 
 class TestDirectMemberGuard:
