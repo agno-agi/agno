@@ -14,19 +14,36 @@ from agno.utils.path_safety import safe_join_relative_path
 
 @functools.lru_cache(maxsize=None)
 def _warn_coding_tools() -> None:
-    logger.warning("CodingTools can run arbitrary shell commands, please provide human supervision.")
+    logger.warning(
+        "CodingTools run_shell executes arbitrary shell commands. Provide human supervision "
+        "and never expose it to untrusted input; restrict_to_base_dir is not a security sandbox."
+    )
 
 
 class CodingTools(Toolkit):
     """A minimal, powerful toolkit for coding agents.
 
-    Provides four core tools (read, edit, write, shell) and three optional
-    exploration tools (grep, find, ls). With these primitives, an agent can
+    Provides three core tools (read, edit, write) plus opt-in shell (run_shell)
+    and exploration tools (grep, find, ls). With these primitives, an agent can
     perform any file operation, run tests, use git, install packages, search
     codebases, and more.
 
     Inspired by the Pi coding agent's philosophy: a small number of composable
     tools is more powerful than many specialized ones.
+
+    Security:
+        run_shell executes commands through the system shell and is disabled by
+        default. Enable it only for agents you supervise, and never expose it to
+        untrusted or third-party input.
+
+        ``restrict_to_base_dir`` reduces accidental damage: it confines file
+        tools to base_dir and applies a command allowlist and metacharacter
+        block to run_shell. It is NOT a security sandbox. Any allowlisted
+        interpreter (python, pip, git, ...) can read arbitrary files, dump the
+        process environment, or reach the network, so a determined caller can
+        escape the restriction. To run shell against untrusted input, execute it
+        in a real sandbox (separate process or container with a scrubbed
+        environment, no network, and a read-only mount) instead.
     """
 
     DEFAULT_ALLOWED_COMMANDS: List[str] = [
@@ -129,7 +146,7 @@ class CodingTools(Toolkit):
         enable_read_file: bool = True,
         enable_edit_file: bool = True,
         enable_write_file: bool = True,
-        enable_run_shell: bool = True,
+        enable_run_shell: bool = False,
         enable_grep: bool = False,
         enable_find: bool = False,
         enable_ls: bool = False,
@@ -143,14 +160,18 @@ class CodingTools(Toolkit):
 
         Args:
             base_dir: Root directory for file operations. Defaults to cwd.
-            restrict_to_base_dir: If True, file and shell operations cannot escape base_dir.
+            restrict_to_base_dir: If True, confine file tools to base_dir and apply a
+                command allowlist plus metacharacter block to run_shell. This limits
+                accidental damage but is not a security sandbox: an allowlisted
+                interpreter can still escape it. Do not rely on it for untrusted input.
             max_lines: Maximum lines to return before truncating (default 2000).
             max_bytes: Maximum bytes to return before truncating (default 50KB).
             shell_timeout: Timeout in seconds for shell commands (default 120).
             enable_read_file: Enable the read_file tool.
             enable_edit_file: Enable the edit_file tool.
             enable_write_file: Enable the write_file tool.
-            enable_run_shell: Enable the run_shell tool.
+            enable_run_shell: Enable the run_shell tool. Disabled by default because it
+                executes arbitrary shell commands; enable it only under human supervision.
             enable_grep: Enable the grep tool (disabled by default).
             enable_find: Enable the find tool (disabled by default).
             enable_ls: Enable the ls tool (disabled by default).
@@ -250,15 +271,24 @@ class CodingTools(Toolkit):
     # Shell operators that enable command chaining or substitution
     _DANGEROUS_PATTERNS: List[str] = ["&&", "||", ";", "|", "$(", "`", ">", ">>", "<"]
 
+    # Interpreters that can execute arbitrary inline code, bypassing the allowlist
+    # and path checks. Matched by basename prefix (python, python3, python3.12, ...).
+    _CODE_EXEC_INTERPRETER_PREFIXES: tuple = ("python",)
+
+    # Flags that make an interpreter run inline code or an arbitrary module/stdin.
+    _CODE_EXEC_FLAGS: set = {"-c", "-m", "-e", "-"}
+
     def _check_command(self, command: str) -> Optional[str]:
         """Check if a shell command is safe to execute.
 
         When restrict_to_base_dir is True, this method:
         1. Blocks shell metacharacters that enable chaining/substitution.
         2. Validates the command name against the allowed_commands list (if set).
-        3. Checks that path-like tokens don't escape the base directory.
+        3. Blocks inline code-execution flags on interpreters (e.g. python3 -c).
+        4. Checks that path-like tokens don't escape the base directory.
 
-        Returns an error message if a violation is found, None if safe.
+        These are harm-reduction heuristics, not a security sandbox. Returns an
+        error message if a violation is found, None if safe.
         """
         if not self.restrict_to_base_dir:
             return None
@@ -274,11 +304,23 @@ class CodingTools(Toolkit):
             return "Error: Could not parse shell command."
 
         # Validate command against allowlist
+        cmd_base = Path(tokens[0]).name if tokens else ""  # Handle /usr/bin/python -> python
         if self.allowed_commands is not None and tokens:
-            cmd = tokens[0]
-            cmd_base = Path(cmd).name  # Handle /usr/bin/python -> python
             if cmd_base not in self.allowed_commands:
                 return f"Error: Command '{cmd_base}' is not in the allowed commands list."
+
+        # Block inline code execution via an interpreter, which would otherwise run
+        # arbitrary code past the allowlist and path checks (e.g. python3 -c "...").
+        # This is harm reduction, not a boundary: an interpreter can still escape by
+        # running a script file. Do not expose run_shell to untrusted input.
+        if cmd_base.startswith(self._CODE_EXEC_INTERPRETER_PREFIXES):
+            for token in tokens[1:]:
+                if token in self._CODE_EXEC_FLAGS:
+                    return (
+                        f"Error: Inline code execution flag '{token}' is not allowed in "
+                        "restricted mode. Run a script file instead, or set "
+                        "restrict_to_base_dir=False for an unsupervised interpreter."
+                    )
 
         for i, token in enumerate(tokens):
             # Skip the command itself (already validated by allowlist above)
