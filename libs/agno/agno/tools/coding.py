@@ -37,8 +37,9 @@ class CodingTools(Toolkit):
         untrusted or third-party input.
 
         ``restrict_to_base_dir`` reduces accidental damage: it confines file
-        tools to base_dir and applies a command allowlist and metacharacter
-        block to run_shell. It is NOT a security sandbox. Any allowlisted
+        tools to base_dir and, for run_shell, runs commands without a shell
+        (so chaining, redirection, substitution, and globbing are inert) behind
+        a command allowlist. It is NOT a security sandbox. Any allowlisted
         interpreter (python, pip, git, ...) can read arbitrary files, dump the
         process environment, or reach the network, so a determined caller can
         escape the restriction. To run shell against untrusted input, execute it
@@ -160,10 +161,12 @@ class CodingTools(Toolkit):
 
         Args:
             base_dir: Root directory for file operations. Defaults to cwd.
-            restrict_to_base_dir: If True, confine file tools to base_dir and apply a
-                command allowlist plus metacharacter block to run_shell. This limits
-                accidental damage but is not a security sandbox: an allowlisted
+            restrict_to_base_dir: If True, confine file tools to base_dir and run
+                run_shell commands without a shell behind a command allowlist (so
+                chaining, redirection, substitution, and globbing are inert). This
+                limits accidental damage but is not a security sandbox: an allowlisted
                 interpreter can still escape it. Do not rely on it for untrusted input.
+                If False, run_shell runs the raw string through the system shell.
             max_lines: Maximum lines to return before truncating (default 2000).
             max_bytes: Maximum bytes to return before truncating (default 50KB).
             shell_timeout: Timeout in seconds for shell commands (default 120).
@@ -268,16 +271,11 @@ class CodingTools(Toolkit):
                 pass
         self._temp_files.clear()
 
-    # Separator / redirect operators that chain or redirect commands. These only
-    # take effect when unquoted: the shell treats them literally inside quotes, so
-    # `git commit -m "A & B"` is safe. Detected quote-aware (see _find_shell_operator).
-    _SEPARATOR_OPERATORS: tuple = ("&&", "||", ">>", ";", "|", "&", "<", ">", "\n", "\r")
-
-    # Command-substitution operators. Unlike separators, these still expand inside
-    # double quotes (`"$(cmd)"`, `` "`cmd`" ``), and shlex cannot distinguish double
-    # from single quotes, so they are only safe inside single quotes. Detected in
-    # every context except single-quoted spans.
-    _SUBSTITUTION_OPERATORS: tuple = ("$(", "`")
+    # Control operators that chain, background, or redirect commands. In restricted
+    # mode commands run without a shell (shell=False), so these never take effect;
+    # shlex leaves an unquoted operator as its own token, which we reject with a
+    # clear "unsupported" message while quoted uses (e.g. -m "A & B") pass untouched.
+    _UNSUPPORTED_OPERATOR_TOKENS: set = {"&&", "||", ";", "|", "&", "<", ">", ">>"}
 
     # Interpreters that can execute arbitrary inline code, bypassing the allowlist
     # and path checks. Matched by basename prefix (python, python3, python3.12, ...).
@@ -289,60 +287,6 @@ class CodingTools(Toolkit):
     # CPython short options that consume the rest of the token as their argument, so
     # a following 'c'/'m' is a value, not the code-exec flag (e.g. -W c, -X c).
     _ARG_TAKING_SHORT_OPTS: set = {"W", "X", "Q"}
-
-    def _find_shell_operator(self, command: str) -> Optional[str]:
-        """Return a shell operator that would take effect, or None if the string is inert.
-
-        Walks the raw command tracking quote state, because it is executed via a shell
-        (shell=True) and quoting decides what is an operator versus literal text:
-
-        - Single quotes: everything inside is literal.
-        - Double quotes: separators/redirects are literal, but $(...) and backticks
-          still expand.
-        - Unquoted: everything is active; a backslash escapes the next character.
-
-        Erring toward blocking: unrecognized escapes and edge cases fall through to a
-        match rather than being treated as safe.
-        """
-        i, n = 0, len(command)
-        quote: Optional[str] = None  # None, "'" or '"'
-        while i < n:
-            ch = command[i]
-            two = command[i : i + 2]
-            if quote == "'":
-                if ch == "'":
-                    quote = None
-                i += 1
-                continue
-            if quote == '"':
-                # Substitution still expands inside double quotes.
-                if two == "$(":
-                    return "$("
-                if ch == "`":
-                    return "`"
-                if ch == "\\" and i + 1 < n:
-                    i += 2
-                    continue
-                if ch == '"':
-                    quote = None
-                i += 1
-                continue
-            # Unquoted context.
-            if ch == "\\" and i + 1 < n:
-                i += 2  # Escaped character is literal.
-                continue
-            if ch == "'" or ch == '"':
-                quote = ch
-                i += 1
-                continue
-            for op in self._SUBSTITUTION_OPERATORS:
-                if command.startswith(op, i):
-                    return op
-            for op in self._SEPARATOR_OPERATORS:
-                if command.startswith(op, i):
-                    return op
-            i += 1
-        return None
 
     def _has_interpreter_code_exec(self, args: List[str]) -> bool:
         """Detect inline code execution in a Python interpreter's arguments.
@@ -371,32 +315,36 @@ class CodingTools(Toolkit):
         return False
 
     def _check_command(self, command: str) -> Optional[str]:
-        """Check if a shell command is safe to execute.
+        """Validate a command for restricted mode, returning an error message or None.
 
-        When restrict_to_base_dir is True, this method:
-        1. Blocks shell metacharacters that enable chaining/substitution.
+        In restricted mode the command is executed without a shell (see run_shell),
+        so this validates the shlex-tokenized command that will actually run:
+        1. Rejects control operators (|, &&, ;, redirects) as unsupported, since a
+           shell-less run would treat them as literal arguments, not chaining.
         2. Validates the command name against the allowed_commands list (if set).
         3. Blocks inline code-execution flags on interpreters (e.g. python3 -c).
         4. Checks that path-like tokens don't escape the base directory.
 
-        These are harm-reduction heuristics, not a security sandbox. Returns an
-        error message if a violation is found, None if safe.
+        Allowlist and operator rejection are harm reduction, not a security sandbox;
+        running without a shell is what actually neutralizes chaining/substitution.
         """
         if not self.restrict_to_base_dir:
             return None
-
-        # Block shell operators that enable chaining/substitution, but only where the
-        # shell would actually act on them (unquoted separators; substitution outside
-        # single quotes), so legitimate quoted arguments like `-m "A & B"` are allowed.
-        operator = self._find_shell_operator(command)
-        if operator is not None:
-            display = operator.replace("\n", "\\n").replace("\r", "\\r")
-            return f"Error: Shell operator '{display}' is not allowed in restricted mode."
 
         try:
             tokens = shlex.split(command)
         except ValueError:
             return "Error: Could not parse shell command."
+
+        # Reject control operators. shlex leaves an unquoted operator as its own token,
+        # while a quoted one stays inside an argument, so `git commit -m "A & B"` passes.
+        for token in tokens:
+            if token in self._UNSUPPORTED_OPERATOR_TOKENS:
+                return (
+                    f"Error: Shell operator '{token}' is not supported in restricted mode. "
+                    "Run separate commands, or set restrict_to_base_dir=False for a full "
+                    "shell (trusted, supervised use only)."
+                )
 
         # Validate command against allowlist
         cmd_base = Path(tokens[0]).name if tokens else ""  # Handle /usr/bin/python -> python
@@ -634,14 +582,17 @@ class CodingTools(Toolkit):
             return f"Error writing file: {e}"
 
     def run_shell(self, command: str, timeout: Optional[int] = None) -> str:
-        """Execute a shell command and return its output.
+        """Execute a command and return its output.
 
-        Runs the command as a string via the system shell. Output (stdout + stderr)
-        is truncated if it exceeds the configured limits. When output is truncated,
-        the full output is saved to a temporary file and its path is included in
-        the response.
+        In restricted mode the command is tokenized and run WITHOUT a shell, so
+        chaining, redirection, command substitution, and globbing have no effect;
+        this is what makes the allowlist meaningful. When restrict_to_base_dir is
+        False the raw string is run through the system shell instead (full power,
+        for trusted and supervised use only). Output (stdout + stderr) is truncated
+        if it exceeds the configured limits, with the full output saved to a temp
+        file whose path is included in the response.
 
-        :param command: The shell command to execute as a single string.
+        :param command: The command to execute as a single string.
         :param timeout: Timeout in seconds. Defaults to the toolkit's shell_timeout.
         :return: Command output (stdout and stderr combined), or an error message.
         """
@@ -649,16 +600,30 @@ class CodingTools(Toolkit):
             _warn_coding_tools()
             log_info(f"Running shell command: {command}")
 
-            # Check for path escapes in command
-            path_error = self._check_command(command)
-            if path_error:
-                return path_error
+            # Validate against the restricted-mode policy (allowlist, operators, paths).
+            command_error = self._check_command(command)
+            if command_error:
+                return command_error
 
             effective_timeout = timeout if timeout is not None else self.shell_timeout
 
+            # Restricted mode runs without a shell so operators cannot chain or
+            # substitute; unrestricted mode keeps full shell semantics by request.
+            if self.restrict_to_base_dir:
+                try:
+                    args: Union[str, List[str]] = shlex.split(command)
+                except ValueError:
+                    return "Error: Could not parse shell command."
+                if not args:
+                    return "Error: Empty command."
+                use_shell = False
+            else:
+                args = command
+                use_shell = True
+
             result = subprocess.run(
-                command,
-                shell=True,
+                args,
+                shell=use_shell,
                 capture_output=True,
                 text=True,
                 timeout=effective_timeout,
@@ -693,6 +658,9 @@ class CodingTools(Toolkit):
         except subprocess.TimeoutExpired:
             effective_timeout = timeout if timeout is not None else self.shell_timeout
             return f"Error: Command timed out after {effective_timeout} seconds"
+        except FileNotFoundError:
+            # Raised in restricted mode (shell=False) when the executable is missing.
+            return f"Error: Command not found: {command}"
         except Exception as e:
             log_error(f"Error running shell command: {str(e)}")
             return f"Error running shell command: {e}"
