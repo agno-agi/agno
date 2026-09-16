@@ -336,8 +336,12 @@ class CodingTools(Toolkit):
         except ValueError:
             return "Error: Could not parse shell command."
 
-        # Reject control operators. shlex leaves an unquoted operator as its own token,
-        # while a quoted one stays inside an argument, so `git commit -m "A & B"` passes.
+        # Reject control operators to give a clear error instead of a confusing literal
+        # run (shell=False already makes them inert). shlex leaves an unquoted operator
+        # as its own token while keeping it inside a larger quoted argument, so
+        # `git commit -m "A & B"` passes. Known limitation: an argument that is exactly
+        # an operator (e.g. `echo '&'`) also becomes a bare token and is rejected; that
+        # is harmless over-rejection, and detecting it would require full quote tracking.
         for token in tokens:
             if token in self._UNSUPPORTED_OPERATOR_TOKENS:
                 return (
