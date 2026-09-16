@@ -54,6 +54,21 @@ _ASYNC_DB_SYNC_CALL_MESSAGE = (
 
 _DENY = "deny"
 _ALLOW = "allow"
+
+
+def _resource_key(resource_type: str, resource_id: Optional[str]) -> str:
+    """The policy resource a request is evaluated against.
+
+    A request naming one resource is ``type/id``. A request on the collection itself (create,
+    or a list) has no id and is evaluated as ``type/*``: the same key a two-part scope such as
+    ``agents:write`` is stored under, so a role holding that scope passes ``POST /agents`` the
+    way it passes :meth:`check_scope`. A grant on one id (``agents/research``) does not match
+    ``agents/*``, so it still cannot create or list the whole collection; the list route falls
+    back to filtering by accessible ids. The bare ``type`` key was never written by any
+    policy, so evaluating against it denied every collection request."""
+    return f"{resource_type}/{resource_id}" if resource_id else f"{resource_type}/*"
+
+
 # A policy row carried through the decision logic: (role, resource, action, effect).
 _PolicyRow = Tuple[str, str, str, str]
 
@@ -397,8 +412,7 @@ class NativePolicyEngine(PolicyEngine):
     ) -> bool:
         if not resource_type or not action:
             return True  # non-resource check: defer (the route gate handles it)
-        resource = f"{resource_type}/{resource_id}" if resource_id else resource_type
-        return self._enforce(resource, action, subject, roles)
+        return self._enforce(_resource_key(resource_type, resource_id), action, subject, roles)
 
     def check_scope(self, scope: str, *, subject: Optional[str] = None, roles: Optional[List[str]] = None) -> bool:
         try:
@@ -691,8 +705,7 @@ class NativePolicyEngine(PolicyEngine):
     ) -> bool:
         if not resource_type or not action:
             return True
-        resource = f"{resource_type}/{resource_id}" if resource_id else resource_type
-        return await self._aenforce(resource, action, subject, roles)
+        return await self._aenforce(_resource_key(resource_type, resource_id), action, subject, roles)
 
     async def acheck_scope(
         self, scope: str, *, subject: Optional[str] = None, roles: Optional[List[str]] = None

@@ -82,10 +82,15 @@ def supports_authz(db: Any) -> bool:
     """
     if db is None:
         return False
-    from agno.db.base import AsyncBaseDb
+    from agno.db.base import AsyncBaseDb, BaseDb
 
     if isinstance(db, AsyncBaseDb):
         return type(db).authz_name_is_role is not AsyncBaseDb.authz_name_is_role
+    if not isinstance(db, BaseDb):
+        # Not an agno database: there is no contract to implement, so this is "unsupported",
+        # not "reachable but down". The generic except below used to swallow the resulting
+        # AttributeError as "supported", so a stray object passed boot and failed per request.
+        return False
     try:
         db.authz_name_is_role("__agno_authz_probe__")
     except NotImplementedError:

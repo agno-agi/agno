@@ -406,6 +406,18 @@ class RoleStore:
         return defaults[0] if defaults else None
 
     # ------------------------------------------------------------- assignments
+    @staticmethod
+    def _refuse_role_as_subject(subject: str, roles: List[str]) -> None:
+        """Subjects and roles share the grouping table, so a role slug used as the subject of an
+        assignment is not a user grant but role inheritance: every holder of that role gains the
+        assigned role's permissions. Refuse it at the one write path every caller goes through
+        (the admin API, ``Authorization.assign``/``seed``, and the store itself)."""
+        if subject in roles:
+            raise ValueError(
+                f"{subject!r} is a role, not a user, so it cannot be assigned a role: that would make every "
+                f"holder of {subject!r} inherit the assigned role's permissions. Did you swap the arguments?"
+            )
+
     def assign(self, subject: str, role: str, actor: Optional[str] = None) -> None:
         """Give a subject THE role (runtime, persisted).
 
@@ -414,7 +426,12 @@ class RoleStore:
         (a membership has one role) so role management is a select, not a
         multi-grant. Compose permissions in the role's scopes, not by stacking
         roles on a user. No-op if the subject already holds exactly this role.
+
+        Refuses a ``subject`` that is itself a role slug. Subjects and roles share one
+        grouping table, so ``assign("viewer", "admin")`` (the arguments transposed) would
+        make the role ``viewer`` inherit ``admin`` and promote every viewer to admin.
         """
+        self._refuse_role_as_subject(subject, self.list_roles())
         before = self.roles_of(subject)
         if before == [role]:
             return  # already exactly this role; no change, no audit noise
@@ -775,6 +792,7 @@ class RoleStore:
     # --- async assignments ---
     async def aassign(self, subject: str, role: str, actor: Optional[str] = None) -> None:
         """Async twin of :meth:`assign`."""
+        self._refuse_role_as_subject(subject, await self.alist_roles())
         before = await self.aroles_of(subject)
         if before == [role]:
             return

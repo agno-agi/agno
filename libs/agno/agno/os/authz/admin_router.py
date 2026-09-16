@@ -548,7 +548,13 @@ def get_roles_router(
         # subject/role namespace, which the collision guard then refuses on every request,
         # silently denying that user all access with no trace in the role views.
         _role_or_404(body.role)
-        store.assign(subject, body.role, actor=actor)
+        try:
+            store.assign(subject, body.role, actor=actor)
+        except ValueError as e:
+            # The subject is itself a role slug (the transposed call the comment above describes,
+            # the other way round): the store refuses it because it would be role inheritance,
+            # not a user grant. Surface that as a client error, not a 500.
+            raise HTTPException(status_code=400, detail=str(e))
         return {"subject": subject, "role": _role_of(subject)}
 
     @router.delete("/subjects/{subject}/roles/{role}")
