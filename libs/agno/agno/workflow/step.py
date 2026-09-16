@@ -2527,7 +2527,9 @@ class Step:
                         if isinstance(member_response, RunOutput):
                             workflow_run_response.step_executor_runs.append(member_response)
 
-    def _get_deepest_content_from_step_output(self, step_output: "StepOutput") -> Optional[str]:
+    def _get_deepest_content_from_step_output(
+        self, step_output: "StepOutput"
+    ) -> Optional[Union[str, Dict[str, Any], List[Any], BaseModel]]:
         """
         Extract the deepest content from a step output, handling nested structures like Steps, Router, Loop, etc.
 
@@ -2543,16 +2545,16 @@ class Step:
                 aggregated_parts = []
                 for i, inner_step in enumerate(step_output.steps):
                     inner_content = self._get_deepest_content_from_step_output(inner_step)
-                    if inner_content:
+                    if inner_content is not None and str(inner_content).strip():
                         step_name = inner_step.step_name or f"Step {i + 1}"
                         aggregated_parts.append(f"=== {step_name} ===\n{inner_content}")
-                return "\n\n".join(aggregated_parts) if aggregated_parts else step_output.content  # type: ignore
+                return "\n\n".join(aggregated_parts) if aggregated_parts else step_output.content
 
             # For other nested step types, recursively get content from the last nested step
             return self._get_deepest_content_from_step_output(step_output.steps[-1])
 
         # For regular steps, return their content
-        return step_output.content  # type: ignore
+        return step_output.content
 
     def _prepare_message(
         self,
