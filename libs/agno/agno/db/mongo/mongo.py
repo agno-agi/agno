@@ -802,7 +802,7 @@ class MongoDb(BaseDb):
             page (Optional[int]): The page number to get.
             sort_by (Optional[str]): The field to sort the sessions by.
             sort_order (Optional[str]): The order to sort the sessions by.
-            deserialize (Optional[bool]): Whether to serialize the sessions. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the sessions. Defaults to True.
             create_table_if_not_found (Optional[bool]): Whether to create the collection if it doesn't exist.
 
         Returns:
@@ -1323,7 +1323,7 @@ class MongoDb(BaseDb):
 
         Args:
             memory_id (str): The ID of the memory to get.
-            deserialize (Optional[bool]): Whether to serialize the memory. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the memory. Defaults to True.
             user_id (Optional[str]): The ID of the user to verify ownership. If provided, only return the memory if it belongs to this user.
 
         Returns:
@@ -1380,7 +1380,7 @@ class MongoDb(BaseDb):
             page (Optional[int]): The page number to get.
             sort_by (Optional[str]): The field to sort the memories by.
             sort_order (Optional[str]): The order to sort the memories by.
-            deserialize (Optional[bool]): Whether to serialize the memories. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the memories. Defaults to True.
             create_table_if_not_found: Whether to create the collection if it doesn't exist.
 
         Returns:
@@ -1509,7 +1509,7 @@ class MongoDb(BaseDb):
 
         Args:
             memory (UserMemory): The memory to upsert.
-            deserialize (Optional[bool]): Whether to serialize the memory. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the memory. Defaults to True.
 
         Returns:
             Optional[Union[UserMemory, Dict[str, Any]]]:
@@ -2118,7 +2118,7 @@ class MongoDb(BaseDb):
 
         Args:
             eval_run_id (str): The ID of the eval run to get.
-            deserialize (Optional[bool]): Whether to serialize the eval run. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the eval run. Defaults to True.
             user_id (Optional[str]): If set, only return the run if owned by this user.
 
         Returns:
@@ -2180,7 +2180,7 @@ class MongoDb(BaseDb):
             user_id (Optional[str]): If set, only return runs owned by this user.
             eval_type (Optional[List[EvalType]]): The type of eval to filter by.
             filter_type (Optional[EvalFilterType]): The type of filter to apply.
-            deserialize (Optional[bool]): Whether to serialize the eval runs. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the eval runs. Defaults to True.
             create_table_if_not_found (Optional[bool]): Whether to create the collection if it doesn't exist.
 
         Returns:
@@ -2258,7 +2258,7 @@ class MongoDb(BaseDb):
         Args:
             eval_run_id (str): The ID of the eval run to update.
             name (str): The new name of the eval run.
-            deserialize (Optional[bool]): Whether to serialize the eval run. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the eval run. Defaults to True.
             user_id (Optional[str]): If set, only rename the run if owned by this user.
 
         Returns:
