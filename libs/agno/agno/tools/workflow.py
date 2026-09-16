@@ -172,8 +172,7 @@ class WorkflowTools(Toolkit):
         """Use this tool to execute the workflow with the specified inputs and parameters.
         After thinking through the requirements, use this tool to run the workflow with appropriate inputs.
         Args:
-            input_data: The input data for the workflow (use a `str` for a simple input)
-            additional_data: The additional data for the workflow. This is a dictionary of key-value pairs that will be passed to the workflow. E.g. {"topic": "food", "style": "Humour"}
+            input: The workflow input (a `RunWorkflowInput` holding input_data and additional_data).
         """
         if isinstance(input, dict):
             input = RunWorkflowInput.model_validate(input)
