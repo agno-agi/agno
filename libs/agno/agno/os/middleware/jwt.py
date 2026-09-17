@@ -1572,6 +1572,10 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 return await call_next(request)
             if hmac.compare_digest(token, self.security_key):
                 request.state.authenticated = True
+                # The key is the OS's unscoped root: no subject, no scopes. Gates that need an
+                # administrator (the /users directory API) read this rather than inferring root
+                # from the absence of claims.
+                request.state.security_key_verified = True
                 setattr(request.state, _AUTH_COMPLETE_ATTR, True)
                 return await call_next(request)
             return self._create_error_response(401, "Invalid authentication token", origin, cors_allowed_origins)

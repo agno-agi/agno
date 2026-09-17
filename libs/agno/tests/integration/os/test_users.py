@@ -812,3 +812,30 @@ def test_users_api_refuses_reserved_principals_and_role_slugs():
         assert client.patch(f"/users/{bad}", headers=_auth("alice"), json={"disabled": True}).status_code == 422, bad
         assert users.get(bad) is None
     assert client.post("/users", headers=_auth("alice"), json={"id": "bob", "email": "bob@co"}).status_code == 200
+
+
+def test_users_api_admits_the_security_key_as_root(tmp_path, monkeypatch):
+    """In security-key mode the key is the OS's unscoped root: it carries no subject and no scopes,
+    and every other route admits it. The admin gate must admit it too, or a directory on a
+    security-key deployment has no administrator at all. Anonymous and a wrong key stay out."""
+    from agno.db.sqlite import SqliteDb
+    from agno.os.settings import AgnoAPISettings
+
+    monkeypatch.delenv("JWT_VERIFICATION_KEY", raising=False)
+    monkeypatch.delenv("JWT_JWKS_FILE", raising=False)
+    db = SqliteDb(db_file=str(tmp_path / "key.db"))
+    agent_os = AgentOS(
+        id=OS_ID,
+        agents=[Agent(id="a", name="A", db=db)],
+        db=db,
+        settings=AgnoAPISettings(os_security_key="root-key"),
+        user_directory=True,
+    )
+    client = TestClient(agent_os.get_app())
+    root = {"Authorization": "Bearer root-key"}
+
+    assert client.get("/users").status_code == 401
+    assert client.get("/users", headers={"Authorization": "Bearer wrong"}).status_code == 401
+    assert client.get("/users", headers=root).status_code == 200
+    assert client.post("/users", headers=root, json={"id": "bob"}).status_code == 200
+    assert client.patch("/users/bob", headers=root, json={"disabled": True}).status_code == 200
