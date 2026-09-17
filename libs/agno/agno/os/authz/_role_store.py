@@ -345,10 +345,15 @@ class RoleStore:
                 staged[key] = (scope, "deny") if eff == "deny" else prev
             else:
                 staged[key] = (scope, eff)
+        # Validate the removes BEFORE the first write. Each add_scope commits on its own, so a bad
+        # remove entry that only failed inside remove_scope left every upsert persisted, the
+        # caller with a 422, and no audit event for the grants that did land.
+        removals = [_normalize_scope(entry)[0] for entry in remove or []]
+        for scope in removals:
+            scope_to_resource_action(scope)  # raises on an unrecognised scope, with nothing written yet
         for scope, effect in staged.values():
             self._engine.add_scope(role, scope, effect)
-        for entry in remove or []:
-            scope, _ = _normalize_scope(entry)
+        for scope in removals:
             self._engine.remove_scope(role, scope)
         self._meta_upsert(role)  # touch updated_at / ensure metadata row exists
         self._emit("role.set_scopes", role, before, self.get_role_scope_entries(role) if self._audit else None, actor)
@@ -751,10 +756,12 @@ class RoleStore:
                 staged[key] = (scope, "deny") if eff == "deny" else prev
             else:
                 staged[key] = (scope, eff)
+        removals = [_normalize_scope(entry)[0] for entry in remove or []]
+        for scope in removals:
+            scope_to_resource_action(scope)  # validate before the first write (see the sync twin)
         for scope, effect in staged.values():
             await self._engine.aadd_scope(role, scope, effect)
-        for entry in remove or []:
-            scope, _ = _normalize_scope(entry)
+        for scope in removals:
             await self._engine.aremove_scope(role, scope)
         await self._ameta_upsert(role)
         after = await self.aget_role_scope_entries(role) if self._audit else None

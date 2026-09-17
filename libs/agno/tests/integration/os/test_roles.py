@@ -521,3 +521,41 @@ def test_db_registered_teams_are_filtered_like_configured_ones(tmp_path):
 
     # the listing agrees with the per-resource gate
     assert client.get("/teams/db-secret-team", headers=headers).status_code == 403
+
+
+def test_patch_role_scopes_validates_the_whole_diff_before_writing(tmp_path):
+    """A PATCH with a bad remove entry used to persist every upsert first (each add commits on its
+    own), then raise from the remove: the caller saw a 422, the new grants were live, and no
+    audit event recorded them. The diff is now validated in full before the first write."""
+    import asyncio
+
+    from agno.db.sqlite import SqliteDb
+    from agno.os.authz.audit import AuditEvent, AuditSink
+
+    class Capture(AuditSink):
+        def __init__(self):
+            self.events: list = []
+
+        def record(self, event: AuditEvent) -> None:
+            self.events.append(event)
+
+        async def arecord(self, event: AuditEvent) -> None:
+            self.events.append(event)
+
+    sink = Capture()
+    store = RoleStore(db=SqliteDb(db_file=str(tmp_path / "patch.db")), audit=sink)
+    store.set_role_scopes("member", ["agents:*:read"])
+    sink.events.clear()
+
+    with pytest.raises(ValueError):
+        store.patch_role_scopes("member", upsert=["agents:*:run", "sessions:write"], remove=["not-a-scope"])
+    assert store.get_role_scopes("member") == ["agents:read"]  # nothing from the failed diff landed
+    assert sink.events == []  # and nothing was audited
+
+    with pytest.raises(ValueError):
+        asyncio.run(store.apatch_role_scopes("member", upsert=["agents:*:run"], remove=["x:y:z:w"]))
+    assert store.get_role_scopes("member") == ["agents:read"]
+    assert sink.events == []
+
+    store.patch_role_scopes("member", upsert=["agents:*:run"], remove=["agents:*:read"])  # a valid diff still applies
+    assert store.get_role_scopes("member") == ["agents:run"]
