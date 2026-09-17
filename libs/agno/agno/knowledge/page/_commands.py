@@ -625,6 +625,15 @@ _COMMANDS: dict[str, Callable[[list[str], Mapping[str, str]], str]] = {
 }
 
 
+EMPTY_INDEX = "The page index is empty."
+
+
+def _lists_root(argv: list[str]) -> bool:
+    """True when the command browses the corpus root rather than a named path."""
+    operands = [token for token in argv[1:] if not token.startswith("-")]
+    return argv[0] in ("ls", "tree", "find") and all(token.rstrip("/") == "" for token in operands)
+
+
 def _execute_command(command: str, files: Mapping[str, str]) -> str:
     """Parse and execute one emulated command against the corpus. Never raises."""
     try:
