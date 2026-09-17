@@ -5121,7 +5121,7 @@ Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUC
             tool_name: Page search tool name when page_results is enabled.
             tool_description: Optional product description for the page search tool.
             transport: chat returns JSON text; mcp exposes SearchResult schema and execution errors.
-            max_output_bytes: Final page-search JSON bound (1024 through 32000 UTF-8 bytes).
+            max_output_bytes: Final page-search JSON bound (24000 through 32000 UTF-8 bytes).
             **kwargs: Additional context.
 
         Returns:

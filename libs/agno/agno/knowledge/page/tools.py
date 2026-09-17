@@ -55,8 +55,14 @@ def page_search_tool(
 
     if transport not in ("chat", "mcp") or not tool_name.strip():
         raise ValueError("Use a nonempty tool name and chat or mcp transport")
-    if type(max_output_bytes) is not int or not 1024 <= max_output_bytes <= 32000:
-        raise ValueError("max_output_bytes must be an integer from 1024 through 32000")
+    # The same bound page search itself enforces, so a configured tool cannot build
+    # here and then fail invalid_search_output_budget on every call.
+    from agno.knowledge.page._coordinator import MAX_JSON_BYTES, MAX_SEARCH_JSON_BYTES
+
+    if type(max_output_bytes) is not int or not MAX_JSON_BYTES <= max_output_bytes <= MAX_SEARCH_JSON_BYTES:
+        raise ValueError(
+            f"max_output_bytes must be an integer from {MAX_JSON_BYTES} through {MAX_SEARCH_JSON_BYTES}"
+        )
 
     def record(result: SearchResult, query: str) -> SearchResult:
         if run_response is not None:

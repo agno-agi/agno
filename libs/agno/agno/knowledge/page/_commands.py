@@ -634,12 +634,18 @@ class _RootOnlyCorpus(Mapping[str, str]):
     """A corpus whose root holds pages that no operand can name.
 
     Every lookup of a specific path misses, so replaying a command here fails on
-    exactly the operands that name something other than the root.
+    exactly the operands that name something other than the root. Path validation
+    is delegated to the real corpus so an invalid path keeps its own error.
     """
 
     #: Unreachable by design: _norm strips trailing slashes, so no operand can
     #: normalize to a non-root path that ends in one.
     HIDDEN = "/page/"
+
+    def __init__(self, source: Mapping[str, str]):
+        normalize = getattr(source, "canonical_prefix", None)
+        if callable(normalize):
+            self.canonical_prefix = normalize
 
     def __getitem__(self, key: str) -> str:
         if key == self.HIDDEN:
@@ -659,18 +665,19 @@ class _RootOnlyCorpus(Mapping[str, str]):
         return path == self.HIDDEN
 
 
-def _browses_empty_root(command: str, exc: "CommandError") -> bool:
-    """True when a command failed only because the corpus root holds no pages.
+def _replay_on_root(command: str, exc: "CommandError", files: Mapping[str, str]) -> tuple[str, ...] | None:
+    """The errors this command reports when only the corpus root holds pages.
 
-    The handler reports the first path it cannot resolve, so a later operand may
-    also be missing. Replaying against a root-only corpus answers that for every
-    operand at once, without re-parsing flags or the error message.
+    The handler stops at the first path it cannot resolve, so on an empty index a
+    later operand never gets its say and a leading root masks it. Replaying against
+    a root-only corpus judges every operand, so an empty index reports what the same
+    command would report once pages exist. None when the root was not the blocker.
     """
     if exc.missing != "/":
-        return False
-    probe = _CommandCorpus(_RootOnlyCorpus())
+        return None
+    probe = _CommandCorpus(_RootOnlyCorpus(files))
     _execute_command(command, probe)
-    return not probe.status["errors"]
+    return tuple(probe.status["errors"])
 
 
 def _execute_command(command: str, files: Mapping[str, str]) -> str:
@@ -698,8 +705,15 @@ def _execute_command(command: str, files: Mapping[str, str]) -> str:
     except CommandError as exc:
         # An empty index has no paths at all, so browsing one reports that instead of
         # a missing directory. Named paths and invalid usage keep their own error.
-        if empty and _browses_empty_root(command, exc):
-            return EMPTY_INDEX
+        replayed = _replay_on_root(command, exc, files) if empty else None
+        if replayed is not None:
+            if not replayed:
+                return EMPTY_INDEX
+            # Report the operand the command would fail on once pages exist, not the
+            # root it happened to stop at first.
+            for code in replayed:
+                _error(files, code)
+            return str(exc)
         _error(files, exc.code)
         return str(exc)
     except (ValueError, RecursionError, OverflowError, MemoryError, TimeoutError) as exc:
