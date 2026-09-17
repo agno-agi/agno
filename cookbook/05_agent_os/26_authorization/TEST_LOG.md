@@ -255,3 +255,31 @@ Re-ran 2026-09-15 after role display names were added to the responses: each `by
 entry now carries `role_slug` and `role_name` ("Administrator", "Data analyst", and "viewer"
 for the role defined without one), and `GET /users/bob` returned `role_slug analyst` with
 `role_name Data analyst`. Exit 0, same counts as above.
+
+---
+
+### 12_legacy_authorization_config.py
+
+**Status:** PASS
+
+**Test mode:** LIVE (server booted on :7777 and driven with curl; no model calls made)
+
+**Description:** Serves an AgentOS on the deprecated spelling,
+`AgentOS(authorization=True, authorization_config=AuthorizationConfig(...))`, carrying
+only the released fields (verification key, algorithm, audience, `user_isolation=True`),
+for a frontend to connect to. Tested in both verification modes: control-plane mode
+(`OS_ID` + an RS256 public key in `JWT_VERIFICATION_KEY`, tokens signed with the matching
+throwaway private key) and dev mode (nothing set, built-in HS256 secret, printed admin token).
+
+**Result:** PASS (run 2026-09-17). Both modes booted with the deprecation warning.
+Control-plane mode: an `agent_os:admin` token read `/config` and `/agents` (200), an
+`agents:read` token read `/agents` (200) but not `/config` (403), a token for another
+audience and a request with no token were refused (401). `GET /info` reported
+`auth_mode='jwt'` and `user_isolation=True`. Dev mode: the printed admin token read
+`/agents` and `/config` (200). CORS preflights from `https://os.agno.com` and
+`http://localhost:3000` were allowed and an unlisted origin was refused (400). Chatting
+with the agent from the frontend was not exercised here (needs `OPENAI_API_KEY`).
+
+Observation: `cors_allowed_origins` REPLACES the default Agno origins rather than merging
+with them, so a list that omits `https://os.agno.com` locks the hosted frontend out. The
+cookbook lists it explicitly.

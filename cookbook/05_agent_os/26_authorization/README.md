@@ -35,6 +35,7 @@ it runs offline against a simulated issuer.
 | `09_idp_workos_auth0.py` | Let WorkOS, Auth0, or Okta own identity while you enforce what a role may do |
 | `10_fga_relationship_based.py` | Relationship-based access (ReBAC): "alice may run this because she owns its folder" |
 | `11_user_management_metrics.py` | `GET /users/metrics`: directory size, users created per day, and users per role, computed live for a User Management page |
+| `12_legacy_authorization_config.py` | Backward compatibility: serve an AgentOS on the deprecated `AgentOS(authorization=True, authorization_config=AuthorizationConfig(...))` and connect a frontend to it, authorized from token scopes |
 | `console.html` | A small browser console for driving the `/authz` admin API by hand |
 
 ## Start Here
