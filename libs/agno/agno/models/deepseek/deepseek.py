@@ -197,7 +197,10 @@ class DeepSeek(OpenAILike):
                 if file_part:
                     message_dict["content"].insert(0, file_part)
 
-        # Manually add the content field even if it is None
+        # Manually add the content field even if it is None, unless files already
+        # produced a non-empty part list.
         if message.content is None:
-            message_dict["content"] = ""
+            content = message_dict.get("content")
+            if not (isinstance(content, list) and content):
+                message_dict["content"] = ""
         return message_dict
