@@ -6,7 +6,7 @@ import json
 import re
 from enum import Enum
 from os import getenv
-from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Optional, Set, Union
+from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Optional, Set, Tuple, Union
 
 from fastapi import Request, Response
 from fastapi.responses import JSONResponse
@@ -1095,15 +1095,19 @@ class AuthMiddleware(BaseHTTPMiddleware):
         )
 
         if not result.allowed:
-            held_roles: Optional[List[str]] = None
+            held_roles, roles_from_token = self._token_roles(request)
             role_store = getattr(request.app.state, "role_store", None)
             subject = getattr(request.state, "user_id", None)
-            if role_store is not None and subject:
+            if held_roles is None and role_store is not None and subject:
                 try:
                     held_roles = list(role_store.roles_of(subject))
                 except Exception:
                     held_roles = None  # a store read failure must not turn a denial into a 500
-            log_warning(self._denial_message(request, method, path, result.required_scopes, scopes, held_roles))
+            log_warning(
+                self._denial_message(
+                    request, method, path, result.required_scopes, scopes, held_roles, roles_from_token
+                )
+            )
             return self._create_error_response(
                 403,
                 "Insufficient permissions",
@@ -1119,6 +1123,20 @@ class AuthMiddleware(BaseHTTPMiddleware):
         return None
 
     @staticmethod
+    def _token_roles(request: Request) -> Tuple[Optional[List[str]], bool]:
+        """(roles, True) when the role store reads a ``roles_claim`` and this token carries one --
+        the roles the engine actually decided on for an external-IdP caller -- else (None, False)
+        so the caller falls back to the subject's stored assignments."""
+        role_store = getattr(request.app.state, "role_store", None)
+        claim = getattr(role_store, "roles_claim", None) if role_store is not None else None
+        if not claim:
+            return None, False
+        from agno.os.authz.engine import normalize_roles_claim
+
+        roles = normalize_roles_claim(getattr(request.state, "claims", None) or {}, claim)
+        return (list(roles), True) if roles else (None, False)
+
+    @staticmethod
     def _denial_message(
         request: Request,
         method: str,
@@ -1126,6 +1144,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
         required_scopes: List[str],
         scopes: List[str],
         held_roles: Optional[List[str]],
+        roles_from_token: bool = False,
     ) -> str:
         """The log line for a route-gate denial, worded for the plane that actually decided.
 
@@ -1133,7 +1152,9 @@ class AuthMiddleware(BaseHTTPMiddleware):
         truth. Under a managed-roles or ReBAC provider the token's scopes were never consulted,
         so listing them as what the user "has" reads as a contradiction (the required scope is
         right there in the list) and hides the real reason: the provider denied the subject.
-        ``held_roles`` is the subject's stored roles when a role store is configured, else None.
+        ``held_roles`` is what the engine decided on: the roles carried on the token when the
+        store reads a ``roles_claim`` and the token has one (``roles_from_token``), else the
+        subject's stored assignments; None when no role store is configured.
         """
         from agno.os.auth import caller_scopes_are_authoritative
 
@@ -1141,7 +1162,9 @@ class AuthMiddleware(BaseHTTPMiddleware):
             return f"Insufficient scopes for {method} {path}. Required: {required_scopes}, User has: {scopes}"
         subject = getattr(request.state, "user_id", None)
         line = f"Denied {method} {path} for {subject!r}: the configured authorization provider refused it."
-        if held_roles:
+        if held_roles and roles_from_token:
+            line += f" The token carries role(s) {held_roles}, which do not grant {required_scopes}."
+        elif held_roles:
             line += f" The subject holds role(s) {held_roles}, which do not grant {required_scopes}."
         elif held_roles is not None:
             line += " The subject holds no role in the role store."
@@ -1189,15 +1212,19 @@ class AuthMiddleware(BaseHTTPMiddleware):
         )
 
         if not result.allowed:
-            held_roles: Optional[List[str]] = None
+            held_roles, roles_from_token = self._token_roles(request)
             role_store = getattr(request.app.state, "role_store", None)
             subject = getattr(request.state, "user_id", None)
-            if role_store is not None and subject:
+            if held_roles is None and role_store is not None and subject:
                 try:
                     held_roles = list(await role_store.aroles_of(subject))
                 except Exception:
                     held_roles = None  # a store read failure must not turn a denial into a 500
-            log_warning(self._denial_message(request, method, path, result.required_scopes, scopes, held_roles))
+            log_warning(
+                self._denial_message(
+                    request, method, path, result.required_scopes, scopes, held_roles, roles_from_token
+                )
+            )
             return self._create_error_response(
                 403,
                 "Insufficient permissions",

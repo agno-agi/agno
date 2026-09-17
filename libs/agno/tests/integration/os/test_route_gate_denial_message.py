@@ -104,3 +104,31 @@ def test_denial_under_the_scope_plane_keeps_required_versus_held(tmp_path):
     assert r.status_code == 403
     line = [m for m in messages if "/config" in m][-1]
     assert "Required: ['config:read']" in line and "User has: ['agents:read']" in line
+
+
+def test_denial_under_roles_claim_names_the_token_carried_role(tmp_path):
+    """External IdP: the engine decides on the role the TOKEN carries, not on stored assignments,
+    so the line must name that role rather than claim the subject holds none."""
+    db = SqliteDb(db_file=str(tmp_path / "idp.db"))
+    authz = Authorization(
+        db=db, verification_keys=[SECRET], algorithm="HS256", verify_audience=True, audience=OS_ID, roles_claim="role"
+    )
+    authz.define_role("admin", ["agent_os:admin"])
+    authz.define_role("viewer", ["agents:*:read"])
+    client = TestClient(
+        AgentOS(id=OS_ID, db=db, agents=[Agent(id="a", name="A", db=InMemoryDb())], authorization=authz).get_app()
+    )
+    payload = {
+        "sub": "idp-user",
+        "aud": OS_ID,
+        "role": "viewer",
+        "scopes": ["config:read"],
+        "exp": int(time.time()) + 3600,
+    }
+    headers = {"Authorization": "Bearer " + jwt.encode(payload, SECRET, algorithm="HS256")}
+    with _warnings() as messages:
+        r = client.get("/config", headers=headers)
+    assert r.status_code == 403
+    line = [m for m in messages if "/config" in m][-1]
+    assert "token carries role(s) ['viewer']" in line and "do not grant ['config:read']" in line
+    assert "holds no role" not in line and "User has" not in line
