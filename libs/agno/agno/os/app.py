@@ -1672,11 +1672,9 @@ class AgentOS:
             # enforcement knows to add authorization.
             log_warning(
                 "AgentOS is configured with a user directory / per-user isolation but no authorization. "
-                "They work off the request's user_id for local/demo use (a roster fills in, a request scopes "
-                "to the user it names), but that id is self-asserted -- so the disabled kill-switch and "
-                "isolation are ADVISORY, not enforced. With user_isolation on, every request that reads or "
-                "writes user data must carry a user_id (?user_id= or the run form field) or it is refused "
-                "with 400. Add AgentOS(authorization=True) with a verification key to enforce."
+                "They work off the run's user_id for local/demo use (a roster fills in, a run scopes its "
+                "own data), but that id is self-asserted -- so the disabled kill-switch and isolation are "
+                "ADVISORY, not enforced. Add AgentOS(authorization=True) with a verification key to enforce."
             )
         if self.authorization:
             # Set authorization_enabled flag on settings so security key validation is skipped

@@ -53,7 +53,6 @@ from agno.os.middleware.user_scope import (
     SESSION_ID_REQUIRED,
     SESSION_ID_REQUIRED_RECONNECT,
     WORKFLOW_ID_REQUIRED_RECONNECT,
-    adopt_self_asserted_user_id,
     assert_session_matches_component,
     assert_session_writable,
     caller_is_admin,
@@ -1699,8 +1698,6 @@ def get_workflow_router(
     ):
         kwargs = await get_request_kwargs(request, create_workflow_run)
 
-        # No auth: the form user_id is the caller's identity (the middleware reads only the query).
-        adopt_self_asserted_user_id(request, user_id)
         # Scoped non-admin callers always get their JWT sub as user_id.
         # Admins and unscoped callers fall through to middleware/form values.
         scoped_user_id = get_scoped_user_id(request)
@@ -2122,8 +2119,6 @@ def get_workflow_router(
             description="JSON object with factory-specific parameters for dynamic workflow reconstruction",
         ),
     ):
-        # No auth: the form user_id is the caller's identity (the middleware reads only the query).
-        adopt_self_asserted_user_id(request, user_id)
         if hasattr(request.state, "user_id") and request.state.user_id is not None:
             user_id = request.state.user_id
         if hasattr(request.state, "session_id") and request.state.session_id is not None:

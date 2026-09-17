@@ -3,11 +3,7 @@
 When an OS runs with per-user isolation but NO authentication, there is no verified token to key
 identity off. So this middleware reads the caller's self-asserted ``user_id`` from the request and
 enables per-user isolation SCOPING for it (when ``user_isolation`` is on), so this request's own
-reads are scoped as the authenticated path would. Isolation is switched on for every request, id
-or not: a scoped read that names nobody is refused (400) by ``get_scoped_user_id`` rather than
-served everyone's data, so omitting the parameter is not a way around the scoping. Runs carry
-their user in the form body, which this middleware never reads; the run routes adopt it
-themselves (``adopt_self_asserted_user_id``).
+reads are scoped as the authenticated path would.
 
 It deliberately does NOT provision the directory. Scoping a request to a self-asserted id is
 read-only; writing a directory row is not, and doing it from any endpoint on an open instance would
@@ -57,14 +53,8 @@ class NoAuthIdentityMiddleware(BaseHTTPMiddleware):
             # flooding primitive (a GET ?user_id=<random> inserts a row + audit event per id). So
             # no-auth provisioning is restricted to the run endpoints (sync_directory_from_request
             # there), where there is at least intent to use the system.
-            if self.user_isolation:
+            if user_id and self.user_isolation:
                 # Mirror what the auth middleware sets so get_scoped_user_id scopes to this id.
-                # The isolation flag is set whether or not an id arrived: a scoped read with no
-                # id is then refused by get_scoped_user_id (400) instead of falling through to
-                # everyone's data, which made omitting the parameter a bypass. Runs name their
-                # user in the form, which is not read here; the run routes adopt it themselves
-                # (adopt_self_asserted_user_id) before they scope.
+                request.state.user_id = user_id
                 request.state.user_isolation_enabled = True
-                if user_id:
-                    request.state.user_id = user_id
         return await call_next(request)

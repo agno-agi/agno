@@ -211,11 +211,6 @@ True)`, his next no-token run still returned ALLOWED (200) -- confirming the fla
 is advisory, not enforced, without auth. Points to 02_managed_users.py for the
 enforced kill switch.
 
-Re-ran 2026-09-16 after id-less requests under `user_isolation=True` started being
-refused with 400 on a no-auth OS: the runs still name their user in the form field,
-so every step passed unchanged (exit 0). The boot warning now also says a user_id is
-required on every request that touches user data.
-
 ---
 
 ### 07_manage_users.py

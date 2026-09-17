@@ -17,9 +17,7 @@ run's own data by its user_id.
 What you get without auth:
 - A roster. Every run's user_id lands in the directory (user_directory=True turns on
   auto-provision), so you can SEE everyone who has shown up.
-- Per-user data. user_isolation=True scopes each run's data by its user_id. Every request that
-  touches user data then has to say whose it is: ?user_id=<id> on a read, or the user_id form
-  field on a run. One that names nobody is refused with 400 rather than shown everyone's data.
+- Per-user data. user_isolation=True scopes each run's data by its user_id.
 
 What you do NOT get without auth (read this):
 - Enforcement. With no verified identity the user_id is whatever the caller types, so
@@ -106,9 +104,13 @@ if __name__ == "__main__":
     show_directory()
 
     print("\n  >> chegizkhan makes a run (no token, just a user_id on the request)...")
-    print(f"    chegizkhan in the directory beforehand?  {users.get('chegizkhan') is not None}")
+    print(
+        f"    chegizkhan in the directory beforehand?  {users.get('chegizkhan') is not None}"
+    )
     run_as("chegizkhan")
-    print(f"    chegizkhan in the directory now?         {users.get('chegizkhan') is not None}")
+    print(
+        f"    chegizkhan in the directory now?         {users.get('chegizkhan') is not None}"
+    )
 
     print("\n  >> subotai runs too...")
     run_as("subotai")
@@ -121,12 +123,20 @@ if __name__ == "__main__":
     status = run_as("chegizkhan")
     verdict = "BLOCKED" if status in (401, 403) else "ALLOWED"
     print(f"    chegizkhan's next run (still no auth):   {verdict} ({status})")
-    print("    -> WITHOUT auth the disabled flag is ADVISORY: the id is self-asserted, so it is")
-    print("       not enforced here. Add AgentOS(authorization=True) with a key to make disable")
+    print(
+        "    -> WITHOUT auth the disabled flag is ADVISORY: the id is self-asserted, so it is"
+    )
+    print(
+        "       not enforced here. Add AgentOS(authorization=True) with a key to make disable"
+    )
     print("       (and isolation) real - see 02_managed_users.py.")
 
     print("=" * 80)
-    print("the point: a user directory is data, not a login. with no auth it is a roster that")
-    print("fills in from run user_ids, and isolation scopes each run by its user_id - enough to")
+    print(
+        "the point: a user directory is data, not a login. with no auth it is a roster that"
+    )
+    print(
+        "fills in from run user_ids, and isolation scopes each run by its user_id - enough to"
+    )
     print("demo the features. enforcement is what authorization adds on top.")
     print("=" * 80)

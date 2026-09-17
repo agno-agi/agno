@@ -192,47 +192,38 @@ def test_user_isolation_without_auth_sets_scoping_but_does_not_provision(tmp_pat
     assert store.get("zara") is None  # scoping is read-only: the middleware does NOT provision
 
 
-def test_no_auth_isolation_without_a_user_id_is_refused_with_400(tmp_path):
-    """Isolation means every request says whose data it is for. With no auth and no user_id, a
-    scoped read used to fall through to everyone's data, which made omitting the parameter a
-    bypass. It is now refused with 400 (a contract on the caller, not a security boundary: the id is
-    self-asserted, so 403 would overstate it). With isolation off nothing changes: unscoped."""
+def test_no_auth_isolation_without_a_user_id_stays_unscoped_not_403(tmp_path):
+    """Advisory, not enforced: with no auth and no user_id on the request, isolation must fall back
+    to unscoped (None) rather than 403 -- there is no verified identity to fail closed on."""
     import asyncio
     from types import SimpleNamespace
 
-    from fastapi import HTTPException
     from starlette.requests import Request
 
     from agno.os.middleware.no_auth_identity import NoAuthIdentityMiddleware
-    from agno.os.middleware.user_scope import MISSING_SELF_ASSERTED_USER_ID, get_scoped_user_id
+    from agno.os.middleware.user_scope import get_scoped_user_id
 
-    def dispatch(user_isolation: bool):
-        app_obj = SimpleNamespace(state=SimpleNamespace(user_store=None, user_auto_provision=False))
-        request = Request(
-            {
-                "type": "http",
-                "method": "GET",
-                "path": "/x",
-                "query_string": b"",
-                "headers": [],
-                "app": app_obj,
-                "state": {},
-            }
-        )
-        captured = {}
+    app_obj = SimpleNamespace(state=SimpleNamespace(user_store=None, user_auto_provision=False))
+    scope = {
+        "type": "http",
+        "method": "GET",
+        "path": "/x",
+        "query_string": b"",
+        "headers": [],
+        "app": app_obj,
+        "state": {},
+    }
+    request = Request(scope)
 
-        async def call_next(req):
-            try:
-                captured["scoped"] = get_scoped_user_id(req)
-            except HTTPException as e:
-                captured["error"] = (e.status_code, e.detail)
-            return SimpleNamespace(status_code=200)
+    captured = {}
 
-        asyncio.run(NoAuthIdentityMiddleware(app=None, user_isolation=user_isolation).dispatch(request, call_next))
-        return captured
+    async def call_next(req):
+        captured["scoped"] = get_scoped_user_id(req)
+        return SimpleNamespace(status_code=200)
 
-    assert dispatch(user_isolation=True) == {"error": (400, MISSING_SELF_ASSERTED_USER_ID)}
-    assert dispatch(user_isolation=False) == {"scoped": None}  # flag off: unscoped, as before
+    mw = NoAuthIdentityMiddleware(app=None, user_isolation=True)
+    asyncio.run(mw.dispatch(request, call_next))
+    assert captured["scoped"] is None  # no id -> unscoped, no 403
 
 
 def test_users_api_is_open_on_a_no_auth_instance(tmp_path):
