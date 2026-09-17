@@ -191,3 +191,33 @@ async def test_ambiguous_route_action_does_not_report_an_unrelated_deny(tmp_path
     line = [m for m in messages if "/agents/secret" in m][-1]
     assert "explicit deny" not in line  # the write deny did not decide this request
     assert "holds role(s) ['reader']" in line
+
+
+def test_denial_of_a_directory_user_with_no_assignment_names_the_default_role(tmp_path):
+    """A known directory user with no assignment is evaluated through the is_default role at
+    decision time, so 'holds no role' would be wrong: the default role decided."""
+    from agno.os.authz import UserDirectory, UserStore
+
+    db = SqliteDb(db_file=str(tmp_path / "default.db"))
+    authz = Authorization(db=db, verification_keys=[SECRET], algorithm="HS256", verify_audience=True, audience=OS_ID)
+    authz.define_role("admin", ["agent_os:admin"])
+    authz.define_role("viewer", ["agents:*:read"], default=True)
+    users = UserStore(db=db)
+    users.upsert("dana", email="d@co")  # in the directory, never assigned a role
+    agents = [Agent(id="a", name="A", db=InMemoryDb())]
+    client = TestClient(
+        AgentOS(
+            id=OS_ID,
+            db=db,
+            agents=agents,
+            authorization=authz,
+            user_directory=UserDirectory(user_store=users, auto_provision=False),
+        ).get_app()
+    )
+    with _warnings() as messages:
+        assert client.get("/agents/a", headers=_token("dana", [])).status_code == 200  # the default role reads
+        r = client.get("/config", headers=_token("dana", []))
+    assert r.status_code == 403
+    line = [m for m in messages if "/config" in m][-1]
+    assert "holds no role" not in line
+    assert "default role ['viewer']" in line and "does not authorize GET /config" in line
