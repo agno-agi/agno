@@ -10,20 +10,39 @@ from agno.utils.log import log_warning
 from agno.utils.timer import Timer
 
 
-def _stringify_stream_chunk(content: Any) -> str:
-    """Turn a streaming content chunk into text that can be concatenated."""
+def _update_stream_display(current: Any, content: Any) -> Any:
+    """Update the live pprint buffer for one event.
+
+    String deltas are concatenated (token streaming). Dict, list, and Pydantic
+    payloads are pretty-printed as JSON, matching the non-streaming path.
+    They are not concatenated as stream tokens. Agno does not stream structured
+    responses.
+    """
+    from rich.json import JSON
+
     if isinstance(content, str):
-        return content
+        if isinstance(current, JSON):
+            json_text = current.text.plain if hasattr(current.text, "plain") else str(current.text)
+            current = json_text + "\n"
+        return current + content
+
     if isinstance(content, BaseModel):
         try:
-            return content.model_dump_json(exclude_none=True)
+            display: Any = JSON(content.model_dump_json(exclude_none=True), indent=2)
         except Exception as e:
             log_warning(f"Failed to convert response to Markdown: {str(e)}")
-            return str(content)
-    try:
-        return json.dumps(content, ensure_ascii=False)
-    except Exception:
-        return str(content)
+            return current
+    else:
+        try:
+            display = JSON(json.dumps(content), indent=4)
+        except Exception as e:
+            log_warning(f"Failed to convert response to string: {str(e)}")
+            return current
+
+    if isinstance(current, str) and current:
+        json_text = display.text.plain if hasattr(display.text, "plain") else str(display.text)
+        return current.rstrip() + "\n" + json_text
+    return display
 
 
 def pprint_run_response(
@@ -90,15 +109,9 @@ def pprint_run_response(
                     and hasattr(resp, "content")
                     and resp.content is not None
                 ):
-                    if isinstance(resp.content, BaseModel):
-                        try:
-                            JSON(resp.content.model_dump_json(exclude_none=True), indent=2)  # type: ignore
-                        except Exception as e:
-                            log_warning(f"Failed to convert response to Markdown: {str(e)}")
-                    else:
-                        if isinstance(streaming_response_content, JSON):
-                            streaming_response_content = streaming_response_content.text + "\n"  # type: ignore
-                        streaming_response_content += _stringify_stream_chunk(resp.content)
+                    streaming_response_content = _update_stream_display(
+                        streaming_response_content, resp.content
+                    )
 
                 formatted_response = Markdown(streaming_response_content) if markdown else streaming_response_content  # type: ignore
                 table = Table(box=ROUNDED, border_style="blue", show_header=False)
@@ -174,15 +187,9 @@ async def apprint_run_response(
                     and hasattr(resp, "content")
                     and resp.content is not None
                 ):
-                    if isinstance(resp.content, BaseModel):
-                        try:
-                            streaming_response_content = JSON(resp.content.model_dump_json(exclude_none=True), indent=2)  # type: ignore
-                        except Exception as e:
-                            log_warning(f"Failed to convert response to Markdown: {str(e)}")
-                    else:
-                        if isinstance(streaming_response_content, JSON):
-                            streaming_response_content = streaming_response_content.text + "\n"  # type: ignore
-                        streaming_response_content += _stringify_stream_chunk(resp.content)
+                    streaming_response_content = _update_stream_display(
+                        streaming_response_content, resp.content
+                    )
 
                 formatted_response = Markdown(streaming_response_content) if markdown else streaming_response_content  # type: ignore
                 table = Table(box=ROUNDED, border_style="blue", show_header=False)
