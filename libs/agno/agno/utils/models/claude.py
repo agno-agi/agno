@@ -531,6 +531,26 @@ def _validate_cache_ttl_order(blocks: List[Dict[str, Any]]) -> None:
             seen_5m = True
 
 
+def _parse_tool_use_input(tool_call: Dict[str, Any]) -> Dict[str, Any]:
+    """Parse tool-call arguments into a dict Anthropic ToolUseBlock can take.
+
+    History and cross-provider hops can store ``arguments`` as a JSON string, a
+    dict, or JSON null. ``json.loads(None)`` and ``json.loads({})`` both raise
+    TypeError, which used to abort request assembly.
+    """
+    function = tool_call.get("function") or {}
+    arguments = function.get("arguments")
+    if arguments is None or arguments == "":
+        return {}
+    if isinstance(arguments, dict):
+        return arguments
+    try:
+        parsed = json.loads(arguments)
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
 def format_messages(
     messages: List[Message],
     compress_tool_results: bool = False,
@@ -669,9 +689,7 @@ def format_messages(
                         content.append(
                             ToolUseBlock(
                                 id=tool_call["id"],
-                                input=json.loads(tool_call["function"]["arguments"])
-                                if "arguments" in tool_call["function"]
-                                else {},
+                                input=_parse_tool_use_input(tool_call),
                                 name=tool_call["function"]["name"],
                                 type="tool_use",
                             )
