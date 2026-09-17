@@ -665,9 +665,7 @@ class _RootOnlyCorpus(Mapping[str, str]):
         return path == self.HIDDEN
 
 
-def _replay_on_root(
-    command: str, exc: "CommandError", files: Mapping[str, str]
-) -> tuple[tuple[str, ...], str] | None:
+def _replay_on_root(command: str, exc: "CommandError", files: Mapping[str, str]) -> tuple[tuple[str, ...], str] | None:
     """What this command reports when only the corpus root holds pages.
 
     The handler stops at the first path it cannot resolve, so on an empty index a
