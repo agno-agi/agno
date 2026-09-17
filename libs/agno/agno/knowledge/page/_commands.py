@@ -630,13 +630,22 @@ _COMMANDS: dict[str, Callable[[list[str], Mapping[str, str]], str]] = {
 EMPTY_INDEX = "The page index is empty."
 
 
-def _missing_root(exc: "CommandError") -> bool:
+# One page at the root: a command that succeeds here named no other path.
+_ROOT_ONLY_CORPUS = {"/index.md": ""}
+
+
+def _browses_empty_root(command: str, exc: "CommandError") -> bool:
     """True when a command failed only because the corpus root holds no pages.
 
-    Reads the path the handler resolved rather than its message, so a page path
-    that happens to contain the message's punctuation cannot pass as the root.
+    The handler reports the first path it cannot resolve, so a later operand may
+    also be missing. Replaying against a single root page answers that for every
+    operand at once, without re-parsing flags or the error message.
     """
-    return exc.missing == "/"
+    if exc.missing != "/":
+        return False
+    probe = _CommandCorpus(dict(_ROOT_ONLY_CORPUS))
+    _execute_command(command, probe)
+    return not probe.status["errors"]
 
 
 def _execute_command(command: str, files: Mapping[str, str]) -> str:
@@ -664,7 +673,7 @@ def _execute_command(command: str, files: Mapping[str, str]) -> str:
     except CommandError as exc:
         # An empty index has no paths at all, so browsing one reports that instead of
         # a missing directory. Named paths and invalid usage keep their own error.
-        if empty and _missing_root(exc):
+        if empty and _browses_empty_root(command, exc):
             return EMPTY_INDEX
         _error(files, exc.code)
         return str(exc)
