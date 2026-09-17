@@ -9,22 +9,11 @@ low-level config:
     AgentOS(authorization=True, authorization_config=AuthorizationConfig(...))
 
 That spelling is deprecated but still boots, so a deployment written against it keeps
-running after an upgrade. This cookbook starts a real AgentOS server on it and leaves
-it running, so you can connect the AgentOS frontend (https://os.agno.com) or your own
-UI and confirm the old setup still works end to end.
+running after an upgrade. This cookbook serves a real AgentOS on it so you can connect
+the AgentOS frontend (https://os.agno.com) or your own UI and confirm it end to end.
 
-What the legacy config does:
-- verifies the token (verification_keys / jwks_file, algorithm, audience)
-- authorizes every request from the SCOPES the token carries - there is no role store,
-  so nothing is looked up in a database and no /authz admin API is mounted
-- user_isolation=True on the config still turns per-user data isolation on
-
-Migrating is moving the same fields onto the Authorization object (user_isolation
-becomes the top-level AgentOS switch); the behaviour is identical until you define roles:
-
-    AgentOS(user_isolation=True, authorization=Authorization(verification_keys=..., ...))
-
-See 00_quickstart_authorization.py for that spelling.
+The legacy config verifies the token and authorizes every request from the SCOPES the
+token carries. There is no role store, so no /authz admin API is mounted.
 
 Run it:
     pip install "agno[os]"
@@ -32,16 +21,9 @@ Run it:
     python 12_legacy_authorization_config.py
 The server keeps running until you Ctrl-C.
 
-Verifying tokens - pick whichever fits; auto-selected by env, no code change:
-  - Control plane / frontend: set
-        OS_ID                 your os_id (the token audience)
-        JWT_VERIFICATION_KEY  the OS public key from the control plane (RS256)
-    then add http://localhost:7777 as an OS in the frontend. Its tokens carry the
-    scopes that authorize each request. e.g.
-        OS_ID="<your-os-id>" JWT_VERIFICATION_KEY="<os public key>" \\
-        python 12_legacy_authorization_config.py
-  - Dev (default, nothing set): a built-in HS256 secret. On startup it prints a
-    ready-made admin bearer token you can paste into curl or your own UI.
+To connect the frontend, set OS_ID (your os_id) and JWT_VERIFICATION_KEY (the OS public
+key from the control plane), then add http://localhost:7777 as an OS. With neither set
+it runs on a built-in dev secret and prints an admin bearer token for curl.
 """
 
 import os
