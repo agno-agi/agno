@@ -175,6 +175,7 @@ run. The focused public-configuration and MCP suites passed all 204 tests.
 ## 2026-09-09 typed page-tool outcomes
 
 - PASS: 267 composed command/filesystem/lazy-read/tool/MCP cases, including 66 archived command outputs unchanged, literal-grep completeness, typed grammar/missing-path/storage errors, no false error from page prose, Unicode JSON bounds, MCP schemas/isError, search parity and run reference tracking.
-- PASS: `page_tool_results.py --check` with demo Python, without storage/provider calls.
+- PASS: `page_tool_results.py` with demo Python. The default `check` mode validates configuration without storage/provider calls; `sync` published 174 of 175 discovered pages against the shared `ai` database; `run "ls /"` returned a typed successful result and `cat /no-such-page` returned `is_error=True` with `page_not_found`.
 - PASS: full format and validation scripts.
+- FIXED: an empty page index returned before command validation, so invalid syntax, unsupported commands, pipes and missing paths all reported `is_error=False` and MCP saw success. The empty-index message now follows validation; malformed input stays an error and a valid command against an empty index still reports it.
 - Existing chat command tools retain their character-bound text contract. Direct typed/MCP command results additionally bound the complete result JSON; MCP envelope overhead remains under the transport's own limits. No product feedback or score-interpretation policy moved upstream.

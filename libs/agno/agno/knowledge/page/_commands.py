@@ -627,8 +627,6 @@ _COMMANDS: dict[str, Callable[[list[str], Mapping[str, str]], str]] = {
 
 def _execute_command(command: str, files: Mapping[str, str]) -> str:
     """Parse and execute one emulated command against the corpus. Never raises."""
-    if not files:
-        return "The page index is empty."
     try:
         argv = shlex.split(command or "")
     except ValueError as exc:
@@ -643,6 +641,9 @@ def _execute_command(command: str, files: Mapping[str, str]) -> str:
     if handler is None:
         _error(files)
         return f"unsupported command: {argv[0]!r}\n\n{USAGE}"
+    # Reported only for a valid command; malformed input above stays an error.
+    if not files:
+        return "The page index is empty."
     try:
         output = handler(argv[1:], files)
     except CommandError as exc:
