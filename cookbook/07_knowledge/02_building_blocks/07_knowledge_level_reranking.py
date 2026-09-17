@@ -31,9 +31,14 @@ qdrant_url = "http://localhost:6333"
 
 knowledge = Knowledge(
     vector_db=Qdrant(collection="knowledge_reranking_demo", url=qdrant_url),
-    # Runs after the vector db returns candidates. Scoring each document on its own,
-    # so it keeps the default fetch rather than widening it.
-    reranker=CohereReranker(),
+    reranker=CohereReranker(
+        # Cohere scores each document on its own, so candidate_multiplier defaults to 1
+        # and the fetch is left alone. Raise it to let Cohere rescue a document that
+        # plain search ranked outside max_results, at that many times the API cost.
+        candidate_multiplier=1,
+        # Ceiling on the widened fetch, once the multiplier is above 1.
+        max_candidates=100,
+    ),
 )
 
 agent = Agent(
