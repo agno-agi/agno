@@ -34,8 +34,7 @@ from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS, create_dev_token
-from agno.os.authz import Authorization, UserStore
-from agno.os.authz import UserDirectory
+from agno.os.authz import Authorization, UserDirectory, UserStore
 
 OS_ID = "user-management-metrics-os"
 SECRET = "your-secret-key-at-least-256-bits-long"
