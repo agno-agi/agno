@@ -39,6 +39,7 @@ class Neo4jTools(Toolkit):
             enable_list_relationships (bool): Whether to list relationship types.
             enable_get_schema (bool): Whether to get the schema.
             enable_run_cypher (bool): Whether to run Cypher queries.
+            all (bool): Enable all tools. Overrides individual flags when True. Default is False.
             **kwargs: Additional keyword arguments.
         """
         # Determine the connection URI and credentials

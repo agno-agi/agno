@@ -172,7 +172,7 @@ class WorkflowTools(Toolkit):
         """Use this tool to execute the workflow with the specified inputs and parameters.
         After thinking through the requirements, use this tool to run the workflow with appropriate inputs.
         Args:
-            input: The workflow input (a `RunWorkflowInput` holding input_data and additional_data).
+            input: The input data for the workflow.
         """
         if isinstance(input, dict):
             input = RunWorkflowInput.model_validate(input)
