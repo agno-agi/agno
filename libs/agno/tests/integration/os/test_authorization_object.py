@@ -848,3 +848,49 @@ def test_draft_preview_ignores_a_raw_token_admin_scope_under_managed_roles(tmp_p
     assert stages(_auth("dave")) == []  # a viewer sees the published stage only (nothing yet)
     assert stages(_auth("dave", scopes=["agent_os:admin"])) == []  # a raw admin scope changes nothing here
     assert client.get("/authz/roles", headers=_auth("dave", scopes=["agent_os:admin"])).status_code == 403
+
+
+def test_provider_outage_is_a_denial_with_an_audit_row_and_no_backend_text(tmp_path):
+    """A standalone provider that raises (an FGA outage, say) used to escape into the token-decode
+    handler: 401, the backend's error text in the body, and no decision row. The gate now fails
+    closed with a 403, keeps the message server side, and records the denial as provider_error."""
+    from agno.os.authz.audit import AuditEvent, AuditSink
+    from agno.os.authz.provider import AuthorizationContext, AuthorizationProvider
+
+    class Down(AuthorizationProvider):
+        def check(self, ctx: AuthorizationContext) -> bool:
+            raise ConnectionError("openfga unreachable at 10.0.0.5:8080")
+
+        def accessible_resource_ids(self, ctx: AuthorizationContext):
+            raise ConnectionError("openfga unreachable at 10.0.0.5:8080")
+
+    class Capture(AuditSink):
+        def __init__(self):
+            self.events: list = []
+
+        def record(self, event: AuditEvent) -> None:
+            self.events.append(event)
+
+        async def arecord(self, event: AuditEvent) -> None:
+            self.events.append(event)
+
+    sink = Capture()
+    authz = Authorization(
+        verification_keys=[SECRET],
+        algorithm="HS256",
+        verify_audience=True,
+        audience=OS_ID,
+        authorization_provider=Down(),
+        audit=sink,
+    )
+    client = TestClient(
+        AgentOS(
+            id=OS_ID, db=SqliteDb(db_file=str(tmp_path / "down.db")), agents=_agents(), authorization=authz
+        ).get_app()
+    )
+    for path in ("/agents/research", "/agents"):
+        r = client.get(path, headers=_auth("u", scopes=["agents:read"]))
+        assert r.status_code == 403, (path, r.status_code, r.text)
+        assert "10.0.0.5" not in r.text and "openfga" not in r.text
+    denied = [e for e in sink.events if e.action == "access.denied"]
+    assert denied and all(e.metadata.get("reason") == "provider_error" for e in denied)
