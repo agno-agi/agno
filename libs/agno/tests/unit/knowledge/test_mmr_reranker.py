@@ -280,3 +280,15 @@ def test_selection_matches_the_unoptimised_formula():
         for lambda_mult in (0.0, 0.5, 1.0):
             selected = [doc.id for doc in MMRReranker(lambda_mult=lambda_mult, top_n=8).rerank("q", build(seed))]
             assert selected == reference(query_embedding, build(seed), lambda_mult, 8)
+
+
+def test_mmr_scores_survive_the_search_api_schema():
+    # /knowledge/search serializes results through VectorSearchResult, whose
+    # reranking_score bound must admit the negative scores MMR produces routinely.
+    schemas = pytest.importorskip("agno.os.routers.knowledge.schemas")
+
+    results = MMRReranker(lambda_mult=0.5).rerank("q", _documents())
+
+    assert any(doc.reranking_score < 0 for doc in results)
+    for document in results:
+        schemas.VectorSearchResult.from_document(document)

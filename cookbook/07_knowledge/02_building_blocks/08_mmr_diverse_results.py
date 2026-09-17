@@ -12,8 +12,8 @@ lambda_mult controls the tradeoff:
 - 0.0 ranks by difference alone
 
 MMR needs a pool larger than the number of results requested, which is what the
-knowledge-level reranker provides: rerank_multiplier widens the fetch, MMR selects
-from it, and max_results are returned.
+reranker provides: candidate_multiplier widens the fetch, MMR selects from it, and
+max_results are returned.
 
 MMR reads the embedding on each search result. Not every vector db returns one:
 Milvus, MongoDB, Redis and Valkey do not, so MMR raises there rather
@@ -23,9 +23,8 @@ Take the returned order as the result: reranking_score holds the MMR score at th
 moment each document was picked, which is not descending, so re-sorting by it discards
 the diversity ordering.
 
-A reranker set on the vector db still runs first, on the widened pool, and MMR then
-reorders its output. Scoring by relevance and then by embedding similarity rarely
-composes usefully, so prefer setting one or the other.
+Set a reranker in one place: with one on both Knowledge and the vector db, only the
+one on Knowledge is applied and the vector db's is ignored.
 
 See also: 07_knowledge_level_reranking.py for how the widened fetch works.
 """
@@ -46,9 +45,9 @@ qdrant_url = "http://localhost:6333"
 
 knowledge = Knowledge(
     vector_db=Qdrant(collection="mmr_demo", url=qdrant_url),
+    # candidate_multiplier=5 by default: MMR retrieves 5x the requested results so it
+    # has candidates to choose between.
     reranker=MMRReranker(lambda_mult=0.5),
-    # Retrieve 5x the requested results so MMR has candidates to choose between.
-    rerank_multiplier=5,
 )
 
 agent = Agent(

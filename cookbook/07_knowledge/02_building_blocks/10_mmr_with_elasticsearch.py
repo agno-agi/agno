@@ -38,9 +38,9 @@ vector_db = Elasticsearch(
 knowledge = Knowledge(
     vector_db=vector_db,
     # Runs after Elasticsearch returns candidates.
+    # candidate_multiplier=5 by default: MMR retrieves 5x the requested results so it
+    # has candidates to choose between.
     reranker=MMRReranker(lambda_mult=0.5),
-    # Retrieve 5x the requested results so MMR has candidates to choose between.
-    rerank_multiplier=5,
 )
 
 # ---------------------------------------------------------------------------

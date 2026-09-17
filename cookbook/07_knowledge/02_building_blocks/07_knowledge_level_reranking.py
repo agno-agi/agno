@@ -5,15 +5,12 @@ A reranker set on Knowledge runs after the vector db returns results, rather tha
 inside the vector db itself. Two differences follow from that:
 
 1. It works with any vector db, so the same reranker moves between backends.
-2. Knowledge widens the fetch first, so the reranker chooses from a real pool.
-   Asking for 5 results with a reranker set retrieves rerank_multiplier * 5
-   candidates (capped by max_rerank_candidates) and returns the best 5.
+2. A reranker that selects a subset can widen the fetch, so it chooses from a real
+   pool. candidate_multiplier (capped by max_candidates) is set on the reranker
+   itself, and defaults to 1: a scoring reranker gains nothing from a wider pool.
 
 The widened fetch is what makes ordering strategies possible: a reranker can only
 surface a document that was retrieved in the first place.
-
-A reranker configured on the vector db still runs first. The knowledge-level one
-runs on its output.
 
 See also: 03_reranking.py for vector db level reranking.
 """
@@ -34,12 +31,9 @@ qdrant_url = "http://localhost:6333"
 
 knowledge = Knowledge(
     vector_db=Qdrant(collection="knowledge_reranking_demo", url=qdrant_url),
-    # Runs after the vector db returns candidates.
+    # Runs after the vector db returns candidates. Scoring each document on its own,
+    # so it keeps the default fetch rather than widening it.
     reranker=CohereReranker(),
-    # Retrieve 5x the requested results, so the reranker has candidates to compare.
-    rerank_multiplier=5,
-    # Ceiling on the widened fetch, whatever max_results is asked for.
-    max_rerank_candidates=100,
 )
 
 agent = Agent(

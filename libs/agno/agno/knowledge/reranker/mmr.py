@@ -1,3 +1,4 @@
+import asyncio
 from dataclasses import replace
 from math import sqrt
 from typing import Any, List, Optional, Sequence, Tuple
@@ -20,6 +21,21 @@ def _cosine_similarity(left: Sequence[float], right: Sequence[float]) -> float:
     if left_norm <= 0.0 or right_norm <= 0.0:
         return 0.0
     return dot / (sqrt(left_norm) * sqrt(right_norm))
+
+
+def _unit(vector: Sequence[float]) -> List[float]:
+    """Scale to unit length so similarity reduces to a dot product."""
+    norm = sqrt(sum(value * value for value in vector))
+    if norm <= 0.0:
+        return [0.0] * len(vector)
+    return [value / norm for value in vector]
+
+
+def _dot(left: Sequence[float], right: Sequence[float]) -> float:
+    total = 0.0
+    for a, b in zip(left, right):
+        total += a * b
+    return total
 
 
 class MMRReranker(Reranker):
@@ -50,6 +66,10 @@ class MMRReranker(Reranker):
     sorting by them discards the diversity ordering.
     """
 
+    # Selection compares candidates against each other, so it needs a pool wider than
+    # the caller asked for: a document can only be surfaced if it was retrieved.
+    candidate_multiplier: int = Field(default=5, ge=1)
+
     # Weight between relevance and diversity: 1.0 ranks by relevance alone, 0.0 by
     # difference alone.
     lambda_mult: float = Field(default=0.5, ge=0.0, le=1.0)
@@ -78,16 +98,20 @@ class MMRReranker(Reranker):
         if query_embedding is None or len(query_embedding) == 0:
             raise ValueError("MMRReranker could not embed the query: the embedder returned no vector")
 
-        embeddings: List[List[float]] = [doc.embedding for doc in documents]  # type: ignore[misc]
+        raw: List[List[float]] = [doc.embedding for doc in documents]  # type: ignore[misc]
         # zip() would silently truncate to the shorter vector and score against a prefix.
-        dimensions = {len(embedding) for embedding in embeddings} | {len(query_embedding)}
+        dimensions = {len(embedding) for embedding in raw} | {len(query_embedding)}
         if len(dimensions) > 1:
             raise ValueError(
                 f"MMRReranker requires embeddings of one dimension, but got {sorted(dimensions)}. "
                 "The query embedder and the indexed documents likely use different models."
             )
 
-        relevance = [_cosine_similarity(query_embedding, embedding) for embedding in embeddings]
+        # Normalise once: every similarity below is then a dot product, instead of
+        # recomputing the same norms across thousands of pair comparisons.
+        embeddings = [_unit(embedding) for embedding in raw]
+        unit_query = _unit(query_embedding)
+        relevance = [_dot(unit_query, embedding) for embedding in embeddings]
 
         selected: List[Tuple[int, float]] = []
         remaining = list(range(len(documents)))
@@ -103,7 +127,7 @@ class MMRReranker(Reranker):
         # selected, which at the candidate ceiling dominates the search itself.
         best_redundancy = [0.0] * len(documents)
         for candidate in remaining:
-            best_redundancy[candidate] = _cosine_similarity(embeddings[candidate], embeddings[first])
+            best_redundancy[candidate] = _dot(embeddings[candidate], embeddings[first])
 
         while remaining and len(selected) < limit:
             best_index = remaining[0]
@@ -116,7 +140,7 @@ class MMRReranker(Reranker):
             selected.append((best_index, best_score))
             remaining.remove(best_index)
             for candidate in remaining:
-                similarity = _cosine_similarity(embeddings[candidate], embeddings[best_index])
+                similarity = _dot(embeddings[candidate], embeddings[best_index])
                 if similarity > best_redundancy[candidate]:
                     best_redundancy[candidate] = similarity
 
@@ -132,7 +156,7 @@ class MMRReranker(Reranker):
             results.append(document)
         return results
 
-    def _prepare(self, documents: List[Document]) -> Optional[int]:
+    def _prepare(self, documents: List[Document], requested: Optional[int] = None) -> Optional[int]:
         """Validate inputs and return the number of documents to select."""
         if not documents:
             return None
@@ -151,7 +175,10 @@ class MMRReranker(Reranker):
                 "Redis, Valkey) do not return embeddings on search."
             )
 
-        limit = self.top_n if self.top_n is not None else len(documents)
+        # Selecting the whole pool and discarding the tail is wasted work, so stop at
+        # the count the caller will keep.
+        candidates = [value for value in (self.top_n, requested) if value is not None]
+        limit = min(candidates) if candidates else len(documents)
         return min(limit, len(documents))
 
     def _resolve_embedder(self, documents: List[Document]) -> Any:
@@ -165,18 +192,20 @@ class MMRReranker(Reranker):
             "(such as Upstash hosted embeddings) do not expose one, so MMR cannot run there."
         )
 
-    def rerank(self, query: str, documents: List[Document]) -> List[Document]:
-        limit = self._prepare(documents)
+    def rerank(self, query: str, documents: List[Document], limit: Optional[int] = None) -> List[Document]:
+        limit = self._prepare(documents, limit)
         if limit is None:
             return documents
 
         embedder = self._resolve_embedder(documents)
         return self._select(embedder.get_embedding(query), documents, limit)
 
-    async def arerank(self, query: str, documents: List[Document]) -> List[Document]:
-        limit = self._prepare(documents)
-        if limit is None:
+    async def arerank(self, query: str, documents: List[Document], limit: Optional[int] = None) -> List[Document]:
+        selection = self._prepare(documents, limit)
+        if selection is None:
             return documents
 
         embedder = self._resolve_embedder(documents)
-        return self._select(await embedder.async_get_embedding(query), documents, limit)
+        query_embedding = await embedder.async_get_embedding(query)
+        # Selection is pure-Python and grows with the pool, so keep it off the loop.
+        return await asyncio.to_thread(self._select, query_embedding, documents, selection)
