@@ -21,9 +21,11 @@ the documented construction smoke.
 | `asymmetric_keys.py` | RS256 signing and the production private-key/public-key boundary |
 | `per_resource_scopes.py` | Wildcard and per-id scopes for agents, teams, and workflows |
 | `custom_scope_mappings.py` | Add or override route-to-scope mappings |
+| `excluded_routes.py` | Mark custom routes as public using fnmatch patterns |
 | `cookie_auth.py` | Read a JWT from a secure HTTP-only cookie |
 | `jwt_claims.py` | Move trusted claims through request state into agent dependencies |
 | `user_isolation.py` | Restrict sessions and other user-owned data to the JWT subject |
+| `user_isolation_knowledge.py` | Read shared and owned knowledge content, but modify only owned rows |
 | `service_accounts.py` | Mint, use, list, and revoke opaque `agno_pat_` machine credentials |
 | `workos_byot.py` | Verify WorkOS JWKS tokens and read scopes from `permissions` |
 | `test_scopes.py` | Executable and pytest enforcement matrix |
@@ -97,6 +99,30 @@ other JWT examples that mint tokens follow the same audience-bound pattern.
 If one issuer serves several AgentOS instances, pass an explicit `audience`.
 Otherwise, audience verification uses the AgentOS id.
 
+## Excluded Routes
+
+Some routes should be public even when JWT authentication is enabled. Use
+`AuthorizationConfig.excluded_route_paths` to mark them:
+
+```python
+AgentOS(
+    authorization=True,
+    authorization_config=AuthorizationConfig(
+        verification_keys=[JWT_SECRET],
+        excluded_route_paths=[
+            "/public/*",     # Wildcard: matches /public/anything
+            "/webhooks/*",   # External webhooks with their own auth
+        ],
+    ),
+)
+```
+
+Patterns use `fnmatch` syntax - `*` matches any characters including `/`. Note
+that `/public/*` does not match the bare `/public` path; list both if needed.
+The default exclusions (`/`, `/health`, `/info`, `/docs`, `/redoc`,
+`/openapi.json`) are always preserved; custom paths are additive. Use this for
+webhooks, login flows, or any route that handles authentication differently.
+
 ## Cookies and Trusted Claims
 
 `cookie_auth.py` changes only the credential transport. Scopes and audience
@@ -121,6 +147,24 @@ RBAC controls routes; `user_isolation=True` also scopes user-owned database
 operations. A non-admin JWT caller is pinned to its `sub` value for session
 reads and writes. The configured admin scope bypasses isolation. Unauthenticated
 requests remain rejected because the example enables JWT authentication.
+
+Knowledge content adds a shared arm on top of that pinning: a content row with
+no owner is org-wide. A non-admin reads their own rows plus the shared ones but
+may only modify or delete rows they own, so a scoped `PATCH` or `DELETE` on
+shared content returns 403 and a bulk delete clears only the caller's own rows.
+Another user's row is invisible, so acting on it returns 404. Only an admin can
+remove shared content.
+
+Metrics are stored one bucket per user, with the empty string as the bucket for
+unowned sessions. A scoped caller reads only its own bucket. An unscoped read
+folds every bucket into one row per date and aggregation period, returned under
+a synthesised `{date}_{period}` id.
+
+Schedules have a nullable owner but no shared arm: a scoped caller sees,
+updates, and deletes only the schedules it owns, and a schedule name is unique
+per owner rather than globally. An unowned schedule is invisible to every
+scoped caller but still fires, because the poller claims due schedules across
+all users.
 
 ## Service Accounts
 

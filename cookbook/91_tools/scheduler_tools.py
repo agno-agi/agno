@@ -10,7 +10,7 @@ into cron-based schedules that run via the AgentOS scheduler infrastructure.
 Prerequisites:
     pip install agno[scheduler]
     # A running AgentOS server with scheduler enabled
-    # See cookbook/05_agent_os/scheduler/scheduler_tools_agent.py for full setup
+    # See cookbook/05_agent_os/12_scheduler/04_scheduler_tools_agent.py for full setup
 """
 
 from agno.agent import Agent
@@ -33,7 +33,7 @@ db = PostgresDb(
 
 agent = Agent(
     id="scheduler-demo",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[
         SchedulerTools(
             db=db,

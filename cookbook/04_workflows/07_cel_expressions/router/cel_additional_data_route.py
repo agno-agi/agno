@@ -25,21 +25,21 @@ if not CEL_AVAILABLE:
 # ---------------------------------------------------------------------------
 email_agent = Agent(
     name="Email Writer",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     instructions="You write professional emails. Be concise and polished.",
     markdown=True,
 )
 
 blog_agent = Agent(
     name="Blog Writer",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     instructions="You write engaging blog posts with clear structure and headings.",
     markdown=True,
 )
 
 tweet_agent = Agent(
     name="Tweet Writer",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     instructions="You write punchy tweets. Keep it under 280 characters.",
     markdown=True,
 )

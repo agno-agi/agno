@@ -11,7 +11,7 @@ Requirements:
     pip install langgraph langchain-openai
 
 Usage:
-    .venvs/demo/bin/python cookbook/frameworks/langgraph_time_travel.py
+    .venvs/demo/bin/python cookbook/frameworks/langgraph/langgraph_time_travel.py
 """
 
 from agno.agents.langgraph import LangGraphAgent

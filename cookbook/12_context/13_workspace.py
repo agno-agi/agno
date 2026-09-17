@@ -30,7 +30,7 @@ project = WorkspaceContextProvider(
     id="agno",
     name="Agno Project",
     root=Path(__file__).resolve().parents[2],
-    model=OpenAIResponses(id="gpt-5.4-mini"),
+    model=OpenAIResponses(id="gpt-5.6-luna"),
 )
 
 # ---------------------------------------------------------------------------

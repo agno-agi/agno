@@ -13,11 +13,26 @@ from agno.session.summary import SessionSummary
 
 
 def create_session_with_runs(shared_db, session_id: str, runs: list[RunOutput]) -> AgentSession:
-    """Helper function to create and store a session with runs in the database"""
+    """Helper function to create and store a session with runs in the database.
+
+    Under v3 storage, ``upsert_session`` writes only the session row and runs
+    are persisted independently via ``upsert_run``. This helper does both so
+    tests exercising the full session + runs shape can rely on the returned
+    session being fully populated.
+    """
     agent_session = AgentSession(session_id=session_id, agent_id="test_agent", runs=runs, created_at=int(time()))
 
-    # Store the session in the database
+    # Store the session row in the database
     shared_db.upsert_session(session=agent_session)
+
+    # Persist each run individually (v3 contract)
+    for idx, run in enumerate(runs):
+        shared_db.upsert_run(
+            run=run,
+            session_id=session_id,
+            user_id=agent_session.user_id,
+            run_index=idx,
+        )
 
     # Retrieve it back to ensure it's properly persisted
     return shared_db.get_session(session_id=session_id, session_type=SessionType.AGENT)

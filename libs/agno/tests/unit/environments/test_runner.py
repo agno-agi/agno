@@ -79,7 +79,6 @@ class StubRolloutAgent:
         db=None,
         knowledge=None,
         learning=None,
-        culture_manager=None,
         memory_manager=None,
         reasoning_model=None,
         parser_model=None,
@@ -95,7 +94,6 @@ class StubRolloutAgent:
         self.db = db
         self.knowledge = knowledge
         self.learning = learning
-        self.culture_manager = culture_manager
         self.memory_manager = memory_manager
         self.reasoning_model = reasoning_model
         self.parser_model = parser_model
@@ -104,11 +102,8 @@ class StubRolloutAgent:
         self.session_state = {"seed": 1}
         self.instructions = "Answer tersely."
         self.update_memory_on_run = True
-        self.enable_user_memories = True
         self.enable_agentic_memory = True
         self.update_knowledge = True
-        self.update_cultural_knowledge = True
-        self.enable_agentic_culture = True
 
     def deep_copy(self):
         # Mirrors Agent.deep_copy's sharing rule for what matters here: db, models,
@@ -129,18 +124,14 @@ class StubRolloutAgent:
                 "model_cache": self.model.cache_response if self.model is not None else None,
                 "knowledge": self.knowledge,
                 "learning": self.learning,
-                "culture_manager": self.culture_manager,
                 "memory_manager": self.memory_manager,
                 "reasoning_model": self.reasoning_model,
                 "parser_model": self.parser_model,
                 "output_model": self.output_model,
                 "user_id": self.user_id,
                 "update_memory_on_run": self.update_memory_on_run,
-                "enable_user_memories": self.enable_user_memories,
                 "enable_agentic_memory": self.enable_agentic_memory,
                 "update_knowledge": self.update_knowledge,
-                "update_cultural_knowledge": self.update_cultural_knowledge,
-                "enable_agentic_culture": self.enable_agentic_culture,
                 "session_state": dict(self.session_state or {}),
                 "instructions": self.instructions,
             }
@@ -201,7 +192,6 @@ async def test_hermetic_no_memory_capture():
 
     for snapshot in recorder.snapshots:
         assert snapshot["update_memory_on_run"] is False
-        assert snapshot["enable_user_memories"] is False
         assert snapshot["enable_agentic_memory"] is False
 
 
@@ -258,14 +248,10 @@ def _masked_start(run_input, snapshot):
         "model": None if snapshot["model"] is None else (snapshot["model"].id, snapshot["model"].cache_response),
         "knowledge": snapshot["knowledge"],
         "learning": snapshot["learning"],
-        "culture_manager": snapshot["culture_manager"],
         "memory_manager": snapshot["memory_manager"],
         "update_memory_on_run": snapshot["update_memory_on_run"],
-        "enable_user_memories": snapshot["enable_user_memories"],
         "enable_agentic_memory": snapshot["enable_agentic_memory"],
         "update_knowledge": snapshot["update_knowledge"],
-        "update_cultural_knowledge": snapshot["update_cultural_knowledge"],
-        "enable_agentic_culture": snapshot["enable_agentic_culture"],
     }
 
 
@@ -291,20 +277,18 @@ async def test_hermetic_identical_start():
 
 
 async def test_hermetic_live_agent_full_override_set():
-    # The live-agent branch on STUB agents: db-bound state cut, culture rebound to a
-    # read-only copy, memory rebound to the attempt's fresh db, secondary-model
-    # caches disabled on copies -- and the caller's instance untouched afterwards.
+    # The live-agent branch on STUB agents: db-bound state cut, memory rebound to
+    # the attempt's fresh db, secondary-model caches disabled on copies -- and the
+    # caller's instance untouched afterwards.
     # The REAL-Agent twin below covers the fields this stub cannot model.
     recorder = Recorder()
     caller_db = object()
-    culture_manager = StubManager(db=object())
     memory_manager = StubManager()
     live = StubRolloutAgent(
         recorder,
         model=StubModel(cache_response=True),
         db=caller_db,
         learning=object(),
-        culture_manager=culture_manager,
         memory_manager=memory_manager,
         reasoning_model=StubModel(cache_response=True, id="reasoning"),
         parser_model=StubModel(cache_response=True, id="parser"),
@@ -320,16 +304,10 @@ async def test_hermetic_live_agent_full_override_set():
         assert snapshot["agent"] is not live
         assert isinstance(snapshot["db"], InMemoryDb)
         assert snapshot["learning"] is None
-        # Culture READS survive: a manager copy, never the caller's object.
-        assert snapshot["culture_manager"] is not None
-        assert snapshot["culture_manager"] is not culture_manager
-        assert snapshot["culture_manager"].db is culture_manager.db
         # Memory is per-user state: the manager copy reads the attempt's fresh db.
         assert snapshot["memory_manager"] is not None
         assert snapshot["memory_manager"] is not memory_manager
         assert snapshot["memory_manager"].db is snapshot["db"]
-        assert snapshot["update_cultural_knowledge"] is False
-        assert snapshot["enable_agentic_culture"] is False
         assert snapshot["model_cache"] is False
         for secondary_name in ("reasoning_model", "parser_model", "output_model"):
             secondary = snapshot[secondary_name]
@@ -337,11 +315,9 @@ async def test_hermetic_live_agent_full_override_set():
             assert secondary is not getattr(live, secondary_name)
     # The caller's live agent keeps its configuration.
     assert live.db is caller_db
-    assert live.culture_manager is culture_manager
     assert live.memory_manager is memory_manager
     assert live.model.cache_response is True
     assert live.reasoning_model.cache_response is True
-    assert live.update_cultural_knowledge is True
 
 
 # ---------------------------------------------------------------------------
@@ -796,32 +772,25 @@ def test_diff_flags_regressions():
 
 
 # ---------------------------------------------------------------------------
-# Review fixes: factory lifecycle, culture/memory hermeticity, storm resilience
+# Review fixes: factory lifecycle, memory hermeticity, storm resilience
 # ---------------------------------------------------------------------------
 
 
-async def test_hermetic_factory_culture_and_memory_rebound():
-    # The factory branch gets the same override set as the live branch: culture
-    # rebound to a read-only copy so global reads survive, memory rebound to the
-    # attempt's fresh db so per-user reads are empty.
+async def test_hermetic_factory_memory_rebound():
+    # The factory branch gets the same override set as the live branch: memory
+    # rebound to the attempt's fresh db so per-user reads are empty.
     recorder = Recorder()
-    culture_manager = StubManager(db=object())
     memory_manager = StubManager()
-    env = _stub_env(recorder, culture_manager=culture_manager, memory_manager=memory_manager)
+    env = _stub_env(recorder, memory_manager=memory_manager)
 
     result = await arun_rollouts(env, k=2, concurrency=2)
 
     assert result.pass_rate == 1.0
     assert len(recorder.snapshots) == 2  # non-vacuous: the old assertions passed on zero snapshots
     for snapshot in recorder.snapshots:
-        assert snapshot["culture_manager"] is not None
-        assert snapshot["culture_manager"] is not culture_manager
-        assert snapshot["culture_manager"].db is culture_manager.db
         assert snapshot["memory_manager"] is not None
         assert snapshot["memory_manager"] is not memory_manager
         assert snapshot["memory_manager"].db is snapshot["db"]
-        assert snapshot["update_cultural_knowledge"] is False
-        assert snapshot["enable_agentic_culture"] is False
 
 
 async def test_factory_preflight_error_names_the_factory():
@@ -1111,7 +1080,6 @@ async def test_error_storm_detected_by_error_type_on_real_agent():
 
 async def test_hermetic_real_agent_full_override_set(tmp_path):
     from agno.compression.manager import CompressionManager
-    from agno.culture.manager import CultureManager
     from agno.session import SessionSummaryManager
     from agno.skills.agent_skills import Skills
 
@@ -1129,7 +1097,6 @@ async def test_hermetic_real_agent_full_override_set(tmp_path):
     reasoning_db = InMemoryDb()
     summary_manager = SessionSummaryManager()
     compression_manager = CompressionManager()
-    culture_manager = CultureManager(db=InMemoryDb())
     skills = Skills(loaders=[])
     save_path = tmp_path / "response.txt"
     caller = Agent(
@@ -1140,7 +1107,6 @@ async def test_hermetic_real_agent_full_override_set(tmp_path):
         fallback_models=[fallback_model],
         session_summary_manager=summary_manager,
         compression_manager=compression_manager,
-        culture_manager=culture_manager,
         skills=skills,
         reasoning_agent=Agent(model=sub_model, db=reasoning_db, telemetry=False),
         save_response_to_file=str(save_path),
@@ -1176,12 +1142,9 @@ async def test_hermetic_real_agent_full_override_set(tmp_path):
         # read flag unresolved -- exactly what a fresh production run would see.
         assert attempt_agent.add_memories_to_context is None
         assert attempt_agent.add_session_summary_to_context is True
-        assert attempt_agent.add_culture_to_context is True
         assert attempt_agent.compression_manager is not compression_manager
         assert attempt_agent.compression_manager.stats == {}
         assert attempt_agent.compression_manager.stats is not compression_manager.stats
-        assert attempt_agent.culture_manager is not culture_manager
-        assert attempt_agent.culture_manager.db is culture_manager.db
         assert attempt_agent.reasoning_agent is not caller.reasoning_agent
         assert isinstance(attempt_agent.reasoning_agent.db, InMemoryDb)
         assert attempt_agent.reasoning_agent.db is not reasoning_db
@@ -1201,30 +1164,6 @@ async def test_hermetic_real_agent_full_override_set(tmp_path):
     # else: no summary or memory call rode along. (Reasoning is not enabled on
     # this caller, so the reasoning slots are exercised as bindings only.)
     assert [call[0] for call in calls] == ["fake-main", "fake-main"]
-
-
-async def test_culture_reads_survive_hermetic_attempts():
-    # Regression pin: nulling the culture manager silently swapped the caller's
-    # culture for the empty-culture boilerplate inside every attempt.
-    from agno.culture.manager import CultureManager
-    from agno.db.schemas.culture import CulturalKnowledge
-
-    seen_messages = []
-    recording_model = RecordingFakeModel("culture", seen_messages=seen_messages)
-    caller_db = InMemoryDb()
-    CultureManager(db=caller_db).add_cultural_knowledge(
-        CulturalKnowledge(name="Golden Rule", content="CULTURE-MARKER-XYZZY")
-    )
-    caller = Agent(model=recording_model, db=caller_db, add_culture_to_context=True, telemetry=False)
-
-    result = await arun_rollouts(_real_env(caller), k=1, concurrency=1)
-
-    assert result.pass_rate == 1.0
-    prompt_text = "\n".join(
-        str(message.content) for messages in seen_messages for message in messages if message.content
-    )
-    assert "CULTURE-MARKER-XYZZY" in prompt_text
-    assert "no cultural knowledge is currently available" not in prompt_text
 
 
 class FakeLearnedKnowledge:
@@ -1255,8 +1194,8 @@ class FakeLearnedKnowledge:
 async def test_learning_reads_survive_hermetic_attempts():
     # Regression pin: nulling agent.learning severed global learned-knowledge READS
     # -- the <learning_system> block, the search_learnings tool, the store read
-    # path -- when only the writes must go. Learned knowledge is global state like
-    # culture, so attempts read it exactly as production does.
+    # path -- when only the writes must go. Learned knowledge is global state,
+    # so attempts read it exactly as production does.
     from agno.learn import LearningMachine
     from agno.learn.config import LearnedKnowledgeConfig
 
@@ -1616,36 +1555,6 @@ async def test_read_parity_memory():
     assert attempt_prompt == production_prompt
 
 
-async def test_read_parity_culture():
-    from agno.culture.manager import CultureManager
-    from agno.db.schemas.culture import CulturalKnowledge
-
-    world_db = InMemoryDb()
-    CultureManager(db=world_db).add_cultural_knowledge(
-        CulturalKnowledge(name="Golden Rule", content="CULTURE-MARKER-XYZZY")
-    )
-
-    def build(model):
-        return Agent(model=model, db=world_db, add_culture_to_context=True, telemetry=False)
-
-    attempt_prompt, production_prompt = await _parity_prompts(build)
-    assert "CULTURE-MARKER-XYZZY" in attempt_prompt  # global culture reads survive
-    assert attempt_prompt == production_prompt
-
-
-async def test_read_parity_culture_write_flag_only_no_db():
-    # The gate's path 5a: a caller with only a culture WRITE flag and no db.
-    # Production resolves add_culture_to_context=True and renders the culture
-    # empty state; severing the write flag before resolution used to lose the
-    # whole block. Resolution now runs first, against the attempt's fresh db.
-    def build(model):
-        return Agent(model=model, update_cultural_knowledge=True, telemetry=False)
-
-    attempt_prompt, production_prompt = await _parity_prompts(build)
-    assert "no cultural knowledge is currently available" in attempt_prompt
-    assert attempt_prompt == production_prompt
-
-
 async def test_read_parity_learning():
     from agno.learn import LearningMachine
     from agno.learn.config import LearnedKnowledgeConfig
@@ -1806,8 +1715,6 @@ async def test_write_isolation_deep_freeze(tmp_path):
     # warm caches, save file. Snapshot the caller's reachable graph before and
     # after; zero caller-side mutations, no save file, no cache replay.
     from agno.compression.manager import CompressionManager
-    from agno.culture.manager import CultureManager
-    from agno.db.schemas.culture import CulturalKnowledge
     from agno.learn import LearningMachine
     from agno.learn.config import LearnedKnowledgeConfig, LearningMode
     from agno.memory import MemoryManager
@@ -1824,10 +1731,6 @@ async def test_write_isolation_deep_freeze(tmp_path):
     sub_model.cache_response = True
 
     world_db = InMemoryDb()
-    culture_db = InMemoryDb()
-    CultureManager(db=culture_db).add_cultural_knowledge(
-        CulturalKnowledge(name="Golden Rule", content="CULTURE-MARKER-XYZZY")
-    )
     learned_store = FakeLearnedKnowledge()
     save_path = tmp_path / "response.txt"
 
@@ -1838,7 +1741,6 @@ async def test_write_isolation_deep_freeze(tmp_path):
         fallback_models=[fallback_model],
         memory_manager=MemoryManager(),
         session_summary_manager=SessionSummaryManager(),
-        culture_manager=CultureManager(db=culture_db),
         compression_manager=CompressionManager(),
         learning=LearningMachine(
             learned_knowledge=LearnedKnowledgeConfig(knowledge=learned_store, mode=LearningMode.ALWAYS)
@@ -1847,8 +1749,6 @@ async def test_write_isolation_deep_freeze(tmp_path):
         enable_agentic_memory=True,
         enable_session_summaries=True,
         update_knowledge=True,
-        update_cultural_knowledge=True,
-        enable_agentic_culture=True,
         reasoning_agent=Agent(model=sub_model, db=InMemoryDb(), telemetry=False),
         save_response_to_file=str(save_path),
         skills=StubSkills(),

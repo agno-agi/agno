@@ -24,7 +24,7 @@ download_file(
 )
 
 agent = Agent(
-    model=Gemini(id="gemini-3.5-flash"),
+    model=Gemini(id="gemini-3.7-flash"),
     markdown=True,
     add_history_to_context=True,
 )

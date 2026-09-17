@@ -273,6 +273,13 @@ class GoogleToolkit(Toolkit):
                 return creds
 
         # 6. Interactive OAuth (local only) — uses AGGREGATED scopes
+        # Raise (never return None): the @authenticate decorator only converts
+        # exceptions into its auth-failed JSON.
+        if not self._auth.interactive:
+            raise RuntimeError(
+                "Google credentials require interactive OAuth but interactive login is disabled "
+                "(interactive=False). Re-authenticate offline or use the GoogleAuth toolkit to mint a consent URL."
+            )
         client_id = self._auth.client_id
         client_secret = self._auth.client_secret
 

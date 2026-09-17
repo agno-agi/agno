@@ -16,7 +16,6 @@ class ModelType(str, Enum):
     MEMORY_MODEL = "memory_model"
     REASONING_MODEL = "reasoning_model"
     SESSION_SUMMARY_MODEL = "session_summary_model"
-    CULTURE_MODEL = "culture_model"
     LEARNING_MODEL = "learning_model"
     COMPRESSION_MODEL = "compression_model"
     FOLLOWUP_MODEL = "followup_model"
@@ -440,10 +439,6 @@ class RunMetrics(BaseMetrics):
             self.time_to_first_token = self.timer.elapsed
 
 
-# Backward-compat alias
-Metrics = RunMetrics
-
-
 # ---------------------------------------------------------------------------
 # Session metrics – aggregated across runs
 # ---------------------------------------------------------------------------
@@ -777,7 +772,7 @@ def merge_background_metrics(
 ) -> None:
     """Merge background task metrics into run_metrics on the main thread.
 
-    Each background task (memory, culture, learning) accumulates metrics into its
+    Each background task (memory, learning) accumulates metrics into its
     own isolated RunMetrics collector. After all tasks complete, this function
     merges those collectors into the real run_metrics — avoiding concurrent
     mutation of shared state.
