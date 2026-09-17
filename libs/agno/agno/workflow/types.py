@@ -389,12 +389,16 @@ class StepInput:
             # Return dict with {step_name: content} for each sub-step
             parallel_content = {}
             for sub_step in step_output.steps:
-                if sub_step.step_name and sub_step.content:
+                if sub_step.step_name and sub_step.content is not None and str(sub_step.content).strip():
                     # Check if this sub-step has its own nested steps (like Condition -> Research Step)
                     if sub_step.steps and len(sub_step.steps) > 0:
                         # This is a composite step (like Condition) - get content from its nested steps
                         for nested_step in sub_step.steps:
-                            if nested_step.step_name and nested_step.content:
+                            if (
+                                nested_step.step_name
+                                and nested_step.content is not None
+                                and str(nested_step.content).strip()
+                            ):
                                 parallel_content[nested_step.step_name] = str(nested_step.content)
                     else:
                         # This is a direct step - use its content
@@ -425,7 +429,7 @@ class StepInput:
 
         content_parts = []
         for step_name, output in self.previous_step_outputs.items():
-            if output.content:
+            if output.content is not None and str(output.content).strip():
                 content_parts.append(f"=== {step_name} ===\n{output.content}")
 
         return "\n\n".join(content_parts)
