@@ -37,7 +37,7 @@ Example::
 
 import asyncio
 import time
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union, Set
 
 from agno.os.authz._db import NO_DB_MESSAGE, is_async_authz_db, resolve_authz_db, supports_authz
 from agno.os.authz.audit import DEFAULT_AUDIT_SORT_FIELD, DEFAULT_AUDIT_SORT_ORDER
@@ -130,6 +130,20 @@ class RoleStore:
             import logging
 
             logging.getLogger("agno.authz.engine").setLevel(logging.INFO)
+
+    def explicit_denials(
+        self,
+        resource_type: str,
+        action: Optional[str],
+        *,
+        subject: Optional[str] = None,
+        roles: Optional[List[str]] = None,
+    ) -> Set[str]:
+        """Ids of ``resource_type`` the identity is explicitly DENIED for ``action`` (``{"*"}`` for
+        a collection-wide deny). Deny-overrides means such a row refuses a request even when a
+        wider allow would grant it; a gate explaining a denial uses this to name the deny rather
+        than report a grant as missing."""
+        return self._engine.denied_resource_ids(resource_type, action, subject=subject, roles=roles)
 
     @property
     def roles_claim(self) -> Optional[str]:
@@ -828,6 +842,17 @@ class RoleStore:
     async def aroles_of_many(self, subjects: List[str]) -> Dict[str, List[str]]:
         """Async twin of :meth:`roles_of_many`."""
         return await self._engine.aroles_of_many(subjects)
+
+    async def aexplicit_denials(
+        self,
+        resource_type: str,
+        action: Optional[str],
+        *,
+        subject: Optional[str] = None,
+        roles: Optional[List[str]] = None,
+    ) -> Set[str]:
+        """Async twin of :meth:`explicit_denials`."""
+        return await self._engine.adenied_resource_ids(resource_type, action, subject=subject, roles=roles)
 
     async def aadmin_subjects(self) -> List[str]:
         """Async twin of :meth:`admin_subjects`."""

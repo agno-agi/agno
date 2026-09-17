@@ -92,7 +92,7 @@ def test_denial_under_managed_roles_names_the_held_role(tmp_path):
         r = client.get("/config", headers=_token("vic", []))
     assert r.status_code == 403
     line = [m for m in messages if "/config" in m][-1]
-    assert "holds role(s) ['viewer']" in line and "do not grant ['config:read']" in line
+    assert "holds role(s) ['viewer']" in line and "do not authorize GET /config" in line
     assert "User has" not in line
 
 
@@ -130,5 +130,24 @@ def test_denial_under_roles_claim_names_the_token_carried_role(tmp_path):
         r = client.get("/config", headers=headers)
     assert r.status_code == 403
     line = [m for m in messages if "/config" in m][-1]
-    assert "token carries role(s) ['viewer']" in line and "do not grant ['config:read']" in line
+    assert "token carries role(s) ['viewer']" in line and "do not authorize GET /config" in line
     assert "holds no role" not in line and "User has" not in line
+
+
+def test_denial_by_an_explicit_deny_names_the_deny_not_a_missing_grant(tmp_path):
+    """Wildcard allow plus a resource-specific deny: the role DOES grant agents:read, so 'does not
+    grant' would send an operator to add a grant that exists. The line must name the deny."""
+    db = SqliteDb(db_file=str(tmp_path / "deny.db"))
+    authz = Authorization(db=db, verification_keys=[SECRET], algorithm="HS256", verify_audience=True, audience=OS_ID)
+    authz.define_role("reader", ["agents:*:read", ("agents:secret:read", "deny")])
+    authz.assign("rae", "reader")
+    agents = [Agent(id="pub", name="P", db=InMemoryDb()), Agent(id="secret", name="S", db=InMemoryDb())]
+    client = TestClient(AgentOS(id=OS_ID, db=db, agents=agents, authorization=authz).get_app())
+    with _warnings() as messages:
+        assert client.get("/agents/pub", headers=_token("rae", [])).status_code == 200
+        r = client.get("/agents/secret", headers=_token("rae", []))
+    assert r.status_code == 403
+    line = [m for m in messages if "/agents/secret" in m][-1]
+    assert "do not grant" not in line
+    assert "explicit deny on 'agents/secret'" in line
+    assert "holds role(s) ['reader']" in line
