@@ -628,38 +628,20 @@ _COMMANDS: dict[str, Callable[[list[str], Mapping[str, str]], str]] = {
 EMPTY_INDEX = "The page index is empty."
 
 
-# Roots each browsing command reads when no path is given, and the leading tokens
-# that are consumed before one: a pattern for rg/grep, a value for tree's -L.
-_BROWSE_ROOTS = {"ls": 0, "tree": 0, "find": 0, "rg": 1, "grep": 1}
-
-
 def _missing_root(exc: "CommandError") -> bool:
-    """True when the failure is only that the corpus root holds no pages."""
-    return str(exc).rstrip().endswith(("no such directory", "no such file or directory"))
+    """True when a command failed only because the corpus root holds no pages.
 
-
-def _browses_corpus(argv: list[str]) -> bool:
-    """True when a browsing command targets the whole corpus rather than a named path.
-
-    Accepted flags are ignored; the handler already validated them by the time this
-    runs, so only the remaining path operands decide whether a root was named.
+    Each handler resolves its own root and names it in the message, so this reads
+    the reported subject instead of re-parsing flags the handler already accepted.
     """
-    skip = _BROWSE_ROOTS.get(argv[0])
-    if skip is None:
-        return False
-    operands, pending = [], skip
-    tokens = iter(argv[1:])
-    for token in tokens:
-        if token.startswith("-"):
-            # A flag that takes a value consumes the next token (tree -L 2).
-            if token in ("-L", "-n", "-c", "-name", "--name"):
-                next(tokens, None)
-            continue
-        if pending:
-            pending -= 1
-            continue
-        operands.append(token)
-    return not any(token.rstrip("/") for token in operands)
+    message = str(exc).rstrip()
+    for suffix in (": no such directory", ": no such file or directory"):
+        if message.endswith(suffix):
+            # The path is the last colon-separated field before the suffix, and may
+            # carry a "find: " style command prefix.
+            subject = message[: -len(suffix)].rsplit(": ", 1)[-1]
+            return subject.rstrip("/") == ""
+    return False
 
 
 def _execute_command(command: str, files: Mapping[str, str]) -> str:
@@ -687,7 +669,7 @@ def _execute_command(command: str, files: Mapping[str, str]) -> str:
     except CommandError as exc:
         # An empty index has no paths at all, so browsing one reports that instead of
         # a missing directory. Named paths and invalid usage keep their own error.
-        if empty and _missing_root(exc) and _browses_corpus(argv):
+        if empty and _missing_root(exc):
             return EMPTY_INDEX
         _error(files, exc.code)
         return str(exc)
