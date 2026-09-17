@@ -1103,6 +1103,17 @@ class AuthMiddleware(BaseHTTPMiddleware):
                     held_roles = list(role_store.roles_of(subject))
                 except Exception:
                     held_roles = None  # a store read failure must not turn a denial into a 500
+            # A directory user with no assignment is evaluated through the role flagged default
+            # (decision time only, never written), so that role, not "no role", decided.
+            via_default = False
+            user_store = getattr(request.app.state, "user_store", None)
+            if held_roles == [] and role_store is not None and user_store is not None and subject:
+                try:
+                    default_role = role_store.default_role()
+                    if default_role and user_store.get(subject) is not None:
+                        held_roles, via_default = [default_role], True
+                except Exception:
+                    via_default = False
             explicit_deny: Optional[str] = None
             resource_type, resource_id = get_resource_context_from_path(path)
             # Only when the route names ONE action: with several (a custom mapping), the failed
@@ -1129,7 +1140,15 @@ class AuthMiddleware(BaseHTTPMiddleware):
                     explicit_deny = None
             log_warning(
                 self._denial_message(
-                    request, method, path, result.required_scopes, scopes, held_roles, roles_from_token, explicit_deny
+                    request,
+                    method,
+                    path,
+                    result.required_scopes,
+                    scopes,
+                    held_roles,
+                    roles_from_token,
+                    explicit_deny,
+                    via_default,
                 )
             )
             return self._create_error_response(
@@ -1170,6 +1189,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
         held_roles: Optional[List[str]],
         roles_from_token: bool = False,
         explicit_deny: Optional[str] = None,
+        via_default: bool = False,
     ) -> str:
         """The log line for a route-gate denial, worded for the plane that actually decided.
 
@@ -1182,7 +1202,8 @@ class AuthMiddleware(BaseHTTPMiddleware):
         subject's stored assignments; None when no role store is configured. ``explicit_deny``
         is the resource an explicit deny row refused, when the engine reports one: with
         deny-overrides the role may well grant the route's scope, so "does not grant" would send
-        an operator to add a grant that already exists.
+        an operator to add a grant that already exists. ``via_default`` marks ``held_roles`` as the
+        role flagged default, applied at decision time to a directory user with no assignment.
         """
         from agno.os.auth import caller_scopes_are_authoritative
 
@@ -1192,6 +1213,11 @@ class AuthMiddleware(BaseHTTPMiddleware):
         line = f"Denied {method} {path} for {subject!r}: the configured authorization provider refused it."
         if held_roles and roles_from_token:
             line += f" The token carries role(s) {held_roles}, which do not authorize {method} {path}."
+        elif held_roles and via_default:
+            line += (
+                f" The subject holds no assigned role; the default role {held_roles} applied and does not "
+                f"authorize {method} {path}."
+            )
         elif held_roles:
             line += f" The subject holds role(s) {held_roles}, which do not authorize {method} {path}."
         elif held_roles is not None:
@@ -1250,6 +1276,17 @@ class AuthMiddleware(BaseHTTPMiddleware):
                     held_roles = list(await role_store.aroles_of(subject))
                 except Exception:
                     held_roles = None  # a store read failure must not turn a denial into a 500
+            # A directory user with no assignment is evaluated through the role flagged default
+            # (decision time only, never written), so that role, not "no role", decided.
+            via_default = False
+            user_store = getattr(request.app.state, "user_store", None)
+            if held_roles == [] and role_store is not None and user_store is not None and subject:
+                try:
+                    default_role = await role_store.adefault_role()
+                    if default_role and await user_store.aget(subject) is not None:
+                        held_roles, via_default = [default_role], True
+                except Exception:
+                    via_default = False
             explicit_deny: Optional[str] = None
             resource_type, resource_id = get_resource_context_from_path(path)
             # Only when the route names ONE action: with several (a custom mapping), the failed
@@ -1276,7 +1313,15 @@ class AuthMiddleware(BaseHTTPMiddleware):
                     explicit_deny = None
             log_warning(
                 self._denial_message(
-                    request, method, path, result.required_scopes, scopes, held_roles, roles_from_token, explicit_deny
+                    request,
+                    method,
+                    path,
+                    result.required_scopes,
+                    scopes,
+                    held_roles,
+                    roles_from_token,
+                    explicit_deny,
+                    via_default,
                 )
             )
             return self._create_error_response(
