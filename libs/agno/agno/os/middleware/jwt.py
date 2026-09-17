@@ -1105,11 +1105,21 @@ class AuthMiddleware(BaseHTTPMiddleware):
                     held_roles = None  # a store read failure must not turn a denial into a 500
             explicit_deny: Optional[str] = None
             resource_type, resource_id = get_resource_context_from_path(path)
-            if role_store is not None and resource_type and resource_id and hasattr(role_store, "explicit_denials"):
+            # Only when the route names ONE action: with several (a custom mapping), the failed
+            # action is unknown and an action-less lookup would surface a deny on any action --
+            # naming, say, a write deny for a request that failed on a missing run grant.
+            route_action = _route_action(result.required_scopes)
+            if (
+                role_store is not None
+                and resource_type
+                and resource_id
+                and route_action is not None
+                and hasattr(role_store, "explicit_denials")
+            ):
                 try:
                     denied = role_store.explicit_denials(
                         resource_type,
-                        _route_action(result.required_scopes),
+                        route_action,
                         subject=subject,
                         roles=held_roles if roles_from_token else None,
                     )
@@ -1242,11 +1252,21 @@ class AuthMiddleware(BaseHTTPMiddleware):
                     held_roles = None  # a store read failure must not turn a denial into a 500
             explicit_deny: Optional[str] = None
             resource_type, resource_id = get_resource_context_from_path(path)
-            if role_store is not None and resource_type and resource_id and hasattr(role_store, "explicit_denials"):
+            # Only when the route names ONE action: with several (a custom mapping), the failed
+            # action is unknown and an action-less lookup would surface a deny on any action --
+            # naming, say, a write deny for a request that failed on a missing run grant.
+            route_action = _route_action(result.required_scopes)
+            if (
+                role_store is not None
+                and resource_type
+                and resource_id
+                and route_action is not None
+                and hasattr(role_store, "explicit_denials")
+            ):
                 try:
                     denied = await role_store.aexplicit_denials(
                         resource_type,
-                        _route_action(result.required_scopes),
+                        route_action,
                         subject=subject,
                         roles=held_roles if roles_from_token else None,
                     )
