@@ -342,6 +342,11 @@ def _make_require_admin(role_store: "Optional[RoleStore]" = None, *, auth_enable
             return getattr(request.state, "user_id", None) or ""
         if not getattr(request.state, "authenticated", False):
             raise HTTPException(status_code=401, detail="Not authenticated")
+        if getattr(request.state, "security_key_verified", False):
+            # Security-key mode: the key is the OS's unscoped root and every other route admits
+            # it, so the directory admin API does too. Nothing else can administer a directory on
+            # such a deployment. There is no subject to record as the actor.
+            return ""
         principal_id = getattr(request.state, "user_id", None)
         claims = getattr(request.state, "claims", {}) or {}
         token_scopes = getattr(request.state, "scopes", []) or []
