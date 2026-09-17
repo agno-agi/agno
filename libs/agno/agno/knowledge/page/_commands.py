@@ -641,18 +641,19 @@ def _execute_command(command: str, files: Mapping[str, str]) -> str:
     if handler is None:
         _error(files)
         return f"unsupported command: {argv[0]!r}\n\n{USAGE}"
-    # Reported only for a valid command; malformed input above stays an error.
-    if not files:
-        return "The page index is empty."
     try:
         output = handler(argv[1:], files)
     except CommandError as exc:
+        # An empty index has no paths, so a root listing reports that rather than a
+        # missing directory. Every other failure keeps its typed status.
+        if not files and exc.code == "page_not_found" and _lists_root(argv):
+            return EMPTY_INDEX
         _error(files, exc.code)
         return str(exc)
     except (ValueError, RecursionError, OverflowError, MemoryError, TimeoutError) as exc:
         _error(files, "command_failed")
         return f"{argv[0]}: could not run this command ({exc.__class__.__name__}: {exc})\n\n{USAGE}"
-    return output if output else "(no output)"
+    return output if output else EMPTY_INDEX if not files else "(no output)"
 
 
 def run_command_result(command: str, files: Mapping[str, str]):
