@@ -480,6 +480,7 @@ class AgentOS:
         # pipeline below already understands, and record what it hands over: its role store
         # (provisioning + the /authz API), the provider it composed, the pinned issuer, and its
         # audit sink. It adopts this OS db so role definitions persist alongside agent data.
+        self._authz_object: Optional["Authorization"] = None
         self._authz_role_store: Any = None
         self._authz_provider: Any = None
         self._authz_issuer: Optional[str] = None
@@ -516,6 +517,9 @@ class AgentOS:
             authorization._bind(self.db)
             authorization_config = authorization.authorization_config()
             audit = authorization.audit_sink
+            # Keep the object: get_app() re-reads its store and provider right before serving, so
+            # roles defined between construction and get_app() are enforced, then freezes it.
+            self._authz_object = authorization
             self._authz_role_store = authorization.role_store
             self._authz_provider = authorization.provider
             self._authz_issuer = authorization.issuer
@@ -1403,6 +1407,7 @@ class AgentOS:
             if not isinstance(self.public, PublicSurface):
                 raise ValueError("AgentOS.public must be a PublicSurface")
             self.public._bind(self)
+        self._refresh_authorization()
         # Pick up MCP tools added to the registry after construction, before the
         # lifespan that connects them is assembled below
         collect_mcp_tools_from_registry(self.registry, self.mcp_tools)
@@ -2036,6 +2041,22 @@ class AgentOS:
                     )
                 )
         return routers
+
+    def _refresh_authorization(self) -> None:
+        """Re-read the Authorization object right before the app is built, then freeze it.
+
+        The object stays mutable after construction: define_role / seed / assign apply to the
+        store immediately. Reading it once in __init__ meant roles defined after AgentOS(...)
+        landed in the store but were never enforced -- no /authz mount, token-scope RBAC still
+        running, no warning. Everything defined before get_app() now counts; anything after it
+        is refused by the object, since the routes and the provider are already wired."""
+        authz = self._authz_object
+        if authz is None:
+            return
+        self._authz_role_store = authz.role_store
+        self._authz_provider = authz.provider
+        self._authz_issuer = authz.issuer
+        authz._freeze()
 
     def _auth_configured(self) -> bool:
         """Whether an auth middleware runs on this OS: ``authorization`` is on, a JWT key comes from

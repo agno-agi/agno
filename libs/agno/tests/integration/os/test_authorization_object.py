@@ -778,3 +778,41 @@ def test_assign_is_bootstrap_safe_and_buffers(tmp_path):
     a1.role_store.assign("bob", "runner")  # an admin promotes bob at runtime
     a2 = boot()  # a restart re-runs the identical authz.assign("bob", "viewer")
     assert a2.role_store.roles_of("bob") == ["runner"]  # create-if-absent: the promotion is NOT clobbered
+
+
+def test_roles_defined_after_agentos_but_before_get_app_are_enforced(tmp_path):
+    """AgentOS(...) used to snapshot the object's store and provider at construction, so roles
+    defined afterwards landed in the store but were never enforced: no /authz mount, token-scope
+    RBAC still running, no warning. get_app() now re-reads the object, so everything defined before
+    the app is built counts."""
+    db = SqliteDb(db_file=str(tmp_path / "late.db"))
+    authz = Authorization(verification_keys=[SECRET], algorithm="HS256", verify_audience=True, audience=OS_ID)
+    os_ = AgentOS(id=OS_ID, db=db, agents=_agents(), authorization=authz)  # constructed first
+    authz.define_role("admin", ["agent_os:admin"])
+    authz.define_role("viewer", ["agents:*:read"])
+    authz.seed(admin="alice")
+    authz.assign("bob", "viewer")
+    client = TestClient(os_.get_app())
+
+    assert client.get("/authz/roles", headers=_auth("alice")).status_code == 200  # mounted
+    assert client.get("/agents/research", headers=_auth("bob")).status_code == 200  # role enforced
+    assert (
+        client.get("/agents/research", headers=_auth("x", scopes=["agents:*:read"])).status_code == 403
+    )  # scopes not authoritative
+
+
+def test_authoring_after_get_app_is_refused(tmp_path):
+    """Once the app is built the routes and provider are wired, so a later define_role / seed /
+    assign would write to the store without being enforced. The object refuses it plainly instead."""
+    db = SqliteDb(db_file=str(tmp_path / "frozen.db"))
+    authz = Authorization(db=db, verification_keys=[SECRET], algorithm="HS256", verify_audience=True, audience=OS_ID)
+    authz.define_role("admin", ["agent_os:admin"])
+    AgentOS(id=OS_ID, db=db, agents=_agents(), authorization=authz).get_app()
+    for call in (
+        lambda: authz.define_role("viewer", ["agents:*:read"]),
+        lambda: authz.seed(admin="alice"),
+        lambda: authz.assign("bob", "admin"),
+    ):
+        with pytest.raises(ValueError, match="after AgentOS.get_app"):
+            call()
+    authz.role_store.set_role_scopes("viewer", ["agents:*:read"])  # the runtime path is still open
