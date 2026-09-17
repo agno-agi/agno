@@ -1095,9 +1095,15 @@ class AuthMiddleware(BaseHTTPMiddleware):
         )
 
         if not result.allowed:
-            log_warning(
-                f"Insufficient scopes for {method} {path}. Required: {result.required_scopes}, User has: {scopes}"
-            )
+            held_roles: Optional[List[str]] = None
+            role_store = getattr(request.app.state, "role_store", None)
+            subject = getattr(request.state, "user_id", None)
+            if role_store is not None and subject:
+                try:
+                    held_roles = list(role_store.roles_of(subject))
+                except Exception:
+                    held_roles = None  # a store read failure must not turn a denial into a 500
+            log_warning(self._denial_message(request, method, path, result.required_scopes, scopes, held_roles))
             return self._create_error_response(
                 403,
                 "Insufficient permissions",
@@ -1111,6 +1117,41 @@ class AuthMiddleware(BaseHTTPMiddleware):
         else:
             log_debug(f"No scopes required for {method} {path}")
         return None
+
+    @staticmethod
+    def _denial_message(
+        request: Request,
+        method: str,
+        path: str,
+        required_scopes: List[str],
+        scopes: List[str],
+        held_roles: Optional[List[str]],
+    ) -> str:
+        """The log line for a route-gate denial, worded for the plane that actually decided.
+
+        When the caller's token scopes are what the gate compared, "required vs held" is the
+        truth. Under a managed-roles or ReBAC provider the token's scopes were never consulted,
+        so listing them as what the user "has" reads as a contradiction (the required scope is
+        right there in the list) and hides the real reason: the provider denied the subject.
+        ``held_roles`` is the subject's stored roles when a role store is configured, else None.
+        """
+        from agno.os.auth import caller_scopes_are_authoritative
+
+        if caller_scopes_are_authoritative(request):
+            return f"Insufficient scopes for {method} {path}. Required: {required_scopes}, User has: {scopes}"
+        subject = getattr(request.state, "user_id", None)
+        line = f"Denied {method} {path} for {subject!r}: the configured authorization provider refused it."
+        if held_roles:
+            line += f" The subject holds role(s) {held_roles}, which do not grant {required_scopes}."
+        elif held_roles is not None:
+            line += " The subject holds no role in the role store."
+        if scopes:
+            on_token = [sc for sc in scopes if sc in required_scopes] or scopes
+            line += (
+                " Token scopes are not trusted under this provider (Authorization(trust_token_scopes=False)), "
+                f"so {on_token} on the token does not apply."
+            )
+        return line
 
     async def _acheck_scopes(
         self,
@@ -1148,9 +1189,15 @@ class AuthMiddleware(BaseHTTPMiddleware):
         )
 
         if not result.allowed:
-            log_warning(
-                f"Insufficient scopes for {method} {path}. Required: {result.required_scopes}, User has: {scopes}"
-            )
+            held_roles: Optional[List[str]] = None
+            role_store = getattr(request.app.state, "role_store", None)
+            subject = getattr(request.state, "user_id", None)
+            if role_store is not None and subject:
+                try:
+                    held_roles = list(await role_store.aroles_of(subject))
+                except Exception:
+                    held_roles = None  # a store read failure must not turn a denial into a 500
+            log_warning(self._denial_message(request, method, path, result.required_scopes, scopes, held_roles))
             return self._create_error_response(
                 403,
                 "Insufficient permissions",
