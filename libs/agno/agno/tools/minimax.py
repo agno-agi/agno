@@ -80,7 +80,7 @@ class MiniMaxTools(Toolkit):
 
         Args:
             prompt: Text description of the video to generate.
-            resolution: Output resolution. MiniMax H3 currently supports 2K.
+            resolution: Output resolution. MiniMax H3 supports 768P or 2K.
             duration: Video duration in seconds, from 4 through 15.
             ratio: Output aspect ratio, such as 16:9 or 9:16.
         """
@@ -162,7 +162,14 @@ class MiniMaxTools(Toolkit):
         duration: int = 5,
         ratio: str = "16:9",
     ) -> ToolResult:
-        """Generate a video from a text prompt asynchronously."""
+        """Generate a video from a text prompt.
+
+        Args:
+            prompt: Text description of the video to generate.
+            resolution: Output resolution. MiniMax H3 supports 768P or 2K.
+            duration: Video duration in seconds, from 4 through 15.
+            ratio: Output aspect ratio, such as 16:9 or 9:16.
+        """
         if not self.api_key:
             return ToolResult(content="Please set the MINIMAX_API_KEY")
         if not prompt:
