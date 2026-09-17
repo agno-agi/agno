@@ -151,3 +151,43 @@ def test_denial_by_an_explicit_deny_names_the_deny_not_a_missing_grant(tmp_path)
     assert "do not grant" not in line
     assert "explicit deny on 'agents/secret'" in line
     assert "holds role(s) ['reader']" in line
+
+
+async def test_ambiguous_route_action_does_not_report_an_unrelated_deny(tmp_path):
+    """A custom mapping can require two actions on one resource route, and then the route has no
+    single action to look denials up for. Querying with no action filter would surface a deny on
+    ANY action; here the request fails for a missing run grant while the only deny is on write,
+    so the line must not claim that deny applies."""
+    from starlette.requests import Request
+
+    from agno.os.middleware.jwt import JWTMiddleware
+
+    db = SqliteDb(db_file=str(tmp_path / "ambig.db"))
+    authz = Authorization(db=db, verification_keys=[SECRET], algorithm="HS256", verify_audience=True, audience=OS_ID)
+    authz.define_role("reader", ["agents:*:read", ("agents:secret:write", "deny")])
+    authz.assign("rae", "reader")
+    agents = [Agent(id="secret", name="S", db=InMemoryDb())]
+    app = AgentOS(id=OS_ID, db=db, agents=agents, authorization=authz).get_app()
+    TestClient(app).get("/health")  # materialise the routes and app.state the gate reads
+
+    mw = JWTMiddleware(app=None, verification_keys=[SECRET], algorithm="HS256")
+    scope = {"type": "http", "method": "GET", "path": "/agents/secret", "headers": [], "query_string": b"", "app": app}
+    request = Request(scope)
+    request.state.user_id = "rae"
+    request.state.claims = {"sub": "rae"}
+    request.state.scopes = []
+    request.state.authorization_enabled = True
+    with _warnings() as messages:
+        response = await mw._acheck_scopes(
+            request,
+            "GET",
+            "/agents/secret",
+            [],
+            None,
+            None,
+            scope_mappings={"GET /agents/*": ["agents:read", "agents:run"]},
+        )
+    assert response is not None and response.status_code == 403
+    line = [m for m in messages if "/agents/secret" in m][-1]
+    assert "explicit deny" not in line  # the write deny did not decide this request
+    assert "holds role(s) ['reader']" in line
