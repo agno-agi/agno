@@ -56,6 +56,7 @@ from agno.os.routers.database import get_database_router
 from agno.os.routers.evals import get_eval_router
 from agno.os.routers.health import get_health_router
 from agno.os.routers.home import get_home_router
+from agno.os.routers.insights import get_insights_router
 from agno.os.routers.job_queue import get_queue_router
 from agno.os.routers.knowledge import get_knowledge_router
 from agno.os.routers.learnings import get_learnings_router
@@ -665,6 +666,7 @@ class AgentOS:
                 teams=self._teams or None,  # type: ignore[arg-type]
             ),
             get_metrics_router(dbs=self.dbs),
+            get_insights_router(dbs=self.dbs, settings=self.settings),
             get_knowledge_router(knowledge_instances=self.knowledge_instances),
             get_traces_router(dbs=self.dbs),
             get_database_router(self, settings=self.settings),
@@ -1423,6 +1425,7 @@ class AgentOS:
                 teams=self._teams or None,  # type: ignore[arg-type]
             ),
             get_metrics_router(dbs=self.dbs),
+            get_insights_router(dbs=self.dbs, settings=self.settings),
             get_knowledge_router(knowledge_instances=self.knowledge_instances),
             get_traces_router(dbs=self.dbs),
             get_database_router(self, settings=self.settings),

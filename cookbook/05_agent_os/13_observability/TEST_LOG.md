@@ -86,6 +86,26 @@ one agent run, one agent session, one user, and 42 total tokens.
 
 ---
 
+### insights.py
+
+**Status:** PASS
+
+**Test mode:** LIVE
+
+**Description:** Started the checked-in insights AgentOS server on port 7777,
+ran `insights-researcher` (`gpt-5.5`) and `insights-summarizer`
+(`gpt-5.6-luna`) through `POST /agents/{agent_id}/runs`, and read
+`GET /insights/metrics?days=7`. Ran the summarizer again, called
+`POST /metrics/refresh`, and read the insights with `refresh=true`.
+
+**Result:** The first read reported 2 runs that recorded a model, one per
+model at 50.0% run share. After the second summarizer run,
+`POST /metrics/refresh` and `refresh=true` reported 3 runs, with
+`gpt-5.6-luna` at 66.7% and `gpt-5.5` at 33.3%. The response carried only
+`models`, `total_runs`, `window_days` and `computed_at`.
+
+---
+
 ## Validation
 
 - All five runnable examples completed with live observed results.

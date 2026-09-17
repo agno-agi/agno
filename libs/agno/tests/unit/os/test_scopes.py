@@ -44,6 +44,16 @@ class TestCheckRouteScopes:
         result = check_route_scopes(["metrics:read"], get_default_scope_mappings(), "GET", "/metrics/refresh/status")
         assert result.allowed is True
 
+    def test_insights_need_the_metrics_read_scope(self):
+        # Insights carry every user's run counts per model. Unmapped routes are open, so without
+        # this entry a token scoped to running one agent reads them.
+        result = check_route_scopes(
+            ["agents:agent-openai:run"], get_default_scope_mappings(), "GET", "/insights/metrics"
+        )
+        assert result.allowed is False
+        result = check_route_scopes(["metrics:read"], get_default_scope_mappings(), "GET", "/insights/metrics")
+        assert result.allowed is True
+
 
 class TestParseScope:
     def test_parses_global_scope(self):
