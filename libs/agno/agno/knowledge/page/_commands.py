@@ -628,17 +628,38 @@ _COMMANDS: dict[str, Callable[[list[str], Mapping[str, str]], str]] = {
 EMPTY_INDEX = "The page index is empty."
 
 
-# Browse the whole corpus when given no path; everything else requires an operand.
-_BROWSE_COMMANDS = ("ls", "tree", "find", "rg", "grep")
+# Roots each browsing command reads when no path is given, and the leading tokens
+# that are consumed before one: a pattern for rg/grep, a value for tree's -L.
+_BROWSE_ROOTS = {"ls": 0, "tree": 0, "find": 0, "rg": 1, "grep": 1}
 
 
-def _names_operand(argv: list[str]) -> bool:
-    """True when the command names a path or flag it must validate before answering."""
-    if argv[0] not in _BROWSE_COMMANDS or any(token.startswith("-") for token in argv[1:]):
-        return True
-    if argv[0] in ("rg", "grep"):
-        return len(argv) < 2 or any(token.rstrip("/") for token in argv[2:])
-    return any(token.rstrip("/") for token in argv[1:])
+def _missing_root(exc: "CommandError") -> bool:
+    """True when the failure is only that the corpus root holds no pages."""
+    return str(exc).rstrip().endswith(("no such directory", "no such file or directory"))
+
+
+def _browses_corpus(argv: list[str]) -> bool:
+    """True when a browsing command targets the whole corpus rather than a named path.
+
+    Accepted flags are ignored; the handler already validated them by the time this
+    runs, so only the remaining path operands decide whether a root was named.
+    """
+    skip = _BROWSE_ROOTS.get(argv[0])
+    if skip is None:
+        return False
+    operands, pending = [], skip
+    tokens = iter(argv[1:])
+    for token in tokens:
+        if token.startswith("-"):
+            # A flag that takes a value consumes the next token (tree -L 2).
+            if token in ("-L", "-n", "-c", "-name", "--name"):
+                next(tokens, None)
+            continue
+        if pending:
+            pending -= 1
+            continue
+        operands.append(token)
+    return not any(token.rstrip("/") for token in operands)
 
 
 def _execute_command(command: str, files: Mapping[str, str]) -> str:
@@ -657,21 +678,23 @@ def _execute_command(command: str, files: Mapping[str, str]) -> str:
     if handler is None:
         _error(files)
         return f"unsupported command: {argv[0]!r}\n\n{USAGE}"
-    # One cheap existence probe, as before. An empty index answers a command that
-    # browses the whole corpus directly; anything naming a path or flag still runs,
-    # so a real failure keeps its typed status instead of reading as success.
+    # One cheap existence probe, as before. The handler decides what is valid; an
+    # empty index only rewrites the presentation of a command that ran cleanly, so a
+    # real failure keeps its typed status instead of reading as success.
     empty = not files
-    if empty and not _names_operand(argv):
-        return EMPTY_INDEX
     try:
         output = handler(argv[1:], files)
     except CommandError as exc:
+        # An empty index has no paths at all, so browsing one reports that instead of
+        # a missing directory. Named paths and invalid usage keep their own error.
+        if empty and _missing_root(exc) and _browses_corpus(argv):
+            return EMPTY_INDEX
         _error(files, exc.code)
         return str(exc)
     except (ValueError, RecursionError, OverflowError, MemoryError, TimeoutError) as exc:
         _error(files, "command_failed")
         return f"{argv[0]}: could not run this command ({exc.__class__.__name__}: {exc})\n\n{USAGE}"
-    return output if output else EMPTY_INDEX if not files else "(no output)"
+    return output if output else EMPTY_INDEX if empty else "(no output)"
 
 
 def run_command_result(command: str, files: Mapping[str, str]):
