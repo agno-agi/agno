@@ -1289,9 +1289,11 @@ class OpenAIResponses(Model):
 
         Args:
             stream_event: Raw streaming event from the model provider
+            assistant_message: The assistant message to populate
+            tool_use: The current tool being built across chunks
 
         Returns:
-            ModelResponse: Parsed response delta
+            Tuple[ModelResponse, Dict[str, Any]]: The parsed model response delta and updated tool_use
         """
         model_response = ModelResponse()
 
@@ -1393,7 +1395,7 @@ class OpenAIResponses(Model):
         Parse the given OpenAI-specific usage into an Agno MessageMetrics object.
 
         Args:
-            response: The response from the provider.
+            response_usage: Usage data from OpenAI
 
         Returns:
             MessageMetrics: Parsed metrics data

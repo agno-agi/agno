@@ -527,7 +527,7 @@ class Groq(Model):
             response: Raw response chunk from Groq
 
         Returns:
-            ModelResponse: Iterator of parsed response data
+            ModelResponse: Parsed response data
         """
         model_response = ModelResponse()
 
