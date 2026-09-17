@@ -1,14 +1,17 @@
 """Tests for the insights REST API router."""
 
 import time
-from unittest.mock import MagicMock, patch
+from datetime import timedelta
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from agno.os.routers.insights.insights import get_insights_router
+from agno.os.routers.metrics.schemas import DayAggregatedMetrics, MetricsResponse
 from agno.os.settings import AgnoAPISettings
+from agno.remote.base import RemoteDb
 
 # =============================================================================
 # Fixtures
@@ -249,3 +252,47 @@ class TestScopingAndCaching:
             client.get("/insights/metrics?days=1")
 
         assert mock_db.get_metrics.call_count == calls_before
+
+
+# =============================================================================
+# GET /insights/metrics -- remote database
+# =============================================================================
+
+
+class TestRemoteDatabase:
+    @pytest.fixture
+    def remote_db(self):
+        remote_db = MagicMock(spec=RemoteDb)
+        remote_db.id = "remote-db"
+        remote_db.get_metrics = AsyncMock(
+            return_value=MetricsResponse(
+                metrics=[DayAggregatedMetrics.from_dict(_make_metric(None, date=_today(), runs=3))]
+            )
+        )
+        return remote_db
+
+    @pytest.fixture
+    def remote_client(self, remote_db, settings):
+        app = FastAPI()
+        with patch("agno.os.routers.insights.insights.get_authentication_dependency", return_value=lambda: True):
+            app.include_router(get_insights_router(dbs={"remote-db": [remote_db]}, settings=settings))
+        return TestClient(app)
+
+    def test_remote_metrics_are_read_with_the_callers_token(self, remote_client, remote_db):
+        with _scope(None):
+            usage = remote_client.get(
+                "/insights/metrics?days=7", headers={"Authorization": "Bearer caller-token"}
+            ).json()
+
+        assert usage["total_runs"] == 3
+        kwargs = remote_db.get_metrics.call_args.kwargs
+        assert kwargs["headers"] == {"Authorization": "Bearer caller-token"}
+        assert kwargs["ending_date"] - kwargs["starting_date"] == timedelta(days=6)
+
+    def test_remote_metrics_are_not_cached(self, remote_client, remote_db):
+        """The remote AgentOS scopes by the forwarded token, which the cache key cannot tell apart."""
+        with _scope(None):
+            remote_client.get("/insights/metrics", headers={"Authorization": "Bearer alice-token"})
+            remote_client.get("/insights/metrics", headers={"Authorization": "Bearer bob-token"})
+
+        assert remote_db.get_metrics.await_count == 2

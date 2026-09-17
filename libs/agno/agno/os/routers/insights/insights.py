@@ -1,8 +1,7 @@
-import logging
 import time
 from collections import OrderedDict
 from datetime import datetime, timedelta, timezone
-from typing import Dict, Optional, Set, Tuple, Union
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
 from fastapi import BackgroundTasks, Depends, HTTPException, Query, Request
 from fastapi.routing import APIRouter
@@ -11,7 +10,7 @@ from starlette.concurrency import run_in_threadpool
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.db.utils import aggregate_metrics_by_date, is_legacy_metric
 from agno.exceptions import AgnoError
-from agno.os.auth import get_authentication_dependency
+from agno.os.auth import get_auth_token_from_request, get_authentication_dependency
 from agno.os.middleware.user_scope import resolve_db_and_scope
 from agno.os.routers.insights.schemas import MetricsInsightsResponse, ModelUsage
 from agno.os.schema import (
@@ -24,8 +23,7 @@ from agno.os.schema import (
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import AgnoHTTPException
 from agno.remote.base import RemoteDb
-
-logger = logging.getLogger(__name__)
+from agno.utils.log import log_error, log_exception
 
 # Insights are recomputed at most this often per owner and window, which bounds how far they
 # can trail the daily metrics. Past this age an entry is still served, and a recompute starts
@@ -106,6 +104,9 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
             # pre-ownership records with, and those hold every user's traffic
             metrics = [metric for metric in metrics if not is_legacy_metric(metric)]
 
+        return _build_metrics_insights(metrics, days)
+
+    def _build_metrics_insights(metrics: List[Dict[str, Any]], days: int) -> MetricsInsightsResponse:
         run_counts: Dict[Tuple[str, Optional[str]], int] = {}
         for metric in metrics:
             for model_metric in metric.get("model_metrics") or []:
@@ -143,7 +144,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
             _cache_put(key, await _compute_metrics_insights(db, effective_user_id, days))
         except Exception as e:
             # The stale entry keeps being served, and the next open retries
-            logger.error(f"Insights recompute failed: {e}")
+            log_error(f"Insights recompute failed: {e}")
         finally:
             recomputing.discard(key)
 
@@ -185,7 +186,6 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                     }
                 },
             },
-            501: {"description": "Remote databases are not supported"},
             500: {"description": "Failed to compute insights", "model": InternalServerErrorResponse},
         },
     )
@@ -202,9 +202,19 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         try:
             db, effective_user_id = await resolve_db_and_scope(request, dbs, db_id, fallback_user_id=user_id)
 
-            # A remote AgentOS keeps its own daily metrics and serves its own insights
             if isinstance(db, RemoteDb):
-                raise HTTPException(status_code=501, detail="Insights are not available for remote databases")
+                auth_token = get_auth_token_from_request(request)
+                headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
+                ending_date = datetime.now(timezone.utc).date()
+                remote_metrics = await db.get_metrics(
+                    starting_date=ending_date - timedelta(days=days - 1),
+                    ending_date=ending_date,
+                    db_id=db_id,
+                    headers=headers,
+                )
+                # Not cached: the remote AgentOS scopes the metrics by the forwarded token, which
+                # the cache key cannot tell apart
+                return _build_metrics_insights([metric.model_dump() for metric in remote_metrics.metrics], days)
 
             cache_key = (str(db.id), effective_user_id, days)
             if not refresh:
@@ -227,7 +237,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         except AgnoError as e:
             raise AgnoHTTPException(e)
         except Exception as e:
-            logger.exception("GET /insights/metrics failed")
+            log_exception("GET /insights/metrics failed")
             raise HTTPException(status_code=500, detail=f"Error getting insights: {str(e)}")
 
     return router
