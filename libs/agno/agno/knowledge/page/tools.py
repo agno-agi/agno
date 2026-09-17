@@ -60,9 +60,7 @@ def page_search_tool(
     from agno.knowledge.page._coordinator import MAX_JSON_BYTES, MAX_SEARCH_JSON_BYTES
 
     if type(max_output_bytes) is not int or not MAX_JSON_BYTES <= max_output_bytes <= MAX_SEARCH_JSON_BYTES:
-        raise ValueError(
-            f"max_output_bytes must be an integer from {MAX_JSON_BYTES} through {MAX_SEARCH_JSON_BYTES}"
-        )
+        raise ValueError(f"max_output_bytes must be an integer from {MAX_JSON_BYTES} through {MAX_SEARCH_JSON_BYTES}")
 
     def record(result: SearchResult, query: str) -> SearchResult:
         if run_response is not None:

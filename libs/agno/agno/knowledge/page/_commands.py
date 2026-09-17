@@ -677,7 +677,8 @@ def _replay_on_root(command: str, exc: "CommandError", files: Mapping[str, str])
         return None
     probe = _CommandCorpus(_RootOnlyCorpus(files))
     _execute_command(command, probe)
-    return tuple(probe.status["errors"])
+    errors: list[str] = probe.status["errors"]  # type: ignore[assignment]
+    return tuple(errors)
 
 
 def _execute_command(command: str, files: Mapping[str, str]) -> str:
