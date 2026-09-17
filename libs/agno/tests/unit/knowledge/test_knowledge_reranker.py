@@ -278,8 +278,24 @@ def test_limit_is_passed_to_rerankers_that_accept_it():
     assert seen["limit"] == 5
 
 
-def test_a_scoring_reranker_does_not_widen_the_fetch():
-    # The base default is 1: only rerankers that select a subset pay for a wider pool.
+def test_a_reranker_can_opt_out_of_widening():
+    # The base default widens, since reranking earns its cost by rescuing documents
+    # ranked below the cutoff. A reranker that only reorders can opt down to 1.
+    class ReorderOnlyReranker(Reranker):
+        candidate_multiplier: int = Field(default=1, ge=1)
+
+        def rerank(self, query: str, documents: List[Document], limit: Optional[int] = None) -> List[Document]:
+            return documents
+
+    db = StubVectorDb()
+    knowledge = Knowledge(vector_db=db, reranker=ReorderOnlyReranker())
+
+    knowledge.search("q", max_results=5)
+
+    assert db.requested_limit == 5
+
+
+def test_the_base_default_widens_the_fetch():
     class ScoringReranker(Reranker):
         def rerank(self, query: str, documents: List[Document], limit: Optional[int] = None) -> List[Document]:
             return documents
@@ -289,7 +305,7 @@ def test_a_scoring_reranker_does_not_widen_the_fetch():
 
     knowledge.search("q", max_results=5)
 
-    assert db.requested_limit == 5
+    assert db.requested_limit == 15
 
 
 def test_pool_size_is_configured_on_the_reranker():
@@ -302,18 +318,33 @@ def test_pool_size_is_configured_on_the_reranker():
 
 
 class RerankerAwareVectorDb(StubVectorDb):
-    """Runs its own reranker the way the adapters do, and records that it ran."""
+    """Runs its own reranker the way the adapters do, and records that it ran.
+
+    Reads the reranker through VectorDb's property, which is what hides it from a
+    search that has suspended it.
+    """
 
     def __init__(self, available: int = 100):
         super().__init__(available=available)
-        self.reranker: Optional[Reranker] = None
+        self._reranker: Optional[Reranker] = None
         self.reranker_ran = False
+
+    @property
+    def reranker(self) -> Optional[Reranker]:
+        from agno.vectordb.base import VectorDb
+
+        return VectorDb.reranker.fget(self)  # type: ignore[attr-defined]
+
+    @reranker.setter
+    def reranker(self, value: Optional[Reranker]) -> None:
+        self._reranker = value
 
     def search(self, query: str, limit: int = 5, filters=None) -> List[Document]:
         documents = super().search(query=query, limit=limit, filters=filters)
-        if self.reranker is not None:
+        reranker = self.reranker
+        if reranker is not None:
             self.reranker_ran = True
-            documents = self.reranker.rerank(query=query, documents=documents)
+            documents = reranker.rerank(query=query, documents=documents)
         return documents
 
 
@@ -401,3 +432,73 @@ async def test_a_shipped_reranker_with_the_older_signature_survives_arerank():
 
     # Reaches rerank without a TypeError; the empty list short-circuits the API call.
     assert await reranker.arerank(query="q", documents=[], limit=5) == []
+
+
+@pytest.mark.asyncio
+async def test_suspension_does_not_leak_to_another_knowledge_sharing_the_store():
+    # One vector db behind two Knowledge instances is a normal setup. Suspending the
+    # store's reranker for one search must not hide it from the other. The barrier makes
+    # the overlap deterministic: B reads the attribute while A's window is open.
+    import asyncio
+
+    observed: Dict[str, Optional[str]] = {}
+    inside_a = asyncio.Event()
+    b_has_read = asyncio.Event()
+
+    class ObservingVectorDb(RerankerAwareVectorDb):
+        async def async_search(self, query: str, limit: int = 5, filters=None) -> List[Document]:
+            if query == "from-a":
+                inside_a.set()
+                await asyncio.wait_for(b_has_read.wait(), timeout=5)
+            else:
+                await asyncio.wait_for(inside_a.wait(), timeout=5)
+            observed[query] = "set" if self.reranker is not None else None
+            if query == "from-b":
+                b_has_read.set()
+            return StubVectorDb.search(self, query=query, limit=limit, filters=filters)
+
+    db = ObservingVectorDb()
+    db.reranker = ReverseReranker()
+    with_own = Knowledge(vector_db=db, reranker=ReverseReranker())
+    relies_on_db = Knowledge(vector_db=db)
+
+    await asyncio.gather(
+        with_own.asearch("from-a", max_results=3),
+        relies_on_db.asearch("from-b", max_results=3),
+    )
+
+    # A suppressed it for itself; B, reading inside that window, still sees its own.
+    assert observed["from-a"] is None
+    assert observed["from-b"] == "set"
+
+
+def test_no_reranker_returns_the_adapter_result_untouched():
+    # The default path every current user is on: without a reranker the adapter's list
+    # is returned as produced, not re-sliced by Knowledge.
+    class OverReturningVectorDb(StubVectorDb):
+        def search(self, query: str, limit: int = 5, filters=None) -> List[Document]:
+            self.requested_limit = limit
+            # An adapter that hands back more than asked for must not be silently trimmed.
+            return [Document(id=str(i), content=f"doc {i}") for i in range(limit + 2)]
+
+    db = OverReturningVectorDb()
+    knowledge = Knowledge(vector_db=db)
+
+    results = knowledge.search("q", max_results=5)
+
+    assert db.requested_limit == 5
+    assert len(results) == 7
+
+
+@pytest.mark.asyncio
+async def test_no_reranker_returns_the_adapter_result_untouched_async():
+    class OverReturningVectorDb(StubVectorDb):
+        async def async_search(self, query: str, limit: int = 5, filters=None) -> List[Document]:
+            self.requested_limit = limit
+            return [Document(id=str(i), content=f"doc {i}") for i in range(limit + 2)]
+
+    knowledge = Knowledge(vector_db=OverReturningVectorDb())
+
+    results = await knowledge.asearch("q", max_results=5)
+
+    assert len(results) == 7

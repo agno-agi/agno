@@ -5,9 +5,9 @@ A reranker set on Knowledge runs after the vector db returns results, rather tha
 inside the vector db itself. Two differences follow from that:
 
 1. It works with any vector db, so the same reranker moves between backends.
-2. A reranker that selects a subset can widen the fetch, so it chooses from a real
-   pool. candidate_multiplier (capped by max_candidates) is set on the reranker
-   itself, and defaults to 1: a scoring reranker gains nothing from a wider pool.
+2. It widens the fetch, so the reranker chooses from a real pool rather than only
+   reordering what the vector db already returned. candidate_multiplier (capped by
+   max_candidates) is set on the reranker itself.
 
 The widened fetch is what makes ordering strategies possible: a reranker can only
 surface a document that was retrieved in the first place.
@@ -32,10 +32,10 @@ qdrant_url = "http://localhost:6333"
 knowledge = Knowledge(
     vector_db=Qdrant(collection="knowledge_reranking_demo", url=qdrant_url),
     reranker=CohereReranker(
-        # Cohere scores each document on its own, so candidate_multiplier defaults to 1
-        # and the fetch is left alone. Raise it to let Cohere rescue a document that
-        # plain search ranked outside max_results, at that many times the API cost.
-        candidate_multiplier=1,
+        # Candidates fetched per requested result, so Cohere can rescue a document that
+        # plain search ranked outside max_results. Costs that many times the API calls,
+        # so lower it to 1 to only reorder what the vector db already returned.
+        candidate_multiplier=3,
         # Ceiling on the widened fetch, once the multiplier is above 1.
         max_candidates=100,
     ),

@@ -12,10 +12,10 @@ class Reranker(BaseModel):
 
     model_config = ConfigDict(arbitrary_types_allowed=True, populate_by_name=True)
 
-    # Candidates fetched per requested result. A reranker that scores each document on
-    # its own gains nothing from a wider pool, so the default leaves the fetch alone;
-    # one that selects a subset raises it.
-    candidate_multiplier: int = Field(default=1, ge=1)
+    # Candidates fetched per requested result. Reranking is worth its cost because it
+    # rescues documents the vector search ranked below the cutoff, so the default asks
+    # for a wider pool; set it to 1 for a reranker that only needs to reorder.
+    candidate_multiplier: int = Field(default=3, ge=1)
     # Ceiling on the widened fetch, so a large request cannot turn one search into an
     # unbounded scan.
     max_candidates: int = Field(default=100, ge=1)

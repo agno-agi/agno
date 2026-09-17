@@ -132,7 +132,8 @@ class Knowledge(RemoteKnowledge):
             log_warning(
                 "A reranker is set on both Knowledge and the vector db. Only the one on "
                 "Knowledge is applied and the vector db's is ignored: running both would "
-                "rerank a pool that was already reordered. Set it in one place."
+                "rerank a pool that was already reordered. Prefer the one on Knowledge, "
+                "which works with every vector db and can widen the candidate pool."
             )
         self.__post_init__()
 
@@ -198,16 +199,13 @@ class Knowledge(RemoteKnowledge):
         Knowledge widens the fetch for its reranker, so letting the vector db reorder
         and trim that pool first would discard the candidates it was widened for.
         """
-        vector_db = self.vector_db
-        if self.reranker is None or vector_db is None or getattr(vector_db, "reranker", None) is None:
+        if self.reranker is None or getattr(self.vector_db, "reranker", None) is None:
             yield
             return
-        original = vector_db.reranker
-        vector_db.reranker = None
-        try:
+        from agno.vectordb.base import suppress_reranker
+
+        with suppress_reranker():
             yield
-        finally:
-            vector_db.reranker = original
 
     def _search_limit(self, max_results: int) -> int:
         """Widen the vector db fetch so the reranker has candidates to choose between."""
@@ -219,7 +217,8 @@ class Knowledge(RemoteKnowledge):
     def _rerank_documents(self, query: str, documents: List[Document], max_results: int) -> List[Document]:
         """Apply the knowledge-level reranker, then trim to the caller's requested count."""
         if self.reranker is None:
-            return documents[:max_results]
+            # Unchanged from before this hook existed: the adapter already applied the limit.
+            return documents
         try:
             kwargs = {"limit": max_results} if self.reranker.accepts_limit() else {}
             reranked = self.reranker.rerank(query=query, documents=documents, **kwargs)
@@ -235,7 +234,8 @@ class Knowledge(RemoteKnowledge):
     async def _arerank_documents(self, query: str, documents: List[Document], max_results: int) -> List[Document]:
         """Async variant of ``_rerank_documents``."""
         if self.reranker is None:
-            return documents[:max_results]
+            # See the matching comment in ``_rerank_documents``.
+            return documents
         try:
             # arerank always accepts limit; it forwards only to a rerank that takes it.
             reranked = await self.reranker.arerank(query=query, documents=documents, limit=max_results)

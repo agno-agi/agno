@@ -1,41 +1,12 @@
 import asyncio
 from dataclasses import replace
-from math import sqrt
-from typing import Any, List, Optional, Sequence, Tuple
+from typing import Any, List, Optional, Tuple
 
 from pydantic import Field, field_validator
 
 from agno.knowledge.document import Document
 from agno.knowledge.reranker.base import Reranker
-
-
-def _cosine_similarity(left: Sequence[float], right: Sequence[float]) -> float:
-    """Cosine similarity without numpy, which is not a core dependency."""
-    dot = 0.0
-    left_norm = 0.0
-    right_norm = 0.0
-    for a, b in zip(left, right):
-        dot += a * b
-        left_norm += a * a
-        right_norm += b * b
-    if left_norm <= 0.0 or right_norm <= 0.0:
-        return 0.0
-    return dot / (sqrt(left_norm) * sqrt(right_norm))
-
-
-def _unit(vector: Sequence[float]) -> List[float]:
-    """Scale to unit length so similarity reduces to a dot product."""
-    norm = sqrt(sum(value * value for value in vector))
-    if norm <= 0.0:
-        return [0.0] * len(vector)
-    return [value / norm for value in vector]
-
-
-def _dot(left: Sequence[float], right: Sequence[float]) -> float:
-    total = 0.0
-    for a, b in zip(left, right):
-        total += a * b
-    return total
+from agno.utils.vectors import dot, unit
 
 
 class MMRReranker(Reranker):
@@ -109,9 +80,9 @@ class MMRReranker(Reranker):
 
         # Normalise once: every similarity below is then a dot product, instead of
         # recomputing the same norms across thousands of pair comparisons.
-        embeddings = [_unit(embedding) for embedding in raw]
-        unit_query = _unit(query_embedding)
-        relevance = [_dot(unit_query, embedding) for embedding in embeddings]
+        embeddings = [unit(embedding) for embedding in raw]
+        unit_query = unit(query_embedding)
+        relevance = [dot(unit_query, embedding) for embedding in embeddings]
 
         selected: List[Tuple[int, float]] = []
         remaining = list(range(len(documents)))
@@ -127,7 +98,7 @@ class MMRReranker(Reranker):
         # selected, which at the candidate ceiling dominates the search itself.
         best_redundancy = [0.0] * len(documents)
         for candidate in remaining:
-            best_redundancy[candidate] = _dot(embeddings[candidate], embeddings[first])
+            best_redundancy[candidate] = dot(embeddings[candidate], embeddings[first])
 
         while remaining and len(selected) < limit:
             best_index = remaining[0]
@@ -140,7 +111,7 @@ class MMRReranker(Reranker):
             selected.append((best_index, best_score))
             remaining.remove(best_index)
             for candidate in remaining:
-                similarity = _dot(embeddings[candidate], embeddings[best_index])
+                similarity = dot(embeddings[candidate], embeddings[best_index])
                 if similarity > best_redundancy[candidate]:
                     best_redundancy[candidate] = similarity
 

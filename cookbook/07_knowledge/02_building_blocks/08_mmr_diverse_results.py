@@ -58,7 +58,6 @@ knowledge = Knowledge(
 agent = Agent(
     model=OpenAIResponses(id="gpt-5.6-luna"),
     knowledge=knowledge,
-    search_knowledge=True,
     markdown=True,
 )
 

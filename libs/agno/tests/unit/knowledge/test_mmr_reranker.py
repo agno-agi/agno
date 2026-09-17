@@ -5,7 +5,8 @@ from typing import List, Optional
 import pytest
 
 from agno.knowledge.document import Document
-from agno.knowledge.reranker.mmr import MMRReranker, _cosine_similarity
+from agno.knowledge.reranker.mmr import MMRReranker
+from agno.utils.vectors import cosine_similarity
 
 
 class StubEmbedder:
@@ -36,15 +37,15 @@ def _documents() -> List[Document]:
 
 
 def test_cosine_similarity_of_identical_vectors_is_one():
-    assert _cosine_similarity([1.0, 0.0], [1.0, 0.0]) == pytest.approx(1.0)
+    assert cosine_similarity([1.0, 0.0], [1.0, 0.0]) == pytest.approx(1.0)
 
 
 def test_cosine_similarity_of_orthogonal_vectors_is_zero():
-    assert _cosine_similarity([1.0, 0.0], [0.0, 1.0]) == pytest.approx(0.0)
+    assert cosine_similarity([1.0, 0.0], [0.0, 1.0]) == pytest.approx(0.0)
 
 
 def test_zero_vector_does_not_divide_by_zero():
-    assert _cosine_similarity([0.0, 0.0], [1.0, 0.0]) == 0.0
+    assert cosine_similarity([0.0, 0.0], [1.0, 0.0]) == 0.0
 
 
 def test_diversity_beats_the_near_duplicate():
@@ -241,11 +242,11 @@ def test_selection_matches_the_unoptimised_formula():
     # Pins the running-redundancy optimisation to the definition it replaced.
     import random
 
-    from agno.knowledge.reranker.mmr import _cosine_similarity
+    from agno.utils.vectors import cosine_similarity
 
     def reference(query_embedding, documents, lambda_mult, limit):
         embeddings = [doc.embedding for doc in documents]
-        relevance = [_cosine_similarity(query_embedding, embedding) for embedding in embeddings]
+        relevance = [cosine_similarity(query_embedding, embedding) for embedding in embeddings]
         remaining = list(range(len(documents)))
         first = max(remaining, key=lambda candidate: relevance[candidate])
         selected = [first]
@@ -253,7 +254,7 @@ def test_selection_matches_the_unoptimised_formula():
         while remaining and len(selected) < limit:
             best_index, best_score = remaining[0], float("-inf")
             for candidate in remaining:
-                redundancy = max(_cosine_similarity(embeddings[candidate], embeddings[j]) for j in selected)
+                redundancy = max(cosine_similarity(embeddings[candidate], embeddings[j]) for j in selected)
                 score = lambda_mult * relevance[candidate] - (1.0 - lambda_mult) * redundancy
                 if score > best_score:
                     best_score, best_index = score, candidate
