@@ -628,10 +628,17 @@ _COMMANDS: dict[str, Callable[[list[str], Mapping[str, str]], str]] = {
 EMPTY_INDEX = "The page index is empty."
 
 
-def _lists_root(argv: list[str]) -> bool:
-    """True when the command browses the corpus root rather than a named path."""
-    operands = [token for token in argv[1:] if not token.startswith("-")]
-    return argv[0] in ("ls", "tree", "find") and all(token.rstrip("/") == "" for token in operands)
+# Browse the whole corpus when given no path; everything else requires an operand.
+_BROWSE_COMMANDS = ("ls", "tree", "find", "rg", "grep")
+
+
+def _names_operand(argv: list[str]) -> bool:
+    """True when the command names a path or flag it must validate before answering."""
+    if argv[0] not in _BROWSE_COMMANDS or any(token.startswith("-") for token in argv[1:]):
+        return True
+    if argv[0] in ("rg", "grep"):
+        return len(argv) < 2 or any(token.rstrip("/") for token in argv[2:])
+    return any(token.rstrip("/") for token in argv[1:])
 
 
 def _execute_command(command: str, files: Mapping[str, str]) -> str:
@@ -650,13 +657,15 @@ def _execute_command(command: str, files: Mapping[str, str]) -> str:
     if handler is None:
         _error(files)
         return f"unsupported command: {argv[0]!r}\n\n{USAGE}"
+    # One cheap existence probe, as before. An empty index answers a command that
+    # browses the whole corpus directly; anything naming a path or flag still runs,
+    # so a real failure keeps its typed status instead of reading as success.
+    empty = not files
+    if empty and not _names_operand(argv):
+        return EMPTY_INDEX
     try:
         output = handler(argv[1:], files)
     except CommandError as exc:
-        # An empty index has no paths, so a root listing reports that rather than a
-        # missing directory. Every other failure keeps its typed status.
-        if not files and exc.code == "page_not_found" and _lists_root(argv):
-            return EMPTY_INDEX
         _error(files, exc.code)
         return str(exc)
     except (ValueError, RecursionError, OverflowError, MemoryError, TimeoutError) as exc:
