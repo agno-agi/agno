@@ -665,20 +665,23 @@ class _RootOnlyCorpus(Mapping[str, str]):
         return path == self.HIDDEN
 
 
-def _replay_on_root(command: str, exc: "CommandError", files: Mapping[str, str]) -> tuple[str, ...] | None:
-    """The errors this command reports when only the corpus root holds pages.
+def _replay_on_root(
+    command: str, exc: "CommandError", files: Mapping[str, str]
+) -> tuple[tuple[str, ...], str] | None:
+    """What this command reports when only the corpus root holds pages.
 
     The handler stops at the first path it cannot resolve, so on an empty index a
     later operand never gets its say and a leading root masks it. Replaying against
-    a root-only corpus judges every operand, so an empty index reports what the same
-    command would report once pages exist. None when the root was not the blocker.
+    a root-only corpus judges every operand, so an empty index reports the codes and
+    text the same command would once pages exist. None when the root was not the
+    blocker.
     """
     if exc.missing != "/":
         return None
     probe = _CommandCorpus(_RootOnlyCorpus(files))
-    _execute_command(command, probe)
+    output = _execute_command(command, probe)
     errors: list[str] = probe.status["errors"]  # type: ignore[assignment]
-    return tuple(errors)
+    return tuple(errors), output
 
 
 def _execute_command(command: str, files: Mapping[str, str]) -> str:
@@ -708,13 +711,14 @@ def _execute_command(command: str, files: Mapping[str, str]) -> str:
         # a missing directory. Named paths and invalid usage keep their own error.
         replayed = _replay_on_root(command, exc, files) if empty else None
         if replayed is not None:
-            if not replayed:
+            codes, text = replayed
+            if not codes:
                 return EMPTY_INDEX
             # Report the operand the command would fail on once pages exist, not the
-            # root it happened to stop at first.
-            for code in replayed:
+            # root it happened to stop at first. MCP surfaces this text verbatim.
+            for code in codes:
                 _error(files, code)
-            return str(exc)
+            return text
         _error(files, exc.code)
         return str(exc)
     except (ValueError, RecursionError, OverflowError, MemoryError, TimeoutError) as exc:
