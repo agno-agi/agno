@@ -91,7 +91,7 @@ class LocalFileSystemTools(Toolkit):
             # Create directory if it doesn't exist
             file_path.parent.mkdir(parents=True, exist_ok=True)
 
-            file_path.write_text(content)
+            file_path.write_text(content, encoding="utf-8")
 
             return f"Successfully wrote file to: {file_path}"
 
@@ -119,7 +119,7 @@ class LocalFileSystemTools(Toolkit):
             if not file_path.exists():
                 return f"File not found: {file_path}"
 
-            return file_path.read_text()
+            return file_path.read_text(encoding="utf-8")
 
         except Exception as e:
             error_msg = f"Failed to read file: {str(e)}"

@@ -134,6 +134,21 @@ def test_write_file_generates_uuid_filename(tools, temp_dir):
     assert filepath.read_text() == "auto name"
 
 
+def test_write_file_utf8_non_ascii(tools, temp_dir):
+    result = tools.write_file("café São Paulo", filename="unicode")
+    assert "Successfully wrote file to:" in result
+
+    filepath = Path(temp_dir) / "unicode.txt"
+    assert filepath.read_text(encoding="utf-8") == "café São Paulo"
+
+
+def test_read_file_utf8_non_ascii(tools, temp_dir):
+    filepath = Path(temp_dir) / "unicode.txt"
+    filepath.write_bytes("café São Paulo".encode("utf-8"))
+
+    assert tools.read_file("unicode.txt") == "café São Paulo"
+
+
 # --- Read File ---
 
 
