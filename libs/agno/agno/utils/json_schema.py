@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import Any, Dict, Literal, Optional, Union, get_args, get_origin
+from typing import Any, Dict, Literal, Optional, Union, get_args, get_origin, get_type_hints
 
 from pydantic import BaseModel
 
@@ -149,12 +149,17 @@ def get_json_schema_for_arg(type_hint: Any) -> Optional[Dict[str, Any]]:
         return inline_pydantic_schema(schema)  # type: ignore
 
     if hasattr(type_hint, "__dataclass_fields__"):
-        # Convert dataclass to JSON schema
+        # Convert dataclass to JSON schema. get_type_hints resolves PEP 563
+        # postponed annotations so field.type strings become real types.
+        try:
+            resolved_hints = get_type_hints(type_hint)
+        except Exception:
+            resolved_hints = {}
         properties = {}
         required = []
 
         for field_name, field in type_hint.__dataclass_fields__.items():
-            field_type = field.type
+            field_type = resolved_hints.get(field_name, field.type)
             field_schema = get_json_schema_for_arg(field_type)
 
             if (
@@ -184,6 +189,13 @@ def get_json_schema_for_arg(type_hint: Any) -> Optional[Dict[str, Any]]:
     # Bare dict means "arbitrary key-value pairs" — allow any properties
     if type_hint is dict:
         return {"type": "object", "additionalProperties": True}
+
+    if isinstance(type_hint, str):
+        json_schema = {"type": get_json_type_for_py_type(type_hint)}
+        if json_schema["type"] == "object":
+            json_schema["properties"] = {}
+            json_schema["additionalProperties"] = False
+        return json_schema
 
     json_schema: Dict[str, Any] = {"type": get_json_type_for_py_type(type_hint.__name__)}
     if json_schema["type"] == "object":
