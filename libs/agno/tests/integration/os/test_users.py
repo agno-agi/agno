@@ -797,3 +797,21 @@ def test_users_api_is_gated_whenever_an_auth_middleware_runs(tmp_path, monkeypat
     assert client.get("/agents", headers=_auth("alice")).status_code == 200  # alice untouched
     admin = {"Authorization": f"Bearer {_token('op', scopes=['agent_os:admin'])}"}
     assert client.get("/users", headers=admin).status_code == 200  # a real admin still can
+
+
+def test_users_api_refuses_reserved_principals_and_role_slugs():
+    """The directory holds people. A service-account or system principal is never looked up in it,
+    so a row for one is dead weight and disabling it is a revocation that never happens; a role slug
+    is not a person and breaks the roster and its metrics. Both are refused on create and on the
+    create-on-PATCH path."""
+    roles = RoleStore(db_url=_db_url())
+    roles.set_role_scopes("admin", ["agent_os:admin"])
+    roles.set_role_scopes("viewer", ["agents:*:read"])
+    roles.assign("alice", "admin")
+    users = UserStore(db_url=_db_url())
+    client = TestClient(_os(roles, users).get_app())
+    for bad in ("sa:svc", "__scheduler__", "__oauth__:client", "viewer"):
+        assert client.post("/users", headers=_auth("alice"), json={"id": bad}).status_code == 422, bad
+        assert client.patch(f"/users/{bad}", headers=_auth("alice"), json={"disabled": True}).status_code == 422, bad
+        assert users.get(bad) is None
+    assert client.post("/users", headers=_auth("alice"), json={"id": "bob", "email": "bob@co"}).status_code == 200

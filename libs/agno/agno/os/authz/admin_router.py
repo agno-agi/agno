@@ -734,8 +734,31 @@ def get_users_router(
             search_time_ms=round(time.time() * 1000 - start_ms, 2),
         )
 
+    def _refuse_non_user_id(user_id: str) -> None:
+        """The directory holds people. A system-reserved principal (``sa:*``, ``__scheduler__``,
+        ``__oauth__:*``) is never a directory user: those identities skip the directory entirely,
+        so a row for one is dead weight and disabling it looks like a revocation that never
+        happens (a service-account PAT keeps working). A role slug is not a person either, and a
+        row for one turns the roster and its metrics into nonsense. Refuse both up front."""
+        from agno.os.middleware.jwt import is_reserved_principal
+
+        if is_reserved_principal(user_id):
+            raise HTTPException(
+                status_code=422,
+                detail=f"{user_id!r} is a system-reserved principal, not a directory user. Service accounts "
+                "and system identities are never stored in the directory, so disabling them here would "
+                "have no effect; revoke the credential instead.",
+            )
+        if role_store is not None and role_store.get_role(user_id) is not None:
+            raise HTTPException(
+                status_code=422,
+                detail=f"{user_id!r} is a role, not a user. Subjects and roles share one namespace; use "
+                "an opaque id (an email, say) for the person.",
+            )
+
     @router.post("", response_model=UserSchema)
     def create_user(body: CreateUserRequest, actor: str = Depends(require_admin)):
+        _refuse_non_user_id(body.id)
         return _user(user_store.upsert(body.id, email=body.email, name=body.name, actor=actor))
 
     # Declared before /{user_id} so the path parameter does not swallow it.
@@ -766,6 +789,7 @@ def get_users_router(
     def update_user(user_id: str, body: UpdateUserRequest, actor: str = Depends(require_admin)):
         """Update a user. ``disabled`` is the revocation kill-switch: a disabled user is
         denied at the enforcement point on their next request, even with a still-valid token."""
+        _refuse_non_user_id(user_id)  # PATCH creates an unknown id, so it needs the same check
         user = user_store.upsert(user_id, email=body.email, name=body.name, actor=actor)
         if body.disabled is not None and body.disabled != user["disabled"]:
             user = user_store.set_disabled(user_id, body.disabled, actor=actor)
