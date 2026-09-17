@@ -6,7 +6,7 @@ import json
 import re
 from enum import Enum
 from os import getenv
-from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Optional, Set, Union
+from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Optional, Set, Tuple, Union
 
 from fastapi import Request, Response
 from fastapi.responses import JSONResponse
@@ -1095,8 +1095,61 @@ class AuthMiddleware(BaseHTTPMiddleware):
         )
 
         if not result.allowed:
+            held_roles, roles_from_token = self._token_roles(request)
+            role_store = getattr(request.app.state, "role_store", None)
+            subject = getattr(request.state, "user_id", None)
+            if held_roles is None and role_store is not None and subject:
+                try:
+                    held_roles = list(role_store.roles_of(subject))
+                except Exception:
+                    held_roles = None  # a store read failure must not turn a denial into a 500
+            # A directory user with no assignment is evaluated through the role flagged default
+            # (decision time only, never written), so that role, not "no role", decided.
+            via_default = False
+            user_store = getattr(request.app.state, "user_store", None)
+            if held_roles == [] and role_store is not None and user_store is not None and subject:
+                try:
+                    default_role = role_store.default_role()
+                    if default_role and user_store.get(subject) is not None:
+                        held_roles, via_default = [default_role], True
+                except Exception:
+                    via_default = False
+            explicit_deny: Optional[str] = None
+            resource_type, resource_id = get_resource_context_from_path(path)
+            # Only when the route names ONE action: with several (a custom mapping), the failed
+            # action is unknown and an action-less lookup would surface a deny on any action --
+            # naming, say, a write deny for a request that failed on a missing run grant.
+            route_action = _route_action(result.required_scopes)
+            if (
+                role_store is not None
+                and resource_type
+                and resource_id
+                and route_action is not None
+                and hasattr(role_store, "explicit_denials")
+            ):
+                try:
+                    denied = role_store.explicit_denials(
+                        resource_type,
+                        route_action,
+                        subject=subject,
+                        roles=held_roles if roles_from_token else None,
+                    )
+                    if resource_id in denied or "*" in denied:
+                        explicit_deny = f"{resource_type}/{resource_id if resource_id in denied else '*'}"
+                except Exception:
+                    explicit_deny = None
             log_warning(
-                f"Insufficient scopes for {method} {path}. Required: {result.required_scopes}, User has: {scopes}"
+                self._denial_message(
+                    request,
+                    method,
+                    path,
+                    result.required_scopes,
+                    scopes,
+                    held_roles,
+                    roles_from_token,
+                    explicit_deny,
+                    via_default,
+                )
             )
             return self._create_error_response(
                 403,
@@ -1111,6 +1164,73 @@ class AuthMiddleware(BaseHTTPMiddleware):
         else:
             log_debug(f"No scopes required for {method} {path}")
         return None
+
+    @staticmethod
+    def _token_roles(request: Request) -> Tuple[Optional[List[str]], bool]:
+        """(roles, True) when the role store reads a ``roles_claim`` and this token carries one --
+        the roles the engine actually decided on for an external-IdP caller -- else (None, False)
+        so the caller falls back to the subject's stored assignments."""
+        role_store = getattr(request.app.state, "role_store", None)
+        claim = getattr(role_store, "roles_claim", None) if role_store is not None else None
+        if not claim:
+            return None, False
+        from agno.os.authz.engine import normalize_roles_claim
+
+        roles = normalize_roles_claim(getattr(request.state, "claims", None) or {}, claim)
+        return (list(roles), True) if roles else (None, False)
+
+    @staticmethod
+    def _denial_message(
+        request: Request,
+        method: str,
+        path: str,
+        required_scopes: List[str],
+        scopes: List[str],
+        held_roles: Optional[List[str]],
+        roles_from_token: bool = False,
+        explicit_deny: Optional[str] = None,
+        via_default: bool = False,
+    ) -> str:
+        """The log line for a route-gate denial, worded for the plane that actually decided.
+
+        When the caller's token scopes are what the gate compared, "required vs held" is the
+        truth. Under a managed-roles or ReBAC provider the token's scopes were never consulted,
+        so listing them as what the user "has" reads as a contradiction (the required scope is
+        right there in the list) and hides the real reason: the provider denied the subject.
+        ``held_roles`` is what the engine decided on: the roles carried on the token when the
+        store reads a ``roles_claim`` and the token has one (``roles_from_token``), else the
+        subject's stored assignments; None when no role store is configured. ``explicit_deny``
+        is the resource an explicit deny row refused, when the engine reports one: with
+        deny-overrides the role may well grant the route's scope, so "does not grant" would send
+        an operator to add a grant that already exists. ``via_default`` marks ``held_roles`` as the
+        role flagged default, applied at decision time to a directory user with no assignment.
+        """
+        from agno.os.auth import caller_scopes_are_authoritative
+
+        if caller_scopes_are_authoritative(request):
+            return f"Insufficient scopes for {method} {path}. Required: {required_scopes}, User has: {scopes}"
+        subject = getattr(request.state, "user_id", None)
+        line = f"Denied {method} {path} for {subject!r}: the configured authorization provider refused it."
+        if held_roles and roles_from_token:
+            line += f" The token carries role(s) {held_roles}, which do not authorize {method} {path}."
+        elif held_roles and via_default:
+            line += (
+                f" The subject holds no assigned role; the default role {held_roles} applied and does not "
+                f"authorize {method} {path}."
+            )
+        elif held_roles:
+            line += f" The subject holds role(s) {held_roles}, which do not authorize {method} {path}."
+        elif held_roles is not None:
+            line += " The subject holds no role in the role store."
+        if explicit_deny:
+            line += f" An explicit deny on '{explicit_deny}' applies (deny overrides any wider allow)."
+        if scopes:
+            on_token = [sc for sc in scopes if sc in required_scopes] or scopes
+            line += (
+                " Token scopes are not trusted under this provider (Authorization(trust_token_scopes=False)), "
+                f"so {on_token} on the token does not apply."
+            )
+        return line
 
     async def _acheck_scopes(
         self,
@@ -1148,8 +1268,61 @@ class AuthMiddleware(BaseHTTPMiddleware):
         )
 
         if not result.allowed:
+            held_roles, roles_from_token = self._token_roles(request)
+            role_store = getattr(request.app.state, "role_store", None)
+            subject = getattr(request.state, "user_id", None)
+            if held_roles is None and role_store is not None and subject:
+                try:
+                    held_roles = list(await role_store.aroles_of(subject))
+                except Exception:
+                    held_roles = None  # a store read failure must not turn a denial into a 500
+            # A directory user with no assignment is evaluated through the role flagged default
+            # (decision time only, never written), so that role, not "no role", decided.
+            via_default = False
+            user_store = getattr(request.app.state, "user_store", None)
+            if held_roles == [] and role_store is not None and user_store is not None and subject:
+                try:
+                    default_role = await role_store.adefault_role()
+                    if default_role and await user_store.aget(subject) is not None:
+                        held_roles, via_default = [default_role], True
+                except Exception:
+                    via_default = False
+            explicit_deny: Optional[str] = None
+            resource_type, resource_id = get_resource_context_from_path(path)
+            # Only when the route names ONE action: with several (a custom mapping), the failed
+            # action is unknown and an action-less lookup would surface a deny on any action --
+            # naming, say, a write deny for a request that failed on a missing run grant.
+            route_action = _route_action(result.required_scopes)
+            if (
+                role_store is not None
+                and resource_type
+                and resource_id
+                and route_action is not None
+                and hasattr(role_store, "explicit_denials")
+            ):
+                try:
+                    denied = await role_store.aexplicit_denials(
+                        resource_type,
+                        route_action,
+                        subject=subject,
+                        roles=held_roles if roles_from_token else None,
+                    )
+                    if resource_id in denied or "*" in denied:
+                        explicit_deny = f"{resource_type}/{resource_id if resource_id in denied else '*'}"
+                except Exception:
+                    explicit_deny = None
             log_warning(
-                f"Insufficient scopes for {method} {path}. Required: {result.required_scopes}, User has: {scopes}"
+                self._denial_message(
+                    request,
+                    method,
+                    path,
+                    result.required_scopes,
+                    scopes,
+                    held_roles,
+                    roles_from_token,
+                    explicit_deny,
+                    via_default,
+                )
             )
             return self._create_error_response(
                 403,
