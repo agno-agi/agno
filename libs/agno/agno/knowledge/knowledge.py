@@ -198,15 +198,16 @@ class Knowledge(RemoteKnowledge):
         Knowledge widens the fetch for its reranker, so letting the vector db reorder
         and trim that pool first would discard the candidates it was widened for.
         """
-        if self.reranker is None or getattr(self.vector_db, "reranker", None) is None:
+        vector_db = self.vector_db
+        if self.reranker is None or vector_db is None or getattr(vector_db, "reranker", None) is None:
             yield
             return
-        original = self.vector_db.reranker
-        self.vector_db.reranker = None
+        original = vector_db.reranker
+        vector_db.reranker = None
         try:
             yield
         finally:
-            self.vector_db.reranker = original
+            vector_db.reranker = original
 
     def _search_limit(self, max_results: int) -> int:
         """Widen the vector db fetch so the reranker has candidates to choose between."""
