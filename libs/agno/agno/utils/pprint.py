@@ -1,5 +1,5 @@
 import json
-from typing import AsyncIterable, Iterable, Union, get_args
+from typing import Any, AsyncIterable, Iterable, Union, get_args
 
 from pydantic import BaseModel
 
@@ -8,6 +8,22 @@ from agno.run.team import TeamRunOutput, TeamRunOutputEvent
 from agno.run.workflow import WorkflowRunOutput, WorkflowRunOutputEvent
 from agno.utils.log import log_warning
 from agno.utils.timer import Timer
+
+
+def _stringify_stream_chunk(content: Any) -> str:
+    """Turn a streaming content chunk into text that can be concatenated."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, BaseModel):
+        try:
+            return content.model_dump_json(exclude_none=True)
+        except Exception as e:
+            log_warning(f"Failed to convert response to Markdown: {str(e)}")
+            return str(content)
+    try:
+        return json.dumps(content, ensure_ascii=False)
+    except Exception:
+        return str(content)
 
 
 def pprint_run_response(
@@ -82,7 +98,7 @@ def pprint_run_response(
                     else:
                         if isinstance(streaming_response_content, JSON):
                             streaming_response_content = streaming_response_content.text + "\n"  # type: ignore
-                        streaming_response_content += resp.content  # type: ignore
+                        streaming_response_content += _stringify_stream_chunk(resp.content)
 
                 formatted_response = Markdown(streaming_response_content) if markdown else streaming_response_content  # type: ignore
                 table = Table(box=ROUNDED, border_style="blue", show_header=False)
@@ -166,7 +182,7 @@ async def apprint_run_response(
                     else:
                         if isinstance(streaming_response_content, JSON):
                             streaming_response_content = streaming_response_content.text + "\n"  # type: ignore
-                        streaming_response_content += resp.content  # type: ignore
+                        streaming_response_content += _stringify_stream_chunk(resp.content)
 
                 formatted_response = Markdown(streaming_response_content) if markdown else streaming_response_content  # type: ignore
                 table = Table(box=ROUNDED, border_style="blue", show_header=False)
