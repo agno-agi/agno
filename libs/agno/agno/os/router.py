@@ -268,6 +268,10 @@ def get_info_router(os: "AgentOS") -> APIRouter:
                 authorization=os.authorization,
                 app=request.app,
             ),
+            # The effective flag get_app() recorded: the top-level user_isolation switch OR'd with
+            # the legacy AuthorizationConfig(user_isolation=...). A client reads it with auth_mode to
+            # know whether it has to name the user itself (see the field description).
+            user_isolation=bool(getattr(request.app.state, "user_isolation_enabled", False)),
         )
 
     return router
