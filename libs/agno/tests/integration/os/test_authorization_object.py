@@ -894,3 +894,30 @@ def test_provider_outage_is_a_denial_with_an_audit_row_and_no_backend_text(tmp_p
         assert "10.0.0.5" not in r.text and "openfga" not in r.text
     denied = [e for e in sink.events if e.action == "access.denied"]
     assert denied and all(e.metadata.get("reason") == "provider_error" for e in denied)
+
+
+def test_a_failed_build_does_not_freeze_the_object(tmp_path):
+    """Authoring is refused only once an app was actually built. If get_app() raises partway (a
+    route conflict with the base app here), nothing is wired, so the caller must be able to fix
+    the setup and build again through the same bootstrap API."""
+    from fastapi import FastAPI
+
+    db = SqliteDb(db_file=str(tmp_path / "unfrozen.db"))
+    authz = Authorization(db=db, verification_keys=[SECRET], algorithm="HS256", verify_audience=True, audience=OS_ID)
+    authz.define_role("admin", ["agent_os:admin"])
+    clashing = FastAPI()
+
+    @clashing.get("/agents")
+    def clash():
+        return []
+
+    with pytest.raises(ValueError, match="Route conflict"):
+        AgentOS(
+            id=OS_ID, db=db, agents=_agents(), authorization=authz, base_app=clashing, on_route_conflict="error"
+        ).get_app()
+
+    authz.define_role("viewer", ["agents:*:read"])  # still open: no app exists
+    authz.assign("alice", "admin")
+    AgentOS(id=OS_ID, db=db, agents=_agents(), authorization=authz).get_app()
+    with pytest.raises(ValueError, match="after AgentOS.get_app"):
+        authz.define_role("editor", ["agents:*:write"])

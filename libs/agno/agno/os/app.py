@@ -1763,6 +1763,10 @@ class AgentOS:
         if self.base_app is not None:
             self._base_app_prepared = True
 
+        if self._authz_object is not None:
+            # Only a built app freezes the object. A build that raised above wired nothing, so
+            # authoring stays open for the caller to fix the setup and build again.
+            self._authz_object._freeze()
         return fastapi_app
 
     def _get_service_account_verifier(self) -> Optional[Any]:
@@ -2043,20 +2047,19 @@ class AgentOS:
         return routers
 
     def _refresh_authorization(self) -> None:
-        """Re-read the Authorization object right before the app is built, then freeze it.
+        """Re-read the Authorization object right before the app is built.
 
         The object stays mutable after construction: define_role / seed / assign apply to the
         store immediately. Reading it once in __init__ meant roles defined after AgentOS(...)
         landed in the store but were never enforced -- no /authz mount, token-scope RBAC still
-        running, no warning. Everything defined before get_app() now counts; anything after it
-        is refused by the object, since the routes and the provider are already wired."""
+        running, no warning. Everything defined before get_app() now counts. The object is frozen
+        by get_app() once the build succeeds, since only then are the routes and provider wired."""
         authz = self._authz_object
         if authz is None:
             return
         self._authz_role_store = authz.role_store
         self._authz_provider = authz.provider
         self._authz_issuer = authz.issuer
-        authz._freeze()
 
     def _auth_configured(self) -> bool:
         """Whether an auth middleware runs on this OS: ``authorization`` is on, a JWT key comes from
