@@ -875,3 +875,35 @@ def test_seed_alone_puts_roles_in_play(tmp_path):
     # /authz is mounted (roles are in play). alice is refused there only because nothing defined what
     # "admin" grants; that is the seeded-admin-without-admin-scope warning case, not an unmounted API.
     assert client.get("/authz/roles", headers=_auth("alice")).status_code == 403
+
+
+def test_draft_preview_ignores_a_raw_token_admin_scope_under_managed_roles(tmp_path):
+    """Under a managed-roles plane a token's agent_os:admin is inert at every gate. The draft-preview
+    gate read it raw, so a viewer whose token carried that scope could read another owner's draft
+    component configs (isolation off, where components stay visible but drafts are owner-only)."""
+    db = SqliteDb(db_file=str(tmp_path / "drafts.db"))
+    authz = Authorization(db=db, verification_keys=[SECRET], algorithm="HS256", verify_audience=True, audience=OS_ID)
+    authz.define_role("builder", ["components:write", "components:read", "agents:*:read"])
+    authz.define_role("viewer", ["components:read", "agents:*:read"])
+    authz.assign("alice", "builder")
+    authz.assign("dave", "viewer")
+    client = TestClient(AgentOS(id=OS_ID, db=db, agents=_agents(), authorization=authz).get_app())
+    body = {
+        "name": "Alice draft",
+        "component_type": "agent",
+        "stage": "draft",
+        "config": {"model": {"provider": "openai", "id": "gpt-5.6-luna"}},
+    }
+    created = client.post("/components", headers=_auth("alice"), json=body)
+    assert created.status_code == 201, created.text
+    cid = created.json().get("component_id") or created.json()["id"]
+
+    def stages(headers):
+        r = client.get(f"/components/{cid}/configs", headers=headers)
+        assert r.status_code == 200, r.text
+        return sorted({c.get("stage") for c in r.json()})
+
+    assert stages(_auth("alice")) == ["draft"]  # the owner sees her draft
+    assert stages(_auth("dave")) == []  # a viewer sees the published stage only (nothing yet)
+    assert stages(_auth("dave", scopes=["agent_os:admin"])) == []  # a raw admin scope changes nothing here
+    assert client.get("/authz/roles", headers=_auth("dave", scopes=["agent_os:admin"])).status_code == 403
