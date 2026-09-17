@@ -766,3 +766,31 @@ def test_workflow_continue_over_ws_enforces_the_approval_gate(monkeypatch):
                 break
         else:
             raise AssertionError("no error frame within 8 messages")
+
+
+def test_users_api_is_gated_whenever_an_auth_middleware_runs(tmp_path, monkeypatch):
+    """/users is open only on a no-auth OS. With a JWT key from the environment and authorization
+    off, an auth middleware still runs and every caller has a verified identity, so the gate must
+    apply: anonymous 401, a plain token 403, an admin-scoped token 200. Keying the gate on
+    authorization alone opened the roster to every signed token in that mode."""
+    from agno.db.sqlite import SqliteDb
+    from agno.os.config import AuthorizationConfig
+
+    monkeypatch.setenv("JWT_VERIFICATION_KEY", SECRET)
+    db = SqliteDb(db_file=str(tmp_path / "env.db"))
+    agent_os = AgentOS(
+        id=OS_ID,
+        agents=[Agent(id="a", name="A", db=db)],
+        db=db,
+        authorization_config=AuthorizationConfig(algorithm="HS256"),  # verification only, RBAC off
+        user_directory=True,
+    )
+    client = TestClient(agent_os.get_app())
+    client.get("/agents", headers=_auth("alice"))  # alice is JIT-provisioned
+
+    assert client.get("/users").status_code == 401  # anonymous: the OS is not open
+    assert client.get("/users", headers=_auth("mallory")).status_code == 403  # signed, not admin
+    assert client.patch("/users/alice", headers=_auth("mallory"), json={"disabled": True}).status_code == 403
+    assert client.get("/agents", headers=_auth("alice")).status_code == 200  # alice untouched
+    admin = {"Authorization": f"Bearer {_token('op', scopes=['agent_os:admin'])}"}
+    assert client.get("/users", headers=admin).status_code == 200  # a real admin still can

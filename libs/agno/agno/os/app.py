@@ -539,9 +539,9 @@ class AgentOS:
         # UserDirectory on its own db, so callers avoid the manual wiring.
         self.user_directory = self._resolve_user_directory(user_directory)
         # The /users directory API is served whenever a directory is configured. It is admin-gated
-        # under authorization; on a no-auth OS it mounts open, matching every other route (the admin
-        # gate needs a verified identity to check, and there is none). See _admin_api_routers,
-        # which passes auth_enabled so the gate knows which mode it is in.
+        # whenever an auth middleware runs (so callers have a verified identity to gate on) and
+        # open only on a no-auth OS, where every route is open. See _admin_api_routers, which
+        # passes auth_enabled so the gate knows which mode it is in.
 
         # CORS configuration - merge user-provided origins with defaults from settings
         self.cors_allowed_origins = resolve_origins(cors_allowed_origins, self.settings.cors_origin_list)
@@ -1712,7 +1712,7 @@ class AgentOS:
             fastapi_app.router.lifespan_context = public_lifespan
             fastapi_app.add_middleware(PublicMiddleware, surface=self.public, agent_os=self)
 
-        auth_configured = bool(self.authorization or jwt_env_configured or security_key)
+        auth_configured = self._auth_configured()
         if auth_configured:
             # In JWT mode the security key is ignored (JWT takes precedence), matching
             # get_effective_auth_mode; pass None so the middleware doesn't fall back to it.
@@ -2022,18 +2022,31 @@ class AgentOS:
             if self._authz_role_store is not None:
                 routers.append(get_roles_router(self._authz_role_store))
             if served_directory is not None:
-                # /users is admin-gated under authorization; on a no-auth OS it mounts open, matching
-                # every other route (the whole OS serves anonymous callers, and the roster is already
-                # writable via auto-provision). The roles router stays gated -- it exists only when
-                # there is an Authorization object, so authorization is always on there.
+                # /users mounts open only on a no-auth OS, where every route is open (the whole OS
+                # serves anonymous callers, and the roster is already writable via auto-provision).
+                # Whenever an auth middleware runs -- authorization on, a JWT key from the
+                # environment, or a security key -- callers carry a verified identity and the gate
+                # requires an admin. Keying this on ``self.authorization`` alone left the router open
+                # to every signed token when a JWT key came from the environment with
+                # authorization off: anonymous callers got 401, any token could disable anyone. The
+                # roles router stays gated: it exists only with an Authorization object.
                 routers.append(
                     get_users_router(
                         served_directory,
                         role_store=self._authz_role_store,
-                        auth_enabled=bool(self.authorization),
+                        auth_enabled=self._auth_configured(),
                     )
                 )
         return routers
+
+    def _auth_configured(self) -> bool:
+        """Whether an auth middleware runs on this OS: ``authorization`` is on, a JWT key comes from
+        the environment, or a security key is set. The single definition both the middleware
+        install and the ``/users`` gate read, so they cannot disagree about whether a caller has
+        a verified identity."""
+        security_key = self.settings.os_security_key if self.settings else None
+        jwt_env_configured = bool(getenv("JWT_VERIFICATION_KEY") or getenv("JWT_JWKS_FILE"))
+        return bool(self.authorization or jwt_env_configured or security_key)
 
     def _seed_authorization_provider(self, fastapi_app: FastAPI) -> None:
         """Seed ``app.state.authorization_provider`` (and ``authz_audit``) from the Authorization
