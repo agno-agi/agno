@@ -392,7 +392,7 @@ def _rg_targets(roots: list[str], files: Mapping[str, str]) -> list[str]:
             targets.extend(under)
             found = True
         if not found:
-            raise CommandError(f"rg: {root}: no such file or directory", "invalid_command", _norm(root))
+            raise CommandError(f"rg: {root}: no such file or directory", "page_not_found", _norm(root))
     if not targets:
         raise CommandError(f"rg: no files under {', '.join(roots)}")
     return targets
@@ -630,20 +630,45 @@ _COMMANDS: dict[str, Callable[[list[str], Mapping[str, str]], str]] = {
 EMPTY_INDEX = "The page index is empty."
 
 
-# One page at the root: a command that succeeds here named no other path.
-_ROOT_ONLY_CORPUS = {"/index.md": ""}
+class _RootOnlyCorpus(Mapping[str, str]):
+    """A corpus whose root holds pages that no operand can name.
+
+    Every lookup of a specific path misses, so replaying a command here fails on
+    exactly the operands that name something other than the root.
+    """
+
+    #: Unreachable by design: _norm strips trailing slashes, so no operand can
+    #: normalize to a non-root path that ends in one.
+    HIDDEN = "/page/"
+
+    def __getitem__(self, key: str) -> str:
+        if key == self.HIDDEN:
+            return ""
+        raise KeyError(key)
+
+    def __iter__(self):
+        return iter((self.HIDDEN,))
+
+    def __len__(self) -> int:
+        return 1
+
+    def paths_under(self, prefix: str) -> list[str]:
+        return [self.HIDDEN] if prefix == "/" else []
+
+    def _metadata_contains(self, path: str) -> bool:
+        return path == self.HIDDEN
 
 
 def _browses_empty_root(command: str, exc: "CommandError") -> bool:
     """True when a command failed only because the corpus root holds no pages.
 
     The handler reports the first path it cannot resolve, so a later operand may
-    also be missing. Replaying against a single root page answers that for every
+    also be missing. Replaying against a root-only corpus answers that for every
     operand at once, without re-parsing flags or the error message.
     """
     if exc.missing != "/":
         return False
-    probe = _CommandCorpus(dict(_ROOT_ONLY_CORPUS))
+    probe = _CommandCorpus(_RootOnlyCorpus())
     _execute_command(command, probe)
     return not probe.status["errors"]
 
