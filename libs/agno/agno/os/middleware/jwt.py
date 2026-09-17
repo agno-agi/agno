@@ -1103,9 +1103,23 @@ class AuthMiddleware(BaseHTTPMiddleware):
                     held_roles = list(role_store.roles_of(subject))
                 except Exception:
                     held_roles = None  # a store read failure must not turn a denial into a 500
+            explicit_deny: Optional[str] = None
+            resource_type, resource_id = get_resource_context_from_path(path)
+            if role_store is not None and resource_type and resource_id and hasattr(role_store, "explicit_denials"):
+                try:
+                    denied = role_store.explicit_denials(
+                        resource_type,
+                        _route_action(result.required_scopes),
+                        subject=subject,
+                        roles=held_roles if roles_from_token else None,
+                    )
+                    if resource_id in denied or "*" in denied:
+                        explicit_deny = f"{resource_type}/{resource_id if resource_id in denied else '*'}"
+                except Exception:
+                    explicit_deny = None
             log_warning(
                 self._denial_message(
-                    request, method, path, result.required_scopes, scopes, held_roles, roles_from_token
+                    request, method, path, result.required_scopes, scopes, held_roles, roles_from_token, explicit_deny
                 )
             )
             return self._create_error_response(
@@ -1145,6 +1159,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
         scopes: List[str],
         held_roles: Optional[List[str]],
         roles_from_token: bool = False,
+        explicit_deny: Optional[str] = None,
     ) -> str:
         """The log line for a route-gate denial, worded for the plane that actually decided.
 
@@ -1154,7 +1169,10 @@ class AuthMiddleware(BaseHTTPMiddleware):
         right there in the list) and hides the real reason: the provider denied the subject.
         ``held_roles`` is what the engine decided on: the roles carried on the token when the
         store reads a ``roles_claim`` and the token has one (``roles_from_token``), else the
-        subject's stored assignments; None when no role store is configured.
+        subject's stored assignments; None when no role store is configured. ``explicit_deny``
+        is the resource an explicit deny row refused, when the engine reports one: with
+        deny-overrides the role may well grant the route's scope, so "does not grant" would send
+        an operator to add a grant that already exists.
         """
         from agno.os.auth import caller_scopes_are_authoritative
 
@@ -1163,11 +1181,13 @@ class AuthMiddleware(BaseHTTPMiddleware):
         subject = getattr(request.state, "user_id", None)
         line = f"Denied {method} {path} for {subject!r}: the configured authorization provider refused it."
         if held_roles and roles_from_token:
-            line += f" The token carries role(s) {held_roles}, which do not grant {required_scopes}."
+            line += f" The token carries role(s) {held_roles}, which do not authorize {method} {path}."
         elif held_roles:
-            line += f" The subject holds role(s) {held_roles}, which do not grant {required_scopes}."
+            line += f" The subject holds role(s) {held_roles}, which do not authorize {method} {path}."
         elif held_roles is not None:
             line += " The subject holds no role in the role store."
+        if explicit_deny:
+            line += f" An explicit deny on '{explicit_deny}' applies (deny overrides any wider allow)."
         if scopes:
             on_token = [sc for sc in scopes if sc in required_scopes] or scopes
             line += (
@@ -1220,9 +1240,23 @@ class AuthMiddleware(BaseHTTPMiddleware):
                     held_roles = list(await role_store.aroles_of(subject))
                 except Exception:
                     held_roles = None  # a store read failure must not turn a denial into a 500
+            explicit_deny: Optional[str] = None
+            resource_type, resource_id = get_resource_context_from_path(path)
+            if role_store is not None and resource_type and resource_id and hasattr(role_store, "explicit_denials"):
+                try:
+                    denied = await role_store.aexplicit_denials(
+                        resource_type,
+                        _route_action(result.required_scopes),
+                        subject=subject,
+                        roles=held_roles if roles_from_token else None,
+                    )
+                    if resource_id in denied or "*" in denied:
+                        explicit_deny = f"{resource_type}/{resource_id if resource_id in denied else '*'}"
+                except Exception:
+                    explicit_deny = None
             log_warning(
                 self._denial_message(
-                    request, method, path, result.required_scopes, scopes, held_roles, roles_from_token
+                    request, method, path, result.required_scopes, scopes, held_roles, roles_from_token, explicit_deny
                 )
             )
             return self._create_error_response(
