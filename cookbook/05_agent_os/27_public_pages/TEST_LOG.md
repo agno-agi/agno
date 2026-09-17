@@ -171,3 +171,61 @@ run. The focused public-configuration and MCP suites passed all 204 tests.
   OAuth routes are deliberately rejected rather than publishing a wrong resource.
 - Cookbook mcp_domain.py --check passed. Full format and validation passed.
 - No DNS, hosting or production application changes were made.
+
+---
+
+### migrate_page_source.py (2026-09-17)
+
+**Status:** PASS
+
+**Description:** Drove the CLI as a subprocess against a disposable local
+PostgreSQL 18 database created by the page storage test fixture, with the demo
+module's own `Knowledge`, a stub embedder in place of OpenAI, in-memory page
+fetching and a placeholder API key: `--help` with the database URL pointed at a
+closed port; the default dry run on uninitialized storage; seeding at the old
+host; dry run; `--apply`; a repeated `--apply`; a dry run once the target is
+current; an invalid `http://` target; and `public_pages.py sync` still configured
+with the old source. The same sequence is maintained as
+`test_source_relocation_cli_reports_each_outcome_and_keeps_setup_visible` in
+`libs/agno/tests/integration/knowledge/test_page_storage.py`.
+
+**Result:** `--help` exits before the demo import. The dry run on fresh storage
+runs `setup()`, creates the page schema and binding row, then rejects the unbound
+namespace. After seeding, the dry run leaves the binding unchanged and says so;
+`--apply` moves the source and increments the revision once; the repeated apply
+and the dry run at target report that the binding already points to the target
+with no further increment; the invalid target fails with `invalid_source_url` and
+prints no success text; the stale producer is refused with "bound to another
+documentation source" and the binding is not rewritten. No provider was called.
+Chat, serve and MCP modes were not run.
+
+---
+
+### Source relocation operator API (2026-09-17)
+
+**Status:** PASS
+
+**Description:** Focused runs on the PR head with the local review changes
+(uncommitted) against a disposable local PostgreSQL 18 database created per
+module by the fixture: `libs/agno/tests/unit/knowledge/test_page_contract.py`
+(19 passed, exact public-export set with `PageSourceBinding`,
+`PageSourceMigration` and `PageSourceBusy` checked in a storage-blocking
+subprocess) and `libs/agno/tests/integration/knowledge/test_page_storage.py`
+(153 passed, 0 skipped, including the relocation cases). Environment: Python
+3.12.13, pytest 9.1.1, SQLAlchemy 2.0.52, psycopg 3.3.5 (binary), pgvector 0.5.0.
+
+**Result:** Sync and async inspect and migrate, dry run, apply and idempotent
+retry; held-lock contention with `PageSourceBusy` for sync and async competitors
+and an independent namespace proceeding; sync waiting behind a held relocation
+and refusing the old source afterward; readers during an uncommitted update;
+cancellation before commit (rolled back) and during commit (committed); a
+simulated lost commit acknowledgement with guarded retry; worker-pool and
+connection-pool exhaustion; the URL validation matrix; binding-only persistence
+checked with plain SQL against catalog, filesystem, vector and binding tables;
+citation refresh through list, read, grep, search and legacy search without
+document embeddings, with changed-content and `public_url` controls; and
+list-cursor restart after apply. `ruff check`, `ruff format --check` and the
+cookbook pattern check passed. `mypy` reports 53 pre-existing errors in 13
+unrelated modules, identical on the PR base and head; no new diagnostics.
+
+---

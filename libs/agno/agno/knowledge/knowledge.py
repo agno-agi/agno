@@ -19,7 +19,16 @@ from agno.exceptions import EmbeddingError
 from agno.filters import EQ, FilterExpr
 from agno.knowledge.content import Content, ContentAuth, ContentStatus, FileData
 from agno.knowledge.document import Document
-from agno.knowledge.page import GrepResult, PageList, PageRead, PageSearchConfig, SearchResult, SyncReport
+from agno.knowledge.page import (
+    GrepResult,
+    PageList,
+    PageRead,
+    PageSearchConfig,
+    PageSourceBinding,
+    PageSourceMigration,
+    SearchResult,
+    SyncReport,
+)
 from agno.knowledge.reader import Reader, ReaderFactory
 from agno.knowledge.reader.utils.urls import canonical_page_name, is_sitemap_url
 from agno.knowledge.remote_content.base import BaseStorageConfig
@@ -232,6 +241,57 @@ class Knowledge(RemoteKnowledge):
             reindex=reindex,
             validate_discovery=validate_discovery,
             seconds=3900,
+        )
+
+    def inspect_page_source(self) -> PageSourceBinding:
+        """Inspect the namespace's current storage/source binding without mutations."""
+        from agno.knowledge.page._coordinator import READ_WORKERS
+
+        return READ_WORKERS.run_sync(self._pages().inspect_source, seconds=5)
+
+    async def ainspect_page_source(self) -> PageSourceBinding:
+        """Async inspect_page_source on bounded workers."""
+        from agno.knowledge.page._coordinator import READ_WORKERS
+
+        return await READ_WORKERS.run(self._pages().inspect_source, seconds=5)
+
+    def migrate_page_source(
+        self, *, expected_source: str, target_source: str, dry_run: bool = True
+    ) -> PageSourceMigration:
+        """Explicitly relocate an existing source to another HTTPS host; dry-run by default.
+
+        The discovery path and configured storage tables must match. Caller must
+        own the target and establish that it serves the same corpus; this operation
+        performs no network fetch. The namespace lock rejects active sync/maintenance.
+        Only the source binding/revision change; pages and vectors stay untouched.
+        Sync the target with the same transform/index_version afterward to refresh
+        citations without re-embedding unchanged content. Repeating the same request
+        is safe if the binding already equals target_source. An uncertain commit
+        requires inspection/retry, not an assumption that the binding stayed old.
+        This operator API is never automatically exposed as a tool or HTTP route.
+        """
+        from agno.knowledge.page._coordinator import READ_WORKERS
+
+        return READ_WORKERS.run_sync(
+            self._pages().migrate_source,
+            expected_source=expected_source,
+            target_source=target_source,
+            dry_run=dry_run,
+            seconds=5,
+        )
+
+    async def amigrate_page_source(
+        self, *, expected_source: str, target_source: str, dry_run: bool = True
+    ) -> PageSourceMigration:
+        """Async migrate_page_source; cancellation retains capacity until transaction cleanup."""
+        from agno.knowledge.page._coordinator import READ_WORKERS
+
+        return await READ_WORKERS.run(
+            self._pages().migrate_source,
+            expected_source=expected_source,
+            target_source=target_source,
+            dry_run=dry_run,
+            seconds=5,
         )
 
     def search_pages(

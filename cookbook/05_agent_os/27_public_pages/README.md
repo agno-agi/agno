@@ -345,3 +345,54 @@ OAuth deployments retain the native `/mcp` route; combining OAuth with custom
 routing fails at startup until protected-resource discovery supports that mapping.
 A different site's `/mcp` compatibility reverse proxy remains deployment configuration.
 No application middleware or mutation of `app.user_middleware` is needed for routing.
+### Relocating the documentation source
+
+Relocation changes which source URL a namespace is bound to. It does not move
+website files, verify that you own the target, or check that the target serves
+the same documentation; those remain the operator's responsibility. Inspect with
+`knowledge.inspect_page_source()` or `ainspect_page_source()`; relocate with
+`knowledge.migrate_page_source(expected_source=old, target_source=new)` or
+`amigrate_page_source(...)`, which is a dry run unless `dry_run=False`.
+
+Runbook:
+
+1. Verify that you own the target host and that it serves the same corpus at the
+   same discovery path; only the host may differ.
+2. Inspect the existing binding: filesystem, catalog, vector table, source URL and
+   revision.
+3. Run the guarded dry run. Its result reports the current binding twice, as
+   `before` and `after`, with `changed=False`; it does not project a future state.
+4. Apply with `dry_run=False`. Only the binding's source and revision change;
+   pages, catalog rows and stored vectors stay as they are, so citations keep
+   naming the old host until step 6.
+5. Point every sync producer at the target (for this example `PAGE_DEMO_INDEX_URL`,
+   which the `sync` mode and the `sync-docs` workflow read) and restart producers
+   that captured their configuration at startup. A sync still configured with the
+   old source is refused with "bound to another documentation source"; the
+   binding is never rewritten by sync.
+6. Run a normal sync against the target with `sync_pages` or `async_sync_pages`,
+   using the same transform and `index_version`. Unchanged pages are republished
+   with new citation URLs and their document embeddings are reused; changed
+   content, a different `index_version` or invalid stored vectors re-embed as
+   usual. An explicit `public_url` keeps deciding the citation host regardless of
+   the discovery host.
+7. If an apply fails after it started (timeout, lost connection, cancellation), do
+   not assume a rollback: inspect the binding, or repeat the same guarded request,
+   which is a no-op once the binding already names the target. Being at the target
+   does not mean step 6 has happened.
+
+Guards: HTTPS only; an unchanged discovery path, compared literally, so encoded or
+otherwise equivalent spellings are rejected; the configured catalog and vector
+tables; and a current source equal to `expected_source` or already equal to
+`target_source`. The namespace lock shared with sync rejects a relocation during
+an active sync or another relocation with `PageSourceBusy`; a sync started while a
+relocation holds the lock waits for it. Readers keep working throughout. An
+applied relocation bumps the namespace revision, so open `list_pages` cursors
+report `restart_required` and must be re-obtained.
+
+`migrate_page_source.py OLD_URL NEW_URL` calls `setup()` first, which on
+uninitialized storage creates the page schema even in dry-run mode, then prints
+the current binding, the dry-run result and what remains to be done; add
+`--apply` only after reviewing them. It uses the database configured by
+`public_pages.py`. No HTTP route or model/MCP tool is added automatically; keep
+this an operator action.
