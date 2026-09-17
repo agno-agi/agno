@@ -66,9 +66,11 @@ def _partial(files, reason):
 class CommandError(Exception):
     """User-facing command error; its message is returned as the tool output."""
 
-    def __init__(self, message: str, code: str = "invalid_command"):
+    def __init__(self, message: str, code: str = "invalid_command", missing: str | None = None):
         super().__init__(message)
         self.code = code
+        # The path the command resolved and could not find, when it reported one.
+        self.missing = missing
 
 
 class _PageRead(str):
@@ -214,7 +216,7 @@ def _cmd_ls(args: list[str], files: Mapping[str, str]) -> str:
             if _has_file(candidate, files) and candidate not in lines:
                 lines.append(candidate)
         if not lines:
-            raise CommandError(f"{target}: no such file or directory", "page_not_found")
+            raise CommandError(f"{target}: no such file or directory", "page_not_found", _norm(target))
         header = f"{clean}:\n" if len(targets) > 1 else ""
         blocks.append(header + "\n".join(lines))
     return "\n\n".join(blocks)
@@ -229,7 +231,7 @@ def _cmd_tree(args: list[str], files: Mapping[str, str]) -> str:
         for candidate in _file_candidates(root):
             if _has_file(candidate, files):
                 return candidate
-        raise CommandError(f"{root}: no such directory", "page_not_found")
+        raise CommandError(f"{root}: no such directory", "page_not_found", _norm(root))
     lines = [root]
     seen_dirs = set()
     canonical_root = _canonical(root, files)
@@ -268,7 +270,7 @@ def _cmd_find(args: list[str], files: Mapping[str, str]) -> str:
         i += 1
     candidates = _files_under(root, files)
     if not candidates:
-        raise CommandError(f"find: {root}: no such directory", "page_not_found")
+        raise CommandError(f"find: {root}: no such directory", "page_not_found", _norm(root))
     if pattern is None:
         return "\n".join(candidates)
     matches = [
@@ -390,7 +392,7 @@ def _rg_targets(roots: list[str], files: Mapping[str, str]) -> list[str]:
             targets.extend(under)
             found = True
         if not found:
-            raise CommandError(f"rg: {root}: no such file or directory")
+            raise CommandError(f"rg: {root}: no such file or directory", "invalid_command", _norm(root))
     if not targets:
         raise CommandError(f"rg: no files under {', '.join(roots)}")
     return targets
@@ -495,7 +497,7 @@ def _cmd_rg(args: list[str], files: Mapping[str, str]) -> str:
             exact = next((candidate for candidate in _file_candidates(clean) if candidate in files), None)
             prefix = clean + "/" if page_corpus.has_directory(clean + "/") else None
             if prefix is None and exact is None:
-                raise CommandError(f"rg: {roots[0]}: no such file or directory", "page_not_found")
+                raise CommandError(f"rg: {roots[0]}: no such file or directory", "page_not_found", _norm(roots[0]))
         if prefix is not None:
             result = page_corpus.grep(positional[0], prefix=prefix, ignore_case="i" in flags)
             matches = [(m.path, m.line_number, m.text) for m in result.matches if m.path.startswith(prefix)]
@@ -631,17 +633,10 @@ EMPTY_INDEX = "The page index is empty."
 def _missing_root(exc: "CommandError") -> bool:
     """True when a command failed only because the corpus root holds no pages.
 
-    Each handler resolves its own root and names it in the message, so this reads
-    the reported subject instead of re-parsing flags the handler already accepted.
+    Reads the path the handler resolved rather than its message, so a page path
+    that happens to contain the message's punctuation cannot pass as the root.
     """
-    message = str(exc).rstrip()
-    for suffix in (": no such directory", ": no such file or directory"):
-        if message.endswith(suffix):
-            # The path is the last colon-separated field before the suffix, and may
-            # carry a "find: " style command prefix.
-            subject = message[: -len(suffix)].rsplit(": ", 1)[-1]
-            return subject.rstrip("/") == ""
-    return False
+    return exc.missing == "/"
 
 
 def _execute_command(command: str, files: Mapping[str, str]) -> str:
