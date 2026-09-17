@@ -175,14 +175,22 @@ class Ollama(Model):
             for tool_call in message.tool_calls:
                 if "function" in tool_call:
                     function_data = tool_call["function"]
+                    args = function_data.get("arguments")
+                    if isinstance(args, dict):
+                        parsed_args = args
+                    elif isinstance(args, str):
+                        try:
+                            parsed_args = json.loads(args) if args.strip() else {}
+                        except json.JSONDecodeError:
+                            parsed_args = {}
+                    else:
+                        parsed_args = {}
                     formatted_tool_call = {
                         "id": tool_call.get("id"),
                         "type": "function",
                         "function": {
                             "name": function_data["name"],
-                            "arguments": json.loads(function_data["arguments"])
-                            if isinstance(function_data["arguments"], str)
-                            else function_data["arguments"],
+                            "arguments": parsed_args,
                         },
                     }
                     formatted_tool_calls.append(formatted_tool_call)
