@@ -616,6 +616,10 @@ class RouteScopeCheck:
     # hold per-resource scopes: the endpoint should filter results to these IDs
     # (possibly an empty set) instead of rejecting with 403.
     accessible_resource_ids: Optional[Set[str]] = None
+    # Why a denial happened when it was not a plain scope mismatch, recorded on the decision
+    # trail: ``provider_error`` when the enforcing provider raised (an FGA outage, an unreachable
+    # role database) and the gate failed closed.
+    reason: Optional[str] = None
 
 
 def check_route_scopes(
