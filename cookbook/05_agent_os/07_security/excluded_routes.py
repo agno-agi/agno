@@ -2,7 +2,7 @@
 Excluding routes from JWT authentication
 ========================================
 
-Use AuthorizationConfig.excluded_route_paths to mark custom routes as public.
+Use Authorization(excluded_route_paths=[...]) to mark custom routes as public.
 Patterns use fnmatch syntax: "/public/*" matches /public/anything.
 
 Prerequisites: none for the smoke
@@ -15,7 +15,7 @@ import jwt
 from agno.agent import Agent
 from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS
-from agno.os.config import AuthorizationConfig
+from agno.os.authz import Authorization
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -48,8 +48,7 @@ agent_os = AgentOS(
     id=OS_ID,
     agents=[agent],
     base_app=base_app,
-    authorization=True,
-    authorization_config=AuthorizationConfig(
+    authorization=Authorization(
         verification_keys=[JWT_SECRET],
         algorithm="HS256",
         excluded_route_paths=["/public/*"],

@@ -18,7 +18,7 @@ import jwt
 from agno.agent import Agent
 from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS
-from agno.os.config import AuthorizationConfig
+from agno.os.authz import Authorization
 from fastapi.testclient import TestClient
 
 # ---------------------------------------------------------------------------
@@ -40,8 +40,7 @@ security_agent = Agent(
 agent_os = AgentOS(
     id=OS_ID,
     agents=[security_agent],
-    authorization=True,
-    authorization_config=AuthorizationConfig(
+    authorization=Authorization(
         verification_keys=[JWT_SECRET],
         algorithm="HS256",
         verify_audience=True,
