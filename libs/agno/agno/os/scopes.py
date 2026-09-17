@@ -481,6 +481,7 @@ def get_default_scope_mappings() -> Dict[str, List[str]]:
         "GET /knowledge/content/*": ["knowledge:read"],
         "GET /knowledge/config": ["knowledge:read"],
         "POST /knowledge/content": ["knowledge:write"],
+        "POST /knowledge/content/*/refresh": ["knowledge:write"],
         "PATCH /knowledge/content/*": ["knowledge:write"],
         "POST /knowledge/search": ["knowledge:read"],
         "DELETE /knowledge/content": ["knowledge:delete"],
