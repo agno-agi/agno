@@ -769,3 +769,76 @@ def test_workflow_continue_over_ws_enforces_the_approval_gate(monkeypatch):
                 break
         else:
             raise AssertionError("no error frame within 8 messages")
+
+
+def test_users_api_is_gated_whenever_an_auth_middleware_runs(tmp_path, monkeypatch):
+    """/users is open only on a no-auth OS. With a JWT key from the environment and authorization
+    off, an auth middleware still runs and every caller has a verified identity, so the gate must
+    apply: anonymous 401, a plain token 403, an admin-scoped token 200. Keying the gate on
+    authorization alone opened the roster to every signed token in that mode."""
+    from agno.db.sqlite import SqliteDb
+    from agno.os.config import AuthorizationConfig
+
+    monkeypatch.setenv("JWT_VERIFICATION_KEY", SECRET)
+    db = SqliteDb(db_file=str(tmp_path / "env.db"))
+    agent_os = AgentOS(
+        id=OS_ID,
+        agents=[Agent(id="a", name="A", db=db)],
+        db=db,
+        authorization_config=AuthorizationConfig(algorithm="HS256"),  # verification only, RBAC off
+        user_directory=True,
+    )
+    client = TestClient(agent_os.get_app())
+    client.get("/agents", headers=_auth("alice"))  # alice is JIT-provisioned
+
+    assert client.get("/users").status_code == 401  # anonymous: the OS is not open
+    assert client.get("/users", headers=_auth("mallory")).status_code == 403  # signed, not admin
+    assert client.patch("/users/alice", headers=_auth("mallory"), json={"disabled": True}).status_code == 403
+    assert client.get("/agents", headers=_auth("alice")).status_code == 200  # alice untouched
+    admin = {"Authorization": f"Bearer {_token('op', scopes=['agent_os:admin'])}"}
+    assert client.get("/users", headers=admin).status_code == 200  # a real admin still can
+
+
+def test_users_api_refuses_reserved_principals_and_role_slugs():
+    """The directory holds people. A service-account or system principal is never looked up in it,
+    so a row for one is dead weight and disabling it is a revocation that never happens; a role slug
+    is not a person and breaks the roster and its metrics. Both are refused on create and on the
+    create-on-PATCH path."""
+    roles = RoleStore(db_url=_db_url())
+    roles.set_role_scopes("admin", ["agent_os:admin"])
+    roles.set_role_scopes("viewer", ["agents:*:read"])
+    roles.assign("alice", "admin")
+    users = UserStore(db_url=_db_url())
+    client = TestClient(_os(roles, users).get_app())
+    for bad in ("sa:svc", "__scheduler__", "__oauth__:client", "viewer"):
+        assert client.post("/users", headers=_auth("alice"), json={"id": bad}).status_code == 422, bad
+        assert client.patch(f"/users/{bad}", headers=_auth("alice"), json={"disabled": True}).status_code == 422, bad
+        assert users.get(bad) is None
+    assert client.post("/users", headers=_auth("alice"), json={"id": "bob", "email": "bob@co"}).status_code == 200
+
+
+def test_users_api_admits_the_security_key_as_root(tmp_path, monkeypatch):
+    """In security-key mode the key is the OS's unscoped root: it carries no subject and no scopes,
+    and every other route admits it. The admin gate must admit it too, or a directory on a
+    security-key deployment has no administrator at all. Anonymous and a wrong key stay out."""
+    from agno.db.sqlite import SqliteDb
+    from agno.os.settings import AgnoAPISettings
+
+    monkeypatch.delenv("JWT_VERIFICATION_KEY", raising=False)
+    monkeypatch.delenv("JWT_JWKS_FILE", raising=False)
+    db = SqliteDb(db_file=str(tmp_path / "key.db"))
+    agent_os = AgentOS(
+        id=OS_ID,
+        agents=[Agent(id="a", name="A", db=db)],
+        db=db,
+        settings=AgnoAPISettings(os_security_key="root-key"),
+        user_directory=True,
+    )
+    client = TestClient(agent_os.get_app())
+    root = {"Authorization": "Bearer root-key"}
+
+    assert client.get("/users").status_code == 401
+    assert client.get("/users", headers={"Authorization": "Bearer wrong"}).status_code == 401
+    assert client.get("/users", headers=root).status_code == 200
+    assert client.post("/users", headers=root, json={"id": "bob"}).status_code == 200
+    assert client.patch("/users/bob", headers=root, json={"disabled": True}).status_code == 200

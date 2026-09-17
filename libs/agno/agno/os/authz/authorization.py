@@ -175,6 +175,9 @@ class Authorization:
         self._db: Any = resolve_authz_db(db, db_url)
         self._db_is_async = False
         self._bound = False
+        # Set by AgentOS when it builds the app: the store and provider are wired at that point,
+        # so later authoring would write to the store without ever being enforced.
+        self._frozen = False
         if self._db is not None:
             self._bind()
 
@@ -199,6 +202,7 @@ class Authorization:
         ``default=True`` is applied on every boot, existing role or not: it is the provisioning
         policy, and moving it to another role in code must take effect. Omitting ``default`` never
         clears an existing default. Chainable."""
+        self._require_not_frozen("define_role")
         self._roles_defined = True
         if self._bound:
             self._apply_role_def(slug, scopes, default, name, description)
@@ -215,6 +219,7 @@ class Authorization:
         BOOTSTRAP semantics: an existing admin is left as is, so seeding on every start is safe. A
         handover to another admin survives restarts; only a true lockout (nobody holds an admin role)
         re-grants ``admin`` here. Applied now if a db is bound, else buffered until AgentOS lends one."""
+        self._require_not_frozen("seed")
         if self._bound:
             self._apply_seed(admin, admin_role)
         else:
@@ -229,12 +234,27 @@ class Authorization:
         admin changed at runtime through the ``/authz`` API. That is the difference from
         ``role_store.assign``, which overwrites unconditionally (use it directly for a declarative,
         code-owns-the-assignment model). Applied now if a db is bound, else buffered. Chainable."""
+        self._require_not_frozen("assign")
         self._roles_defined = True
         if self._bound:
             self._apply_assign(subject, role)
         else:
             self._assign_calls.append((subject, role))
         return self
+
+    def _freeze(self) -> None:
+        """Called by AgentOS once the app is built: routes and the provider are wired from this
+        object's state as of now, so further authoring would land in the store unenforced."""
+        self._frozen = True
+
+    def _require_not_frozen(self, method: str) -> None:
+        if self._frozen:
+            raise ValueError(
+                f"Authorization.{method}() was called after AgentOS.get_app() built the app, so it would "
+                "write to the role store without ever being enforced. Define roles, seeds and "
+                "assignments before get_app(); change them at runtime through the /authz admin API or "
+                "authz.role_store."
+            )
 
     # ------------------------------------------------------------------ binding
     def _bind(self, os_db: Optional[Any] = None) -> "Authorization":

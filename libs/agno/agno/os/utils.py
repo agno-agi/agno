@@ -1330,23 +1330,29 @@ def draft_preview_identity(request: Any) -> tuple:
     """(actor, privileged) for the draft-preview gate.
 
     ``privileged`` is True only for a caller allowed to preview anyone's
-    draft: the admin scope, or no authentication at all (no request, or no
-    auth middleware ran). A plain authenticated caller keeps its raw
-    identity even when ``user_isolation`` is off - that flag widens reads,
-    never the right to run another owner's draft.
+    draft: an admin, or no authentication at all (no request, or no auth
+    middleware ran). A plain authenticated caller keeps its raw identity
+    even when ``user_isolation`` is off - that flag widens reads, never the
+    right to run another owner's draft.
+
+    "Admin" is decided the way every other gate decides it
+    (:func:`~agno.os.middleware.user_scope.caller_is_admin`): the token's
+    admin scope counts only when the caller's scopes are their authority. Under
+    a managed-roles or ReBAC plane a JWT's ``scopes`` claim is inert everywhere
+    else, so reading it raw here let any validly-signed token carrying
+    ``agent_os:admin`` preview every owner's drafts while being denied every
+    other admin action.
     """
     if request is None:
         return None, True
-    from agno.os.middleware.user_scope import _has_admin_scope
+    from agno.os.middleware.user_scope import caller_is_admin
 
     user_id = getattr(request.state, "user_id", None)
     scopes = getattr(request.state, "scopes", None)
-    admin_scope_raw = getattr(request.state, "admin_scope", None)
-    admin_scope = admin_scope_raw if isinstance(admin_scope_raw, str) else None
     if scopes is None and user_id is None:
         # No auth middleware ran: authorization is off.
         return None, True
-    if _has_admin_scope(list(scopes or []), admin_scope=admin_scope):
+    if caller_is_admin(request):
         return None, True
     return (user_id if isinstance(user_id, str) else None), False
 

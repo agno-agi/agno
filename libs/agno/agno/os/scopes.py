@@ -481,6 +481,7 @@ def get_default_scope_mappings() -> Dict[str, List[str]]:
         "GET /knowledge/content/*": ["knowledge:read"],
         "GET /knowledge/config": ["knowledge:read"],
         "POST /knowledge/content": ["knowledge:write"],
+        "POST /knowledge/content/*/refresh": ["knowledge:write"],
         "PATCH /knowledge/content/*": ["knowledge:write"],
         "POST /knowledge/search": ["knowledge:read"],
         "DELETE /knowledge/content": ["knowledge:delete"],
@@ -616,6 +617,10 @@ class RouteScopeCheck:
     # hold per-resource scopes: the endpoint should filter results to these IDs
     # (possibly an empty set) instead of rejecting with 403.
     accessible_resource_ids: Optional[Set[str]] = None
+    # Why a denial happened when it was not a plain scope mismatch, recorded on the decision
+    # trail: ``provider_error`` when the enforcing provider raised (an FGA outage, an unreachable
+    # role database) and the gate failed closed.
+    reason: Optional[str] = None
 
 
 def check_route_scopes(

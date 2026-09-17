@@ -15,7 +15,7 @@ import pytest
 
 pytest.importorskip("sqlalchemy")  # managed roles persist/enforce via the native engine + SQLAlchemy
 
-from agno.os.auth import provision_user_with_default_role  # noqa: E402
+from agno.os.auth import aprovision_user_with_default_role, provision_user_with_default_role  # noqa: E402
 from agno.os.authz.role_store import RoleStore  # noqa: E402
 from agno.os.authz.user_store import UserStore  # noqa: E402
 
@@ -158,3 +158,26 @@ def test_an_explicit_role_wins_over_the_default_fallback():
     engine = roles._engine
     assert engine.check_scope("agents:x:write", subject="bob") is True  # editor grants write
     assert engine.check_scope("agents:x:read", subject="bob") is False  # editor is not the default viewer
+
+
+def test_a_role_slug_is_never_provisioned_as_a_user():
+    """Subjects and roles share one namespace. Provisioning a token whose sub is a role slug created a
+    directory row named after the role and, before the store refused it, granted the role the default
+    role as an inheritance edge. Now: no row, no grant, None returned (the caller falls back to the
+    directory read, and the request stays denied by the collision guard)."""
+    import asyncio
+
+    roles, users = _roles(), _users()
+    roles.set_role_scopes("viewer", ["agents:*:read"])
+    roles.set_role_scopes("member", ["agents:*:run"], is_default=True)
+    roles.assign("vic", "viewer")
+
+    assert provision_user_with_default_role(users, roles, "viewer", {"email": "v@co"}) is None
+    assert users.get("viewer") is None
+    assert roles.roles_of("viewer") == []
+    assert roles._engine.check_scope("agents:run", subject="vic") is False  # no inheritance edge
+
+    assert asyncio.run(aprovision_user_with_default_role(users, roles, "member", {})) is None
+    assert users.get("member") is None
+
+    assert provision_user_with_default_role(users, roles, "newbie", {}) is not None  # people still provision

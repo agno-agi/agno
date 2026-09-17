@@ -480,6 +480,7 @@ class AgentOS:
         # pipeline below already understands, and record what it hands over: its role store
         # (provisioning + the /authz API), the provider it composed, the pinned issuer, and its
         # audit sink. It adopts this OS db so role definitions persist alongside agent data.
+        self._authz_object: Optional["Authorization"] = None
         self._authz_role_store: Any = None
         self._authz_provider: Any = None
         self._authz_issuer: Optional[str] = None
@@ -516,6 +517,9 @@ class AgentOS:
             authorization._bind(self.db)
             authorization_config = authorization.authorization_config()
             audit = authorization.audit_sink
+            # Keep the object: get_app() re-reads its store and provider right before serving, so
+            # roles defined between construction and get_app() are enforced, then freezes it.
+            self._authz_object = authorization
             self._authz_role_store = authorization.role_store
             self._authz_provider = authorization.provider
             self._authz_issuer = authorization.issuer
@@ -540,9 +544,9 @@ class AgentOS:
         # UserStore from its own db, so callers avoid the manual wiring.
         self.user_directory = self._resolve_user_directory(user_directory)
         # The /users directory API is served whenever a directory is configured. It is admin-gated
-        # under authorization; on a no-auth OS it mounts open, matching every other route (the admin
-        # gate needs a verified identity to check, and there is none). See _admin_api_routers,
-        # which passes auth_enabled so the gate knows which mode it is in.
+        # whenever an auth middleware runs (so callers have a verified identity to gate on) and
+        # open only on a no-auth OS, where every route is open. See _admin_api_routers, which
+        # passes auth_enabled so the gate knows which mode it is in.
         self._authz_user_store = self.user_directory.user_store if self.user_directory is not None else None
 
         # CORS configuration - merge user-provided origins with defaults from settings
@@ -1403,6 +1407,7 @@ class AgentOS:
             if not isinstance(self.public, PublicSurface):
                 raise ValueError("AgentOS.public must be a PublicSurface")
             self.public._bind(self)
+        self._refresh_authorization()
         # Pick up MCP tools added to the registry after construction, before the
         # lifespan that connects them is assembled below
         collect_mcp_tools_from_registry(self.registry, self.mcp_tools)
@@ -1714,7 +1719,7 @@ class AgentOS:
             fastapi_app.router.lifespan_context = public_lifespan
             fastapi_app.add_middleware(PublicMiddleware, surface=self.public, agent_os=self)
 
-        auth_configured = bool(self.authorization or jwt_env_configured or security_key)
+        auth_configured = self._auth_configured()
         if auth_configured:
             # In JWT mode the security key is ignored (JWT takes precedence), matching
             # get_effective_auth_mode; pass None so the middleware doesn't fall back to it.
@@ -1758,6 +1763,10 @@ class AgentOS:
         if self.base_app is not None:
             self._base_app_prepared = True
 
+        if self._authz_object is not None:
+            # Only a built app freezes the object. A build that raised above wired nothing, so
+            # authoring stays open for the caller to fix the setup and build again.
+            self._authz_object._freeze()
         return fastapi_app
 
     def _get_service_account_verifier(self) -> Optional[Any]:
@@ -2021,18 +2030,45 @@ class AgentOS:
             if self._authz_role_store is not None:
                 routers.append(get_roles_router(self._authz_role_store))
             if self._authz_user_store is not None:
-                # /users is admin-gated under authorization; on a no-auth OS it mounts open, matching
-                # every other route (the whole OS serves anonymous callers, and the roster is already
-                # writable via auto-provision). The roles router stays gated -- it exists only when
-                # there is an Authorization object, so authorization is always on there.
+                # /users mounts open only on a no-auth OS, where every route is open (the whole OS
+                # serves anonymous callers, and the roster is already writable via auto-provision).
+                # Whenever an auth middleware runs -- authorization on, a JWT key from the
+                # environment, or a security key -- callers carry a verified identity and the gate
+                # requires an admin. Keying this on ``self.authorization`` alone left the router open
+                # to every signed token when a JWT key came from the environment with
+                # authorization off: anonymous callers got 401, any token could disable anyone.
                 routers.append(
                     get_users_router(
                         self._authz_user_store,
                         role_store=self._authz_role_store,
-                        auth_enabled=bool(self.authorization),
+                        auth_enabled=self._auth_configured(),
                     )
                 )
         return routers
+
+    def _refresh_authorization(self) -> None:
+        """Re-read the Authorization object right before the app is built.
+
+        The object stays mutable after construction: define_role / seed / assign apply to the
+        store immediately. Reading it once in __init__ meant roles defined after AgentOS(...)
+        landed in the store but were never enforced -- no /authz mount, token-scope RBAC still
+        running, no warning. Everything defined before get_app() now counts. The object is frozen
+        by get_app() once the build succeeds, since only then are the routes and provider wired."""
+        authz = self._authz_object
+        if authz is None:
+            return
+        self._authz_role_store = authz.role_store
+        self._authz_provider = authz.provider
+        self._authz_issuer = authz.issuer
+
+    def _auth_configured(self) -> bool:
+        """Whether an auth middleware runs on this OS: ``authorization`` is on, a JWT key comes from
+        the environment, or a security key is set. The single definition both the middleware
+        install and the ``/users`` gate read, so they cannot disagree about whether a caller has
+        a verified identity."""
+        security_key = self.settings.os_security_key if self.settings else None
+        jwt_env_configured = bool(getenv("JWT_VERIFICATION_KEY") or getenv("JWT_JWKS_FILE"))
+        return bool(self.authorization or jwt_env_configured or security_key)
 
     def _seed_authorization_provider(self, fastapi_app: FastAPI) -> None:
         """Seed ``app.state.authorization_provider`` (and ``authz_audit``) from the Authorization

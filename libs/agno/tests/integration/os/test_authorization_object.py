@@ -778,3 +778,146 @@ def test_assign_is_bootstrap_safe_and_buffers(tmp_path):
     a1.role_store.assign("bob", "runner")  # an admin promotes bob at runtime
     a2 = boot()  # a restart re-runs the identical authz.assign("bob", "viewer")
     assert a2.role_store.roles_of("bob") == ["runner"]  # create-if-absent: the promotion is NOT clobbered
+
+
+def test_roles_defined_after_agentos_but_before_get_app_are_enforced(tmp_path):
+    """AgentOS(...) used to snapshot the object's store and provider at construction, so roles
+    defined afterwards landed in the store but were never enforced: no /authz mount, token-scope
+    RBAC still running, no warning. get_app() now re-reads the object, so everything defined before
+    the app is built counts."""
+    db = SqliteDb(db_file=str(tmp_path / "late.db"))
+    authz = Authorization(verification_keys=[SECRET], algorithm="HS256", verify_audience=True, audience=OS_ID)
+    os_ = AgentOS(id=OS_ID, db=db, agents=_agents(), authorization=authz)  # constructed first
+    authz.define_role("admin", ["agent_os:admin"])
+    authz.define_role("viewer", ["agents:*:read"])
+    authz.seed(admin="alice")
+    authz.assign("bob", "viewer")
+    client = TestClient(os_.get_app())
+
+    assert client.get("/authz/roles", headers=_auth("alice")).status_code == 200  # mounted
+    assert client.get("/agents/research", headers=_auth("bob")).status_code == 200  # role enforced
+    assert (
+        client.get("/agents/research", headers=_auth("x", scopes=["agents:*:read"])).status_code == 403
+    )  # scopes not authoritative
+
+
+def test_authoring_after_get_app_is_refused(tmp_path):
+    """Once the app is built the routes and provider are wired, so a later define_role / seed /
+    assign would write to the store without being enforced. The object refuses it plainly instead."""
+    db = SqliteDb(db_file=str(tmp_path / "frozen.db"))
+    authz = Authorization(db=db, verification_keys=[SECRET], algorithm="HS256", verify_audience=True, audience=OS_ID)
+    authz.define_role("admin", ["agent_os:admin"])
+    AgentOS(id=OS_ID, db=db, agents=_agents(), authorization=authz).get_app()
+    for call in (
+        lambda: authz.define_role("viewer", ["agents:*:read"]),
+        lambda: authz.seed(admin="alice"),
+        lambda: authz.assign("bob", "admin"),
+    ):
+        with pytest.raises(ValueError, match="after AgentOS.get_app"):
+            call()
+    authz.role_store.set_role_scopes("viewer", ["agents:*:read"])  # the runtime path is still open
+
+
+def test_draft_preview_ignores_a_raw_token_admin_scope_under_managed_roles(tmp_path):
+    """Under a managed-roles plane a token's agent_os:admin is inert at every gate. The draft-preview
+    gate read it raw, so a viewer whose token carried that scope could read another owner's draft
+    component configs (isolation off, where components stay visible but drafts are owner-only)."""
+    db = SqliteDb(db_file=str(tmp_path / "drafts.db"))
+    authz = Authorization(db=db, verification_keys=[SECRET], algorithm="HS256", verify_audience=True, audience=OS_ID)
+    authz.define_role("builder", ["components:write", "components:read", "agents:*:read"])
+    authz.define_role("viewer", ["components:read", "agents:*:read"])
+    authz.assign("alice", "builder")
+    authz.assign("dave", "viewer")
+    client = TestClient(AgentOS(id=OS_ID, db=db, agents=_agents(), authorization=authz).get_app())
+    body = {
+        "name": "Alice draft",
+        "component_type": "agent",
+        "stage": "draft",
+        "config": {"model": {"provider": "openai", "id": "gpt-5.6-luna"}},
+    }
+    created = client.post("/components", headers=_auth("alice"), json=body)
+    assert created.status_code == 201, created.text
+    cid = created.json().get("component_id") or created.json()["id"]
+
+    def stages(headers):
+        r = client.get(f"/components/{cid}/configs", headers=headers)
+        assert r.status_code == 200, r.text
+        return sorted({c.get("stage") for c in r.json()})
+
+    assert stages(_auth("alice")) == ["draft"]  # the owner sees her draft
+    assert stages(_auth("dave")) == []  # a viewer sees the published stage only (nothing yet)
+    assert stages(_auth("dave", scopes=["agent_os:admin"])) == []  # a raw admin scope changes nothing here
+    assert client.get("/authz/roles", headers=_auth("dave", scopes=["agent_os:admin"])).status_code == 403
+
+
+def test_provider_outage_is_a_denial_with_an_audit_row_and_no_backend_text(tmp_path):
+    """A standalone provider that raises (an FGA outage, say) used to escape into the token-decode
+    handler: 401, the backend's error text in the body, and no decision row. The gate now fails
+    closed with a 403, keeps the message server side, and records the denial as provider_error."""
+    from agno.os.authz.audit import AuditEvent, AuditSink
+    from agno.os.authz.provider import AuthorizationContext, AuthorizationProvider
+
+    class Down(AuthorizationProvider):
+        def check(self, ctx: AuthorizationContext) -> bool:
+            raise ConnectionError("openfga unreachable at 10.0.0.5:8080")
+
+        def accessible_resource_ids(self, ctx: AuthorizationContext):
+            raise ConnectionError("openfga unreachable at 10.0.0.5:8080")
+
+    class Capture(AuditSink):
+        def __init__(self):
+            self.events: list = []
+
+        def record(self, event: AuditEvent) -> None:
+            self.events.append(event)
+
+        async def arecord(self, event: AuditEvent) -> None:
+            self.events.append(event)
+
+    sink = Capture()
+    authz = Authorization(
+        verification_keys=[SECRET],
+        algorithm="HS256",
+        verify_audience=True,
+        audience=OS_ID,
+        authorization_provider=Down(),
+        audit=sink,
+    )
+    client = TestClient(
+        AgentOS(
+            id=OS_ID, db=SqliteDb(db_file=str(tmp_path / "down.db")), agents=_agents(), authorization=authz
+        ).get_app()
+    )
+    for path in ("/agents/research", "/agents"):
+        r = client.get(path, headers=_auth("u", scopes=["agents:read"]))
+        assert r.status_code == 403, (path, r.status_code, r.text)
+        assert "10.0.0.5" not in r.text and "openfga" not in r.text
+    denied = [e for e in sink.events if e.action == "access.denied"]
+    assert denied and all(e.metadata.get("reason") == "provider_error" for e in denied)
+
+
+def test_a_failed_build_does_not_freeze_the_object(tmp_path):
+    """Authoring is refused only once an app was actually built. If get_app() raises partway (a
+    route conflict with the base app here), nothing is wired, so the caller must be able to fix
+    the setup and build again through the same bootstrap API."""
+    from fastapi import FastAPI
+
+    db = SqliteDb(db_file=str(tmp_path / "unfrozen.db"))
+    authz = Authorization(db=db, verification_keys=[SECRET], algorithm="HS256", verify_audience=True, audience=OS_ID)
+    authz.define_role("admin", ["agent_os:admin"])
+    clashing = FastAPI()
+
+    @clashing.get("/agents")
+    def clash():
+        return []
+
+    with pytest.raises(ValueError, match="Route conflict"):
+        AgentOS(
+            id=OS_ID, db=db, agents=_agents(), authorization=authz, base_app=clashing, on_route_conflict="error"
+        ).get_app()
+
+    authz.define_role("viewer", ["agents:*:read"])  # still open: no app exists
+    authz.assign("alice", "admin")
+    AgentOS(id=OS_ID, db=db, agents=_agents(), authorization=authz).get_app()
+    with pytest.raises(ValueError, match="after AgentOS.get_app"):
+        authz.define_role("editor", ["agents:*:write"])

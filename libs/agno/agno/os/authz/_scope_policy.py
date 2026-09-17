@@ -11,6 +11,8 @@ Resources use a ``type/id`` shape with ``/*`` for the collection/global form;
 from typing import Tuple
 
 ADMIN_SCOPE = "agent_os:admin"
+# The namespace of the admin scope. Not a resource type: no other scope may use it.
+ADMIN_NAMESPACE = ADMIN_SCOPE.split(":")[0]
 
 
 def scope_to_resource_action(scope: str) -> Tuple[str, str]:
@@ -26,6 +28,16 @@ def scope_to_resource_action(scope: str) -> Tuple[str, str]:
     parts = scope.split(":")
     if any(part == "" for part in parts):
         raise ValueError(f"Unrecognised scope (empty component): {scope!r}")
+    if parts[0] == ADMIN_NAMESPACE:
+        # ``agent_os`` is not a resource type; the only scope in that namespace is the admin
+        # super-scope. Anything else here (``agent_os:*:admin``, ``agent_os:x:read``) would be
+        # stored under an ``agent_os/...`` resource that grants nothing -- and the read-back
+        # of ``agent_os/*`` + ``admin`` used to render as ``agent_os:admin``, so an edit-and-save
+        # through the UI or API silently turned a no-op grant into full admin.
+        raise ValueError(
+            f"Unrecognised scope {scope!r}: {ADMIN_NAMESPACE!r} is not a resource type. The only scope "
+            f"in that namespace is {ADMIN_SCOPE!r}."
+        )
     if len(parts) == 2:
         resource, action = f"{parts[0]}/*", parts[1]
     elif len(parts) == 3:
@@ -56,9 +68,14 @@ def resource_action_to_scope(resource: str, action: str) -> str:
     """
     if resource == "*":
         return ADMIN_SCOPE
+    rtype, _, rid = resource.partition("/")
+    if rtype == ADMIN_NAMESPACE:
+        # A legacy row under the admin namespace grants nothing, so it must never read back as
+        # the admin super-scope: render the explicit three-part form, which the parser now
+        # refuses on save, so the row gets cleaned up instead of promoted.
+        return f"{rtype}:{rid}:{action}"
     if resource.endswith("/*"):
         return f"{resource[:-2]}:{action}"
-    rtype, _, rid = resource.partition("/")
     return f"{rtype}:{rid}:{action}"
 
 
