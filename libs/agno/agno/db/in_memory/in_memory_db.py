@@ -21,6 +21,7 @@ from agno.db.utils import (
     drop_legacy_metrics,
     filter_context_runs,
     metrics_starting_date_from_records,
+    validate_pagination,
 )
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info, log_warning
@@ -258,6 +259,7 @@ class InMemoryDb(BaseDb):
         Raises:
             Exception: If an error occurs while reading the sessions.
         """
+        validate_pagination(limit, page)
         try:
             # Apply filters
             filtered_sessions = []
@@ -508,6 +510,7 @@ class InMemoryDb(BaseDb):
         deserialize: Optional[bool] = True,
     ) -> Union[List[Any], Tuple[List[Dict[str, Any]], int]]:
         """Read runs across in-memory sessions with the same filters as SQL adapters."""
+        validate_pagination(limit, page)
         from agno.db.utils import deserialize_run, get_run_type
         from agno.run.base import RunStatus
 
@@ -753,6 +756,7 @@ class InMemoryDb(BaseDb):
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
     ) -> Union[List[UserMemory], Tuple[List[Dict[str, Any]], int]]:
+        validate_pagination(limit, page)
         try:
             # Apply filters
             filtered_memories = []
@@ -811,6 +815,7 @@ class InMemoryDb(BaseDb):
         Raises:
             Exception: If an error occurs while getting stats.
         """
+        validate_pagination(limit, page)
         try:
             user_stats = {}
 
@@ -1167,6 +1172,7 @@ class InMemoryDb(BaseDb):
         Raises:
             Exception: If an error occurs during retrieval.
         """
+        validate_pagination(limit, page)
         try:
             knowledge_items = [deepcopy(item) for item in self._knowledge]
 
@@ -1307,6 +1313,7 @@ class InMemoryDb(BaseDb):
         user_id: Optional[str] = None,
     ) -> Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
         """Get all eval runs from in-memory storage with filtering and pagination."""
+        validate_pagination(limit, page)
         try:
             # Apply filters
             filtered_runs = []

@@ -882,16 +882,18 @@ class TestPaginationEdgeCases:
     """Edge cases for pagination parameters."""
 
     def test_page_zero_behavior(self, db_with_sessions):
-        """page=0 is allowed (ge=0 in query param) and returns empty data due to negative offset."""
+        """page is 1-indexed, so page=0 is rejected at the query-parameter boundary.
+
+        It used to be accepted (ge=0) and then answered differently per backend:
+        an empty page from InMemoryDb's negative offset, a 500 from any SQL
+        adapter, whose get_sessions raises in validate_pagination.
+        """
         db, *_ = db_with_sessions
         client = _build_client(db)
 
-        # page=0 computes start_idx = (0-1)*limit = negative, resulting in empty slice
         resp = client.get("/sessions?user_id=user-1&page=0&limit=2")
-        assert resp.status_code == 200
-        data, meta = _get_data(resp)
-        assert len(data) == 0
-        assert meta.get("total_count", 0) >= 3
+        assert resp.status_code == 422
+        assert any(err["loc"][-1] == "page" for err in resp.json()["detail"])
 
     def test_large_page_returns_empty(self, db_with_sessions):
         db, *_ = db_with_sessions

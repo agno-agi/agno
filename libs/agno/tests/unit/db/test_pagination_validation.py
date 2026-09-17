@@ -224,25 +224,79 @@ class TestPostgresGetRunsPageWithoutLimitRaises:
                 c.commit()
 
 
-class TestInMemoryDbPaginationBackwardCompat:
-    """InMemoryDb pagination is not routed through validate_pagination in
-    this pass (kept to avoid changing behavior beyond what the reviewer
-    flagged). This documents the current behavior — remove/adjust if a
-    later pass ports the InMemoryDb read path over."""
+# The paginated reads that default to ``limit=None, page=None`` (i.e. "no
+# pagination unless asked"), which is the set the SQL adapters guard. The
+# trace reads are deliberately excluded: they default to ``limit=20, page=1``,
+# so a caller passing ``limit=None`` to mean "all traces" would start raising.
+LOCAL_ADAPTER_READS = [
+    "get_sessions",
+    "get_runs",
+    "get_user_memories",
+    "get_user_memory_stats",
+    "get_knowledge_contents",
+    "get_eval_runs",
+]
 
-    def test_in_memory_page_without_limit_currently_silent(self):
-        """Not asserting a raise here — this is a placeholder documenting the
-        current state so a future contributor sees the follow-up scope."""
-        db = InMemoryDb()
+
+def _seeded_local_dbs():
+    """One InMemoryDb and one JsonDb holding the same single session + run."""
+    from agno.run.agent import RunOutput
+    from agno.run.base import RunStatus
+    from agno.session.agent import AgentSession
+
+    dbs = {"in_memory": InMemoryDb(), "json": JsonDb(db_path=tempfile.mkdtemp())}
+    for db in dbs.values():
+        session = AgentSession(session_id="s1", agent_id="a1", user_id="u1")
+        session.upsert_run(RunOutput(run_id="r0", agent_id="a1", session_id="s1", status=RunStatus.completed))
+        db.upsert_session(session)
+    return dbs
+
+
+class TestLocalAdaptersEnforceThePaginationContract:
+    """InMemoryDb and JsonDb are the zero-config local backends, so the same
+    application code runs against them and against a SQL adapter. Without the
+    guard the SQL adapter raises while these two silently return the wrong
+    rows — page 1 for ``page=0``, or the whole table for ``page`` without
+    ``limit``."""
+
+    @pytest.mark.parametrize("backend", ["in_memory", "json"])
+    @pytest.mark.parametrize("method_name", LOCAL_ADAPTER_READS)
+    def test_page_without_limit_raises(self, backend: str, method_name: str):
+        db = _seeded_local_dbs()[backend]
+        with pytest.raises(ValueError, match="page.*without.*limit"):
+            getattr(db, method_name)(page=2)
+
+    @pytest.mark.parametrize("backend", ["in_memory", "json"])
+    @pytest.mark.parametrize("method_name", LOCAL_ADAPTER_READS)
+    def test_page_zero_raises(self, backend: str, method_name: str):
+        db = _seeded_local_dbs()[backend]
+        with pytest.raises(ValueError, match="1-indexed"):
+            getattr(db, method_name)(limit=1, page=0)
+
+    @pytest.mark.parametrize("backend", ["in_memory", "json"])
+    @pytest.mark.parametrize("method_name", LOCAL_ADAPTER_READS)
+    def test_valid_and_absent_pagination_still_pass(self, backend: str, method_name: str):
+        """The guard must only reject the two documented caller bugs."""
+        db = _seeded_local_dbs()[backend]
+        getattr(db, method_name)()
+        getattr(db, method_name)(limit=2)
+        getattr(db, method_name)(limit=2, page=1)
+
+    @pytest.mark.parametrize("backend", ["in_memory", "json"])
+    def test_pagination_windows_are_unchanged(self, backend: str):
+        """Valid pagination keeps returning the same window as before."""
         from agno.run.agent import RunOutput
         from agno.run.base import RunStatus
         from agno.session.agent import AgentSession
 
-        s = AgentSession(session_id="s1", agent_id="a1", user_id="u1")
-        s.upsert_run(RunOutput(run_id="r0", agent_id="a1", session_id="s1", status=RunStatus.completed))
-        db.upsert_session(s)
+        db = _seeded_local_dbs()[backend]
+        for i in range(2, 6):
+            session = AgentSession(session_id=f"s{i}", agent_id="a1", user_id="u1")
+            session.upsert_run(RunOutput(run_id=f"r{i}", agent_id="a1", session_id=f"s{i}", status=RunStatus.completed))
+            db.upsert_session(session)
 
-        # InMemoryDb currently doesn't validate — this call succeeds today.
-        # If a future change routes it through validate_pagination, invert
-        # this assertion.
-        db.get_runs(page=2)
+        first, total = db.get_sessions(limit=2, page=1, deserialize=False)
+        second, _ = db.get_sessions(limit=2, page=2, deserialize=False)
+        assert total == 5
+        assert len(first) == 2 and len(second) == 2
+        assert {s["session_id"] for s in first}.isdisjoint({s["session_id"] for s in second})

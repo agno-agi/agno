@@ -28,6 +28,7 @@ from agno.db.utils import (
     filter_context_runs,
     merge_runs_table_with_legacy_blob,
     metrics_starting_date_from_records,
+    validate_pagination,
 )
 from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
@@ -320,8 +321,6 @@ class JsonDb(BaseDb):
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
     ) -> Union[List[Union[RunOutput, TeamRunOutput, WorkflowRunOutput]], Tuple[List[Dict[str, Any]], int]]:
-        from agno.db.utils import validate_pagination
-
         validate_pagination(limit, page)
         try:
             rows = self._read_runs_file(create_table_if_not_found=False)
@@ -577,6 +576,7 @@ class JsonDb(BaseDb):
         Raises:
             Exception: If an error occurs while reading the sessions.
         """
+        validate_pagination(limit, page)
         try:
             sessions_raw = self._read_json_file(self.session_table_name)
 
@@ -928,6 +928,7 @@ class JsonDb(BaseDb):
         deserialize: Optional[bool] = True,
     ) -> Union[List[UserMemory], Tuple[List[Dict[str, Any]], int]]:
         """Get all memories from the JSON file with filtering and pagination."""
+        validate_pagination(limit, page)
         try:
             memories = self._read_json_file(self.memory_table_name)
 
@@ -985,6 +986,7 @@ class JsonDb(BaseDb):
         Returns:
             Tuple[List[Dict[str, Any]], int]: A list of dictionaries containing user stats and total count.
         """
+        validate_pagination(limit, page)
         try:
             memories = self._read_json_file(self.memory_table_name)
             user_stats = {}
@@ -1376,6 +1378,7 @@ class JsonDb(BaseDb):
         Raises:
             Exception: If an error occurs during retrieval.
         """
+        validate_pagination(limit, page)
         try:
             knowledge_items = self._read_json_file(self.knowledge_table_name)
 
@@ -1542,6 +1545,7 @@ class JsonDb(BaseDb):
         user_id: Optional[str] = None,
     ) -> Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
         """Get all eval runs from the JSON file with filtering and pagination."""
+        validate_pagination(limit, page)
         try:
             eval_runs = self._read_json_file(self.eval_table_name)
 

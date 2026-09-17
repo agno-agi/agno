@@ -152,7 +152,7 @@ def attach_routes(
         user_id: Optional[str] = Query(default=None, description="Filter sessions by user ID"),
         session_name: Optional[str] = Query(default=None, description="Filter sessions by name (partial match)"),
         limit: Optional[int] = Query(default=20, description="Number of sessions to return per page", ge=1),
-        page: Optional[int] = Query(default=1, description="Page number for pagination", ge=0),
+        page: Optional[int] = Query(default=1, description="Page number for pagination", ge=1),
         sort_by: Optional[str] = Query(default="created_at", description="Field to sort sessions by"),
         sort_order: Optional[SortOrder] = Query(default=SortOrder.DESC, description="Sort order (asc or desc)"),
         db_id: Optional[str] = Query(default=None, description="Database ID to query sessions from"),
