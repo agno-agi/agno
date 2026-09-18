@@ -4701,38 +4701,44 @@ async def _amember_run_for_storage(team: "Team", session: TeamSession, member_ru
 
 def _persist_member_runs_for_team_run(
     team: "Team", session: TeamSession, team_run_id: Optional[str], team_run: Optional[TeamRunOutput] = None
-) -> None:
+) -> Set[str]:
     from agno.team._session import save_run
     from agno.utils.media_offload import offload_cache_for
 
     cache = offload_cache_for(team_run) if team_run is not None else None
+    persisted_member_run_ids: Set[str] = set()
 
     for idx, member_run in _iter_member_runs_for_team_run(session, team_run_id):
         try:
             # The team owns this write, so the team's media_storage offloads the member rows too;
             # sharing the team run's cache keeps the same bytes from being uploaded twice.
-            save_run(
+            persisted = save_run(
                 team,
                 run=_media_offloaded(team, session, _member_run_for_storage(team, session, member_run), cache),
                 session_id=session.session_id,
                 user_id=session.user_id,
                 run_index=idx,
             )
+            if persisted and getattr(member_run, "run_id", None) is not None:
+                persisted_member_run_ids.add(member_run.run_id)
         except Exception as e:
             log_debug(f"Failed to persist member run {getattr(member_run, 'run_id', None)}: {e}")
+
+    return persisted_member_run_ids
 
 
 async def _apersist_member_runs_for_team_run(
     team: "Team", session: TeamSession, team_run_id: Optional[str], team_run: Optional[TeamRunOutput] = None
-) -> None:
+) -> Set[str]:
     from agno.team._session import asave_run
     from agno.utils.media_offload import offload_cache_for
 
     cache = offload_cache_for(team_run) if team_run is not None else None
+    persisted_member_run_ids: Set[str] = set()
 
     for idx, member_run in _iter_member_runs_for_team_run(session, team_run_id):
         try:
-            await asave_run(
+            persisted = await asave_run(
                 team,
                 run=await _amedia_offloaded(
                     team, session, await _amember_run_for_storage(team, session, member_run), cache
@@ -4741,8 +4747,12 @@ async def _apersist_member_runs_for_team_run(
                 user_id=session.user_id,
                 run_index=idx,
             )
+            if persisted and getattr(member_run, "run_id", None) is not None:
+                persisted_member_run_ids.add(member_run.run_id)
         except Exception as e:
             log_debug(f"Failed to persist member run {getattr(member_run, 'run_id', None)}: {e}")
+
+    return persisted_member_run_ids
 
 
 def _cleanup_and_store(
@@ -4802,23 +4812,36 @@ def _cleanup_and_store(
         else:
             session.session_data = {"session_state": run_context.session_state}
 
-    # Persist the session row and this single run (both O(1))
-    from agno.team._session import save_run
+    # Write the complete root first so child rows can satisfy their parent
+    # foreign key. This is also the fallback if a child write fails.
+    from agno.team._session import save_run, save_session
 
     team.save_session(session=session)
-    # v3: member runs are always persisted as separate rows in the runs table
-    # (source of truth for member history after reload). The store_member_responses
-    # flag only controls whether the team row ALSO carries an embedded nested
-    # copy in run_data.member_responses.
-    _persist_member_runs_for_team_run(
-        team=team, session=session, team_run_id=storage_copy.run_id, team_run=run_response
-    )
     save_run(
         team,
         run=storage_copy,
         session_id=session.session_id,
         user_id=session.user_id,
         run_index=run_index,
+    )
+
+    # v3: member runs are always persisted as separate rows in the runs table
+    # (source of truth for member history after reload). The store_member_responses
+    # flag only controls whether the team row ALSO carries an embedded nested
+    # copy in run_data.member_responses.
+    persisted_member_run_ids = _persist_member_runs_for_team_run(
+        team=team, session=session, team_run_id=storage_copy.run_id, team_run=run_response
+    )
+    # Rewrite the root only after successful child writes; unconfirmed child
+    # rows remain embedded and therefore resumable.
+    save_session(team, session=session, _persisted_member_run_ids=persisted_member_run_ids)
+    save_run(
+        team,
+        run=storage_copy,
+        session_id=session.session_id,
+        user_id=session.user_id,
+        run_index=run_index,
+        _persisted_member_run_ids=persisted_member_run_ids,
     )
 
     # Update approval run_status if this run has an associated approval.
@@ -4885,23 +4908,36 @@ async def _acleanup_and_store(
         else:
             session.session_data = {"session_state": run_context.session_state}
 
-    # Persist the session row and this single run (both O(1))
-    from agno.team._session import asave_run
+    # Write the complete root first so child rows can satisfy their parent
+    # foreign key. This is also the fallback if a child write fails.
+    from agno.team._session import asave_run, asave_session
 
     await team.asave_session(session=session)
-    # v3: member runs are always persisted as separate rows in the runs table
-    # (source of truth for member history after reload). The store_member_responses
-    # flag only controls whether the team row ALSO carries an embedded nested
-    # copy in run_data.member_responses.
-    await _apersist_member_runs_for_team_run(
-        team=team, session=session, team_run_id=storage_copy.run_id, team_run=run_response
-    )
     await asave_run(
         team,
         run=storage_copy,
         session_id=session.session_id,
         user_id=session.user_id,
         run_index=run_index,
+    )
+
+    # v3: member runs are always persisted as separate rows in the runs table
+    # (source of truth for member history after reload). The store_member_responses
+    # flag only controls whether the team row ALSO carries an embedded nested
+    # copy in run_data.member_responses.
+    persisted_member_run_ids = await _apersist_member_runs_for_team_run(
+        team=team, session=session, team_run_id=storage_copy.run_id, team_run=run_response
+    )
+    # Rewrite the root only after successful child writes; unconfirmed child
+    # rows remain embedded and therefore resumable.
+    await asave_session(team, session=session, _persisted_member_run_ids=persisted_member_run_ids)
+    await asave_run(
+        team,
+        run=storage_copy,
+        session_id=session.session_id,
+        user_id=session.user_id,
+        run_index=run_index,
+        _persisted_member_run_ids=persisted_member_run_ids,
     )
 
     # Update approval run_status if this run has an associated approval.
@@ -5028,19 +5064,32 @@ def _persist_team_run_in_session(
         else:
             session.session_data = {"session_state": run_context.session_state}
 
-    # Persist the session row and this single run (both O(1))
-    from agno.team._session import save_run
+    # Write the complete root first so child rows can satisfy their parent
+    # foreign key. This is also the fallback if a child write fails.
+    from agno.team._session import save_run, save_session
 
     team.save_session(session=session)
-    _persist_member_runs_for_team_run(
-        team=team, session=session, team_run_id=storage_copy.run_id, team_run=run_response
-    )
     save_run(
         team,
         run=storage_copy,
         session_id=session.session_id,
         user_id=session.user_id,
         run_index=run_index,
+    )
+
+    persisted_member_run_ids = _persist_member_runs_for_team_run(
+        team=team, session=session, team_run_id=storage_copy.run_id, team_run=run_response
+    )
+    # Rewrite the root only after successful child writes; unconfirmed child
+    # rows remain embedded and therefore resumable.
+    save_session(team, session=session, _persisted_member_run_ids=persisted_member_run_ids)
+    save_run(
+        team,
+        run=storage_copy,
+        session_id=session.session_id,
+        user_id=session.user_id,
+        run_index=run_index,
+        _persisted_member_run_ids=persisted_member_run_ids,
     )
 
 
@@ -5088,19 +5137,32 @@ async def _apersist_team_run_in_session(
         else:
             session.session_data = {"session_state": run_context.session_state}
 
-    # Persist the session row and this single run (both O(1))
-    from agno.team._session import asave_run
+    # Write the complete root first so child rows can satisfy their parent
+    # foreign key. This is also the fallback if a child write fails.
+    from agno.team._session import asave_run, asave_session
 
     await team.asave_session(session=session)
-    await _apersist_member_runs_for_team_run(
-        team=team, session=session, team_run_id=storage_copy.run_id, team_run=run_response
-    )
     await asave_run(
         team,
         run=storage_copy,
         session_id=session.session_id,
         user_id=session.user_id,
         run_index=run_index,
+    )
+
+    persisted_member_run_ids = await _apersist_member_runs_for_team_run(
+        team=team, session=session, team_run_id=storage_copy.run_id, team_run=run_response
+    )
+    # Rewrite the root only after successful child writes; unconfirmed child
+    # rows remain embedded and therefore resumable.
+    await asave_session(team, session=session, _persisted_member_run_ids=persisted_member_run_ids)
+    await asave_run(
+        team,
+        run=storage_copy,
+        session_id=session.session_id,
+        user_id=session.user_id,
+        run_index=run_index,
+        _persisted_member_run_ids=persisted_member_run_ids,
     )
 
 
