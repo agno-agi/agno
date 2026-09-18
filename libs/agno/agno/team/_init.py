@@ -370,12 +370,17 @@ def __init__(
     team.store_events = store_events
     team.store_member_responses = store_member_responses
 
+    # By default we keep the high frequency events out of the stored run: one row
+    # per token or per argument fragment is not what a caller wants. They are
+    # still streamed to subscribers; this list only governs storage.
     team.events_to_skip = events_to_skip
     if team.events_to_skip is None:
         team.events_to_skip = [
             RunEvent.run_content,
+            RunEvent.tool_call_args_delta,
             TeamRunEvent.run_content,
             TeamRunEvent.run_intermediate_content,
+            TeamRunEvent.tool_call_args_delta,
         ]
     team.stream_member_events = stream_member_events
 

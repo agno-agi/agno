@@ -15,6 +15,7 @@ from agno.run.team import (
     TeamRunEvent,
     TeamRunOutput,
     TeamRunOutputEvent,
+    ToolCallArgsDeltaEvent,
     ToolCallCompletedEvent,
     ToolCallStartedEvent,
 )
@@ -48,6 +49,7 @@ __all__ = [
     "ReasoningStartedEvent",
     "ReasoningStepEvent",
     "ReasoningCompletedEvent",
+    "ToolCallArgsDeltaEvent",
     "ToolCallStartedEvent",
     "ToolCallCompletedEvent",
     "get_team_by_id",
