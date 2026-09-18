@@ -15,7 +15,6 @@ from agno.os.authz import Authorization  # noqa: E402
 from agno.os.authz._composite import CompositeAuthorizationProvider  # noqa: E402 (internal mechanism)
 from agno.os.authz.admin_router import get_roles_router  # noqa: E402
 from agno.os.authz.provider import AuthorizationContext  # noqa: E402
-from agno.os.authz.role_store import RoleStore  # noqa: E402
 from agno.os.authz.scope_provider import ScopeAuthorizationProvider  # noqa: E402
 
 SECRET = "composite-secret-at-least-256-bits-long-padding-xxxxxxxx"
@@ -39,9 +38,9 @@ def test_empty_providers_rejected():
 
 
 def test_allows_via_either_plane():
-    store = RoleStore(db_url=_db_url())
+    store = Authorization(db_url=_db_url())
     store.set_role_scopes("viewer", ["agents:*:read"])
-    store.assign("storeuser", "viewer")
+    store.set_role("storeuser", "viewer")
     comp = CompositeAuthorizationProvider([ScopeAuthorizationProvider(), store.provider])
 
     # operator plane: scopes ride the token, nothing in the store for them
@@ -62,9 +61,9 @@ def test_allows_via_either_plane():
 
 
 def test_accessible_ids_union_with_wildcard_winning():
-    store = RoleStore(db_url=_db_url())
+    store = Authorization(db_url=_db_url())
     store.set_role_scopes("one", ["agents:a1:read"])
-    store.assign("u", "one")
+    store.set_role("u", "one")
     comp = CompositeAuthorizationProvider([ScopeAuthorizationProvider(), store.provider])
 
     # token gives a specific id, store gives another -> union
@@ -87,9 +86,9 @@ def _token(sub, scopes):
 def test_both_planes_enforce_on_one_os_end_to_end():
     """One OS: an operator authorized by token scopes AND an end user authorized by
     the store both get in; an unknown caller is denied."""
-    store = RoleStore(db_url=_db_url())
+    store = Authorization(db_url=_db_url())
     store.set_role_scopes("viewer", ["agents:*:read"])
-    store.assign("enduser", "viewer")  # end user known only to the store
+    store.set_role("enduser", "viewer")  # end user known only to the store
 
     agent = Agent(id="research-agent", name="R", db=InMemoryDb())
     agent_os = AgentOS(
@@ -118,7 +117,8 @@ def test_both_planes_enforce_on_one_os_end_to_end():
 def test_admin_gate_accepts_admin_from_token_scope():
     """An operator whose token carries agent_os:admin can manage roles even though
     they have no admin assignment in the store (the cloud/operator plane)."""
-    store = RoleStore(db_url=_db_url())  # nobody is admin in the store
+    store = Authorization(db_url=_db_url())
+    store.define_role("viewer", ["agents:*:read"])  # managed roles, but nobody is admin in the store
     agent = Agent(id="research-agent", name="R", db=InMemoryDb())
     agent_os = AgentOS(
         id=OS_ID,
@@ -359,9 +359,9 @@ def test_job_queue_admin_gate_is_provider_aware():
 
     from agno.os.routers.job_queue.router import _require_queue_admin
 
-    store = RoleStore(db_url=_db_url())
+    store = Authorization(db_url=_db_url())
     store.set_role_scopes("admin", ["agent_os:admin"])
-    store.assign("real-admin", "admin")
+    store.set_role("real-admin", "admin")
 
     def _req(user_id, scopes):
         return SimpleNamespace(

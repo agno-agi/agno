@@ -13,7 +13,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from agno.os.authz.audit import AuditEvent, AuditSink, DbAuditSink  # noqa: E402
-from agno.os.authz.user_store import UserStore  # noqa: E402
+from agno.os.authz.user_directory import UserDirectory  # noqa: E402
 
 SECRET = "managed-users-secret-at-least-256-bits-long-padding-xxxxxx"
 OS_ID = "managed-users-os"
@@ -46,7 +46,7 @@ def _auth(sub: str, **claims) -> dict:
 @pytest.mark.parametrize("db_url", [None, "sqlite"])
 def test_store_crud_and_disable(tmp_path, db_url):
     url = None if db_url is None else f"sqlite:///{tmp_path / 'users.db'}"
-    store = UserStore(db_url=url)
+    store = UserDirectory(db_url=url)
 
     # create
     u = store.upsert("u1", email="u1@co", name="One")
@@ -80,7 +80,7 @@ def test_store_crud_and_disable(tmp_path, db_url):
     assert store.remove("u2") is False
 
 
-def _backdate(store: UserStore, user_id: str, created_at: int) -> None:
+def _backdate(store: UserDirectory, user_id: str, created_at: int) -> None:
     """Rewrite a user's ``created_at`` through the store's own write path. The upsert
     carries every NOT NULL column for its insert half, so the whole row goes back."""
     row = {**store.get(user_id), "created_at": created_at}
@@ -97,7 +97,7 @@ def test_store_created_by_day_and_ids(tmp_path, db_url):
     users on request."""
     day = 24 * 60 * 60
     url = None if db_url is None else f"sqlite:///{tmp_path / 'users.db'}"
-    store = UserStore(db_url=url)
+    store = UserDirectory(db_url=url)
     store.upsert("u1")
     store.upsert("u2")
     store.upsert("u3")
@@ -122,7 +122,7 @@ def test_store_created_by_day_and_ids(tmp_path, db_url):
 
 def test_store_emits_audit_with_actor_and_diff():
     sink = _CapturingSink()
-    store = UserStore(audit=sink)
+    store = UserDirectory(audit=sink)
 
     store.upsert("u1", email="u1@co", actor="admin")
     store.upsert("u1", name="One", actor="admin")  # update
@@ -142,7 +142,7 @@ def test_store_emits_audit_with_actor_and_diff():
 
 
 def test_provision_from_claims_is_idempotent():
-    store = UserStore()
+    store = UserDirectory()
     user, was_created = store.provision_from_claims("u1", {"email": "u1@co", "name": "One"})
     assert was_created is True
     assert user["email"] == "u1@co" and user["name"] == "One"
@@ -158,8 +158,7 @@ pytest.importorskip("sqlalchemy")  # managed roles persist/enforce via the nativ
 from agno.agent import Agent  # noqa: E402
 from agno.db.in_memory import InMemoryDb  # noqa: E402
 from agno.os import AgentOS  # noqa: E402
-from agno.os.authz import Authorization, UserDirectory  # noqa: E402
-from agno.os.authz.role_store import RoleStore  # noqa: E402
+from agno.os.authz import Authorization  # noqa: E402
 from agno.os.config import AuthorizationConfig  # noqa: E402
 
 
@@ -174,32 +173,35 @@ def _db_url() -> str:
     return f"sqlite:///{path}"
 
 
-def _os(role_store, user_store, *, auto_provision=False):
+def _roles(**kw):
+    """A managed-roles Authorization with this file's verification settings (the object is the
+    authorization, so the role store and the verification travel together)."""
     from agno.os.authz import Authorization
+
+    return Authorization(
+        db_url=_db_url(), verification_keys=[SECRET], algorithm="HS256", verify_audience=True, audience=OS_ID, **kw
+    )
+
+
+def _os(role_store, user_store, *, auto_provision=False):
 
     agent = Agent(id="research-agent", name="Research Agent", db=InMemoryDb())
     return AgentOS(
         id=OS_ID,
         agents=[agent],
         # The directory is a top-level concern now (mounts /users); roles stay on Authorization (/authz).
-        user_directory=UserDirectory(user_store=user_store, auto_provision=auto_provision),
-        authorization=Authorization(
-            verification_keys=[SECRET],
-            algorithm="HS256",
-            verify_audience=True,
-            audience=OS_ID,
-            role_store=role_store,
-        ),
+        user_directory=user_store,
+        authorization=role_store,
     )
 
 
 def test_users_api_crud_and_role_merge():
-    roles = RoleStore(db_url=_db_url())
+    roles = _roles()
     roles.set_role_scopes("admin", ["agent_os:admin"])
-    roles.create_role("viewer", name="Read-only viewer")
+    roles._create_role("viewer", name="Read-only viewer")
     roles.set_role_scopes("viewer", ["agents:*:read"])
-    roles.assign("alice", "admin")
-    users = UserStore(db_url=_db_url())  # AgentOS requires a persistable directory
+    roles.set_role("alice", "admin")
+    users = UserDirectory(db_url=_db_url())  # AgentOS requires a persistable directory
 
     app = _os(roles, users).get_app()
     client = TestClient(app)
@@ -212,7 +214,7 @@ def test_users_api_crud_and_role_merge():
 
     # give bob a role; the user view merges it in (singular: one role per user), with the display
     # name alongside the slug so a frontend needs no second request to /authz/roles
-    roles.assign("bob", "viewer")
+    roles.set_role("bob", "viewer")
     got = client.get("/users/bob", headers=_auth("alice")).json()
     assert got["email"] == "bob@co" and got["role_slug"] == "viewer" and got["role_name"] == "Read-only viewer"
 
@@ -249,16 +251,16 @@ def test_user_metrics_api_with_a_role_store():
     """/users/metrics rides on the users router: directory counts, the per-day series
     (bounded by the date range), and the role breakdown from the role store. Admin-only,
     like the rest of user management."""
-    roles = RoleStore(db_url=_db_url())
+    roles = _roles()
     roles.set_role_scopes("admin", ["agent_os:admin"])
-    roles.create_role("viewer", name="Read-only viewer")
+    roles._create_role("viewer", name="Read-only viewer")
     roles.set_role_scopes("viewer", ["agents:*:read"])
-    roles.assign("alice", "admin")
-    users = UserStore(db_url=_db_url())
+    roles.set_role("alice", "admin")
+    users = UserDirectory(db_url=_db_url())
     for user in ("alice", "bob", "carol", "dave"):
         users.upsert(user)
-    roles.assign("bob", "viewer")
-    roles.assign("carol", "viewer")
+    roles.set_role("bob", "viewer")
+    roles.set_role("carol", "viewer")
     users.set_disabled("dave", True)
     day = 24 * 60 * 60
     _backdate(users, "bob", users.get("bob")["created_at"] - 2 * day)
@@ -308,7 +310,7 @@ def test_user_metrics_api_without_a_role_store(tmp_path):
     from agno.db.sqlite import SqliteDb
     from agno.os.authz import Authorization
 
-    users = UserStore()
+    users = UserDirectory(auto_provision=False)
     users.upsert("zed")
     agent = Agent(id="research-agent", name="Research Agent", db=InMemoryDb())
     app = AgentOS(
@@ -316,7 +318,7 @@ def test_user_metrics_api_without_a_role_store(tmp_path):
         db=SqliteDb(db_file=str(tmp_path / "os.db")),
         agents=[agent],
         # provisioning off: the caller below must not register itself and move the counts
-        user_directory=UserDirectory(user_store=users, auto_provision=False),
+        user_directory=users,
         authorization=Authorization(
             verification_keys=[SECRET],
             algorithm="HS256",
@@ -335,12 +337,12 @@ def test_user_metrics_api_without_a_role_store(tmp_path):
 
 
 def test_users_api_is_admin_only():
-    roles = RoleStore(db_url=_db_url())
+    roles = _roles()
     roles.set_role_scopes("admin", ["agent_os:admin"])
     roles.set_role_scopes("viewer", ["agents:*:read"])
-    roles.assign("alice", "admin")
-    roles.assign("bob", "viewer")
-    users = UserStore(db_url=_db_url())  # AgentOS requires a persistable directory
+    roles.set_role("alice", "admin")
+    roles.set_role("bob", "viewer")
+    users = UserDirectory(db_url=_db_url())  # AgentOS requires a persistable directory
 
     app = _os(roles, users).get_app()
     client = TestClient(app)
@@ -350,10 +352,10 @@ def test_users_api_is_admin_only():
 
 
 def test_disabled_user_is_denied_even_with_valid_token():
-    roles = RoleStore(db_url=_db_url())
+    roles = _roles()
     roles.set_role_scopes("viewer", ["agents:*:read"])
-    roles.assign("bob", "viewer")
-    users = UserStore(db_url=_db_url())  # AgentOS requires a persistable directory
+    roles.set_role("bob", "viewer")
+    users = UserDirectory(db_url=_db_url())  # AgentOS requires a persistable directory
     users.upsert("bob", email="bob@co")
 
     client = TestClient(_os(roles, users).get_app())
@@ -377,10 +379,10 @@ def test_disabled_user_is_denied_on_websocket():
     a disabled user with a valid token is rejected at WS authenticate."""
     import json as _json
 
-    roles = RoleStore(db_url=_db_url())
+    roles = _roles()
     roles.set_role_scopes("viewer", ["agents:*:read", "workflows:*:run"])
-    roles.assign("bob", "viewer")
-    users = UserStore(db_url=_db_url())  # AgentOS requires a persistable directory
+    roles.set_role("bob", "viewer")
+    users = UserDirectory(db_url=_db_url())  # AgentOS requires a persistable directory
     users.upsert("bob", email="bob@co")
 
     client = TestClient(_os(roles, users).get_app())
@@ -407,10 +409,10 @@ def test_disabled_user_is_denied_on_websocket():
 
 
 def test_auto_provision_from_claims_at_the_gate():
-    roles = RoleStore(db_url=_db_url())
+    roles = _roles()
     roles.set_role_scopes("viewer", ["agents:*:read"])
-    roles.assign("carol", "viewer")
-    users = UserStore(db_url=_db_url())  # AgentOS requires a persistable directory
+    roles.set_role("carol", "viewer")
+    users = UserDirectory(db_url=_db_url())  # AgentOS requires a persistable directory
 
     client = TestClient(_os(roles, users, auto_provision=True).get_app())
 
@@ -425,9 +427,9 @@ def test_auto_provision_from_claims_at_the_gate():
 def test_auto_provision_grants_default_role_at_the_gate():
     """A user auto-provisioned on first request is granted the role flagged is_default,
     so they land usable rather than inert. Single-role model (one role)."""
-    roles = RoleStore(db_url=_db_url())
+    roles = _roles()
     roles.set_role_scopes("member", ["agents:*:read"], is_default=True)
-    users = UserStore(db_url=_db_url())
+    users = UserDirectory(db_url=_db_url())
 
     client = TestClient(_os(roles, users, auto_provision=True).get_app())
 
@@ -444,7 +446,7 @@ def test_auto_provision_grants_default_role_at_the_gate():
 
 def test_user_directory_true_builds_the_store_from_the_os_db(tmp_path):
     """AgentOS(user_directory=True) is the zero-ceremony path: AgentOS builds the
-    UserStore from its own db, so callers avoid the manual store wiring."""
+    UserDirectory from its own db, so callers avoid the manual store wiring."""
     from agno.db.sqlite import SqliteDb
 
     db = SqliteDb(db_file=str(tmp_path / "os.db"))
@@ -456,11 +458,11 @@ def test_user_directory_true_builds_the_store_from_the_os_db(tmp_path):
         authorization_config=AuthorizationConfig(verification_keys=[SECRET], algorithm="HS256"),
         user_directory=True,
     )
-    assert isinstance(os_.user_directory.user_store, UserStore)
+    assert isinstance(os_.user_directory, UserDirectory)
     # end to end: the app builds and the directory persists a user
     os_.get_app()
-    os_.user_directory.user_store.upsert("alice", email="alice@co")
-    assert os_.user_directory.user_store.get("alice")["email"] == "alice@co"
+    os_.user_directory.upsert("alice", email="alice@co")
+    assert os_.user_directory.get("alice")["email"] == "alice@co"
 
 
 def test_user_directory_config_store_true_builds_from_db_and_keeps_options(tmp_path):
@@ -477,7 +479,7 @@ def test_user_directory_config_store_true_builds_from_db_and_keeps_options(tmp_p
         authorization_config=AuthorizationConfig(verification_keys=[SECRET], algorithm="HS256"),
         user_directory=UserDirectory(auto_provision=True),
     )
-    assert isinstance(os_.user_directory.user_store, UserStore)
+    assert isinstance(os_.user_directory, UserDirectory)
     assert os_.user_directory.auto_provision is True
 
 
@@ -501,12 +503,12 @@ def test_stores_share_one_agno_db(tmp_path):
     from agno.db.sqlite import SqliteDb
 
     shared = SqliteDb(db_file=str(tmp_path / "shared.db"))
-    r = RoleStore(db=shared)
-    u = UserStore(db=shared)
+    r = Authorization(db=shared)
+    u = UserDirectory(db=shared)
     a = DbAuditSink(db=shared)  # noqa: F841 (constructed for table creation)
 
     r.set_role_scopes("viewer", ["agents:*:read"])
-    r.assign("bob", "viewer")
+    r.set_role("bob", "viewer")
     u.upsert("bob", email="bob@co")
     a.record(AuditEvent(action="role.set_scopes", actor="admin", target="viewer", timestamp=1))
 
@@ -539,9 +541,9 @@ def test_a_db_that_cannot_store_authz_is_refused():
 def test_agentos_adopts_its_db_so_the_kill_switch_persists(tmp_path):
     """Regression: a user directory created without a db must not stay in-memory.
 
-    UserStore silently fell back to a process-local dict, so disabling a user
+    UserDirectory silently fell back to a process-local dict, so disabling a user
     -- the revocation that is supposed to outlive a valid token -- vanished on restart
-    and was never seen by another replica. Its sibling RoleStore refuses to run
+    and was never seen by another replica. Managed roles refuse to run
     unpersisted at all; this makes the directory consistent by having AgentOS lend it
     the OS database, carrying any rows written beforehand across.
     """
@@ -549,24 +551,23 @@ def test_agentos_adopts_its_db_so_the_kill_switch_persists(tmp_path):
     from agno.db.sqlite import SqliteDb
     from agno.os import AgentOS
     from agno.os.authz import Authorization
-    from agno.os.authz.role_store import RoleStore
 
     db_file = str(tmp_path / "os.db")
     os_db = SqliteDb(db_file=db_file)
 
-    users = UserStore()  # no db: the shape that used to be silently in-memory
+    users = UserDirectory(auto_provision=False)  # no db: the shape that used to be silently in-memory
     users.upsert("bob")
     users.set_disabled("bob", True)
     assert users.is_bound is False
 
-    roles = RoleStore(db_url=f"sqlite:///{db_file}")
+    roles = Authorization(db_url=f"sqlite:///{db_file}", verification_keys=["k" * 40], algorithm="HS256")
     roles.set_role_scopes("admin", ["agent_os:admin"])
     AgentOS(
         id="user-adopt-os",
         agents=[Agent(id="a1", name="A", db=os_db)],
         db=os_db,
-        user_directory=UserDirectory(user_store=users, auto_provision=False),
-        authorization=Authorization(verification_keys=["k" * 40], algorithm="HS256", role_store=roles),
+        user_directory=users,
+        authorization=roles,
     ).get_app()
 
     # adopted, and the revocation made before adoption came across
@@ -574,14 +575,14 @@ def test_agentos_adopts_its_db_so_the_kill_switch_persists(tmp_path):
     assert users.is_disabled("bob") is True
 
     # a second worker on the same database agrees
-    replica = UserStore(db=SqliteDb(db_file=db_file))
+    replica = UserDirectory(db=SqliteDb(db_file=db_file))
     assert replica.is_disabled("bob") is True
     assert [u["id"] for u in replica.list()] == ["bob"]
 
 
 def test_in_memory_directory_still_works_standalone():
     """The in-memory mode stays supported for tests/dev when there is no AgentOS db."""
-    users = UserStore()
+    users = UserDirectory(auto_provision=False)
     users.upsert("ana", email="ana@example.com")
     users.set_disabled("ana", True)
     assert users.is_bound is False
@@ -593,17 +594,16 @@ def test_user_store_without_a_persistable_db_fails_fast():
 
     It backs the disabled-user kill switch, so an in-memory one means a revocation is
     lost on restart and never reaches another replica -- the control silently does
-    nothing. RoleStore already refuses this; the two must agree, otherwise the
+    nothing. Managed roles already refuse this; the two must agree, otherwise the
     weaker of the pair decides how safe the deployment is.
     """
     from agno.agent import Agent
     from agno.db.in_memory import InMemoryDb
     from agno.os import AgentOS
     from agno.os.authz import Authorization
-    from agno.os.authz.role_store import RoleStore
 
     non_sql_db = InMemoryDb()  # stands in for any db with no SQLAlchemy engine (e.g. Mongo)
-    roles = RoleStore(db_url="sqlite:///:memory:")
+    roles = Authorization(db_url="sqlite:///:memory:", verification_keys=["k" * 40], algorithm="HS256")
     roles.set_role_scopes("admin", ["agent_os:admin"])
 
     with pytest.raises(ValueError, match="needs a SQL database"):
@@ -611,12 +611,8 @@ def test_user_store_without_a_persistable_db_fails_fast():
             id="unpersisted-users-os",
             agents=[Agent(id="a1", name="A", db=non_sql_db)],
             db=non_sql_db,
-            user_directory=UserDirectory(user_store=UserStore()),  # bare: nothing to persist into
-            authorization=Authorization(
-                verification_keys=["k" * 40],
-                algorithm="HS256",
-                role_store=roles,
-            ),
+            user_directory=UserDirectory(),  # bare: nothing to persist into
+            authorization=roles,
         ).get_app()
 
 
@@ -625,17 +621,17 @@ def test_deleting_a_user_revokes_their_roles_no_access_reversal():
     the directory row is the kill-switch tombstone (absence reads as 'not disabled'), so
     deleting a disabled user while their role assignment survives would re-grant their
     still-valid token. Delete now cascades the role revocation, leaving them access-less."""
-    roles = RoleStore(db_url=_db_url())
+    roles = _roles()
     roles.set_role_scopes("viewer", ["agents:*:read"])
     roles.set_role_scopes("admin", ["agent_os:admin"])
-    roles.assign("alice", "admin")
-    users = UserStore(db_url=_db_url())
+    roles.set_role("alice", "admin")
+    users = UserDirectory(db_url=_db_url())
 
     app = _os(roles, users).get_app()
     client = TestClient(app)
 
     client.post("/users", headers=_auth("alice"), json={"id": "bob", "email": "bob@co"})
-    roles.assign("bob", "viewer")
+    roles.set_role("bob", "viewer")
     # bob can read while enabled and assigned
     assert client.get("/agents/research-agent", headers=_auth("bob")).status_code == 200
     # revoke via disable
@@ -652,7 +648,7 @@ def test_profile_upsert_does_not_clobber_the_disabled_flag():
     """Lost-update regression (ADM-3). A profile edit (or JIT provision) must never write
     `disabled`: it is set only by the explicit, atomic set_disabled. Otherwise a profile
     edit carrying a stale snapshot would silently un-revoke a disabled user."""
-    users = UserStore(db_url=_db_url())
+    users = UserDirectory(db_url=_db_url())
     users.upsert("bob", email="bob@co")
     users.set_disabled("bob", True)
     assert users.is_disabled("bob") is True
@@ -676,7 +672,7 @@ def test_user_directory_without_auth_is_allowed_as_a_roster():
         id=OS_ID,
         agents=[Agent(id="research-agent", name="R", db=InMemoryDb())],
         # neither authentication nor authorization: a plain roster
-        user_directory=UserDirectory(user_store=UserStore(db_url=_db_url())),
+        user_directory=UserDirectory(db_url=_db_url()),
     )
     app = agent_os.get_app()  # no raise
     assert getattr(app.state, "user_store", None) is not None
@@ -686,10 +682,10 @@ def test_assign_unknown_role_is_rejected():
     """Namespace/collision regression (ADM-4). Assigning a role that does not exist must
     be refused, so an arbitrary string (e.g. a transposed user id) cannot be written as a
     role assignment and turn a real user id into a 'role name'."""
-    roles = RoleStore(db_url=_db_url())
+    roles = _roles()
     roles.set_role_scopes("admin", ["agent_os:admin"])
-    roles.assign("alice", "admin")
-    users = UserStore(db_url=_db_url())
+    roles.set_role("alice", "admin")
+    users = UserDirectory(db_url=_db_url())
 
     app = _os(roles, users).get_app()
     client = TestClient(app)
@@ -714,10 +710,10 @@ def test_workflow_continue_over_ws_enforces_the_approval_gate(monkeypatch):
 
     from agno.db.sqlite import SqliteDb
 
-    roles = RoleStore(db_url=_db_url())
+    roles = _roles()
     roles.set_role_scopes("runner", ["workflows:*:run"])  # can run, NOT approvals:write
-    roles.assign("bob", "runner")
-    users = UserStore(db_url=_db_url())
+    roles.set_role("bob", "runner")
+    users = UserDirectory(db_url=_db_url())
     users.upsert("bob", email="bob@co")
 
     os_db = SqliteDb(db_url=_db_url())
@@ -733,7 +729,7 @@ def test_workflow_continue_over_ws_enforces_the_approval_gate(monkeypatch):
             audience=OS_ID,
             authorization_provider=roles.provider,
         ),
-        user_directory=UserDirectory(user_store=users, auto_provision=False),
+        user_directory=users,
     )
     app = agent_os.get_app()
 

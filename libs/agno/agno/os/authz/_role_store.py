@@ -1,4 +1,6 @@
-"""Managed roles for AgentOS — agno-native API, native policy engine inside.
+"""The role store behind ``Authorization`` (private: use ``agno.os.authz.Authorization``).
+
+Managed roles for AgentOS — agno-native API, native policy engine inside.
 
 This is the "governance product" middle tier: create roles, assign them, and
 change them at runtime, persisted to your own DB. You work entirely in agno

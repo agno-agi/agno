@@ -38,7 +38,7 @@ from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS, create_dev_token
-from agno.os.authz import Authorization, UserDirectory, UserStore
+from agno.os.authz import Authorization, UserDirectory
 
 JWT_SECRET = os.getenv("JWT_VERIFICATION_KEY", "your-secret-key-at-least-256-bits-long")
 OS_ID = "managed-users-os"
@@ -50,7 +50,7 @@ db = SqliteDb(db_file="tmp/managed_users.db")
 
 # The user directory (roster) is its own thing, separate from authorization. Create the store and
 # seed people on it directly: an id + optional email/name, no passwords, plus the disabled off-switch.
-users = UserStore(db=db)
+users = UserDirectory(db=db, auto_provision=True)
 users.upsert("alice", email="alice@co", name="Alice")
 users.upsert("bob", email="bob@co", name="Bob")
 
@@ -68,7 +68,7 @@ authz.define_role("viewer", ["agents:*:read"], default=True)
 authz.define_role("admin", ["agent_os:admin"])
 authz.seed(admin="alice")  # alice is the bootstrap admin (the admin ROLE)
 # give bob a role explicitly (everyone else gets the default). assign is bootstrap-safe: a role an
-# admin later changes at runtime survives a restart, unlike role_store.assign which overwrites.
+# admin later changes at runtime survives a restart, unlike set_role which overwrites.
 authz.assign("bob", "viewer")
 
 research_agent = Agent(
@@ -86,13 +86,12 @@ agent_os = AgentOS(
     db=db,
     description="Managed-users AgentOS",
     agents=[research_agent],
-    user_directory=UserDirectory(user_store=users, auto_provision=True),
+    user_directory=users,
     authorization=authz,
 )
 app = agent_os.get_app()
-# Inspect and manage the directory through the store (list / set_disabled / get) and roles through
-# authz.role_store. See 06_manage_users_and_roles.py for a frontend that drives the admin API.
-user_store = users
+# Inspect and manage the directory through `users` (list / set_disabled / get) and roles through
+# `authz`. See 06_manage_users_and_roles.py for a frontend that drives the admin API.
 
 
 if __name__ == "__main__":
@@ -124,8 +123,8 @@ if __name__ == "__main__":
 
     # Everyone in the directory, with the role each one was assigned.
     print("\n  the directory:")
-    for u in user_store.list():
-        role = (authz.role_store.roles_of(u["id"]) or [None])[0]
+    for u in users.list():
+        role = (authz.roles_of(u["id"]) or [None])[0]
         print(
             f"    - {u['id']:8s} {str(u['email'] or ''):12s} role={role}  disabled={u['disabled']}"
         )
@@ -138,7 +137,7 @@ if __name__ == "__main__":
     )
 
     print("\n  >> now an admin DISABLES bob (e.g. he left the company)...\n")
-    user_store.set_disabled("bob", True, actor="alice")
+    users.set_disabled("bob", True, actor="alice")
     show(
         "bob asks to LOOK at the agent",
         client.get("/agents/research-agent", headers=auth("bob")),
@@ -146,7 +145,7 @@ if __name__ == "__main__":
     )
 
     print("\n  >> ...bob is back, re-enable him...\n")
-    user_store.set_disabled("bob", False, actor="alice")
+    users.set_disabled("bob", False, actor="alice")
     show(
         "bob asks to LOOK at the agent",
         client.get("/agents/research-agent", headers=auth("bob")),
@@ -156,17 +155,15 @@ if __name__ == "__main__":
     print(
         "\n  >> a brand-new user (dave) we've NEVER seen makes his first request...\n"
     )
-    print(
-        f"    dave in the directory beforehand?  {user_store.get('dave') is not None}"
-    )
+    print(f"    dave in the directory beforehand?  {users.get('dave') is not None}")
     show(
         "dave (unknown) asks to LOOK at the agent",
         client.get("/agents/research-agent", headers=auth("dave")),
         "auto-provisioned + granted the default role, so he's allowed on the same request",
     )
-    dave_role = (authz.role_store.roles_of("dave") or [None])[0]
+    dave_role = (authz.roles_of("dave") or [None])[0]
     print(
-        f"    dave in the directory now?         {user_store.get('dave') is not None}  role={dave_role}"
+        f"    dave in the directory now?         {users.get('dave') is not None}  role={dave_role}"
     )
 
     print("=" * 80)

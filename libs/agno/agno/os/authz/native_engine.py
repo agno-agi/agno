@@ -90,7 +90,7 @@ class NativePolicyEngine(PolicyEngine):
     stay consistent across the workers/replicas an AgentOS deployment runs."""
 
     def __init__(self, db_url: Optional[str] = None, db: Optional[Any] = None):
-        # A DB is required. It may arrive later via attach_db() (the AgentOS role_store=
+        # A DB is required. It may arrive later via attach_db() (AgentOS lending its db to the
         # shortcut), so an engine built with neither starts "unbound" and raises on use
         # until bound — it is never an operating mode.
         self._db: Any = resolve_authz_db(db, db_url)
@@ -240,7 +240,7 @@ class NativePolicyEngine(PolicyEngine):
     def _default_role(self) -> Optional[str]:
         """The role flagged ``is_default`` -- the fallback for a subject with no assigned role.
 
-        Mirrors :meth:`RoleStore.default_role`: at most one role carries the flag (the
+        Mirrors :meth:`Authorization.default_role`: at most one role carries the flag (the
         metadata setters clear the others); the lowest slug wins if legacy data has several, so
         the choice is deterministic. Returns ``None`` when no default is set or the db cannot
         list role metadata (e.g. a third-party backend)."""

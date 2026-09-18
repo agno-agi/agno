@@ -1,9 +1,17 @@
 # Test Log: 26_authorization
 
-Last updated: 2026-09-14 (after the rename to `RoleStore` / `UserStore` / `UserDirectory` and the
+Last updated: 2026-09-18 (after the store fold: `RoleStore` is private behind `Authorization`
+(`authz.set_role`, `authz.set_role_scopes`, `authz.roles_of`, `authz.audit_log`,
+`authz.decisions`, ...), `UserStore` is folded into `UserDirectory` (the directory IS the roster:
+`users.upsert`, `users.set_disabled`, ...), and the plumbing exports are gone. Re-ran
+00/01/02/03/04/05/08/09/10/11 plus the three new files 12/13/14 end to end, all exit 0, and
+booted 06/07 without serving to confirm they mount `/authz` and `/users` with `/users/metrics`.
+Run with the demo venv and `PYTHONPATH` pointed at the branch's `libs/agno`.)
+
+Earlier (2026-09-14): after the rename to `RoleStore` / `UserStore` / `UserDirectory` and the
 `GET /users/metrics` endpoint landed on this branch: re-ran 00/01/02/03/04/05/08/09/10/11 end to end,
 all exit 0, and booted 06/07 without serving to confirm they mount `/authz` and `/users` with
-`/users/metrics`. Run with the dev venv and `PYTHONPATH` pointed at the branch's `libs/agno`.)
+`/users/metrics`.
 
 Earlier (2026-09-11): the user directory is now fully separate from `Authorization`. It is the
 top-level `AgentOS(user_directory=...)` switch, a peer of `user_isolation`, and its roster is seeded
@@ -255,3 +263,60 @@ Re-ran 2026-09-15 after role display names were added to the responses: each `by
 entry now carries `role_slug` and `role_name` ("Administrator", "Data analyst", and "viewer"
 for the role defined without one), and `GET /users/bob` returned `role_slug analyst` with
 `role_name Data analyst`. Exit 0, same counts as above.
+
+---
+
+### 12_idp_roles_claim.py
+
+**Status:** PASS
+
+**Test mode:** LIVE (driven via TestClient; no model calls needed)
+
+**Description:** `Authorization(roles_claim="roles")`: roles are defined once in code and the
+token names which role the caller holds. Exercises a list-valued claim (Auth0 style), a
+string-valued claim (WorkOS style), an undefined role on the token, a token with no claim and
+no stored assignment, a token with no claim but a stored `authz.assign`, and admin via a
+role on the token.
+
+**Result:** Exit 0. member ran the agent (200); viewer read (200) but could not run (403);
+the undefined `guest` role and the claim-less unassigned user were refused (403); the
+claim-less user with a stored viewer assignment read (200); the token-role admin listed
+`/authz/roles` (200) and the member was refused there (403).
+
+---
+
+### 13_custom_policy_engine.py
+
+**Status:** PASS
+
+**Test mode:** LIVE (driven via TestClient; no model calls needed)
+
+**Description:** `Authorization(engine=...)` with a dict-backed `PolicyEngine` written in
+the file: `define_role`, `seed` and `assign` land in the custom engine, the route and
+per-resource gates decide through it, and the `/authz` admin API edits a role on it at
+runtime. Role metadata lives in the OS db the object borrows.
+
+**Result:** Exit 0. The engine held the three roles and three assignments after setup;
+member ran (200), viewer read (200) and could not run (403), an unknown subject was
+refused (403); the seeded admin listed `/authz/roles` (200) and widened viewer through
+`PUT /authz/roles/viewer/scopes` (200), after which the viewer's run was allowed (200) and
+the engine's own dict showed the new scope.
+
+---
+
+### 14_custom_audit_sink.py
+
+**Status:** PASS
+
+**Test mode:** LIVE (driven via TestClient; no model calls needed)
+
+**Description:** `Authorization(audit=<AuditSink>)` with a JSON-lines sink written in the
+file. Makes three role changes (one by the system, two by an admin actor) and two real
+requests, then tails the file.
+
+**Result:** Exit 0. The file held five lines: three change events (`role.set_scopes` x2,
+`user.assigned`) with actor and before/after, and two decision events (`access.allowed`
+for the viewer's read, `access.denied` for the unknown caller's run) with the required
+scopes in metadata. `authz.decisions()` returned an empty list, as documented for a sink
+without a database reader.
+

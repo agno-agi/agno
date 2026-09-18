@@ -33,7 +33,7 @@ from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS
-from agno.os.authz import Authorization, UserDirectory, UserStore
+from agno.os.authz import Authorization, UserDirectory
 
 JWT_SECRET = os.getenv("JWT_VERIFICATION_KEY", "your-secret-key-at-least-256-bits-long")
 OS_ID = "authz-quickstart-os"
@@ -42,7 +42,7 @@ os.makedirs("tmp", exist_ok=True)
 db = SqliteDb(db_file="tmp/authz_quickstart.db")
 
 # The user directory (roster) is separate from authorization: create the store and seed people on it.
-users = UserStore(db=db)
+users = UserDirectory(db=db, auto_provision=True)
 users.upsert("alice", email="alice@example.com", name="Alice")
 users.upsert("bob", email="bob@example.com", name="Bob")
 users.upsert("carol", email="carol@example.com", name="Carol")
@@ -87,7 +87,7 @@ agent_os = AgentOS(
     ],
     # The user directory is a top-level switch (a peer of user_isolation). Pass the store you seeded;
     # auto_provision creates + default-roles an unknown but authenticated user on first request.
-    user_directory=UserDirectory(user_store=users, auto_provision=True),
+    user_directory=users,
     authorization=authz,
 )
 app = agent_os.get_app()

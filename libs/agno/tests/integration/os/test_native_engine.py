@@ -274,11 +274,11 @@ def test_unbound_engine_raises():
     than silently running an in-memory store that can't work across replicas."""
     eng = NativePolicyEngine()  # no db / db_url
     assert eng.is_bound is False
-    with pytest.raises(RuntimeError, match="requires a SQL database"):
+    with pytest.raises(RuntimeError, match="need a SQL database"):
         eng.set_role_scopes("viewer", [("agents:*:read", "allow")])
-    with pytest.raises(RuntimeError, match="requires a SQL database"):
+    with pytest.raises(RuntimeError, match="need a SQL database"):
         eng.check_resource("agents", "x", "read", subject="bob")
-    with pytest.raises(RuntimeError, match="requires a SQL database"):
+    with pytest.raises(RuntimeError, match="need a SQL database"):
         eng.roles_of("bob")
 
 
