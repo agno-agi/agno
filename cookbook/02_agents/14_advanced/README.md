@@ -46,9 +46,9 @@ still reaches the follow-up model.
 excess suggestions are clipped, and `[]` is a valid result. The default prompt asks
 the model to respect refusals and stay within the answer's scope; this is prompt
 guidance, not enforcement, and it applies to every `followups=True` component, with
-or without a `FollowupConfig`. Malformed generation still produces `None`. Streaming
-completion events and persisted run output preserve the list, including `[]`.
-Consumers should hide suggestion controls for an empty list.
+or without a `FollowupConfig`. Failed, cancelled or malformed generation produces
+`None`. Streaming completion events and persisted run output preserve the list,
+including `[]`. Consumers should hide suggestion controls for an empty list.
 
 `to_dict()` and `from_dict()` on `Agent` and `Team` keep `followups`, `num_followups`,
 `followup_model` and `followup_config`. A model is stored by identity only (`id`,
