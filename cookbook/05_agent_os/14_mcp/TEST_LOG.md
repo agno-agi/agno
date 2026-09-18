@@ -307,3 +307,67 @@ and the SQLite file removed afterwards.
   with no violations.
 - `git diff --check` passed for the lesson and consumed legacy MCP folder.
 - All scoped servers were stopped after testing.
+
+## Agno 3.1 MCP defaults validation (2026-09-18)
+
+Used an isolated `.venvs/demo` with this worktree installed, `mcp==2.1.1`, and `fastmcp==4.0.3`. Imported each cookbook, constructed its real AgentOS app, and inspected registration through a FastMCP in-memory client. Temporary local data and test-only credentials were used. These are configuration/discovery checks; no live model calls, hosted clients, database-backed public-page ingestion, or production services were exercised.
+
+### agents_as_tools.py
+
+**Status:** PASS
+
+**Description:** Built the app and verified chief, deep_research, continue_run, and cancel_run are the entire MCP tool list with default_tools omitted.
+
+**Result:** Application construction and exact MCP tool registration passed.
+
+---
+
+### custom_tools.py
+
+**Status:** PASS
+
+**Description:** Built the app and verified ask_workspace is the only MCP tool with default_tools omitted.
+
+**Result:** Application construction and exact MCP tool registration passed.
+
+---
+
+### toolkit_tools.py
+
+**Status:** PASS
+
+**Description:** Built the app and verified get_memories, add_memory, update_memory, and delete_memory are the entire MCP tool list with default_tools omitted.
+
+**Result:** Application construction and exact MCP tool registration passed.
+
+---
+
+### server_identity.py
+
+**Status:** PASS
+
+**Description:** Built the app and verified all eight default tools remain available with explicit default_tools=True.
+
+**Result:** Application construction and exact MCP tool registration passed.
+
+---
+
+### stateless.py
+
+**Status:** PASS
+
+**Description:** Built the app and verified all eight default tools remain available with explicit default_tools=True and stateless=True.
+
+**Result:** Application construction and exact MCP tool registration passed.
+
+---
+
+### secure_mcp.py
+
+**Status:** PASS
+
+**Description:** Built the app using a temporary root key and verified the six core tools remain available with explicit default_tools=True. The existing authorize warning still appears; PAT enforcement is covered by the framework suites, not this discovery smoke.
+
+**Result:** Application construction and exact MCP tool registration passed.
+
+---

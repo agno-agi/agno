@@ -2,7 +2,7 @@
 Serve agents as MCP tools
 =========================
 
-Turn the default MCP surface off and serve agents directly as tools. A bare
+Serve agents directly as tools using the custom MCP surface. A bare
 agent in MCPConfig(tools=[...]) becomes a tool named after its id with the
 agent's own description; agent.as_tool(name=..., description=...) publishes
 it under a model-facing name and pitch of your choosing instead. An MCP
@@ -68,7 +68,6 @@ agent_os = AgentOS(
     db=db,
     agents=[chief, researcher],
     mcp=MCPConfig(
-        default_tools=False,
         tools=[
             chief,
             researcher.as_tool(

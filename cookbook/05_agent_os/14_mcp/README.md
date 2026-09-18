@@ -11,9 +11,9 @@ an Agno agent consumes another MCP server belong in `cookbook/91_tools/mcp`.
 | File | What it teaches |
 |---|---|
 | `basic.py` | Serve the eight default AgentOS MCP tools. |
-| `agents_as_tools.py` | Turn the default tools off and expose agents directly as named MCP tools. |
+| `agents_as_tools.py` | Expose agents directly as named MCP tools. |
 | `mcp_client.py` | Discover, pause, continue, cancel, and inspect runs with a protocol-level client. |
-| `custom_tools.py` | Disable the default tools and expose one purpose-built tool. |
+| `custom_tools.py` | Expose one purpose-built tool. |
 | `server_identity.py` | Set the name, version and instructions the server reports to connecting clients. |
 | `toolkit_tools.py` | Serve a whole toolkit, flattened into one MCP tool per method. |
 | `secure_mcp.py` | Mint a PAT, authorize its principal, restrict hosts and tool tags, and return full results. |
@@ -56,9 +56,36 @@ run, cancels a second paused run, and reads the continued session from SQLite.
 Run tools return a trimmed result by default: answer content plus
 `run_id`, `session_id`, `status`, and unresolved requirements when paused.
 
+## Migrating to Agno 3.1
+
+`mcp=True` still enables the eight default tools. With `MCPConfig`, default tools
+are now off unless you explicitly set `default_tools=True`:
+
+```python
+# A custom server: publish your tools without the generic default interface.
+mcp = MCPConfig(tools=[ask_product_agent])
+
+# Customize the default interface: explicitly opt in.
+mcp = MCPConfig(default_tools=True, name="Support", stateless=True)
+
+# Combine the default tools with your own tools.
+mcp = MCPConfig(default_tools=True, tools=[ask_product_agent])
+```
+
+Existing configurations such as `MCPConfig(name="Support")` need
+`default_tools=True`. Custom configurations can drop their redundant
+`default_tools=False`. Bare `MCPConfig()` now raises an actionable error: supply
+`tools=[...]` or opt in to default tools. Tags only filter enabled default tools;
+`include_tags={"core"}` also needs `default_tools=True`.
+
+Exposed agents, teams, and workflows still add scoped `continue_run` and
+`cancel_run` tools so paused runs can finish. Set `lifecycle_tools=False` or
+`exclude_tags={"lifecycle"}` to opt out. Custom functions do not add those tools.
+The deprecated aliases follow the same defaults.
+
 ## Server name, version and instructions
 
-`server_identity.py` sets what a client learns in the initialize response:
+`server_identity.py` sets the identity and instructions reported to clients:
 
 ```python
 agent_os = AgentOS(
@@ -66,6 +93,7 @@ agent_os = AgentOS(
     version="1.4.0",
     agents=[support_agent],
     mcp=MCPConfig(
+        default_tools=True,
         name="Acme Support",
         version="1.4.0",
         instructions="This server answers questions about Acme products. Start with run_agent ...",
@@ -81,7 +109,7 @@ Open `/mcp` in a browser and you are sent to `/mcp/server-card`, a JSON Server C
 with the name, description and endpoint URL in the shape of the MCP Server Card
 extension. The `version` is the one the server reports at connect time, so set it on
 `MCPConfig` or `AgentOS` to publish your deployment's version rather than the default.
-`MCPConfig(server_card=False)` turns it off.
+`MCPConfig(default_tools=True, server_card=False)` turns it off.
 
 The card also lists the served tools in the same shape `tools/list` returns — name,
 title, description and `inputSchema` — built from each tool's own MCP representation,
@@ -92,7 +120,7 @@ connected client calls.
 Behind a proxy or load balancer, set the public endpoint explicitly:
 
 ```python
-mcp=MCPConfig(name="Acme Support", server_card_url="https://docs.agno.com/mcp")
+mcp=MCPConfig(default_tools=True, name="Acme Support", server_card_url="https://docs.agno.com/mcp")
 ```
 
 Without it the URL is derived from the request, and `X-Forwarded-Host` is honoured only
@@ -111,7 +139,6 @@ so an unvalidated forwarded host is never echoed into it.
 agent_os = AgentOS(
     agents=[chief, researcher],
     mcp=MCPConfig(
-        default_tools=False,
         tools=[
             chief,
             researcher.as_tool(
@@ -164,7 +191,7 @@ tools; paused runs then say to resume over the REST API.
 ## Custom and scoped surfaces
 
 `custom_tools.py` passes an Agno `@tool` through
-`MCPConfig(tools=[...])` and sets `default_tools=False`, leaving a
+`MCPConfig(tools=[...])`, leaving a
 single client-visible tool.
 
 `toolkit_tools.py` passes a whole `Toolkit` instead of a single tool. AgentOS
@@ -243,18 +270,29 @@ scope, and revocation details.
 
 ## Stateless transport
 
-`stateless.py` sets `MCPConfig(stateless=True)`. Every request builds its own
-transport and nothing survives between requests, so no replica owns a caller's
-session and a horizontally scaled deployment needs no session affinity -- an
-ordinary load balancer is enough. Responses carry no `mcp-session-id` header.
+`stateless.py` sets `MCPConfig(default_tools=True, stateless=True)` to disable
+transport sessions for legacy clients (protocol `2025-11-25` and earlier).
+Modern requests (`2026-07-28`) are always sessionless: the SDK routes them without
+an initialization handshake or `Mcp-Session-Id`, regardless of this flag.
 
-What that costs is anything requiring a retained session: server-initiated
-notifications and SSE resumability. Tool calls do not need one, so a pure tool
-server loses nothing. Leave the flag off (the default) whenever the server has
-to push to a client or resume an interrupted stream.
+| Client protocol | Default settings | `stateless=True` |
+|---|---|---|
+| `2026-07-28` | No transport session | No transport session |
+| `2025-11-25` and earlier | Transport session, unless overridden in FastMCP settings | No transport session |
 
-The flag is only passed to the transport when set, so an unset config keeps
-whatever `fastmcp.settings.stateless_http` already establishes.
+Legacy stateless mode loses the server-to-client request channel and SSE
+resumability. Request-scoped progress still works. Modern MCP uses multi-round-trip
+responses for interactive input and `subscriptions/listen` for opted-in change
+notifications; stateless does not mean streaming is disabled.
+
+Only `stateless=True` is forwarded to FastMCP. Leaving it false preserves
+`fastmcp.settings.stateless_http`, including `FASTMCP_STATELESS_HTTP` overrides.
+The flag does not change Agno's conversation `session_id`, persisted history, or
+run state. Multiple workers still need shared application storage and run
+coordination; the SQLite cookbook is for local development.
+
+See the [MCP HTTP specification](https://modelcontextprotocol.io/specification/2026-07-28/basic/transports/streamable-http)
+and [Python SDK deployment guide](https://py.sdk.modelcontextprotocol.io/run/deploy/).
 
 ```bash
 .venvs/demo/bin/python cookbook/05_agent_os/14_mcp/stateless.py

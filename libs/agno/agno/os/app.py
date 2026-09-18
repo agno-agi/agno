@@ -339,8 +339,9 @@ class AgentOS:
                 ``True`` for the default surface (all default tools), or an
                 ``MCPConfig`` to expose agents/teams/workflows as individual tools:
                 its ``tools=[...]`` takes components, ``component.as_tool(name=...,
-                description=...)`` markers, and custom callables; ``default_tools``
-                and ``include_tags``/``exclude_tags`` scope the default surface.
+                description=...)`` markers, and custom callables. Default tools are
+                off in ``MCPConfig`` unless ``default_tools=True``; ``include_tags``
+                and ``exclude_tags`` scope those enabled default tools.
             mcp_server: Deprecated alias for ``mcp``, still accepted; passing both with
                 different values is an error.
             mcp_auth: An ``AuthProvider`` object that owns authentication for the MCP

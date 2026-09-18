@@ -196,7 +196,7 @@ async def test_exposure_composes_with_default_tools_and_custom_tools():
         return "pong"
 
     agent = _agent()
-    os = AgentOS(agents=[agent], mcp=MCPConfig(tools=[agent, ping]))
+    os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=True, tools=[agent, ping]))
 
     names = await _tool_names(os)
     assert "chief" in names
@@ -526,7 +526,7 @@ async def test_exposed_agent_honours_per_resource_scopes(monkeypatch):
 async def test_exposed_id_colliding_with_default_tool_raises():
     """An exposed component whose tool name matches a default tool is a hard build error."""
     agent = _agent(id="run_agent")
-    os = AgentOS(agents=[agent], mcp=MCPConfig(tools=[agent]))
+    os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=True, tools=[agent]))
     with pytest.raises(ValueError, match='"run_agent"'):
         build_mcp_server(os)
 
@@ -728,7 +728,7 @@ def test_exposed_id_colliding_with_named_agno_function_raises():
 async def test_exposure_composes_with_include_tags():
     """Tag scoping keeps applying to the default tools while exposure adds its own names."""
     agent = _agent()
-    os = AgentOS(agents=[agent], mcp=MCPConfig(include_tags={"core"}, tools=[agent]))
+    os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=True, include_tags={"core"}, tools=[agent]))
 
     names = await _tool_names(os)
     core = {name for name, tags in mcp_mod._BUILTIN_TOOL_NAMES.items() if "core" in tags}
@@ -866,7 +866,7 @@ def test_exposure_only_config_does_not_warn(caplog):
 
     agent = _agent()
     with caplog.at_level(logging.WARNING):
-        MCPConfig(include_tags=set(), tools=[agent])
+        MCPConfig(default_tools=True, include_tags=set(), tools=[agent])
     assert "zero tools" not in caplog.text
 
 
@@ -874,6 +874,18 @@ def test_zero_tools_validator_accepts_exposure_and_still_rejects_empty():
     MCPConfig(default_tools=False, tools=[_agent()])
     with pytest.raises(ValueError, match="zero tools"):
         MCPConfig(default_tools=False)
+
+
+@pytest.mark.parametrize("kind", ["agents", "teams", "workflows"])
+@pytest.mark.parametrize("options", [{}, {"lifecycle_tools": False}, {"exclude_tags": {"lifecycle"}}])
+async def test_implicit_custom_surface_preserves_component_lifecycle(kind, options):
+    component = {"agents": _agent, "teams": _team, "workflows": _workflow}[kind]()
+    config = MCPConfig(tools=[component.as_tool(name="ask_product")], **options)
+    os = AgentOS(**{kind: [component]}, mcp=config)
+    expected = {"ask_product"}
+    if not options:
+        expected |= {"continue_run", "cancel_run"}
+    assert await _tool_names(os) == expected
 
 
 async def test_builtin_tool_name_map_matches_registered_tools():
@@ -903,7 +915,7 @@ def test_conflicting_default_tools_spellings_raise():
 
 def test_enable_builtin_tools_assignment_still_works():
     """Pre-rename this was a plain field write; the alias keeps assignment working."""
-    config = MCPConfig(tools=[lambda: "x"])
+    config = MCPConfig(default_tools=True, tools=[lambda: "x"])
     config.enable_builtin_tools = False
     assert config.default_tools is False
     assert config.enable_builtin_tools is False
@@ -918,7 +930,7 @@ def test_enable_builtin_tools_survives_model_copy_update():
         """Return ok."""
         return "ok"
 
-    config = MCPConfig(tools=[noop])
+    config = MCPConfig(default_tools=True, tools=[noop])
     copied = config.model_copy(update={"enable_builtin_tools": False})
     assert copied.default_tools is False
     assert copied.enable_builtin_tools is False
@@ -926,7 +938,7 @@ def test_enable_builtin_tools_survives_model_copy_update():
 
 
 def test_conflicting_spellings_in_model_copy_update_raise():
-    config = MCPConfig()
+    config = MCPConfig(default_tools=True)
     with pytest.raises(ValueError, match="deprecated alias"):
         config.model_copy(update={"enable_builtin_tools": False, "default_tools": True})
 
@@ -976,7 +988,7 @@ def test_agentos_equal_mcp_spellings_are_accepted():
 def test_assigning_config_to_mcp_property_applies_config():
     os = AgentOS(agents=[_agent()])
     assert os.mcp is False
-    config = MCPConfig(tools=[lambda: "x"])
+    config = MCPConfig(default_tools=True, tools=[lambda: "x"])
     os.mcp = config
     assert os.mcp is True
     assert os.mcp_config is config
@@ -984,7 +996,7 @@ def test_assigning_config_to_mcp_property_applies_config():
 
 def test_assigning_via_deprecated_mcp_server_property_applies_config():
     os = AgentOS(agents=[_agent()])
-    config = MCPConfig(tools=[lambda: "x"])
+    config = MCPConfig(default_tools=True, tools=[lambda: "x"])
     os.mcp_server = config
     assert os.mcp is True
     assert os.mcp_config is config
@@ -1266,7 +1278,7 @@ async def test_exposure_with_exclude_core_still_rides_lifecycle():
     run tools AND the pair's core membership, but the exposure adds ``lifecycle`` back
     so a paused exposed run stays resumable."""
     agent = _agent()
-    os = AgentOS(agents=[agent], mcp=MCPConfig(tools=[agent], exclude_tags={"core"}))
+    os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=True, tools=[agent], exclude_tags={"core"}))
     names = await _tool_names(os)
     assert names == {"chief", "continue_run", "cancel_run", "get_sessions", "get_session_runs"}
     assert "run_agent" not in names
@@ -1306,7 +1318,7 @@ async def test_custom_tool_named_like_default_tool_raises_on_default_surface():
         """Impostor."""
         return "no"
 
-    os = AgentOS(agents=[_agent()], mcp=MCPConfig(tools=[run_agent]))
+    os = AgentOS(agents=[_agent()], mcp=MCPConfig(default_tools=True, tools=[run_agent]))
     with pytest.raises(ValueError, match='custom tool name "run_agent"'):
         build_mcp_server(os)
 
@@ -1329,7 +1341,7 @@ async def test_lifecycle_collision_advice_matches_how_the_name_was_claimed():
     assert "lifecycle_tools=False" in str(exc_ride.value)
 
     # Default surface: the pair is core-registered; lifecycle_tools=False can't free it.
-    core_on = AgentOS(agents=[_agent()], mcp=MCPConfig(tools=[continue_run]))
+    core_on = AgentOS(agents=[_agent()], mcp=MCPConfig(default_tools=True, tools=[continue_run]))
     with pytest.raises(ValueError) as exc_core:
         build_mcp_server(core_on)
     assert "lifecycle_tools=False" not in str(exc_core.value)
@@ -1341,7 +1353,7 @@ async def test_exposed_id_collision_advice_is_lifecycle_aware_on_core_surface():
     that collides with the core-registered lifecycle pair must not be told to flip the
     lifecycle switches (they don't free a core-served name)."""
     agent = _agent(id="cancel_run")
-    core_on = AgentOS(agents=[agent], mcp=MCPConfig(tools=[agent]))
+    core_on = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=True, tools=[agent]))
     with pytest.raises(ValueError) as exc:
         build_mcp_server(core_on)
     assert "lifecycle_tools=False" not in str(exc.value)
@@ -1539,7 +1551,7 @@ async def test_pair_reaches_roster_when_core_is_served(monkeypatch):
         return RunOutput(agent_id="unexposed-agent", run_id=run_id, session_id=session_id, content="resumed")
 
     unexposed.acontinue_run = fake_acontinue_run  # type: ignore[method-assign]
-    os = AgentOS(agents=[exposed, unexposed], mcp=MCPConfig(tools=[exposed]))
+    os = AgentOS(agents=[exposed, unexposed], mcp=MCPConfig(default_tools=True, tools=[exposed]))
 
     result = await _call_tool(
         os,
@@ -1570,7 +1582,7 @@ async def test_explicit_lifecycle_include_is_roster_wide(monkeypatch):
     unexposed.acontinue_run = fake_acontinue_run  # type: ignore[method-assign]
     os = AgentOS(
         agents=[exposed, unexposed],
-        mcp=MCPConfig(include_tags={"lifecycle"}, tools=[exposed]),
+        mcp=MCPConfig(default_tools=True, include_tags={"lifecycle"}, tools=[exposed]),
     )
 
     result = await _call_tool(
@@ -1777,7 +1789,7 @@ async def test_remote_workflow_run_propagates_the_caller_bearer_token(monkeypatc
 
     remote.arun = fake_arun  # type: ignore[method-assign]
     # default_tools on so the generic run_workflow registers alongside the exposure.
-    os = AgentOS(workflows=[remote], mcp=MCPConfig(tools=[remote]))
+    os = AgentOS(workflows=[remote], mcp=MCPConfig(default_tools=True, tools=[remote]))
 
     _patch_request(monkeypatch, _request_with_bearer("tok-wf"))
     await _call_tool(os, "far-flow", {"message": "go"})
