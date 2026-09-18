@@ -58,3 +58,15 @@
 **Result:** Completed successfully in 11s.
 
 ---
+
+### prepare_model_request.py
+
+**Status:** PASS
+
+**Description:** Inspected Agent and Team requests through both sync and async
+methods using an offline model with no provider credentials. Verified messages,
+tool schemas, response format, and session context without model generation.
+
+**Result:** All four inspections completed successfully in the demo environment.
+
+---
