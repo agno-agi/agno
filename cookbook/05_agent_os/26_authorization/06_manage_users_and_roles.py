@@ -232,9 +232,7 @@ if IS_DEV:
         scopes = getattr(request.state, "scopes", []) or []
         user_id = getattr(request.state, "user_id", None)
         claims = getattr(request.state, "claims", {}) or {}
-        if "agent_os:admin" not in scopes and not authz.role_store.can_manage(
-            user_id, claims
-        ):
+        if "agent_os:admin" not in scopes and not authz.can_manage(user_id, claims):
             raise HTTPException(
                 status_code=403, detail="Only admins can mint persona tokens"
             )

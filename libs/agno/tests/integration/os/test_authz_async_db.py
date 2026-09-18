@@ -30,7 +30,6 @@ from agno.os import AgentOS  # noqa: E402
 from agno.os.authz import Authorization  # noqa: E402
 from agno.os.authz.audit import DbAuditSink  # noqa: E402
 from agno.os.authz.native_engine import NativePolicyEngine  # noqa: E402
-from agno.os.authz.role_store import RoleStore  # noqa: E402
 from agno.os.authz.user_directory import UserDirectory  # noqa: E402
 from agno.os.config import AuthorizationConfig  # noqa: E402
 
@@ -89,17 +88,17 @@ def test_sync_and_async_decisions_agree(tmp_path):
 
 
 def test_managed_stores_and_audit_async_on_async_db(tmp_path):
-    """RoleStore, UserDirectory and DbAuditSink round-trip on an async DB, and the
+    """UserDirectory and DbAuditSink round-trip on an async DB, and the
     change trail is written and read back."""
 
     async def scenario():
         db = AsyncSqliteDb(db_file=str(tmp_path / "stores.db"))
         audit = DbAuditSink(db=db)
-        roles = RoleStore(db=db, audit=audit)
+        roles = Authorization(db=db, audit=audit)
         users = UserDirectory(db=db, audit=audit)
 
         await roles.aset_role_scopes("member", ["agents:*:read"], name="Member", is_default=True, actor="admin")
-        await roles.aassign("bob", "member", actor="admin")
+        await roles.aset_role("bob", "member", actor="admin")
         assert await roles.aroles_of("bob") == ["member"]
         assert await roles.adefault_role() == "member"
         assert await roles.acan_manage("bob") is False
@@ -112,7 +111,7 @@ def test_managed_stores_and_audit_async_on_async_db(tmp_path):
         user, created = await users.aprovision_from_claims("newbie", {"email": "n@x.com"})
         assert created is True and user["id"] == "newbie"
 
-        assert await roles.aaudit_count() > 0
+        assert await roles._aaudit_count() > 0
         actions = [row["action"] for row in await audit.aread(limit=20)]
         assert "user.disabled" in actions
         await db.close()
@@ -136,11 +135,11 @@ class _MockRunOutput:
 def _served_os(tmp_path):
     """AgentOS whose OS db is async, with managed roles bound to it."""
     adb = AsyncSqliteDb(db_file=str(tmp_path / "served.db"))
-    roles = RoleStore(db=adb)
+    roles = Authorization(db=adb)
     asyncio.run(roles.aset_role_scopes("runner", ["agents:research:run", "agents:research:read"]))
-    asyncio.run(roles.aassign("alice", "runner"))
+    asyncio.run(roles.aset_role("alice", "runner"))
     asyncio.run(roles.aset_role_scopes("admin", ["agent_os:admin"]))
-    asyncio.run(roles.aassign("carol", "admin"))
+    asyncio.run(roles.aset_role("carol", "admin"))
     os_ = AgentOS(
         id=OS_ID,
         agents=[Agent(id="research", name="R", db=InMemoryDb()), Agent(id="secret", name="S", db=InMemoryDb())],
@@ -242,7 +241,7 @@ def test_user_management_metrics_async_on_async_db(tmp_path):
     )
 
     adb = AsyncSqliteDb(db_file=str(tmp_path / "metrics.db"))
-    roles = RoleStore(db=adb)
+    roles = Authorization(db=adb, verification_keys=[SECRET], algorithm="HS256", verify_audience=True, audience=OS_ID)
     users = UserDirectory(db=adb, auto_provision=False)
 
     async def seed():
@@ -250,20 +249,20 @@ def test_user_management_metrics_async_on_async_db(tmp_path):
         await roles.aset_role_scopes("viewer", ["agents:*:read"])
         for user in ("alice", "bob", "carol", "dave"):
             await users.aupsert(user)
-        await roles.aassign("alice", "admin")
-        await roles.aassign("bob", "viewer")
-        await roles.aassign("carol", "viewer")
+        await roles.aset_role("alice", "admin")
+        await roles.aset_role("bob", "viewer")
+        await roles.aset_role("carol", "viewer")
         await users.aset_disabled("dave", True)
 
         assert await users.acount_by_status() == {"total": 4, "disabled": 1}
         assert await users.aids() == ["alice", "bob", "carol", "dave"]
         assert [row["count"] for row in await users.acreated_by_day()] == [4]
-        assert await roles.aroles_of_many(["alice", "bob", "nobody"]) == {
+        assert await roles._aroles_of_many(["alice", "bob", "nobody"]) == {
             "alice": ["admin"],
             "bob": ["viewer"],
             "nobody": [],
         }
-        assert await roles.arole_names() == {"admin": "admin", "viewer": "viewer"}  # no display names set
+        assert await roles._arole_names() == {"admin": "admin", "viewer": "viewer"}  # no display names set
         metrics = await acollect_user_management_metrics(users, roles)
         assert (metrics.total, metrics.active, metrics.disabled, metrics.without_role) == (4, 3, 1, 1)
         assert [(r.role_slug, r.role_name, r.count) for r in metrics.by_role] == [
@@ -282,13 +281,7 @@ def test_user_management_metrics_async_on_async_db(tmp_path):
         db=adb,
         # the directory is a top-level concern (mounts /users); roles stay on Authorization (/authz)
         user_directory=users,
-        authorization=Authorization(
-            verification_keys=[SECRET],
-            algorithm="HS256",
-            verify_audience=True,
-            audience=OS_ID,
-            role_store=roles,
-        ),
+        authorization=roles,
     )
     app = os_.get_app()
     client = TestClient(app)
@@ -302,7 +295,7 @@ def test_user_management_metrics_async_on_async_db(tmp_path):
 
     # parity: the sync collector on a sync DB produces the same numbers the async one does
     sdb = SqliteDb(db_file=str(tmp_path / "metrics_sync.db"))
-    sroles, susers = RoleStore(db=sdb), UserDirectory(db=sdb)
+    sroles, susers = Authorization(db=sdb), UserDirectory(db=sdb)
     sroles.set_role_scopes("admin", ["agent_os:admin"])
     sroles.set_role_scopes("viewer", ["agents:*:read"])
     for user in ("alice", "bob", "carol", "dave"):

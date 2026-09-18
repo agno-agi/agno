@@ -16,7 +16,7 @@ import pytest
 pytest.importorskip("sqlalchemy")  # managed roles persist/enforce via the native engine + SQLAlchemy
 
 from agno.os.auth import provision_user_with_default_role  # noqa: E402
-from agno.os.authz.role_store import RoleStore  # noqa: E402
+from agno.os.authz import Authorization  # noqa: E402
 from agno.os.authz.user_directory import UserDirectory  # noqa: E402
 
 
@@ -26,8 +26,8 @@ def _db_url() -> str:
     return f"sqlite:///{path}"
 
 
-def _roles() -> RoleStore:
-    return RoleStore(db_url=_db_url())
+def _roles() -> Authorization:
+    return Authorization(db_url=_db_url())
 
 
 def _users() -> UserDirectory:
@@ -55,7 +55,7 @@ def test_is_default_is_unique_setting_a_new_default_clears_the_old():
     roles.set_role_scopes("member", ["agents:*:read"], is_default=True)
     roles.set_role_scopes("staff", ["agents:*:read"], is_default=True)
     assert roles.default_role() == "staff"
-    flags = {r["slug"]: r["is_default"] for r in roles.list_roles_detailed()}
+    flags = {r["slug"]: r["is_default"] for r in roles._list_roles_detailed()}
     assert flags["staff"] is True
     assert flags["member"] is False
 
@@ -120,12 +120,12 @@ def test_no_role_default_applies_only_to_a_known_directory_user(tmp_path):
     from agno.os.authz.user_directory import UserDirectory
 
     url = f"sqlite:///{tmp_path}/authz.db"
-    roles = RoleStore(db_url=url)
+    roles = Authorization(db_url=url)
     roles.set_role_scopes("viewer", ["agents:*:read"], is_default=True)
     roles.set_role_scopes("admin", ["agent_os:admin"])
     users = UserDirectory(db_url=url)  # same db as the role store's engine
     users.upsert("known", name="Known")  # a directory user with NO assigned role
-    engine = roles._engine
+    engine = roles._store()._engine
 
     # known directory user, no role -> gets the default 'viewer', denied what it doesn't grant
     assert roles.roles_of("known") == []
@@ -142,10 +142,10 @@ def test_no_default_role_means_a_roleless_directory_user_is_denied(tmp_path):
     from agno.os.authz.user_directory import UserDirectory
 
     url = f"sqlite:///{tmp_path}/authz.db"
-    roles = RoleStore(db_url=url)
+    roles = Authorization(db_url=url)
     roles.set_role_scopes("viewer", ["agents:*:read"])  # exists, but NOT flagged default
     UserDirectory(db_url=url).upsert("known")
-    assert roles._engine.check_scope("agents:x:read", subject="known") is False
+    assert roles._store()._engine.check_scope("agents:x:read", subject="known") is False
 
 
 def test_an_explicit_role_wins_over_the_default_fallback():
@@ -154,7 +154,7 @@ def test_an_explicit_role_wins_over_the_default_fallback():
     roles = _roles()
     roles.set_role_scopes("viewer", ["agents:*:read"], is_default=True)
     roles.set_role_scopes("editor", ["agents:*:write"])
-    roles.assign("bob", "editor")  # bob has a real role
-    engine = roles._engine
+    roles.set_role("bob", "editor")  # bob has a real role
+    engine = roles._store()._engine
     assert engine.check_scope("agents:x:write", subject="bob") is True  # editor grants write
     assert engine.check_scope("agents:x:read", subject="bob") is False  # editor is not the default viewer

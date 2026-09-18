@@ -73,10 +73,10 @@ authz = Authorization(
 authz.define_role("viewer", ["agents:*:read"])
 authz.define_role("member", ["agents:*:read", "agents:research-agent:run"])
 authz.define_role("admin", ["agent_os:admin"])
-# Hand people roles. authz.role_store is the live handle used for assignments (and for
+# Hand people roles. set_role is the runtime call (it replaces; assign is the bootstrap-safe one) (and for
 # the runtime changes further down).
-authz.role_store.assign("bob", "viewer")  # bob can read agents but not run them
-authz.role_store.assign("alice", "admin")
+authz.set_role("bob", "viewer")  # bob can read agents but not run them
+authz.set_role("alice", "admin")
 
 # Setup database
 db = SqliteDb(db_file="tmp/agentos.db")
@@ -170,7 +170,7 @@ if __name__ == "__main__":
     )
 
     print("\n  >> now we make bob a 'member' while the server is running...\n")
-    authz.role_store.assign("bob", "member")
+    authz.set_role("bob", "member")
     show(
         "bob (member)  asks to RUN the agent",
         client.post(
@@ -180,7 +180,7 @@ if __name__ == "__main__":
     )
 
     print("\n  >> ...and now we take the 'member' role back...\n")
-    authz.role_store.unassign("bob", "member")
+    authz.unassign("bob", "member")
     show(
         "bob (no role) asks to RUN the agent",
         client.post(

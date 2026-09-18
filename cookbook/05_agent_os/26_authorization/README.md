@@ -24,17 +24,20 @@ it runs offline against a simulated issuer.
 | File | Lesson |
 |---|---|
 | `00_quickstart_authorization.py` | Start here. Verification, roles, audit and the admin API on one `Authorization` object, the user directory on `AgentOS(user_directory=True)`, all on the OS db |
-| `01_managed_roles.py` | Roles only: define what each role may do and hand people roles through `authz.role_store`, no directory |
+| `01_managed_roles.py` | Roles only: define what each role may do and hand people roles through `authz.assign` / `authz.set_role`, no directory |
 | `02_managed_users.py` | The credential-less user directory and the disabled-user kill switch that outlives a valid token |
 | `03_directory_without_auth.py` | `AgentOS(db=db, user_isolation=True, user_directory=True)` with NO auth: a roster + per-user isolation that key off the run's user_id (advisory without auth) |
 | `04_managed_roles_sessions.py` | Roles protecting real data: who may delete a chat session |
 | `05_managed_roles_audit.py` | The audit trail — who changed what, plus every allow/deny decision |
 | `06_manage_users_and_roles.py` | Serve the `/authz` user and role management API for a frontend |
-| `07_manage_users.py` | Serve a users-ONLY management API (`/users`, no role store, no `/authz` roles) for a plain User-Management frontend |
+| `07_manage_users.py` | Serve a users-ONLY management API (`/users`, no roles, no `/authz`) for a plain User-Management frontend |
 | `08_custom_authorization_provider.py` | Bring your own decision engine in about thirty lines |
 | `09_idp_workos_auth0.py` | Let WorkOS, Auth0, or Okta own identity while you enforce what a role may do |
 | `10_fga_relationship_based.py` | Relationship-based access (ReBAC): "alice may run this because she owns its folder" |
 | `11_user_management_metrics.py` | `GET /users/metrics`: directory size, users created per day, and users per role, computed live for a User Management page |
+| `12_idp_roles_claim.py` | `Authorization(roles_claim=...)`: the identity provider names the caller's role on the token, you `define_role` what it may do, no per-user `assign` |
+| `13_custom_policy_engine.py` | `Authorization(engine=...)`: keep managed roles, the audit trail and the `/authz` admin API, but store policy and decide in your own `PolicyEngine` |
+| `14_custom_audit_sink.py` | `Authorization(audit=...)` with your own `AuditSink`: ship both audit trails to a SIEM, a queue, or a file instead of the database |
 | `console.html` | A small browser console for driving the `/authz` admin API by hand |
 
 ## Start Here
@@ -47,10 +50,11 @@ ALLOWED or BLOCKED for each:
 .venvs/demo/bin/python cookbook/05_agent_os/26_authorization/00_quickstart_authorization.py
 ```
 
-`01_managed_roles.py` builds the same model from the underlying primitives, for when
-you want to hold each piece yourself. Then read `02_managed_users.py` for the
-directory tier, and `08_custom_authorization_provider.py` once you want your own
-decision logic.
+`01_managed_roles.py` is roles only, for when you do not need a directory. Then read
+`02_managed_users.py` for the directory tier, and `08_custom_authorization_provider.py`
+once you want your own decision logic. The three escape hatches on the `Authorization`
+object each have a file: `roles_claim=` (12), `engine=` (13) and `audit=` with your own
+sink (14).
 
 `06_manage_users_and_roles.py` is the only file that blocks: it serves an AgentOS on
 port 7777 so you can drive the admin API (or `console.html`) against it.
@@ -61,7 +65,9 @@ port 7777 so you can drive the admin API (or `console.html`) against it.
 |---|---|
 | Only JWT scopes, no directory | `07_security` — no provider needed |
 | No identity provider, want roles in your DB | `01_managed_roles.py` + `02_managed_users.py` |
-| An existing IdP (WorkOS / Auth0 / Okta) | `09_idp_workos_auth0.py` |
+| An existing IdP (WorkOS / Auth0 / Okta) | `12_idp_roles_claim.py` (roles on the token, definitions in your DB) or `09_idp_workos_auth0.py` (a provider of your own) |
+| Your own policy backend, but keep the `/authz` admin API | `13_custom_policy_engine.py` |
+| Audit events that belong in your SIEM or log pipeline | `14_custom_audit_sink.py` |
 | Permissions that depend on relationships, not roles | `10_fga_relationship_based.py` |
 | An authorization service of your own | `08_custom_authorization_provider.py` |
 

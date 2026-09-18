@@ -46,7 +46,7 @@ OS_ID = "managed-roles-sessions-os"
 os.makedirs("tmp", exist_ok=True)
 
 # Authorization owns verification and the roles in one object. support is read-only; operator
-# can delete. define_role sets what a role may do; authz.role_store hands people the roles.
+# can delete. define_role sets what a role may do; authz.assign / authz.set_role hand people the roles.
 authz = Authorization(
     db_url="sqlite:///tmp/managed_roles_sessions.db",
     verification_keys=[JWT_SECRET],
@@ -57,9 +57,9 @@ authz = Authorization(
 authz.define_role("support", ["sessions:read"])
 authz.define_role("operator", ["sessions:read", "sessions:write", "sessions:delete"])
 authz.define_role("admin", ["agent_os:admin"])
-authz.role_store.assign("bob", "support")
-authz.role_store.assign("val", "operator")
-authz.role_store.assign("alice", "admin")
+authz.set_role("bob", "support")
+authz.set_role("val", "operator")
+authz.set_role("alice", "admin")
 
 # Setup database
 db = SqliteDb(db_file="tmp/agentos_sessions.db")

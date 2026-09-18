@@ -18,8 +18,9 @@ never updated or deleted - tamper-evident, the kind of thing an auditor wants):
                        the token used (its `jti`, or a short hash - never the token
                        itself).
 
-You turn it on by handing the store (and the OS) a `DbAuditSink` pointed at a DB.
-That's it - every change and every decision is recorded from then on.
+You turn it on with `Authorization(audit=True)`: one switch, both trails, written to the
+object's database. (Pass your own `AuditSink` instead to ship events elsewhere; see
+14_custom_audit_sink.py.) Every change and every decision is recorded from then on.
 
 This file makes a few role changes and a couple of real requests, then prints both
 trails. No server, no OpenAI key needed.
@@ -69,13 +70,13 @@ def main() -> None:
     )
 
     # --- role changes (each is recorded on the change trail, with the actor) ---
-    # define_role establishes the role; later edits go through authz.role_store, the live handle
+    # define_role establishes the role; later edits go through the object's runtime API (set_role, set_role_scopes, ...),
     # the /authz admin API writes to, so each carries the acting admin (actor=).
     authz.define_role("viewer", ["agents:*:read"])
-    authz.role_store.set_role_scopes(
+    authz.set_role_scopes(
         "viewer", ["agents:*:read", "agents:research-agent:run"], actor="alice"
     )  # widened
-    authz.role_store.assign("bob", "viewer", actor="alice")
+    authz.set_role("bob", "viewer", actor="alice")
 
     # --- a couple of real requests (each is recorded on the decision trail) ---
     agent = Agent(id="research-agent", name="Research Agent", db=InMemoryDb())
@@ -90,13 +91,13 @@ def main() -> None:
 
     # --- read both trails back ---
     print("\n=== CHANGE TRAIL (authz_audit) — who changed what ===")
-    for e in authz.role_store.audit_log(limit=20):
+    for e in authz.audit_log(limit=20):
         print(
             f"  {e['actor'] or 'system':>6}  {e['action']:<16} {e['target']:<10} {e.get('before')} -> {e.get('after')}"
         )
 
     print("\n=== DECISION TRAIL (authz_decisions) — every allow/deny ===")
-    for d in authz.audit_sink.read_decisions(limit=20):
+    for d in authz.decisions(limit=20):
         m = d.get("metadata", {})
         print(
             f"  {d['actor'] or '-':>6}  {d['action']:<14} {d['target']:<28} required={m.get('required')}"

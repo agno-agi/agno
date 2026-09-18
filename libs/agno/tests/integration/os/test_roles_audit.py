@@ -20,7 +20,6 @@ from agno.os import AgentOS  # noqa: E402
 from agno.os.authz import Authorization  # noqa: E402
 from agno.os.authz.admin_router import get_roles_router  # noqa: E402
 from agno.os.authz.audit import AuditEvent, AuditSink, DbAuditSink  # noqa: E402
-from agno.os.authz.role_store import RoleStore  # noqa: E402
 
 SECRET = "managed-roles-audit-secret-at-least-256-bits-long-xxxx"
 OS_ID = "managed-roles-audit-os"
@@ -58,11 +57,11 @@ def _auth(sub: str, jti: str | None = None) -> dict:
 
 def test_store_emits_change_events_with_actor_and_diff():
     sink = _CapturingSink()
-    store = RoleStore(audit=sink, db_url=_db_url())
+    store = Authorization(audit=sink, db_url=_db_url())
 
     store.set_role_scopes("member", ["agents:*:read"], actor="alice")
     store.set_role_scopes("member", ["agents:*:read", "agents:*:run"], actor="alice")  # widen
-    store.assign("bob", "member", actor="alice")
+    store.set_role("bob", "member", actor="alice")
     store.unassign("bob", "member", actor="alice")
     store.remove_role("member", actor="alice")
 
@@ -88,10 +87,10 @@ def test_store_emits_change_events_with_actor_and_diff():
 
 
 def test_no_sink_means_no_overhead_and_no_events():
-    store = RoleStore(db_url=_db_url())  # no audit
+    store = Authorization(db_url=_db_url())  # no audit
     # should not raise and should be a no-op for auditing
     store.set_role_scopes("member", ["agents:*:read"], actor="alice")
-    store.assign("bob", "member", actor="alice")
+    store.set_role("bob", "member", actor="alice")
     assert store.roles_of("bob") == ["member"]
 
 
@@ -101,10 +100,10 @@ def test_db_audit_sink_is_append_only_table(tmp_path):
     db_file = tmp_path / "audit.db"
     url = f"sqlite:///{db_file}"
     sink = DbAuditSink(db_url=url)
-    store = RoleStore(audit=sink, db_url=_db_url())
+    store = Authorization(audit=sink, db_url=_db_url())
 
     store.set_role_scopes("member", ["agents:*:read"], actor="alice")
-    store.assign("bob", "member", actor="alice")
+    store.set_role("bob", "member", actor="alice")
     store.unassign("bob", "member", actor="carol")
 
     eng = sa.create_engine(url)
@@ -123,9 +122,9 @@ def test_db_audit_sink_is_append_only_table(tmp_path):
 
 def test_http_api_records_actor_from_jwt():
     sink = _CapturingSink()
-    store = RoleStore(audit=sink, db_url=_db_url())
+    store = Authorization(audit=sink, db_url=_db_url())
     store.set_role_scopes("admin", ["agent_os:admin"])
-    store.assign("alice", "admin")  # bootstrap admin (not audited: no actor route)
+    store.set_role("alice", "admin")  # bootstrap admin (not audited: no actor route)
 
     agent = Agent(id="research-agent", name="Research Agent", db=InMemoryDb())
     agent_os = AgentOS(
@@ -160,9 +159,16 @@ def test_http_api_records_actor_from_jwt():
 def _decision_os(sink):
     """An AgentOS where viewer can read agents but not delete sessions, with the
     given sink wired for decision audit."""
-    store = RoleStore(db_url=_db_url())
+    store = Authorization(
+        db_url=_db_url(),
+        verification_keys=[SECRET],
+        algorithm="HS256",
+        verify_audience=True,
+        audience=OS_ID,
+        audit=sink,  # <- decision audit (and the change trail, same sink)
+    )
     store.set_role_scopes("viewer", ["agents:*:read"])
-    store.assign("bob", "viewer")
+    store.set_role("bob", "viewer")
 
     db = InMemoryDb()
     agent = Agent(id="research-agent", name="Research Agent", db=db)
@@ -170,14 +176,7 @@ def _decision_os(sink):
         id=OS_ID,
         agents=[agent],
         db=db,
-        authorization=Authorization(
-            verification_keys=[SECRET],
-            algorithm="HS256",
-            verify_audience=True,
-            audience=OS_ID,
-            authorization_provider=store.provider,
-            audit=sink,  # <- decision audit
-        ),
+        authorization=store,
     )
     return store, agent_os
 
@@ -229,8 +228,6 @@ def test_decision_and_change_audit_go_to_separate_tables(tmp_path):
     sink = DbAuditSink(db_url=url)
 
     store, agent_os = _decision_os(sink)
-    # also route the store's change events to the same sink
-    store._audit = sink  # noqa: SLF001 (test wiring)
     store.set_role_scopes("viewer", ["agents:*:read", "agents:*:run"], actor="alice")  # a change
 
     client = TestClient(agent_os.get_app())
@@ -244,8 +241,9 @@ def test_decision_and_change_audit_go_to_separate_tables(tmp_path):
             sa.text("select action, target, token_ref from agno_authz_decisions order by created_at")
         ).fetchall()
 
-    # change table holds only the role change, no access.* rows
-    assert [tuple(r) for r in changes] == [("role.set_scopes", "viewer")]
+    # change table holds the role changes (the helper's setup and the one above), no access.* rows
+    assert ("role.set_scopes", "viewer") in [tuple(r) for r in changes]
+    assert all(not r[0].startswith("access.") for r in changes)
     # decision table holds only access.* rows, with the jti as the token ref
     actions = {(r[0], r[2]) for r in decisions}
     assert ("access.allowed", "jti-1") in actions
@@ -262,11 +260,11 @@ def test_decisions_endpoint_returns_trail_for_admin(tmp_path):
     it is separate from /authz/audit (changes)."""
     db_file = tmp_path / "audit.db"
     sink = DbAuditSink(db_url=f"sqlite:///{db_file}")
-    store = RoleStore(audit=sink, db_url=_db_url())
+    store = Authorization(audit=sink, db_url=_db_url())
     store.set_role_scopes("admin", ["agent_os:admin"])
-    store.assign("alice", "admin")
+    store.set_role("alice", "admin")
     store.set_role_scopes("viewer", ["agents:*:read"])
-    store.assign("bob", "viewer")
+    store.set_role("bob", "viewer")
 
     agent = Agent(id="research-agent", name="Research Agent", db=InMemoryDb())
     agent_os = AgentOS(
@@ -307,9 +305,9 @@ def test_decisions_endpoint_returns_trail_for_admin(tmp_path):
 def test_audit_endpoint_returns_trail(tmp_path):
     """GET /authz/audit returns the change trail (newest first) for admins only."""
     db_file = tmp_path / "audit.db"
-    store = RoleStore(audit=DbAuditSink(db_url=f"sqlite:///{db_file}"), db_url=_db_url())
+    store = Authorization(audit=DbAuditSink(db_url=f"sqlite:///{db_file}"), db_url=_db_url())
     store.set_role_scopes("admin", ["agent_os:admin"])
-    store.assign("alice", "admin")
+    store.set_role("alice", "admin")
 
     agent = Agent(id="research-agent", name="Research Agent", db=InMemoryDb())
     agent_os = AgentOS(
@@ -364,7 +362,7 @@ def test_audit_endpoint_returns_trail(tmp_path):
     assert client.get("/authz/audit?sort_by=evil", headers=_auth("alice")).status_code == 422
 
     # non-admin and anonymous are blocked
-    store.assign("bob", "runner")  # bob still isn't an admin
+    store.set_role("bob", "runner")  # bob still isn't an admin
     assert client.get("/authz/audit", headers=_auth("bob")).status_code == 403
     assert client.get("/authz/audit").status_code == 401
 
@@ -444,7 +442,7 @@ def test_audit_sink_is_mirrored_onto_the_mcp_subapp():
     entire MCP transport."""
     pytest.importorskip("fastmcp")
     sink = _CapturingSink()
-    store = RoleStore(db_url=_db_url())
+    store = Authorization(db_url=_db_url())
     store.set_role_scopes("viewer", ["agents:*:read"])
 
     db = InMemoryDb()

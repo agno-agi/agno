@@ -17,7 +17,7 @@ def _boot(db, *, default: str):
     authz = Authorization(db=db, verification_keys=[SECRET], audience="dr-os")
     authz.define_role("viewer", ["agents:*:read"], default=(default == "viewer"))
     authz.define_role("member", ["agents:*:read", "agents:*:run"], default=(default == "member"))
-    return authz.role_store
+    return authz
 
 
 def test_moving_the_default_in_code_takes_effect_on_the_next_boot(tmp_path):

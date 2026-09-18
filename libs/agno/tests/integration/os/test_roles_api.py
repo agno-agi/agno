@@ -1,4 +1,4 @@
-"""Integration tests for the RoleStore HTTP management API.
+"""Integration tests for the managed-roles HTTP management API.
 
 Exercises the admin-only governance surface end to end: CRUD over roles and
 assignments through HTTP, the admin gate (401/403), and the payoff — a role
@@ -18,7 +18,6 @@ from agno.db.in_memory import InMemoryDb  # noqa: E402
 from agno.os import AgentOS  # noqa: E402
 from agno.os.authz import Authorization  # noqa: E402
 from agno.os.authz.admin_router import get_roles_router  # noqa: E402
-from agno.os.authz.role_store import RoleStore  # noqa: E402
 
 SECRET = "managed-roles-api-test-secret-at-least-256-bits-long-xx"
 OS_ID = "managed-roles-api-test-os"
@@ -49,11 +48,11 @@ def _auth(sub: str) -> dict:
 
 @pytest.fixture
 def client_and_store():
-    store = RoleStore(db_url=_db_url())  # in-memory
+    store = Authorization(db_url=_db_url())  # in-memory
     store.set_role_scopes("viewer", ["agents:*:read"])
     store.set_role_scopes("admin", ["agent_os:admin"])
-    store.assign("alice", "admin")
-    store.assign("bob", "viewer")
+    store.set_role("alice", "admin")
+    store.set_role("bob", "viewer")
 
     agent = Agent(id="research-agent", name="Research Agent", db=InMemoryDb())
     agent_os = AgentOS(
@@ -210,7 +209,7 @@ def test_scope_catalog_endpoint(client_and_store):
 
 def test_admin_via_token_claim_can_manage():
     """When roles come from the token (external IdP), an admin role on the token grants management."""
-    store = RoleStore(roles_claim="roles", db_url=_db_url())
+    store = Authorization(roles_claim="roles", db_url=_db_url())
     store.set_role_scopes("admin", ["agent_os:admin"])
     store.set_role_scopes("viewer", ["agents:*:read"])
 
@@ -328,23 +327,22 @@ def test_authz_api_is_served_with_the_mcp_server_enabled(tmp_path):
     from agno.db.in_memory import InMemoryDb
     from agno.os import AgentOS
     from agno.os.authz import Authorization
-    from agno.os.authz.role_store import RoleStore
 
-    store = RoleStore(db_url=f"sqlite:///{tmp_path / 'roles.db'}")
+    store = Authorization(
+        db_url=f"sqlite:///{tmp_path / 'roles.db'}",
+        verification_keys=[SECRET],
+        algorithm="HS256",
+        verify_audience=True,
+        audience=OS_ID,
+    )
     store.set_role_scopes("admin", ["agent_os:admin"])
-    store.assign("alice", "admin")
+    store.set_role("alice", "admin")
 
     agent_os = AgentOS(
         id=OS_ID,
         agents=[Agent(id="a1", name="A", db=InMemoryDb())],
         mcp_server=True,
-        authorization=Authorization(
-            verification_keys=[SECRET],
-            algorithm="HS256",
-            verify_audience=True,
-            audience=OS_ID,
-            role_store=store,
-        ),
+        authorization=store,
     )
     app = agent_os.get_app()  # no manual include_router: the router is built in
     headers = {"Authorization": f"Bearer {_token('alice')}"}
@@ -384,25 +382,25 @@ def test_patch_role_scopes_deny_wins_on_a_spelling_collision():
     """Issue-2 regression: PATCH upsert must be deny-wins like PUT. `agents:read` and
     `agents:*:read` collapse to one policy key, so upserting an allow must not overwrite a
     deny listed in the same diff -- else PATCH silently converts a denial into a grant."""
-    store = RoleStore(db_url=_db_url())
+    store = Authorization(db_url=_db_url())
     store.set_role_scopes("r", ["agents:public:read"])
-    store.patch_role_scopes(
+    store._patch_role_scopes(
         "r",
         upsert=[
             {"scope": "agents:*:read", "effect": "deny"},
             {"scope": "agents:read", "effect": "allow"},
         ],
     )
-    entries = store.get_role_scope_entries("r")
+    entries = store._get_role_scope_entries("r")
     assert {"scope": "agents:read", "effect": "deny"} in entries, entries
     assert {"scope": "agents:read", "effect": "allow"} not in entries
     # and reverse order (allow first) still keeps deny
     store.set_role_scopes("r2", [])
-    store.patch_role_scopes(
+    store._patch_role_scopes(
         "r2",
         upsert=[
             {"scope": "agents:read", "effect": "allow"},
             {"scope": "agents:*:read", "effect": "deny"},
         ],
     )
-    assert {"scope": "agents:read", "effect": "deny"} in store.get_role_scope_entries("r2")
+    assert {"scope": "agents:read", "effect": "deny"} in store._get_role_scope_entries("r2")

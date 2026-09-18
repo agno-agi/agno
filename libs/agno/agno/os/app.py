@@ -515,7 +515,7 @@ class AgentOS:
             authorization._bind(self.db)
             authorization_config = authorization.authorization_config()
             audit = authorization.audit_sink
-            self._authz_role_store = authorization.role_store
+            self._authz_role_store = authorization if authorization.uses_roles else None
             self._authz_provider = authorization.provider
             self._authz_issuer = authorization.issuer
             authorization = True

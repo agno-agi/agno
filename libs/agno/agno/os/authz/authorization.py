@@ -1,6 +1,6 @@
 """One object for AgentOS authorization: verification, roles, audit, and the ``/authz`` admin API.
 
-Standing up managed roles by hand means assembling a ``DbAuditSink``, a ``RoleStore``, an
+Standing up managed roles by hand would mean assembling an audit sink, a role store, an
 ``AuthorizationConfig``, a ``ScopeAuthorizationProvider``, the store's provider, a router factory
 and an ``include_router`` call, and keeping them pointed at the same database.
 :class:`Authorization` owns all of that and wires itself into AgentOS:
@@ -28,10 +28,12 @@ verify-only case is a one-liner:
 
     Authorization(verification_keys=KEYS, audience=OS_ID)   # no roles, no ceremony
 
-Everything the object builds is still reachable as a primitive: pass your own ``role_store=`` /
-``engine=`` and the object uses them instead of building its own. ``authorization_provider=`` is the
-full override: your provider decides alone, no store, no ``/authz``. Simplicity by default, full
-control when you need it.
+Roles are managed through this object at runtime too: ``set_role``, ``unassign``, ``roles_of``,
+``set_role_scopes``, ``remove_role``, ``list_roles``, ``can_manage``, ``audit_log``, ``decisions``
+(each with an async twin). The store underneath is private. ``engine=`` swaps the policy backend
+(a :class:`~agno.os.authz.engine.PolicyEngine`) and keeps this API and ``/authz``;
+``authorization_provider=`` is the full override: your provider decides alone, no store, no
+``/authz``. Simplicity by default, full control when you need it.
 
 The database is borrowed from AgentOS when you don't pass one, so you never write ``db=`` twice --
 role definitions and the admin seed are buffered and applied once the db binds (the same way
@@ -44,10 +46,10 @@ from agno.os.authz._db import is_async_authz_db, resolve_authz_db
 from agno.utils.log import log_debug, log_warning
 
 if TYPE_CHECKING:
+    from agno.os.authz._role_store import RoleStore
     from agno.os.authz.audit import AuditSink
     from agno.os.authz.engine import PolicyEngine
     from agno.os.authz.provider import AuthorizationProvider
-    from agno.os.authz.role_store import RoleStore
     from agno.os.config import AuthorizationConfig
 
 # The role name :meth:`Authorization.seed` grants to its ``admin=`` subject. Define a role with
@@ -65,21 +67,20 @@ _NEEDS_DB = (
 _ASYNC_SETUP_MSG = (
     "Authorization.define_role()/seed() write roles at setup time and need a synchronous database, but "
     "the bound database is async ({db_type}). Give AgentOS a sync db for setup, or configure roles "
-    "yourself through the async store API (RoleStore.aset_role_scopes) and pass it via "
-    "Authorization(role_store=...). An object with a pre-built store and no define_role()/seed() calls "
-    "works against an async db."
+    "yourself through the async runtime API (Authorization.aset_role_scopes / aset_role) once bound. "
+    "An object with no define_role()/seed()/assign() calls works against an async db."
 )
 
-# A scope entry as accepted by RoleStore.set_role_scopes.
+# A scope entry as accepted by set_role_scopes: a scope string, a (scope, effect) pair, or a dict.
 ScopeInput = Union[str, Tuple[str, str], Dict[str, str]]
 
 
 class Authorization:
     """The single AgentOS authorization object. Pass it as ``AgentOS(authorization=...)``.
 
-    Owns token verification, the optional managed-role store, the optional user directory, the
-    audit sink, and the admin API mount. Build the common case in a few lines; drop to the
-    underlying primitives (``role_store=``, ``authorization_provider=``, ...) for full control.
+    Owns token verification, managed roles (defined, seeded and edited through this object), the
+    audit sink, and the ``/authz`` admin API mount. Build the common case in a few lines; drop to
+    ``engine=`` or ``authorization_provider=`` for full control.
     """
 
     def __init__(
@@ -103,7 +104,6 @@ class Authorization:
         # --- escape hatches (bring your own) ---
         authorization_provider: Optional[Union["AuthorizationProvider", List["AuthorizationProvider"]]] = None,
         engine: Optional["PolicyEngine"] = None,
-        role_store: Optional["RoleStore"] = None,
     ):
         """
         Args:
@@ -122,17 +122,18 @@ class Authorization:
                 still ``define_role`` what each role may do; the token asserts which role the caller
                 has, so no per-user ``assign``. Turns managed roles on by itself.
             authorization_provider: full override -- your provider decides alone, no store is built
-                and ``/authz`` is not mounted. Cannot be combined with ``role_store``/``engine``; to
-                keep the admin API on top of your own backend, pass ``engine=`` instead.
-            engine / role_store: primitives. Supply either and the object uses it instead of
-                building its own. (The user directory is a top-level ``AgentOS(user_directory=...)``
-                concern, a peer of ``user_isolation``, not configured here.)
+                and ``/authz`` is not mounted. Cannot be combined with ``engine``; to keep the admin
+                API on top of your own backend, pass ``engine=`` instead.
+            engine: a custom :class:`~agno.os.authz.engine.PolicyEngine` backend for the roles (OpenFGA,
+                SpiceDB, ...); the default is agno's native engine on the bound database. (The user
+                directory is a top-level ``AgentOS(user_directory=...)`` concern, a peer of
+                ``user_isolation``, not configured here.)
         """
-        if authorization_provider is not None and (role_store is not None or engine is not None):
+        if authorization_provider is not None and engine is not None:
             raise ValueError(
-                "Authorization(authorization_provider=...) is the full override and takes no role_store= "
-                "or engine=: the provider decides alone. To keep managed roles and the /authz admin API "
-                "on your own backend, pass engine=<PolicyEngine> instead of a provider."
+                "Authorization(authorization_provider=...) is the full override and takes no engine=: the "
+                "provider decides alone. To keep managed roles and the /authz admin API on your own backend, "
+                "pass engine=<PolicyEngine> instead of a provider."
             )
         # Verification settings, splatted into the AuthorizationConfig at build time. Typed Any so
         # the per-key kwarg splat type-checks against AuthorizationConfig's specific field types.
@@ -154,7 +155,7 @@ class Authorization:
         self._provider_override = authorization_provider
         self._engine = engine
 
-        self._role_store: Optional["RoleStore"] = role_store
+        self._role_store: Optional["RoleStore"] = None
         self._audit_sink: Optional["AuditSink"] = None
 
         # The user directory is NOT owned here: it is a top-level AgentOS(user_directory=...) concern,
@@ -162,17 +163,23 @@ class Authorization:
         # it -- seed() below bootstraps the admin ROLE only.
 
         # Roles are in play if any were defined, or a store/engine was supplied.
-        self._roles_defined = role_store is not None or engine is not None or roles_claim is not None
+        self._roles_defined = engine is not None or roles_claim is not None
 
         # Buffers applied at bind time (used when no db is available yet).
         self._role_defs: List[Tuple[str, List[ScopeInput], bool, Optional[str], Optional[str]]] = []
         self._seed_calls: List[Tuple[str, str]] = []
-        self._assign_calls: List[Tuple[str, str]] = []
+        self._assign_calls: List[Tuple[str, str, Optional[str]]] = []
         # Admins seeded, checked once at finalize so a warning never depends on define_role/seed order.
         self._seeded_admins: List[Tuple[str, str]] = []
         self._admins_checked = False
 
         self._db: Any = resolve_authz_db(db, db_url)
+        if self._db is not None:
+            # A database that cannot store authorization data fails here, at construction, rather
+            # than on the first role definition or served request.
+            from agno.os.authz._db import require_authz_db
+
+            require_authz_db(self._db)
         self._db_is_async = False
         self._bound = False
         if self._db is not None:
@@ -194,7 +201,7 @@ class Authorization:
         BOOTSTRAP semantics for scopes: an existing role's scopes are left untouched, so re-running
         this on every start never overwrites scope changes an admin made at runtime through the
         ``/authz`` API. To change a role's scopes after first boot, use the admin API (or
-        ``RoleStore.set_role_scopes`` directly for a declarative, code-owns-the-role model).
+        :meth:`set_role_scopes` directly for a declarative, code-owns-the-role model).
 
         ``default=True`` is applied on every boot, existing role or not: it is the provisioning
         policy, and moving it to another role in code must take effect. Omitting ``default`` never
@@ -221,7 +228,7 @@ class Authorization:
             self._seed_calls.append((admin, admin_role))
         return self
 
-    def assign(self, subject: str, role: str) -> "Authorization":
+    def assign(self, subject: str, role: str, actor: Optional[str] = None) -> "Authorization":
         """Give ``subject`` a ``role`` if they hold none yet -- the bootstrap way to grant a seeded
         user their role (define the role first).
 
@@ -231,10 +238,17 @@ class Authorization:
         code-owns-the-assignment model). Applied now if a db is bound, else buffered. Chainable."""
         self._roles_defined = True
         if self._bound:
-            self._apply_assign(subject, role)
+            self._apply_assign(subject, role, actor)
         else:
-            self._assign_calls.append((subject, role))
+            self._assign_calls.append((subject, role, actor))
         return self
+
+    async def aassign(self, subject: str, role: str, actor: Optional[str] = None) -> None:
+        """Async twin of :meth:`assign` for the request path (JIT provisioning): create-if-absent,
+        against a bound store."""
+        store = self._store()
+        if not await store.aroles_of(subject):
+            await store.aassign(subject, role, actor=actor)
 
     # ------------------------------------------------------------------ binding
     def _bind(self, os_db: Optional[Any] = None) -> "Authorization":
@@ -271,8 +285,8 @@ class Authorization:
         for admin, admin_role in self._seed_calls:
             self._apply_seed(admin, admin_role)
         self._seed_calls.clear()
-        for subject, role in self._assign_calls:
-            self._apply_assign(subject, role)
+        for subject, role, actor in self._assign_calls:
+            self._apply_assign(subject, role, actor)
         self._assign_calls.clear()
 
     def _needs_own_db(self) -> bool:
@@ -282,8 +296,7 @@ class Authorization:
         if self._audit_arg is True:
             return True
         if self._roles_defined or self._role_defs:
-            if self._role_store is None or getattr(self._role_store, "is_bound", True) is False:
-                return True
+            return self._role_store is None or getattr(self._role_store, "is_bound", True) is False
         return False
 
     def _resolve_audit(self) -> Optional["AuditSink"]:
@@ -297,7 +310,7 @@ class Authorization:
 
     def _ensure_role_store(self) -> "RoleStore":
         if self._role_store is None:
-            from agno.os.authz.role_store import RoleStore
+            from agno.os.authz._role_store import RoleStore
 
             self._role_store = RoleStore(db=self._db, engine=self._engine, roles_claim=self._roles_claim)
         else:
@@ -341,12 +354,12 @@ class Authorization:
         # define_role ran before or after this seed.
         self._seeded_admins.append((admin, admin_role))
 
-    def _apply_assign(self, subject: str, role: str) -> None:
+    def _apply_assign(self, subject: str, role: str, actor: Optional[str] = None) -> None:
         """Assign a role to a subject, create-if-absent so a runtime promotion survives a restart."""
         self._require_sync_setup()
         role_store = self._ensure_role_store()
         if not role_store.roles_of(subject):  # bootstrap: never clobber an existing (runtime) role
-            role_store.assign(subject, role)
+            role_store.assign(subject, role, actor=actor)
 
     @staticmethod
     def _restore_bootstrap_admin(role_store: "RoleStore", admin: str, admin_role: str) -> None:
@@ -385,6 +398,253 @@ class Authorization:
         if self._db_is_async:
             raise ValueError(_ASYNC_SETUP_MSG.format(db_type=type(self._db).__name__))
 
+    # ------------------------------------------------------------------ runtime role API
+    # The role store is private; this is its public face. Everything below reads or writes the
+    # persisted roles at runtime (an admin promoting someone, a script listing roles) and needs a
+    # bound database. define_role / seed / assign above are the bootstrap-safe boot-time forms.
+
+    def set_role_scopes(
+        self,
+        role: str,
+        scopes: List[Union[str, Tuple[str, str], Dict[str, str]]],
+        actor: Optional[str] = None,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        is_default: Optional[bool] = None,
+    ) -> None:
+        """Define (or replace) what a role can do, in agno scope terms."""
+        return self._store().set_role_scopes(role, scopes, actor, name, description, is_default)
+
+    async def aset_role_scopes(
+        self,
+        role: str,
+        scopes: List[Union[str, Tuple[str, str], Dict[str, str]]],
+        actor: Optional[str] = None,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        is_default: Optional[bool] = None,
+    ) -> None:
+        """Async twin of :meth:`set_role_scopes`."""
+        return await self._store().aset_role_scopes(role, scopes, actor, name, description, is_default)
+
+    def get_role_scopes(self, role: str) -> List[str]:
+        """Return a role's scope strings (allow + deny), for display/read-back."""
+        return self._store().get_role_scopes(role)
+
+    async def aget_role_scopes(self, role: str) -> List[str]:
+        """Async twin of :meth:`get_role_scopes`."""
+        return await self._store().aget_role_scopes(role)
+
+    def remove_role(self, role: str, actor: Optional[str] = None) -> None:
+        """remove_role"""
+        return self._store().remove_role(role, actor)
+
+    async def aremove_role(self, role: str, actor: Optional[str] = None) -> None:
+        """Async twin of :meth:`remove_role`."""
+        return await self._store().aremove_role(role, actor)
+
+    def list_roles(self) -> List[str]:
+        """All role slugs (those with policies and/or metadata)."""
+        return self._store().list_roles()
+
+    async def alist_roles(self) -> List[str]:
+        """Async twin of :meth:`list_roles`."""
+        return await self._store().alist_roles()
+
+    def unassign(self, subject: str, role: str, actor: Optional[str] = None) -> None:
+        """unassign"""
+        return self._store().unassign(subject, role, actor)
+
+    async def aunassign(self, subject: str, role: str, actor: Optional[str] = None) -> None:
+        """Async twin of :meth:`unassign`."""
+        return await self._store().aunassign(subject, role, actor)
+
+    def roles_of(self, subject: str) -> List[str]:
+        """roles_of"""
+        return self._store().roles_of(subject)
+
+    async def aroles_of(self, subject: str) -> List[str]:
+        """Async twin of :meth:`roles_of`."""
+        return await self._store().aroles_of(subject)
+
+    def default_role(self) -> Optional[str]:
+        """The role flagged ``is_default``, granted to a user on first JIT provision."""
+        return self._store().default_role()
+
+    async def adefault_role(self) -> Optional[str]:
+        """Async twin of :meth:`default_role`."""
+        return await self._store().adefault_role()
+
+    def can_manage(self, principal_id: Optional[str], claims: Optional[Dict[str, Any]] = None) -> bool:
+        """True if the caller may administer roles (i.e. satisfies ``agent_os:admin``)."""
+        return self._store().can_manage(principal_id, claims)
+
+    async def acan_manage(self, principal_id: Optional[str], claims: Optional[Dict[str, Any]] = None) -> bool:
+        """Async twin of :meth:`can_manage`."""
+        return await self._store().acan_manage(principal_id, claims)
+
+    def admin_subjects(self) -> List[str]:
+        """Subjects whose STORED role satisfies ``agent_os:admin`` -- everyone who can reach the admin"""
+        return self._store().admin_subjects()
+
+    async def aadmin_subjects(self) -> List[str]:
+        """Async twin of :meth:`admin_subjects`."""
+        return await self._store().aadmin_subjects()
+
+    def audit_log(
+        self,
+        limit: int = 100,
+        offset: int = 0,
+        search: Optional[str] = None,
+        sort_by: str = "created_at",
+        order: str = "desc",
+    ) -> List[Dict[str, Any]]:
+        """A page of change-audit events (newest first by default), if the audit"""
+        return self._store().audit_log(limit, offset, search, sort_by, order)
+
+    async def aaudit_log(
+        self,
+        limit: int = 100,
+        offset: int = 0,
+        search: Optional[str] = None,
+        sort_by: str = "created_at",
+        order: str = "desc",
+    ) -> List[Dict[str, Any]]:
+        """Async twin of :meth:`audit_log`."""
+        return await self._store().aaudit_log(limit, offset, search, sort_by, order)
+
+    def set_role(self, subject: str, role: str, actor: Optional[str] = None) -> None:
+        """Give the subject THE role, replacing any current one: the runtime counterpart of the bootstrap-safe :meth:`assign`."""
+        return self._store().assign(subject, role, actor)
+
+    async def aset_role(self, subject: str, role: str, actor: Optional[str] = None) -> None:
+        """Async twin of :meth:`set_role`."""
+        return await self._store().aassign(subject, role, actor)
+
+    @property
+    def _audit_readable(self) -> bool:
+        """Whether the change trail can be read back (a db-backed sink); the ``/authz/audit`` route
+        404s when it cannot."""
+        return bool(getattr(self._store(), "audit_readable", False))
+
+    # Admin-API plumbing: the /authz router's view of the store, not something a user calls.
+
+    def _create_role(
+        self,
+        role: str,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        is_default: Optional[bool] = None,
+        actor: Optional[str] = None,
+    ) -> dict:
+        """Create a role with metadata only — no scopes (add those via"""
+        return self._store().create_role(role, name, description, is_default, actor)
+
+    async def _acreate_role(
+        self,
+        role: str,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        is_default: Optional[bool] = None,
+        actor: Optional[str] = None,
+    ) -> dict:
+        """Async twin of :meth:`_create_role`."""
+        return await self._store().acreate_role(role, name, description, is_default, actor)
+
+    def set_role_meta(
+        self,
+        role: str,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        is_default: Optional[bool] = None,
+        actor: Optional[str] = None,
+    ) -> dict:
+        """Update ONLY a role's metadata (display name / description / is_default),"""
+        return self._store().set_role_meta(role, name, description, is_default, actor)
+
+    async def aset_role_meta(
+        self,
+        role: str,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        is_default: Optional[bool] = None,
+        actor: Optional[str] = None,
+    ) -> dict:
+        """Async twin of :meth:`set_role_meta`."""
+        return await self._store().aset_role_meta(role, name, description, is_default, actor)
+
+    def _patch_role_scopes(
+        self,
+        role: str,
+        upsert: Optional[List[Union[str, Tuple[str, str], Dict[str, str]]]] = None,
+        remove: Optional[List[Union[str, Tuple[str, str], Dict[str, str]]]] = None,
+        actor: Optional[str] = None,
+    ) -> None:
+        """Apply a scope diff: add/flip the ``upsert`` scopes and drop the ``remove``"""
+        return self._store().patch_role_scopes(role, upsert, remove, actor)
+
+    async def _apatch_role_scopes(
+        self,
+        role: str,
+        upsert: Optional[List[Union[str, Tuple[str, str], Dict[str, str]]]] = None,
+        remove: Optional[List[Union[str, Tuple[str, str], Dict[str, str]]]] = None,
+        actor: Optional[str] = None,
+    ) -> None:
+        """Async twin of :meth:`_patch_role_scopes`."""
+        return await self._store().apatch_role_scopes(role, upsert, remove, actor)
+
+    def get_role(self, role: str) -> Optional[dict]:
+        """Full role record: metadata + scope entries, or None if the role has"""
+        return self._store().get_role(role)
+
+    async def aget_role(self, role: str) -> Optional[dict]:
+        """Async twin of :meth:`get_role`."""
+        return await self._store().aget_role(role)
+
+    def _get_role_scope_entries(self, role: str) -> List[dict]:
+        """Return a role's scopes with effects: ``[{"scope": ..., "effect": ...}]``."""
+        return self._store().get_role_scope_entries(role)
+
+    async def _aget_role_scope_entries(self, role: str) -> List[dict]:
+        """Async twin of :meth:`_get_role_scope_entries`."""
+        return await self._store().aget_role_scope_entries(role)
+
+    def _list_roles_detailed(self) -> List[dict]:
+        """Every role as a full record (metadata + scope entries)."""
+        return self._store().list_roles_detailed()
+
+    async def _alist_roles_detailed(self) -> List[dict]:
+        """Async twin of :meth:`_list_roles_detailed`."""
+        return await self._store().alist_roles_detailed()
+
+    def _role_names(self) -> Dict[str, str]:
+        """``{slug: display name}`` for every role with a metadata row, from one read. A role"""
+        return self._store().role_names()
+
+    async def _arole_names(self) -> Dict[str, str]:
+        """Async twin of :meth:`_role_names`."""
+        return await self._store().arole_names()
+
+    def _roles_of_many(self, subjects: List[str]) -> Dict[str, List[str]]:
+        """Roles of each subject in one call; used where a caller needs the whole"""
+        return self._store().roles_of_many(subjects)
+
+    async def _aroles_of_many(self, subjects: List[str]) -> Dict[str, List[str]]:
+        """Async twin of :meth:`_roles_of_many`."""
+        return await self._store().aroles_of_many(subjects)
+
+    def _audit_count(self, search: Optional[str] = None) -> int:
+        """Total number of change-audit events (for pagination, honouring"""
+        return self._store().audit_count(search)
+
+    async def _aaudit_count(self, search: Optional[str] = None) -> int:
+        """Async twin of :meth:`_audit_count`."""
+        return await self._store().aaudit_count(search)
+
+    def _attach_audit(self, sink: Optional["AuditSink"]) -> None:
+        """Adopt ``sink`` as the change-audit sink if one wasn't set explicitly."""
+        return self._store().attach_audit(sink)
+
     def _check_seeded_admins(self) -> None:
         """Warn (once) about any seeded admin whose role does not actually confer ``agent_os:admin``,
         so a mismatch surfaces at boot instead of as a silent ``can_manage() == False`` at runtime."""
@@ -408,9 +668,9 @@ class Authorization:
         scope RBAC. A list means several planes composed with OR."""
         if self._provider_override is not None:
             return self._provider_override
-        store = self.role_store
-        if store is None:
+        if not self.uses_roles:
             return None  # verify-only / scope-based: AgentOS defaults to ScopeAuthorizationProvider
+        store = self._store()
         if self._trust_token_scopes:
             from agno.os.authz.scope_provider import ScopeAuthorizationProvider
 
@@ -423,16 +683,49 @@ class Authorization:
         return self._issuer
 
     @property
-    def _uses_roles(self) -> bool:
+    def uses_roles(self) -> bool:
+        """Whether managed roles are in play: a role was defined, a subject seeded or assigned, an
+        engine or ``roles_claim`` given, or the runtime role API used. AgentOS mounts ``/authz`` and
+        provisions default roles only when this is True."""
         return self._roles_defined
 
     @property
-    def role_store(self) -> Optional["RoleStore"]:
-        """The role store, or None when the object is verify-only. Mount the ``/authz`` admin API
-        only when this is set. Built on demand once a db is bound."""
-        if not self._uses_roles:
-            return None
-        return self._ensure_role_store() if self._bound else self._role_store
+    def roles_claim(self) -> Optional[str]:
+        """The JWT claim a caller's roles are read from (the external-IdP case), or None when roles
+        come from this object's own assignments."""
+        return self._roles_claim
+
+    @property
+    def is_bound(self) -> bool:
+        """True once a database is bound and, when roles are in play, the role store persists."""
+        return self._bound and (self._role_store is None or getattr(self._role_store, "is_bound", True))
+
+    def attach_db(self, db: Any) -> "Authorization":
+        """Bind a database to an object built without one (what AgentOS does with the OS db)."""
+        return self._bind(db)
+
+    def _store(self) -> "RoleStore":
+        """The private role store behind the runtime API. Using it puts roles in play; it needs a
+        bound database, so an unbound object says so rather than failing inside the engine."""
+        self._roles_defined = True
+        if not self._bound:
+            raise ValueError(_NEEDS_DB)
+        return self._ensure_role_store()
+
+    def decisions(self, limit: int = 100, offset: int = 0) -> List[Dict[str, Any]]:
+        """The decision trail (every allow/deny the OS recorded), newest first. Empty when the audit
+        sink is off or cannot be read (a logging sink)."""
+        sink = self._audit_sink
+        fn = getattr(sink, "read_decisions", None)
+        return list(fn(limit=limit, offset=offset)) if callable(fn) else []
+
+    async def adecisions(self, limit: int = 100, offset: int = 0) -> List[Dict[str, Any]]:
+        """Async twin of :meth:`decisions`."""
+        sink = self._audit_sink
+        fn = getattr(sink, "aread_decisions", None)
+        if callable(fn):
+            return list(await fn(limit=limit, offset=offset))
+        return self.decisions(limit=limit, offset=offset)
 
     @property
     def audit_sink(self) -> Optional["AuditSink"]:
