@@ -28,3 +28,17 @@ def test_requires_confirmation_tools_gates_run_shell_command():
     """The documented HITL pattern marks run_shell_command for confirmation."""
     tools = ShellTools(requires_confirmation_tools=["run_shell_command"])
     assert tools.functions["run_shell_command"].requires_confirmation is True
+
+
+def test_shell_command_tail_output_handling():
+    """tail option correctly extracts last N non-empty lines without trailing newline artifacts."""
+    import sys
+    from agno.utils.shell import run_shell_command as utils_run_shell_command
+
+    args = [sys.executable, "-c", "print('first'); print('second')"]
+    tools = ShellTools()
+
+    for run_fn in (tools.run_shell_command, utils_run_shell_command):
+        assert run_fn(args, tail=1) == "second"
+        assert run_fn(args, tail=2) == "first\nsecond"
+

@@ -16,7 +16,10 @@ def run_shell_command(args: List[str], tail: int = 100) -> str:
             return f"Error: {result.stderr}"
 
         # return only the last n lines of the output
-        return "\n".join(result.stdout.split("\n")[-tail:])
+        lines = result.stdout.splitlines()
+        if tail <= 0:
+            return ""
+        return "\n".join(lines[-tail:])
     except Exception as e:
         log_warning(f"Failed to run shell command: {str(e)}")
         return f"Error: {e}"
