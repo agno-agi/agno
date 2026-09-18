@@ -342,7 +342,15 @@ class QueueCapabilities(BaseModel):
     a queue_per_session flag without durable=True gates nothing and is
     reported false. Readable by any authenticated caller (deployment
     capability, not operator data - the admin-scoped /queue surface stays
-    the only view of actual jobs)."""
+    the only view of actual jobs).
+
+    Both fields describe submissions the durable queue can carry. A
+    background submission the queue cannot carry (media uploads, payloads
+    plain JSON cannot store, factory-backed or off-registry components)
+    executes in-process on the accepting replica, outside the gate and
+    without durability, and the server logs each such bypass; the client
+    still receives 202 PENDING. A caller that sends those knows it is
+    sending them; the capability does not change per submission."""
 
     durable: bool = Field(
         ...,
