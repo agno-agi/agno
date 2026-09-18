@@ -237,8 +237,8 @@ class Knowledge(RemoteKnowledge):
             # See the matching comment in ``_rerank_documents``.
             return documents
         try:
-            # arerank always accepts limit; it forwards only to a rerank that takes it.
-            reranked = await self.reranker.arerank(query=query, documents=documents, limit=max_results)
+            kwargs = {"limit": max_results} if self.reranker.accepts_async_limit() else {}
+            reranked = await self.reranker.arerank(query=query, documents=documents, **kwargs)
         except ValueError:
             # See the matching comment in ``_rerank_documents``.
             raise
