@@ -71,7 +71,11 @@ def to_utc_datetime(value: Optional[Union[str, int, float, date, datetime]]) -> 
         try:
             if value.endswith("Z"):
                 value = value[:-1] + "+00:00"
-            return datetime.fromisoformat(value)
+            parsed = datetime.fromisoformat(value)
+            # An offset-less ISO string is a wall-clock reading, not a UTC instant: normalize
+            # it like the datetime branch above, else '2024-01-01' returns naive while
+            # date(2024, 1, 1) -- the same instant -- returns aware.
+            return parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed
         except (ValueError, TypeError):
             return None
 
