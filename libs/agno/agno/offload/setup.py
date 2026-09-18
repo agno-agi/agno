@@ -28,10 +28,10 @@ def _db_supports_offloading(db: Any) -> bool:
     """Whether this db can back a ResultStore.
 
     Payloads go to AgentFS, whose database backend is sync, and the index
-    table agno_tool_results is implemented by SqliteDb and PostgresDb, so
-    those classes and their subclasses qualify. Anywhere else the setting is
-    honoured as off, with one warning: a run must never believe its payloads
-    are recoverable when they are not.
+    table agno_tool_results is implemented by SqliteDb, PostgresDb and
+    OracleDb, so those classes and their subclasses qualify. Anywhere else
+    the setting is honoured as off, with one warning: a run must never
+    believe its payloads are recoverable when they are not.
     """
     supported: Tuple[type, ...] = ()
     # An instance of either class proves its module imports; a failed import
@@ -46,6 +46,12 @@ def _db_supports_offloading(db: Any) -> bool:
         from agno.db.postgres.postgres import PostgresDb
 
         supported += (PostgresDb,)
+    except ImportError:
+        pass
+    try:
+        from agno.db.oracle.oracle import OracleDb
+
+        supported += (OracleDb,)
     except ImportError:
         pass
     return isinstance(db, supported)
