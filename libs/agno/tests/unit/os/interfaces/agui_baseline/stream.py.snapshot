@@ -1,11 +1,8 @@
 from collections.abc import Iterator
-from typing import Any, AsyncIterator, Dict, List, Optional, Tuple, Union
+from typing import Any, AsyncIterator, Dict, List, Optional, Union
 
 from ag_ui.core import BaseEvent
 
-from agno.os.interfaces.agui.handlers import (
-    _readable as readable_value,
-)
 from agno.os.interfaces.agui.handlers import (
     close_open_spans,
     is_completion_event,
@@ -14,7 +11,9 @@ from agno.os.interfaces.agui.handlers import (
     process_event,
     validate_subagent_visibility,
 )
-from agno.os.interfaces.agui.interrupts import validate_interrupt_outcome
+from agno.os.interfaces.agui.handlers import (
+    _readable as readable_value,
+)
 from agno.os.interfaces.agui.state import StreamState
 from agno.run.agent import RunCompletedEvent, RunOutputEvent
 from agno.run.base import BaseRunOutputEvent
@@ -85,50 +84,12 @@ def _cleanup_events(state: StreamState, run_id: str, error_message: str) -> List
         return []
 
 
-def _run_terminal_events(
-    state: StreamState,
-    run_id: str,
-    root_terminal: Optional[BaseRunOutputEvent],
-    subagent_terminal: Optional[BaseRunOutputEvent],
-) -> Tuple[List[BaseEvent], Optional[Exception]]:
-    """The run terminal, or the span closes a terminal that could not be built owes.
-
-    Building the terminal is failable work: it renders a paused run's own words,
-    serializes the arguments of every call the pause prompts for, and copies the
-    session state the run ends holding. Outside a guard, a raise from any of
-    that sent no span end and no terminal, leaving the client spinning on a
-    message and a tool call with the caller's own in-band error as the only
-    account of how the run stopped.
-
-    Guarded apart from the event loop rather than with it, because the two are
-    different faults and the record has to say which happened: a source stream
-    that died is the run's, a terminal that cannot be built is this interface's
-    own. One guard could name only one of them, and would report a bug here as a
-    dead source stream.
-
-    The failure is returned rather than raised so the caller can send the closes
-    before it propagates, and it does propagate: nothing may follow a run
-    terminal, so a terminal written from here would leave the caller writing a
-    second one, and a failure that is loud today must not go quiet because the
-    stream around it was tidied up.
-    """
-    try:
-        return process_completion(_run_terminal(root_terminal, subagent_terminal), state), None
-    except Exception as error:
-        log_exception(
-            f"AG-UI stream for run {run_id} could not build its run terminal, closing open spans: "
-            f"{_failure_detail(error)}"
-        )
-        return _cleanup_events(state, run_id, _failure_message(error)), error
-
-
 def stream_agno_response_as_agui_events(
     response_stream: Iterator[Union[RunOutputEvent, TeamRunOutputEvent]],
     thread_id: str,
     run_id: str,
     run_state: Optional[Dict[str, Any]] = None,
     subagent_visibility: Optional[str] = None,
-    emit_interrupt_outcome: bool = False,
 ) -> Iterator[BaseEvent]:
     """Map the Agno response stream to AG-UI format."""
     state = StreamState(
@@ -136,7 +97,6 @@ def stream_agno_response_as_agui_events(
         run_id=run_id,
         run_state=run_state,
         subagent_visibility=validate_subagent_visibility(subagent_visibility),
-        emit_interrupt_outcome=validate_interrupt_outcome(emit_interrupt_outcome),
     )
 
     if run_state is not None:
@@ -169,11 +129,8 @@ def stream_agno_response_as_agui_events(
             yield event
         raise
 
-    terminal, failure = _run_terminal_events(state, run_id, terminal_chunk, subagent_terminal_chunk)
-    for event in terminal:
+    for event in process_completion(_run_terminal(terminal_chunk, subagent_terminal_chunk), state):
         yield event
-    if failure is not None:
-        raise failure
 
 
 async def async_stream_agno_response_as_agui_events(
@@ -182,7 +139,6 @@ async def async_stream_agno_response_as_agui_events(
     run_id: str,
     run_state: Optional[Dict[str, Any]] = None,
     subagent_visibility: Optional[str] = None,
-    emit_interrupt_outcome: bool = False,
 ) -> AsyncIterator[BaseEvent]:
     """Map the Agno response stream to AG-UI format."""
     state = StreamState(
@@ -190,7 +146,6 @@ async def async_stream_agno_response_as_agui_events(
         run_id=run_id,
         run_state=run_state,
         subagent_visibility=validate_subagent_visibility(subagent_visibility),
-        emit_interrupt_outcome=validate_interrupt_outcome(emit_interrupt_outcome),
     )
 
     if run_state is not None:
@@ -223,8 +178,5 @@ async def async_stream_agno_response_as_agui_events(
             yield event
         raise
 
-    terminal, failure = _run_terminal_events(state, run_id, terminal_chunk, subagent_terminal_chunk)
-    for event in terminal:
+    for event in process_completion(_run_terminal(terminal_chunk, subagent_terminal_chunk), state):
         yield event
-    if failure is not None:
-        raise failure

@@ -10,7 +10,6 @@ from ag_ui.core.types import ToolMessage as AGUIToolMessage
 from pydantic import BaseModel
 
 from agno.media import Audio, File, Image, Video
-from agno.os.interfaces.agui.interrupts import declares
 from agno.tools.function import Function
 from agno.utils.log import log_warning
 
@@ -166,40 +165,6 @@ def extract_tool_messages(messages: List[AGUIMessage]) -> List[AGUIToolMessage]:
         else:
             break
     return list(reversed(tool_msgs))
-
-
-# The request field a client's answers to a paused run's interrupts arrive in.
-RESUME_FIELD = "resume"
-
-
-def extract_resume_entries(run_input: Any) -> List[Any]:
-    """The answers the request carries for the interrupts of a paused run.
-
-    The field is an optional part of the protocol, and whether this release has
-    it is a question about the schema, so it is asked of the schema. Asking the
-    parsed request instead answers a different question: the protocol's models
-    keep a key they do not declare as untyped extra data, so a client's array
-    still arrives on a release that never declared the field, as raw dictionaries
-    an attribute lookup then hands on as entries. The first resolver reads a
-    field off one of them and the run fails, having passed over the tool-message
-    channel the same request carried its answers in.
-
-    A release without the field leaves this interface the tool-message channel,
-    which is what it had before the interrupt round trip existed. Answers that
-    arrived for a channel this release does not have are dropped, and dropping
-    them is said once, naming the field, because silence here is a client left
-    waiting on a run nothing will continue.
-    """
-    if not declares(type(run_input), RESUME_FIELD):
-        if getattr(run_input, RESUME_FIELD, None):
-            log_warning(
-                f"AG-UI request carries a {RESUME_FIELD} array, which the installed ag-ui-protocol does not "
-                "declare: the answers it holds are dropped. Please upgrade with `pip install -U ag-ui-protocol`."
-            )
-        return []
-
-    entries = getattr(run_input, RESUME_FIELD, None)
-    return list(entries) if entries else []
 
 
 def parse_client_tools(agui_tools: Optional[List[AGUITool]]) -> List[Function]:
