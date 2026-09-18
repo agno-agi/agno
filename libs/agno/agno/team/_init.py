@@ -437,6 +437,12 @@ def __init__(
         team,
     )
 
+    # Fail closed before any run can persist a HITL pause under an ambiguous id.
+    if isinstance(team.members, list):
+        from agno.utils.team import validate_unique_member_ids
+
+        validate_unique_member_ids(team.members, team_id=team.id, team_name=team.name)
+
 
 def background_executor(team: "Team") -> Any:
     """Lazy initialization of shared thread pool executor for background tasks.
@@ -527,6 +533,9 @@ def _initialize_member(team: "Team", member: Union["Team", Agent], debug_mode: O
         if isinstance(member.members, list):
             for sub_member in member.members:
                 member._initialize_member(sub_member, debug_mode=debug_mode)
+            from agno.utils.team import validate_unique_member_ids
+
+            validate_unique_member_ids(member.members, team_id=member.id, team_name=member.name)
 
 
 def propagate_run_hooks_in_background(team: "Team", run_in_background: bool = True) -> None:
@@ -901,6 +910,11 @@ def initialize_team(team: "Team", debug_mode: Optional[bool] = None) -> None:
     if isinstance(team.members, list):
         for member in team.members:
             _initialize_member(team, member, debug_mode=team.debug_mode)
+        # Re-check after set_id: assigned ids can collide even when construction
+        # saw distinct get_member_id values (e.g. name="RightTeam" vs id="rightteam").
+        from agno.utils.team import validate_unique_member_ids
+
+        validate_unique_member_ids(team.members, team_id=team.id, team_name=team.name)
 
 
 def add_tool(team: "Team", tool: Union[Toolkit, Callable, Function, Dict]) -> None:
