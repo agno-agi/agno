@@ -8,11 +8,18 @@ This module tests:
 - Edge cases and concurrent request scenarios
 """
 
+from typing import Any, AsyncIterator, Iterator
+
 import pytest
 
 from agno.agent import Agent
+from agno.exceptions import ComponentRehydrationError
+from agno.models.base import Model
+from agno.models.message import MessageMetrics
+from agno.models.response import ModelResponse
 from agno.os.utils import (
     get_agent_by_id,
+    get_agent_by_id_async,
     get_team_by_id,
     get_workflow_by_id,
 )
@@ -25,6 +32,56 @@ from agno.workflow.router import Router
 from agno.workflow.step import Step
 from agno.workflow.steps import Steps
 from agno.workflow.types import StepInput, StepOutput
+
+
+class MockModel(Model):
+    """Minimal offline model for deep-copy and resolver tests."""
+
+    def __init__(self):
+        super().__init__(id="mock-model", name="mock-model", provider="test")
+        self._mock_response = ModelResponse(content="ok", role="assistant", response_usage=MessageMetrics())
+
+    def get_instructions_for_model(self, *args, **kwargs):
+        return None
+
+    def get_system_message_for_model(self, *args, **kwargs):
+        return None
+
+    async def aget_instructions_for_model(self, *args, **kwargs):
+        return None
+
+    async def aget_system_message_for_model(self, *args, **kwargs):
+        return None
+
+    def parse_args(self, *args, **kwargs):
+        return {}
+
+    def invoke(self, *args, **kwargs) -> ModelResponse:
+        return self._mock_response
+
+    async def ainvoke(self, *args, **kwargs) -> ModelResponse:
+        return self._mock_response
+
+    def invoke_stream(self, *args, **kwargs) -> Iterator[ModelResponse]:
+        yield self._mock_response
+
+    async def ainvoke_stream(self, *args, **kwargs) -> AsyncIterator[ModelResponse]:
+        yield self._mock_response
+        return
+
+    def _parse_provider_response(self, response: Any, **kwargs) -> ModelResponse:
+        return self._mock_response
+
+    def _parse_provider_response_delta(self, response: Any) -> ModelResponse:
+        return self._mock_response
+
+
+class KwargsForwardingAgent(Agent):
+    """Reproduces the subclass shape that loses state under inherited deep_copy()."""
+
+    def __init__(self, **kwargs):
+        super().__init__(name="helper", **kwargs)
+
 
 # ============================================================================
 # Fixtures
@@ -115,6 +172,44 @@ class TestGetAgentForRequest:
 
         # Internal state should be reset to initial values
         assert copy._cached_session is None
+
+    def test_create_fresh_refuses_kwargs_forwarding_subclass_when_copy_loses_state(self):
+        """A blank deep_copy must fail loudly instead of being served as a fresh agent."""
+        agent = KwargsForwardingAgent(
+            id="helper-id",
+            model=MockModel(),
+            instructions="Say hi.",
+            metadata={"role": "helper"},
+        )
+
+        with pytest.raises(ComponentRehydrationError, match="helper-id"):
+            get_agent_by_id("helper-id", [agent], create_fresh=True)
+
+    @pytest.mark.asyncio
+    async def test_create_fresh_refuses_kwargs_forwarding_subclass_in_async_helper(self):
+        """The async resolver must apply the same fidelity guard as the sync helper."""
+        agent = KwargsForwardingAgent(
+            id="helper-id",
+            model=MockModel(),
+            instructions="Say hi.",
+            metadata={"role": "helper"},
+        )
+
+        with pytest.raises(ComponentRehydrationError, match="helper-id"):
+            await get_agent_by_id_async("helper-id", [agent], create_fresh=True)
+
+    def test_create_fresh_lenient_falls_back_to_shared_instance_when_copy_loses_state(self):
+        """strict=False keeps the old shared-instance fallback but must not return a blank copy."""
+        agent = KwargsForwardingAgent(
+            id="helper-id",
+            model=MockModel(),
+            instructions="Say hi.",
+            metadata={"role": "helper"},
+        )
+
+        result = get_agent_by_id("helper-id", [agent], create_fresh=True, strict=False)
+
+        assert result is agent
 
 
 class TestGetTeamForRequest:
