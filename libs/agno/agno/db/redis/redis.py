@@ -2551,10 +2551,16 @@ class RedisDb(BaseDb):
         idem_key = self._q_idem_key(job.get("user_id"), idem) if idem is not None else None
 
         job_key = self._q_job_key(job["id"])
-        # Store-assigned enqueue sequence, taken once up front: a WATCH retry
-        # keeps the same number (gaps are fine, only monotonicity matters),
-        # and same-second siblings are ordered by it instead of by uuid
-        job = {**job, "seq": int(self.redis_client.incr(self._q_key("seq")))}  # type: ignore[arg-type]
+        # The enqueue sequence is allocated INSIDE the transaction, from a
+        # per-session counter read under WATCH: allocation and publication
+        # are one atomic step, so seq order is visibility order. A bare INCR
+        # before the transaction let a stalled enqueue publish a lower
+        # number after a faster sibling had been published and claimed.
+        # Per session rather than global so that only same-session enqueues
+        # contend (the WATCH retry is exactly the serialization the head
+        # rule needs); the counter is what the head rule orders by, and it
+        # is never reset.
+        seq_key = self._q_key(f"seq:{job['session_id']}")
 
         for _ in range(10):
             with self.redis_client.pipeline() as pipe:
@@ -2563,7 +2569,7 @@ class RedisDb(BaseDb):
                     # and a racing enqueue of the same id must not silently
                     # overwrite (see the existence check further down).
                     if idem_key is not None:
-                        pipe.watch(job_key, idem_key)
+                        pipe.watch(job_key, idem_key, seq_key)
                         existing_id = pipe.get(idem_key)
                         if existing_id is not None:
                             existing_id = existing_id if isinstance(existing_id, str) else existing_id.decode()
@@ -2578,7 +2584,9 @@ class RedisDb(BaseDb):
                             # and live event stream) - never attach; fall
                             # through and take the key over inside the MULTI
                     else:
-                        pipe.watch(job_key)
+                        pipe.watch(job_key, seq_key)
+                    raw_seq = pipe.get(seq_key)
+                    next_seq = int(_q_to_str(raw_seq)) + 1 if raw_seq is not None else 1
 
                     if max_depth and max_depth > 0:
                         queued = int(self.redis_client.zcard(self._q_key("queued")))
@@ -2596,7 +2604,9 @@ class RedisDb(BaseDb):
                         pipe.unwatch()
                         raise RuntimeError(f"enqueue_job: job {job['id']} already exists; ids are never reused")
 
+                    job = {**job, "seq": next_seq}
                     pipe.multi()
+                    pipe.set(seq_key, next_seq)
                     if idem_key is not None:
                         pipe.set(idem_key, job["id"])
                     self._q_save_job_in_pipe(pipe, job)

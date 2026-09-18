@@ -644,8 +644,11 @@ class TestSubmissionOrderParity:
 
     @pytest.mark.asyncio
     async def test_enqueue_sequence_is_monotonic_and_survives_round_trip(self, store):
+        """Monotonic within a session is the contract the head rule needs;
+        Postgres happens to make it global (an identity column), Redis keeps
+        a counter per session so only same-session enqueues contend."""
         first = (await store.enqueue_job(make_job("r1", session_id="s1", created_at=1000)))["job"]
-        second = (await store.enqueue_job(make_job("r2", session_id="s2", created_at=1000)))["job"]
+        second = (await store.enqueue_job(make_job("r2", session_id="s1", created_at=1000)))["job"]
         assert first.get("seq") is not None and second.get("seq") is not None
         assert first["seq"] < second["seq"]
         stored = await store.get_job("r2")
@@ -1188,3 +1191,78 @@ class TestPostgresSessionSerialization:
                 engine.dispose()
         finally:
             self._drop(db)
+
+
+@pytest.mark.skipif(not _REDIS_AVAILABLE, reason="Redis not available on localhost:6379")
+class TestRedisSequencePublication:
+    """The Redis enqueue sequence must be allocated in the same atomic step
+    that publishes the job. Allocating it first (a bare INCR before the
+    transaction) let two overlapping same-session enqueues publish out of
+    sequence order: the first took 1 and stalled, the second took 2 and was
+    published and claimed, then the first landed with the lower number. No
+    overlap, but the store's own ordering premise was false. Postgres holds
+    a session lock across the insert; Redis matches by allocating from a
+    per-session counter under WATCH inside the enqueue transaction, so a
+    stalled enqueue re-allocates after the one that overtook it."""
+
+    @staticmethod
+    def _db(prefix: str):
+        from redis import Redis
+
+        from agno.db.redis import RedisDb
+
+        return RedisDb(redis_client=Redis.from_url(REDIS_URL), db_prefix=prefix)
+
+    @staticmethod
+    def _cleanup(prefix: str) -> None:
+        from redis import Redis
+
+        client = Redis.from_url(REDIS_URL)
+        for key in client.scan_iter(f"{prefix}:*"):
+            client.delete(key)
+        client.close()
+
+    def test_sequence_follows_publication_order_under_a_stalled_enqueue(self):
+        prefix = f"parity_seqpub_{uuid.uuid4().hex[:6]}"
+        try:
+            db = self._db(prefix)
+            real_pipeline = db.redis_client.pipeline
+            armed = {"stall": True}
+
+            def pipeline(*args, **kwargs):
+                pipe = real_pipeline(*args, **kwargs)
+                real_execute = pipe.execute
+
+                def execute(*eargs, **ekwargs):
+                    if armed["stall"]:
+                        # The slow enqueue is between allocation and
+                        # publication; a second enqueue to the same session
+                        # runs to completion in that window
+                        armed["stall"] = False
+                        db.enqueue_job(make_job("r_fast", session_id="s1", created_at=1000))
+                    return real_execute(*eargs, **ekwargs)
+
+                pipe.execute = execute
+                return pipe
+
+            db.redis_client.pipeline = pipeline
+            db.enqueue_job(make_job("r_slow", session_id="s1", created_at=1000))
+            fast, slow = db.get_job("r_fast"), db.get_job("r_slow")
+            assert fast is not None and slow is not None
+            assert fast["seq"] < slow["seq"], "the job published first must carry the lower sequence"
+            head = db.claim_job("w1", queue_per_session=True)
+            assert head is not None and head["id"] == "r_fast"
+        finally:
+            self._cleanup(prefix)
+
+    def test_sequence_is_dense_within_a_session(self):
+        prefix = f"parity_seqdense_{uuid.uuid4().hex[:6]}"
+        try:
+            db = self._db(prefix)
+            for i in range(5):
+                db.enqueue_job(make_job(f"r{i}", session_id="s1", created_at=1000 + i))
+            seqs = [db.get_job(f"r{i}")["seq"] for i in range(5)]
+            assert seqs == sorted(seqs) and len(set(seqs)) == 5
+        finally:
+            self._cleanup(prefix)
+
