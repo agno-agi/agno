@@ -47,6 +47,8 @@ class AgenticChunking(ChunkingStrategy):
                     f"Using default chunk size of {max_chunk_size} characters. "
                     "Consider specifying `max_chunk_size` explicitly when using `custom_prompt`."
                 )
+        elif max_chunk_size <= 0:
+            raise ValueError("max_chunk_size must be greater than 0")
 
         self.chunk_size = max_chunk_size
         self.custom_prompt = custom_prompt
@@ -83,7 +85,10 @@ class AgenticChunking(ChunkingStrategy):
             try:
                 response = self.model.response([Message(role="user", content=prompt)])
                 if response and response.content:
-                    break_point = min(int(response.content.strip()), self.chunk_size)
+                    break_point = int(response.content.strip())
+                    if break_point <= 0:
+                        raise ValueError("Model breakpoint must be greater than 0")
+                    break_point = min(break_point, self.chunk_size)
                 else:
                     break_point = self.chunk_size
             except Exception:

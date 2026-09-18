@@ -8,6 +8,10 @@ from agno.knowledge.chunking.agentic import DEFAULT_INSTRUCTIONS, MAX_CHUNK_SIZE
 from agno.knowledge.document.base import Document
 
 
+class BreakpointSentinel(BaseException):
+    """Raised if a regression makes chunking ask the model after the expected calls."""
+
+
 @pytest.fixture
 def mock_model():
     """Create a mock model for testing."""
@@ -161,6 +165,49 @@ def test_custom_prompt_model_failure_fallback(mock_model):
     assert len(chunks[0].content) == 1000
     assert len(chunks[1].content) == 1000
     assert len(chunks[2].content) == 500
+
+
+@pytest.mark.parametrize(
+    "response_content",
+    ["0", "-1", "-20"],
+)
+def test_non_positive_breakpoint_falls_back_to_max_chunk_size(mock_model, response_content):
+    """Non-positive model positions must not leave chunking without progress."""
+    mock_model.response.side_effect = [
+        Mock(content=response_content),
+        Mock(content=response_content),
+        BreakpointSentinel,
+    ]
+
+    with patch("agno.knowledge.chunking.agentic.get_model", return_value=mock_model):
+        chunker = AgenticChunking(model="test-model", max_chunk_size=5)
+
+    chunks = chunker.chunk(Document(id="test", content="abcdefghij"))
+
+    assert [chunk.content for chunk in chunks] == ["abcde", "fghij"]
+    assert mock_model.response.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_non_positive_breakpoint_falls_back_for_async_chunking(mock_model):
+    """The inherited async chunking path must preserve the progress guard."""
+    mock_model.response.side_effect = [Mock(content="0"), Mock(content="0"), BreakpointSentinel]
+
+    with patch("agno.knowledge.chunking.agentic.get_model", return_value=mock_model):
+        chunker = AgenticChunking(model="test-model", max_chunk_size=5)
+
+    chunks = await chunker.achunk(Document(id="test", content="abcdefghij"))
+
+    assert [chunk.content for chunk in chunks] == ["abcde", "fghij"]
+    assert mock_model.response.call_count == 2
+
+
+@pytest.mark.parametrize("max_chunk_size", [0, -1])
+def test_max_chunk_size_must_be_positive(mock_model, max_chunk_size):
+    """A zero chunk size would make fallback chunking unable to make progress."""
+    with patch("agno.knowledge.chunking.agentic.get_model", return_value=mock_model):
+        with pytest.raises(ValueError, match="max_chunk_size must be greater than 0"):
+            AgenticChunking(model="test-model", max_chunk_size=max_chunk_size)
 
 
 def test_default_instructions_constant():
