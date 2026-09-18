@@ -101,7 +101,23 @@ if TYPE_CHECKING:
     from agno.os.app import AgentOS
 
 
-_ws_tail_pumps: "weakref.WeakKeyDictionary[WebSocket, asyncio.Task]" = weakref.WeakKeyDictionary()
+# Live event tail pumps, per socket and per run. A socket may hold several:
+# a chat client submits a second run on its session while the first is
+# still streaming, and the first run's events must keep flowing to it.
+_ws_tail_pumps: "weakref.WeakKeyDictionary[WebSocket, Dict[str, asyncio.Task]]" = weakref.WeakKeyDictionary()
+
+# How often a pump probes a PENDING run before entering its live tail. On
+# Redis the live tail is a blocking read that holds a connection for as long
+# as it waits, and a pending run has produced nothing to read; a status probe
+# is one round trip and holds nothing.
+_PENDING_TAIL_PROBE_SECONDS = 2.0
+
+# Bound on non-terminal runs attached to one socket, checked before a ticket
+# commits: the abuse backstop for a client that keeps submitting into a slow
+# queue. Refusing before acceptance is the honest shape (a run accepted and
+# then left without a tail is the bug the per-run pumps fixed). A client
+# that needs more parallelism opens another connection.
+_MAX_ATTACHED_RUNS_PER_SOCKET = 32
 
 
 def _stream_payload_to_dict(payload: Any, ev_index: int, run_id: str) -> Dict[str, Any]:
@@ -136,6 +152,18 @@ async def _pump_event_stream_to_websocket(websocket: WebSocket, run_id: str, fro
     executes, and tail() bridges the two."""
     event_stream = get_event_stream()
     try:
+        # Wait out the queue without holding a connection: enter the live
+        # tail once the run has left PENDING. The stream buffers, so nothing
+        # produced in between is missed. A failed probe falls through to the
+        # tail, which carries its own fault tolerance.
+        while True:
+            try:
+                status = await event_stream.get_run_status(run_id)
+            except Exception:
+                break
+            if status != RunStatus.pending:
+                break
+            await asyncio.sleep(_PENDING_TAIL_PROBE_SECONDS)
         async for ev_index, sse_data in event_stream.tail(run_id, last_event_index=from_index):
             await websocket.send_text(
                 json.dumps(_stream_payload_to_dict(sse_data, ev_index, run_id), default=json_serializer)
@@ -159,11 +187,67 @@ async def _pump_event_stream_to_websocket(websocket: WebSocket, run_id: str, fro
 # the FE parser accepts both, and one pump beats two formats diverging.
 
 
-async def cancel_subscription_pump(websocket: WebSocket) -> None:
-    """Cancel the tail pump attached to this socket, if any (called on
-    disconnect by the WS dispatcher, and on re-subscribe)."""
-    task = _ws_tail_pumps.pop(websocket, None)
-    if task is not None:
+async def refuse_if_socket_at_tail_capacity(websocket: WebSocket, run_id: Optional[str] = None) -> bool:
+    """Enforce the per-socket bound on attached runs at every door that can
+    attach a tail: submission, durable continue and reconnect. Called BEFORE
+    the door accepts anything (the enqueue, the continue CAS, the replay),
+    so a refusal leaves no accepted run without a tail. A run this socket
+    already holds does not count: re-attaching it replaces its pump. Sends
+    the error frame and returns True when refused."""
+    pumps = _ws_tail_pumps.get(websocket) or {}
+    if run_id is not None and run_id in pumps:
+        return False
+    if len(pumps) < _MAX_ATTACHED_RUNS_PER_SOCKET:
+        return False
+    payload: Dict[str, Any] = {
+        "event": "error",
+        "error": f"Too many runs in flight on this connection ({len(pumps)}); "
+        "wait for some to finish or open another connection",
+    }
+    if run_id is not None:
+        payload["run_id"] = run_id
+    await websocket.send_text(json.dumps(payload))
+    return True
+
+
+def start_tail_pump(websocket: WebSocket, run_id: str, from_index: Optional[int]) -> asyncio.Task:
+    """Attach a live tail of one run to a socket.
+
+    Pumps are scoped per (socket, run): starting a tail for a new run never
+    touches the tails of runs already streaming to the same socket. A second
+    tail for the SAME run (a re-subscribe) replaces the first, since two
+    pumps on one run would double-deliver every event. A pump unregisters
+    itself when its tail ends, so a long-lived socket does not accumulate
+    finished tasks."""
+    pumps = _ws_tail_pumps.setdefault(websocket, {})
+    previous = pumps.pop(run_id, None)
+    if previous is not None:
+        previous.cancel()
+    task = asyncio.create_task(_pump_event_stream_to_websocket(websocket, run_id, from_index))
+    pumps[run_id] = task
+
+    def _unregister(done: asyncio.Task) -> None:
+        live = _ws_tail_pumps.get(websocket)
+        if live is not None and live.get(run_id) is done:
+            del live[run_id]
+
+    task.add_done_callback(_unregister)
+    return task
+
+
+async def cancel_subscription_pump(websocket: WebSocket, run_id: Optional[str] = None) -> None:
+    """Cancel the tail pumps attached to this socket: all of them on
+    disconnect (the WS dispatcher's finally), or one run's on request."""
+    pumps = _ws_tail_pumps.get(websocket)
+    if not pumps:
+        return
+    if run_id is None:
+        tasks = list(pumps.values())
+        pumps.clear()
+    else:
+        task = pumps.pop(run_id, None)
+        tasks = [task] if task is not None else []
+    for task in tasks:
         task.cancel()
         with contextlib.suppress(asyncio.CancelledError, Exception):
             await task
@@ -324,6 +408,8 @@ async def handle_workflow_via_websocket(
             )
         )
         if ws_submit_queueable:
+            if await refuse_if_socket_at_tail_capacity(websocket):
+                return
             # Accept must honor input_schema exactly like the inline path
             try:
                 validate_seam_input(workflow, user_message)
@@ -374,12 +460,10 @@ async def handle_workflow_via_websocket(
                 json.dumps({"event": "queued", "run_id": queued_run_id, "session_id": session_id})
             )
             # Tail the whole stream from the start (this socket is the primary
-            # view). One pump per socket; the dispatcher cancels it on
-            # disconnect/re-subscribe via the shared registry.
-            await cancel_subscription_pump(websocket)
-            _ws_tail_pumps[websocket] = asyncio.create_task(
-                _pump_event_stream_to_websocket(websocket, queued_run_id, None)
-            )
+            # view). The pump is scoped to this run: earlier runs still
+            # streaming to this socket keep their own tails, and the
+            # dispatcher cancels every pump on disconnect.
+            start_tail_pump(websocket, queued_run_id, None)
             return
         if queue_worker is not None:
             log_warning(
@@ -625,7 +709,12 @@ async def handle_workflow_subscription(
             return
 
         # Run is still active - replay missed events, then follow live via a
-        # tail pump (works regardless of which replica executes the run)
+        # tail pump (works regardless of which replica executes the run).
+        # The attachment bound applies here and only here: a finished,
+        # paused or unknown run above replays without attaching anything.
+        # Checked before the replay so a refusal is a single clean frame.
+        if await refuse_if_socket_at_tail_capacity(websocket, run_id):
+            return
         missed_events = await event_stream.replay(run_id, last_event_index)
         current_event_count = await event_stream.get_event_count(run_id)
 
@@ -666,11 +755,9 @@ async def handle_workflow_subscription(
 
         # Live phase: tail() handles the replay/subscribe race internally, so
         # events landing between our replay and the pump start are not lost.
-        # One pump per socket: a re-subscribe replaces the previous pump.
-        await cancel_subscription_pump(websocket)
-        _ws_tail_pumps[websocket] = asyncio.create_task(
-            _pump_event_stream_to_websocket(websocket, run_id, last_replayed_index)
-        )
+        # A re-subscribe replaces this run's pump only; other runs streaming
+        # to the same socket are untouched.
+        start_tail_pump(websocket, run_id, last_replayed_index)
 
         log_debug(f"Client subscribed to workflow run {run_id} (last_event_index: {last_event_index})")
 
@@ -873,6 +960,8 @@ async def handle_workflow_continue_via_websocket(
             for candidate in (os.workflows or [])
         )
         if queue_worker is not None and workflow_is_queueable and payload_is_queueable(continue_payload):
+            if await refuse_if_socket_at_tail_capacity(websocket, run_id):
+                return
             # existing_run.is_paused was proven above. stream_requested: this
             # socket IS a stream - a non-streaming submission's ticket must be
             # refused before the CAS, not silently pumped from an empty stream
@@ -926,9 +1015,8 @@ async def handle_workflow_continue_via_websocket(
                 # (captured by the helper before the CAS) - the execute
                 # socket gets post-approval events only, exactly like the
                 # detached continue producer; earlier history belongs to the
-                # subscription/replay surface. One pump per socket, cancelled
-                # on disconnect/re-subscribe by the dispatcher (same registry
-                # the subscription pump uses).
+                # subscription/replay surface. The pump is scoped to this
+                # run; the dispatcher cancels every pump on disconnect.
                 # Also send the "queued" ack here: the continue socket has the
                 # same claim-delay window as a submission, and the FE ignores
                 # unknown frames until it wires this one up
@@ -936,10 +1024,7 @@ async def handle_workflow_continue_via_websocket(
                     await websocket.send_text(
                         json.dumps({"event": "queued", "run_id": run_id, "session_id": session_id})
                     )
-                await cancel_subscription_pump(websocket)
-                _ws_tail_pumps[websocket] = asyncio.create_task(
-                    _pump_event_stream_to_websocket(websocket, run_id, continue_outcome.get("tail_from"))
-                )
+                start_tail_pump(websocket, run_id, continue_outcome.get("tail_from"))
                 return
             # DELIBERATE transport asymmetry with the HTTP continue door
             # (which refuses this cell): the socket is itself the live event
