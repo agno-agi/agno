@@ -10,7 +10,11 @@ from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
 from agno.agent.agent import Agent
+from agno.models.azure import AzureOpenAI
+from agno.models.lmstudio import LMStudio
 from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
+from agno.models.siliconflow import Siliconflow
 from agno.os import AgentOS
 from agno.os.config import AgentOSConfig, ChatConfig, Manifest
 from agno.os.schema import AgentSummaryResponse, ConfigResponse, TeamSummaryResponse
@@ -272,7 +276,7 @@ class TestAgentSummaryModelField:
         summary = AgentSummaryResponse.from_agent(agent)
         assert summary.model is not None
         assert summary.model.id == "gpt-4o"
-        assert summary.model.provider == "OpenAI"
+        assert summary.model.provider == "openai-chat"
 
     def test_from_agent_handles_missing_model(self):
         agent = Agent(name="Marketing Agent", id="marketing-agent", telemetry=False)
@@ -289,7 +293,29 @@ class TestAgentSummaryModelField:
         os_instance = AgentOS(agents=[agent], telemetry=False)
         client = TestClient(os_instance.get_app())
         body = client.get("/config").json()
-        assert body["agents"][0]["model"] == {"id": "gpt-4o", "provider": "OpenAI"}
+        assert body["agents"][0]["model"] == {"id": "gpt-4o", "provider": "openai-chat"}
+
+    @pytest.mark.parametrize(
+        "model, expected_provider",
+        [
+            (OpenAIChat(id="gpt-4o"), "openai-chat"),
+            (OpenAIResponses(id="gpt-4o"), "openai-responses"),
+            (AzureOpenAI(id="gpt-4o"), "azure-openai"),
+            (LMStudio(id="local-model"), "lmstudio"),
+            (Siliconflow(id="Qwen/QwQ-32B"), "siliconflow"),
+        ],
+    )
+    def test_agent_model_provider_uses_canonical_key(self, model, expected_provider):
+        agent = Agent(name="Marketing Agent", id=f"agent-{expected_provider}", model=model, telemetry=False)
+        summary = AgentSummaryResponse.from_agent(agent)
+        assert summary.model is not None
+        assert summary.model.provider == expected_provider
+
+        os_instance = AgentOS(agents=[agent], telemetry=False)
+        client = TestClient(os_instance.get_app())
+        body = client.get("/config").json()
+        assert body["agents"][0]["model"] == {"id": model.id, "provider": expected_provider}
+        assert client.get("/models").json() == [{"id": model.id, "provider": expected_provider}]
 
 
 class TestTeamSummaryModelField:
@@ -305,7 +331,7 @@ class TestTeamSummaryModelField:
         summary = TeamSummaryResponse.from_team(team)
         assert summary.model is not None
         assert summary.model.id == "gpt-4o-mini"
-        assert summary.model.provider == "OpenAI"
+        assert summary.model.provider == "openai-chat"
 
     def test_from_team_handles_missing_model(self):
         member = Agent(name="Member", id="member", telemetry=False)
@@ -325,4 +351,23 @@ class TestTeamSummaryModelField:
         os_instance = AgentOS(teams=[team], telemetry=False)
         client = TestClient(os_instance.get_app())
         body = client.get("/config").json()
-        assert body["teams"][0]["model"] == {"id": "gpt-4o-mini", "provider": "OpenAI"}
+        assert body["teams"][0]["model"] == {"id": "gpt-4o-mini", "provider": "openai-chat"}
+
+    def test_team_model_provider_uses_canonical_key(self):
+        member = Agent(name="Member", id="member-canonical", telemetry=False)
+        team = Team(
+            name="Support Team",
+            id="support-team-canonical",
+            members=[member],
+            model=AzureOpenAI(id="gpt-4o-mini"),
+            telemetry=False,
+        )
+        summary = TeamSummaryResponse.from_team(team)
+        assert summary.model is not None
+        assert summary.model.provider == "azure-openai"
+
+        os_instance = AgentOS(teams=[team], telemetry=False)
+        client = TestClient(os_instance.get_app())
+        body = client.get("/config").json()
+        assert body["teams"][0]["model"] == {"id": "gpt-4o-mini", "provider": "azure-openai"}
+        assert client.get("/models").json() == [{"id": "gpt-4o-mini", "provider": "azure-openai"}]
