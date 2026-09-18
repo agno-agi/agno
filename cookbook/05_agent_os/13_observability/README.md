@@ -14,6 +14,7 @@ through the same routes used by monitoring clients.
 | `filtering.py` | Build a `FilterExpr`, inspect the filter schema, and execute an advanced trace search. |
 | `traces_to_clickhouse.py` | Split transactional sessions from a batched ClickHouse trace store and select it with `db_id`. |
 | `metrics.py` | Refresh daily metrics from persisted sessions and read the aggregate back. |
+| `insights.py` | Serve agents on two models and read their model usage from `GET /insights/metrics`. |
 
 ## Prerequisites
 
@@ -49,6 +50,17 @@ After calling its served agent, inspect `GET /traces`,
 `GET /traces/{trace_id}`, `POST /traces/search`, and
 `GET /traces/filter-schema`. The same `tracing=True` switch instruments local
 agents, teams, and workflows registered with that OS.
+
+Serve two agents on different models to read insights:
+
+```bash
+.venvs/demo/bin/python cookbook/05_agent_os/13_observability/insights.py
+```
+
+After running both agents, open `GET /insights/metrics?days=7` for the model
+usage breakdown. Insights are built from the daily metrics, so to include runs
+made after the first read, call `POST /metrics/refresh` and pass
+`refresh=true`.
 
 The other files generate and inspect their own data in one process:
 
