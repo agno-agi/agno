@@ -60,6 +60,9 @@ class AgentOSScope(str, Enum):
     - learnings:read - View learnings
     - learnings:write - Create and update learnings
     - learnings:delete - Delete learnings
+    - skills:read - View skills
+    - skills:write - Create and update skills
+    - skills:delete - Delete skills
     - knowledge:read - View and search knowledge
     - knowledge:write - Add and update knowledge
     - knowledge:delete - Delete knowledge
@@ -476,6 +479,12 @@ def get_default_scope_mappings() -> Dict[str, List[str]]:
         "POST /learnings": ["learnings:write"],
         "PATCH /learnings/*": ["learnings:write"],
         "DELETE /learnings/*": ["learnings:delete"],
+        # Skills endpoints
+        "GET /skills": ["skills:read"],
+        "GET /skills/*": ["skills:read"],
+        "POST /skills": ["skills:write"],
+        "PATCH /skills/*": ["skills:write"],
+        "DELETE /skills/*": ["skills:delete"],
         # Knowledge endpoints
         "GET /knowledge/content": ["knowledge:read"],
         "GET /knowledge/content/*": ["knowledge:read"],
