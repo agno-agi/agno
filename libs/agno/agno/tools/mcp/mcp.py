@@ -1,7 +1,6 @@
 import asyncio
 import inspect
 import time
-import weakref
 from contextlib import asynccontextmanager
 from dataclasses import asdict
 from typing import TYPE_CHECKING, Any, AsyncIterator, Callable, Literal, Optional, Tuple, Union
@@ -244,6 +243,9 @@ class MCPTools(Toolkit):
     1. Direct initialization with a ClientSession
     2. As an async context manager with StdioServerParameters
     3. As an async context manager with SSE or Streamable HTTP client parameters
+
+    Use the async context manager or await close() to close the toolkit's main
+    connection. Caller-supplied sessions remain caller-owned.
     """
 
     def __init__(
@@ -422,7 +424,6 @@ class MCPTools(Toolkit):
         self._client = client
 
         self._initialized = False
-        self._connection_task = None
         self._active_contexts: list[Any] = []
         self._context = None
         self._session_context = None
@@ -433,14 +434,6 @@ class MCPTools(Toolkit):
         self._run_session_contexts: dict[str, Any] = {}  # Maps run_id to its connection context
         self._session_ttl_seconds: float = 300.0  # 5 minutes TTL for MCP sessions
         self._session_lock: Optional[asyncio.Lock] = None  # Lazily created lock for session creation
-
-        def cleanup():
-            """Cancel active connections"""
-            if self._connection_task and not self._connection_task.done():
-                self._connection_task.cancel()
-
-        # Setup cleanup logic before the instance is garbage collected
-        self._cleanup_finalizer = weakref.finalize(self, cleanup)
 
     @property
     def initialized(self) -> bool:
@@ -761,7 +754,6 @@ class MCPTools(Toolkit):
             self._context = None
             self._session_context = None
             self._initialized = False
-            self._connection_task = None
             self._active_contexts = []
 
         if self._initialized:
