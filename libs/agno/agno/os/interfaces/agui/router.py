@@ -1,6 +1,6 @@
 import copy
 import uuid
-from typing import AsyncIterator, Optional, Union
+from typing import Any, AsyncIterator, List, Optional, Union
 
 from agno.utils.log import log_error, log_warning
 
@@ -21,11 +21,12 @@ from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
 
 from agno.agent import Agent, RemoteAgent
+from agno.models.message import Message
 from agno.os.interfaces.agui.input import (
     extract_context,
-    extract_media,
+    extract_current_turn,
+    extract_message_history,
     extract_tool_messages,
-    extract_user_input,
     parse_client_tools,
     validate_state,
 )
@@ -35,6 +36,43 @@ from agno.os.middleware.user_scope import assert_session_writable, caller_is_adm
 from agno.run.base import RunContext
 from agno.team.remote import RemoteTeam
 from agno.team.team import Team
+
+
+def _settle_ids(entity: Any) -> None:
+    """Give an entity and everything under it its own id before it is copied.
+
+    Ids are assigned lazily on the first run. Letting each request's copy assign its own
+    would give one entity, or one member of a team of teams, a different id per request.
+    """
+    if hasattr(entity, "set_id"):
+        entity.set_id()
+
+    # A Team's members can be a callable factory resolved per run, which is not a list.
+    members = getattr(entity, "members", None)
+    if isinstance(members, (list, tuple)):
+        for member in members:
+            _settle_ids(member)
+
+
+def _with_forwarded_history(entity: Union[Agent, Team], history: List[Message]) -> Union[Agent, Team]:
+    """Return a request-scoped copy of ``entity`` that carries ``history`` as extra input.
+
+    The entity is shared by every request, so the transcript of one conversation must
+    never be written onto it. Agno's own ``deep_copy`` is the per-request copy: it shares
+    the heavy resources that hold connections (model, database, knowledge) by reference,
+    and it re-runs initialization so the private per-run bookkeeping the run appends to
+    and clears starts clean. A plain shallow copy shares those mutable lists while the
+    clearing lands only on the copy, which leaves connectable tools registered but never
+    reconnected. Tools and a Team's members are copied rather than shared, so a toolkit's
+    own state does not carry from one forwarded turn to the next.
+
+    Ids are settled first, all the way down a team, because they are assigned lazily and
+    each request's copy would otherwise assign its own. Any additional input the caller
+    configured stays ahead of the conversation.
+    """
+    _settle_ids(entity)
+    forwarded = list(entity.additional_input or []) + list(history)
+    return entity.deep_copy(update={"additional_input": forwarded})
 
 
 async def run_entity(
@@ -54,8 +92,7 @@ async def run_entity(
         messages = run_input.messages or []
 
         # 1. Extract inputs from AG-UI message history
-        user_input = extract_user_input(messages)
-        images, audio, videos, files = extract_media(messages)
+        user_input, images, audio, videos, files = extract_current_turn(messages)
         tool_messages = extract_tool_messages(messages)
 
         # 2. Convert frontend tool definitions to Agno Functions
@@ -105,7 +142,26 @@ async def run_entity(
                 if client_tools:
                     # Dropped: the remote agent cannot pause back into this process's session.
                     log_warning("AG-UI client tools are not forwarded to remote agents or teams")
+                if extract_message_history(messages):
+                    # The remote run route takes a single message, so the transcript cannot
+                    # travel with it: only the remote entity's own session store can hold
+                    # this conversation.
+                    log_warning(
+                        "AG-UI conversation history is not forwarded to remote agents or teams. "
+                        "The remote entity's own session store has to provide it."
+                    )
             else:
+                if getattr(entity, "db", None) is None:
+                    # AG-UI clients resend the whole conversation every turn, while Agno reads
+                    # history from a session: with no database there is no session worth
+                    # reading, so the transcript the client sent is the conversation. The run
+                    # is told to add no history of its own either way, because an in-process
+                    # cached session survives between requests and belongs to whoever ran the
+                    # thread on this worker first.
+                    run_kwargs["add_history_to_context"] = False
+                    history = extract_message_history(messages)
+                    if history:
+                        entity = _with_forwarded_history(entity, history)
                 run_kwargs["run_context"] = run_context
             response_stream = entity.arun(  # type: ignore
                 input=user_input,
