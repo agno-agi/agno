@@ -2452,11 +2452,23 @@ class AgentOS:
         # Create a terminal panel to announce OS initialization and provide useful info
         from rich.align import Align
         from rich.console import Console, Group
+        from rich.text import Text
 
         panel_group = [
             Align.center(f"[bold cyan]{public_endpoint}[/bold cyan]"),
             Align.center(f"\n\n[bold dark_orange]OS running on:[/bold dark_orange] http://{host}:{port}"),
         ]
+        if self.mcp:
+            mcp_endpoint = self.mcp_config.server_card_url if self.mcp_config is not None else None
+            if mcp_endpoint is None:
+                mcp_path = self.mcp_config.path if self.mcp_config is not None else "/mcp"
+                if self.mcp_config is not None and host == self.mcp_config.root_host:
+                    mcp_path = "/"
+                endpoint_host = f"[{host}]" if ":" in host and not host.startswith("[") else host
+                scheme = "https" if kwargs.get("ssl_certfile") else "http"
+                root_path = kwargs.get("root_path", "").rstrip("/")
+                mcp_endpoint = f"{scheme}://{endpoint_host}:{port}{root_path}{mcp_path}"
+            panel_group.append(Align.center(Text.assemble(("MCP endpoint: ", "bold dark_orange"), mcp_endpoint)))
         if self.authorization:
             panel_group.append(
                 Align.center("\n\n[bold chartreuse3]:lock: JWT Authorization Enabled[/bold chartreuse3]")

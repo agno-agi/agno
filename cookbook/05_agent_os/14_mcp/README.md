@@ -36,6 +36,10 @@ accepted as silent aliases.
 
 ## Default MCP tools
 
+When MCP is enabled, the startup panel shows its endpoint below the OS address.
+It uses `MCPConfig.server_card_url` when configured; otherwise it uses the serving
+address and configured MCP path.
+
 Plain `mcp=True` exposes eight tools:
 
 | Tag | Tools |
