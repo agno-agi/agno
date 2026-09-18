@@ -1973,7 +1973,7 @@ class Model(ABC):
                     stream_data.response_provider_data[key] = value
 
         # Update stream_data tool calls
-        if model_response_delta.tool_calls is not None:
+        if model_response_delta.tool_calls:
             if stream_data.response_tool_calls is None:
                 stream_data.response_tool_calls = []
             stream_data.response_tool_calls.extend(model_response_delta.tool_calls)
