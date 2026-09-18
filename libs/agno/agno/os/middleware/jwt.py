@@ -13,6 +13,7 @@ from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from agno.os.auth import INTERNAL_SCHEDULER_USER_ID, INTERNAL_SERVICE_SCOPES, build_insufficient_permissions_detail
+from agno.os.middleware.cors import OriginPolicy
 from agno.os.scopes import (
     AgentOSScope,
     check_route_scopes,
@@ -551,12 +552,14 @@ class AuthMiddleware(BaseHTTPMiddleware):
         user_isolation: bool = False,
         service_account_verifier: Optional["ServiceAccountVerifier"] = None,
         security_key: Optional[str] = None,
+        cors_origin_policy: Optional[OriginPolicy] = None,
     ):
         """
         Initialize the JWT middleware.
 
         Args:
             app: The FastAPI app instance
+            cors_origin_policy: Optional shared AgentOS browser policy for authentication errors.
             verification_keys: List of keys for verifying JWT signatures.
                               For asymmetric algorithms (RS256, ES256), these should be public keys.
                               For symmetric algorithms (HS256), these are shared secrets.
@@ -647,6 +650,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
         # Store config for easy access
         self.validate = validate
+        self.cors_origin_policy = cors_origin_policy
         self.algorithm = algorithm
         self.token_source = token_source
         self.token_header_key = token_header_key
@@ -890,9 +894,10 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
     def _is_origin_allowed(self, origin: str, cors_allowed_origins: Optional[List[str]] = None) -> bool:
         """Check if the origin is in the allowed origins list."""
-        if not cors_allowed_origins:
-            # If no allowed origins configured, allow all (fallback to default behavior)
-            return True
+        if self.cors_origin_policy is not None:
+            return self.cors_origin_policy.allows(origin)
+        if cors_allowed_origins is None:
+            return True  # Preserve standalone middleware behavior when no policy was supplied.
 
         # Check if origin is in the allowed list
         return origin in cors_allowed_origins
