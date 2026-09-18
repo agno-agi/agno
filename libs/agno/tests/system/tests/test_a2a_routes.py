@@ -580,7 +580,7 @@ class TestA2ARemoteAgentGoogleADK:
         """Test that the ADK A2A agent is listed in gateway agents."""
         response = client.get("/agents")
         assert response.status_code == 200
-        agents = response.json()
+        agents = response.json()["data"]
         agent_ids = [a["id"] for a in agents]
         assert self.A2A_AGENT_ID in agent_ids
 
