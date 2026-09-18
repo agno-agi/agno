@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -821,6 +822,15 @@ def _resolve_models(team: "Team") -> None:
         team.parser_model = get_model(team.parser_model)
     if team.output_model is not None:
         team.output_model = get_model(team.output_model)
+
+    # Follow-up slots resolve strings like the siblings but keep the instance's
+    # model_type: follow-up metrics are attributed explicitly at the call site, and
+    # the same instance may also serve as the main model.
+    if team.followup_model is not None:
+        team.followup_model = get_model(team.followup_model)
+    if team.followup_config is not None and isinstance(team.followup_config.model, str):
+        # Resolve on a copy: one config object may be shared across components.
+        team.followup_config = replace(team.followup_config, model=get_model(team.followup_config.model))
 
     if team.fallback_config is not None:
         team.fallback_config.resolve_models()

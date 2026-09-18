@@ -6,7 +6,7 @@ from uuid import uuid4
 
 import pytest
 
-from agno.agent import Agent
+from agno.agent import Agent, FollowupConfig
 from agno.agent._utils import SHARED_BY_REFERENCE_FIELDS
 from agno.db.in_memory import InMemoryDb
 from agno.environments import (
@@ -1090,6 +1090,9 @@ async def test_hermetic_real_agent_full_override_set(tmp_path):
     reasoning_model.cache_response = True
     followup_model = RecordingFakeModel("followup")
     followup_model.cache_response = True
+    followup_config_model = RecordingFakeModel("followup-config")
+    followup_config_model.cache_response = True
+    followup_config_model.cache_dir = str(tmp_path / "followup-config-cache")
     fallback_model = RecordingFakeModel("fallback")
     fallback_model.cache_response = True
     sub_model = RecordingFakeModel("sub")
@@ -1104,6 +1107,7 @@ async def test_hermetic_real_agent_full_override_set(tmp_path):
         db=caller_db,
         reasoning_model=reasoning_model,
         followup_model=followup_model,
+        followup_config=FollowupConfig(model=followup_config_model, instructions="Suggest documentation questions."),
         fallback_models=[fallback_model],
         session_summary_manager=summary_manager,
         compression_manager=compression_manager,
@@ -1126,6 +1130,11 @@ async def test_hermetic_real_agent_full_override_set(tmp_path):
         assert attempt_agent.reasoning_model.cache_response is False
         assert attempt_agent.followup_model is not followup_model
         assert attempt_agent.followup_model.cache_response is False
+        assert attempt_agent.followup_config is not caller.followup_config
+        assert attempt_agent.followup_config.model is not followup_config_model
+        assert attempt_agent.followup_config.model.cache_response is False
+        assert attempt_agent.followup_config.instructions == "Suggest documentation questions."
+        assert followup_config_model.cache_response is True
         assert attempt_agent.fallback_config is not caller.fallback_config
         assert all(entry.cache_response is False for entry in attempt_agent.fallback_config.on_error)
         # The summary manager survives as an attempt-local copy: production's
@@ -1505,6 +1514,53 @@ def test_every_shared_field_has_a_hermetic_action():
     # without a mapped hermetic action fails here before it ships.
     missing = set(SHARED_BY_REFERENCE_FIELDS) - set(_ISOLATE_FIELD_ACTIONS)
     assert not missing, f"unmapped shared-by-reference fields: {sorted(missing)}"
+
+
+async def test_followup_config_model_gets_fresh_provider_calls_per_attempt(tmp_path):
+    # Two sequential attempts must each hit the provider on a cache-off copy: with the
+    # caller's cache-on instance shared, the second attempt would replay the first.
+    calls = []
+    followup_config_model = RecordingFakeModel("followup-config", calls=calls)
+    followup_config_model.cache_response = True
+    followup_config_model.cache_dir = str(tmp_path / "followup-config-cache")
+    caller = Agent(
+        model=RecordingFakeModel("main"),
+        db=InMemoryDb(),
+        followups=True,
+        followup_config=FollowupConfig(model=followup_config_model),
+        telemetry=False,
+    )
+
+    result = await arun_rollouts(_real_env(caller), k=2, concurrency=1)
+
+    assert result.pass_rate == 1.0
+    assert len(calls) == 2
+    assert all(cache_response is False for _, _, _, cache_response in calls)
+    assert all(instance_id != id(followup_config_model) for _, _, instance_id, _ in calls)
+    assert followup_config_model.cache_response is True
+
+
+def test_string_followup_config_model_is_resolved_before_isolation(tmp_path):
+    # A "provider:model_id" string resolves at construction, so deep_copy hands the
+    # attempt a Model instance and the isolation pass can give it a cache-off copy.
+    caller = Agent(
+        model=RecordingFakeModel("main"),
+        db=InMemoryDb(),
+        followups=True,
+        followup_config=FollowupConfig(model="openai:gpt-4o-mini"),
+        telemetry=False,
+    )
+    assert isinstance(caller.followup_config.model, Model)
+    caller.followup_config.model.cache_response = True
+    caller.followup_config.model.cache_dir = str(tmp_path / "cache")
+
+    attempt = caller.deep_copy()
+    _isolate_attempt(attempt)
+
+    assert isinstance(attempt.followup_config.model, Model)
+    assert attempt.followup_config.model is not caller.followup_config.model
+    assert attempt.followup_config.model.cache_response is False
+    assert caller.followup_config.model.cache_response is True
 
 
 # ---------------------------------------------------------------------------

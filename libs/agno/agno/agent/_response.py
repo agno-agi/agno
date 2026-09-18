@@ -1827,7 +1827,9 @@ def generate_followups(
         return
 
     followup_instructions = agent.followup_config.instructions if agent.followup_config else None
-    model = (agent.followup_config.model if agent.followup_config else None) or agent.followup_model or agent.model
+    # followup_config.model is resolved to a Model at construction (see get_models).
+    config_model = cast(Optional[Model], agent.followup_config.model) if agent.followup_config else None
+    model = config_model or agent.followup_model or agent.model
     if model is None:
         return
 
@@ -1841,6 +1843,8 @@ def generate_followups(
         response_format=response_format,
     )
 
+    # A resumed run still carries the earlier answer's suggestions; a failed regeneration must not keep them.
+    run_response.followups = None
     try:
         model_response: ModelResponse = model.response(
             messages=messages,
@@ -1863,7 +1867,9 @@ async def agenerate_followups(
         return
 
     followup_instructions = agent.followup_config.instructions if agent.followup_config else None
-    model = (agent.followup_config.model if agent.followup_config else None) or agent.followup_model or agent.model
+    # followup_config.model is resolved to a Model at construction (see get_models).
+    config_model = cast(Optional[Model], agent.followup_config.model) if agent.followup_config else None
+    model = config_model or agent.followup_model or agent.model
     if model is None:
         return
 
@@ -1877,6 +1883,8 @@ async def agenerate_followups(
         response_format=response_format,
     )
 
+    # A resumed run still carries the earlier answer's suggestions; a failed regeneration must not keep them.
+    run_response.followups = None
     try:
         model_response: ModelResponse = await model.aresponse(
             messages=messages,
@@ -1900,7 +1908,9 @@ def generate_followups_stream(
         return
 
     followup_instructions = agent.followup_config.instructions if agent.followup_config else None
-    model = (agent.followup_config.model if agent.followup_config else None) or agent.followup_model or agent.model
+    # followup_config.model is resolved to a Model at construction (see get_models).
+    config_model = cast(Optional[Model], agent.followup_config.model) if agent.followup_config else None
+    model = config_model or agent.followup_model or agent.model
     if model is None:
         return
 
@@ -1922,6 +1932,8 @@ def generate_followups_stream(
         response_format=response_format,
     )
 
+    # A resumed run still carries the earlier answer's suggestions; a failed regeneration must not keep them.
+    run_response.followups = None
     try:
         model_response: ModelResponse = model.response(
             messages=messages,
@@ -1953,7 +1965,9 @@ async def agenerate_followups_stream(
         return
 
     followup_instructions = agent.followup_config.instructions if agent.followup_config else None
-    model = (agent.followup_config.model if agent.followup_config else None) or agent.followup_model or agent.model
+    # followup_config.model is resolved to a Model at construction (see get_models).
+    config_model = cast(Optional[Model], agent.followup_config.model) if agent.followup_config else None
+    model = config_model or agent.followup_model or agent.model
     if model is None:
         return
 
@@ -1975,6 +1989,8 @@ async def agenerate_followups_stream(
         response_format=response_format,
     )
 
+    # A resumed run still carries the earlier answer's suggestions; a failed regeneration must not keep them.
+    run_response.followups = None
     try:
         model_response: ModelResponse = await model.aresponse(
             messages=messages,

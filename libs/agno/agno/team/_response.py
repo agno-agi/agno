@@ -1759,7 +1759,9 @@ def generate_team_followups(
         return
 
     followup_instructions = team.followup_config.instructions if team.followup_config else None
-    model = (team.followup_config.model if team.followup_config else None) or team.followup_model or team.model
+    # followup_config.model is resolved to a Model at construction (see _resolve_models).
+    config_model = cast(Optional[Model], team.followup_config.model) if team.followup_config else None
+    model = config_model or team.followup_model or team.model
     if model is None:
         return
 
@@ -1773,6 +1775,8 @@ def generate_team_followups(
         response_format=response_format,
     )
 
+    # A resumed run still carries the earlier answer's suggestions; a failed regeneration must not keep them.
+    run_response.followups = None
     try:
         model_response: ModelResponse = model.response(
             messages=messages,
@@ -1798,7 +1802,9 @@ async def agenerate_team_followups(
         return
 
     followup_instructions = team.followup_config.instructions if team.followup_config else None
-    model = (team.followup_config.model if team.followup_config else None) or team.followup_model or team.model
+    # followup_config.model is resolved to a Model at construction (see _resolve_models).
+    config_model = cast(Optional[Model], team.followup_config.model) if team.followup_config else None
+    model = config_model or team.followup_model or team.model
     if model is None:
         return
 
@@ -1812,6 +1818,8 @@ async def agenerate_team_followups(
         response_format=response_format,
     )
 
+    # A resumed run still carries the earlier answer's suggestions; a failed regeneration must not keep them.
+    run_response.followups = None
     try:
         model_response: ModelResponse = await model.aresponse(
             messages=messages,
@@ -1838,7 +1846,9 @@ def generate_team_followups_stream(
         return
 
     followup_instructions = team.followup_config.instructions if team.followup_config else None
-    model = (team.followup_config.model if team.followup_config else None) or team.followup_model or team.model
+    # followup_config.model is resolved to a Model at construction (see _resolve_models).
+    config_model = cast(Optional[Model], team.followup_config.model) if team.followup_config else None
+    model = config_model or team.followup_model or team.model
     if model is None:
         return
 
@@ -1860,6 +1870,8 @@ def generate_team_followups_stream(
         response_format=response_format,
     )
 
+    # A resumed run still carries the earlier answer's suggestions; a failed regeneration must not keep them.
+    run_response.followups = None
     try:
         model_response: ModelResponse = model.response(
             messages=messages,
@@ -1894,7 +1906,9 @@ async def agenerate_team_followups_stream(
         return
 
     followup_instructions = team.followup_config.instructions if team.followup_config else None
-    model = (team.followup_config.model if team.followup_config else None) or team.followup_model or team.model
+    # followup_config.model is resolved to a Model at construction (see _resolve_models).
+    config_model = cast(Optional[Model], team.followup_config.model) if team.followup_config else None
+    model = config_model or team.followup_model or team.model
     if model is None:
         return
 
@@ -1916,6 +1930,8 @@ async def agenerate_team_followups_stream(
         response_format=response_format,
     )
 
+    # A resumed run still carries the earlier answer's suggestions; a failed regeneration must not keep them.
+    run_response.followups = None
     try:
         model_response: ModelResponse = await model.aresponse(
             messages=messages,

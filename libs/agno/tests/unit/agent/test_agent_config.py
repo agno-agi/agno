@@ -1754,3 +1754,185 @@ class TestGetAgentsPagination:
 
         assert len(loaded) == 120
         assert {item.id for item in loaded} == {f"own-agent-{i:03d}" for i in range(120)}
+
+
+# =============================================================================
+# Follow-up configuration round trip
+# =============================================================================
+
+
+class TestAgentFollowupConfigRoundtrip:
+    """followups, num_followups, followup_model and followup_config survive to_dict/from_dict."""
+
+    def test_to_dict_serializes_followup_settings(self):
+        from agno.agent import FollowupConfig
+
+        agent = Agent(followups=True, num_followups=2, followup_config=FollowupConfig(instructions="Only docs."))
+        config = agent.to_dict()
+        assert config["followups"] is True
+        assert config["num_followups"] == 2
+        assert config["followup_config"] == {"instructions": "Only docs."}
+        assert "followup_model" not in config
+
+    def test_from_dict_roundtrip_preserves_followup_settings(self):
+        from agno.agent import FollowupConfig
+
+        agent = Agent(followups=True, num_followups=2, followup_config=FollowupConfig(instructions="Only docs."))
+        reconstructed = Agent.from_dict(agent.to_dict())
+        assert reconstructed.followups is True
+        assert reconstructed.num_followups == 2
+        assert isinstance(reconstructed.followup_config, FollowupConfig)
+        assert reconstructed.followup_config.instructions == "Only docs."
+        assert reconstructed.followup_config.model is None
+
+    def test_legacy_followup_model_roundtrip(self):
+        from agno.models.openai import OpenAIChat
+
+        model = OpenAIChat(id="gpt-4o-mini")
+        config = Agent(followups=True, followup_model=model).to_dict()
+        assert config["followup_model"] == model.to_dict()
+        assert set(config["followup_model"]) <= {"id", "name", "provider"}
+        reconstructed = Agent.from_dict(config)
+        assert isinstance(reconstructed.followup_model, OpenAIChat)
+        assert reconstructed.followup_model.id == "gpt-4o-mini"
+
+    def test_followup_config_model_roundtrip(self):
+        from agno.agent import FollowupConfig
+        from agno.models.openai import OpenAIResponses
+
+        model = OpenAIResponses(id="gpt-4o-mini")
+        config = Agent(followups=True, followup_config=FollowupConfig(model=model, instructions="Only docs.")).to_dict()
+        assert config["followup_config"] == {"model": model.to_dict(), "instructions": "Only docs."}
+        reconstructed = Agent.from_dict(config)
+        assert isinstance(reconstructed.followup_config.model, OpenAIResponses)
+        assert reconstructed.followup_config.model.id == "gpt-4o-mini"
+        assert reconstructed.followup_config.instructions == "Only docs."
+
+    def test_all_three_model_slots_survive_distinctly(self):
+        """Precedence after reconstruction: followup_config.model, then followup_model, then model."""
+        from agno.agent import FollowupConfig
+        from agno.models.openai import OpenAIChat, OpenAIResponses
+
+        agent = Agent(
+            model=OpenAIChat(id="gpt-4o"),
+            followups=True,
+            followup_model=OpenAIChat(id="gpt-4o-mini"),
+            followup_config=FollowupConfig(model=OpenAIResponses(id="gpt-4.1-mini")),
+        )
+        reconstructed = Agent.from_dict(agent.to_dict())
+        assert reconstructed.model.id == "gpt-4o"
+        assert reconstructed.followup_model.id == "gpt-4o-mini"
+        assert reconstructed.followup_config.model.id == "gpt-4.1-mini"
+        assert isinstance(reconstructed.followup_config.model, OpenAIResponses)
+
+    def test_instructions_only_config(self):
+        from agno.agent import FollowupConfig
+
+        config = Agent(followups=True, followup_config=FollowupConfig(instructions="Only docs.")).to_dict()
+        assert config["followup_config"] == {"instructions": "Only docs."}
+        assert Agent.from_dict(config).followup_config.model is None
+
+    def test_model_only_config(self):
+        from agno.agent import FollowupConfig
+        from agno.models.openai import OpenAIResponses
+
+        model = OpenAIResponses(id="gpt-4o-mini")
+        config = Agent(followups=True, followup_config=FollowupConfig(model=model)).to_dict()
+        assert config["followup_config"] == {"model": model.to_dict()}
+        assert Agent.from_dict(config).followup_config.instructions is None
+
+    def test_empty_config_object_is_distinct_from_absent(self):
+        from agno.agent import FollowupConfig
+
+        with_empty = Agent(followups=True, followup_config=FollowupConfig()).to_dict()
+        assert with_empty["followup_config"] == {}
+        reconstructed = Agent.from_dict(with_empty)
+        assert reconstructed.followup_config == FollowupConfig()
+
+        without = Agent(followups=True).to_dict()
+        assert "followup_config" not in without
+        assert Agent.from_dict(without).followup_config is None
+
+    def test_disabled_followups_stay_disabled(self):
+        from agno.agent import FollowupConfig
+
+        config = Agent(followup_config=FollowupConfig(instructions="Only docs.")).to_dict()
+        assert "followups" not in config
+        reconstructed = Agent.from_dict(config)
+        assert reconstructed.followups is False
+        assert reconstructed.followup_config.instructions == "Only docs."
+
+    def test_default_num_followups_is_omitted(self):
+        assert "num_followups" not in Agent(followups=True).to_dict()
+
+    def test_dict_without_followup_keys_uses_defaults(self, sample_agent_config):
+        reconstructed = Agent.from_dict(sample_agent_config)
+        assert reconstructed.followups is False
+        assert reconstructed.num_followups == 3
+        assert reconstructed.followup_model is None
+        assert reconstructed.followup_config is None
+
+    @pytest.mark.parametrize(
+        "instructions",
+        [None, "", "   ", "Suggest only documentation questions.", "Nur Dokumentation – 日本語 ✓"],
+        ids=["none", "empty", "whitespace", "plain", "unicode"],
+    )
+    def test_instructions_preserved_exactly(self, instructions):
+        from agno.agent import FollowupConfig
+
+        config = Agent(followups=True, followup_config=FollowupConfig(instructions=instructions)).to_dict()
+        assert Agent.from_dict(config).followup_config.instructions == instructions
+
+    def test_string_model_references_roundtrip(self):
+        from agno.agent import FollowupConfig
+        from agno.models.base import Model
+
+        agent = Agent(
+            followups=True,
+            followup_model="openai:gpt-4o-mini",
+            followup_config=FollowupConfig(model="openai:gpt-4o-mini"),
+        )
+        config = agent.to_dict()
+        # Resolved at construction, so both slots serialize as model dicts.
+        assert config["followup_model"]["id"] == "gpt-4o-mini"
+        assert config["followup_config"]["model"]["id"] == "gpt-4o-mini"
+        reconstructed = Agent.from_dict(config)
+        assert isinstance(reconstructed.followup_model, Model)
+        assert isinstance(reconstructed.followup_config.model, Model)
+
+    def test_raw_string_references_in_serialized_dict_resolve(self):
+        from agno.models.openai import OpenAIResponses
+
+        config = {
+            "id": "string-agent",
+            "followups": True,
+            "followup_model": "openai:gpt-4o-mini",
+            "followup_config": {"model": "openai:gpt-4o-mini", "instructions": "Only docs."},
+        }
+        reconstructed = Agent.from_dict(config)
+        assert isinstance(reconstructed.followup_model, OpenAIResponses)
+        assert isinstance(reconstructed.followup_config.model, OpenAIResponses)
+        assert reconstructed.followup_config.instructions == "Only docs."
+
+    def test_registry_model_is_reused_with_its_connection_settings(self):
+        from agno.agent import FollowupConfig
+        from agno.models.openai import OpenAIResponses
+
+        live = OpenAIResponses(id="gpt-4o-mini", base_url="http://localhost:1/v1")
+        agent = Agent(followups=True, followup_model=live, followup_config=FollowupConfig(model=live))
+        reconstructed = Agent.from_dict(agent.to_dict(), registry=Registry(models=[live]))
+        assert reconstructed.followup_model is live
+        assert reconstructed.followup_config.model is live
+        assert reconstructed.followup_config.model.base_url == "http://localhost:1/v1"
+
+    def test_no_credentials_or_clients_serialized(self):
+        from agno.agent import FollowupConfig
+        from agno.models.openai import OpenAIResponses
+
+        secret = "sk-review-not-a-real-key"
+        live = OpenAIResponses(id="gpt-4o-mini", api_key=secret, base_url="http://localhost:1/v1")
+        agent = Agent(followups=True, followup_model=live, followup_config=FollowupConfig(model=live, instructions="x"))
+        serialized = repr(agent.to_dict())
+        assert secret not in serialized
+        for forbidden in ("api_key", "base_url", "client", "http://"):
+            assert forbidden not in serialized

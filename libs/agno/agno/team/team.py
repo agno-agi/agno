@@ -375,7 +375,7 @@ class Team:
     num_followups: int = 3
     # Optional model to use for generating followups (defaults to team's model)
     followup_model: Optional[Model] = None
-    # Optional config object housing all follow-up generation settings
+    # Optional follow-up model and instructions; followups and num_followups stay on the component
     followup_config: Optional[FollowupConfig] = None
 
     # --- Team Streaming ---

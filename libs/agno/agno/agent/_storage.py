@@ -21,6 +21,7 @@ if TYPE_CHECKING:
     from agno.agent.agent import Agent
     from agno.offload.store import ResultStore
 
+from agno.agent.followup import FollowupConfig
 from agno.db.base import BaseDb, ComponentType, SessionType
 from agno.db.schemas.scheduler import strip_reserved_run_metadata
 from agno.db.utils import resolve_db_from_config
@@ -1020,6 +1021,19 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
             config["reasoning_model"] = str(agent.reasoning_model)
     # Skip reasoning_agent to avoid circular serialization
 
+    # --- Followup settings ---
+    if agent.followups:
+        config["followups"] = agent.followups
+    if agent.num_followups != 3:
+        config["num_followups"] = agent.num_followups
+    if agent.followup_model is not None:
+        if isinstance(agent.followup_model, Model):
+            config["followup_model"] = agent.followup_model.to_dict()
+        else:
+            config["followup_model"] = str(agent.followup_model)
+    if agent.followup_config is not None:
+        config["followup_config"] = agent.followup_config.to_dict()
+
     # --- Default tools settings ---
     if agent.read_chat_history:
         config["read_chat_history"] = agent.read_chat_history
@@ -1213,6 +1227,12 @@ def from_dict(
     # --- Handle reasoning_model reconstruction ---
     if config.get("reasoning_model") is not None:
         config["reasoning_model"] = resolve_model(config["reasoning_model"], registry)
+
+    # --- Handle followup model reconstruction ---
+    if config.get("followup_model") is not None:
+        config["followup_model"] = resolve_model(config["followup_model"], registry)
+    if isinstance(config.get("followup_config"), dict):
+        config["followup_config"] = FollowupConfig.from_dict(config["followup_config"], registry)
 
     # --- Handle parser_model reconstruction ---
     # TODO: implement parser model deserialization
@@ -1416,6 +1436,11 @@ def from_dict(
         tool_choice=config.get("tool_choice"),
         # --- Reasoning settings ---
         reasoning_model=config.get("reasoning_model"),
+        # --- Followup settings ---
+        followups=config.get("followups", False),
+        num_followups=config.get("num_followups", 3),
+        followup_model=config.get("followup_model"),
+        followup_config=config.get("followup_config"),
         # --- Default tools settings ---
         read_chat_history=config.get("read_chat_history", False),
         search_knowledge=config.get("search_knowledge", True),
