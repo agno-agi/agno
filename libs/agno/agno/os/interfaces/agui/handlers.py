@@ -42,6 +42,12 @@ from agno.utils.message import get_text_from_message
 
 EventHandler = Callable[[BaseRunOutputEvent, StreamState], List[BaseEvent]]
 
+#: Name for a render call whose fragment carries none. Mirrors the render tool
+#: name the shared A2UI toolkit owns, spelled out because this module loads on
+#: every AG-UI request and that toolkit is optional. A test pins the two
+#: together, so drift fails the suite.
+RENDER_A2UI_TOOL_NAME_FALLBACK = "render_a2ui"
+
 
 def _extract_response_chunk_content(response: RunContentEvent) -> str:
     # RunContentEvent can carry text in .messages (list) or .content (direct)
@@ -102,8 +108,13 @@ def _emit_state_delta(state: StreamState) -> List[BaseEvent]:
     return [StateDeltaEvent(type=EventType.STATE_DELTA, delta=ops)]
 
 
-def _close_open_spans(state: StreamState) -> List[BaseEvent]:
-    """End any reasoning, tool call, or text message still open, so a terminal event never leaves a dangling span."""
+def close_open_spans(state: StreamState) -> List[BaseEvent]:
+    """End any reasoning, tool call, or text message still open, so a terminal event never leaves a dangling span.
+
+    Part of this module's interface: a run that fails outside the stream mapper
+    still has to close whatever it opened, because a terminal event is the last
+    thing the client will ever see for that run.
+    """
     events: List[BaseEvent] = []
 
     # Close orphaned reasoning session
@@ -321,6 +332,70 @@ def on_reasoning_completed(chunk: BaseRunOutputEvent, state: StreamState) -> Lis
     return events
 
 
+def on_a2ui_render_stream(payload: Dict[str, Any], state: StreamState) -> List[BaseEvent]:
+    """Translate one A2UI render fragment into AG-UI tool-call events.
+
+    A client paints a generated surface from the render call's argument
+    fragments as they arrive, so the fragments have to reach the wire as a tool
+    call of their own, nested inside the generation call that produced them.
+    """
+    tool_call_id = payload.get("tool_call_id") or ""
+    if not tool_call_id:
+        return []
+
+    kind = payload.get("kind")
+    events: List[BaseEvent] = []
+
+    if kind == "start":
+        # A wire id belongs to one render call, and the client buffers that
+        # call's arguments under it. A second start under a spent id appends
+        # this surface to the buffer still held for the other, so the two parse
+        # as one malformed object and neither paints.
+        if tool_call_id in state.active_tool_call_ids or tool_call_id in state.ended_tool_call_ids:
+            return []
+        # A tool call may not open inside an unfinished text message.
+        if state.text_message_open:
+            events.append(TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=state.text_message_id))
+            state.set_pending_tool_calls_parent_id(state.text_message_id)
+            state.close_text_message()
+        events.append(
+            ToolCallStartEvent(
+                type=EventType.TOOL_CALL_START,
+                tool_call_id=tool_call_id,
+                tool_call_name=payload.get("tool_call_name") or RENDER_A2UI_TOOL_NAME_FALLBACK,
+                # The generation call hangs off this message too, which is
+                # what groups the surface into the turn that produced it. No
+                # empty parent is invented when there is none, unlike the path
+                # for the agent's own tool calls: the field is optional, and a
+                # message the run never produced is worse than an absent id.
+                parent_message_id=state.get_parent_message_id_for_tool_call() or None,
+            )
+        )
+        # Tracked like any other call, so a run that dies mid-generation still
+        # closes it.
+        state.start_tool_call(tool_call_id)
+
+    elif kind == "args":
+        # A fragment for a call that was never opened, or that has already been
+        # closed, has nothing on the wire to attach to: the client would be
+        # given arguments for a tool call it does not know about.
+        if tool_call_id not in state.active_tool_call_ids:
+            return []
+        delta = payload.get("delta")
+        if delta:
+            events.append(ToolCallArgsEvent(type=EventType.TOOL_CALL_ARGS, tool_call_id=tool_call_id, delta=delta))
+
+    elif kind == "end":
+        # Only a call the client was told about can be ended. An end for one it
+        # never saw opened, or has already finished with, is an event its
+        # verifier rejects fatally, which costs the run every event after it.
+        if tool_call_id in state.active_tool_call_ids:
+            events.append(ToolCallEndEvent(type=EventType.TOOL_CALL_END, tool_call_id=tool_call_id))
+            state.end_tool_call(tool_call_id)
+
+    return events
+
+
 def on_custom_event(chunk: BaseRunOutputEvent, state: StreamState) -> List[BaseEvent]:
     try:
         custom_event_name = chunk.__class__.__name__
@@ -353,7 +428,7 @@ def on_run_error(chunk: BaseRunOutputEvent, state: StreamState) -> List[BaseEven
     message = getattr(chunk, "content", None) or "Run failed"
     error_type = getattr(chunk, "error_type", None)
 
-    events = _close_open_spans(state)
+    events = close_open_spans(state)
     events.append(
         AGUIRunErrorEvent(
             type=EventType.RUN_ERROR,
@@ -366,7 +441,7 @@ def on_run_error(chunk: BaseRunOutputEvent, state: StreamState) -> List[BaseEven
 
 
 def on_run_completed(chunk: BaseRunOutputEvent, state: StreamState) -> List[BaseEvent]:
-    events = _close_open_spans(state)
+    events = close_open_spans(state)
 
     # 1. Collect paused tools for frontend rendering
     paused_tools: List[ToolExecution] = []
