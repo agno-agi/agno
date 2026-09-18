@@ -128,6 +128,25 @@ def _raise_if_async_tools_in_list(tools: list) -> None:
                 )
 
 
+def _append_filesystem_tools(
+    agent: Agent,
+    agent_tools: List[Union[Toolkit, Callable, Function, Dict]],
+) -> None:
+    """Inject the managed filesystem toolkit into this run's resolved tools."""
+    filesystem = agent.filesystem_instance
+    if filesystem is None:
+        return
+
+    from agno.fs.toolkit import FileSystemTools
+
+    if any(isinstance(tool, FileSystemTools) for tool in agent_tools):
+        raise ValueError(
+            "filesystem manages its own FileSystemTools. Remove the manually configured "
+            "FileSystemTools or disable the filesystem setting."
+        )
+    agent_tools.append(filesystem.tools(add_instructions=True))
+
+
 def get_tools(
     agent: Agent,
     run_response: RunOutput,
@@ -164,6 +183,8 @@ def get_tools(
         # If not running in async mode, raise if any tool is async
         _raise_if_async_tools_in_list(resolved_tools)
         agent_tools.extend(resolved_tools)
+
+    _append_filesystem_tools(agent, agent_tools)
 
     # Add tools for accessing memory
     if agent.read_chat_history:
@@ -299,6 +320,8 @@ async def aget_tools(
 
             # Add the tool (MCP tools that passed checks, or any non-MCP tool)
             agent_tools.append(tool)
+
+    _append_filesystem_tools(agent, agent_tools)
 
     # Add tools for accessing memory
     if agent.read_chat_history:

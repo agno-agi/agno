@@ -25,6 +25,7 @@ from agno.os.middleware.jwt import _VERIFIED_API_JWT, JWTValidator, is_reserved_
 from agno.os.middleware.user_scope import (
     INSUFFICIENT_PERMISSIONS_WS_RECONNECT,
     WORKFLOW_ID_REQUIRED_RECONNECT,
+    get_scoped_user_id,
 )
 from agno.os.routers.workflows.router import (
     WebSocketAuthContext,
@@ -175,7 +176,7 @@ def get_base_router(
             }
         },
     )
-    async def config() -> ConfigResponse:
+    async def config(request: Request) -> ConfigResponse:
         try:
             agent_summaries = [AgentSummaryResponse.from_agent(a) for a in os.agents] if os.agents else []
             team_summaries = [TeamSummaryResponse.from_team(t) for t in os.teams] if os.teams else []
@@ -199,6 +200,9 @@ def get_base_router(
             session=os._get_session_config(),
             memory=os._get_memory_config(),
             learning=os._get_learning_config(),
+            filesystem=os._get_filesystem_config(
+                user_id=get_scoped_user_id(request) or getattr(request.state, "user_id", None)
+            ),
             knowledge=os._get_knowledge_config(),
             evals=os._get_evals_config(),
             metrics=os._get_metrics_config(),

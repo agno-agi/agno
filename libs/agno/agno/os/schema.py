@@ -189,6 +189,59 @@ def _extract_model(entity: Any) -> Optional[Model]:
     return Model(id=model_id, provider=provider)
 
 
+class FileSystemSummary(BaseModel):
+    backend_type: str = Field(..., description="Filesystem backend type")
+    db_id: Optional[str] = Field(None, description="Database identifier for a database-backed filesystem")
+    db_schema: Optional[str] = Field(None, description="Database schema containing filesystem rows")
+    table_name: Optional[str] = Field(None, description="Database table containing filesystem rows")
+    namespace: str = Field(
+        ...,
+        description="Canonical namespace resolved for the caller; placeholders remain when identity is unavailable",
+    )
+    user_isolation: bool = Field(..., description="Whether the namespace is partitioned by user identity")
+    max_file_bytes: int = Field(..., description="Maximum UTF-8 bytes per file")
+    max_namespace_bytes: int = Field(..., description="Maximum bytes across the namespace")
+
+
+class FileSystemInstance(FileSystemSummary):
+    agents: List[str] = Field(..., description="IDs of agents using this filesystem instance")
+
+
+class FileSystemConfig(BaseModel):
+    instances: List[FileSystemInstance] = Field(
+        default_factory=list,
+        description="Filesystem instances discovered from configured agents",
+    )
+
+
+def _extract_filesystem(agent: Any, user_id: Optional[str] = None) -> Optional[FileSystemSummary]:
+    if not getattr(agent, "filesystem", False):
+        return None
+    filesystem = getattr(agent, "filesystem_instance", None)
+    if filesystem is None:
+        return None
+    user_isolation = "user_id" in filesystem._placeholders
+    filesystem = filesystem.resolve(user_id=user_id, agent_id=agent.id)
+    backend = filesystem.backend
+    backend_db = getattr(backend, "db", None)
+    if backend_db is not None or hasattr(backend, "db_engine"):
+        backend_type = "db"
+    elif hasattr(backend, "root"):
+        backend_type = "local"
+    else:
+        backend_type = type(backend).__name__
+    return FileSystemSummary(
+        backend_type=backend_type,
+        db_id=getattr(backend_db, "id", None),
+        db_schema=getattr(backend, "db_schema", None),
+        table_name=getattr(backend, "table_name", None),
+        namespace=filesystem.namespace,
+        user_isolation=user_isolation,
+        max_file_bytes=filesystem.max_file_bytes,
+        max_namespace_bytes=filesystem.max_namespace_bytes,
+    )
+
+
 class AgentSummaryResponse(BaseModel):
     id: Optional[str] = Field(None, description="Unique identifier for the agent")
     name: Optional[str] = Field(None, description="Name of the agent")
@@ -355,6 +408,7 @@ class ConfigResponse(BaseModel):
     metrics: Optional[MetricsConfig] = Field(None, description="Metrics configuration")
     memory: Optional[MemoryConfig] = Field(None, description="Memory configuration")
     learning: Optional[LearningConfig] = Field(None, description="Learning configuration")
+    filesystem: Optional[FileSystemConfig] = Field(None, description="Filesystem configuration")
     knowledge: Optional[KnowledgeConfig] = Field(None, description="Knowledge configuration")
     evals: Optional[EvalsConfig] = Field(None, description="Evaluations configuration")
     traces: Optional[TracesConfig] = Field(None, description="Traces configuration")
