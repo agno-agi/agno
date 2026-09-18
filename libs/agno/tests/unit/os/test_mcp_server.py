@@ -665,6 +665,44 @@ async def test_run_agent_omitted_session_end_to_end_returns_distinct_ids(monkeyp
     assert agent.session_id is None
 
 
+async def test_custom_tool_session_follow_up_needs_no_builtin_tools(monkeypatch, tmp_path):
+    """An exposed agent persists and loads conversation history without lifecycle tools."""
+    from agno.db.sqlite import SqliteDb
+
+    monkeypatch.setattr(mcp_mod, "_resolve_user_id", lambda caller: None)
+    model = _MockModel()
+    histories = []
+
+    async def record_stream(*args, **kwargs):
+        histories.append([(message.role, message.content) for message in kwargs["messages"]])
+        yield model._r
+
+    monkeypatch.setattr(model, "ainvoke_stream", record_stream)
+    agent = Agent(
+        id="product-agent",
+        model=model,
+        db=SqliteDb(db_file=str(tmp_path / "sessions.db")),
+        add_history_to_context=True,
+        num_history_runs=3,
+    )
+    os = AgentOS(agents=[agent], mcp=MCPConfig(tools=[agent.as_tool(name="ask_product_agent")]))
+
+    async with Client(build_mcp_server(os)) as client:
+        assert {tool.name for tool in await client.list_tools()} == {"ask_product_agent"}
+        first = await client.call_tool("ask_product_agent", {"message": "Remember the cycle is two weeks."})
+        session_id = _result_session_id(first)
+        assert session_id
+        second = await client.call_tool(
+            "ask_product_agent", {"message": "How long is the cycle?", "session_id": session_id}
+        )
+
+    assert _result_session_id(second) == session_id
+    assert len(histories) == 2
+    assert ("user", "Remember the cycle is two weeks.") in histories[1]
+    assert ("assistant", "ok") in histories[1]
+    assert ("user", "How long is the cycle?") in histories[1]
+
+
 async def test_continue_run_targets_the_given_session_and_never_mints(monkeypatch):
     """continue_run must resume the exact session it was handed, never mint a new one --
     so the PAUSED -> continue_run HITL flow resolves the original run/session."""

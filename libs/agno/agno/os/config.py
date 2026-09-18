@@ -40,7 +40,9 @@ class MCPConfig(BaseModel):
     individual MCP tools, register your own tools, scope the default tools, gate the
     server, and add middleware. With plain ``mcp=True``, all default tools are
     registered and no extra gate or middleware is added. With ``MCPConfig``, default
-    tools are opt-in: pass ``tools=[...]`` or set ``default_tools=True``.
+    tools and lifecycle additions are opt-in: pass ``tools=[...]`` to publish exactly
+    those tools, add ``lifecycle_tools=True`` for exposed component continuation and
+    cancellation, or set ``default_tools=True`` for all eight built-in tools.
 
     The default tools are tagged so they can be scoped as a group. See
     ``MCP_BUILTIN_TAGS`` for the canonical set; current values:
@@ -48,7 +50,7 @@ class MCPConfig(BaseModel):
         ``continue_run``, ``cancel_run``
       - ``"session"``   -> read-only session tools (``get_sessions``, ``get_session_runs``)
       - ``"lifecycle"`` -> ``continue_run``, ``cancel_run`` (dual-tagged with ``core``);
-        registered automatically alongside exposed components -- see ``lifecycle_tools``
+        opt in alongside exposed components with ``lifecycle_tools=True``
 
     The default surface is deliberately small (8 tools): it is an operator surface for
     LLM frontends, not a database console. Session writes and memory CRUD live on the
@@ -138,9 +140,9 @@ class MCPConfig(BaseModel):
     # then -- the riding lifecycle pair is bounded to the components published at
     # build time). Listing here is publishing: every
     # caller who can reach tools/list sees the names and descriptions (invocation is
-    # still gated by scopes at call time). HITL works out of the box: whenever
-    # components are exposed, ``continue_run`` and ``cancel_run`` register alongside
-    # them (see ``lifecycle_tools``), and the exposed result's structuredContent
+    # still gated by scopes at call time). For HITL, set ``lifecycle_tools=True`` to
+    # add ``continue_run`` and ``cancel_run`` alongside exposed components. The
+    # exposed result's structuredContent
     # carries the component id a resume needs. Factories whose input_schema has
     # required fields cannot be invoked over MCP yet (true for run_agent too); invoke
     # those over REST.
@@ -169,20 +171,22 @@ class MCPConfig(BaseModel):
     # outright on raw bytes.
     tools: Optional[List[Any]] = None
 
-    # Opt in to the 8 default tools alongside your own ``tools`` surface. Plain
+    # Opt in to the 8 default tools, including continue_run/cancel_run, alongside
+    # your own ``tools`` surface. Plain
     # AgentOS(mcp=True) still serves all default tools. ``enable_builtin_tools`` is
     # the deprecated spelling, still accepted at construction.
     default_tools: bool = False
 
-    # Whether ``continue_run``/``cancel_run`` ride along whenever components are
-    # exposed via ``tools`` -- even with ``default_tools=False``. Default True: an
-    # exposed component can pause on a confirmation-required (HITL) tool, and without
-    # continue_run the pause would be a dead end over MCP. The riding pair is bounded
+    # Opt in to ``continue_run``/``cancel_run`` alongside components exposed via
+    # ``tools``, without enabling all default tools. Enable this when clients need
+    # to resume paused (HITL) runs or request cancellation. This flag is additive:
+    # False does not remove the pair from the default tools enabled by
+    # ``default_tools=True``. The added pair is bounded
     # to the publication list: when it registered only because exposures exist (not
     # via ``core`` or an explicit include), it refuses runs of unpublished roster
     # components, and it is scope-gated per component like the tool that produced the
     # run.
-    lifecycle_tools: bool = True
+    lifecycle_tools: bool = False
 
     # Finer scoping over enabled default tools via their tags (see ``MCP_BUILTIN_TAGS``).
     # These tags do not opt in to default tools; set ``default_tools=True`` first.

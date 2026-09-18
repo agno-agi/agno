@@ -46,7 +46,7 @@ Plain `mcp=True` exposes eight tools:
 |---|---|
 | `core` | `get_agentos_config`, `run_agent`, `run_team`, `run_workflow`, `continue_run`, `cancel_run` |
 | `session` | `get_sessions`, `get_session_runs` |
-| `lifecycle` | `continue_run`, `cancel_run` (also tagged `core`) -- the pair rides along whenever components are exposed; include the tag explicitly to serve just the pair |
+| `lifecycle` | `continue_run`, `cancel_run` (also tagged `core`) -- opt in alongside exposed components with `lifecycle_tools=True`; use `default_tools=True, include_tags={"lifecycle"}` to serve just the pair |
 
 Run the server and client in separate terminals:
 
@@ -60,32 +60,43 @@ run, cancels a second paused run, and reads the continued session from SQLite.
 Run tools return a trimmed result by default: answer content plus
 `run_id`, `session_id`, `status`, and unresolved requirements when paused.
 
-## Migrating to Agno 3.1
+## Migrating to the next Agno 3.0.x release
 
-`mcp=True` still enables the eight default tools. With `MCPConfig`, default tools
-are now off unless you explicitly set `default_tools=True`:
+Both `default_tools` and `lifecycle_tools` now default to `False` in `MCPConfig`.
+A custom tool list publishes exactly those tools. `mcp=True` still enables all
+eight default tools, including `continue_run` and `cancel_run`.
 
 ```python
-# A custom server: publish your tools without the generic default interface.
-mcp = MCPConfig(tools=[ask_product_agent])
+# Publish only your product agent.
+mcp = MCPConfig(tools=[product_agent.as_tool(name="ask_product_agent")])
+
+# Add continuation and cancellation for exposed components that need them.
+mcp = MCPConfig(tools=[approval_agent.as_tool(name="ask_approval_agent")], lifecycle_tools=True)
+
+# Add all eight default tools, including continuation and cancellation.
+mcp = MCPConfig(tools=[product_agent.as_tool(name="ask_product_agent")], default_tools=True)
 
 # Customize the default interface: explicitly opt in.
 mcp = MCPConfig(default_tools=True, name="Support", stateless=True)
-
-# Combine the default tools with your own tools.
-mcp = MCPConfig(default_tools=True, tools=[ask_product_agent])
 ```
 
-Existing configurations such as `MCPConfig(name="Support")` need
-`default_tools=True`. Custom configurations can drop their redundant
-`default_tools=False`. Bare `MCPConfig()` now raises an actionable error: supply
-`tools=[...]` or opt in to default tools. Tags only filter enabled default tools;
-`include_tags={"core"}` also needs `default_tools=True`.
+`lifecycle_tools=True` is an additive opt-in for exposed agents, teams, and
+workflows. `lifecycle_tools=False` does not remove tools enabled by
+`default_tools=True`. For example, `default_tools=True, include_tags={"session"}`
+serves only the two session tools; `exclude_tags={"core"}` also removes the run
+and lifecycle tools unless lifecycle tools are separately enabled. Because the
+pair also carries the `core` tag, excluding only `lifecycle` does not remove it
+from the default tool set.
 
-Exposed agents, teams, and workflows still add scoped `continue_run` and
-`cancel_run` tools so paused runs can finish. Set `lifecycle_tools=False` or
-`exclude_tags={"lifecycle"}` to opt out. Custom functions do not add those tools.
-The deprecated aliases follow the same defaults.
+Existing metadata-only configurations such as `MCPConfig(name="Support")` need
+`default_tools=True`. Existing custom component integrations that resume paused
+runs or request cancellation must add `lifecycle_tools=True`. Ordinary session
+follow-ups do not need lifecycle tools. Custom configurations can drop redundant
+`default_tools=False` and `lifecycle_tools=False` arguments.
+
+Bare `MCPConfig()` raises an actionable error: supply `tools=[...]` or opt in to
+default tools. Tags only filter enabled default tools; `include_tags={"core"}`
+also needs `default_tools=True`. The deprecated aliases follow the same defaults.
 
 ## Server name, version and instructions
 
@@ -182,15 +193,14 @@ but appear as named tools only after a restart -- and with
 until the restart (the riding `continue_run`/`cancel_run` are bounded to the
 components published at build time).
 
-HITL works out of the box: whenever components are exposed, `continue_run` and
-`cancel_run` ride along -- even with `default_tools=False` -- so a run that
-pauses on a confirmation-required tool is resumable over MCP (the paused
-result's structuredContent carries the component id, run_id, session_id, and
-requirements that `continue_run` needs). The riding pair only acts on runs of
-the published components: on an exposure-only server, runs of roster
-components you left off `tools=` cannot be resumed or cancelled over MCP. Set
-`lifecycle_tools=False` for a tools/list that shows exactly the configured
-tools; paused runs then say to resume over the REST API.
+To support paused (human-in-the-loop) runs over a custom MCP surface, set
+`lifecycle_tools=True`. This adds `continue_run` and `cancel_run` alongside the
+exposed components. The paused result's structuredContent carries the component
+id, run_id, session_id, and requirements that `continue_run` needs. The added pair
+only acts on runs of the published components: on a custom server, runs of roster
+components you left off `tools=` cannot be resumed or cancelled over MCP.
+Without this opt-in, clients see exactly the configured tools, and paused runs
+include guidance to resume over the REST API or enable lifecycle tools.
 
 ## Custom and scoped surfaces
 
