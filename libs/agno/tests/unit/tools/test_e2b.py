@@ -36,14 +36,15 @@ def mock_e2b_tools():
     with patch("agno.tools.e2b.Sandbox") as mock_sandbox_class:
         # Set up our mock sandbox instance
         mock_sandbox = Mock()
-        mock_sandbox_class.return_value = mock_sandbox
+        # Sandbox is created via Sandbox.create(), not Sandbox()
+        mock_sandbox_class.create.return_value = mock_sandbox
 
         # Set up sandbox attributes and methods
         mock_sandbox.files = Mock()
         mock_sandbox.commands = Mock()
         mock_sandbox.get_host = Mock(return_value="example.com:8080")
         mock_sandbox.kill = Mock()
-        mock_sandbox.list = Mock()
+        mock_sandbox_class.list = Mock()
         mock_sandbox.id = "test-sandbox-123"
 
         # Create the E2BTools instance with our patched Sandbox
@@ -312,3 +313,41 @@ def test_list_running_sandboxes(mock_e2b_tools):
     assert '"status": "success"' in result
     assert '"message": "Found 2 running sandboxes"' in result
     assert '"sandbox_id": "sb-123"' in result
+
+
+def test_lazy_init_no_sandbox_on_construction():
+    """Sandbox.create() must NOT be called during E2BTools.__init__."""
+    with patch("agno.tools.e2b.Sandbox") as mock_sandbox_class:
+        mock_sandbox_class.create.return_value = Mock()
+        with patch.dict("os.environ", {"E2B_API_KEY": TEST_API_KEY}):
+            tools = E2BTools()
+        mock_sandbox_class.create.assert_not_called()
+        assert tools._sandbox is None
+
+
+def test_lazy_init_sandbox_created_on_first_access():
+    """Sandbox.create() is called exactly once on first sandbox property access."""
+    with patch("agno.tools.e2b.Sandbox") as mock_sandbox_class:
+        mock_sandbox = Mock()
+        mock_sandbox_class.create.return_value = mock_sandbox
+        with patch.dict("os.environ", {"E2B_API_KEY": TEST_API_KEY}):
+            tools = E2BTools(timeout=120)
+
+        # Access sandbox property twice — create() must only be called once
+        _ = tools.sandbox
+        _ = tools.sandbox
+        mock_sandbox_class.create.assert_called_once_with(
+            api_key=TEST_API_KEY, timeout=120
+        )
+        assert tools._sandbox is mock_sandbox
+
+
+def test_shutdown_sandbox_no_op_when_never_started():
+    """shutdown_sandbox() should be a no-op and not create a sandbox if never used."""
+    with patch("agno.tools.e2b.Sandbox") as mock_sandbox_class:
+        mock_sandbox_class.create.return_value = Mock()
+        with patch.dict("os.environ", {"E2B_API_KEY": TEST_API_KEY}):
+            tools = E2BTools()
+        result = tools.shutdown_sandbox()
+        mock_sandbox_class.create.assert_not_called()
+        assert '"No sandbox is running"' in result
