@@ -2072,7 +2072,8 @@ async def _server_card(
                 # else here would be published as the endpoint's URL.
                 forwarded_proto = request.headers.get("x-forwarded-proto", "").split(",")[0].strip().lower()
                 scheme = forwarded_proto if forwarded_proto in ("http", "https") else scheme
-        url = f"{scheme}://{host}{_MCP_PATH}"
+        endpoint = request.scope.get("_agno_mcp_public_endpoint", _MCP_PATH)
+        url = f"{scheme}://{host}{endpoint}"
     remote: Dict[str, Any] = {"type": "streamable-http", "url": url}
     if not _mcp_server_is_open(os):
         remote["headers"] = [
@@ -2104,8 +2105,10 @@ def _register_server_card(
     card_url: Optional[str] = None,
     allowed_hosts: Optional[List[str]] = None,
 ) -> None:
+    import json
+
     from starlette.requests import Request
-    from starlette.responses import JSONResponse, Response
+    from starlette.responses import Response
 
     # The body varies with the request host unless a URL was configured, so a shared cache must
     # key on the headers that shape it -- otherwise one caller's card is served to everyone.
@@ -2113,8 +2116,15 @@ def _register_server_card(
 
     @mcp.custom_route(MCP_SERVER_CARD_PATH, methods=["GET"], include_in_schema=False)
     async def server_card(request: Request) -> Response:
-        return JSONResponse(
-            await _server_card(mcp, os, request, version, card_url, allowed_hosts),
+        # Discovery should be readable directly in a browser without a JSON formatter.
+        return Response(
+            json.dumps(
+                await _server_card(mcp, os, request, version, card_url, allowed_hosts),
+                ensure_ascii=False,
+                allow_nan=False,
+                indent=2,
+            )
+            + "\n",
             media_type=SERVER_CARD_MEDIA_TYPE,
             headers={
                 "Cache-Control": "public, max-age=300",
@@ -2147,6 +2157,8 @@ def _add_browser_redirect_middleware(mcp_app: StarletteWithLifespan) -> None:
     in a browser, who would otherwise get a JSON-RPC 406 or a 405.
     """
 
+    from starlette._utils import get_route_path
+
     class _BrowserRedirectMiddleware:
         def __init__(self, app: Any) -> None:
             self.app = app
@@ -2155,7 +2167,7 @@ def _add_browser_redirect_middleware(mcp_app: StarletteWithLifespan) -> None:
             if (
                 scope["type"] == "http"
                 and scope.get("method") == "GET"
-                and scope.get("path", "").rstrip("/") == _MCP_PATH
+                and get_route_path(scope).rstrip("/") == _MCP_PATH
             ):
                 accept = next((v.decode("latin-1") for k, v in scope.get("headers", []) if k == b"accept"), "")
                 if not _accepts_event_stream(accept):
@@ -2767,7 +2779,7 @@ _MCP_LOCALHOST_HOSTS = ("127.0.0.1", "localhost", "[::1]")
 
 def _mcp_request_hostname(host_header: str) -> str:
     """Bare hostname from a Host header value, port stripped (keeps the ipv6 brackets)."""
-    value = host_header.strip()
+    value = host_header.strip().lower()
     if value.startswith("["):  # ipv6 literal, e.g. [::1]:7777
         end = value.find("]")
         return value[: end + 1] if end != -1 else value
@@ -2831,15 +2843,22 @@ def _mcp_server_is_open(os: "AgentOS") -> bool:
     which now reports the REST/WS plane only. Otherwise this defers to that shared
     detection: ``AgentOS(authorization=True)``, JWT env vars, a manually installed
     ``JWTMiddleware`` on a ``base_app``, and the security key all count as authenticated.
-    Only the fully-anonymous case (no mcp_auth and REST mode "none") answers requests
-    carrying no bearer token -- the case a rebound web page could drive, so the one that
-    needs default transport security. A service-account verifier alone does NOT close that
-    path (PATs are checked only when presented).
+    A mixed public/JWT deployment also accepts anonymous MCP requests when
+    PublicSurface selects MCP: its route policy bypasses REST authentication for
+    those requests. Both that case and REST mode "none" need default transport
+    security. A service-account verifier alone does NOT close the anonymous path
+    (PATs are checked only when presented).
     """
     from agno.os.auth import get_effective_auth_mode
 
     if getattr(os, "mcp_auth", None) is not None:
         return False
+    # Mirror PublicRoutePolicy's mixed-mode anonymous admission. Merely selecting
+    # public MCP does not bypass a security key or JWT configured without
+    # authorization=True; the parent auth middleware still challenges those.
+    public = getattr(os, "public", None)
+    if bool(getattr(os, "authorization", False)) and public is not None and public.mcp:
+        return True
     return (
         get_effective_auth_mode(
             getattr(os, "settings", None),
@@ -2946,14 +2965,16 @@ def get_mcp_server(
     # Outermost: built-in DNS-rebinding protection (runs first, before auth and tools).
     #
     # A configured ``allowed_hosts`` always applies. On top of that, when the server is OPEN
-    # (no JWT and no security key, so /mcp answers anonymous callers) we default to
-    # localhost-only protection even without ``allowed_hosts`` -- this is the one config a
+    # (including public MCP alongside JWT-protected REST) we default to localhost-only
+    # protection even without ``allowed_hosts`` -- these are the configurations a
     # rebound web page could drive, and it restores the safe default fastmcp's own guard gave
     # before we disabled it. Authenticated deployments rely on the bearer token, which a
     # rebinding attacker cannot supply, so protection there stays opt-in: their real hostname
     # is not gated (the 421/400 regression the built-in guard caused) unless they set
     # ``allowed_hosts`` themselves.
     allowed_hosts = mcp_config.allowed_hosts if mcp_config is not None else None
+    if mcp_config is not None and mcp_config.root_host:
+        allowed_hosts = [*(allowed_hosts or []), mcp_config.root_host]
     allowed_origins = mcp_config.allowed_origins if mcp_config is not None else None
     if allowed_hosts is None and _mcp_server_is_open(os):
         allowed_hosts = []

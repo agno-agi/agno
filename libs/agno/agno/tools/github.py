@@ -710,7 +710,7 @@ class GithubTools(Toolkit):
             state (str, optional): State of the PRs to retrieve. Can be 'open', 'closed', or 'all'. Defaults to 'open'.
             sort (str, optional): What to sort results by. Can be 'created', 'updated', 'popularity', 'long-running'. Defaults to 'created'.
             direction (str, optional): The direction of the sort. Can be 'asc' or 'desc'. Defaults to 'desc'.
-            limit (int, optional): The maximum number of pull requests to return. Defaults to 20.
+            limit (int, optional): The maximum number of pull requests to return. Defaults to 50.
 
         Returns:
             A JSON-formatted string containing a list of pull requests.

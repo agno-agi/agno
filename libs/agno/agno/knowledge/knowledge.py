@@ -2,7 +2,9 @@ import asyncio
 import hashlib
 import io
 import json
+import math
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import Enum
 from io import BytesIO
@@ -26,6 +28,7 @@ from agno.knowledge.remote_content.remote_content import (
     RemoteContent,
 )
 from agno.knowledge.remote_knowledge import RemoteKnowledge
+from agno.knowledge.reranker.base import Reranker
 from agno.knowledge.types import ContentType
 from agno.knowledge.utils import get_agno_metadata, merge_user_metadata, set_agno_metadata, strip_agno_metadata
 from agno.utils.http import async_fetch_with_retry
@@ -34,7 +37,17 @@ from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id
 
 ContentDict = Dict[str, Union[str, Dict[str, str]]]
+# PageCoordinator.search rejects a limit outside 1..20.
+_MAX_PAGE_SEARCH_LIMIT = 20
 _DATABASE_UNSET = object()
+
+
+def _validate_full_page_read(max_chars: int, timeout: float) -> None:
+    # PostgreSQL substr accepts a signed 32-bit integer length.
+    if isinstance(max_chars, bool) or not isinstance(max_chars, int) or not 0 <= max_chars <= 2**31 - 1:
+        raise ValueError("max_chars must be an integer between 0 and 2147483647")
+    if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or not math.isfinite(timeout) or timeout <= 0:
+        raise ValueError("timeout must be finite and positive")
 
 
 class KnowledgeContentOrigin(Enum):
@@ -70,6 +83,11 @@ class Knowledge(RemoteKnowledge):
     page_store: Optional[Any] = None
     page_search: Optional[PageSearchConfig] = None
 
+    # Reorders results after the vector db returns them, so a strategy that needs to
+    # compare candidates against each other (diversity, recency) sees a real pool.
+    # Runs after any reranker configured on the vector db itself.
+    reranker: Optional[Reranker] = None
+
     def __init__(
         self,
         *,
@@ -85,6 +103,7 @@ class Knowledge(RemoteKnowledge):
         page_search: Optional[PageSearchConfig] = None,
         max_embedding_retries: int = 0,
         embedding_retry_backoff: float = 1.0,
+        reranker: Optional[Reranker] = None,
         contents_db: Optional[Union[BaseDb, AsyncBaseDb]] = cast(Any, _DATABASE_UNSET),
     ):
         """Configure Knowledge using keyword arguments.
@@ -108,6 +127,14 @@ class Knowledge(RemoteKnowledge):
         self.embedding_retry_backoff = embedding_retry_backoff
         self.page_store = page_store
         self.page_search = page_search
+        self.reranker = reranker
+        if reranker is not None and getattr(vector_db, "reranker", None) is not None:
+            log_warning(
+                "A reranker is set on both Knowledge and the vector db. Only the one on "
+                "Knowledge is applied and the vector db's is ignored: running both would "
+                "rerank a pool that was already reordered. Prefer the one on Knowledge, "
+                "which works with every vector db and can widen the candidate pool."
+            )
         self.__post_init__()
 
     @property
@@ -156,15 +183,85 @@ class Knowledge(RemoteKnowledge):
             for hit in result.results
         ]
 
+    def _page_search_limit(self, max_results: int) -> int:
+        """Widen within the page search ceiling, which rejects a limit above 20.
+
+        The gain is small either way: search_pages drops hits from the tail until the
+        serialized result fits its byte budget, so a page fetch is bounded well before
+        the ceiling.
+        """
+        return min(self._search_limit(max_results), _MAX_PAGE_SEARCH_LIMIT)
+
+    @contextmanager
+    def _vector_db_reranker_suspended(self):
+        """Skip the vector db's own reranker while the one on Knowledge is in charge.
+
+        Knowledge widens the fetch for its reranker, so letting the vector db reorder
+        and trim that pool first would discard the candidates it was widened for.
+        """
+        if self.reranker is None or getattr(self.vector_db, "reranker", None) is None:
+            yield
+            return
+        from agno.vectordb.base import suppress_reranker
+
+        with suppress_reranker():
+            yield
+
+    def _search_limit(self, max_results: int) -> int:
+        """Widen the vector db fetch so the reranker has candidates to choose between."""
+        if self.reranker is None:
+            return max_results
+        # The reranker decides how wide its own pool needs to be.
+        return self.reranker.search_limit(max_results)
+
+    def _rerank_documents(self, query: str, documents: List[Document], max_results: int) -> List[Document]:
+        """Apply the knowledge-level reranker, then trim to the caller's requested count."""
+        if self.reranker is None:
+            # Unchanged from before this hook existed: the adapter already applied the limit.
+            return documents
+        try:
+            kwargs = {"limit": max_results} if self.reranker.accepts_limit() else {}
+            reranked = self.reranker.rerank(query=query, documents=documents, **kwargs)
+        except ValueError:
+            # A misconfigured reranker would otherwise look like it ran and changed nothing.
+            raise
+        except Exception as e:
+            # A reranker failure degrades ordering, not availability: keep the vector db order.
+            log_error(f"Error reranking documents: {str(e)}")
+            return documents[:max_results]
+        return reranked[:max_results]
+
+    async def _arerank_documents(self, query: str, documents: List[Document], max_results: int) -> List[Document]:
+        """Async variant of ``_rerank_documents``."""
+        if self.reranker is None:
+            # See the matching comment in ``_rerank_documents``.
+            return documents
+        try:
+            # arerank always accepts limit; it forwards only to a rerank that takes it.
+            reranked = await self.reranker.arerank(query=query, documents=documents, limit=max_results)
+        except ValueError:
+            # See the matching comment in ``_rerank_documents``.
+            raise
+        except Exception as e:
+            log_error(f"Error reranking documents: {str(e)}")
+            return documents[:max_results]
+        return reranked[:max_results]
+
     def setup(self) -> None:
         """Prepare and validate coordinated page storage before query traffic."""
-        self._pages().setup()
+        pages = self._pages()
+        log_info(f"Preparing knowledge storage: namespace={pages.namespace}")
+        pages.setup()
+        log_info(f"Knowledge storage ready: namespace={pages.namespace}")
 
     async def asetup(self) -> None:
         """Prepare page storage on bounded workers."""
         from agno.knowledge.page._coordinator import SYNC_WORKERS
 
-        await SYNC_WORKERS.run(self._pages().setup, seconds=60)
+        pages = self._pages()
+        log_info(f"Preparing knowledge storage: namespace={pages.namespace}")
+        await SYNC_WORKERS.run(pages.setup, seconds=60)
+        log_info(f"Knowledge storage ready: namespace={pages.namespace}")
 
     def sync_pages(
         self,
@@ -289,6 +386,62 @@ class Knowledge(RemoteKnowledge):
         try:
             return await READ_WORKERS.run(
                 self._pages().read, path, revision=revision, offset=offset, max_chars=max_chars, seconds=2
+            )
+        except (TimeoutError, asyncio.TimeoutError, PoolTimeout, DBAPIError) as exc:
+            raise PageError() from exc
+
+    def read_full_page(
+        self, path: str, *, revision: Optional[str] = None, max_chars: int = 24000, timeout: float = 2.0
+    ) -> Optional[str]:
+        """Read a complete published page within a character and time budget.
+
+        max_chars must be an integer from 0 through 2147483647. Return None
+        if the page exceeds max_chars; zero skips storage entirely.
+        Limits count Unicode code points, not serialized JSON bytes. A single
+        read-only snapshot returns the text without continuation round trips.
+        Pass a search hit's revision to reject a changed publication. Missing,
+        changed and unavailable pages raise PageNotFound, PageChanged and
+        PageError respectively. The timeout covers worker and database work;
+        capacity stays occupied until cleanup finishes after a timeout. Both
+        full-page variants use the shared eight-slot page-read worker pool and
+        raise PageError immediately when all slots are occupied.
+        """
+        from sqlalchemy.exc import DBAPIError
+        from sqlalchemy.exc import TimeoutError as PoolTimeout
+
+        from agno.knowledge.page import PageError
+        from agno.knowledge.page._coordinator import READ_WORKERS
+
+        _validate_full_page_read(max_chars, timeout)
+        if max_chars == 0:
+            return None
+        try:
+            return READ_WORKERS.run_sync(
+                self._pages().read_full, path, revision=revision, max_chars=max_chars, seconds=timeout
+            )
+        except (TimeoutError, asyncio.TimeoutError, PoolTimeout, DBAPIError) as exc:
+            raise PageError() from exc
+
+    async def aread_full_page(
+        self, path: str, *, revision: Optional[str] = None, max_chars: int = 24000, timeout: float = 2.0
+    ) -> Optional[str]:
+        """Async read_full_page with the same size, revision and deadline contract.
+
+        Cancellation propagates and retains worker capacity until cleanup.
+        Applications choose their own overall budget when expanding many pages.
+        """
+        from sqlalchemy.exc import DBAPIError
+        from sqlalchemy.exc import TimeoutError as PoolTimeout
+
+        from agno.knowledge.page import PageError
+        from agno.knowledge.page._coordinator import READ_WORKERS
+
+        _validate_full_page_read(max_chars, timeout)
+        if max_chars == 0:
+            return None
+        try:
+            return await READ_WORKERS.run(
+                self._pages().read_full, path, revision=revision, max_chars=max_chars, seconds=timeout
             )
         except (TimeoutError, asyncio.TimeoutError, PoolTimeout, DBAPIError) as exc:
             raise PageError() from exc
@@ -877,9 +1030,9 @@ class Knowledge(RemoteKnowledge):
         if self.page_store is not None:
             if filters:
                 raise ValueError("Page knowledge does not support filters")
-            return self._page_documents(
-                self.search_pages(query, limit=max_results if max_results is not None else self.max_results)
-            )
+            page_limit = max_results if max_results is not None else self.max_results
+            page_documents = self._page_documents(self.search_pages(query, limit=self._page_search_limit(page_limit)))
+            return self._rerank_documents(query, page_documents, page_limit)
         from agno.vectordb import VectorDb
         from agno.vectordb.search import SearchType
 
@@ -900,12 +1053,14 @@ class Knowledge(RemoteKnowledge):
 
             _max_results = max_results or self.max_results
             log_debug(f"Getting {_max_results} relevant documents for query: {query}")
-            return self.vector_db.search(
-                query=query,
-                limit=_max_results,
-                filters=search_filters,
-                **strict_user_id_kwarg(self.vector_db.search, user_id),
-            )
+            with self._vector_db_reranker_suspended():
+                documents = self.vector_db.search(
+                    query=query,
+                    limit=self._search_limit(_max_results),
+                    filters=search_filters,
+                    **strict_user_id_kwarg(self.vector_db.search, user_id),
+                )
+            return self._rerank_documents(query, documents, _max_results)
         except ValueError:
             # The adapters raise these outside their own catch-alls on purpose.
             raise
@@ -929,9 +1084,11 @@ class Knowledge(RemoteKnowledge):
         if self.page_store is not None:
             if filters:
                 raise ValueError("Page knowledge does not support filters")
-            return self._page_documents(
-                await self.asearch_pages(query, limit=max_results if max_results is not None else self.max_results)
+            page_limit = max_results if max_results is not None else self.max_results
+            page_documents = self._page_documents(
+                await self.asearch_pages(query, limit=self._page_search_limit(page_limit))
             )
+            return await self._arerank_documents(query, page_documents, page_limit)
         from agno.vectordb import VectorDb
         from agno.vectordb.search import SearchType
 
@@ -951,21 +1108,24 @@ class Knowledge(RemoteKnowledge):
 
             _max_results = max_results or self.max_results
             log_debug(f"Getting {_max_results} relevant documents for query: {query}")
-            try:
-                return await self.vector_db.async_search(
-                    query=query,
-                    limit=_max_results,
-                    filters=search_filters,
-                    **strict_user_id_kwarg(self.vector_db.async_search, user_id),
-                )
-            except NotImplementedError:
-                log_info("Vector db does not support async search")
-                return self.vector_db.search(
-                    query=query,
-                    limit=_max_results,
-                    filters=search_filters,
-                    **strict_user_id_kwarg(self.vector_db.search, user_id),
-                )
+            search_limit = self._search_limit(_max_results)
+            with self._vector_db_reranker_suspended():
+                try:
+                    documents = await self.vector_db.async_search(
+                        query=query,
+                        limit=search_limit,
+                        filters=search_filters,
+                        **strict_user_id_kwarg(self.vector_db.async_search, user_id),
+                    )
+                except NotImplementedError:
+                    log_info("Vector db does not support async search")
+                    documents = self.vector_db.search(
+                        query=query,
+                        limit=search_limit,
+                        filters=search_filters,
+                        **strict_user_id_kwarg(self.vector_db.search, user_id),
+                    )
+            return await self._arerank_documents(query, documents, _max_results)
         except ValueError:
             # See the matching comment in ``search``.
             raise

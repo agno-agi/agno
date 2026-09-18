@@ -960,6 +960,19 @@ class PageCoordinator:
                     high = middle - 1
             return result(low)
 
+    def read_full(self, path: str, *, revision: Optional[str], max_chars: int, budget: WorkBudget) -> Optional[str]:
+        with self._snapshot(budget) as conn:
+            # Bound the text in SQL before transferring it. Reading one snapshot
+            # also avoids JSON clipping and continuation reads of the same page.
+            rows = self._rows(conn, prefix=page_path(path), limit=1, exact_path=True, read_range=(0, max_chars))
+            if not rows:
+                raise PageNotFound()
+            page, content = self._checked(rows[0])
+            if revision is not None and revision != page.revision:
+                raise PageChanged(current_revision=page.revision)
+            budget.remaining()
+            return content if rows[0].total_chars <= max_chars else None
+
     def list(
         self, *, prefix: str = "/", cursor: Optional[str] = None, limit: int = 100, budget: Optional[WorkBudget] = None
     ) -> PageList:
