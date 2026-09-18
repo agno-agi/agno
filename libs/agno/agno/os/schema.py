@@ -457,6 +457,45 @@ class UpdateSessionRequest(BaseModel):
     summary: Optional[Dict[str, Any]] = Field(None, description="Session summary")
 
 
+class CreateRunFeedbackRequest(BaseModel):
+    signal: Literal["positive", "negative"] = Field(..., description="Feedback signal for the run")
+    comment: Optional[str] = Field(None, description="Free-text feedback from the user")
+
+
+class RunFeedbackSchema(BaseModel):
+    feedback_id: str = Field(..., description="Unique feedback identifier")
+    signal: str = Field(..., description="Feedback signal (positive or negative)")
+    comment: Optional[str] = Field(None, description="Free-text feedback from the user")
+    learning: Optional[str] = Field(None, description="Lesson distilled from the feedback")
+    context: Optional[str] = Field(None, description="Snippet of the reviewed run this feedback refers to")
+    run_id: Optional[str] = Field(None, description="The run this feedback reviews")
+    session_id: Optional[str] = Field(None, description="Session the reviewed run belongs to")
+    user_id: Optional[str] = Field(None, description="User who gave the feedback")
+    agent_id: Optional[str] = Field(None, description="Agent the feedback is for")
+    team_id: Optional[str] = Field(None, description="Team the feedback is for")
+    workflow_id: Optional[str] = Field(None, description="Workflow the reviewed run belongs to")
+    created_at: Optional[str] = Field(None, description="When the feedback was given")
+    updated_at: Optional[str] = Field(None, description="When the feedback was last changed")
+
+    @classmethod
+    def from_feedback_dict(cls, feedback: Dict[str, Any]) -> "RunFeedbackSchema":
+        return cls(
+            feedback_id=feedback.get("id", ""),
+            signal=feedback.get("signal", ""),
+            comment=feedback.get("comment"),
+            learning=feedback.get("learning"),
+            context=feedback.get("context"),
+            run_id=feedback.get("run_id"),
+            session_id=feedback.get("session_id"),
+            user_id=feedback.get("user_id"),
+            agent_id=feedback.get("agent_id"),
+            team_id=feedback.get("team_id"),
+            workflow_id=feedback.get("workflow_id"),
+            created_at=feedback.get("created_at"),
+            updated_at=feedback.get("updated_at"),
+        )
+
+
 class AgentSessionDetailSchema(BaseModel):
     user_id: Optional[str] = Field(None, description="User ID associated with the session")
     agent_session_id: str = Field(..., description="Unique agent session identifier")
