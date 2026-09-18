@@ -137,6 +137,7 @@ class TeamSession:
         skip_statuses: Optional[List[RunStatus]] = None,
         skip_history_messages: bool = True,
         skip_member_messages: bool = True,
+        exclude_run_ids: Optional[List[str]] = None,
     ) -> List[Message]:
         """Returns the messages belonging to the session that fit the given criteria.
 
@@ -149,6 +150,11 @@ class TeamSession:
             skip_statuses: Skip messages with these statuses.
             skip_history_messages: Skip messages that were tagged as history in previous runs.
             skip_member_messages: Skip messages created by members of the team.
+            exclude_run_ids: Run ids to exclude outright, regardless of their persisted status. A run being
+                continued in the background is persisted as RUNNING for visibility before its own messages
+                are rebuilt for the model call — by that point it no longer matches `skip_statuses` (which
+                only excludes PAUSED/CANCELLED/ERROR/REGENERATED), so without this it re-enters its own
+                history as a phantom duplicate of the turn already supplied via the caller's own input.
 
         Returns:
             A list of Messages belonging to the session.
@@ -209,6 +215,10 @@ class TeamSession:
 
         # Filter by status
         session_runs = [run for run in session_runs if hasattr(run, "status") and run.status not in skip_statuses]  # type: ignore
+
+        # Exclude specific runs outright (e.g. the run currently being continued)
+        if exclude_run_ids:
+            session_runs = [run for run in session_runs if run.run_id not in exclude_run_ids]  # type: ignore
 
         # Filter by last_n_runs before applying message limit
         if last_n_runs is not None:
