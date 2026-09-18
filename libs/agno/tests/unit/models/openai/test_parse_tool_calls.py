@@ -12,7 +12,7 @@ class _FakeChoiceDeltaToolCallFunction:
 class _FakeChoiceDeltaToolCall:
     def __init__(
         self,
-        index: int,
+        index: Optional[int],
         tool_id: Optional[str] = None,
         tool_type: Optional[str] = None,
         func_name: Optional[str] = None,
@@ -69,6 +69,98 @@ def test_parse_tool_calls_multiple_tools_independent():
     assert result[0]["function"]["name"] == "tool_a"
     assert result[1]["function"]["name"] == "tool_b"
     assert result[0] is not result[1]
+
+
+# ---------------------------------------------------------------------------
+# Unreliable delta routing (OpenAI-compatible providers, e.g. deepseek behind
+# OpenAI-compatible endpoints): colliding/missing `index` values used to merge
+# the arguments of different tool calls into one entry -> invalid JSON -> the
+# provider rejects the follow-up request with 400 "invalid tool call arguments".
+# ---------------------------------------------------------------------------
+
+
+def test_parse_tool_calls_id_collision_appends_instead_of_merging():
+    """Replay of a live capture: the head of the SECOND call arrives with index 0
+    (colliding with the first call) and its argument tail with index 1. The old
+    index-only routing produced entry0 = first_args + second_head (concatenated,
+    invalid JSON) and entry1 = orphan tail."""
+    import json
+
+    deltas = [
+        _FakeChoiceDeltaToolCall(
+            index=0, tool_id="call_kpi", tool_type="function", func_name="add_kpi", func_args='{"label":"Revenue"}'
+        ),
+        _FakeChoiceDeltaToolCall(
+            index=0, tool_id="call_chart", tool_type="function", func_name="add_chart", func_args='{"type":"bar","'
+        ),
+        _FakeChoiceDeltaToolCall(index=1, func_args='series":"2022=1; 2023=2"}'),
+    ]
+    result = OpenAIChat.parse_tool_calls(deltas)
+
+    assert len(result) == 2
+    assert result[0]["function"]["name"] == "add_kpi"
+    assert result[1]["function"]["name"] == "add_chart"
+    # both entries must hold valid, self-contained JSON arguments
+    assert json.loads(result[0]["function"]["arguments"]) == {"label": "Revenue"}
+    assert json.loads(result[1]["function"]["arguments"]) == {"type": "bar", "series": "2022=1; 2023=2"}
+
+
+def test_parse_tool_calls_known_id_wins_over_wrong_index():
+    """A delta carrying an already-seen id belongs to that call even if its index points elsewhere."""
+    deltas = [
+        _FakeChoiceDeltaToolCall(index=0, tool_id="call_a", tool_type="function", func_name="tool_a", func_args='{"x"'),
+        _FakeChoiceDeltaToolCall(index=1, tool_id="call_b", tool_type="function", func_name="tool_b", func_args="{}"),
+        _FakeChoiceDeltaToolCall(index=1, tool_id="call_a", func_args=":1}"),  # wrong index, known id
+    ]
+    result = OpenAIChat.parse_tool_calls(deltas)
+
+    assert result[0]["function"]["arguments"] == '{"x":1}'
+    assert result[1]["function"]["arguments"] == "{}"
+
+
+def test_parse_tool_calls_missing_index_two_calls_not_merged():
+    """Providers that omit `index`: `index or 0` used to collapse every call onto entry 0."""
+    deltas = [
+        _FakeChoiceDeltaToolCall(
+            index=None, tool_id="call_a", tool_type="function", func_name="tool_a", func_args="{}"
+        ),
+        _FakeChoiceDeltaToolCall(
+            index=None, tool_id="call_b", tool_type="function", func_name="tool_b", func_args="{}"
+        ),
+    ]
+    result = OpenAIChat.parse_tool_calls(deltas)
+
+    assert len(result) == 2
+    assert [entry["function"]["name"] for entry in result] == ["tool_a", "tool_b"]
+
+
+def test_parse_tool_calls_missing_index_fragment_follows_current_call():
+    """A fragment without id nor index belongs to the call currently being streamed."""
+    deltas = [
+        _FakeChoiceDeltaToolCall(
+            index=None, tool_id="call_a", tool_type="function", func_name="tool_a", func_args='{"x"'
+        ),
+        _FakeChoiceDeltaToolCall(index=None, func_args=":1}"),
+    ]
+    result = OpenAIChat.parse_tool_calls(deltas)
+
+    assert len(result) == 1
+    assert result[0]["function"]["arguments"] == '{"x":1}'
+
+
+def test_parse_tool_calls_spec_compliant_fragmenting_unchanged():
+    """OpenAI-spec streams (id on the head, index-only fragments) keep working as before."""
+    deltas = [
+        _FakeChoiceDeltaToolCall(index=0, tool_id="call_a", tool_type="function", func_name="tool_a", func_args='{"x"'),
+        _FakeChoiceDeltaToolCall(index=0, func_args=":1}"),
+        _FakeChoiceDeltaToolCall(index=1, tool_id="call_b", tool_type="function", func_name="tool_b", func_args='{"y"'),
+        _FakeChoiceDeltaToolCall(index=1, func_args=":2}"),
+    ]
+    result = OpenAIChat.parse_tool_calls(deltas)
+
+    assert len(result) == 2
+    assert result[0]["function"]["arguments"] == '{"x":1}'
+    assert result[1]["function"]["arguments"] == '{"y":2}'
 
 
 # ---------------------------------------------------------------------------
