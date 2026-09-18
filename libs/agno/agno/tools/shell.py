@@ -62,7 +62,9 @@ class ShellTools(Toolkit):
             log_debug(f"Return code: {result.returncode}")
             if result.returncode != 0:
                 return f"Error: {result.stderr}"
-            return "\n".join(result.stdout.split("\n")[-tail:])
+            # Keep the command's line endings while avoiding the synthetic empty
+            # element produced by split("\n") for normal newline-terminated output.
+            return "".join(result.stdout.splitlines(keepends=True)[-tail:])
         except Exception as e:
             log_warning(f"Failed to run shell command: {str(e)}")
             return f"Error: {e}"
