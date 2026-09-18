@@ -26,6 +26,7 @@ from agno.os.schema import (
     PaginatedResponse,
     PaginationInfo,
     RunSchema,
+    SessionRunSummarySchema,
     SessionSchema,
     SortOrder,
     TeamRunSchema,
@@ -563,14 +564,16 @@ def attach_routes(
 
     @router.get(
         "/sessions/{session_id}/runs",
-        response_model=List[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]],
+        response_model=List[Union[RunSchema, TeamRunSchema, WorkflowRunSchema, SessionRunSummarySchema]],
         status_code=200,
         operation_id="get_session_runs",
         summary="Get Session Runs",
         description=(
-            "Retrieve all runs (executions) for a specific session with optional timestamp filtering. "
-            "Runs represent individual interactions or executions within a session. "
-            "Response schema varies based on session type."
+            "Retrieve all runs (executions) for a specific session with optional timestamp and "
+            "status filtering. Repeat the status param to match any of several (case-insensitive; "
+            "e.g. status=PENDING&status=RUNNING&status=PAUSED is the live set a queue tray shows). "
+            "summary=true returns lightweight entries (ids, status, timestamps, truncated previews) "
+            "instead of full runs. Response schema varies based on session type."
         ),
         response_model_exclude_none=True,
         responses={
@@ -695,15 +698,37 @@ def attach_routes(
             default=None,
             description="Filter runs created before this Unix timestamp (epoch time in seconds)",
         ),
+        status: Optional[List[str]] = Query(
+            default=None,
+            description="Status filter; repeatable to match any of several, case-insensitive "
+            "(PENDING, RUNNING, PAUSED, COMPLETED, CANCELLED, ERROR)",
+        ),
+        summary: bool = Query(
+            default=False,
+            description="Return lightweight run summaries instead of full runs (messages, events, "
+            "media and metrics omitted; previews truncated)",
+        ),
         db_id: Optional[str] = Query(default=None, description="Database ID to query runs from"),
         table: Optional[str] = Query(default=None, description="Table to query runs from"),
-    ) -> List[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]]:
+    ) -> List[Union[RunSchema, TeamRunSchema, WorkflowRunSchema, SessionRunSummarySchema]]:
+        from agno.run.base import RunStatus
+
+        wanted_statuses = None
+        if status:
+            valid = {member.value for member in RunStatus}
+            wanted_statuses = {value.upper() for value in status}
+            unknown = sorted(wanted_statuses - valid)
+            if unknown:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Invalid status value(s) {unknown}; expected one of {sorted(valid)}",
+                )
         db, effective_user_id = await resolve_db_and_scope(request, dbs, db_id, table, fallback_user_id=user_id)
 
         if isinstance(db, RemoteDb):
             auth_token = get_auth_token_from_request(request)
             headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
-            return await db.get_session_runs(
+            runs = await db.get_session_runs(
                 session_id=session_id,
                 session_type=session_type,
                 user_id=effective_user_id,
@@ -713,21 +738,31 @@ def attach_routes(
                 table=table,
                 headers=headers,
             )
+        else:
+            # Shared with the MCP get_session_runs tool: auto-detection, timestamp
+            # filtering, per-run classification, and sync-db threadpool offload all
+            # live in the service so the two surfaces cannot drift.
+            try:
+                runs = await get_session_runs_from_service(
+                    db,
+                    session_id=session_id,
+                    session_type=session_type,
+                    user_id=effective_user_id,
+                    created_after=created_after,
+                    created_before=created_before,
+                )
+            except SessionNotFoundError:
+                raise HTTPException(status_code=404, detail=f"Session with ID {session_id} not found")
 
-        # Shared with the MCP get_session_runs tool: auto-detection, timestamp
-        # filtering, per-run classification, and sync-db threadpool offload all
-        # live in the service so the two surfaces cannot drift.
-        try:
-            return await get_session_runs_from_service(
-                db,
-                session_id=session_id,
-                session_type=session_type,
-                user_id=effective_user_id,
-                created_after=created_after,
-                created_before=created_before,
-            )
-        except SessionNotFoundError:
-            raise HTTPException(status_code=404, detail=f"Session with ID {session_id} not found")
+        # Status filter and summary projection run AFTER the fetch, identically
+        # for both sources: a RemoteDb cannot be assumed to understand the new
+        # params, and a session's run list is bounded - one implementation for
+        # both branches beats a pushed-down filter that only one of them has.
+        if wanted_statuses is not None:
+            runs = [r for r in runs if (getattr(r, "status", None) or "").upper() in wanted_statuses]
+        if summary:
+            return [SessionRunSummarySchema.from_run(r) for r in runs]
+        return cast(List[Union[RunSchema, TeamRunSchema, WorkflowRunSchema, SessionRunSummarySchema]], runs)
 
     @router.get(
         "/sessions/{session_id}/runs/{run_id}",
