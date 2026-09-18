@@ -2729,37 +2729,45 @@ class RedisDb(BaseDb):
         terminalizing between the read and the add, which resurrects a dead
         member; that is inert (_q_session_line_view skips members whose
         document is terminal or missing) and retention cleanup removes it."""
-        page_size = 256
-        offset = 0
+        # The member ids are snapshotted up front, then the documents are
+        # read in batches. Rank-offset paging over `all` was unsafe because
+        # retention cleanup mutates it concurrently: removing an already-read
+        # member shifts every later rank and an unseen one slides into the
+        # consumed window. A snapshot cannot skip: a member reaped after it
+        # has no document and is passed over, which is right (it was
+        # terminal), and a job enqueued after it joins its line through the
+        # enqueue itself. Ids only, bounded by retention, once per process.
+        batch_size = 256
         restored = 0
-        while True:
-            raw_ids = list(self.redis_client.zrange(self._q_key("all"), offset, offset + page_size - 1))  # type: ignore[arg-type]
-            if not raw_ids:
-                break
-            job_ids = [_q_to_str(raw_id) for raw_id in raw_ids]
-            raw_docs = list(self.redis_client.mget([self._q_job_key(job_id) for job_id in job_ids]))  # type: ignore[arg-type]
-            pipe = self.redis_client.pipeline(transaction=False)
-            pending = 0
-            for job_id, raw in zip(job_ids, raw_docs):
-                if raw is None:
-                    continue
-                try:
-                    doc = json.loads(raw if isinstance(raw, str) else raw.decode())
-                except (ValueError, AttributeError):
-                    continue
-                if doc.get("status") not in ("queued", "running", "paused"):
-                    continue
-                session_id = doc.get("session_id")
-                if not session_id:
-                    continue
-                pipe.zadd(self._q_line_key(session_id), {job_id: doc.get("created_at") or 0})
-                pending += 1
-            if pending:
-                pipe.execute()
-                restored += pending
-            offset += page_size
+        job_ids = [_q_to_str(member) for member in self.redis_client.zrange(self._q_key("all"), 0, -1)]  # type: ignore[union-attr]
+        for start in range(0, len(job_ids), batch_size):
+            restored += self._q_index_lines_for(job_ids[start : start + batch_size])
         if restored:
             log_info(f"Job queue: indexed {restored} existing job(s) into their session lines (per-session queueing)")
+
+    def _q_index_lines_for(self, job_ids: List[str]) -> int:
+        """Add each live (queued/running/paused) job in job_ids to its session
+        line; returns how many were added. One MGET and one pipelined write."""
+        raw_docs = list(self.redis_client.mget([self._q_job_key(job_id) for job_id in job_ids]))  # type: ignore[arg-type]
+        pipe = self.redis_client.pipeline(transaction=False)
+        pending = 0
+        for job_id, raw in zip(job_ids, raw_docs):
+            if raw is None:
+                continue
+            try:
+                doc = json.loads(raw if isinstance(raw, str) else raw.decode())
+            except (ValueError, AttributeError):
+                continue
+            if doc.get("status") not in ("queued", "running", "paused"):
+                continue
+            session_id = doc.get("session_id")
+            if not session_id:
+                continue
+            pipe.zadd(self._q_line_key(session_id), {job_id: doc.get("created_at") or 0})
+            pending += 1
+        if pending:
+            pipe.execute()
+        return pending
 
     def _q_session_line_view(self, session_id: str) -> List[Tuple[int, int, str, str]]:
         """(seq, created_at, id, status) of the session line's LIVE members,

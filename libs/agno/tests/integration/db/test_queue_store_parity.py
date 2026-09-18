@@ -1266,3 +1266,70 @@ class TestRedisSequencePublication:
         finally:
             self._cleanup(prefix)
 
+
+@pytest.mark.skipif(not _REDIS_AVAILABLE, reason="Redis not available on localhost:6379")
+class TestRedisBackfillPagination:
+    """The one-time line backfill walks the `all` index, which retention
+    cleanup mutates concurrently. Paging by rank with an advancing offset
+    skips an unseen member whenever an already-read member is removed
+    ahead of it, and a skipped paused job never self-heals. Snapshotting the
+    member ids before reading any document cannot skip one."""
+
+    @staticmethod
+    def _db(prefix: str):
+        from redis import Redis
+
+        from agno.db.redis import RedisDb
+
+        return RedisDb(redis_client=Redis.from_url(REDIS_URL), db_prefix=prefix)
+
+    @staticmethod
+    def _cleanup(prefix: str) -> None:
+        from redis import Redis
+
+        client = Redis.from_url(REDIS_URL)
+        for key in client.scan_iter(f"{prefix}:*"):
+            client.delete(key)
+        client.close()
+
+    def test_backfill_survives_a_concurrent_retention_removal(self):
+        prefix = f"parity_bfscan_{uuid.uuid4().hex[:6]}"
+        try:
+            db = self._db(prefix)
+            total = 300  # more than one page of the backfill
+            for i in range(total):
+                db.enqueue_job(make_job(f"r{i:04d}", session_id=f"s{i % 7}", created_at=1000 + i))
+            for key in list(db.redis_client.scan_iter(f"{prefix}:jobs:line:*")):
+                db.redis_client.delete(key)  # pre-index shape
+
+            replica = self._db(prefix)
+            real_mget = replica.redis_client.mget
+            removed: list = []
+
+            def mget(keys, *args, **kwargs):
+                docs = real_mget(keys, *args, **kwargs)
+                if not removed:
+                    # Retention cleanup reaps a member this pass has already
+                    # read, shifting every later rank by one
+                    first_key = keys[0].decode() if isinstance(keys[0], bytes) else keys[0]
+                    job_id = first_key.rsplit(":", 1)[1]
+                    replica.redis_client.zrem(f"{prefix}:jobs:all", job_id)
+                    replica.redis_client.delete(first_key)
+                    removed.append(job_id)
+                return docs
+
+            replica.redis_client.mget = mget
+            replica.claim_job("w1", queue_per_session=True)  # first gated claim runs the backfill
+
+            missing = []
+            for i in range(total):
+                job_id = f"r{i:04d}"
+                if job_id in removed:
+                    continue
+                members = replica.redis_client.zrange(f"{prefix}:jobs:line:s{i % 7}", 0, -1)
+                members = {m.decode() if isinstance(m, bytes) else m for m in members}
+                if job_id not in members:
+                    missing.append(job_id)
+            assert not missing, f"jobs skipped by the backfill: {missing}"
+        finally:
+            self._cleanup(prefix)
