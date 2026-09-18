@@ -367,13 +367,10 @@ class OpenAIResponses(Model):
                 request_params["store"] = False
 
                 # Add encrypted reasoning content to include if not already present
-                include_list = request_params.get("include", []) or []
+                include_list = list(request_params.get("include") or [])
                 if "reasoning.encrypted_content" not in include_list:
                     include_list.append("reasoning.encrypted_content")
-                    if request_params.get("include") is None:
-                        request_params["include"] = include_list
-                    elif isinstance(request_params["include"], list):
-                        request_params["include"].extend(include_list)
+                request_params["include"] = include_list
 
             else:
                 request_params["store"] = True
