@@ -66,3 +66,48 @@ def test_query_csv_file_path_injection_is_neutralized(tmp_path):
 
     # The path is bound as a parameter, so the injected statement never runs
     assert connection.execute("SELECT COUNT(*) FROM inventory").fetchone()[0] == 1
+
+
+@pytest.mark.parametrize(
+    ("query", "expected"),
+    [
+        ("SELECT note FROM notes WHERE note = 'alpha;beta'", "note\nalpha;beta"),
+        ("SELECT note AS \"note;label\" FROM notes WHERE note = 'ordinary'", "note;label\nordinary"),
+        ("SELECT note FROM notes WHERE note = $$alpha;beta$$", "note\nalpha;beta"),
+        ("SELECT note FROM notes /* note; filter */ WHERE note = 'ordinary'", "note\nordinary"),
+        ("SELECT note FROM notes -- note; filter\nWHERE note = 'ordinary'", "note\nordinary"),
+    ],
+    ids=["string-literal", "quoted-identifier", "dollar-quoted-string", "block-comment", "line-comment"],
+)
+def test_query_csv_file_preserves_embedded_semicolons(tmp_path, query, expected):
+    pytest.importorskip("duckdb")
+    csv_path = tmp_path / "notes.csv"
+    csv_path.write_text("note\nalpha;beta\nordinary\n", encoding="utf-8")
+    tools = CsvTools(csvs=[csv_path])
+
+    assert tools.query_csv_file("notes", query) == expected
+
+
+@pytest.mark.parametrize("value", ["ordinary", "alpha;beta"])
+def test_query_csv_file_only_executes_first_statement(tmp_path, value):
+    duckdb = pytest.importorskip("duckdb")
+    csv_path = tmp_path / "notes.csv"
+    csv_path.write_text("note\nalpha;beta\nordinary\n", encoding="utf-8")
+    with duckdb.connect() as connection:
+        connection.execute("CREATE TABLE inventory AS SELECT 1 AS id")
+        tools = CsvTools(csvs=[csv_path], duckdb_connection=connection)
+
+        result = tools.query_csv_file("notes", f"SELECT note FROM notes WHERE note = '{value}'; DELETE FROM inventory")
+
+        assert result == f"note\n{value}"
+        assert connection.execute("SELECT COUNT(*) FROM inventory").fetchone()[0] == 1
+
+
+@pytest.mark.parametrize("query", ["", "   ", "-- no query"])
+def test_query_csv_file_without_statements_returns_no_output(tmp_path, query):
+    pytest.importorskip("duckdb")
+    csv_path = tmp_path / "notes.csv"
+    csv_path.write_text("note\nordinary\n", encoding="utf-8")
+    tools = CsvTools(csvs=[csv_path])
+
+    assert tools.query_csv_file("notes", query) == "No output"
