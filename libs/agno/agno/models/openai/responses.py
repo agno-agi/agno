@@ -107,7 +107,9 @@ class OpenAIResponses(Model):
 
     def _set_reasoning_request_param(self, base_params: Dict[str, Any]) -> Dict[str, Any]:
         """Set the reasoning request parameter."""
-        base_params["reasoning"] = self.reasoning or {}
+        # A copy: the writes below are derived from this request, and landing them in
+        # `self.reasoning` would make them permanent state and mutate the caller's own dict.
+        base_params["reasoning"] = dict(self.reasoning or {})
 
         if self.reasoning_effort is not None:
             base_params["reasoning"]["effort"] = self.reasoning_effort
