@@ -1983,7 +1983,9 @@ class StudioRunnerTools(Toolkit):
     ) -> Optional["Agent"]:
         """Load an agent from DB via config + from_dict.
 
-        Registry-backed references resolve at their current published version."""
+        Registry-backed references resolve at their current published version;
+        Prompt-bound fields resolve against the catalog at the versions this
+        config's links pin."""
         from agno.db.base import ComponentType
 
         loaded = self._load_config_row_from_db(
@@ -1995,8 +1997,9 @@ class StudioRunnerTools(Toolkit):
         self._require_registry_for("agent", agent_id, config, version=resolved_version)
         from agno.agent.agent import Agent
 
+        links = self._load_links_from_db(agent_id, version=resolved_version)
         try:
-            agent = Agent.from_dict(config, registry=self.registry, strict=for_dispatch)
+            agent = Agent.from_dict(config, db=self.db, registry=self.registry, links=links, strict=for_dispatch)
             agent.id = agent_id
             # The catalog db is a fallback only: a config-declared db (resolved
             # by from_dict, possibly with table overrides) must keep winning.
@@ -2019,7 +2022,7 @@ class StudioRunnerTools(Toolkit):
                 config,
                 "agent",
                 agent_id,
-                lambda: Agent.from_dict(config, registry=self.registry, strict=False),
+                lambda: Agent.from_dict(config, db=self.db, registry=self.registry, links=links, strict=False),
                 version=resolved_version,
             ) from rehydration_error
         except Exception:

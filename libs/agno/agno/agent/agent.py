@@ -41,6 +41,7 @@ from agno.knowledge.protocol import KnowledgeProtocol
 
 if TYPE_CHECKING:
     from agno.learn.machine import LearningMachine
+    from agno.prompt.prompt import Prompt, PromptHandle
     from agno.tools.component import ComponentTool
 
 from agno.media import Audio, File, Image, Video
@@ -50,6 +51,7 @@ from agno.metrics import SessionMetrics
 from agno.models.base import Model
 from agno.models.fallback import FallbackConfig
 from agno.models.message import Message
+from agno.prompt.prompt import bind_prompt_field
 
 if TYPE_CHECKING:
     from agno.offload.store import ResultStore
@@ -236,7 +238,7 @@ class Agent:
 
     # --- System message settings ---
     # Provide the system message as a string or function
-    system_message: Optional[Union[str, Callable, Message]] = None
+    system_message: Optional[Union[str, Callable, Message, Prompt]] = None
     # Role for the system message
     system_message_role: str = "system"
     # Provide the introduction as the first message from the Agent
@@ -248,7 +250,7 @@ class Agent:
     # A description of the Agent that is added to the start of the system message.
     description: Optional[str] = None
     # List of instructions for the agent.
-    instructions: Optional[Union[str, List[str], Callable]] = None
+    instructions: Optional[Union[str, List[str], Callable, Prompt]] = None
     # If True, wrap instructions in <instructions> tags. Default is False.
     use_instruction_tags: bool = False
     # Provide the expected output from the Agent.
@@ -447,12 +449,12 @@ class Agent:
         update_knowledge: bool = False,
         read_tool_call_history: bool = False,
         send_media_to_model: bool = True,
-        system_message: Optional[Union[str, Callable, Message]] = None,
+        system_message: Optional[Union[str, Callable, Message, Prompt]] = None,
         system_message_role: str = "system",
         introduction: Optional[str] = None,
         build_context: bool = True,
         description: Optional[str] = None,
-        instructions: Optional[Union[str, List[str], Callable]] = None,
+        instructions: Optional[Union[str, List[str], Callable, Prompt]] = None,
         use_instruction_tags: bool = False,
         expected_output: Optional[str] = None,
         additional_context: Optional[str] = None,
@@ -617,11 +619,13 @@ class Agent:
         self.update_knowledge = update_knowledge
         self.read_tool_call_history = read_tool_call_history
         self.send_media_to_model = send_media_to_model
-        self.system_message = system_message
+        # A Prompt on either field is copied into a retained handle; the field keeps plain text.
+        self._prompt_handles: Dict[str, PromptHandle] = {}
+        self.system_message = bind_prompt_field(self, "system_message", system_message)
         self.system_message_role = system_message_role
         self.build_context = build_context
         self.description = description
-        self.instructions = instructions
+        self.instructions = bind_prompt_field(self, "instructions", instructions)
         self.use_instruction_tags = use_instruction_tags
         self.expected_output = expected_output
         self.additional_context = additional_context
@@ -997,8 +1001,18 @@ class Agent:
         return _storage.to_dict(self)
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any], registry: Optional[Registry] = None, strict: bool = False) -> "Agent":
-        return _storage.from_dict(cls, data=data, registry=registry, strict=strict)
+    def from_dict(
+        cls,
+        data: Dict[str, Any],
+        registry: Optional[Registry] = None,
+        strict: bool = False,
+        db: Optional[BaseDb] = None,
+        links: Optional[List[Dict[str, Any]]] = None,
+        resolve_prompts: bool = True,
+    ) -> "Agent":
+        return _storage.from_dict(
+            cls, data=data, registry=registry, strict=strict, db=db, links=links, resolve_prompts=resolve_prompts
+        )
 
     def save(
         self,
@@ -1800,6 +1814,7 @@ def get_agent_by_id(
     user_id: Optional[str] = None,
     strict: bool = False,
     published_only: bool = True,
+    resolve_prompts: bool = True,
 ) -> Optional["Agent"]:
     """
     Get an Agent by id from the database (new entities/configs schema).
@@ -1816,6 +1831,8 @@ def get_agent_by_id(
         user_id: If set, only resolve the agent when owned by this user, unowned (shared), or published.
         strict: If True, unresolvable registry references raise
             ComponentRehydrationError; None strictly means the agent was not found.
+        resolve_prompts: Resolve Prompt-bound fields; listings pass False to
+            keep a degraded agent visible and unresolved.
 
     Returns:
         Agent instance or None.
@@ -1850,7 +1867,15 @@ def get_agent_by_id(
         if cfg is None:
             raise ValueError(f"Invalid config found for agent {id}")
 
-        agent = Agent.from_dict(cfg, registry=registry, strict=strict)
+        # Prompt links of this exact version drive Prompt resolution.
+        resolved_version = row.get("version")
+        try:
+            links = db.get_links(component_id=id, version=resolved_version) if isinstance(resolved_version, int) else []
+        except NotImplementedError:
+            links = []
+        agent = Agent.from_dict(
+            cfg, registry=registry, strict=strict, db=db, links=links, resolve_prompts=resolve_prompts
+        )
         agent.id = id
         # Only fall back to the caller-provided db if the config didn't
         # reconstruct one, matching Agent.load.
@@ -1946,8 +1971,27 @@ def get_agents(
                         if "id" not in agent_config:
                             agent_config["id"] = component_id
                         # Lenient on purpose: listings must show degraded
-                        # components so they stay visible and fixable.
-                        agent = Agent.from_dict(agent_config, registry=registry, strict=False)
+                        # components so they stay visible and fixable. Prompt
+                        # links carry the stored selector and fallback, and the
+                        # fields stay unresolved so a Prompt that no longer
+                        # resolves cannot drop the agent here; the run guard
+                        # refuses to run it.
+                        config_version = config.get("version")
+                        try:
+                            prompt_links = [
+                                link
+                                for link in (
+                                    (db.get_links(component_id=component_id, version=config_version) or [])
+                                    if isinstance(config_version, int)
+                                    else []
+                                )
+                                if link.get("link_kind") == "prompt"
+                            ]
+                        except NotImplementedError:
+                            prompt_links = []
+                        agent = Agent.from_dict(
+                            agent_config, registry=registry, strict=False, links=prompt_links, resolve_prompts=False
+                        )
                         agent.id = component_id
                         agent._version = component.get("current_version")
                         agent._stage = config.get("stage")

@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from agno.agent.agent import Agent
 
 from agno.filters import FilterExpr
+from agno.prompt.prompt import copy_prompt_handles
 from agno.utils.log import log_debug, log_error, log_warning
 
 
@@ -167,6 +168,7 @@ def deep_copy(agent: Agent, *, update: Optional[Dict[str, Any]] = None) -> Agent
     # Create a new Agent
     try:
         new_agent = agent.__class__(**fields_for_new_agent)
+        copy_prompt_handles(agent, new_agent, overridden=update or {})
         log_debug(f"Created new {agent.__class__.__name__}")
         return new_agent
     except Exception as e:

@@ -123,6 +123,24 @@ class TestListComponents:
         call_args = mock_db.list_components.call_args
         assert call_args.kwargs["component_type"] == ComponentType.AGENT
 
+    def test_list_components_prompt_filter_excludes_no_registry_ids(self, mock_db, settings):
+        """The registry holds no Prompts; a code-defined agent's id must not hide a stored Prompt."""
+        from agno.agent import Agent
+        from agno.registry import Registry
+
+        mock_db.list_components.return_value = ([], 0)
+        app = FastAPI()
+        app.include_router(
+            get_components_router(
+                os_db=mock_db, settings=settings, registry=Registry(agents=[Agent(id="support", name="Support")])
+            )
+        )
+
+        response = TestClient(app).get("/components?component_type=prompt")
+
+        assert response.status_code == 200
+        assert mock_db.list_components.call_args.kwargs["exclude_component_ids"] is None
+
     def test_list_components_with_pagination(self, client, mock_db):
         """Test list_components with pagination parameters."""
         mock_db.list_components.return_value = ([], 100)
@@ -1651,3 +1669,116 @@ class TestScopedWriteThreading:
         assert client.patch("/components/agent-1", json={"current_version": 1}).status_code == 200
         assert mock_db.set_current_version.call_args.kwargs["user_id"] == "user-x"
         assert mock_db.upsert_component.call_args.kwargs["user_id"] == "user-x"
+
+
+class TestPromptReferencePinThroughConfigRoutes:
+    """A config version created through the route keeps an omitted Prompt selector pinned.
+
+    The route derives member and step links only, so the saved reference has
+    to carry the pin on its own."""
+
+    @pytest.fixture
+    def real_db(self, tmp_path):
+        from agno.db.sqlite import SqliteDb
+
+        return SqliteDb(id="prompt-pin-db", db_file=str(tmp_path / "prompt-pin.db"))
+
+    @pytest.fixture
+    def real_client(self, real_db, settings):
+        app = FastAPI()
+        app.include_router(get_components_router(os_db=real_db, settings=settings))
+        return TestClient(app)
+
+    def test_create_config_keeps_the_omitted_selector_pinned(self, real_client, real_db):
+        from agno.agent.agent import Agent
+        from agno.prompt import Prompt
+
+        Prompt(id="support", content="one").save(db=real_db)
+        Agent(id="prompted", name="Prompted", instructions=Prompt(id="support")).save(db=real_db)
+        stored = real_db.get_config("prompted", version=1)["config"]
+
+        response = real_client.post(
+            "/components/prompted/configs", json={"config": {**stored, "name": "Renamed"}, "stage": "published"}
+        )
+
+        assert response.status_code == 201, response.text
+        assert response.json()["version"] == 2
+        assert real_db.get_config("prompted", version=2)["config"]["instructions"] == {
+            "prompt_id": "support",
+            "version": 1,
+        }
+        Prompt(id="support", content="two").save(db=real_db)
+        assert Agent.load("prompted", db=real_db, strict=True).instructions == "one"
+
+    def test_update_config_keeps_the_omitted_selector_pinned(self, real_client, real_db):
+        from agno.agent.agent import Agent
+        from agno.prompt import Prompt
+
+        Prompt(id="support", content="one").save(db=real_db)
+        Prompt(id="sm", content="Old text.").save(db=real_db)
+        Agent(
+            id="prompted",
+            name="Prompted",
+            instructions=Prompt(id="support"),
+            system_message=Prompt(id="sm", version="latest"),
+        ).save(db=real_db)
+        stored = real_db.get_config("prompted", version=1)["config"]
+        draft = real_client.post("/components/prompted/configs", json={"config": stored})
+        assert draft.status_code == 201, draft.text
+        assert draft.json()["version"] == 2
+
+        edited = real_client.patch("/components/prompted/configs/2", json={"config": {**stored, "name": "Renamed"}})
+        assert edited.status_code == 200, edited.text
+        published = real_client.patch("/components/prompted/configs/2", json={"stage": "published"})
+        assert published.status_code == 200, published.text
+
+        config = real_db.get_config("prompted", version=2)["config"]
+        assert config["name"] == "Renamed"
+        assert config["instructions"] == {"prompt_id": "support", "version": 1}
+        assert config["system_message"] == {"prompt_id": "sm", "version": "latest"}
+        # The route derives the prompt rows from the references; both carry the same selector.
+        assert [(link["link_key"], link["child_version"]) for link in real_db.get_links("prompted", version=2)] == [
+            ("system_message", None),
+            ("instructions", 1),
+        ]
+        assert real_db.get_component("prompted")["current_version"] == 2
+        Prompt(id="support", content="two").save(db=real_db)
+        Prompt(id="sm", content="New text.").save(db=real_db)
+        loaded = Agent.load("prompted", db=real_db, strict=True)
+        assert loaded.instructions == "one"
+        assert loaded.system_message == "New text."
+
+    def test_update_config_keeps_team_member_links_and_prompt_references(self, real_client, real_db):
+        from agno.agent.agent import Agent
+        from agno.prompt import Prompt
+        from agno.team.team import Team
+
+        Prompt(id="support", content="one").save(db=real_db)
+        member = Agent(id="member", name="Member", instructions="Help the team.")
+        Team(id="prompted-team", name="Prompted Team", members=[member], instructions=Prompt(id="support")).save(
+            db=real_db
+        )
+        stored = real_db.get_config("prompted-team", version=1)["config"]
+        draft = real_client.post("/components/prompted-team/configs", json={"config": stored})
+        assert draft.status_code == 201, draft.text
+
+        edited = real_client.patch(
+            "/components/prompted-team/configs/2", json={"config": {**stored, "name": "Renamed"}}
+        )
+        assert edited.status_code == 200, edited.text
+        published = real_client.patch("/components/prompted-team/configs/2", json={"stage": "published"})
+        assert published.status_code == 200, published.text
+
+        links = real_db.get_links("prompted-team", version=2)
+        assert [
+            (link["link_kind"], link["link_key"], link["child_component_id"], link["child_version"]) for link in links
+        ] == [("member", "member_0", "member", 1), ("prompt", "instructions", "support", 1)]
+        assert real_db.get_config("prompted-team", version=2)["config"]["instructions"] == {
+            "prompt_id": "support",
+            "version": 1,
+        }
+        Prompt(id="support", content="two").save(db=real_db)
+        loaded = Team.load("prompted-team", db=real_db, strict=True)
+        assert loaded.instructions == "one"
+        assert [m.id for m in loaded.members] == ["member"]
+        assert loaded.members[0].instructions == "Help the team."

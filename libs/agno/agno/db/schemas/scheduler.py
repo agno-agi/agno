@@ -63,13 +63,24 @@ COMPONENT_VERSION_METADATA_KEY = "agno_component_version"
 DISPATCH_CHAIN_METADATA_KEY = "agno_dispatch_chain"
 DISPATCH_DEPTH_METADATA_KEY = "agno_dispatch_depth"
 
+# Written by Agent and Team dispatch from the host's retained Prompt resolution: one
+# record per Prompt-backed field that shaped the model request. Runtime-owned: a
+# caller or a stored config may never supply it, and a continued run keeps the
+# stored value.
+PROMPT_VERSIONS_METADATA_KEY = "agno_prompt_versions"
+
 # Every run-metadata key the runtime owns. Component metadata is merged OVER
 # call-site metadata, so a stored config carrying one of these would overwrite
 # the value the runtime just wrote: a forged version stamp would continue a
 # paused run on the wrong version, and a forged (or emptied) dispatch lineage
 # would reset the cycle guard on every hop and re-open unbounded self-dispatch.
 RESERVED_RUN_METADATA_KEYS = frozenset(
-    {COMPONENT_VERSION_METADATA_KEY, DISPATCH_CHAIN_METADATA_KEY, DISPATCH_DEPTH_METADATA_KEY}
+    {
+        COMPONENT_VERSION_METADATA_KEY,
+        DISPATCH_CHAIN_METADATA_KEY,
+        DISPATCH_DEPTH_METADATA_KEY,
+        PROMPT_VERSIONS_METADATA_KEY,
+    }
 )
 
 
@@ -111,6 +122,35 @@ def restore_reserved_run_metadata(
 # so a name-keyed upsert can never repoint who a schedule belongs to or which
 # runs wrote it. user_id stays a WHERE filter in the adapters, never a SET
 # column, which is why it is not in this set.
+def prompt_version_record(handle: Any) -> Dict[str, Any]:
+    """One attribution record for a Prompt-backed host field, read from its retained resolution."""
+    return {
+        "prompt_id": handle.prompt.id,
+        "field": handle.field,
+        "selection": handle.selection,
+        "requested_version": handle.requested_version,
+        "resolved_version": handle.resolved_version,
+        "source": handle.source,
+        "fallback": handle.fallback,
+        "fallback_reason": handle.fallback_reason,
+    }
+
+
+def assign_prompt_versions(
+    metadata: Optional[Dict[str, Any]], records: List[Dict[str, Any]]
+) -> Optional[Dict[str, Any]]:
+    """Run metadata with the runtime's Prompt attribution assigned.
+
+    Always a fresh dict: a caller-supplied value under the key is dropped, the
+    key is removed when no Prompt-backed field was effective, and the records
+    are copied so a later run can never append to an earlier run's list.
+    """
+    base = {key: value for key, value in (metadata or {}).items() if key != PROMPT_VERSIONS_METADATA_KEY}
+    if records:
+        base[PROMPT_VERSIONS_METADATA_KEY] = list(records)
+    return base or None
+
+
 SCHEDULE_MUTABLE_COLUMNS = frozenset(
     {
         "name",

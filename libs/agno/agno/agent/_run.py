@@ -47,6 +47,7 @@ from agno.models.base import Model
 from agno.models.fallback import acall_model_with_fallback, call_model_with_fallback
 from agno.models.message import Message
 from agno.models.response import ModelResponse
+from agno.prompt.prompt import require_resolved_prompts, retained_prompt_handle
 from agno.run import RunContext, RunStatus
 from agno.run.agent import (
     RunCancelledEvent,
@@ -1304,6 +1305,25 @@ def _run_stream(
         cleanup_run(run_response.run_id)  # type: ignore
 
 
+def _stamp_prompt_versions(agent: Agent, run_context: RunContext, run_response: RunOutput) -> None:
+    """Record the Prompt-backed field that shapes this run's system message.
+
+    Mirrors get_system_message: a custom system_message replaces everything
+    else, and build_context=False builds no system message, so instructions
+    behind either are omitted as ineffective. A never-published inline Prompt
+    leaves no record either; only catalog text and the inline fallback that
+    stood in for it are attributed. The list is assigned fresh and a
+    caller-supplied value under the key is dropped.
+    """
+    from agno.db.schemas.scheduler import assign_prompt_versions, prompt_version_record
+
+    effective = retained_prompt_handle(agent, "system_message")
+    if effective is None and agent.system_message is None and agent.build_context:
+        effective = retained_prompt_handle(agent, "instructions")
+    records = [prompt_version_record(effective)] if effective is not None and effective.attributable else []
+    run_context.metadata = run_response.metadata = assign_prompt_versions(run_context.metadata, records)
+
+
 def run_dispatch(
     agent: Agent,
     input: Union[str, List, Dict, Message, BaseModel, List[Message]],
@@ -1331,6 +1351,7 @@ def run_dispatch(
     **kwargs: Any,
 ) -> Union[RunOutput, Iterator[Union[RunOutputEvent, RunOutput]]]:
     """Run the Agent and return the response."""
+    require_resolved_prompts(agent, "Agent")
     from agno.agent._init import has_async_db
     from agno.agent._response import get_response_format
     from agno.media.storage.base import AsyncMediaStorage
@@ -1417,6 +1438,7 @@ def run_dispatch(
     agent.model = cast(Model, agent.model)
 
     # Initialize run context
+    caller_run_context = run_context is not None
     run_context = run_context or RunContext(
         run_id=run_id,
         session_id=session_id,
@@ -1453,6 +1475,8 @@ def run_dispatch(
 
     run_response.model = agent.model.id if agent.model is not None else None
     run_response.model_provider = agent.model.provider if agent.model is not None else None
+    if not caller_run_context:
+        _stamp_prompt_versions(agent, run_context, run_response)
 
     # Start the run metrics timer, to calculate the run duration
     run_response.metrics = RunMetrics()
@@ -2854,6 +2878,7 @@ def arun_dispatch(  # type: ignore
     **kwargs: Any,
 ) -> Union[RunOutput, AsyncIterator[RunOutputEvent]]:
     """Async Run the Agent and return the response."""
+    require_resolved_prompts(agent, "Agent")
 
     # Set the id for the run and register it immediately for cancellation tracking
     from agno.agent._response import get_response_format
@@ -2941,6 +2966,7 @@ def arun_dispatch(  # type: ignore
     agent.model = cast(Model, agent.model)
 
     # Initialize run context
+    caller_run_context = run_context is not None
     run_context = run_context or RunContext(
         run_id=run_id,
         session_id=session_id,
@@ -2977,6 +3003,8 @@ def arun_dispatch(  # type: ignore
 
     run_response.model = agent.model.id if agent.model is not None else None
     run_response.model_provider = agent.model.provider if agent.model is not None else None
+    if not caller_run_context:
+        _stamp_prompt_versions(agent, run_context, run_response)
 
     # Start the run metrics timer, to calculate the run duration
     run_response.metrics = RunMetrics()
@@ -3425,6 +3453,7 @@ def continue_run_dispatch(
         metadata: The metadata to use for the run.
         debug_mode: Whether to enable debug mode.
     """
+    require_resolved_prompts(agent, "Agent")
     from agno.agent._init import has_async_db, set_default_model
     from agno.agent._messages import get_continue_run_messages
     from agno.agent._response import get_response_format
@@ -4332,6 +4361,7 @@ def acontinue_run_dispatch(  # type: ignore
         debug_mode: Whether to enable debug mode.
         yield_run_output: Whether to yield the run response.
     """
+    require_resolved_prompts(agent, "Agent")
     from agno.agent._response import get_response_format
 
     if run_response is None and run_id is None:

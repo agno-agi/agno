@@ -839,6 +839,7 @@ class ComponentType(str, Enum):
     AGENT = "agent"
     TEAM = "team"
     WORKFLOW = "workflow"
+    PROMPT = "prompt"
 
 
 class ComponentGuard(BaseModel):
@@ -870,7 +871,7 @@ class ComponentCreate(BaseModel):
     component_id: Optional[str] = Field(
         None, description="Unique identifier for the entity. Auto-generated from name if not provided."
     )
-    component_type: ComponentType = Field(..., description="Type of entity: agent, team, or workflow")
+    component_type: ComponentType = Field(..., description="Type of entity: agent, team, workflow, or prompt")
     description: Optional[str] = Field(None, description="Optional description")
     metadata: Optional[Dict[str, Any]] = Field(None, description="Optional metadata")
     # Config parameters are optional, but if provided, they will be used to create the initial config

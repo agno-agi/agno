@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from agno.team.team import Team
 
 from agno.filters import FilterExpr
+from agno.prompt.prompt import copy_prompt_handles
 from agno.utils.log import log_debug, log_error, log_warning
 
 
@@ -150,6 +151,7 @@ def deep_copy(team: Team, *, update: Optional[Dict[str, Any]] = None) -> Team:
     # Create a new Team
     try:
         new_team = team.__class__(**fields_for_new_team)
+        copy_prompt_handles(team, new_team, overridden=update or {})
         log_debug(f"Created new {team.__class__.__name__}")
         return new_team
     except Exception as e:
