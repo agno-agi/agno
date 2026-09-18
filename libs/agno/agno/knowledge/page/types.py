@@ -56,6 +56,36 @@ class PageResult(BaseModel):
     schema_version: Literal[1] = 1
 
 
+class PageCommandResult(PageResult):
+    text: str
+    is_error: bool = False
+    errors: Tuple[str, ...] = ()
+    partial: bool = False
+    truncated: bool = False
+    continuation: Optional[str] = None
+    stop_reason: Optional[str] = None
+
+    def bounded(self, max_bytes: int) -> "PageCommandResult":
+        """Bound the complete UTF-8 JSON value without slicing a code point."""
+        if type(max_bytes) is not int or max_bytes < 1024:
+            raise ValueError("max_output_bytes must be an integer of at least 1024")
+        if encoded_size(self) <= max_bytes:
+            return self
+        # Byte clipping invalidates line-based continuation; do not skip unseen text.
+        result = self.model_copy(update={"truncated": True, "continuation": None})
+        low, high = 0, len(self.text)
+        while low < high:
+            middle = (low + high + 1) // 2
+            if encoded_size(result.model_copy(update={"text": self.text[:middle]})) <= max_bytes:
+                low = middle
+            else:
+                high = middle - 1
+        result = result.model_copy(update={"text": self.text[:low]})
+        if encoded_size(result) > max_bytes:
+            result = result.model_copy(update={"errors": ("output_limit",), "stop_reason": "output_limit"})
+        return result
+
+
 class Page(PageResult):
     content_id: str
     namespace: str
