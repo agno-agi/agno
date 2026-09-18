@@ -498,6 +498,7 @@ _ISOLATE_FIELD_ACTIONS: Dict[str, str] = {
     "session_summary_manager": "isolated-copy",  # resolution binds the attempt model on the copy
     "compression_manager": "isolated-copy",
     "fallback_config": "cache-off-copies",
+    "followup_config": "cache-off-copy",  # deep_copy copies the dataclass but its .model stays the caller's
     "reasoning_agent": "recursive-isolate",
     "save_response_to_file": "nulled",
 }
@@ -786,10 +787,10 @@ def _isolate_attempt(agent: Any, model_override: Optional[Model] = None, _seen: 
       reads. These are the read paths deliberately NOT backed by the isolated db,
       which is why their write engines must be severed below -- empty inputs
       cannot neutralize a write into a shared store.
-    - Every model slot -- primary, *_model fields, fallback lists, manager
-      models -- runs on a copy with the response cache off: the cache is a shared
-      disk cache keyed by messages, and a cached attempt is a replay, not a
-      sample.
+    - Every model slot -- primary, *_model fields, fallback lists, the follow-up
+      config model, manager models -- runs on a copy with the response cache off:
+      the cache is a shared disk cache keyed by messages, and a cached attempt is
+      a replay, not a sample.
     - Manager copies are attempt-local, so resolution binds db and model onto
       them, never onto the caller's instances.
 
@@ -835,6 +836,14 @@ def _isolate_attempt(agent: Any, model_override: Optional[Model] = None, _seen: 
                     [_cache_off_copy(entry) if hasattr(entry, "cache_response") else entry for entry in entries],
                 )
         agent.fallback_config = config_copy
+    # A dataclass, not a Model: the loop above cannot see the model nested in it.
+    followup_config = getattr(agent, "followup_config", None)
+    if followup_config is not None:
+        followup_config_copy = copy.copy(followup_config)
+        followup_config_model = getattr(followup_config_copy, "model", None)
+        if followup_config_model is not None and hasattr(followup_config_model, "cache_response"):
+            followup_config_copy.model = _cache_off_copy(followup_config_model)
+        agent.followup_config = followup_config_copy
 
     # -- inputs: per-user state is a fresh empty world ----------------------
     fresh_db = InMemoryDb()

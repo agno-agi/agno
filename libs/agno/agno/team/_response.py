@@ -1758,22 +1758,31 @@ def generate_team_followups(
     if not team.followups or run_response.content is None:
         return
 
-    model = team.followup_model or team.model
+    followup_instructions = team.followup_config.instructions if team.followup_config else None
+    # followup_config.model is resolved to a Model at construction (see _resolve_models).
+    config_model = cast(Optional[Model], team.followup_config.model) if team.followup_config else None
+    model = config_model or team.followup_model or team.model
     if model is None:
         return
 
     response_format = _get_followups_response_format(model)
     user_message = run_response.input.input_content_string() if run_response.input else None
     messages = _build_followup_messages(
-        run_response.content, team.num_followups, user_message=user_message, response_format=response_format
+        run_response.content,
+        team.num_followups,
+        user_message=user_message,
+        followup_instructions=followup_instructions,
+        response_format=response_format,
     )
 
+    # A resumed run still carries the earlier answer's suggestions; a failed regeneration must not keep them.
+    run_response.followups = None
     try:
         model_response: ModelResponse = model.response(
             messages=messages,
             response_format=response_format,
         )
-        run_response.followups = _parse_followups_response(model_response)
+        run_response.followups = _parse_followups_response(model_response, team.num_followups)
         accumulate_model_metrics(model_response, model, ModelType.FOLLOWUP_MODEL, run_response.metrics)
     except RunCancelledException:
         raise
@@ -1792,22 +1801,31 @@ async def agenerate_team_followups(
     if not team.followups or run_response.content is None:
         return
 
-    model = team.followup_model or team.model
+    followup_instructions = team.followup_config.instructions if team.followup_config else None
+    # followup_config.model is resolved to a Model at construction (see _resolve_models).
+    config_model = cast(Optional[Model], team.followup_config.model) if team.followup_config else None
+    model = config_model or team.followup_model or team.model
     if model is None:
         return
 
     response_format = _get_followups_response_format(model)
     user_message = run_response.input.input_content_string() if run_response.input else None
     messages = _build_followup_messages(
-        run_response.content, team.num_followups, user_message=user_message, response_format=response_format
+        run_response.content,
+        team.num_followups,
+        user_message=user_message,
+        followup_instructions=followup_instructions,
+        response_format=response_format,
     )
 
+    # A resumed run still carries the earlier answer's suggestions; a failed regeneration must not keep them.
+    run_response.followups = None
     try:
         model_response: ModelResponse = await model.aresponse(
             messages=messages,
             response_format=response_format,
         )
-        run_response.followups = _parse_followups_response(model_response)
+        run_response.followups = _parse_followups_response(model_response, team.num_followups)
         accumulate_model_metrics(model_response, model, ModelType.FOLLOWUP_MODEL, run_response.metrics)
     except RunCancelledException:
         raise
@@ -1827,7 +1845,10 @@ def generate_team_followups_stream(
     if not team.followups or run_response.content is None:
         return
 
-    model = team.followup_model or team.model
+    followup_instructions = team.followup_config.instructions if team.followup_config else None
+    # followup_config.model is resolved to a Model at construction (see _resolve_models).
+    config_model = cast(Optional[Model], team.followup_config.model) if team.followup_config else None
+    model = config_model or team.followup_model or team.model
     if model is None:
         return
 
@@ -1842,15 +1863,21 @@ def generate_team_followups_stream(
     response_format = _get_followups_response_format(model)
     user_message = run_response.input.input_content_string() if run_response.input else None
     messages = _build_followup_messages(
-        run_response.content, team.num_followups, user_message=user_message, response_format=response_format
+        run_response.content,
+        team.num_followups,
+        user_message=user_message,
+        followup_instructions=followup_instructions,
+        response_format=response_format,
     )
 
+    # A resumed run still carries the earlier answer's suggestions; a failed regeneration must not keep them.
+    run_response.followups = None
     try:
         model_response: ModelResponse = model.response(
             messages=messages,
             response_format=response_format,
         )
-        run_response.followups = _parse_followups_response(model_response)
+        run_response.followups = _parse_followups_response(model_response, team.num_followups)
         accumulate_model_metrics(model_response, model, ModelType.FOLLOWUP_MODEL, run_response.metrics)
     except RunCancelledException:
         raise
@@ -1878,7 +1905,10 @@ async def agenerate_team_followups_stream(
     if not team.followups or run_response.content is None:
         return
 
-    model = team.followup_model or team.model
+    followup_instructions = team.followup_config.instructions if team.followup_config else None
+    # followup_config.model is resolved to a Model at construction (see _resolve_models).
+    config_model = cast(Optional[Model], team.followup_config.model) if team.followup_config else None
+    model = config_model or team.followup_model or team.model
     if model is None:
         return
 
@@ -1893,15 +1923,21 @@ async def agenerate_team_followups_stream(
     response_format = _get_followups_response_format(model)
     user_message = run_response.input.input_content_string() if run_response.input else None
     messages = _build_followup_messages(
-        run_response.content, team.num_followups, user_message=user_message, response_format=response_format
+        run_response.content,
+        team.num_followups,
+        user_message=user_message,
+        followup_instructions=followup_instructions,
+        response_format=response_format,
     )
 
+    # A resumed run still carries the earlier answer's suggestions; a failed regeneration must not keep them.
+    run_response.followups = None
     try:
         model_response: ModelResponse = await model.aresponse(
             messages=messages,
             response_format=response_format,
         )
-        run_response.followups = _parse_followups_response(model_response)
+        run_response.followups = _parse_followups_response(model_response, team.num_followups)
         accumulate_model_metrics(model_response, model, ModelType.FOLLOWUP_MODEL, run_response.metrics)
     except RunCancelledException:
         raise
