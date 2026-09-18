@@ -129,6 +129,8 @@ class MMRReranker(Reranker):
 
     def _prepare(self, documents: List[Document], requested: Optional[int] = None) -> Optional[int]:
         """Validate inputs and return the number of documents to select."""
+        if requested is not None and requested < 0:
+            raise ValueError("MMRReranker limit must be non-negative")
         if not documents:
             return None
 
@@ -167,6 +169,8 @@ class MMRReranker(Reranker):
         limit = self._prepare(documents, limit)
         if limit is None:
             return documents
+        if limit == 0:
+            return []
 
         embedder = self._resolve_embedder(documents)
         return self._select(embedder.get_embedding(query), documents, limit)
@@ -175,6 +179,8 @@ class MMRReranker(Reranker):
         selection = self._prepare(documents, limit)
         if selection is None:
             return documents
+        if selection == 0:
+            return []
 
         embedder = self._resolve_embedder(documents)
         query_embedding = await embedder.async_get_embedding(query)

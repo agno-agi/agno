@@ -90,6 +90,26 @@ def test_top_n_larger_than_input_is_clamped():
     assert len(results) == 3
 
 
+def test_zero_limit_returns_no_documents():
+    assert MMRReranker().rerank("q", _documents(), limit=0) == []
+
+
+def test_negative_limit_raises():
+    with pytest.raises(ValueError, match="limit must be non-negative"):
+        MMRReranker().rerank("q", _documents(), limit=-1)
+
+
+@pytest.mark.asyncio
+async def test_async_zero_limit_returns_no_documents():
+    assert await MMRReranker().arerank("q", _documents(), limit=0) == []
+
+
+@pytest.mark.asyncio
+async def test_async_negative_limit_raises():
+    with pytest.raises(ValueError, match="limit must be non-negative"):
+        await MMRReranker().arerank("q", _documents(), limit=-1)
+
+
 def test_empty_documents_returns_empty():
     assert MMRReranker().rerank("q", []) == []
 
