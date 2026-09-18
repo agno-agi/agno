@@ -599,6 +599,28 @@ def test_function_call_with_tool_hooks():
     assert hook_calls[1][2] == "processed-value1"
 
 
+def test_function_call_tool_hook_can_replace_arguments():
+    """Fresh kwargs passed to the continuation override only the named values."""
+
+    def replace_first(function_name: str, function_call: Callable, arguments: Dict[str, Any]):
+        return function_call(param1="from-hook")
+
+    def replace_second(function_name: str, function_call: Callable, arguments: Dict[str, Any]):
+        return function_call(param2="from-inner-hook")
+
+    def test_func(param1: str, param2: str) -> str:
+        return f"{param1}-{param2}"
+
+    func = Function(name="test_func", entrypoint=test_func, tool_hooks=[replace_first, replace_second])
+    call = FunctionCall(function=func, arguments={"param1": "from-model", "param2": "preserved"})
+
+    result = call.execute()
+
+    assert result.status == "success"
+    assert result.result == "from-hook-from-inner-hook"
+    assert call.arguments == {"param1": "from-model", "param2": "preserved"}
+
+
 @pytest.mark.asyncio
 async def test_function_call_async_execution():
     """Test async function call execution."""
@@ -707,6 +729,40 @@ async def test_function_call_async_with_tool_hooks():
     assert hook_calls[0][1] == "test_func"
     assert hook_calls[1][0] == "after"
     assert hook_calls[1][2] == "processed-value1"
+
+
+@pytest.mark.asyncio
+async def test_function_call_async_tool_hook_can_replace_arguments():
+    """Async hooks can pass a partial replacement mapping to an async tool."""
+
+    async def replace_param(function_name: str, function_call: Callable, arguments: Dict[str, Any]):
+        return await function_call(param1="from-hook")
+
+    async def test_func(param1: str, param2: str) -> str:
+        return f"{param1}-{param2}"
+
+    func = Function(name="test_func", entrypoint=test_func, tool_hooks=[replace_param])
+    result = await FunctionCall(function=func, arguments={"param1": "from-model", "param2": "preserved"}).aexecute()
+
+    assert result.status == "success"
+    assert result.result == "from-hook-preserved"
+
+
+@pytest.mark.asyncio
+async def test_sync_function_call_async_tool_hook_can_replace_arguments():
+    """The sync-entrypoint branch of the async hook chain honors fresh kwargs."""
+
+    async def replace_param(function_name: str, function_call: Callable, arguments: Dict[str, Any]):
+        return await function_call(param1="from-hook")
+
+    def test_func(param1: str, param2: str) -> str:
+        return f"{param1}-{param2}"
+
+    func = Function(name="test_func", entrypoint=test_func, tool_hooks=[replace_param])
+    result = await FunctionCall(function=func, arguments={"param1": "from-model", "param2": "preserved"}).aexecute()
+
+    assert result.status == "success"
+    assert result.result == "from-hook-preserved"
 
 
 @pytest.mark.asyncio
@@ -4146,6 +4202,30 @@ def test_a_hook_that_rewrites_an_argument_makes_the_call_uncacheable(tmp_path):
     assert list(tmp_path.rglob("*.json")) == []
 
 
+def test_fresh_tool_hook_kwargs_make_the_call_uncacheable(tmp_path):
+    """A fresh replacement mapping must follow the same cache rules as an in-place edit."""
+    profiles = {"123": "profile-v1"}
+    executions = []
+
+    def resolve(function_name: str, function_call: Callable, arguments: Dict[str, Any]):
+        return function_call(**{**arguments, "customer": profiles[arguments["customer"]]})
+
+    def lookup(customer: str) -> str:
+        executions.append(customer)
+        return f"data for {customer}"
+
+    func = Function(name="lookup", entrypoint=lookup, cache_results=True, cache_dir=str(tmp_path), tool_hooks=[resolve])
+
+    first = FunctionCall(function=func, arguments={"customer": "123"}).execute()
+    profiles["123"] = "profile-v2"
+    second = FunctionCall(function=func, arguments={"customer": "123"}).execute()
+
+    assert first.result == "data for profile-v1"
+    assert second.result == "data for profile-v2"
+    assert executions == ["profile-v1", "profile-v2"]
+    assert list(tmp_path.rglob("*.json")) == []
+
+
 def test_a_result_holding_one_object_twice_is_not_cached(tmp_path):
     """Two fields backed by one list come back as two lists, so a hook editing
     one would see a different value on the hit than the miss gave it."""
@@ -4239,6 +4319,34 @@ async def test_a_warm_entry_is_not_served_once_a_hook_rewrites_the_argument_asyn
 
     func = Function(
         name="lookup_async", entrypoint=lookup, cache_results=True, cache_dir=str(tmp_path), tool_hooks=[resolve]
+    )
+
+    first = await FunctionCall(function=func, arguments={"customer": "123"}).aexecute()
+    rewriting["on"] = True
+    second = await FunctionCall(function=func, arguments={"customer": "123"}).aexecute()
+
+    assert first.result == "data for 123"
+    assert second.result == "data for profile-v2"
+    assert executions == ["123", "profile-v2"]
+
+
+@pytest.mark.asyncio
+async def test_a_warm_entry_is_not_served_after_a_fresh_kwargs_rewrite_async(tmp_path):
+    """Fresh async hook kwargs invalidate a warm lookup just like live-dict edits."""
+    rewriting = {"on": False}
+    executions = []
+
+    async def resolve(function_name: str, function_call: Callable, arguments: Dict[str, Any]):
+        if rewriting["on"]:
+            arguments = {**arguments, "customer": "profile-v2"}
+        return await function_call(**arguments)
+
+    async def lookup(customer: str) -> str:
+        executions.append(customer)
+        return f"data for {customer}"
+
+    func = Function(
+        name="lookup_async_fresh", entrypoint=lookup, cache_results=True, cache_dir=str(tmp_path), tool_hooks=[resolve]
     )
 
     first = await FunctionCall(function=func, arguments={"customer": "123"}).aexecute()
