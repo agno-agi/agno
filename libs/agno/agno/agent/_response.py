@@ -1711,8 +1711,10 @@ def handle_model_response_chunk(
 # ---------------------------------------------------------------------------
 
 
-def _get_followups_response_format(model: Model) -> Optional[Union[Dict, Type[BaseModel]]]:
+def _get_followups_response_format(model: Model, use_json_mode: bool = False) -> Optional[Union[Dict, Type[BaseModel]]]:
     """Get the response format for Followups based on model capabilities."""
+    if use_json_mode:
+        return {"type": "json_object"}
     if model.supports_native_structured_outputs:
         return Followups
     elif model.supports_json_schema_outputs:
@@ -1821,7 +1823,7 @@ def generate_followups(
     if model is None:
         return
 
-    response_format = _get_followups_response_format(model)
+    response_format = _get_followups_response_format(model, agent.followup_use_json_mode)
     user_message = run_response.input.input_content_string() if run_response.input else None
     messages = _build_followup_messages(
         run_response.content, agent.num_followups, user_message=user_message, response_format=response_format
@@ -1852,7 +1854,7 @@ async def agenerate_followups(
     if model is None:
         return
 
-    response_format = _get_followups_response_format(model)
+    response_format = _get_followups_response_format(model, agent.followup_use_json_mode)
     user_message = run_response.input.input_content_string() if run_response.input else None
     messages = _build_followup_messages(
         run_response.content, agent.num_followups, user_message=user_message, response_format=response_format
@@ -1892,7 +1894,7 @@ def generate_followups_stream(
             store_events=agent.store_events,
         )
 
-    response_format = _get_followups_response_format(model)
+    response_format = _get_followups_response_format(model, agent.followup_use_json_mode)
     user_message = run_response.input.input_content_string() if run_response.input else None
     messages = _build_followup_messages(
         run_response.content, agent.num_followups, user_message=user_message, response_format=response_format
@@ -1940,7 +1942,7 @@ async def agenerate_followups_stream(
             store_events=agent.store_events,
         )
 
-    response_format = _get_followups_response_format(model)
+    response_format = _get_followups_response_format(model, agent.followup_use_json_mode)
     user_message = run_response.input.input_content_string() if run_response.input else None
     messages = _build_followup_messages(
         run_response.content, agent.num_followups, user_message=user_message, response_format=response_format
