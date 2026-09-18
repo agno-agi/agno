@@ -1,0 +1,3 @@
+agno
+google-generativeai
+python-dotenv
