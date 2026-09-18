@@ -95,7 +95,8 @@ class TestJsonDbPaginationIntegration:
 class TestSharedApplyPaginationHelpers:
     """The adapter-shared ``apply_pagination`` helpers must also reject
     ``page`` without ``limit`` — they're the choke point for redis, valkey,
-    dynamo, firestore reads. Skipped when the native driver isn't installed."""
+    dynamo, firestore and mongo reads. Skipped when the native driver isn't
+    installed."""
 
     def test_dynamo_apply_pagination_raises(self):
         try:
@@ -132,6 +133,38 @@ class TestSharedApplyPaginationHelpers:
 
         with pytest.raises(ValueError, match="page.*without.*limit"):
             apply_pagination_to_records([{"a": 1}], page=1)
+
+    def test_mongo_apply_pagination_raises(self):
+        try:
+            from agno.db.mongo.utils import apply_pagination
+        except ImportError:
+            pytest.skip("pymongo not installed")
+
+        with pytest.raises(ValueError, match="page.*without.*limit"):
+            apply_pagination({}, page=2)
+
+    def test_mongo_apply_pagination_rejects_page_below_one(self):
+        """Mongo computes ``skip`` as ``(page - 1) * limit``, so an unguarded
+        ``page=0`` put ``skip=-5`` into the query arguments rather than raising."""
+        try:
+            from agno.db.mongo.utils import apply_pagination
+        except ImportError:
+            pytest.skip("pymongo not installed")
+
+        with pytest.raises(ValueError, match="1-indexed"):
+            apply_pagination({}, limit=5, page=0)
+
+    def test_mongo_apply_pagination_still_paginates(self):
+        """Valid input must keep producing the same query arguments as before."""
+        try:
+            from agno.db.mongo.utils import apply_pagination
+        except ImportError:
+            pytest.skip("pymongo not installed")
+
+        assert apply_pagination({}, limit=5, page=2) == {"limit": 5, "skip": 5}
+        assert apply_pagination({}, limit=5, page=1) == {"limit": 5, "skip": 0}
+        assert apply_pagination({}, limit=5) == {"limit": 5}
+        assert apply_pagination({}) == {}
 
 
 class TestSqlAdaptersRejectPageWithoutLimit:
