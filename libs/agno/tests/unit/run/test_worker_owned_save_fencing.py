@@ -15,6 +15,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from agno.db.base import AsyncBaseDb, BaseDb
 from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
 from agno.run.concurrency import mark_worker_managed, unmark_worker_managed
@@ -35,16 +36,40 @@ def make_run() -> RunOutput:
 
 
 def make_sync_db(outcome=RunPersistOutcome.UPDATED):
-    db = MagicMock(name="sync_db")
+    db = MagicMock(spec=BaseDb, name="sync_db")
     db.update_run_in_session = MagicMock(return_value=outcome)
+    db.upsert_run = MagicMock()
+    # A bare MagicMock answers every attribute, so it would otherwise
+    # advertise the strict create/scoped update pair it does not implement
+    db.supports_atomic_run_creation = False
     return db
 
 
 def make_async_db(outcome=RunPersistOutcome.UPDATED):
-    db = MagicMock(name="async_db")
+    # spec'd to AsyncBaseDb because the save helpers pick their sync/async
+    # branch with isinstance: a bare MagicMock is not an async adapter, so
+    # the async upsert_run fallback would never be reached and its coroutine
+    # would be created and dropped unawaited instead of exercised
+    db = MagicMock(spec=AsyncBaseDb, name="async_db")
     db.update_run_in_session = AsyncMock(return_value=outcome)
     db.upsert_run = AsyncMock()
+    # A bare MagicMock answers every attribute, so it would otherwise
+    # advertise the strict create/scoped update pair it does not implement
+    db.supports_atomic_run_creation = False
     return db
+
+
+def assert_saved_through_fence(db, attempt: int, calls: int = 1) -> None:
+    """The save reached the attempt-fenced primitive for this run.
+
+    Asserting only that bare ``upsert_run`` went uncalled passes even when
+    the fenced helper raises, because every choke point swallows exceptions.
+    """
+    assert db.update_run_in_session.call_count == calls
+    fenced = db.update_run_in_session.call_args.kwargs
+    assert fenced["run_id"] == RUN_ID
+    assert fenced["expected_attempt"] == attempt
+    db.upsert_run.assert_not_called()
 
 
 class TestFenceHelperCore:
@@ -80,19 +105,6 @@ class TestFenceHelperCore:
         assert await apersist_worker_owned_run(db, make_run(), session_id=SESSION_ID) is True
 
     @pytest.mark.asyncio
-    async def test_missing_row_appends_with_attempt_stamp(self):
-        from agno.run.status_persist import apersist_worker_owned_run
-
-        mark_worker_managed(RUN_ID, worker_id="w1", attempt=2)
-        db = make_async_db(RunPersistOutcome.MISSING)
-        db.append_run_to_session_if_absent = AsyncMock(return_value=True)
-        assert await apersist_worker_owned_run(db, make_run(), session_id=SESSION_ID) is True
-        appended = db.append_run_to_session_if_absent.call_args.kwargs
-        assert appended["run_dict"]["queue_attempt"] == 2, (
-            "a fresh row without the attempt stamp lets the next fence compare pass vacuously"
-        )
-
-    @pytest.mark.asyncio
     async def test_adapter_without_primitive_falls_through(self):
         from agno.run.status_persist import apersist_worker_owned_run
 
@@ -117,9 +129,111 @@ class TestFenceHelperCore:
         assert persist_worker_owned_run(db, make_run(), session_id=SESSION_ID) is False
 
 
+class TestMissingRowAppendPath:
+    """MISSING means the row is not there yet: the fenced save appends it,
+    and every answer the append can give has to be routed."""
+
+    @pytest.mark.asyncio
+    async def test_append_stamps_the_attempt(self):
+        from agno.run.status_persist import apersist_worker_owned_run
+
+        mark_worker_managed(RUN_ID, worker_id="w1", attempt=2)
+        db = make_async_db(RunPersistOutcome.MISSING)
+        db.append_run_to_session_if_absent = AsyncMock(return_value=True)
+        assert await apersist_worker_owned_run(db, make_run(), session_id=SESSION_ID) is True
+        appended = db.append_run_to_session_if_absent.call_args.kwargs
+        assert appended["run_dict"]["queue_attempt"] == 2, (
+            "a fresh row without the attempt stamp lets the next fence compare pass vacuously"
+        )
+
+    @pytest.mark.asyncio
+    async def test_append_returning_none_falls_through(self):
+        """No session row to append to: the legacy path decides, so the
+        caller must NOT be told the save was handled."""
+        from agno.run.status_persist import apersist_worker_owned_run
+
+        mark_worker_managed(RUN_ID, worker_id="w1", attempt=2)
+        db = make_async_db(RunPersistOutcome.MISSING)
+        db.append_run_to_session_if_absent = AsyncMock(return_value=None)
+        assert await apersist_worker_owned_run(db, make_run(), session_id=SESSION_ID) is False
+
+    @pytest.mark.asyncio
+    async def test_append_returning_false_redrives_the_fence(self):
+        """A concurrent writer landed the row between check and append, so
+        the fenced update is re-driven against it rather than skipped."""
+        from agno.run.status_persist import apersist_worker_owned_run
+
+        mark_worker_managed(RUN_ID, worker_id="w1", attempt=2)
+        db = make_async_db()
+        db.update_run_in_session = AsyncMock(
+            side_effect=[RunPersistOutcome.MISSING, RunPersistOutcome.UPDATED],
+        )
+        db.append_run_to_session_if_absent = AsyncMock(return_value=False)
+        assert await apersist_worker_owned_run(db, make_run(), session_id=SESSION_ID) is True
+        assert db.update_run_in_session.call_count == 2
+        assert db.update_run_in_session.call_args.kwargs["expected_attempt"] == 2
+
+    @pytest.mark.asyncio
+    async def test_append_returning_false_with_row_still_gone_falls_through(self):
+        from agno.run.status_persist import apersist_worker_owned_run
+
+        mark_worker_managed(RUN_ID, worker_id="w1", attempt=2)
+        db = make_async_db(RunPersistOutcome.MISSING)
+        db.append_run_to_session_if_absent = AsyncMock(return_value=False)
+        assert await apersist_worker_owned_run(db, make_run(), session_id=SESSION_ID) is False
+        assert db.update_run_in_session.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_adapter_without_append_falls_through(self):
+        from agno.run.status_persist import apersist_worker_owned_run
+
+        mark_worker_managed(RUN_ID, worker_id="w1", attempt=2)
+        db = make_async_db(RunPersistOutcome.MISSING)
+        assert await apersist_worker_owned_run(db, make_run(), session_id=SESSION_ID) is False
+
+    def test_sync_append_stamps_the_attempt(self):
+        from agno.run.status_persist import persist_worker_owned_run
+
+        mark_worker_managed(RUN_ID, worker_id="w1", attempt=5)
+        db = make_sync_db(RunPersistOutcome.MISSING)
+        db.append_run_to_session_if_absent = MagicMock(return_value=True)
+        assert persist_worker_owned_run(db, make_run(), session_id=SESSION_ID) is True
+        appended = db.append_run_to_session_if_absent.call_args.kwargs
+        assert appended["run_dict"]["queue_attempt"] == 5
+
+    def test_sync_append_returning_none_falls_through(self):
+        from agno.run.status_persist import persist_worker_owned_run
+
+        mark_worker_managed(RUN_ID, worker_id="w1", attempt=5)
+        db = make_sync_db(RunPersistOutcome.MISSING)
+        db.append_run_to_session_if_absent = MagicMock(return_value=None)
+        assert persist_worker_owned_run(db, make_run(), session_id=SESSION_ID) is False
+
+    def test_sync_append_returning_false_redrives_the_fence(self):
+        from agno.run.status_persist import persist_worker_owned_run
+
+        mark_worker_managed(RUN_ID, worker_id="w1", attempt=5)
+        db = make_sync_db()
+        db.update_run_in_session = MagicMock(
+            side_effect=[RunPersistOutcome.MISSING, RunPersistOutcome.UPDATED],
+        )
+        db.append_run_to_session_if_absent = MagicMock(return_value=False)
+        assert persist_worker_owned_run(db, make_run(), session_id=SESSION_ID) is True
+        assert db.update_run_in_session.call_count == 2
+
+    def test_sync_twin_skips_async_only_append(self):
+        from agno.run.status_persist import persist_worker_owned_run
+
+        mark_worker_managed(RUN_ID, worker_id="w1", attempt=5)
+        db = make_sync_db(RunPersistOutcome.MISSING)
+        db.append_run_to_session_if_absent = AsyncMock(return_value=True)
+        assert persist_worker_owned_run(db, make_run(), session_id=SESSION_ID) is False
+
+
 class TestChokePointWiring:
     """The three components' save helpers actually consult the fence: a
-    managed run's save must NOT reach bare upsert_run."""
+    managed run's save goes through the attempt-fenced primitive and never
+    reaches bare upsert_run."""
 
     @pytest.mark.asyncio
     async def test_agent_async_save_is_fenced(self):
@@ -129,7 +243,7 @@ class TestChokePointWiring:
         db = make_async_db(RunPersistOutcome.STALE_ATTEMPT)
         agent = SimpleNamespace(db=db)
         await aupsert_run(agent, make_run(), session_id=SESSION_ID)
-        db.upsert_run.assert_not_called()
+        assert_saved_through_fence(db, attempt=2)
 
     @pytest.mark.asyncio
     async def test_agent_async_save_unmanaged_uses_upsert(self):
@@ -138,7 +252,7 @@ class TestChokePointWiring:
         db = make_async_db()
         agent = SimpleNamespace(db=db)
         await aupsert_run(agent, make_run(), session_id=SESSION_ID)
-        db.upsert_run.assert_called_once()
+        db.upsert_run.assert_awaited_once()
         db.update_run_in_session.assert_not_called()
 
     @pytest.mark.asyncio
@@ -151,7 +265,7 @@ class TestChokePointWiring:
         team = SimpleNamespace(db=db)
         run = TeamRunOutput(run_id=RUN_ID, session_id=SESSION_ID, status=RunStatus.completed)
         await _aupsert_run(team, run, session_id=SESSION_ID)
-        db.upsert_run.assert_not_called()
+        assert_saved_through_fence(db, attempt=2)
 
     @pytest.mark.asyncio
     async def test_workflow_async_save_is_fenced(self):
@@ -160,17 +274,16 @@ class TestChokePointWiring:
 
         mark_worker_managed(RUN_ID, worker_id="w1", attempt=2)
         db = make_async_db(RunPersistOutcome.STALE_ATTEMPT)
-        workflow = Workflow(id="wf-fence", name="WF", db=db, steps=[])
+        workflow = Workflow(id="wf-fence", name="WF", db=db, steps=[], telemetry=False)
         run = WorkflowRunOutput(run_id=RUN_ID, session_id=SESSION_ID, status=RunStatus.completed)
         await workflow.asave_run(run=run, session_id=SESSION_ID)
-        db.upsert_run.assert_not_called()
+        assert_saved_through_fence(db, attempt=2)
 
     def test_agent_sync_save_is_fenced(self):
         from agno.agent._storage import upsert_run as sync_upsert_run
 
         mark_worker_managed(RUN_ID, worker_id="w1", attempt=2)
         db = make_sync_db(RunPersistOutcome.STALE_ATTEMPT)
-        db.upsert_run = MagicMock()
         agent = SimpleNamespace(db=db)
         sync_upsert_run(agent, make_run(), session_id=SESSION_ID)
-        db.upsert_run.assert_not_called()
+        assert_saved_through_fence(db, attempt=2)
