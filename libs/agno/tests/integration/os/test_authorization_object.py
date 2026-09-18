@@ -22,8 +22,7 @@ from agno.db.sqlite import SqliteDb  # noqa: E402
 from agno.os import AgentOS  # noqa: E402
 from agno.os.authz import (  # noqa: E402
     Authorization,
-    UserDirectory,  # noqa: E402
-    UserStore,
+    UserDirectory,
 )
 
 SECRET = "authz-object-secret-at-least-256-bits-xxxxxxxxxx"
@@ -73,14 +72,13 @@ def test_user_directory_is_not_on_the_authorization_object(tmp_path):
     import inspect
 
     from agno.os.authz import UserDirectory
-    from agno.os.authz.user_store import UserStore
 
     params = inspect.signature(Authorization.__init__).parameters
     assert "user_directory" not in params  # moved out to AgentOS
     assert "auto_provision" not in params  # a directory concern, on UserDirectory now
 
     db = SqliteDb(db_file=str(tmp_path / "onedir.db"))
-    store = UserStore(db=db)
+    store = UserDirectory(db=db, auto_provision=False)
     authz = Authorization(db=db, verification_keys=[SECRET], audience=OS_ID)
     authz.define_role("viewer", ["agents:*:read"])
     os_ = AgentOS(
@@ -88,9 +86,9 @@ def test_user_directory_is_not_on_the_authorization_object(tmp_path):
         db=db,
         agents=_agents(),
         authorization=authz,
-        user_directory=UserDirectory(user_store=store, auto_provision=False),
+        user_directory=store,
     )
-    assert os_.user_directory.user_store is store  # your store is used, configured on AgentOS
+    assert os_.user_directory is store  # your store is used, configured on AgentOS
 
 
 def test_borrowed_db_applies_buffered_definitions(tmp_path):
@@ -101,20 +99,20 @@ def test_borrowed_db_applies_buffered_definitions(tmp_path):
     assert authz._bound is False
 
     db = SqliteDb(db_file=str(tmp_path / "borrow.db"))
-    users = UserStore(db=db)
+    users = UserDirectory(db=db, auto_provision=False)
     users.upsert("carol", email="c@co")  # directory row, seeded on the store directly
     os_ = AgentOS(
         id=OS_ID,
         db=db,
         agents=_agents(),
-        user_directory=UserDirectory(user_store=users, auto_provision=False),
+        user_directory=users,
         authorization=authz,
     )
     os_.get_app()  # binds the object -> buffered role defs apply
     authz.role_store.assign("carol", "runner")  # role assigned through the now-bound store
     assert authz.role_store.list_roles() == ["runner"]
     assert authz.role_store.roles_of("carol") == ["runner"]
-    assert os_.user_directory.user_store.get("carol") is not None
+    assert os_.user_directory.get("carol") is not None
 
 
 def test_seed_is_idempotent(tmp_path):
@@ -309,7 +307,7 @@ def _served(tmp_path, *, borrow_db, trust_token_scopes=False):
     # The directory is a separate top-level store, a peer of user_isolation; seed rows on it directly.
     # Include the admin: with auto_provision + a default role, a subject not in the directory is
     # provisioned to the default role on first request, which would demote the seeded admin.
-    users = UserStore(db=db)
+    users = UserDirectory(db=db, auto_provision=True)
     users.upsert("root", name="Bootstrap admin")
     users.upsert("bob", email="bob@co", name="Bob")
     users.upsert("carol")
@@ -317,7 +315,7 @@ def _served(tmp_path, *, borrow_db, trust_token_scopes=False):
         id=OS_ID,
         db=db,
         agents=_agents(),
-        user_directory=UserDirectory(user_store=users, auto_provision=True),
+        user_directory=users,
         authorization=authz,
     )
     # AgentOS bound the object's role store; assign the seeded users their roles through it.
@@ -396,7 +394,7 @@ def test_authorization_config_is_deprecated_not_a_second_spelling(tmp_path):
 def test_directory_is_explicit_top_level_never_inferred_from_roles(tmp_path):
     """The directory is a top-level AgentOS(user_directory=...) concern, never inferred from roles. A
     roles-only deployment gets no directory and no /users; adding user_directory=True gives both.
-    Authorization no longer seeds users at all: seeding is on the UserStore, and seed(users=...)
+    Authorization no longer seeds users at all: seeding is on the UserDirectory, and seed(users=...)
     is rejected."""
     # Roles only, no top-level directory -> role store, but no directory and no /users.
     roles_only = Authorization(
@@ -424,7 +422,7 @@ def test_directory_is_explicit_top_level_never_inferred_from_roles(tmp_path):
     # Ask for the directory top-level -> it exists and /users mounts (under auth). People are seeded on
     # the store; Authorization only bootstraps the admin role.
     adb = SqliteDb(db_file=str(tmp_path / "asked.db"))
-    store = UserStore(db=adb)
+    store = UserDirectory(db=adb, auto_provision=False)
     store.upsert("bob", email="bob@co")
     asked = Authorization(verification_keys=[SECRET], algorithm="HS256", verify_audience=True, audience=OS_ID)
     asked.define_role("admin", ["agent_os:admin"])
@@ -433,11 +431,11 @@ def test_directory_is_explicit_top_level_never_inferred_from_roles(tmp_path):
         id=OS_ID,
         db=adb,
         agents=_agents(),
-        user_directory=UserDirectory(user_store=store, auto_provision=False),
+        user_directory=store,
         authorization=asked,
     )
     client2 = TestClient(os_asked.get_app())
-    assert os_asked.user_directory.user_store.get("bob") is not None  # the seeded person is in the directory
+    assert os_asked.user_directory.get("bob") is not None  # the seeded person is in the directory
     assert client2.get("/users", headers=_auth("root")).status_code == 200
 
     # seed(users=...) no longer exists: user seeding is a directory concern, off the Authorization object.
@@ -733,10 +731,9 @@ def test_seeded_admin_not_in_directory_is_not_demoted_on_first_request(tmp_path)
     grant the default role over an existing one -- that would silently demote an admin. A truly
     role-less user still gets the default, so provisioning is not broken, only the demotion is."""
     from agno.os.authz import UserDirectory
-    from agno.os.authz.user_store import UserStore
 
     db = SqliteDb(db_file=str(tmp_path / "demote.db"))
-    users = UserStore(db=db)  # alice deliberately NOT seeded into the directory
+    users = UserDirectory(db=db, auto_provision=True)  # alice deliberately NOT seeded into the directory
     authz = Authorization(db=db, verification_keys=[SECRET], algorithm="HS256", verify_audience=True, audience=OS_ID)
     authz.define_role("viewer", ["agents:*:read"], default=True)
     authz.define_role("admin", ["agent_os:admin"])
@@ -747,7 +744,7 @@ def test_seeded_admin_not_in_directory_is_not_demoted_on_first_request(tmp_path)
             id=OS_ID,
             db=db,
             agents=_agents(),
-            user_directory=UserDirectory(user_store=users, auto_provision=True),
+            user_directory=users,
             authorization=authz,
         ).get_app()
     )

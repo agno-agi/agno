@@ -374,7 +374,7 @@ class AgentOS:
             user_isolation: Opt in to per-user data isolation (each caller sees only their own
                 sessions/memories). Enforced under authorization=True; advisory without auth.
             user_directory: A credential-less user directory (roster + disabled kill switch), a
-                peer of authorization that works with or without it. ``True`` builds a UserStore
+                peer of authorization that works with or without it. ``True`` builds a UserDirectory
                 from the OS db with auto-provision on; pass a ``UserDirectory`` (from
                 ``agno.os.authz``) for control. Audit is not configured here: it lives on
                 ``Authorization(audit=...)``, since a change trail without a verified identity has
@@ -483,7 +483,6 @@ class AgentOS:
         self._authz_role_store: Any = None
         self._authz_provider: Any = None
         self._authz_issuer: Optional[str] = None
-        self._authz_user_store: Any = None
 
         # authorization= takes the switch or the object, never the low-level config: one spelling
         # for the deprecated type is enough, and it is the keyword that already exists.
@@ -537,13 +536,12 @@ class AgentOS:
         self.audit: Optional["AuditSink"] = audit
         # The credential-less user directory is a PEER of authorization (who the users are +
         # the disabled kill-switch). ``user_directory=True`` is a shorthand: AgentOS builds the
-        # UserStore from its own db, so callers avoid the manual wiring.
+        # UserDirectory on its own db, so callers avoid the manual wiring.
         self.user_directory = self._resolve_user_directory(user_directory)
         # The /users directory API is served whenever a directory is configured. It is admin-gated
         # under authorization; on a no-auth OS it mounts open, matching every other route (the admin
         # gate needs a verified identity to check, and there is none). See _admin_api_routers,
         # which passes auth_enabled so the gate knows which mode it is in.
-        self._authz_user_store = self.user_directory.user_store if self.user_directory is not None else None
 
         # CORS configuration - merge user-provided origins with defaults from settings
         self.cors_allowed_origins = resolve_origins(cors_allowed_origins, self.settings.cors_origin_list)
@@ -2015,19 +2013,22 @@ class AgentOS:
         authorization is on, and open on a no-auth OS (where every route is open and the roster is
         already writable via auto-provision), passed through as ``auth_enabled``."""
         routers: List[Any] = []
-        if self._authz_role_store is not None or self._authz_user_store is not None:
+        # /users mounts whenever a directory is configured; the router gates on admin under
+        # authorization and is open on a no-auth OS (every route is open there).
+        served_directory = self.user_directory
+        if self._authz_role_store is not None or served_directory is not None:
             from agno.os.authz.admin_router import get_roles_router, get_users_router
 
             if self._authz_role_store is not None:
                 routers.append(get_roles_router(self._authz_role_store))
-            if self._authz_user_store is not None:
+            if served_directory is not None:
                 # /users is admin-gated under authorization; on a no-auth OS it mounts open, matching
                 # every other route (the whole OS serves anonymous callers, and the roster is already
                 # writable via auto-provision). The roles router stays gated -- it exists only when
                 # there is an Authorization object, so authorization is always on there.
                 routers.append(
                     get_users_router(
-                        self._authz_user_store,
+                        served_directory,
                         role_store=self._authz_role_store,
                         auth_enabled=bool(self.authorization),
                     )
@@ -2096,7 +2097,7 @@ class AgentOS:
     ) -> Optional["UserDirectory"]:
         """Normalise the ``user_directory`` shorthand into a bound ``UserDirectory``.
 
-        ``True`` means "build the UserStore on the OS db with JIT provisioning on", so a caller
+        ``True`` means "build the UserDirectory on the OS db with JIT provisioning on", so a caller
         gets a working directory with zero store wiring. ``False`` / ``None`` means no directory.
         A ``UserDirectory`` is bound to the OS db (a store of its own is kept; one created without
         a db adopts the OS db) and refused if it still cannot persist.
@@ -2125,7 +2126,7 @@ class AgentOS:
         deny disabled users and (when auto_provision is on) create a row from token claims.
         """
         directory = self.user_directory
-        user_store = directory.user_store if directory is not None else None
+        user_store = directory  # the directory is the roster store
         if user_store is not None:
             # Change trail: adopt the Authorization object's audit sink if the directory store has
             # none of its own, so one switch records directory changes too (user.created/disabled).

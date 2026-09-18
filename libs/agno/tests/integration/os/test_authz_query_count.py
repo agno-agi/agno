@@ -23,7 +23,7 @@ from agno.db.sqlite import SqliteDb  # noqa: E402
 from agno.os.authz._request_scope import request_scope  # noqa: E402
 from agno.os.authz.provider import AuthorizationContext  # noqa: E402
 from agno.os.authz.role_store import RoleStore  # noqa: E402
-from agno.os.authz.user_store import UserStore  # noqa: E402
+from agno.os.authz.user_directory import UserDirectory  # noqa: E402
 
 
 def _count_authz_queries():
@@ -33,7 +33,7 @@ def _count_authz_queries():
     roles = RoleStore(db=db)
     roles.set_role_scopes("viewer", ["agents:*:read", "workflows:*:run"])
     roles.assign("alice", "viewer")
-    users = UserStore(db=db)
+    users = UserDirectory(db=db)
     users.upsert("alice", email="a@co")
     provider = roles.provider
 

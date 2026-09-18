@@ -34,8 +34,7 @@ from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS, create_dev_token
-from agno.os.authz import Authorization, UserStore
-from agno.os.authz import UserDirectory
+from agno.os.authz import Authorization, UserDirectory
 
 OS_ID = "user-management-metrics-os"
 SECRET = "your-secret-key-at-least-256-bits-long"
@@ -64,7 +63,7 @@ authz.assign("dave", "viewer")
 
 # A small directory, seeded on the store itself: an admin, two analysts, one viewer,
 # one person with no role yet, and one who has been switched off.
-users = UserStore(db=db)
+users = UserDirectory(db=db, auto_provision=False)
 users.upsert("alice", email="alice@co", name="Alice")
 users.upsert("bob", email="bob@co", name="Bob")
 users.upsert("carol", email="carol@co", name="Carol")
@@ -98,7 +97,7 @@ agent_os = AgentOS(
     authorization=authz,  # roles -> /authz is mounted for you
     # the directory is a top-level switch; pass the store seeded above. Provisioning is
     # off so a caller's first request does not register them and move the counts.
-    user_directory=UserDirectory(user_store=users, auto_provision=False),
+    user_directory=users,
 )
 app = agent_os.get_app()
 

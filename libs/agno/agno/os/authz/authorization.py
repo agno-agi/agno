@@ -20,7 +20,7 @@ and an ``include_router`` call, and keeping them pointed at the same database.
 Roles are opt-in: ``define_role`` puts roles in play, and a verify-only Authorization defines none.
 The user directory is NOT configured here, and Authorization never touches it. It is a top-level
 ``AgentOS(user_directory=...)`` concern, a peer of ``user_isolation``, and it works with or without
-auth. Seed people on the ``UserStore`` itself (``users.upsert(...)``) and give them roles with
+auth. Seed people on the ``UserDirectory`` itself (``users.upsert(...)``) and give them roles with
 ``assign(subject, role)`` (bootstrap-safe) or the ``/authz`` admin API. Verification lives here because it
 already lives under authorization today (``authorization=True`` + ``AuthorizationConfig(...)``), and
 plenty of setups verify tokens with no roles (isolation, scope-based access, service accounts). So the
@@ -158,7 +158,7 @@ class Authorization:
         self._audit_sink: Optional["AuditSink"] = None
 
         # The user directory is NOT owned here: it is a top-level AgentOS(user_directory=...) concern,
-        # a peer of user_isolation, seeded on the UserStore itself. Authorization never touches
+        # a peer of user_isolation, seeded on the UserDirectory itself. Authorization never touches
         # it -- seed() below bootstraps the admin ROLE only.
 
         # Roles are in play if any were defined, or a store/engine was supplied.
@@ -209,7 +209,7 @@ class Authorization:
     def seed(self, *, admin: str, admin_role: str = _ADMIN_ROLE) -> "Authorization":
         """Bootstrap the admin: grant ``admin_role`` (default ``"admin"`` -- define it first) to
         ``admin`` if no subject already holds an admin role. A role concern only. The user directory
-        is separate: seed people on the ``UserStore`` (``users.upsert(...)``) and give them
+        is separate: seed people on the ``UserDirectory`` (``users.upsert(...)``) and give them
         roles with :meth:`assign` or the ``/authz`` admin API.
 
         BOOTSTRAP semantics: an existing admin is left as is, so seeding on every start is safe. A

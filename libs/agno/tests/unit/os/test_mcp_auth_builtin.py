@@ -1016,10 +1016,10 @@ async def test_identity_bridge_denies_disabled_user_over_mcp_auth(tmp_path):
     from types import SimpleNamespace
 
     from agno.db.sqlite import SqliteDb
-    from agno.os.authz.user_store import UserStore
+    from agno.os.authz.user_directory import UserDirectory
     from agno.os.mcp_auth import MCPIdentityBridgeMiddleware
 
-    users = UserStore(db=SqliteDb(db_file=str(tmp_path / "u.db")))
+    users = UserDirectory(db=SqliteDb(db_file=str(tmp_path / "u.db")))
     users.upsert("alice", email="alice@co")
     users.upsert("bob", email="bob@co")
     users.set_disabled("bob", True)

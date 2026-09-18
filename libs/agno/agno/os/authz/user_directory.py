@@ -1,52 +1,84 @@
-"""The user directory: WHO the users are, and whether they are active.
+"""Managed users for AgentOS — a credential-less user directory.
 
-A peer of :class:`~agno.os.authz.authorization.Authorization`, not a part of it. It stores no
-policy, only a roster of people with a ``disabled`` off switch (a revocation that outlives a
-valid token) and optional just-in-time provisioning from token claims. Identity is still asserted
-by the token; this never stores credentials. Pass it as ``AgentOS(user_directory=...)``:
+This is the "no IdP" tier. When a customer has no external identity provider,
+their app still authenticates users its own way and mints a JWT that AgentOS
+verifies (see :class:`~agno.os.middleware.jwt.JWTValidator`). agno does NOT store
+passwords and is NOT an authenticator — it owns a *directory* of the users the
+app asserts, plus their roles (via :class:`~agno.os.authz.authorization.Authorization`) and enforcement.
 
-    AgentOS(db=db, agents=[...], authorization=authz, user_directory=True)
-    AgentOS(db=db, agents=[...], authorization=authz,
-            user_directory=UserDirectory(auto_provision=False, fail_closed=True))
+What this store buys you over "roles only":
+    - **Enumeration / management UX**: list the users that exist, not just react
+      to whatever ``sub`` shows up in a token. Pick a user to assign a role.
+    - **A real off-switch**: ``disabled`` is checked at the enforcement point, so
+      a disabled user is denied *even with a still-valid token* — instant
+      revocation you can't get from token expiry alone.
+    - **Audit/identity enrichment**: map an opaque ``sub`` to an email/name in the
+      decision and change trails.
 
-``True`` builds the roster on the OS db with JIT provisioning on. The object gives you the
-knobs, and takes a :class:`UserStore` of your own via ``user_store=`` (or ``db=`` / ``db_url=``
-to build one somewhere other than the OS db). It works with no authorization at all, as an
-advisory roster keyed off the run's user id; under authorization the off switch is enforced by
-the middleware and ``/users`` is mounted for admins.
+It is deliberately small: a user is ``id`` (the JWT ``sub``), optional ``email``
+/ ``name``, a ``disabled`` flag, timestamps, and free-form ``metadata``. No
+credentials, ever.
+
+Two ways users land in the directory:
+    - **Explicit**: an admin creates them up front (``upsert``) and assigns roles.
+    - **Just-in-time**: on the first valid token from an unknown subject, AgentOS
+      can auto-provision a row from the token's claims (opt-in; see
+      ``provision_from_claims`` and ``AuthorizationConfig``).
+
+Backed by your own DB (pass ``db``/``db_url``); falls back to
+in-memory when neither is given (fine for tests, not for production).
 """
 
-from typing import TYPE_CHECKING, Any, Optional
-
-from agno.os.authz._db import resolve_authz_db
+import asyncio
+import json
+import time
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 if TYPE_CHECKING:
-    from agno.os.authz.user_store import UserStore
+    from agno.os.authz.audit import AuditSink
+
+# The directory's list contract: which fields a page can be sorted by / searched
+# over, and the defaults. The roles router validates request params against
+# these, so they have one owner.
+USER_SORT_FIELDS = ("created_at", "updated_at", "id", "email", "name")
+USER_SEARCH_FIELDS = ("id", "email", "name")
+DEFAULT_USER_SORT_FIELD = "created_at"
+DEFAULT_USER_SORT_ORDER = "desc"
+
+
+def _now() -> int:
+    return int(time.time())
+
 
 _NEEDS_DB = (
     "AgentOS(user_directory=...) needs a SQL database: the user directory backs the disabled-user "
     "kill switch, and an in-memory one cannot stay consistent across replicas (a revocation would be "
     "lost on restart and never seen by other workers). Pass a SQL-capable db to AgentOS(db=...) for it "
-    "to adopt, or give the directory one (UserDirectory(db=...) / user_store=UserStore(db=...))."
+    "to adopt, or give the directory one (UserDirectory(db=...) / db_url=...)."
 )
 
 
 class UserDirectory:
-    """Roster + off switch + JIT provisioning settings, bound to a :class:`UserStore`.
+    """The user directory: WHO the users are, whether they are active, and how they get in.
 
-    Args:
-        db / db_url: where the roster persists. Optional -- when omitted (and no ``user_store``)
-            the directory borrows ``AgentOS(db=...)`` at bind time.
-        user_store: bring your own :class:`UserStore`; the directory adopts it as is.
-        auto_provision: create a row from the token claims on a subject's first valid request.
-            The role they get is the one flagged ``define_role(..., default=True)``; a subject
-            who already holds a role keeps it. On by default, since a roster that has to be
-            filled by hand before anyone can log in is rarely what a deployment wants.
-        email_claim / name_claim: the token claims JIT provisioning reads the profile from.
-        fail_closed: how to treat a directory read that errors while checking the off switch.
-            False (default) lets the request through -- availability over the kill switch.
-            True rejects with 503, so a directory outage cannot silently re-enable a
-            disabled account.
+    A peer of :class:`~agno.os.authz.authorization.Authorization`, not a part of it. It stores no
+    policy, only a roster of people with a ``disabled`` off switch (a revocation that outlives a
+    valid token) and the settings for just-in-time provisioning from token claims. Identity is
+    still asserted by the token; this never stores credentials. Pass it as
+    ``AgentOS(user_directory=...)``:
+
+        AgentOS(db=db, agents=[...], authorization=authz, user_directory=True)
+        AgentOS(db=db, agents=[...], authorization=authz,
+                user_directory=UserDirectory(auto_provision=False, fail_closed=True))
+
+    ``True`` builds the roster on the OS db with JIT provisioning on. Build it yourself to set the
+    knobs, or to persist it somewhere other than the OS db (``db=`` / ``db_url=``); one built with
+    neither is in memory until AgentOS lends it the OS db. It works with no authorization at all,
+    as an advisory roster keyed off the run's user id; under authorization the off switch is
+    enforced by the middleware and ``/users`` is mounted for admins.
+
+    The roster itself is managed here: ``upsert``, ``get``, ``list``, ``set_disabled``, ``remove``
+    (and their async twins), each change emitting an audit event when a sink is attached.
     """
 
     def __init__(
@@ -54,46 +86,640 @@ class UserDirectory:
         *,
         db: Optional[Any] = None,
         db_url: Optional[str] = None,
-        user_store: Optional["UserStore"] = None,
         auto_provision: bool = True,
         email_claim: str = "email",
         name_claim: str = "name",
         fail_closed: bool = False,
+        audit: Optional["AuditSink"] = None,
     ):
-        if user_store is not None and (db is not None or db_url is not None):
-            raise ValueError("UserDirectory takes either user_store= or db=/db_url=, not both.")
+        """
+        Args:
+            db / db_url: where the roster persists. ``db`` is an agno database (the same object
+                you pass to ``AgentOS(db=...)``); ``db_url`` a SQLAlchemy URL. Omit both and the
+                directory is in memory until AgentOS lends it the OS db.
+            auto_provision: create a row from the token claims on a subject's first valid request.
+                The role they get is the one flagged ``define_role(..., default=True)``; a subject
+                who already holds a role keeps it. On by default, since a roster that has to be
+                filled by hand before anyone can log in is rarely what a deployment wants.
+            email_claim / name_claim: the token claims JIT provisioning reads the profile from.
+            fail_closed: how to treat a directory read that errors while checking the off switch.
+                False (default) lets the request through -- availability over the kill switch.
+                True rejects with 503, so a directory outage cannot silently re-enable a
+                disabled account.
+            audit: optional :class:`~agno.os.authz.audit.AuditSink` of your own. AgentOS attaches
+                the ``Authorization(audit=...)`` sink to a directory that has none, so every
+                directory change lands in the same trail as role changes.
+        """
         self.auto_provision = auto_provision
         self.email_claim = email_claim
         self.name_claim = name_claim
         self.fail_closed = fail_closed
-        self._user_store: Optional["UserStore"] = user_store
-        db = resolve_authz_db(db, db_url)
-        if db is not None:
-            from agno.os.authz.user_store import UserStore
+        self._audit = audit
+        self._mem: Optional[Dict[str, dict]] = None
+        from agno.os.authz._db import is_async_authz_db, require_authz_db, resolve_authz_db
 
-            self._user_store = UserStore(db=db)
+        self._db: Any = resolve_authz_db(db, db_url)
+        self._db_is_async: bool = is_async_authz_db(self._db)
+        if self._db is None:
+            # In-memory directory (not persisted). Fine for tests/dev, and AgentOS
+            # upgrades it in place via attach_db() when it has a usable db -- see the
+            # guard there for why a live one must not stay in-memory.
+            self._mem = {}
+        else:
+            # A db that cannot store the directory fails here, at construction, rather than on
+            # the first read or write of a served request.
+            require_authz_db(self._db)
 
     def _bind(self, os_db: Optional[Any]) -> "UserDirectory":
-        """Give the directory a persisted store: build one on the OS db, or adopt the OS db into a
-        store created without one. A store that still cannot persist afterwards is refused: the
-        directory backs the disabled-user kill switch, and an in-memory one silently loses a
-        revocation on restart and never reaches another replica."""
-        if self._user_store is None:
-            if os_db is None:
-                raise ValueError(_NEEDS_DB)
-            from agno.os.authz.user_store import UserStore
-
-            self._user_store = UserStore(db=os_db)
-        else:
-            self._user_store.attach_db(os_db)
-        if getattr(self._user_store, "is_bound", True) is False:
+        """Make sure the roster persists before it is served: adopt the OS db into a directory
+        built without one, and refuse one that still cannot persist. The directory backs the
+        disabled-user kill switch, and an in-memory one silently loses a revocation on restart
+        and never reaches another replica."""
+        self.attach_db(os_db)
+        if not self.is_bound:
             raise ValueError(_NEEDS_DB)
         return self
 
     @property
-    def user_store(self) -> "UserStore":
-        """The roster store. Available once AgentOS has bound the directory (or immediately when
-        built with a db of its own)."""
-        if self._user_store is None:
-            raise ValueError(_NEEDS_DB)
-        return self._user_store
+    def is_bound(self) -> bool:
+        """True once the directory is backed by a database rather than a process-local
+        dict (passed in at construction, or adopted later via :meth:`attach_db`)."""
+        return self._db is not None
+
+    def attach_db(self, db: Any) -> None:
+        """Bind an agno ``Db`` to a store created without one, so the directory persists
+        in (and reads fresh from) that DB.
+
+        No-op if the store already has its own DB, or the db isn't SQL-capable. AgentOS
+        calls this to default the directory to the OS database, mirroring what it does
+        for roles. Any rows written while the directory was in-memory are
+        migrated across, so adoption never silently drops a disabled user.
+        """
+        from agno.os.authz._db import is_async_authz_db, supports_authz
+
+        if self._db is not None or db is None or not supports_authz(db):
+            return
+        pending = list((self._mem or {}).values())
+        self._db = db
+        self._db_is_async = is_async_authz_db(db)
+        self._mem = None
+        # Carry rows written before adoption across verbatim -- including ``disabled``,
+        # which upsert() deliberately refuses to set, so a revoked user stays revoked.
+        for row in pending:
+            self._write(row, insert=True)
+
+    def attach_audit(self, sink: Optional["AuditSink"]) -> None:
+        """Adopt ``sink`` as the change-audit sink if one wasn't set explicitly.
+
+        Mirrors :meth:`attach_db`: ``Authorization(audit=...)`` feeds both the decision trail and this
+        directory's change trail, but an ``audit=`` passed to the store directly wins. No-op when
+        the store already has a sink or ``sink`` is None."""
+        if self._audit is None and sink is not None:
+            self._audit = sink
+
+    # ------------------------------------------------------------------ audit
+    def _emit(
+        self,
+        action: str,
+        target: str,
+        before: Optional[List[str]],
+        after: Optional[List[str]],
+        actor: Optional[str],
+    ) -> None:
+        if self._audit is None:
+            return
+        from agno.os.authz.audit import AuditEvent
+
+        self._audit.record(
+            AuditEvent(action=action, actor=actor, target=target, before=before, after=after, timestamp=_now())
+        )
+
+    # ------------------------------------------------------------------ writes
+    def upsert(
+        self,
+        id: str,
+        email: Optional[str] = None,
+        name: Optional[str] = None,
+        metadata: Optional[dict] = None,
+        actor: Optional[str] = None,
+    ) -> dict:
+        """Create a user, or update the provided fields of an existing one.
+
+        Only fields you pass are changed; omitted fields are left as-is on an
+        existing user (so a metadata-light update can't blank out an email).
+        ``disabled`` is intentionally NOT settable here — use
+        :meth:`set_disabled` so enable/disable is an explicit, audited action.
+        """
+        existing = self.get(id)
+        now = _now()
+        if existing is None:
+            row = {
+                "id": id,
+                "email": email,
+                "name": name,
+                "disabled": False,
+                "created_at": now,
+                "updated_at": now,
+                "metadata": metadata or None,
+            }
+            self._write(row, insert=True)
+            self._emit("user.created", id, None, [self._summary(row)], actor)
+            return row
+
+        row = dict(existing)
+        if email is not None:
+            row["email"] = email
+        if name is not None:
+            row["name"] = name
+        if metadata is not None:
+            row["metadata"] = metadata
+        row["updated_at"] = now
+        self._write(row, insert=False)
+        self._emit("user.updated", id, [self._summary(existing)], [self._summary(row)], actor)
+        return row
+
+    def set_disabled(self, id: str, disabled: bool, actor: Optional[str] = None) -> dict:
+        """Disable (or re-enable) a user. A disabled user is denied at the
+        enforcement point even with a valid token — this is the revocation hook."""
+        existing = self.get(id)
+        if existing is None:
+            # Unknown subject: write a single durable tombstone in the TARGET state
+            # (the app may mint tokens for a sub we've not seen) and emit only the
+            # disable/enable event — no spurious "user.created … active" round-trip.
+            now = _now()
+            row = {
+                "id": id,
+                "email": None,
+                "name": None,
+                "disabled": bool(disabled),
+                "created_at": now,
+                "updated_at": now,
+                "metadata": None,
+            }
+            self._persist_disabled(id, disabled, tombstone=row)
+            self._emit("user.disabled" if disabled else "user.enabled", id, None, [self._summary(row)], actor)
+            return row
+
+        if bool(existing["disabled"]) == bool(disabled):
+            return existing  # no-op, no event
+
+        row = dict(existing)
+        row["disabled"] = bool(disabled)
+        row["updated_at"] = _now()
+        self._persist_disabled(id, disabled)
+        self._emit(
+            "user.disabled" if disabled else "user.enabled", id, [self._summary(existing)], [self._summary(row)], actor
+        )
+        return row
+
+    def _persist_disabled(self, id: str, disabled: bool, tombstone: Optional[dict] = None) -> None:
+        """Write ONLY the ``disabled`` flag, atomically. Never a read-modify-write of the
+        whole row, so a concurrent profile edit / JIT provision cannot revert it (the lost
+        update that would silently un-revoke a user). ``tombstone`` is the full row to seed
+        an unknown subject in the in-memory store."""
+        if self._mem is not None:
+            row = self._mem.get(id)
+            if row is not None:
+                row["disabled"] = bool(disabled)
+                row["updated_at"] = _now()
+            elif tombstone is not None:
+                self._mem[id] = dict(tombstone)
+            return
+        self._db.set_authz_user_disabled(id, bool(disabled))
+
+    def remove(self, id: str, actor: Optional[str] = None) -> bool:
+        """Delete a user from the directory. Does NOT remove role assignments —
+        those live in the role store; remove them there if needed.
+
+        NOTE: delete is NOT a revocation primitive. With JIT auto-provisioning on
+        (``UserDirectory(auto_provision=True)``), the next valid token
+        from this subject re-creates the row as *active*, and any surviving role
+        assignments come back with it. To revoke access, use :meth:`set_disabled`
+        (a durable tombstone enforced at every request), not :meth:`remove`."""
+        existing = self.get(id)
+        if existing is None:
+            return False
+        if self._mem is not None:
+            self._mem.pop(id, None)
+        else:
+            self._db.delete_authz_user(id)
+        self._emit("user.removed", id, [self._summary(existing)], None, actor)
+        return True
+
+    def provision_from_claims(
+        self,
+        subject: str,
+        claims: Dict[str, Any],
+        email_claim: str = "email",
+        name_claim: str = "name",
+        actor: Optional[str] = None,
+    ) -> Tuple[dict, bool]:
+        """Just-in-time: create a directory row for ``subject`` from token claims if it
+        doesn't exist yet.
+
+        Returns ``(user, created)``. ``created`` is True only when a new row was made, so a
+        caller can grant a default role exactly once (on first login, not every request). If
+        the user is already present this is a no-op that returns ``(existing_row, False)``.
+        """
+        existing = self.get(subject)
+        if existing is not None:
+            return existing, False
+        user = self.upsert(
+            subject,
+            email=claims.get(email_claim),
+            name=claims.get(name_claim),
+            actor=actor or "system:jit",
+        )
+        return user, True
+
+    # ------------------------------------------------------------------ reads
+    def get(self, id: str) -> Optional[dict]:
+        if self._mem is not None:
+            row = self._mem.get(id)
+            return dict(row) if row else None
+
+        return self._db.get_authz_user(id)
+
+    def _filtered_mem_rows(self, include_disabled: bool, search: Optional[str]) -> List[dict]:
+        """The in-memory equivalent of the SQL filters, for the unbound dev/test store."""
+        rows = list((self._mem or {}).values())
+        if not include_disabled:
+            rows = [r for r in rows if not r["disabled"]]
+        if search:
+            needle = search.casefold()
+            rows = [
+                r for r in rows if any(str(r.get(f) or "").casefold().find(needle) >= 0 for f in USER_SEARCH_FIELDS)
+            ]
+        return rows
+
+    def list(
+        self,
+        limit: int = 1000,
+        include_disabled: bool = True,
+        offset: int = 0,
+        search: Optional[str] = None,
+        sort_by: str = DEFAULT_USER_SORT_FIELD,
+        order: str = DEFAULT_USER_SORT_ORDER,
+    ) -> List[dict]:
+        """A page of users, optionally excluding disabled ones.
+
+        ``offset``/``limit`` page in the store so callers don't materialise the
+        whole directory; pair with :meth:`count` for the total. ``search``
+        filters case-insensitively by substring across id, email, and name;
+        ``sort_by`` is any of :data:`USER_SORT_FIELDS` (newest first by default)."""
+        if sort_by not in USER_SORT_FIELDS:
+            raise ValueError(f"sort_by must be one of {USER_SORT_FIELDS}, got {sort_by!r}")
+        descending = order != "asc"
+        if self._mem is not None:
+            # Rows missing the field (email/name are optional) go last in either
+            # direction, matching the nullslast() on the SQL path.
+            rows = self._filtered_mem_rows(include_disabled, search)
+            present = sorted(
+                (r for r in rows if r.get(sort_by) is not None), key=lambda r: r[sort_by], reverse=descending
+            )
+            missing = [r for r in rows if r.get(sort_by) is None]
+            return [dict(r) for r in (present + missing)[offset : offset + limit]]
+
+        return self._db.list_authz_users(
+            limit=limit,
+            offset=offset,
+            include_disabled=include_disabled,
+            search=search,
+            sort_by=sort_by,
+            order=order,
+        )
+
+    def count(self, include_disabled: bool = True, search: Optional[str] = None) -> int:
+        """Total number of users (for pagination), with the same filters as
+        :meth:`list`."""
+        if self._mem is not None:
+            return len(self._filtered_mem_rows(include_disabled, search))
+
+        return int(self._db.count_authz_users(include_disabled=include_disabled, search=search))
+
+    def _mem_count_by_status(self) -> Dict[str, int]:
+        rows = list((self._mem or {}).values())
+        return {"total": len(rows), "disabled": sum(1 for r in rows if r.get("disabled"))}
+
+    def _mem_ids(self, include_disabled: bool) -> List[str]:
+        return sorted(r["id"] for r in self._filtered_mem_rows(include_disabled, None))
+
+    def _mem_created_by_day(self, starting_at: Optional[int], ending_before: Optional[int]) -> List[Dict[str, int]]:
+        seconds_per_day = 24 * 60 * 60
+        counts: Dict[int, int] = {}
+        for row in (self._mem or {}).values():
+            created_at = int(row["created_at"])
+            if starting_at is not None and created_at < starting_at:
+                continue
+            if ending_before is not None and created_at >= ending_before:
+                continue
+            day = created_at - (created_at % seconds_per_day)
+            counts[day] = counts.get(day, 0) + 1
+        return [{"date": day, "count": counts[day]} for day in sorted(counts)]
+
+    def count_by_status(self) -> Dict[str, int]:
+        """``{"total": n, "disabled": n}`` from one read, so the pair is consistent."""
+        if self._mem is not None:
+            return self._mem_count_by_status()
+
+        return dict(self._db.count_authz_users_by_status())
+
+    def ids(self, include_disabled: bool = True) -> List[str]:
+        """Every user id, sorted. For bulk lookups keyed on the id (resolving roles for
+        the whole directory) where :meth:`list` would fetch profile columns nobody reads."""
+        if self._mem is not None:
+            return self._mem_ids(include_disabled)
+
+        return list(self._db.list_authz_user_ids(include_disabled=include_disabled))
+
+    def created_by_day(
+        self, starting_at: Optional[int] = None, ending_before: Optional[int] = None
+    ) -> List[Dict[str, int]]:
+        """Users created per UTC day as ``{"date": <day start epoch>, "count": n}``,
+        oldest first; days with no registrations are absent. ``starting_at`` and
+        ``ending_before`` bound ``created_at`` (inclusive / exclusive, epoch seconds).
+        Deleted users drop out of history, so this is the directory as it is now."""
+        if self._mem is not None:
+            return self._mem_created_by_day(starting_at, ending_before)
+
+        return self._db.count_authz_users_by_day(starting_at=starting_at, ending_before=ending_before)
+
+    def is_disabled(self, id: Optional[str]) -> bool:
+        """Fast path for the enforcement point: True only if the user exists AND is
+        disabled. Unknown subjects are NOT disabled (the app may legitimately mint
+        tokens for users not yet in the directory)."""
+        if not id:
+            return False
+        if self._mem is not None:
+            row = self._mem.get(id)
+            return bool(row and row["disabled"])
+
+        return bool(self._db.is_authz_user_disabled(id))
+
+    # ------------------------------------------------------------------ helpers
+    @staticmethod
+    def _summary(row: dict) -> str:
+        """Compact, non-secret one-line representation for the audit before/after."""
+        bits = [row["id"]]
+        if row.get("email"):
+            bits.append(row["email"])
+        bits.append("disabled" if row.get("disabled") else "active")
+        return " ".join(bits)
+
+    def _row_to_dict(self, r) -> dict:
+        return {
+            "id": r["id"],
+            "email": r["email"],
+            "name": r["name"],
+            "disabled": bool(r["disabled"]),
+            "created_at": r["created_at"],
+            "updated_at": r["updated_at"],
+            "metadata": json.loads(r["user_metadata"]) if r["user_metadata"] else None,
+        }
+
+    def _write(self, row: dict, insert: bool = True) -> None:
+        """Persist a directory row. ``insert`` is vestigial -- the store upserts, so a
+        caller never has to know whether the row already existed."""
+        if self._mem is not None:
+            self._mem[row["id"]] = dict(row)
+            return
+
+        self._db.upsert_authz_user(
+            row["id"],
+            {
+                "email": row["email"],
+                "name": row["name"],
+                "disabled": bool(row["disabled"]),
+                "created_at": row["created_at"],
+                "updated_at": row["updated_at"],
+                "metadata": row.get("metadata"),
+            },
+        )
+
+    # =====================================================================
+    # Async variants
+    #
+    # Twins of every public method (plus the DB-touching helpers), so the directory works on
+    # an async request path. The in-memory dev/test store has no I/O, so those branches are
+    # shared with the sync path; the DB branches await through :meth:`_adb`, which drives an
+    # async backend natively and a sync one in a worker thread.
+    # =====================================================================
+    async def _adb(self, name: str, *args: Any, **kwargs: Any) -> Any:
+        fn = getattr(self._db, name)
+        if self._db_is_async:
+            return await fn(*args, **kwargs)
+        return await asyncio.to_thread(fn, *args, **kwargs)
+
+    async def _aemit(
+        self,
+        action: str,
+        target: str,
+        before: Optional[List[str]],
+        after: Optional[List[str]],
+        actor: Optional[str],
+    ) -> None:
+        if self._audit is None:
+            return
+        from agno.os.authz.audit import AuditEvent
+
+        await self._audit.arecord(
+            AuditEvent(action=action, actor=actor, target=target, before=before, after=after, timestamp=_now())
+        )
+
+    async def _awrite(self, row: dict, insert: bool = True) -> None:
+        if self._mem is not None:
+            self._mem[row["id"]] = dict(row)
+            return
+        await self._adb(
+            "upsert_authz_user",
+            row["id"],
+            {
+                "email": row["email"],
+                "name": row["name"],
+                "disabled": bool(row["disabled"]),
+                "created_at": row["created_at"],
+                "updated_at": row["updated_at"],
+                "metadata": row.get("metadata"),
+            },
+        )
+
+    async def _apersist_disabled(self, id: str, disabled: bool, tombstone: Optional[dict] = None) -> None:
+        if self._mem is not None:
+            row = self._mem.get(id)
+            if row is not None:
+                row["disabled"] = bool(disabled)
+                row["updated_at"] = _now()
+            elif tombstone is not None:
+                self._mem[id] = dict(tombstone)
+            return
+        await self._adb("set_authz_user_disabled", id, bool(disabled))
+
+    async def aget(self, id: str) -> Optional[dict]:
+        if self._mem is not None:
+            row = self._mem.get(id)
+            return dict(row) if row else None
+        return await self._adb("get_authz_user", id)
+
+    async def aupsert(
+        self,
+        id: str,
+        email: Optional[str] = None,
+        name: Optional[str] = None,
+        metadata: Optional[dict] = None,
+        actor: Optional[str] = None,
+    ) -> dict:
+        """Async twin of :meth:`upsert`."""
+        existing = await self.aget(id)
+        now = _now()
+        if existing is None:
+            row = {
+                "id": id,
+                "email": email,
+                "name": name,
+                "disabled": False,
+                "created_at": now,
+                "updated_at": now,
+                "metadata": metadata or None,
+            }
+            await self._awrite(row, insert=True)
+            await self._aemit("user.created", id, None, [self._summary(row)], actor)
+            return row
+
+        row = dict(existing)
+        if email is not None:
+            row["email"] = email
+        if name is not None:
+            row["name"] = name
+        if metadata is not None:
+            row["metadata"] = metadata
+        row["updated_at"] = now
+        await self._awrite(row, insert=False)
+        await self._aemit("user.updated", id, [self._summary(existing)], [self._summary(row)], actor)
+        return row
+
+    async def aset_disabled(self, id: str, disabled: bool, actor: Optional[str] = None) -> dict:
+        """Async twin of :meth:`set_disabled`."""
+        existing = await self.aget(id)
+        if existing is None:
+            now = _now()
+            row = {
+                "id": id,
+                "email": None,
+                "name": None,
+                "disabled": bool(disabled),
+                "created_at": now,
+                "updated_at": now,
+                "metadata": None,
+            }
+            await self._apersist_disabled(id, disabled, tombstone=row)
+            await self._aemit("user.disabled" if disabled else "user.enabled", id, None, [self._summary(row)], actor)
+            return row
+
+        if bool(existing["disabled"]) == bool(disabled):
+            return existing
+
+        row = dict(existing)
+        row["disabled"] = bool(disabled)
+        row["updated_at"] = _now()
+        await self._apersist_disabled(id, disabled)
+        await self._aemit(
+            "user.disabled" if disabled else "user.enabled", id, [self._summary(existing)], [self._summary(row)], actor
+        )
+        return row
+
+    async def aremove(self, id: str, actor: Optional[str] = None) -> bool:
+        """Async twin of :meth:`remove`."""
+        existing = await self.aget(id)
+        if existing is None:
+            return False
+        if self._mem is not None:
+            self._mem.pop(id, None)
+        else:
+            await self._adb("delete_authz_user", id)
+        await self._aemit("user.removed", id, [self._summary(existing)], None, actor)
+        return True
+
+    async def aprovision_from_claims(
+        self,
+        subject: str,
+        claims: Dict[str, Any],
+        email_claim: str = "email",
+        name_claim: str = "name",
+        actor: Optional[str] = None,
+    ) -> Tuple[dict, bool]:
+        """Async twin of :meth:`provision_from_claims`."""
+        existing = await self.aget(subject)
+        if existing is not None:
+            return existing, False
+        user = await self.aupsert(
+            subject,
+            email=claims.get(email_claim),
+            name=claims.get(name_claim),
+            actor=actor or "system:jit",
+        )
+        return user, True
+
+    async def alist(
+        self,
+        limit: int = 1000,
+        include_disabled: bool = True,
+        offset: int = 0,
+        search: Optional[str] = None,
+        sort_by: str = DEFAULT_USER_SORT_FIELD,
+        order: str = DEFAULT_USER_SORT_ORDER,
+    ) -> List[dict]:
+        """Async twin of :meth:`list`."""
+        if sort_by not in USER_SORT_FIELDS:
+            raise ValueError(f"sort_by must be one of {USER_SORT_FIELDS}, got {sort_by!r}")
+        if self._mem is not None:
+            descending = order != "asc"
+            rows = self._filtered_mem_rows(include_disabled, search)
+            present = sorted(
+                (r for r in rows if r.get(sort_by) is not None), key=lambda r: r[sort_by], reverse=descending
+            )
+            missing = [r for r in rows if r.get(sort_by) is None]
+            return [dict(r) for r in (present + missing)[offset : offset + limit]]
+        return await self._adb(
+            "list_authz_users",
+            limit=limit,
+            offset=offset,
+            include_disabled=include_disabled,
+            search=search,
+            sort_by=sort_by,
+            order=order,
+        )
+
+    async def acount(self, include_disabled: bool = True, search: Optional[str] = None) -> int:
+        """Async twin of :meth:`count`."""
+        if self._mem is not None:
+            return len(self._filtered_mem_rows(include_disabled, search))
+        return int(await self._adb("count_authz_users", include_disabled=include_disabled, search=search))
+
+    async def acount_by_status(self) -> Dict[str, int]:
+        """Async twin of :meth:`count_by_status`."""
+        if self._mem is not None:
+            return self._mem_count_by_status()
+        return dict(await self._adb("count_authz_users_by_status"))
+
+    async def aids(self, include_disabled: bool = True) -> List[str]:
+        """Async twin of :meth:`ids`."""
+        if self._mem is not None:
+            return self._mem_ids(include_disabled)
+        return list(await self._adb("list_authz_user_ids", include_disabled=include_disabled))
+
+    async def acreated_by_day(
+        self, starting_at: Optional[int] = None, ending_before: Optional[int] = None
+    ) -> List[Dict[str, int]]:
+        """Async twin of :meth:`created_by_day`."""
+        if self._mem is not None:
+            return self._mem_created_by_day(starting_at, ending_before)
+        return await self._adb("count_authz_users_by_day", starting_at=starting_at, ending_before=ending_before)
+
+    async def ais_disabled(self, id: Optional[str]) -> bool:
+        """Async twin of :meth:`is_disabled`."""
+        if not id:
+            return False
+        if self._mem is not None:
+            row = self._mem.get(id)
+            return bool(row and row["disabled"])
+        return bool(await self._adb("is_authz_user_disabled", id))

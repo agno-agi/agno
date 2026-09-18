@@ -38,7 +38,7 @@ from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS, create_dev_token
-from agno.os.authz import Authorization, UserDirectory, UserStore
+from agno.os.authz import Authorization, UserDirectory
 
 JWT_SECRET = os.getenv("JWT_VERIFICATION_KEY", "your-secret-key-at-least-256-bits-long")
 OS_ID = "managed-users-os"
@@ -50,7 +50,7 @@ db = SqliteDb(db_file="tmp/managed_users.db")
 
 # The user directory (roster) is its own thing, separate from authorization. Create the store and
 # seed people on it directly: an id + optional email/name, no passwords, plus the disabled off-switch.
-users = UserStore(db=db)
+users = UserDirectory(db=db, auto_provision=True)
 users.upsert("alice", email="alice@co", name="Alice")
 users.upsert("bob", email="bob@co", name="Bob")
 
@@ -86,7 +86,7 @@ agent_os = AgentOS(
     db=db,
     description="Managed-users AgentOS",
     agents=[research_agent],
-    user_directory=UserDirectory(user_store=users, auto_provision=True),
+    user_directory=users,
     authorization=authz,
 )
 app = agent_os.get_app()

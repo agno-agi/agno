@@ -44,7 +44,7 @@ def test_snippet_builds_directory_and_isolation_without_auth(tmp_path):
     assert os_.user_directory.auto_provision is True  # bare True defaults auto_provision on
 
     client = TestClient(os_.get_app())
-    assert os_.user_directory.user_store.get("chegizkhan") is None
+    assert os_.user_directory.get("chegizkhan") is None
 
     with patch.object(Agent, "arun", new_callable=AsyncMock) as m:
         m.return_value = _MockRunOutput()
@@ -53,7 +53,7 @@ def test_snippet_builds_directory_and_isolation_without_auth(tmp_path):
             data={"message": "hi", "stream": "false", "user_id": "chegizkhan"},
         )
     assert r.status_code == 200, r.text
-    assert os_.user_directory.user_store.get("chegizkhan") is not None  # roster populated from the run
+    assert os_.user_directory.get("chegizkhan") is not None  # roster populated from the run
 
 
 def test_no_auth_directory_does_not_enforce_disabled(tmp_path):
@@ -63,13 +63,11 @@ def test_no_auth_directory_does_not_enforce_disabled(tmp_path):
 
     from fastapi.testclient import TestClient
 
-    from agno.os.authz.user_store import UserStore
-
-    store = UserStore(db=SqliteDb(db_file=str(tmp_path / "dir.db")))
+    store = UserDirectory(db=SqliteDb(db_file=str(tmp_path / "dir.db")), auto_provision=True)
     store.upsert("chegizkhan", name="Chegiz")
     store.set_disabled("chegizkhan", True)
 
-    os_ = _os(tmp_path, user_directory=UserDirectory(user_store=store, auto_provision=True))
+    os_ = _os(tmp_path, user_directory=store)
     client = TestClient(os_.get_app())
 
     with patch.object(Agent, "arun", new_callable=AsyncMock) as m:
@@ -130,7 +128,7 @@ def test_no_auth_provisioning_is_run_only(tmp_path):
 
     # a GET with a user_id must NOT provision
     client.get("/agents/research-agent", params={"user_id": "ghost"})
-    assert os_.user_directory.user_store.get("ghost") is None
+    assert os_.user_directory.get("ghost") is None
 
     # a run DOES provision
     with patch.object(Agent, "arun", new_callable=AsyncMock) as m:
@@ -140,7 +138,7 @@ def test_no_auth_provisioning_is_run_only(tmp_path):
             data={"message": "hi", "stream": "false", "user_id": "realrunner"},
         )
     assert r.status_code == 200, r.text
-    assert os_.user_directory.user_store.get("realrunner") is not None
+    assert os_.user_directory.get("realrunner") is not None
 
 
 def test_user_isolation_without_auth_sets_scoping_but_does_not_provision(tmp_path):
@@ -153,11 +151,10 @@ def test_user_isolation_without_auth_sets_scoping_but_does_not_provision(tmp_pat
 
     from starlette.requests import Request
 
-    from agno.os.authz.user_store import UserStore
     from agno.os.middleware.no_auth_identity import NoAuthIdentityMiddleware
     from agno.os.middleware.user_scope import get_scoped_user_id
 
-    store = UserStore(db=SqliteDb(db_file=str(tmp_path / "m.db")))
+    store = UserDirectory(db=SqliteDb(db_file=str(tmp_path / "m.db")))
     app_obj = SimpleNamespace(
         state=SimpleNamespace(
             user_store=store,
@@ -235,10 +232,8 @@ def test_users_api_is_open_on_a_no_auth_instance(tmp_path):
     on."""
     from fastapi.testclient import TestClient
 
-    from agno.os.authz.user_store import UserStore
-
-    store = UserStore(db=SqliteDb(db_file=str(tmp_path / "u.db")))
-    os_ = _os(tmp_path, user_directory=UserDirectory(user_store=store, auto_provision=True))
+    store = UserDirectory(db=SqliteDb(db_file=str(tmp_path / "u.db")), auto_provision=True)
+    os_ = _os(tmp_path, user_directory=store)
     client = TestClient(os_.get_app())  # auto-mounted, no manual include_router
 
     # /users is open: read and write both work with no token.
@@ -257,10 +252,8 @@ def test_no_auth_run_refuses_a_reserved_principal(tmp_path):
 
     from fastapi.testclient import TestClient
 
-    from agno.os.authz.user_store import UserStore
-
-    store = UserStore(db=SqliteDb(db_file=str(tmp_path / "u.db")))
-    os_ = _os(tmp_path, user_isolation=True, user_directory=UserDirectory(user_store=store, auto_provision=True))
+    store = UserDirectory(db=SqliteDb(db_file=str(tmp_path / "u.db")), auto_provision=True)
+    os_ = _os(tmp_path, user_isolation=True, user_directory=store)
     client = TestClient(os_.get_app())
 
     with patch.object(Agent, "arun", new_callable=AsyncMock) as m:

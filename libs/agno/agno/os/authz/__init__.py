@@ -24,7 +24,6 @@ from agno.os.authz.provider import AuthorizationContext, AuthorizationProvider
 from agno.os.authz.role_store import RoleStore
 from agno.os.authz.scope_provider import ScopeAuthorizationProvider
 from agno.os.authz.user_directory import UserDirectory
-from agno.os.authz.user_store import UserStore
 
 __all__ = [
     # The Authorization object: verification + roles + users + audit + admin API, wired into AgentOS.
@@ -36,9 +35,6 @@ __all__ = [
     # provider, native default engine). get_roles_router lives in admin_router and
     # is imported directly to keep this package import FastAPI-free.
     "RoleStore",
-    # The credential-less user directory (the no-IdP tier). Dependency-free like
-    # RoleStore, so it belongs on the same package seam.
-    "UserStore",
     "UserDirectory",
     "PolicyEngine",
     "ScopeEntry",

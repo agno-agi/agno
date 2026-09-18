@@ -72,13 +72,13 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from agno.os.authz.audit import AUDIT_SORT_FIELDS, DEFAULT_AUDIT_SORT_FIELD
-from agno.os.authz.user_store import DEFAULT_USER_SORT_FIELD, USER_SORT_FIELDS
+from agno.os.authz.user_directory import DEFAULT_USER_SORT_FIELD, USER_SORT_FIELDS
 from agno.os.schema import PaginatedResponse, PaginationInfo, SortOrder
 from agno.os.scopes import AgentOSScope
 
 if TYPE_CHECKING:
     from agno.os.authz.role_store import RoleStore
-    from agno.os.authz.user_store import UserStore
+    from agno.os.authz.user_directory import UserDirectory
 
 
 # --------------------------------------------------------------------- schemas
@@ -624,7 +624,7 @@ def _build_user_management_metrics(
 
 
 def collect_user_management_metrics(
-    user_store: "UserStore",
+    user_store: "UserDirectory",
     role_store: "Optional[RoleStore]" = None,
     starting_at: Optional[int] = None,
     ending_before: Optional[int] = None,
@@ -646,7 +646,7 @@ def collect_user_management_metrics(
 
 
 async def acollect_user_management_metrics(
-    user_store: "UserStore",
+    user_store: "UserDirectory",
     role_store: "Optional[RoleStore]" = None,
     starting_at: Optional[int] = None,
     ending_before: Optional[int] = None,
@@ -661,7 +661,7 @@ async def acollect_user_management_metrics(
 
 
 def get_users_router(
-    user_store: "UserStore",
+    user_store: "UserDirectory",
     role_store: "Optional[RoleStore]" = None,
     prefix: str = "/users",
     tags: Optional[List[Union[str, Enum]]] = None,

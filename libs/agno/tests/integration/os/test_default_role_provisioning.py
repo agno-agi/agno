@@ -17,7 +17,7 @@ pytest.importorskip("sqlalchemy")  # managed roles persist/enforce via the nativ
 
 from agno.os.auth import provision_user_with_default_role  # noqa: E402
 from agno.os.authz.role_store import RoleStore  # noqa: E402
-from agno.os.authz.user_store import UserStore  # noqa: E402
+from agno.os.authz.user_directory import UserDirectory  # noqa: E402
 
 
 def _db_url() -> str:
@@ -30,8 +30,8 @@ def _roles() -> RoleStore:
     return RoleStore(db_url=_db_url())
 
 
-def _users() -> UserStore:
-    return UserStore(db_url=_db_url())
+def _users() -> UserDirectory:
+    return UserDirectory(db_url=_db_url())
 
 
 # ------------------------------------------------ role store: default_role + uniqueness
@@ -117,13 +117,13 @@ def test_no_role_default_applies_only_to_a_known_directory_user(tmp_path):
     (never inert); an arbitrary authenticated ``sub`` that was never provisioned stays DENIED, so a
     permissive default is not a floor for every valid token. Nothing is written (``roles_of`` empty);
     ``disabled`` (not zero roles) remains the lockout. Requires the directory to share the store db."""
-    from agno.os.authz.user_store import UserStore
+    from agno.os.authz.user_directory import UserDirectory
 
     url = f"sqlite:///{tmp_path}/authz.db"
     roles = RoleStore(db_url=url)
     roles.set_role_scopes("viewer", ["agents:*:read"], is_default=True)
     roles.set_role_scopes("admin", ["agent_os:admin"])
-    users = UserStore(db_url=url)  # same db as the role store's engine
+    users = UserDirectory(db_url=url)  # same db as the role store's engine
     users.upsert("known", name="Known")  # a directory user with NO assigned role
     engine = roles._engine
 
@@ -139,12 +139,12 @@ def test_no_role_default_applies_only_to_a_known_directory_user(tmp_path):
 def test_no_default_role_means_a_roleless_directory_user_is_denied(tmp_path):
     """With no ``is_default`` role, even a known directory user with no role is denied -- the
     fallback never invents access where no default was chosen."""
-    from agno.os.authz.user_store import UserStore
+    from agno.os.authz.user_directory import UserDirectory
 
     url = f"sqlite:///{tmp_path}/authz.db"
     roles = RoleStore(db_url=url)
     roles.set_role_scopes("viewer", ["agents:*:read"])  # exists, but NOT flagged default
-    UserStore(db_url=url).upsert("known")
+    UserDirectory(db_url=url).upsert("known")
     assert roles._engine.check_scope("agents:x:read", subject="known") is False
 
 
