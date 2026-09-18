@@ -2088,7 +2088,7 @@ async def _server_card(
     }
     # ``version`` is required by the schema and must match what the runtime reports in
     # ``serverInfo.version``, so the card mirrors ``mcp.version`` when nothing was configured --
-    # even though fastmcp defaults that to its own library version. Set ``MCPConfig(version=...)``
+    # even though fastmcp defaults that to its own library version. Set ``MCPConfig.version``
     # or ``AgentOS(version=...)`` to publish the deployment's real version instead.
     card["version"] = _truncate(version or str(mcp.version), _CARD_VERSION_MAX)
     # Not part of the Server Card schema, which leaves the tool surface to ``tools/list``. It is
@@ -2901,8 +2901,8 @@ def get_mcp_server(
     http_app_params = inspect.signature(mcp.http_app).parameters
     if "host_origin_protection" in http_app_params:
         http_app_kwargs["host_origin_protection"] = False
-    # Opt-in stateless transport: no session is retained between requests, so any replica
-    # can answer any request. Only passed when requested, so the fastmcp default stands.
+    # Modern requests are already sessionless. This opts legacy clients out of transport
+    # sessions too. Only passed when requested, so the FastMCP settings remain in control.
     if mcp_config is not None and mcp_config.stateless and "stateless_http" in http_app_params:
         http_app_kwargs["stateless_http"] = True
     if mcp_auth is not None:

@@ -39,7 +39,8 @@ class MCPConfig(BaseModel):
     Pass this as ``AgentOS(mcp=MCPConfig(...))`` to expose agents/teams/workflows as
     individual MCP tools, register your own tools, scope the default tools, gate the
     server, and add middleware. With plain ``mcp=True``, all default tools are
-    registered and no extra gate or middleware is added.
+    registered and no extra gate or middleware is added. With ``MCPConfig``, default
+    tools are opt-in: pass ``tools=[...]`` or set ``default_tools=True``.
 
     The default tools are tagged so they can be scoped as a group. See
     ``MCP_BUILTIN_TAGS`` for the canonical set; current values:
@@ -168,10 +169,10 @@ class MCPConfig(BaseModel):
     # outright on raw bytes.
     tools: Optional[List[Any]] = None
 
-    # Master switch for the 8 default tools. Set to False to ship only your own
-    # ``tools`` surface. ``enable_builtin_tools`` is the deprecated spelling, still
-    # accepted at construction.
-    default_tools: bool = True
+    # Opt in to the 8 default tools alongside your own ``tools`` surface. Plain
+    # AgentOS(mcp=True) still serves all default tools. ``enable_builtin_tools`` is
+    # the deprecated spelling, still accepted at construction.
+    default_tools: bool = False
 
     # Whether ``continue_run``/``cancel_run`` ride along whenever components are
     # exposed via ``tools`` -- even with ``default_tools=False``. Default True: an
@@ -183,7 +184,8 @@ class MCPConfig(BaseModel):
     # run.
     lifecycle_tools: bool = True
 
-    # Finer scoping over the default tools via their tags (see ``MCP_BUILTIN_TAGS``).
+    # Finer scoping over enabled default tools via their tags (see ``MCP_BUILTIN_TAGS``).
+    # These tags do not opt in to default tools; set ``default_tools=True`` first.
     # When ``include_tags`` is set, only default tools carrying one of those tags are
     # registered (name ``lifecycle`` explicitly to serve just the run-resumption pair).
     # ``exclude_tags`` is then subtracted. With ``default_tools=False`` there are no
@@ -236,11 +238,13 @@ class MCPConfig(BaseModel):
     # ``authorize`` layers, in the order listed.
     middleware: Optional[List[Any]] = None
 
-    # Serve the MCP endpoint without session tracking: every request gets a fresh transport
-    # and nothing is kept between requests. Lets any replica answer any request, so a
-    # multi-instance deployment needs no session affinity. Costs the features that require a
-    # retained session -- server-initiated notifications and SSE resumability -- so it stays
-    # off by default.
+    # Disable transport sessions for legacy MCP clients (2025-11-25 and earlier).
+    # Modern requests (2026-07-28) are always sessionless, regardless of this flag.
+    # Legacy stateless mode loses server-to-client requests and SSE resumability;
+    # request-scoped progress still works. Agno conversation/run state is independent.
+    # Only True is forwarded; False preserves FastMCP settings, including
+    # FASTMCP_STATELESS_HTTP. Application storage/coordination must still be shared
+    # when serving multiple workers.
     stateless: bool = False
 
     @model_validator(mode="before")
@@ -331,10 +335,9 @@ class MCPConfig(BaseModel):
     def _check_has_tools(self) -> "MCPConfig":
         """Refuse a config that would mount an MCP server with zero tools.
 
-        ``default_tools=False`` plus no ``tools`` is almost always a mistake -- the user
-        disabled the default tools intending to ship their own surface and forgot to
-        register it, and ends up with a working ``/mcp`` endpoint that lists nothing. Fail fast at construction with an actionable
-        message instead of booting a useless server.
+        Default tools are opt-in, so a config needs explicit tools or
+        ``default_tools=True``. Fail at construction with an actionable message
+        instead of mounting a working ``/mcp`` endpoint that lists nothing.
 
         The tags reach the same dead end without tripping that check: an explicitly empty
         ``include_tags``, or an ``exclude_tags`` covering every remaining tag, scopes out
@@ -344,9 +347,9 @@ class MCPConfig(BaseModel):
         if not self.default_tools and not self.tools:
             raise ValueError(
                 "MCPConfig would register zero tools: default_tools=False and tools is empty. "
-                "Pass tools=[...] -- components (chief), wrapped components "
-                "(chief.as_tool(name=..., description=...)), and custom callables all go there -- "
-                "or leave default_tools=True (the default) to ship the default tools."
+                "Pass MCPConfig(tools=[...]) to publish your tools, or "
+                "MCPConfig(default_tools=True) to enable the default tools. "
+                "Use AgentOS(mcp=True) for the default server without additional configuration."
             )
 
         # Warn rather than raise: unlike the branch above, this configuration is accepted

@@ -45,6 +45,7 @@ agent_os = AgentOS(
     db=db,
     agents=[support_agent],
     mcp=MCPConfig(
+        default_tools=True,
         # Defaults: the AgentOS name and AgentOS(version=...).
         name="Acme Support",
         version="1.4.0",

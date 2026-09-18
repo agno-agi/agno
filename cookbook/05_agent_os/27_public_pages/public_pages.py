@@ -148,7 +148,6 @@ agent_os = AgentOS(
     public=PublicSurface(agents=[agent], workflows=[sync], mcp=True),
     mcp=MCPConfig(
         tools=tools,
-        default_tools=False,
         stateless=True,
         server_card_url=getenv("PAGE_DEMO_MCP_URL"),
         allowed_hosts=["localhost:*", "127.0.0.1:*"],
