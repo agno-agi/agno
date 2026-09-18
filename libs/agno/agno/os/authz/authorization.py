@@ -56,6 +56,12 @@ if TYPE_CHECKING:
 # this slug (and the ``agent_os:admin`` scope) for the grant to actually confer admin.
 _ADMIN_ROLE = "admin"
 
+_WIRED_WITHOUT_ROLES = (
+    "This Authorization was wired into AgentOS without managed roles, so its role API is not live: "
+    "AgentOS decided at wiring that no role store is in play and /authz is not mounted, and nothing "
+    "would read what is written here. Declare roles before AgentOS(...): define_role / seed / assign, "
+    "a runtime write (set_role_scopes, set_role, ...) on the object, or engine= / roles_claim=."
+)
 _NEEDS_DB = (
     "Authorization needs a SQL database: pass Authorization(db=...) / db_url=..., or hand it to "
     "AgentOS(db=...) so it can adopt the OS database."
@@ -164,6 +170,7 @@ class Authorization:
 
         # Roles are in play if any were defined, or a store/engine was supplied.
         self._roles_defined = engine is not None or roles_claim is not None
+        self._wired = False  # set once AgentOS has wired the object; roles cannot be declared after
 
         # Buffers applied at bind time (used when no db is available yet).
         self._role_defs: List[Tuple[str, List[ScopeInput], bool, Optional[str], Optional[str]]] = []
@@ -206,7 +213,7 @@ class Authorization:
         ``default=True`` is applied on every boot, existing role or not: it is the provisioning
         policy, and moving it to another role in code must take effect. Omitting ``default`` never
         clears an existing default. Chainable."""
-        self._roles_defined = True
+        self._declare_roles()
         if self._bound:
             self._apply_role_def(slug, scopes, default, name, description)
         else:
@@ -222,6 +229,7 @@ class Authorization:
         BOOTSTRAP semantics: an existing admin is left as is, so seeding on every start is safe. A
         handover to another admin survives restarts; only a true lockout (nobody holds an admin role)
         re-grants ``admin`` here. Applied now if a db is bound, else buffered until AgentOS lends one."""
+        self._declare_roles()
         if self._bound:
             self._apply_seed(admin, admin_role)
         else:
@@ -236,7 +244,7 @@ class Authorization:
         admin changed at runtime through the ``/authz`` API. That is the difference from
         ``role_store.assign``, which overwrites unconditionally (use it directly for a declarative,
         code-owns-the-assignment model). Applied now if a db is bound, else buffered. Chainable."""
-        self._roles_defined = True
+        self._declare_roles()
         if self._bound:
             self._apply_assign(subject, role, actor)
         else:
@@ -246,7 +254,7 @@ class Authorization:
     async def aassign(self, subject: str, role: str, actor: Optional[str] = None) -> None:
         """Async twin of :meth:`assign` for the request path (JIT provisioning): create-if-absent,
         against a bound store."""
-        store = self._store()
+        store = self._store(declare=True)
         if not await store.aroles_of(subject):
             await store.aassign(subject, role, actor=actor)
 
@@ -413,7 +421,7 @@ class Authorization:
         is_default: Optional[bool] = None,
     ) -> None:
         """Define (or replace) what a role can do, in agno scope terms."""
-        return self._store().set_role_scopes(role, scopes, actor, name, description, is_default)
+        return self._store(declare=True).set_role_scopes(role, scopes, actor, name, description, is_default)
 
     async def aset_role_scopes(
         self,
@@ -425,7 +433,7 @@ class Authorization:
         is_default: Optional[bool] = None,
     ) -> None:
         """Async twin of :meth:`set_role_scopes`."""
-        return await self._store().aset_role_scopes(role, scopes, actor, name, description, is_default)
+        return await self._store(declare=True).aset_role_scopes(role, scopes, actor, name, description, is_default)
 
     def get_role_scopes(self, role: str) -> List[str]:
         """Return a role's scope strings (allow + deny), for display/read-back."""
@@ -437,11 +445,11 @@ class Authorization:
 
     def remove_role(self, role: str, actor: Optional[str] = None) -> None:
         """remove_role"""
-        return self._store().remove_role(role, actor)
+        return self._store(declare=True).remove_role(role, actor)
 
     async def aremove_role(self, role: str, actor: Optional[str] = None) -> None:
         """Async twin of :meth:`remove_role`."""
-        return await self._store().aremove_role(role, actor)
+        return await self._store(declare=True).aremove_role(role, actor)
 
     def list_roles(self) -> List[str]:
         """All role slugs (those with policies and/or metadata)."""
@@ -453,11 +461,11 @@ class Authorization:
 
     def unassign(self, subject: str, role: str, actor: Optional[str] = None) -> None:
         """unassign"""
-        return self._store().unassign(subject, role, actor)
+        return self._store(declare=True).unassign(subject, role, actor)
 
     async def aunassign(self, subject: str, role: str, actor: Optional[str] = None) -> None:
         """Async twin of :meth:`unassign`."""
-        return await self._store().aunassign(subject, role, actor)
+        return await self._store(declare=True).aunassign(subject, role, actor)
 
     def roles_of(self, subject: str) -> List[str]:
         """roles_of"""
@@ -515,11 +523,11 @@ class Authorization:
 
     def set_role(self, subject: str, role: str, actor: Optional[str] = None) -> None:
         """Give the subject THE role, replacing any current one: the runtime counterpart of the bootstrap-safe :meth:`assign`."""
-        return self._store().assign(subject, role, actor)
+        return self._store(declare=True).assign(subject, role, actor)
 
     async def aset_role(self, subject: str, role: str, actor: Optional[str] = None) -> None:
         """Async twin of :meth:`set_role`."""
-        return await self._store().aassign(subject, role, actor)
+        return await self._store(declare=True).aassign(subject, role, actor)
 
     @property
     def _audit_readable(self) -> bool:
@@ -538,7 +546,7 @@ class Authorization:
         actor: Optional[str] = None,
     ) -> dict:
         """Create a role with metadata only — no scopes (add those via"""
-        return self._store().create_role(role, name, description, is_default, actor)
+        return self._store(declare=True).create_role(role, name, description, is_default, actor)
 
     async def _acreate_role(
         self,
@@ -549,7 +557,7 @@ class Authorization:
         actor: Optional[str] = None,
     ) -> dict:
         """Async twin of :meth:`_create_role`."""
-        return await self._store().acreate_role(role, name, description, is_default, actor)
+        return await self._store(declare=True).acreate_role(role, name, description, is_default, actor)
 
     def set_role_meta(
         self,
@@ -560,7 +568,7 @@ class Authorization:
         actor: Optional[str] = None,
     ) -> dict:
         """Update ONLY a role's metadata (display name / description / is_default),"""
-        return self._store().set_role_meta(role, name, description, is_default, actor)
+        return self._store(declare=True).set_role_meta(role, name, description, is_default, actor)
 
     async def aset_role_meta(
         self,
@@ -571,7 +579,7 @@ class Authorization:
         actor: Optional[str] = None,
     ) -> dict:
         """Async twin of :meth:`set_role_meta`."""
-        return await self._store().aset_role_meta(role, name, description, is_default, actor)
+        return await self._store(declare=True).aset_role_meta(role, name, description, is_default, actor)
 
     def _patch_role_scopes(
         self,
@@ -581,7 +589,7 @@ class Authorization:
         actor: Optional[str] = None,
     ) -> None:
         """Apply a scope diff: add/flip the ``upsert`` scopes and drop the ``remove``"""
-        return self._store().patch_role_scopes(role, upsert, remove, actor)
+        return self._store(declare=True).patch_role_scopes(role, upsert, remove, actor)
 
     async def _apatch_role_scopes(
         self,
@@ -591,7 +599,7 @@ class Authorization:
         actor: Optional[str] = None,
     ) -> None:
         """Async twin of :meth:`_patch_role_scopes`."""
-        return await self._store().apatch_role_scopes(role, upsert, remove, actor)
+        return await self._store(declare=True).apatch_role_scopes(role, upsert, remove, actor)
 
     def get_role(self, role: str) -> Optional[dict]:
         """Full role record: metadata + scope entries, or None if the role has"""
@@ -685,8 +693,9 @@ class Authorization:
     @property
     def uses_roles(self) -> bool:
         """Whether managed roles are in play: a role was defined, a subject seeded or assigned, an
-        engine or ``roles_claim`` given, or the runtime role API used. AgentOS mounts ``/authz`` and
-        provisions default roles only when this is True."""
+        engine or ``roles_claim`` given, or the runtime role API written to before wiring. Decided
+        when AgentOS wires the object (it mounts ``/authz`` and provisions default roles only when
+        this is True); a read never changes it."""
         return self._roles_defined
 
     @property
@@ -704,12 +713,36 @@ class Authorization:
         """Bind a database to an object built without one (what AgentOS does with the OS db)."""
         return self._bind(db)
 
-    def _store(self) -> "RoleStore":
-        """The private role store behind the runtime API. Using it puts roles in play; it needs a
-        bound database, so an unbound object says so rather than failing inside the engine."""
+    def _declare_roles(self) -> None:
+        """Put managed roles in play. Whether roles are enforced (and /authz mounted) is decided when
+        AgentOS wires the object, so a first declaration after wiring would land in a store nothing
+        reads: refuse it. Re-declaring on an object already using roles is fine at any time."""
+        if self._roles_defined:
+            return
+        if self._wired:
+            raise ValueError(_WIRED_WITHOUT_ROLES)
         self._roles_defined = True
+
+    def _wire(self, os_db: Optional[Any]) -> "Authorization":
+        """What AgentOS calls: bind (lending the OS db) and mark the object wired, after which roles
+        cannot be newly declared (see :meth:`_declare_roles`)."""
+        self._bind(os_db)
+        self._wired = True
+        return self
+
+    def _store(self, *, declare: bool = False) -> "RoleStore":
+        """The private role store behind the runtime API. It needs a bound database, so an unbound
+        object says so rather than failing inside the engine. ``declare=True`` (writes) puts roles in
+        play, the same declaration as ``define_role``. A read never changes the object's mode: before
+        wiring it answers from the database as it is (a fresh object on an existing store sees the
+        roles there); after AgentOS wired the object without roles it is refused, since the OS is not
+        using that store and an answer would be mistaken for a live one."""
         if not self._bound:
             raise ValueError(_NEEDS_DB)
+        if declare:
+            self._declare_roles()
+        elif self._wired and not self._roles_defined:
+            raise ValueError(_WIRED_WITHOUT_ROLES)
         return self._ensure_role_store()
 
     def decisions(self, limit: int = 100, offset: int = 0) -> List[Dict[str, Any]]:

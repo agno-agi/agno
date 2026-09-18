@@ -512,7 +512,7 @@ class AgentOS:
                     "AgentOS(authorization=Authorization(...)) already owns authorization_config; "
                     "configure verification on the Authorization object, not on AgentOS."
                 )
-            authorization._bind(self.db)
+            authorization._wire(self.db)
             authorization_config = authorization.authorization_config()
             audit = authorization.audit_sink
             self._authz_role_store = authorization if authorization.uses_roles else None

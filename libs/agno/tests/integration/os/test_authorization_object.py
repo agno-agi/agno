@@ -780,3 +780,98 @@ def test_assign_is_bootstrap_safe_and_buffers(tmp_path):
     a1.set_role("bob", "runner")  # an admin promotes bob at runtime
     a2 = boot()  # a restart re-runs the identical authz.assign("bob", "viewer")
     assert a2.roles_of("bob") == ["runner"]  # create-if-absent: the promotion is NOT clobbered
+
+
+# ------------------------------------------------------------------ roles in play is declared, never inferred
+# Whether managed roles are enforced (and /authz mounted) is decided when AgentOS wires the object.
+# So "roles in play" has to come from what was declared: define_role / seed / assign / engine= /
+# roles_claim=, or a runtime WRITE before wiring. A read must never flip it (before wiring it just
+# answers from the db), and any use after wiring on an object that had no roles must fail loudly
+# instead of landing in, or answering from, a store nothing reads.
+
+
+def _verify_only(db):
+    return Authorization(db=db, verification_keys=[SECRET], algorithm="HS256", verify_audience=True, audience=OS_ID)
+
+
+def test_a_read_on_a_verify_only_object_does_not_put_roles_in_play(tmp_path):
+    db = SqliteDb(db_file=str(tmp_path / "os.db"))
+    authz = _verify_only(db)
+    assert authz.uses_roles is False
+    assert authz.list_roles() == []  # answered from the (empty) db, honestly
+    assert authz.roles_of("bob") == []
+    assert authz.uses_roles is False  # the reads changed nothing
+
+    # and the OS still enforces scope RBAC: an operator token with agents:read gets in, /authz is absent
+    client = TestClient(AgentOS(id=OS_ID, agents=_agents(), db=db, authorization=authz).get_app())
+    assert client.get("/agents", headers=_auth("op", ["agents:read"])).status_code == 200
+    assert client.get("/authz/roles", headers=_auth("op", ["agent_os:admin"])).status_code == 404
+    # after wiring, the object's role API is not live, so a read is refused rather than answered
+    with pytest.raises(ValueError, match="wired into AgentOS without managed roles"):
+        authz.list_roles()
+    assert authz.uses_roles is False
+
+
+def test_a_fresh_object_on_an_existing_store_reads_it_without_declaring(tmp_path):
+    db = SqliteDb(db_file=str(tmp_path / "os.db"))
+    first = _verify_only(db)
+    first.define_role("viewer", ["agents:*:read"]).assign("bob", "viewer")
+    fresh = _verify_only(db)  # an admin script inspecting the same database
+    assert fresh.roles_of("bob") == ["viewer"]
+    assert fresh.list_roles() == ["viewer"]
+    assert fresh.uses_roles is False  # reading is not declaring
+
+
+def test_a_failed_read_on_an_unbound_object_does_not_put_roles_in_play():
+    authz = Authorization(verification_keys=[SECRET], algorithm="HS256", verify_audience=True, audience=OS_ID)
+    with pytest.raises(ValueError):
+        authz.roles_of("bob")
+    assert authz.uses_roles is False
+
+
+def test_a_runtime_write_after_wiring_a_verify_only_object_fails_loud(tmp_path):
+    db = SqliteDb(db_file=str(tmp_path / "os.db"))
+    authz = _verify_only(db)
+    client = TestClient(AgentOS(id=OS_ID, agents=_agents(), db=db, authorization=authz).get_app())
+
+    with pytest.raises(ValueError, match="before AgentOS"):
+        authz.set_role_scopes("viewer", ["agents:*:read"])
+    with pytest.raises(ValueError, match="before AgentOS"):
+        authz.set_role("bob", "viewer")
+    with pytest.raises(ValueError, match="before AgentOS"):
+        authz.define_role("viewer", ["agents:*:read"])
+    with pytest.raises(ValueError, match="before AgentOS"):
+        authz.assign("bob", "viewer")
+    with pytest.raises(ValueError, match="before AgentOS"):
+        authz.seed(admin="alice")
+    assert authz.uses_roles is False
+    # the OS is still the scope-RBAC OS it was wired as
+    assert client.get("/agents", headers=_auth("op", ["agents:read"])).status_code == 200
+
+
+def test_a_runtime_write_before_wiring_puts_roles_in_play(tmp_path):
+    """A write on a bound object before AgentOS is a declaration, like define_role."""
+    db = SqliteDb(db_file=str(tmp_path / "os.db"))
+    authz = _verify_only(db)
+    authz.set_role_scopes("viewer", ["agents:*:read"])
+    authz.set_role("bob", "viewer")
+    assert authz.uses_roles is True
+    client = TestClient(AgentOS(id=OS_ID, agents=_agents(), db=db, authorization=authz).get_app())
+    assert client.get("/agents/research", headers=_auth("bob")).status_code == 200
+    assert client.get("/agents/research", headers=_auth("nobody")).status_code == 403
+    # once roles are in play, runtime writes after wiring are live (the provider reads the store)
+    authz.set_role("nobody", "viewer")
+    assert client.get("/agents/research", headers=_auth("nobody")).status_code == 200
+
+
+def test_seed_alone_puts_roles_in_play(tmp_path):
+    """seed() on an unbound object with no define_role must still count as declaring roles."""
+    db = SqliteDb(db_file=str(tmp_path / "os.db"))
+    authz = Authorization(verification_keys=[SECRET], algorithm="HS256", verify_audience=True, audience=OS_ID)
+    authz.seed(admin="alice")
+    assert authz.uses_roles is True
+    client = TestClient(AgentOS(id=OS_ID, agents=_agents(), db=db, authorization=authz).get_app())
+    assert authz.roles_of("alice") == ["admin"]
+    # /authz is mounted (roles are in play). alice is refused there only because nothing defined what
+    # "admin" grants; that is the seeded-admin-without-admin-scope warning case, not an unmounted API.
+    assert client.get("/authz/roles", headers=_auth("alice")).status_code == 403
