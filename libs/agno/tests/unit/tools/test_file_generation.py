@@ -578,3 +578,18 @@ def test_filename_sanitized_subdir_collapsed():
         assert artifact.filename == "report.json"
         assert artifact.filepath is not None
         assert Path(artifact.filepath).name == "report.json"
+
+
+def test_generate_csv_file_preserves_union_of_all_row_keys():
+    """generate_csv_file includes keys from all rows, not just the first row."""
+    tool = FileGenerationTools()
+    result = tool.generate_csv_file([
+        {"name": "Ada"},
+        {"name": "Ben", "city": "London"},
+    ])
+    assert result.files is not None
+    content = result.files[0].content.decode("utf-8")
+    assert "name,city" in content
+    assert "Ada," in content
+    assert "Ben,London" in content
+

@@ -284,9 +284,13 @@ class FileGenerationTools(Toolkit):
                 writer = csv.writer(output)
 
                 if isinstance(data[0], dict):
-                    # List of dictionaries - use keys as headers
+                    # List of dictionaries - use keys as headers (union of all dict keys)
                     if data:
-                        fieldnames = list(data[0].keys())
+                        fieldnames = list(dict.fromkeys(
+                            key for row in data if isinstance(row, dict) for key in row.keys()
+                        ))
+                        if not fieldnames and isinstance(data[0], dict):
+                            fieldnames = list(data[0].keys())
                         writer.writerow(fieldnames)
                         for row in data:
                             if isinstance(row, dict):
