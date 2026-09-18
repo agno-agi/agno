@@ -475,6 +475,43 @@ async def assert_session_writable(
     raise HTTPException(status_code=404, detail=SESSION_NOT_FOUND)
 
 
+async def assert_run_id_available(
+    db: Union["BaseDb", "AsyncBaseDb", "RemoteDb", None],
+    run_id: Optional[str],
+) -> None:
+    """Raise 409 if a caller-supplied ``run_id`` already exists in storage.
+
+    The create-run routes forward undeclared form fields into the run methods, which
+    honor a caller-provided ``run_id`` (``run_id or str(uuid4())``), and ``upsert_run``
+    applies ``ON CONFLICT (run_id) DO UPDATE`` with no ownership predicate. Without this
+    check, a caller can point a new run at an existing run_id and silently overwrite
+    that run's row — including a row owned by another session and user.
+
+    A caller-supplied run_id is legitimate (pre-allocating an id for tracking or
+    cancellation; idempotent retries after a network failure), so the id is not
+    stripped — only collisions are refused. 409 is the honest answer for a create
+    collision: a retrying client learns the earlier request succeeded and can fetch
+    the existing run.
+
+    Best-effort, mirroring assert_session_writable: allowed when there is no db, no
+    run_id, or a RemoteDb (the downstream AgentOS enforces its own). Adapters not yet
+    ported to v3 run storage return None from get_run and are treated as available.
+    The probe cannot close the TOCTOU race between two concurrent creations sharing a
+    fresh run_id; that requires a strict insert at the storage layer.
+    """
+    if db is None or not run_id:
+        return
+    if isinstance(db, RemoteDb):
+        return
+    if isinstance(db, AsyncBaseDb):
+        existing = await db.get_run(run_id)
+    else:
+        existing = db.get_run(run_id)
+    if existing is not None:
+        log_warning(f"user_scope: refused a create-run with run_id={run_id!r}: a run with that id already exists.")
+        raise HTTPException(status_code=409, detail="A run with this run_id already exists")
+
+
 async def verify_run_in_session(
     entity,
     session_id: str,
