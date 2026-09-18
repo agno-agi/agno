@@ -2551,7 +2551,9 @@ class Workflow:
             try:
                 loop = asyncio.get_running_loop()
                 if loop:
-                    asyncio.create_task(websocket_handler.handle_event(event))
+                    task = asyncio.create_task(websocket_handler.handle_event(event))
+                    _workflow_background_tasks.add(task)
+                    task.add_done_callback(_workflow_background_tasks.discard)
             except RuntimeError:
                 pass
 
@@ -2611,7 +2613,11 @@ class Workflow:
 
         if websocket_handler:
             try:
-                asyncio.create_task(websocket_handler.handle_event(event, event_index=event_index, run_id=run_id))
+                task = asyncio.create_task(
+                    websocket_handler.handle_event(event, event_index=event_index, run_id=run_id)
+                )
+                _workflow_background_tasks.add(task)
+                task.add_done_callback(_workflow_background_tasks.discard)
             except RuntimeError:
                 pass
 
