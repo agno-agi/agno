@@ -86,6 +86,75 @@ class MessageData:
     extra: Optional[Dict[str, Any]] = None
 
 
+# Text written before and after a tool call comes from two separate assistant
+# messages, so a paragraph break goes between them.
+_CONTENT_SEGMENT_SEPARATOR = "\n\n"
+
+
+def _content_segment_separator(previous: Any, new: Any) -> str:
+    """Return the separator to insert between two consecutive text segments of one response.
+
+    A model that writes text, calls a tool, then writes more text produces two
+    assistant messages, and a tool whose result is shown adds a segment of its
+    own. Appending them verbatim runs the sentences together ("Let me check.It
+    is sunny."), so a paragraph break separates them unless either side already
+    carries whitespace at the seam.
+    """
+    if not isinstance(previous, str) or not isinstance(new, str) or not previous or not new:
+        return ""
+    if previous[-1].isspace() or new[0].isspace():
+        return ""
+    return _CONTENT_SEGMENT_SEPARATOR
+
+
+def _append_content_segment(existing: Any, segment: Any, new_segment: bool = True) -> Any:
+    """Append ``segment`` to accumulated response content, separating it when it starts a new segment.
+
+    ``new_segment`` is False when ``segment`` continues the one being appended,
+    such as a generator tool yielding its shown output in pieces.
+    """
+    if existing is None:
+        return segment
+    if new_segment:
+        return existing + _content_segment_separator(existing, segment) + segment
+    return existing + segment
+
+
+@dataclass
+class _ContentSegmentTracker:
+    """Separates the text segments of a streamed response as they are yielded.
+
+    A segment is one model turn's text or one tool call's shown output. Only the
+    first content chunk of a segment gets the separator, so a turn streamed in
+    many chunks stays intact.
+    """
+
+    # Last character of content yielded so far, the left side of the next seam.
+    tail: str = ""
+    in_segment: bool = False
+
+    def start_segment(self) -> None:
+        self.in_segment = False
+
+    def separate(self, response: Any) -> None:
+        """Prefix the separator onto the first content chunk of a segment, in place.
+
+        Only assistant-response content counts: tool-call lifecycle events carry
+        display text of their own that never joins the response.
+        """
+        if (
+            not isinstance(response, ModelResponse)
+            or response.event != ModelResponseEvent.assistant_response.value
+            or not isinstance(response.content, str)
+            or not response.content
+        ):
+            return
+        if not self.in_segment:
+            response.content = _content_segment_separator(self.tail, response.content) + response.content
+            self.in_segment = True
+        self.tail = response.content[-1]
+
+
 def _log_messages(messages: List[Message]) -> None:
     """
     Log messages for debugging.
@@ -690,6 +759,7 @@ class Model(ABC):
         model_response = ModelResponse()
 
         function_call_count = 0
+        tool_output_continues = False
 
         _tool_dicts = self._format_tools(tools) if tools is not None else []
         _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)} if tools is not None else {}
@@ -801,12 +871,17 @@ class Model(ABC):
                                     run_response.requirements = []
                                 run_response.requirements.append(RunRequirement(tool_execution=current_tool_execution))
 
-                        elif function_call_response.event not in [
-                            ModelResponseEvent.tool_call_started.value,
-                            ModelResponseEvent.tool_call_completed.value,
-                        ]:
+                        elif function_call_response.event == ModelResponseEvent.tool_call_started.value:
+                            # A tool's shown output is one segment even when yielded in pieces.
+                            tool_output_continues = False
+                        elif function_call_response.event != ModelResponseEvent.tool_call_completed.value:
                             if function_call_response.content:
-                                model_response.content += function_call_response.content  # type: ignore
+                                model_response.content = _append_content_segment(
+                                    model_response.content,
+                                    function_call_response.content,
+                                    new_segment=not tool_output_continues,
+                                )
+                                tool_output_continues = True
 
                 # Add a function call for each successful execution
                 function_call_count += self._limit_charge_for(function_call_results, result_store)
@@ -920,6 +995,7 @@ class Model(ABC):
         _compression_manager = compression_manager if _compress_tool_results else None
 
         function_call_count = 0
+        tool_output_continues = False
 
         while True:
             # Compress existing tool results BEFORE making API call to avoid context overflow
@@ -1024,12 +1100,17 @@ class Model(ABC):
                                     run_response.requirements = []
                                 run_response.requirements.append(RunRequirement(tool_execution=current_tool_execution))
 
-                        elif function_call_response.event not in [
-                            ModelResponseEvent.tool_call_started.value,
-                            ModelResponseEvent.tool_call_completed.value,
-                        ]:
+                        elif function_call_response.event == ModelResponseEvent.tool_call_started.value:
+                            # A tool's shown output is one segment even when yielded in pieces.
+                            tool_output_continues = False
+                        elif function_call_response.event != ModelResponseEvent.tool_call_completed.value:
                             if function_call_response.content:
-                                model_response.content += function_call_response.content  # type: ignore
+                                model_response.content = _append_content_segment(
+                                    model_response.content,
+                                    function_call_response.content,
+                                    new_segment=not tool_output_continues,
+                                )
+                                tool_output_continues = True
 
                 # Add a function call for each successful execution
                 function_call_count += self._limit_charge_for(function_call_results, result_store)
@@ -1136,10 +1217,9 @@ class Model(ABC):
 
         # Update model response with assistant message content and audio
         if assistant_message.content is not None:
-            if model_response.content is None:
-                model_response.content = assistant_message.get_content_string()
-            else:
-                model_response.content += assistant_message.get_content_string()
+            model_response.content = _append_content_segment(
+                model_response.content, assistant_message.get_content_string()
+            )
         if assistant_message.reasoning_content is not None:
             model_response.reasoning_content = assistant_message.reasoning_content
         if assistant_message.redacted_reasoning_content is not None:
@@ -1206,10 +1286,9 @@ class Model(ABC):
 
         # Update model response with assistant message content and audio
         if assistant_message.content is not None:
-            if model_response.content is None:
-                model_response.content = assistant_message.get_content_string()
-            else:
-                model_response.content += assistant_message.get_content_string()
+            model_response.content = _append_content_segment(
+                model_response.content, assistant_message.get_content_string()
+            )
         if assistant_message.reasoning_content is not None:
             model_response.reasoning_content = assistant_message.reasoning_content
         if assistant_message.redacted_reasoning_content is not None:
@@ -1411,6 +1490,7 @@ class Model(ABC):
         _compression_manager = compression_manager if _compress_tool_results else None
 
         function_call_count = 0
+        segments = _ContentSegmentTracker()
 
         while True:
             # Compress existing tool results BEFORE invoke
@@ -1432,6 +1512,7 @@ class Model(ABC):
             # Create assistant message and stream data
             stream_data = MessageData()
             model_response = ModelResponse()
+            segments.start_segment()
 
             # Emit LLM request started event
             yield ModelResponse(event=ModelResponseEvent.model_request_started.value)
@@ -1454,6 +1535,7 @@ class Model(ABC):
                         run_response=run_response,
                         compress_tool_results=_compress_tool_results,
                     ):
+                        segments.separate(response)
                         if self.cache_response and isinstance(response, ModelResponse):
                             streaming_responses.append(response)
                         yield response
@@ -1484,6 +1566,7 @@ class Model(ABC):
                     from agno.metrics import accumulate_model_metrics
 
                     accumulate_model_metrics(model_response, self, self.model_type, run_response.metrics)
+                segments.separate(model_response)
                 if self.cache_response:
                     streaming_responses.append(model_response)
                 yield model_response
@@ -1521,6 +1604,13 @@ class Model(ABC):
                     function_call_limit=tool_call_limit,
                     result_store=result_store,
                 ):
+                    if (
+                        isinstance(function_call_response, ModelResponse)
+                        and function_call_response.event == ModelResponseEvent.tool_call_started.value
+                    ):
+                        # A tool's shown output is one segment even when yielded in pieces.
+                        segments.start_segment()
+                    segments.separate(function_call_response)
                     if self.cache_response and isinstance(function_call_response, ModelResponse):
                         streaming_responses.append(function_call_response)
                     yield function_call_response
@@ -1692,6 +1782,7 @@ class Model(ABC):
         _compression_manager = compression_manager if _compress_tool_results else None
 
         function_call_count = 0
+        segments = _ContentSegmentTracker()
 
         while True:
             # Compress existing tool results BEFORE making API call to avoid context overflow
@@ -1713,6 +1804,7 @@ class Model(ABC):
             assistant_message = Message(role=self.assistant_message_role)
             stream_data = MessageData()
             model_response = ModelResponse()
+            segments.start_segment()
 
             # Emit LLM request started event
             yield ModelResponse(event=ModelResponseEvent.model_request_started.value)
@@ -1735,6 +1827,7 @@ class Model(ABC):
                         run_response=run_response,
                         compress_tool_results=_compress_tool_results,
                     ):
+                        segments.separate(model_response_delta)
                         if self.cache_response and isinstance(model_response_delta, ModelResponse):
                             streaming_responses.append(model_response_delta)
                         yield model_response_delta
@@ -1765,6 +1858,7 @@ class Model(ABC):
                     from agno.metrics import accumulate_model_metrics
 
                     accumulate_model_metrics(model_response, self, self.model_type, run_response.metrics)
+                segments.separate(model_response)
                 if self.cache_response:
                     streaming_responses.append(model_response)
                 yield model_response
@@ -1802,6 +1896,13 @@ class Model(ABC):
                     function_call_limit=tool_call_limit,
                     result_store=result_store,
                 ):
+                    if (
+                        isinstance(function_call_response, ModelResponse)
+                        and function_call_response.event == ModelResponseEvent.tool_call_started.value
+                    ):
+                        # A tool's shown output is one segment even when yielded in pieces.
+                        segments.start_segment()
+                    segments.separate(function_call_response)
                     if self.cache_response and isinstance(function_call_response, ModelResponse):
                         streaming_responses.append(function_call_response)
                     yield function_call_response
