@@ -506,7 +506,7 @@ def test_enable_flags():
     """Test that tools can be individually disabled."""
     with tempfile.TemporaryDirectory() as tmp_dir:
         base_dir = Path(tmp_dir)
-        tools = CodingTools(base_dir=base_dir, enable_read_file=False)
+        tools = CodingTools(base_dir=base_dir, enable_read_file=False, enable_run_shell=True)
 
         tool_names = [fn for fn in tools.functions]
         assert "read_file" not in tool_names
@@ -515,18 +515,18 @@ def test_enable_flags():
         assert "run_shell" in tool_names
 
 
-def test_exploration_tools_disabled_by_default():
-    """Test that grep, find, ls are disabled by default."""
+def test_optional_tools_disabled_by_default():
+    """Test that run_shell, grep, find, ls are disabled by default."""
     with tempfile.TemporaryDirectory() as tmp_dir:
         base_dir = Path(tmp_dir)
         tools = CodingTools(base_dir=base_dir)
 
         tool_names = list(tools.functions.keys())
-        assert len(tool_names) == 4
+        assert len(tool_names) == 3
         assert "read_file" in tool_names
         assert "edit_file" in tool_names
         assert "write_file" in tool_names
-        assert "run_shell" in tool_names
+        assert "run_shell" not in tool_names
         assert "grep" not in tool_names
         assert "find" not in tool_names
         assert "ls" not in tool_names
@@ -552,51 +552,86 @@ def test_all_flag():
 # --- shell sandbox tests ---
 
 
-def test_run_shell_blocks_metacharacters():
-    """Test that shell metacharacters are blocked in restricted mode."""
+def test_run_shell_rejects_control_operators():
+    """Standalone control operators are rejected as unsupported in restricted mode.
+
+    Restricted mode runs without a shell, so these cannot chain anyway; rejecting the
+    common spaced form gives a clear error instead of a confusing literal run.
+    """
     with tempfile.TemporaryDirectory() as tmp_dir:
         base_dir = Path(tmp_dir)
         tools = CodingTools(base_dir=base_dir)
 
-        # Command chaining with &&
-        result = tools.run_shell("echo hello && cat /etc/passwd")
-        assert "Error" in result
-        assert "&&" in result
+        for op, cmd in (
+            ("&&", "echo hello && cat /etc/passwd"),
+            ("||", "false || cat /etc/passwd"),
+            (";", "echo hello ; cat /etc/passwd"),
+            ("|", "echo hello | cat"),
+            ("&", "echo hello & echo pwned"),
+            (">", "echo hello > escaped.txt"),
+            (">>", "echo hello >> escaped.txt"),
+            ("<", "cat < /etc/passwd"),
+        ):
+            result = tools.run_shell(cmd)
+            assert "Error" in result
+            assert "not supported in restricted mode" in result
+            assert op in result
 
-        # Command chaining with ||
-        result = tools.run_shell("false || cat /etc/passwd")
-        assert "Error" in result
-        assert "||" in result
 
-        # Command chaining with ;
-        result = tools.run_shell("echo hello; cat /etc/passwd")
-        assert "Error" in result
-        assert ";" in result
+def test_run_shell_operators_are_inert_without_a_shell():
+    """Chaining, substitution, redirection, and globbing must not execute.
 
-        # Pipe
-        result = tools.run_shell("echo hello | cat")
-        assert "Error" in result
-        assert "|" in result
+    Restricted mode runs the tokenized command directly (shell=False), so operators
+    are passed as literal arguments. Proven by side effects that never happen.
+    """
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base_dir = Path(tmp_dir)
+        tools = CodingTools(base_dir=base_dir)
 
-        # Command substitution with $()
-        result = tools.run_shell("echo $(cat /etc/passwd)")
-        assert "Error" in result
-        assert "$(" in result
+        # Command substitution does not run: touch is never executed.
+        for cmd in (
+            "echo $(touch pwned.txt)",
+            'echo "$(touch pwned.txt)"',
+            "echo `touch pwned.txt`",
+        ):
+            result = tools.run_shell(cmd)
+            assert not (base_dir / "pwned.txt").exists()
 
-        # Command substitution with backticks
-        result = tools.run_shell("echo `cat /etc/passwd`")
-        assert "Error" in result
-        assert "`" in result
+        # Glued chaining does not run a second command: only echo executes.
+        result = tools.run_shell("echo hello;touch chained.txt")
+        assert not (base_dir / "chained.txt").exists()
 
-        # Output redirection
-        result = tools.run_shell("echo hello > /tmp/evil.txt")
-        assert "Error" in result
-        assert ">" in result
+        # Globs are not expanded: the literal pattern is passed through.
+        (base_dir / "a.py").write_text("x\n")
+        result = tools.run_shell("echo *.py")
+        assert "*.py" in result
 
-        # Input redirection
-        result = tools.run_shell("cat < /etc/passwd")
-        assert "Error" in result
-        assert "<" in result
+
+def test_run_shell_allows_quoted_operators():
+    """Operators inside quotes are ordinary characters and must not be rejected.
+
+    These are valid commands (e.g. a commit message containing '&') that a raw
+    substring check wrongly blocked.
+    """
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base_dir = Path(tmp_dir)
+        tools = CodingTools(base_dir=base_dir)
+
+        for cmd in (
+            "echo 'A & B'",  # single-quoted separator
+            'echo "A & B"',  # double-quoted separator
+            "echo 'a;b'",
+            "echo 'a|b'",
+            "echo 'a>b'",
+            "echo 'a<b'",
+        ):
+            result = tools.run_shell(cmd)
+            assert "Exit code: 0" in result
+            assert "not supported in restricted mode" not in result
+
+        # A backslash-escaped operator is also an ordinary character.
+        result = tools.run_shell("echo a\\&b")
+        assert "Exit code: 0" in result
 
 
 def test_run_shell_blocks_disallowed_commands():
@@ -654,6 +689,66 @@ def test_run_shell_custom_allowlist():
         result = tools.run_shell("python3 --version")
         assert "Error" in result
         assert "not in the allowed commands list" in result
+
+
+def test_run_shell_blocks_inline_interpreter_code():
+    """Inline code-execution flags on an interpreter are blocked in restricted mode.
+
+    This is the reported bypass: python3 -c runs arbitrary code past the allowlist
+    and path checks, so os.environ / arbitrary file reads would otherwise succeed.
+    """
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base_dir = Path(tmp_dir)
+        tools = CodingTools(base_dir=base_dir)
+
+        # -c inline code (space-separated)
+        result = tools.run_shell("python3 -c \"print(__import__('os').environ)\"")
+        assert "Error" in result
+        assert "Inline code execution" in result
+
+        # -c with an attached argument (no space) — CPython accepts this
+        result = tools.run_shell("python3 -c'print(__import__(\"os\").environ)'")
+        assert "Error" in result
+
+        # short options clustered before -c (e.g. -Ic)
+        result = tools.run_shell("python3 -Ic 'print(1)'")
+        assert "Error" in result
+
+        # -m arbitrary module, both spaced and attached
+        result = tools.run_shell("python3 -m http.server")
+        assert "Error" in result
+        result = tools.run_shell("python3 -mhttp.server")
+        assert "Error" in result
+
+        # reading a program from stdin
+        result = tools.run_shell("python3 -")
+        assert "Error" in result
+
+        # versioned interpreter basename is still matched
+        result = tools.run_shell('python -c "print(1)"')
+        assert "Error" in result
+
+        # a plain script invocation (no code-exec flag) is still allowed
+        (base_dir / "ok.py").write_text("print('ok')\n")
+        result = tools.run_shell("python3 ok.py")
+        assert "Exit code: 0" in result
+        assert "ok" in result
+
+        # an arg-taking option whose value happens to be 'c' is not code execution
+        result = tools.run_shell("python3 -W c ok.py")
+        assert "Exit code: 0" in result
+        assert "ok" in result
+
+
+def test_run_shell_inline_code_allowed_when_unrestricted():
+    """restrict_to_base_dir=False disables the inline-code block along with everything else."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base_dir = Path(tmp_dir)
+        tools = CodingTools(base_dir=base_dir, restrict_to_base_dir=False)
+
+        result = tools.run_shell('python3 -c "print(2 + 2)"')
+        assert "Exit code: 0" in result
+        assert "4" in result
 
 
 def test_run_shell_unrestricted_allows_all():
@@ -749,15 +844,15 @@ def test_instructions_custom_bypass():
         assert tools.instructions == "Use the tools wisely."
 
 
-def test_instructions_default_no_exploration():
-    """Test that default config does not mention grep/find/ls."""
+def test_instructions_default_no_opt_in_tools():
+    """Test that default config does not mention opt-in run_shell/grep/find/ls."""
     with tempfile.TemporaryDirectory() as tmp_dir:
         tools = CodingTools(base_dir=tmp_dir)
         instructions = tools.instructions
         assert "**read_file**" in instructions
         assert "**edit_file**" in instructions
         assert "**write_file**" in instructions
-        assert "**run_shell**" in instructions
+        assert "**run_shell**" not in instructions
         assert "**grep**" not in instructions
         assert "**find**" not in instructions
         assert "**ls**" not in instructions

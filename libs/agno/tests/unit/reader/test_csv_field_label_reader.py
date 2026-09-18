@@ -1,10 +1,45 @@
 import io
 import tempfile
+from contextlib import ExitStack
 from pathlib import Path
 
 import pytest
 
 from agno.knowledge.reader.field_labeled_csv_reader import FieldLabeledCSVReader
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("use_async", [False, True], ids=["sync", "async"])
+@pytest.mark.parametrize("stream_type", ["stringio", "text_file", "bytesio"])
+@pytest.mark.parametrize("row_count", [1, 12], ids=["single-row", "paginated"])
+async def test_read_text_and_binary_streams(tmp_path, use_async, stream_type, row_count):
+    person = "José" if stream_type == "bytesio" else "李明"
+    content = "name,city\n" + f"{person},Montréal\n" * row_count
+    with ExitStack() as stack:
+        if stream_type == "text_file":
+            path = tmp_path / "contacts.csv"
+            path.write_text(content, encoding="utf-8")
+            stream = stack.enter_context(path.open(encoding="utf-8"))
+        elif stream_type == "stringio":
+            stream = stack.enter_context(io.StringIO(content))
+        else:
+            stream = stack.enter_context(io.BytesIO(content.encode("latin-1")))
+
+        # Text streams are already decoded; encoding applies only to binary input.
+        reader = FieldLabeledCSVReader(encoding="latin-1")
+        stream.read(1)
+        if use_async:
+            documents = await reader.async_read(stream, name="contacts", page_size=5)
+        else:
+            documents = reader.read(stream, name="contacts")
+
+        assert len(documents) == row_count
+        assert [doc.content for doc in documents] == [f"Name: {person}\nCity: Montréal"] * row_count
+        assert [doc.id for doc in documents] == [f"contacts_row_{i + 1}" for i in range(row_count)]
+        assert [doc.meta_data["row_index"] for doc in documents] == list(range(row_count))
+        assert all(doc.name == "contacts" for doc in documents)
+        assert not stream.closed
+
 
 # Sample CSV data
 SAMPLE_CSV = """name,age,city
