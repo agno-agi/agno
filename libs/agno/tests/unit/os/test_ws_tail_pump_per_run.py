@@ -85,6 +85,7 @@ def ws_env(monkeypatch):
         os=os_stub,
         tail_entries=tail_entries,
         store_count=queue_worker.store.count_queued_jobs,
+        workflow=workflow,
     )
 
 
@@ -228,6 +229,83 @@ async def test_socket_with_too_many_attached_runs_is_refused_before_enqueue(ws_e
         assert not [f for f in new_frames if f.get("event") == "queued"], "the third run must not be accepted"
         assert [f for f in new_frames if f.get("event") == "error"], "and the client must be told why"
         assert await env.store_count() == 2
+    finally:
+        await env.stream.complete_run(first, RunStatus.completed)
+        await env.stream.complete_run(second, RunStatus.completed)
+        await env.router.cancel_subscription_pump(env.ws)
+
+
+@pytest.mark.asyncio
+async def test_reconnect_is_refused_at_the_cap_unless_the_run_is_already_attached(ws_env, monkeypatch):
+    """The bound holds on every door that attaches a tail. A reconnect to a
+    run this socket does not hold is refused at the cap before any replay;
+    a reconnect to a run it already holds replaces that pump and is not a
+    new attachment."""
+    from agno.run.base import RunStatus
+
+    env = ws_env
+    monkeypatch.setattr(env.router, "_MAX_ATTACHED_RUNS_PER_SOCKET", 2, raising=False)
+    first = await _submit(env, "one")
+    second = await _submit(env, "two")
+    await _settle()
+    await env.stream.register_run("r-elsewhere", RunStatus.running)
+    try:
+        before = len(env.ws.sent)
+        await env.router.handle_workflow_subscription(
+            env.ws, {"run_id": "r-elsewhere", "workflow_id": "wf1", "session_id": "s1"}, env.os
+        )
+        new_frames = env.ws.sent[before:]
+        assert [f for f in new_frames if f.get("event") == "error"], "a third attachment must be refused"
+        assert set(env.router._ws_tail_pumps.get(env.ws) or {}) == {first, second}
+        assert "r-elsewhere" not in env.tail_entries
+
+        before = len(env.ws.sent)
+        await env.router.handle_workflow_subscription(
+            env.ws, {"run_id": first, "workflow_id": "wf1", "session_id": "s1"}, env.os
+        )
+        new_frames = env.ws.sent[before:]
+        assert not [f for f in new_frames if f.get("event") == "error"], "re-subscribing an attached run is allowed"
+        assert set(env.router._ws_tail_pumps.get(env.ws) or {}) == {first, second}
+    finally:
+        await env.stream.complete_run(first, RunStatus.completed)
+        await env.stream.complete_run(second, RunStatus.completed)
+        await env.stream.complete_run("r-elsewhere", RunStatus.completed)
+        await env.router.cancel_subscription_pump(env.ws)
+
+
+@pytest.mark.asyncio
+async def test_durable_continue_is_refused_at_the_cap_before_the_ticket_flips(ws_env, monkeypatch):
+    """A continue that would attach a third run is refused BEFORE the
+    continue CAS, so the paused ticket is untouched: nothing is accepted
+    and then left without a tail."""
+    from agno.run.base import RunStatus
+
+    env = ws_env
+    monkeypatch.setattr(env.router, "_MAX_ATTACHED_RUNS_PER_SOCKET", 2, raising=False)
+    first = await _submit(env, "one")
+    second = await _submit(env, "two")
+    await _settle()
+
+    async def paused_run(**kwargs):
+        return SimpleNamespace(is_paused=True, status=None, metadata={})
+
+    monkeypatch.setattr(env.workflow, "aget_run_output", paused_run)
+    cas_calls: List[str] = []
+
+    async def recording_cas(*args, **kwargs):
+        cas_calls.append("called")
+        return {"outcome": "queued", "tail_from": None}
+
+    monkeypatch.setattr(env.router, "acontinue_via_queue", recording_cas)
+    try:
+        before = len(env.ws.sent)
+        await env.router.handle_workflow_continue_via_websocket(
+            env.ws, {"workflow_id": "wf1", "run_id": "r-paused", "session_id": "s1"}, env.os
+        )
+        new_frames = env.ws.sent[before:]
+        assert [f for f in new_frames if f.get("event") == "error"], "the continue must be refused"
+        assert cas_calls == [], "and refused before the ticket CAS"
+        assert set(env.router._ws_tail_pumps.get(env.ws) or {}) == {first, second}
     finally:
         await env.stream.complete_run(first, RunStatus.completed)
         await env.stream.complete_run(second, RunStatus.completed)

@@ -187,6 +187,29 @@ async def _pump_event_stream_to_websocket(websocket: WebSocket, run_id: str, fro
 # the FE parser accepts both, and one pump beats two formats diverging.
 
 
+async def refuse_if_socket_at_tail_capacity(websocket: WebSocket, run_id: Optional[str] = None) -> bool:
+    """Enforce the per-socket bound on attached runs at every door that can
+    attach a tail: submission, durable continue and reconnect. Called BEFORE
+    the door accepts anything (the enqueue, the continue CAS, the replay),
+    so a refusal leaves no accepted run without a tail. A run this socket
+    already holds does not count: re-attaching it replaces its pump. Sends
+    the error frame and returns True when refused."""
+    pumps = _ws_tail_pumps.get(websocket) or {}
+    if run_id is not None and run_id in pumps:
+        return False
+    if len(pumps) < _MAX_ATTACHED_RUNS_PER_SOCKET:
+        return False
+    payload: Dict[str, Any] = {
+        "event": "error",
+        "error": f"Too many runs in flight on this connection ({len(pumps)}); "
+        "wait for some to finish or open another connection",
+    }
+    if run_id is not None:
+        payload["run_id"] = run_id
+    await websocket.send_text(json.dumps(payload))
+    return True
+
+
 def start_tail_pump(websocket: WebSocket, run_id: str, from_index: Optional[int]) -> asyncio.Task:
     """Attach a live tail of one run to a socket.
 
@@ -385,17 +408,7 @@ async def handle_workflow_via_websocket(
             )
         )
         if ws_submit_queueable:
-            attached = len(_ws_tail_pumps.get(websocket) or {})
-            if attached >= _MAX_ATTACHED_RUNS_PER_SOCKET:
-                await websocket.send_text(
-                    json.dumps(
-                        {
-                            "event": "error",
-                            "error": f"Too many runs in flight on this connection ({attached}); "
-                            "wait for some to finish or open another connection",
-                        }
-                    )
-                )
+            if await refuse_if_socket_at_tail_capacity(websocket):
                 return
             # Accept must honor input_schema exactly like the inline path
             try:
@@ -604,6 +617,9 @@ async def handle_workflow_subscription(
                 # Mask existence of another user's run.
                 await websocket.send_text(json.dumps({"event": "error", "error": f"Run {run_id} not found"}))
                 return
+
+        if await refuse_if_socket_at_tail_capacity(websocket, run_id):
+            return
 
         # Check if the run is known to the event stream (any replica)
         event_stream = get_event_stream()
@@ -942,6 +958,8 @@ async def handle_workflow_continue_via_websocket(
             for candidate in (os.workflows or [])
         )
         if queue_worker is not None and workflow_is_queueable and payload_is_queueable(continue_payload):
+            if await refuse_if_socket_at_tail_capacity(websocket, run_id):
+                return
             # existing_run.is_paused was proven above. stream_requested: this
             # socket IS a stream - a non-streaming submission's ticket must be
             # refused before the CAS, not silently pumped from an empty stream
