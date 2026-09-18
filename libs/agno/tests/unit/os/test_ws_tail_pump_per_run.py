@@ -58,6 +58,15 @@ def ws_env(monkeypatch):
 
     stream = InMemoryEventStream(events_buffer=EventsBuffer(), subscriber_manager=SSESubscriberManager())
     monkeypatch.setattr(ws_router, "get_event_stream", lambda: stream)
+    tail_entries: List[str] = []
+    original_tail = stream.tail
+
+    def counting_tail(run_id, last_event_index=None):
+        tail_entries.append(run_id)
+        return original_tail(run_id, last_event_index=last_event_index)
+
+    monkeypatch.setattr(stream, "tail", counting_tail)
+    monkeypatch.setattr(ws_router, "_PENDING_TAIL_PROBE_SECONDS", 0.01, raising=False)
     workflow = Workflow(id="wf1", name="WF", db=InMemoryDb())
     monkeypatch.setattr(ws_router, "get_workflow_by_id", lambda **kwargs: workflow)
 
@@ -69,7 +78,14 @@ def ws_env(monkeypatch):
     queue_worker = SimpleNamespace(store=InMemoryQueueStore(), config=QueueConfig(durable=True))
     ws = FakeWebSocket(SimpleNamespace(queue_worker=queue_worker))
     os_stub = SimpleNamespace(workflows=[workflow], db=None, registry=None)
-    yield SimpleNamespace(router=ws_router, stream=stream, ws=ws, os=os_stub)
+    yield SimpleNamespace(
+        router=ws_router,
+        stream=stream,
+        ws=ws,
+        os=os_stub,
+        tail_entries=tail_entries,
+        store_count=queue_worker.store.count_queued_jobs,
+    )
 
 
 async def _submit(env, message: str) -> str:
@@ -80,6 +96,17 @@ async def _submit(env, message: str) -> str:
     acks = [f for f in env.ws.sent[before:] if f.get("event") == "queued"]
     assert len(acks) == 1, f"expected one queued ack, got frames {env.ws.sent[before:]}"
     return acks[0]["run_id"]
+
+
+async def _start(env, *run_ids: str) -> None:
+    """The worker claims the run: it leaves PENDING, and the deferred tail
+    attaches on its next probe."""
+    from agno.run.base import RunStatus
+
+    for run_id in run_ids:
+        await env.stream.set_run_status(run_id, RunStatus.running)
+    await asyncio.sleep(0.05)
+    await _settle()
 
 
 def _frames_for(env, run_id: str) -> List[dict]:
@@ -93,7 +120,7 @@ async def test_second_submission_keeps_the_first_runs_tail_alive(ws_env):
     env = ws_env
     first = await _submit(env, "first")
     second = await _submit(env, "second")
-    await _settle()
+    await _start(env, first, second)
     try:
         await env.stream.add_event(first, StampedEvent(first, "first run is still streaming"))
         await env.stream.add_event(second, StampedEvent(second, "second run streams too"))
@@ -115,7 +142,7 @@ async def test_resubscribe_replaces_only_that_runs_pump(ws_env):
     env = ws_env
     first = await _submit(env, "first")
     second = await _submit(env, "second")
-    await _settle()
+    await _start(env, first, second)
     try:
         # A reconnect for the first run replaces the first run's pump alone
         await env.router.handle_workflow_subscription(
@@ -140,7 +167,7 @@ async def test_disconnect_cancels_every_pump_and_finished_pumps_unregister(ws_en
     env = ws_env
     first = await _submit(env, "first")
     second = await _submit(env, "second")
-    await _settle()
+    await _start(env, first, second)
     pumps = env.router._ws_tail_pumps.get(env.ws) or {}
     assert set(pumps) == {first, second}
     # A run reaching its terminal state ends its tail, and the pump leaves the registry
@@ -151,3 +178,57 @@ async def test_disconnect_cancels_every_pump_and_finished_pumps_unregister(ws_en
     await env.router.cancel_subscription_pump(env.ws)
     assert not (env.router._ws_tail_pumps.get(env.ws) or {})
     await env.stream.complete_run(second, RunStatus.completed)
+
+
+@pytest.mark.asyncio
+async def test_pending_run_holds_no_tail_until_it_starts(ws_env):
+    """On Redis the live tail is a blocking read that holds a connection for
+    as long as it waits, and a pending run has produced nothing to read. A
+    socket with many queued runs must not hold a connection per run: the
+    pump probes the status on a slow cadence and enters the tail only once
+    the run has left the queue. The stream buffers, so nothing is missed."""
+    from agno.run.base import RunStatus
+
+    env = ws_env
+    run_id = await _submit(env, "queued behind something")
+    await asyncio.sleep(0.05)
+    await _settle()
+    try:
+        assert run_id in (env.router._ws_tail_pumps.get(env.ws) or {}), "the pump is registered while pending"
+        assert env.tail_entries == [], "but the live tail must not be entered while the run is pending"
+        await _start(env, run_id)
+        assert env.tail_entries == [run_id], "the tail attaches once the run starts"
+        await env.stream.add_event(run_id, StampedEvent(run_id, "now running"))
+        await _settle()
+        assert _frames_for(env, run_id), "and the run's events reach the socket"
+    finally:
+        await env.stream.complete_run(run_id, RunStatus.completed)
+        await env.router.cancel_subscription_pump(env.ws)
+
+
+@pytest.mark.asyncio
+async def test_socket_with_too_many_attached_runs_is_refused_before_enqueue(ws_env, monkeypatch):
+    """The abuse backstop: a bound on non-terminal runs attached to one
+    socket, checked before the ticket commits, so nothing is accepted and
+    then left without a tail. A client that needs more parallelism opens
+    another connection."""
+    from agno.run.base import RunStatus
+
+    env = ws_env
+    monkeypatch.setattr(env.router, "_MAX_ATTACHED_RUNS_PER_SOCKET", 2, raising=False)
+    first = await _submit(env, "one")
+    second = await _submit(env, "two")
+    await _settle()
+    try:
+        before = len(env.ws.sent)
+        await env.router.handle_workflow_via_websocket(
+            env.ws, {"workflow_id": "wf1", "session_id": "s1", "message": "three"}, env.os
+        )
+        new_frames = env.ws.sent[before:]
+        assert not [f for f in new_frames if f.get("event") == "queued"], "the third run must not be accepted"
+        assert [f for f in new_frames if f.get("event") == "error"], "and the client must be told why"
+        assert await env.store_count() == 2
+    finally:
+        await env.stream.complete_run(first, RunStatus.completed)
+        await env.stream.complete_run(second, RunStatus.completed)
+        await env.router.cancel_subscription_pump(env.ws)

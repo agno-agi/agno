@@ -106,6 +106,19 @@ if TYPE_CHECKING:
 # still streaming, and the first run's events must keep flowing to it.
 _ws_tail_pumps: "weakref.WeakKeyDictionary[WebSocket, Dict[str, asyncio.Task]]" = weakref.WeakKeyDictionary()
 
+# How often a pump probes a PENDING run before entering its live tail. On
+# Redis the live tail is a blocking read that holds a connection for as long
+# as it waits, and a pending run has produced nothing to read; a status probe
+# is one round trip and holds nothing.
+_PENDING_TAIL_PROBE_SECONDS = 2.0
+
+# Bound on non-terminal runs attached to one socket, checked before a ticket
+# commits: the abuse backstop for a client that keeps submitting into a slow
+# queue. Refusing before acceptance is the honest shape (a run accepted and
+# then left without a tail is the bug the per-run pumps fixed). A client
+# that needs more parallelism opens another connection.
+_MAX_ATTACHED_RUNS_PER_SOCKET = 32
+
 
 def _stream_payload_to_dict(payload: Any, ev_index: int, run_id: str) -> Dict[str, Any]:
     """Normalize an event-stream payload to the WS wire dict.
@@ -139,6 +152,18 @@ async def _pump_event_stream_to_websocket(websocket: WebSocket, run_id: str, fro
     executes, and tail() bridges the two."""
     event_stream = get_event_stream()
     try:
+        # Wait out the queue without holding a connection: enter the live
+        # tail once the run has left PENDING. The stream buffers, so nothing
+        # produced in between is missed. A failed probe falls through to the
+        # tail, which carries its own fault tolerance.
+        while True:
+            try:
+                status = await event_stream.get_run_status(run_id)
+            except Exception:
+                break
+            if status != RunStatus.pending:
+                break
+            await asyncio.sleep(_PENDING_TAIL_PROBE_SECONDS)
         async for ev_index, sse_data in event_stream.tail(run_id, last_event_index=from_index):
             await websocket.send_text(
                 json.dumps(_stream_payload_to_dict(sse_data, ev_index, run_id), default=json_serializer)
@@ -360,6 +385,18 @@ async def handle_workflow_via_websocket(
             )
         )
         if ws_submit_queueable:
+            attached = len(_ws_tail_pumps.get(websocket) or {})
+            if attached >= _MAX_ATTACHED_RUNS_PER_SOCKET:
+                await websocket.send_text(
+                    json.dumps(
+                        {
+                            "event": "error",
+                            "error": f"Too many runs in flight on this connection ({attached}); "
+                            "wait for some to finish or open another connection",
+                        }
+                    )
+                )
+                return
             # Accept must honor input_schema exactly like the inline path
             try:
                 validate_seam_input(workflow, user_message)
