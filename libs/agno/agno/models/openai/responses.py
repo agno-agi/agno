@@ -1408,6 +1408,7 @@ class OpenAIResponses(Model):
 
         if input_tokens_details := response_usage.input_tokens_details:
             metrics.cache_read_tokens = input_tokens_details.cached_tokens
+            metrics.cache_write_tokens = getattr(input_tokens_details, "cache_write_tokens", 0) or 0
 
         if output_tokens_details := response_usage.output_tokens_details:
             metrics.reasoning_tokens = output_tokens_details.reasoning_tokens
