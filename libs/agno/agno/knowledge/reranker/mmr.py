@@ -66,7 +66,7 @@ class MMRReranker(Reranker):
     def _select(self, query_embedding: Optional[List[float]], documents: List[Document], limit: int) -> List[Document]:
         # Vector dbs return embeddings as lists or as numpy arrays, whose truth value
         # is ambiguous, so length is the portable emptiness check throughout.
-        if query_embedding is None or len(query_embedding) == 0:
+        if query_embedding is None or len(query_embedding) == 0 or not any(query_embedding):
             raise ValueError("MMRReranker could not embed the query: the embedder returned no vector")
 
         raw: List[List[float]] = [doc.embedding for doc in documents]  # type: ignore[misc]

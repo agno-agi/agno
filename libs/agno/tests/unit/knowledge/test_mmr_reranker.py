@@ -153,6 +153,15 @@ def test_embedder_returning_no_vector_raises():
         MMRReranker().rerank("q", documents)
 
 
+def test_embedder_returning_zero_vector_raises():
+    documents = _documents()
+    for document in documents:
+        document.embedder = StubEmbedder(embedding=[0.0, 0.0])
+
+    with pytest.raises(ValueError, match="could not embed the query"):
+        MMRReranker().rerank("q", documents)
+
+
 def test_numpy_embeddings_are_supported():
     # PgVector returns embeddings as numpy arrays, whose truth value is ambiguous.
     numpy = pytest.importorskip("numpy")
