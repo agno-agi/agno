@@ -331,6 +331,16 @@ class InfoResponse(BaseModel):
             "when enabled, is described separately under `mcp.oauth`."
         ),
     )
+    user_isolation: bool = Field(
+        False,
+        description=(
+            "Whether per-user data isolation is switched on for this OS instance. Read it together "
+            "with `auth_mode`: under `jwt` the token names the user, so a client sends nothing extra. "
+            "Under `none` or `security_key` the OS cannot tell who a request is for, so a client that "
+            "wants each user to see only their own data sends that user's id as `user_id` on every "
+            "request, reads included, not only on runs."
+        ),
+    )
 
 
 class ConfigResponse(BaseModel):

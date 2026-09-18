@@ -130,6 +130,55 @@ class TestInfoEndpointAuthMode:
         assert body["auth_mode"] == "jwt"
 
 
+class TestInfoEndpointUserIsolation:
+    """A client reads ``user_isolation`` with ``auth_mode`` to know whether it must name the user
+    itself: under jwt the token does; under none / security_key the OS cannot tell who is asking."""
+
+    def test_off_by_default_in_every_mode(self):
+        assert _build_client().get("/info").json()["user_isolation"] is False
+        keyed = _build_client(settings=AgnoAPISettings(os_security_key="test-key"))
+        assert keyed.get("/info").json()["user_isolation"] is False
+
+    def test_on_without_auth(self):
+        body = _build_client(user_isolation=True).get("/info").json()
+        assert (body["auth_mode"], body["user_isolation"]) == ("none", True)
+
+    def test_on_with_a_security_key(self):
+        client = _build_client(user_isolation=True, settings=AgnoAPISettings(os_security_key="test-key"))
+        body = client.get("/info").json()  # still unauthenticated: a client needs it before it has a key
+        assert (body["auth_mode"], body["user_isolation"]) == ("security_key", True)
+
+    def test_on_under_jwt_via_the_top_level_flag(self):
+        client = _build_client(
+            user_isolation=True,
+            authorization=True,
+            authorization_config=AuthorizationConfig(verification_keys=[JWT_SECRET], algorithm="HS256"),
+        )
+        body = client.get("/info").json()
+        assert (body["auth_mode"], body["user_isolation"]) == ("jwt", True)
+
+    def test_on_under_jwt_via_the_legacy_config_flag(self):
+        """The released spelling, AuthorizationConfig(user_isolation=True), reports the same."""
+        client = _build_client(
+            authorization=True,
+            authorization_config=AuthorizationConfig(
+                verification_keys=[JWT_SECRET], algorithm="HS256", user_isolation=True
+            ),
+        )
+        assert client.get("/info").json()["user_isolation"] is True
+
+    def test_a_directory_alone_does_not_turn_it_on(self):
+        """user_directory and user_isolation are separate switches; the roster is not isolation."""
+        import os
+        import tempfile
+
+        from agno.db.sqlite import SqliteDb
+
+        db = SqliteDb(db_file=os.path.join(tempfile.mkdtemp(), "info.db"))
+        body = _build_client(db=db, user_directory=True).get("/info").json()
+        assert body["user_isolation"] is False
+
+
 class TestGetEffectiveAuthMode:
     def test_none_when_settings_missing(self):
         assert get_effective_auth_mode(settings=None) == "none"

@@ -21,7 +21,7 @@ from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS
-from agno.os.config import AuthorizationConfig
+from agno.os.authz import Authorization
 from agno.team import Team
 from agno.workflow import Workflow
 from fastapi.testclient import TestClient
@@ -81,8 +81,7 @@ def build_test_app(db_file: str) -> Any:
         teams=[test_team],
         workflows=[test_workflow],
         db=db,
-        authorization=True,
-        authorization_config=AuthorizationConfig(
+        authorization=Authorization(
             verification_keys=[JWT_SECRET],
             algorithm="HS256",
             verify_audience=True,

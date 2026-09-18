@@ -21,7 +21,7 @@ from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS
-from agno.os.config import AuthorizationConfig
+from agno.os.authz import Authorization
 from agno.os.service_accounts import DEFAULT_SERVICE_ACCOUNT_SCOPES
 from fastapi.testclient import TestClient
 
@@ -45,8 +45,7 @@ agent_os = AgentOS(
     id=OS_ID,
     agents=[assistant_agent],
     db=db,
-    authorization=True,
-    authorization_config=AuthorizationConfig(
+    authorization=Authorization(
         verification_keys=[JWT_SECRET],
         algorithm="HS256",
         verify_audience=True,
