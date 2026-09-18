@@ -333,6 +333,36 @@ class InfoResponse(BaseModel):
     )
 
 
+class QueueCapabilities(BaseModel):
+    """Deployment-level background-run capabilities: what a client may rely on
+    when deciding whether to render queue-aware UI (e.g. a chat tray).
+
+    Reported as EFFECTIVE behavior, not raw settings: queue_per_session is
+    true only when a durable queue actually enforces the per-session gate -
+    a queue_per_session flag without durable=True gates nothing and is
+    reported false. Readable by any authenticated caller (deployment
+    capability, not operator data - the admin-scoped /queue surface stays
+    the only view of actual jobs).
+
+    Both fields describe submissions the durable queue can carry. A
+    background submission the queue cannot carry (media uploads, payloads
+    plain JSON cannot store, factory-backed or off-registry components)
+    executes in-process on the accepting replica, outside the gate and
+    without durability, and the server logs each such bypass; the client
+    still receives 202 PENDING. A caller that sends those knows it is
+    sending them; the capability does not change per submission."""
+
+    durable: bool = Field(
+        ...,
+        description="Accepted background runs survive crashes and deploys (ticketed queue with a worker)",
+    )
+    queue_per_session: bool = Field(
+        ...,
+        description="Same-session background submissions execute at most one at a time, FIFO by submission; "
+        "false when no durable queue enforces the gate",
+    )
+
+
 class ConfigResponse(BaseModel):
     """Response schema for the general config endpoint"""
 
@@ -358,6 +388,9 @@ class ConfigResponse(BaseModel):
     knowledge: Optional[KnowledgeConfig] = Field(None, description="Knowledge configuration")
     evals: Optional[EvalsConfig] = Field(None, description="Evaluations configuration")
     traces: Optional[TracesConfig] = Field(None, description="Traces configuration")
+    # Optional for CLIENT compatibility (the SDK parses this same schema, and
+    # older servers omit the field); the server always populates it.
+    queue: Optional[QueueCapabilities] = Field(None, description="Background-run queue capabilities")
 
     agents: List[AgentSummaryResponse] = Field(..., description="List of registered agents")
     teams: List[TeamSummaryResponse] = Field(..., description="List of registered teams")
