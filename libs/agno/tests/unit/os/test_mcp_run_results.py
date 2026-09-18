@@ -165,7 +165,7 @@ async def test_full_mode_ships_complete_run_output():
     _stub_arun_stream(agent, _full_run_output())
     os = AgentOS(
         agents=[agent],
-        mcp_server=MCPServerConfig(result_mode="full"),
+        mcp_server=MCPServerConfig(default_tools=True, result_mode="full"),
     )
 
     result = await _call_run_agent(os)
@@ -184,7 +184,7 @@ async def test_full_mode_survives_binary_media():
     _stub_arun_stream(agent, run_output)
     os = AgentOS(
         agents=[agent],
-        mcp_server=MCPServerConfig(result_mode="full"),
+        mcp_server=MCPServerConfig(default_tools=True, result_mode="full"),
     )
 
     result = await _call_run_agent(os)

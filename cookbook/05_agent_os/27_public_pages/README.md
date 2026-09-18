@@ -131,7 +131,7 @@ configuration accepts no arbitrary SQL or deadline overrides.
 
 Only the selected Agent, native MCP and protected sync Workflow are exposed. Sessions, configuration and unselected components are closed. Workflow trigger/status require verified bearer credentials even while chat is anonymous. Scoped service accounts require the workflow run/read permissions and cannot use internal-service exemptions. `PAGE_DEMO_SYNC_TOKEN` configures the existing internal-service principal for a trusted deployment hook; keep it out of browsers and MCP clients.
 
-For custom functions such as this example's MCP tools, use `MCPConfig(tools=[...], default_tools=False, stateless=True)`. No lifecycle flag is needed. If you expose agents, teams or workflows as MCP tools, also set `lifecycle_tools=False` or `exclude_tags={"lifecycle"}`: the public surface does not allow the automatically added `continue_run` and `cancel_run` tools.
+For custom functions such as this example's MCP tools, use `MCPConfig(tools=[...], stateless=True)`. Both default and lifecycle tools are disabled by default, including when exposing agents, teams or workflows. Keep these defaults: the public surface does not allow the built-in `continue_run` and `cancel_run` tools.
 
 Public chat defaults to 10 requests/client/minute, 50 globally/minute, 80/client/day and 3,000 globally/day. Cancel and MCP use separate shared buckets. PostgreSQL counters use the stable AgentOS ID across replicas. Default identity ignores arbitrary forwarded headers; customize `PublicSurface.client_id` only for an edge-overwritten trusted header. Request bodies, output, duration and concurrency are bounded; uploads are disabled here. CORS includes admission failures and readiness checks table preparation.
 
