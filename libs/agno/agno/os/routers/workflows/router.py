@@ -618,9 +618,6 @@ async def handle_workflow_subscription(
                 await websocket.send_text(json.dumps({"event": "error", "error": f"Run {run_id} not found"}))
                 return
 
-        if await refuse_if_socket_at_tail_capacity(websocket, run_id):
-            return
-
         # Check if the run is known to the event stream (any replica)
         event_stream = get_event_stream()
         try:
@@ -712,7 +709,12 @@ async def handle_workflow_subscription(
             return
 
         # Run is still active - replay missed events, then follow live via a
-        # tail pump (works regardless of which replica executes the run)
+        # tail pump (works regardless of which replica executes the run).
+        # The attachment bound applies here and only here: a finished,
+        # paused or unknown run above replays without attaching anything.
+        # Checked before the replay so a refusal is a single clean frame.
+        if await refuse_if_socket_at_tail_capacity(websocket, run_id):
+            return
         missed_events = await event_stream.replay(run_id, last_event_index)
         current_event_count = await event_stream.get_event_count(run_id)
 

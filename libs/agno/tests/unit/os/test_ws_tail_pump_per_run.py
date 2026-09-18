@@ -249,6 +249,8 @@ async def test_reconnect_is_refused_at_the_cap_unless_the_run_is_already_attache
     second = await _submit(env, "two")
     await _settle()
     await env.stream.register_run("r-elsewhere", RunStatus.running)
+    await env.stream.register_run("r-done", RunStatus.running)
+    await env.stream.complete_run("r-done", RunStatus.completed)
     try:
         before = len(env.ws.sent)
         await env.router.handle_workflow_subscription(
@@ -256,8 +258,19 @@ async def test_reconnect_is_refused_at_the_cap_unless_the_run_is_already_attache
         )
         new_frames = env.ws.sent[before:]
         assert [f for f in new_frames if f.get("event") == "error"], "a third attachment must be refused"
+        assert not [f for f in new_frames if f.get("event") == "replay"], "and refused cleanly, with no partial replay"
         assert set(env.router._ws_tail_pumps.get(env.ws) or {}) == {first, second}
         assert "r-elsewhere" not in env.tail_entries
+
+        # A finished run only replays and never attaches a pump: the bound
+        # does not apply to it
+        before = len(env.ws.sent)
+        await env.router.handle_workflow_subscription(
+            env.ws, {"run_id": "r-done", "workflow_id": "wf1", "session_id": "s1"}, env.os
+        )
+        new_frames = env.ws.sent[before:]
+        assert [f for f in new_frames if f.get("event") == "replay"], "a completed run replays regardless of the bound"
+        assert not [f for f in new_frames if f.get("event") == "error"]
 
         before = len(env.ws.sent)
         await env.router.handle_workflow_subscription(
