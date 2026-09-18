@@ -308,7 +308,7 @@ and the SQLite file removed afterwards.
 - `git diff --check` passed for the lesson and consumed legacy MCP folder.
 - All scoped servers were stopped after testing.
 
-## Agno 3.1 MCP defaults validation (2026-09-18)
+## Agno 3.0.x MCP defaults validation (2026-09-18)
 
 Used an isolated `.venvs/demo` with this worktree installed, `mcp==2.1.1`, and `fastmcp==4.0.3`. Imported each cookbook, constructed its real AgentOS app, and inspected registration through a FastMCP in-memory client. Temporary local data and test-only credentials were used. These are configuration/discovery checks; no live model calls, hosted clients, database-backed public-page ingestion, or production services were exercised.
 
@@ -316,7 +316,7 @@ Used an isolated `.venvs/demo` with this worktree installed, `mcp==2.1.1`, and `
 
 **Status:** PASS
 
-**Description:** Built the app and verified chief, deep_research, continue_run, and cancel_run are the entire MCP tool list with default_tools omitted.
+**Description:** Rechecked after making lifecycle additions opt-in: chief and deep_research are the entire MCP tool list with both default_tools and lifecycle_tools omitted.
 
 **Result:** Application construction and exact MCP tool registration passed.
 
@@ -371,3 +371,17 @@ Used an isolated `.venvs/demo` with this worktree installed, `mcp==2.1.1`, and `
 **Result:** Application construction and exact MCP tool registration passed.
 
 ---
+
+## Explicit lifecycle defaults follow-up (2026-09-18)
+
+**Status:** PASS
+
+**Description:** Re-ran all six MCP cookbook configuration/discovery checks listed
+above with `mcp==2.1.1` and `fastmcp==4.0.3`. The agents-as-tools example publishes
+only chief and deep_research; default-server examples retain continuation and
+cancellation. Updated the migration guidance for the next 3.0.x release.
+
+**Result:** All six checks passed. A separate automated regression exercises real
+Agent execution and SQLite history through an in-memory MCP client with an offline
+model: the follow-up receives the first user message and assistant response even
+though ask_product_agent is the only published tool. No live provider calls.

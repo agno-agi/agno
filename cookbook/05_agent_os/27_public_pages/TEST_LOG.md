@@ -172,7 +172,7 @@ run. The focused public-configuration and MCP suites passed all 204 tests.
 - Cookbook mcp_domain.py --check passed. Full format and validation passed.
 - No DNS, hosting or production application changes were made.
 
-## Agno 3.1 MCP defaults validation (2026-09-18)
+## Agno 3.0.x MCP defaults validation (2026-09-18)
 
 Used an isolated `.venvs/demo` with this worktree installed, `mcp==2.1.1`, and `fastmcp==4.0.3`. Imported each cookbook, constructed its real AgentOS app, and inspected registration through a FastMCP in-memory client. Temporary local data and test-only credentials were used. These are configuration/discovery checks; no live model calls, hosted clients, database-backed public-page ingestion, or production services were exercised.
 
@@ -205,3 +205,16 @@ Used an isolated `.venvs/demo` with this worktree installed, `mcp==2.1.1`, and `
 **Result:** Application construction and exact MCP tool registration passed.
 
 ---
+
+## Explicit lifecycle defaults follow-up (2026-09-18)
+
+**Status:** PASS
+
+**Description:** Re-ran configuration/discovery checks for mcp_domain.py,
+public_control_plane.py, and public_pages.py using the isolated demo environment
+with `mcp==2.1.1` and `fastmcp==4.0.3`.
+
+**Result:** All three apps built and published exactly their custom tools. The
+updated public MCP tests also verify that exposed components need no lifecycle
+opt-out, while explicitly enabling lifecycle tools remains rejected. These checks
+did not exercise PostgreSQL-backed ingestion or hosted clients.

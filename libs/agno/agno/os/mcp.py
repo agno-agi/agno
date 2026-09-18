@@ -123,9 +123,9 @@ def _enabled_builtin_tags(config: "Optional[MCPConfig]", has_exposures: bool = F
     them, exactly as it did before the tag existed -- tools register on tag
     INTERSECTION, so an implicitly enabled ``lifecycle`` would resurrect the dual-tagged
     pair on a surface that excluded ``core``). The tag is added only when named
-    explicitly in ``include_tags``, or by the exposure ride-along below: an exposed
-    component can pause on a HITL tool, and without continue_run the pause would be a
-    dead end over MCP. Both ride-along off-switches are honoured --
+    explicitly in ``include_tags``, or by opting in with ``lifecycle_tools=True``
+    alongside exposed components. This supports resuming HITL runs and requesting
+    cancellation without enabling the full default surface. Both off-switches are honoured --
     ``lifecycle_tools=False`` and an explicit ``exclude_tags={"lifecycle"}`` -- and
     both gate ONLY the ride-along; neither strips the pair from an enabled ``core``
     surface.
@@ -234,7 +234,7 @@ def _collision_free_advice(colliding_name: str, enabled_tags: "Optional[set]") -
     """The action clause of a name-collision error: how to free ``colliding_name``.
 
     The run-lifecycle pair (continue_run/cancel_run) is tagged BOTH "core" and
-    "lifecycle", and rides along with any exposure. So "is this a lifecycle tool" is
+    "lifecycle", and can be explicitly added alongside exposures. So "is this a lifecycle tool" is
     always true for it and cannot decide the advice -- what matters is HOW the name got
     onto the server. When it was claimed solely via the ride-along ("core" not enabled),
     only the lifecycle switches free it; when "core" is enabled the pair registers as a
@@ -1871,9 +1871,8 @@ def _register_exposed_components(
     }
     taken.update(custom_tool_names or {})
 
-    # continue_run rides along with exposure by default (the lifecycle tag), so this is
-    # False only when the deployer opted out -- the paused-result text then points the
-    # caller at REST instead of at a tool that does not exist.
+    # When neither the default tools nor the lifecycle opt-in registers continue_run,
+    # the paused-result text points the caller at REST instead of a missing tool.
     continue_run_available = bool({"core", "lifecycle"} & enabled_tags)
     singulars = {"agents": "agent", "teams": "team", "workflows": "workflow"}
 
@@ -2216,7 +2215,7 @@ def build_mcp_server(
         )
 
     # Classify the tool surface up front: the enabled default-tool tags depend on
-    # whether components are exposed (the lifecycle pair rides along with exposure).
+    # whether components are exposed (lifecycle_tools=True adds their lifecycle pair).
     custom_entries, exposure_entries = _split_tool_entries(mcp_config, os)
     enabled_tags = _enabled_builtin_tags(mcp_config, has_exposures=bool(exposure_entries))
 
