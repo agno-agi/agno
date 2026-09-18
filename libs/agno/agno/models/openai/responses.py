@@ -3,7 +3,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Tuple, Type, Union
 
-import httpx
+import httpx2
 from pydantic import BaseModel
 from typing_extensions import Literal
 
@@ -16,13 +16,22 @@ from agno.models.openai.types import ReasoningEffort, ReasoningSummary, ServiceT
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 from agno.tools.function import Function
+from agno.utils.http import resolve_http_client, sdk_http_client_type
 from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.models.openai_responses import images_to_message
 from agno.utils.models.schema_utils import get_response_schema_for_provider
 from agno.utils.tokens import count_schema_tokens
 
 try:
-    from openai import APIConnectionError, APIStatusError, AsyncOpenAI, OpenAI, RateLimitError
+    from openai import (
+        APIConnectionError,
+        APIStatusError,
+        AsyncOpenAI,
+        DefaultAsyncHttpxClient,
+        DefaultHttpxClient,
+        OpenAI,
+        RateLimitError,
+    )
     from openai.types.responses import Response, ResponseReasoningItem, ResponseStreamEvent, ResponseUsage
 except ImportError as e:
     raise ImportError("`openai` not installed. Please install using `pip install openai -U`") from e
@@ -73,12 +82,14 @@ class OpenAIResponses(Model):
     # Client parameters
     api_key: Optional[str] = None
     organization: Optional[str] = None
-    base_url: Optional[Union[str, httpx.URL]] = None
+    base_url: Optional[Union[str, httpx2.URL]] = None
     timeout: Optional[float] = None
     max_retries: Optional[int] = None
     default_headers: Optional[Dict[str, str]] = None
     default_query: Optional[Dict[str, str]] = None
-    http_client: Optional[Union[httpx.Client, httpx.AsyncClient]] = None
+    # The accepted client flavour follows the installed OpenAI SDK: httpx for openai<3.0,
+    # httpx2 for openai>=3.0. resolve_http_client checks at runtime.
+    http_client: Optional[Union[httpx2.Client, httpx2.AsyncClient]] = None
     client_params: Optional[Dict[str, Any]] = None
 
     # Parameters affecting built-in tools
@@ -166,8 +177,11 @@ class OpenAIResponses(Model):
             return self.client
 
         client_params: Dict[str, Any] = self._get_client_params()
-        if self.http_client is not None:
-            client_params["http_client"] = self.http_client
+        http_client = resolve_http_client(
+            self.http_client, sdk_http_client_type(DefaultHttpxClient, DefaultAsyncHttpxClient)
+        )
+        if http_client is not None:
+            client_params["http_client"] = http_client
         # When no custom http_client is provided, let the OpenAI SDK use its own default client.
         # The SDK defaults to HTTP/1.1 which avoids transient 400 errors caused by HTTP/2
         # protocol edge cases with OpenAI's infrastructure.
@@ -186,8 +200,11 @@ class OpenAIResponses(Model):
             return self.async_client
 
         client_params: Dict[str, Any] = self._get_client_params()
-        if self.http_client and isinstance(self.http_client, httpx.AsyncClient):
-            client_params["http_client"] = self.http_client
+        http_client = resolve_http_client(
+            self.http_client, sdk_http_client_type(DefaultHttpxClient, DefaultAsyncHttpxClient, is_async=True)
+        )
+        if http_client is not None:
+            client_params["http_client"] = http_client
         # When no custom http_client is provided, let the OpenAI SDK use its own default client.
         # The SDK defaults to HTTP/1.1 which avoids transient 400 errors caused by HTTP/2
         # protocol edge cases with OpenAI's infrastructure.

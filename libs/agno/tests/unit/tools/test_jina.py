@@ -1,6 +1,6 @@
 from unittest.mock import MagicMock, patch
 
-import httpx
+import httpx2
 import pytest
 
 from agno.tools.jina import JinaReaderTools, JinaReaderToolsConfig
@@ -143,7 +143,7 @@ def test_init_tools_selection_none():
     assert len(tools.tools) == 0
 
 
-@patch("agno.tools.jina.httpx.get")
+@patch("agno.tools.jina.httpx2.get")
 def test_read_url_successful(mock_httpx_get, sample_read_url_response):
     """Test successful URL reading"""
     # Setup mock response
@@ -163,11 +163,11 @@ def test_read_url_successful(mock_httpx_get, sample_read_url_response):
     assert str(sample_read_url_response) in result
 
 
-@patch("agno.tools.jina.httpx.get")
+@patch("agno.tools.jina.httpx2.get")
 @patch("agno.tools.jina.log_error")
 def test_read_url_http_error(mock_log_error, mock_httpx_get):
     """Test read_url with HTTP error"""
-    mock_httpx_get.side_effect = httpx.HTTPStatusError("HTTP Error", request=MagicMock(), response=MagicMock())
+    mock_httpx_get.side_effect = httpx2.HTTPStatusError("HTTP Error", request=MagicMock(), response=MagicMock())
 
     tools = JinaReaderTools(api_key="test_key")
     result = tools.read_url("https://example.com")
@@ -177,11 +177,11 @@ def test_read_url_http_error(mock_log_error, mock_httpx_get):
     mock_log_error.assert_called_once()
 
 
-@patch("agno.tools.jina.httpx.get")
+@patch("agno.tools.jina.httpx2.get")
 @patch("agno.tools.jina.log_error")
 def test_read_url_connection_error(mock_log_error, mock_httpx_get):
     """Test read_url with connection error"""
-    mock_httpx_get.side_effect = httpx.ConnectError("Connection failed")
+    mock_httpx_get.side_effect = httpx2.ConnectError("Connection failed")
 
     tools = JinaReaderTools(api_key="test_key")
     result = tools.read_url("https://example.com")
@@ -191,7 +191,7 @@ def test_read_url_connection_error(mock_log_error, mock_httpx_get):
     mock_log_error.assert_called_once()
 
 
-@patch("agno.tools.jina.httpx.get")
+@patch("agno.tools.jina.httpx2.get")
 def test_read_url_with_truncation(mock_httpx_get):
     """Test read_url with content truncation"""
     # Create a large response that should be truncated
@@ -208,7 +208,7 @@ def test_read_url_with_truncation(mock_httpx_get):
     assert "... (content truncated)" in result
 
 
-@patch("agno.tools.jina.httpx.post")
+@patch("agno.tools.jina.httpx2.post")
 def test_search_query_successful(mock_httpx_post, sample_search_query_response):
     """Test successful search query"""
     # Setup mock response
@@ -232,11 +232,11 @@ def test_search_query_successful(mock_httpx_post, sample_search_query_response):
     assert str(sample_search_query_response) in result
 
 
-@patch("agno.tools.jina.httpx.post")
+@patch("agno.tools.jina.httpx2.post")
 @patch("agno.tools.jina.log_error")
 def test_search_query_http_error(mock_log_error, mock_httpx_post):
     """Test search_query with HTTP error"""
-    mock_httpx_post.side_effect = httpx.HTTPStatusError("HTTP Error", request=MagicMock(), response=MagicMock())
+    mock_httpx_post.side_effect = httpx2.HTTPStatusError("HTTP Error", request=MagicMock(), response=MagicMock())
 
     tools = JinaReaderTools(api_key="test_key", enable_search_query=True)
     result = tools.search_query("test query")
@@ -246,7 +246,7 @@ def test_search_query_http_error(mock_log_error, mock_httpx_post):
     mock_log_error.assert_called_once()
 
 
-@patch("agno.tools.jina.httpx.post")
+@patch("agno.tools.jina.httpx2.post")
 def test_search_query_with_truncation(mock_httpx_post):
     """Test search_query with content truncation"""
     # Create a large response that should be truncated

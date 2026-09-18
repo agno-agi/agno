@@ -17,7 +17,7 @@ import os
 from pathlib import Path
 from uuid import uuid4
 
-import httpx
+import httpx2
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.anthropic import Claude
@@ -113,7 +113,7 @@ app = agent_os.get_app()
 def run_demo() -> None:
     """Use the live Studio Agent to create and publish one persisted Agent."""
     component_id = f"api-math-guide-{uuid4().hex[:8]}"
-    with httpx.Client(base_url=BASE_URL, timeout=180.0) as client:
+    with httpx2.Client(base_url=BASE_URL, timeout=180.0) as client:
         registry_response = client.get("/registry", params={"limit": 100})
         registry_response.raise_for_status()
         registry_names = {item["name"] for item in registry_response.json()["data"]}

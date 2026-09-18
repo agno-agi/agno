@@ -2,7 +2,7 @@
 
 from unittest.mock import MagicMock, patch
 
-import httpx
+import httpx2
 import pytest
 
 from agno.tools.pubmed import PubmedTools
@@ -16,8 +16,8 @@ EFETCH_XML = b"""<?xml version="1.0"?>
 
 @pytest.fixture
 def mock_httpx_get():
-    """Mock httpx.get to return canned esearch then efetch responses."""
-    with patch("agno.tools.pubmed.httpx.get") as mock_get:
+    """Mock httpx2.get to return canned esearch then efetch responses."""
+    with patch("agno.tools.pubmed.httpx2.get") as mock_get:
         mock_get.side_effect = [
             MagicMock(content=ESEARCH_XML),
             MagicMock(content=EFETCH_XML),
@@ -90,12 +90,12 @@ def test_constructor_preserves_existing_positional_arguments():
 
 def test_search_pubmed_reports_http_status_error():
     """Test that a failing HTTP status is reported instead of an XML parse failure."""
-    request = httpx.Request("GET", "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi")
-    response = MagicMock(spec=httpx.Response)
+    request = httpx2.Request("GET", "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi")
+    response = MagicMock(spec=httpx2.Response)
     response.status_code = 429
-    response.raise_for_status.side_effect = httpx.HTTPStatusError("rate limited", request=request, response=response)
+    response.raise_for_status.side_effect = httpx2.HTTPStatusError("rate limited", request=request, response=response)
 
-    with patch("agno.tools.pubmed.httpx.get", return_value=response):
+    with patch("agno.tools.pubmed.httpx2.get", return_value=response):
         result = PubmedTools().search_pubmed("test query")
 
     assert result == "Could not fetch articles. Error: rate limited"

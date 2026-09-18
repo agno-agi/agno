@@ -14,7 +14,7 @@ import json
 import os
 from typing import Any
 
-import httpx
+import httpx2
 
 # ---------------------------------------------------------------------------
 # Create Workflow API Helpers
@@ -25,7 +25,7 @@ WORKFLOW_ID = "release-notes-workflow"
 SESSION_ID = "workflow-http-session"
 
 
-def create_run(client: httpx.Client) -> dict[str, Any]:
+def create_run(client: httpx2.Client) -> dict[str, Any]:
     """Create one complete, non-streaming workflow run."""
     response = client.post(
         f"/workflows/{WORKFLOW_ID}/runs",
@@ -42,7 +42,7 @@ def create_run(client: httpx.Client) -> dict[str, Any]:
     return result
 
 
-def stream_run(client: httpx.Client) -> tuple[str, list[str]]:
+def stream_run(client: httpx2.Client) -> tuple[str, list[str]]:
     """Create a workflow run and consume its server-sent events."""
     event_types: list[str] = []
     run_id: str | None = None
@@ -84,7 +84,7 @@ def stream_run(client: httpx.Client) -> tuple[str, list[str]]:
     return run_id, event_types
 
 
-def list_runs(client: httpx.Client) -> list[dict[str, Any]]:
+def list_runs(client: httpx2.Client) -> list[dict[str, Any]]:
     """List persisted runs for the workflow session."""
     response = client.get(
         f"/workflows/{WORKFLOW_ID}/runs",
@@ -99,7 +99,7 @@ def list_runs(client: httpx.Client) -> list[dict[str, Any]]:
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    with httpx.Client(base_url=BASE_URL, timeout=180.0) as http_client:
+    with httpx2.Client(base_url=BASE_URL, timeout=180.0) as http_client:
         health_response = http_client.get("/health")
         health_response.raise_for_status()
 

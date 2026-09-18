@@ -9,7 +9,7 @@ in production.
 URL-only media is skipped by default. Set persist_remote_urls=True to download and store it.
 """
 
-import httpx
+import httpx2
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.media import Image
@@ -58,7 +58,7 @@ agent_with_persist = Agent(
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
     # Download image content first so media storage can offload it
-    image_bytes = httpx.get(IMAGE_URL, follow_redirects=True).content
+    image_bytes = httpx2.get(IMAGE_URL, follow_redirects=True).content
 
     agent.print_response(
         "What do you see in this image?",

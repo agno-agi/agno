@@ -13,7 +13,7 @@ Try: Compare the discovered components with http://localhost:7777/config
 
 import json
 
-import httpx
+import httpx2
 
 # ---------------------------------------------------------------------------
 # Create HTTP Request Helpers
@@ -25,7 +25,7 @@ SESSION_ID = "getting-started-http-session"
 USER_ID = "getting-started-user"
 
 
-def show_config(client: httpx.Client) -> None:
+def show_config(client: httpx2.Client) -> None:
     """Print the components discovered through GET /config."""
     response = client.get("/config")
     response.raise_for_status()
@@ -37,7 +37,7 @@ def show_config(client: httpx.Client) -> None:
     print(f"Workflows: {[workflow['id'] for workflow in config['workflows']]}")
 
 
-def run_non_streaming(client: httpx.Client) -> None:
+def run_non_streaming(client: httpx2.Client) -> None:
     """Run the agent with an application/x-www-form-urlencoded request."""
     response = client.post(
         f"/agents/{AGENT_ID}/runs",
@@ -56,7 +56,7 @@ def run_non_streaming(client: httpx.Client) -> None:
     print(f"Response: {result['content']}")
 
 
-def run_streaming(client: httpx.Client) -> None:
+def run_streaming(client: httpx2.Client) -> None:
     """Run the agent with SSE streaming enabled."""
     with client.stream(
         "POST",
@@ -84,7 +84,7 @@ def run_streaming(client: httpx.Client) -> None:
                     print(f"\nCompleted run: {payload['run_id']}")
 
 
-def show_sessions(client: httpx.Client) -> None:
+def show_sessions(client: httpx2.Client) -> None:
     """List the paginated sessions created by the two runs."""
     response = client.get(
         "/sessions",
@@ -107,7 +107,7 @@ def show_sessions(client: httpx.Client) -> None:
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    with httpx.Client(base_url=BASE_URL, timeout=120.0) as http_client:
+    with httpx2.Client(base_url=BASE_URL, timeout=120.0) as http_client:
         show_config(http_client)
         print("\nNon-streaming run")
         run_non_streaming(http_client)

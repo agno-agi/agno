@@ -3,7 +3,7 @@
 import json
 from unittest.mock import MagicMock, patch
 
-import httpx
+import httpx2
 import pytest
 
 from agno.tools.youcom import YouTools
@@ -23,19 +23,19 @@ def youcom_tools():
 
 
 def _mock_response(payload):
-    response = MagicMock(spec=httpx.Response)
+    response = MagicMock(spec=httpx2.Response)
     response.json.return_value = payload
     response.raise_for_status.return_value = None
     return response
 
 
 def _patch_client(payload):
-    """Patch ``httpx.Client`` so any GET returns the given JSON payload."""
+    """Patch ``httpx2.Client`` so any GET returns the given JSON payload."""
     client = MagicMock()
     client.__enter__.return_value = client
     client.__exit__.return_value = False
     client.get.return_value = _mock_response(payload)
-    return patch("agno.tools.youcom.httpx.Client", return_value=client), client
+    return patch("agno.tools.youcom.httpx2.Client", return_value=client), client
 
 
 def test_init_with_api_key():
@@ -395,9 +395,9 @@ def test_search_http_error_returns_message(youcom_tools):
     client = MagicMock()
     client.__enter__.return_value = client
     client.__exit__.return_value = False
-    client.get.side_effect = httpx.ConnectError("connection failed")
+    client.get.side_effect = httpx2.ConnectError("connection failed")
     with (
-        patch("agno.tools.youcom.httpx.Client", return_value=client),
+        patch("agno.tools.youcom.httpx2.Client", return_value=client),
         patch("agno.tools.youcom.log_error") as mock_log_error,
     ):
         result = youcom_tools.you_search("query")

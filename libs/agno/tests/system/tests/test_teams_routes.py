@@ -8,7 +8,7 @@ import asyncio
 import json
 import uuid
 
-import httpx
+import httpx2
 import pytest
 
 from .test_utils import (
@@ -27,9 +27,9 @@ def test_user_id() -> str:
 
 
 @pytest.fixture(scope="module")
-def client(gateway_url: str, test_user_id: str) -> httpx.Client:
+def client(gateway_url: str, test_user_id: str) -> httpx2.Client:
     """Create an HTTP client for the gateway server with authentication."""
-    return httpx.Client(
+    return httpx2.Client(
         base_url=gateway_url,
         timeout=REQUEST_TIMEOUT,
         headers={"Authorization": f"Bearer {generate_jwt_token(audience='gateway-os', user_id=test_user_id)}"},
@@ -41,7 +41,7 @@ def client(gateway_url: str, test_user_id: str) -> httpx.Client:
 # =============================================================================
 
 
-def test_get_teams_list(client: httpx.Client):
+def test_get_teams_list(client: httpx2.Client):
     """Test GET /teams returns all teams with required fields."""
     response = client.get("/teams")
     assert response.status_code == 200
@@ -53,7 +53,7 @@ def test_get_teams_list(client: httpx.Client):
         assert team_id in team_ids, f"Missing team: {team_id}"
 
 
-def test_get_remote_team_details(client: httpx.Client):
+def test_get_remote_team_details(client: httpx2.Client):
     """Test GET /teams/research-team returns team with members."""
     response = client.get("/teams/research-team")
     assert response.status_code == 200
@@ -70,13 +70,13 @@ def test_get_remote_team_details(client: httpx.Client):
     assert "researcher-agent" in member_ids
 
 
-def test_get_team_not_found(client: httpx.Client):
+def test_get_team_not_found(client: httpx2.Client):
     """Test GET /teams/{team_id} returns 404 for non-existent team."""
     response = client.get("/teams/non-existent-team")
     assert response.status_code == 404
 
 
-def test_create_team_run_non_streaming(client: httpx.Client, test_user_id: str):
+def test_create_team_run_non_streaming(client: httpx2.Client, test_user_id: str):
     """Test POST /teams/{team_id}/runs (non-streaming) returns complete response."""
     session_id = str(uuid.uuid4())
     response = client.post(
@@ -102,7 +102,7 @@ def test_create_team_run_non_streaming(client: httpx.Client, test_user_id: str):
     assert data["user_id"] == test_user_id
 
 
-def test_create_team_run_streaming(client: httpx.Client, test_user_id: str):
+def test_create_team_run_streaming(client: httpx2.Client, test_user_id: str):
     """Test POST /teams/{team_id}/runs (streaming) returns proper SSE stream with TeamRunStarted and TeamRunCompleted events."""
     session_id = str(uuid.uuid4())
     response = client.post(
@@ -144,7 +144,7 @@ def test_create_team_run_streaming(client: httpx.Client, test_user_id: str):
     assert len(last_data["content"]) > 0
 
 
-def test_create_team_run_with_new_session(client: httpx.Client, test_user_id: str):
+def test_create_team_run_with_new_session(client: httpx2.Client, test_user_id: str):
     """Test team run creates new session when session_id not provided."""
     response = client.post(
         "/teams/research-team/runs",
@@ -176,7 +176,7 @@ def test_create_team_run_with_new_session(client: httpx.Client, test_user_id: st
 # =============================================================================
 
 
-def test_get_a2a_team_details(client: httpx.Client):
+def test_get_a2a_team_details(client: httpx2.Client):
     """Test GET /teams/research-team-2 returns Agno A2A team details."""
     response = client.get("/teams/research-team-2")
     assert response.status_code == 200
@@ -186,7 +186,7 @@ def test_get_a2a_team_details(client: httpx.Client):
     assert "name" in data
 
 
-def test_create_a2a_team_run_non_streaming(client: httpx.Client, test_user_id: str):
+def test_create_a2a_team_run_non_streaming(client: httpx2.Client, test_user_id: str):
     """Test POST /teams/research-team-2/runs (non-streaming) for Agno A2A team returns complete response."""
     session_id = str(uuid.uuid4())
     response = client.post(
@@ -212,7 +212,7 @@ def test_create_a2a_team_run_non_streaming(client: httpx.Client, test_user_id: s
     assert data["user_id"] == test_user_id
 
 
-def test_create_a2a_team_run_streaming(client: httpx.Client, test_user_id: str):
+def test_create_a2a_team_run_streaming(client: httpx2.Client, test_user_id: str):
     """Test POST /teams/research-team-2/runs (streaming) for Agno A2A team returns proper SSE stream."""
     session_id = str(uuid.uuid4())
     response = client.post(
@@ -257,7 +257,7 @@ def test_create_a2a_team_run_streaming(client: httpx.Client, test_user_id: str):
 
 
 @pytest.mark.asyncio
-async def test_cancel_team_run_streaming(client: httpx.Client, test_user_id: str, gateway_url: str):
+async def test_cancel_team_run_streaming(client: httpx2.Client, test_user_id: str, gateway_url: str):
     """Test cancelling a streaming team run returns cancellation event."""
     session_id = str(uuid.uuid4())
     latest_run_id = None
@@ -267,7 +267,7 @@ async def test_cancel_team_run_streaming(client: httpx.Client, test_user_id: str
     async def stream_team_run():
         """Stream the team run and collect events."""
         nonlocal latest_run_id, cancellation_event_received
-        async with httpx.AsyncClient(
+        async with httpx2.AsyncClient(
             base_url=gateway_url,
             timeout=REQUEST_TIMEOUT,
             headers={"Authorization": f"Bearer {generate_jwt_token(audience='gateway-os', user_id=test_user_id)}"},
@@ -323,7 +323,7 @@ async def test_cancel_team_run_streaming(client: httpx.Client, test_user_id: str
             # Wait 1 second before canceling to ensure run has started
             await asyncio.sleep(1)
 
-            async with httpx.AsyncClient(
+            async with httpx2.AsyncClient(
                 base_url=gateway_url,
                 timeout=REQUEST_TIMEOUT,
                 headers={"Authorization": f"Bearer {generate_jwt_token(audience='gateway-os', user_id=test_user_id)}"},
@@ -342,7 +342,7 @@ async def test_cancel_team_run_streaming(client: httpx.Client, test_user_id: str
     # Wait for the team task to complete (it should be cancelled)
     try:
         await team_task
-    except (httpx.StreamError, httpx.ReadError, httpx.RemoteProtocolError):
+    except (httpx2.StreamError, httpx2.ReadError, httpx2.RemoteProtocolError):
         # Stream errors are expected when cancellation closes the connection
         pass
 

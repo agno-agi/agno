@@ -16,7 +16,7 @@ import argparse
 import json
 from typing import Any
 
-import httpx
+import httpx2
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
@@ -171,7 +171,7 @@ app.add_middleware(ContentCaptureMiddleware)
 def run_demo() -> None:
     """Exercise both response shapes through the checked-in middleware."""
     headers = {"X-APP-UUID": "cookbook-app"}
-    with httpx.Client(base_url=BASE_URL, timeout=120.0) as client:
+    with httpx2.Client(base_url=BASE_URL, timeout=120.0) as client:
         response = client.post(
             f"/agents/{AGENT_ID}/runs",
             headers=headers,

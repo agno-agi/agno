@@ -82,7 +82,7 @@ halves and record both observations.
 - Observe `background=true` plus `stream=false` return 202 with a database,
   then poll the nested run route with `session_id`.
 - Start and cancel a long background run and observe its final status.
-- Resume an interrupted SSE stream with the raw-httpx workaround.
+- Resume an interrupted SSE stream with the raw-httpx2 workaround.
 - Use `checkpoint="tool-batch"`, list checkpoints, and continue from a
   selected `message_index`.
 - Observe blocking and background hook/eval behavior.

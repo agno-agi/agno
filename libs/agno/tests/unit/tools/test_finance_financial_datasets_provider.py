@@ -1,10 +1,10 @@
-"""FinancialDatasets: request shaping and normalization against OpenAPI-shaped payloads (httpx mocked)."""
+"""FinancialDatasets: request shaping and normalization against OpenAPI-shaped payloads (httpx2 mocked)."""
 
 import json
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import httpx
+import httpx2
 import pytest
 
 from agno.tools.finance import FinanceProviderError, FinanceTools, FinancialDatasets
@@ -13,11 +13,11 @@ from agno.tools.finance.providers import financial_datasets as fd_module
 BASE = "https://api.financialdatasets.ai"
 
 
-def _response(status_code: int = 200, payload=None, text: str = "") -> httpx.Response:
-    request = httpx.Request("GET", f"{BASE}/x")
+def _response(status_code: int = 200, payload=None, text: str = "") -> httpx2.Response:
+    request = httpx2.Request("GET", f"{BASE}/x")
     if payload is not None:
-        return httpx.Response(status_code, json=payload, request=request)
-    return httpx.Response(status_code, text=text, request=request)
+        return httpx2.Response(status_code, json=payload, request=request)
+    return httpx2.Response(status_code, text=text, request=request)
 
 
 @pytest.fixture
@@ -27,7 +27,7 @@ def provider() -> FinancialDatasets:
 
 @pytest.fixture
 def client():
-    with patch("agno.tools.finance.providers.financial_datasets.httpx.Client") as client_cls:
+    with patch("agno.tools.finance.providers.financial_datasets.httpx2.Client") as client_cls:
         yield client_cls.return_value.__enter__.return_value
 
 
@@ -386,7 +386,7 @@ def test_http_error_falls_back_to_error_label_and_text(provider, client):
 
 
 def test_transport_error_is_wrapped(provider, client):
-    client.get.side_effect = httpx.ConnectError("boom")
+    client.get.side_effect = httpx2.ConnectError("boom")
     with pytest.raises(FinanceProviderError, match="Request to financialdatasets.ai failed"):
         provider.get_news("NVDA")
 
@@ -406,13 +406,13 @@ def test_invalid_json_and_missing_snapshot(provider, client):
 
 
 # ---------------------------------------------------------------------------
-# Async (native httpx.AsyncClient)
+# Async (native httpx2.AsyncClient)
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
 async def test_async_quote_uses_async_client(provider):
-    with patch("agno.tools.finance.providers.financial_datasets.httpx.AsyncClient") as async_cls:
+    with patch("agno.tools.finance.providers.financial_datasets.httpx2.AsyncClient") as async_cls:
         aclient = async_cls.return_value.__aenter__.return_value
         aclient.get = AsyncMock(return_value=_response(payload={"snapshot": {"price": 1.5, "ticker": "NVDA"}}))
         quote = await provider.aget_quote("NVDA")
@@ -424,7 +424,7 @@ async def test_async_quote_uses_async_client(provider):
 
 @pytest.mark.asyncio
 async def test_async_error_status_raises(provider):
-    with patch("agno.tools.finance.providers.financial_datasets.httpx.AsyncClient") as async_cls:
+    with patch("agno.tools.finance.providers.financial_datasets.httpx2.AsyncClient") as async_cls:
         aclient = async_cls.return_value.__aenter__.return_value
         aclient.get = AsyncMock(return_value=_response(status_code=402, payload={"detail": "upgrade"}))
         with pytest.raises(FinanceProviderError, match="HTTP 402"):
@@ -459,8 +459,8 @@ def test_through_toolkit_error_payload(provider, client):
 
 
 def test_magicmock_response_is_not_required():
-    # Guard: the parser must accept a real httpx.Response, not only MagicMocks
-    assert isinstance(_response(payload={}), httpx.Response)
+    # Guard: the parser must accept a real httpx2.Response, not only MagicMocks
+    assert isinstance(_response(payload={}), httpx2.Response)
     assert MagicMock is not None
 
 
@@ -519,7 +519,7 @@ def test_price_history_follows_all_pages_up_to_cap(provider, client, frozen_toda
 
 @pytest.mark.asyncio
 async def test_async_pages_are_followed(provider):
-    with patch("agno.tools.finance.providers.financial_datasets.httpx.AsyncClient") as async_cls:
+    with patch("agno.tools.finance.providers.financial_datasets.httpx2.AsyncClient") as async_cls:
         aclient = async_cls.return_value.__aenter__.return_value
         aclient.get = AsyncMock(
             side_effect=[
@@ -572,7 +572,7 @@ async def test_sync_and_async_shape_the_same_request(provider, client, frozen_to
     getattr(provider, method)(**kwargs)
     sync_call = client.get.call_args
 
-    with patch("agno.tools.finance.providers.financial_datasets.httpx.AsyncClient") as async_cls:
+    with patch("agno.tools.finance.providers.financial_datasets.httpx2.AsyncClient") as async_cls:
         aclient = async_cls.return_value.__aenter__.return_value
         aclient.get = AsyncMock(return_value=_response(payload={key: body}))
         await getattr(provider, f"a{method}")(**kwargs)

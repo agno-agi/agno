@@ -3,7 +3,7 @@ Async FinanceTools
 ==================
 Every FinanceTools tool has an async variant registered under the same name,
 so `agent.arun()` / `agent.aprint_response()` use them automatically. Providers
-with a native async client (financialdatasets.ai via httpx) run without a
+with a native async client (financialdatasets.ai via httpx2) run without a
 thread; sync-only providers (yfinance) run in a worker thread.
 
 This example fans out three tickers concurrently with one agent.

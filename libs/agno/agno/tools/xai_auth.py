@@ -3,7 +3,7 @@ from inspect import iscoroutinefunction
 from os import getenv
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
-import httpx
+import httpx2
 
 from agno.exceptions import ModelAuthenticationError
 from agno.run import RunContext
@@ -123,7 +123,7 @@ class XAIAuth(Toolkit):
             info = self.token_manager.start_device_login()
         except ModelAuthenticationError as e:
             return json.dumps({"error": str(e)})
-        except httpx.HTTPError:
+        except httpx2.HTTPError:
             return json.dumps({"error": _TRANSPORT_FAILED})
 
         if force:
@@ -167,7 +167,7 @@ class XAIAuth(Toolkit):
         except ModelAuthenticationError as e:
             self._clear_pending(user_id)
             return json.dumps({"error": _failed(str(e))})
-        except httpx.HTTPError:
+        except httpx2.HTTPError:
             # The poll never got a verdict, so this login is not over: keep the
             # pending row and let the user ask again.
             return json.dumps({"error": _TRANSPORT_FAILED})
@@ -204,7 +204,7 @@ class XAIAuth(Toolkit):
             info = await self.token_manager.astart_device_login()
         except ModelAuthenticationError as e:
             return json.dumps({"error": str(e)})
-        except httpx.HTTPError:
+        except httpx2.HTTPError:
             return json.dumps({"error": _TRANSPORT_FAILED})
 
         if force:
@@ -250,7 +250,7 @@ class XAIAuth(Toolkit):
         except ModelAuthenticationError as e:
             await self._aclear_pending(user_id)
             return json.dumps({"error": _failed(str(e))})
-        except httpx.HTTPError:
+        except httpx2.HTTPError:
             # The poll never got a verdict, so this login is not over: keep the
             # pending row and let the user ask again.
             return json.dumps({"error": _TRANSPORT_FAILED})
@@ -293,7 +293,7 @@ class XAIAuth(Toolkit):
         try:
             self.token_manager.get_access_token(user_id=user_id)
             return True
-        except (ModelAuthenticationError, httpx.HTTPError):
+        except (ModelAuthenticationError, httpx2.HTTPError):
             return False
 
     async def _ais_signed_in(self, user_id: str = "") -> bool:
@@ -306,7 +306,7 @@ class XAIAuth(Toolkit):
         try:
             await self.token_manager.aget_access_token(user_id=user_id)
             return True
-        except (ModelAuthenticationError, httpx.HTTPError):
+        except (ModelAuthenticationError, httpx2.HTTPError):
             return False
 
     @staticmethod

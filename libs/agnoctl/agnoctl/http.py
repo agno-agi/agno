@@ -2,26 +2,26 @@
 
 This module talks plain HTTP to a running AgentOS. It deliberately does not import the
 agno framework: the CLI must stay installable and fast under `uvx` with nothing but
-httpx, rich, and typer.
+httpx2, rich, and typer.
 """
 
 from dataclasses import dataclass, field
 from typing import Any, Dict, Iterator, List, Optional
 
-import httpx
+import httpx2
 
 from agnoctl import __version__
 from agnoctl.errors import APIError, ConflictError
 
-# Test hook: tests set this to an httpx.MockTransport so every client in the CLI
+# Test hook: tests set this to an httpx2.MockTransport so every client in the CLI
 # (API, discovery, MCP verification) talks to an in-memory fake AgentOS.
-_transport_override: Optional[httpx.BaseTransport] = None
+_transport_override: Optional[httpx2.BaseTransport] = None
 
 DEFAULT_TIMEOUT = 10.0
 
 
-def build_client(base_url: str = "", timeout: float = DEFAULT_TIMEOUT) -> httpx.Client:
-    return httpx.Client(
+def build_client(base_url: str = "", timeout: float = DEFAULT_TIMEOUT) -> httpx2.Client:
+    return httpx2.Client(
         base_url=base_url,
         timeout=timeout,
         transport=_transport_override,
@@ -78,7 +78,7 @@ class ServiceAccount:
         }
 
 
-def _error_detail(response: httpx.Response) -> str:
+def _error_detail(response: httpx2.Response) -> str:
     try:
         detail = response.json().get("detail")
         if isinstance(detail, str) and detail:
@@ -138,7 +138,7 @@ class AgentOSAPI:
         """GET a JSON object, or None when unreachable, non-200, or not a JSON object."""
         try:
             response = self._client.get(path)
-        except httpx.HTTPError:
+        except httpx2.HTTPError:
             return None
         if response.status_code != 200:
             return None
@@ -157,7 +157,7 @@ class AgentOSAPI:
         """
         try:
             response = self._client.get("/config")
-        except httpx.HTTPError:
+        except httpx2.HTTPError:
             return "unknown"
         if response.status_code == 200:
             return "none"
@@ -269,7 +269,7 @@ class AgentOSAPI:
 
     # -- Internals -----------------------------------------------------------------
 
-    def _parse_json(self, response: httpx.Response) -> Any:
+    def _parse_json(self, response: httpx2.Response) -> Any:
         try:
             return response.json()
         except Exception:
@@ -281,7 +281,7 @@ class AgentOSAPI:
                 + ") - is this really an AgentOS?"
             )
 
-    def _parse_account(self, response: httpx.Response) -> ServiceAccount:
+    def _parse_account(self, response: httpx2.Response) -> ServiceAccount:
         payload = self._parse_json(response)
         if not isinstance(payload, dict):
             raise APIError("The AgentOS returned an unexpected service-account payload.")
@@ -290,10 +290,10 @@ class AgentOSAPI:
         except KeyError as e:
             raise APIError("The AgentOS returned a malformed service account (missing " + str(e) + ").")
 
-    def _request(self, method: str, path: str, **kwargs: Any) -> httpx.Response:
+    def _request(self, method: str, path: str, **kwargs: Any) -> httpx2.Response:
         try:
             response = self._client.request(method, path, headers=self._headers(), **kwargs)
-        except httpx.HTTPError as e:
+        except httpx2.HTTPError as e:
             raise APIError("Could not reach the AgentOS at " + self.base_url + ": " + str(e)) from e
         if response.status_code in (401, 403):
             raise APIError(
@@ -320,6 +320,6 @@ def service_accounts_open(base_url: str, timeout: float = DEFAULT_TIMEOUT) -> bo
     try:
         with build_client(base_url=base_url.rstrip("/"), timeout=timeout) as client:
             response = client.get("/service-accounts", params={"page": 1, "limit": 1})
-    except httpx.HTTPError:
+    except httpx2.HTTPError:
         return False
     return response.status_code == 200

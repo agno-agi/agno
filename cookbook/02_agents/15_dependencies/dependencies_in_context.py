@@ -7,7 +7,7 @@ Dependencies In Context.
 
 import json
 
-import httpx
+import httpx2
 from agno.agent import Agent
 from agno.models.openai import OpenAIResponses
 
@@ -24,14 +24,14 @@ def get_top_hackernews_stories(num_stories: int = 5) -> str:
     stories = [
         {
             k: v
-            for k, v in httpx.get(
+            for k, v in httpx2.get(
                 f"https://hacker-news.firebaseio.com/v0/item/{id}.json"
             )
             .json()
             .items()
             if k != "kids"  # Exclude discussion threads
         }
-        for id in httpx.get(
+        for id in httpx2.get(
             "https://hacker-news.firebaseio.com/v0/topstories.json"
         ).json()[:num_stories]
     ]
