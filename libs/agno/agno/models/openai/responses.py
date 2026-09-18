@@ -1,5 +1,6 @@
 import asyncio
 import time
+from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Tuple, Type, Union
 
@@ -543,14 +544,17 @@ class OpenAIResponses(Model):
                             prop["type"] = prop["type"][0]
                     formatted_tools.append(_tool_dict)
                 elif _tool.get("type") == "function":
-                    _tool_dict = _tool.get("function", {})
+                    # Deep copy: the rewrites below must not leak into the caller's dict
+                    _tool_dict = deepcopy(_tool.get("function", {}))
                     _tool_dict["type"] = "function"
                     for prop in _tool_dict.get("parameters", {}).get("properties", {}).values():
                         if isinstance(prop.get("type", ""), list):
                             prop["type"] = prop["type"][0]
                     formatted_tools.append(_tool_dict)
                 else:
-                    formatted_tools.append(_tool)
+                    # Copy: file_search tools get vector_store_ids written below,
+                    # and the caller's dict must stay untouched
+                    formatted_tools.append(deepcopy(_tool))
 
         # Only upload files to vector store when file_search tool is present.
         # Otherwise, files will be embedded inline via _format_messages().
