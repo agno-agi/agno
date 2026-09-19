@@ -169,6 +169,59 @@ PAT principal `sa:secure-mcp-client-b0ebb699ad` authenticated, exactly the six
 
 ---
 
+### stateless.py
+
+**Status:** PASS
+
+**Test mode:** LIVE (MCP transport), MOCK (model)
+
+**Description:** Served the cookbook and checked the transport-level effect of
+`MCPConfig(stateless=True)`. A raw `initialize` POST to `/mcp` was compared
+against a default-config server started from the same process, since the flag's
+whole observable difference is whether the server hands back a session.
+
+**Result:** The stateless server answered `initialize` with 200 and **no**
+`mcp-session-id` response header; the default server returned 200 **with** one.
+Verified on fastmcp 4.0.2 / mcp 2.1.1. The four `test_mcp_server.py` stateless
+unit tests pass, covering the flag being absent by default, forwarded as
+`stateless_http=True` when set, absent for plain `mcp=True`, and the field
+default. The agent run itself was not exercised end to end -- no
+`OPENAI_API_KEY` was set in the test environment -- so the model path is
+unverified here.
+
+---
+
+### server_identity.py
+
+**Status:** PASS
+
+**Test mode:** LIVE (MCP transport), MOCK (model)
+
+**Description:** Served the cookbook (agno from this branch, fastmcp 4.0.2 / mcp
+2.1.1) and connected a FastMCP streamable-HTTP client twice, once with
+`mode="legacy"` and once with `mode="auto"`, to read what a client learns about
+the server at connect time.
+
+**Result:** Both handshakes reported `server_info` name `Acme Support` and version
+`1.4.0` and the full instructions string from `MCPConfig(instructions=...)`; the
+legacy handshake carried them in the initialize result and the 2026-07-28
+negotiation exposed the same values on the client. `tools/list` returned the
+eight default tools. No `OPENAI_API_KEY` was set, so `run_agent` was not
+exercised. The four unit tests in `test_mcp_server.py` cover the AgentOS
+defaults, the fastmcp fallback when nothing is set, the `MCPConfig` overrides,
+and the initialize response.
+
+Re-run with the Server Card: a browser-style `GET /mcp` (Accept `text/html`)
+answered 302 to `/mcp/server-card`. The card came back as
+`application/mcp-server-card+json` with the extension's CORS and cache headers,
+name `localhost/acme-support`, title `Acme Support`, version `1.4.0`, the
+AgentOS description and the endpoint URL. With `X-Forwarded-Proto: https` and
+`X-Forwarded-Host: docs.agno.com` the name became `com.agno.docs/acme-support`
+and the URL `https://docs.agno.com/mcp`. A GET with `Accept: text/event-stream`
+was not redirected; fastmcp answered it with its own 400 for a missing session.
+
+---
+
 ### oauth_builtin.py
 
 **Status:** PASS

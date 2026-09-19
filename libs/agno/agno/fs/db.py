@@ -208,6 +208,35 @@ class DbFileSystem(BaseFS):
     # Required core
     # ------------------------------------------------------------------
 
+    def _write_on(self, conn, namespace: str, path: str, content: str) -> FileMeta:
+        """Write through a caller-owned transaction after trusted table setup."""
+        t = self.table
+        now = int(time.time())
+        stmt = self._insert()(t).values(
+            namespace=namespace,
+            path=path,
+            content=content,
+            size_bytes=len(content.encode("utf-8")),
+            version=1,
+            created_at=now,
+            updated_at=now,
+        )
+        stmt = stmt.on_conflict_do_update(
+            index_elements=[t.c.namespace, t.c.path],
+            set_={
+                "content": stmt.excluded.content,
+                "size_bytes": stmt.excluded.size_bytes,
+                "version": t.c.version + 1,
+                "updated_at": now,
+            },
+        ).returning(t.c.version, t.c.size_bytes)
+        row = conn.execute(stmt).one()
+        return FileMeta(path=path, version=row[0], size_bytes=row[1], updated_at=now)
+
+    def _delete_on(self, conn, namespace: str, path: str) -> None:
+        """Delete through a caller-owned transaction without committing it."""
+        conn.execute(delete(self.table).where(self.table.c.namespace == namespace, self.table.c.path == path))
+
     def read(self, namespace: str, path: str) -> Optional[str]:
         self._ensure_table()
         t = self.table

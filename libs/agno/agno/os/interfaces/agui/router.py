@@ -2,7 +2,7 @@ import copy
 import uuid
 from typing import AsyncIterator, Optional, Union
 
-from agno.utils.log import log_error
+from agno.utils.log import log_error, log_warning
 
 try:
     from ag_ui.core import (
@@ -96,6 +96,17 @@ async def run_entity(
             )
         else:
             # Fresh run: new user input
+            if isinstance(entity, (RemoteAgent, RemoteTeam)):
+                # A RunContext is an in-process object: RemoteAgent/RemoteTeam forward every
+                # unknown kwarg as a form field, and the remote AgentOS would hand the
+                # stringified object to Agent.arun. Send the wire fields it carries instead.
+                run_kwargs["session_state"] = session_state
+                run_kwargs["dependencies"] = ui_deps
+                if client_tools:
+                    # Dropped: the remote agent cannot pause back into this process's session.
+                    log_warning("AG-UI client tools are not forwarded to remote agents or teams")
+            else:
+                run_kwargs["run_context"] = run_context
             response_stream = entity.arun(  # type: ignore
                 input=user_input,
                 stream=True,
@@ -107,7 +118,6 @@ async def run_entity(
                 audio=audio or None,
                 videos=videos or None,
                 files=files or None,
-                run_context=run_context,
                 **run_kwargs,
             )
 

@@ -6,7 +6,13 @@ from agno.filters import FilterExpr
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.utils.log import log_debug, log_error, log_info, log_warning
-from agno.vectordb.base import VectorDb, aembed_before_replace, embed_before_replace, is_rate_limit_error, raise_embedding_failures
+from agno.vectordb.base import (
+    VectorDb,
+    aembed_before_replace,
+    embed_before_replace,
+    is_rate_limit_error,
+    raise_embedding_failures,
+)
 from agno.vectordb.cassandra.index import AgnoMetadataVectorCassandraTable
 
 # The owner lives in a reserved metadata key. cassio filters metadata by equality only, so
@@ -80,6 +86,7 @@ class Cassandra(VectorDb):
             id=row["row_id"],
             content=row["body_blob"],
             meta_data=metadata,
+            embedder=self.embedder,
             embedding=row["vector"],
             name=row["document_name"],
             content_id=metadata.get("content_id"),

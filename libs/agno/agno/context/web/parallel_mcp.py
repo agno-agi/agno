@@ -88,8 +88,6 @@ class ParallelMCPBackend(ContextBackend):
         return headers
 
     def _build_tools(self) -> Any:
-        from datetime import timedelta
-
         from agno.tools.mcp import MCPTools
         from agno.tools.mcp.params import StreamableHTTPClientParams
 
@@ -98,7 +96,7 @@ class ParallelMCPBackend(ContextBackend):
         server_params = StreamableHTTPClientParams(
             url=self.url,
             headers=headers,
-            timeout=timedelta(seconds=self.timeout_seconds),
+            timeout=float(self.timeout_seconds),
         )
         return MCPTools(
             server_params=server_params,
@@ -181,10 +179,11 @@ class ParallelMCPBackend(ContextBackend):
         reuses the provider-side session ``get_tools()`` manages.
         """
         import json
-        from datetime import timedelta
 
+        import httpx2
         from mcp import ClientSession
-        from mcp.client.streamable_http import streamablehttp_client
+        from mcp.client.streamable_http import streamable_http_client
+        from mcp.shared._httpx_utils import create_mcp_http_client
 
         from agno.knowledge.reader.page_fetcher import FetchedPage, RateLimited, rate_limit_from_text
 
@@ -193,14 +192,16 @@ class ParallelMCPBackend(ContextBackend):
             arguments["session_id"] = self._fetch_session_id
 
         try:
-            async with streamablehttp_client(
-                url=self.url, headers=self._headers(), timeout=timedelta(seconds=self.timeout_seconds)
-            ) as (read, write, _):
-                async with ClientSession(
-                    read, write, read_timeout_seconds=timedelta(seconds=self.timeout_seconds)
-                ) as session:
-                    await session.initialize()
-                    result = await session.call_tool("web_fetch", arguments)
+            # MCP SDK v2: streamable_http_client takes only url/http_client, so the
+            # per-request headers and timeout ride on the httpx2 client itself.
+            timeout = float(self.timeout_seconds)
+            async with create_mcp_http_client(
+                headers=self._headers(), timeout=httpx2.Timeout(timeout, read=timeout)
+            ) as http_client:
+                async with streamable_http_client(url=self.url, http_client=http_client) as (read, write):
+                    async with ClientSession(read, write, read_timeout_seconds=timeout) as session:
+                        await session.initialize()
+                        result = await session.call_tool("web_fetch", arguments)
         except Exception as e:
             message = str(e)
             if rate_limit_from_text(message):
@@ -211,7 +212,7 @@ class ParallelMCPBackend(ContextBackend):
             ]
 
         text = "".join(getattr(block, "text", "") or "" for block in result.content or [])
-        if result.isError:
+        if result.is_error:
             if rate_limit_from_text(text):
                 raise RateLimited(text[:300])
             return [
