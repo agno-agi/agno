@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from agno.utils.dttm import now_epoch_s, to_epoch_s
@@ -28,8 +28,18 @@ class UserMemory:
             self.updated_at = to_epoch_s(self.updated_at)
 
     def to_dict(self) -> Dict[str, Any]:
-        created_at = datetime.fromtimestamp(self.created_at).isoformat() if self.created_at is not None else None
-        updated_at = datetime.fromtimestamp(self.updated_at).isoformat() if self.updated_at is not None else created_at
+        # ``from_dict`` reads a naive string back as UTC (see ``to_epoch_s``), so a local
+        # wall-clock stamp would shift ``created_at`` by the host offset on every save.
+        created_at = (
+            datetime.fromtimestamp(self.created_at, tz=timezone.utc).isoformat()
+            if self.created_at is not None
+            else None
+        )
+        updated_at = (
+            datetime.fromtimestamp(self.updated_at, tz=timezone.utc).isoformat()
+            if self.updated_at is not None
+            else created_at
+        )
         _dict = {
             "memory_id": self.memory_id,
             "memory": self.memory,
