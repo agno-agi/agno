@@ -1,32 +1,47 @@
 import json
 import math
-from typing import Any, Callable, List, Optional
+from typing import Any, Callable, List, Optional, Union
 
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, log_error
 
 
-def _to_number(value: Any) -> Optional[float]:
+def _to_number(value: Any) -> Optional[Union[int, float]]:
     """Return ``value`` as a number, or ``None`` when it is not numeric.
 
     Tool arguments arrive as JSON and are not validated against the declared
     types, so a model or MCP client that sends ``"10"`` for a numeric parameter
-    reaches these methods as a string.
+    reaches these methods as a string. Integers stay integers, so the result of
+    an integer operation keeps the type it had before the conversion.
     """
     if isinstance(value, bool):
         return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
+    if isinstance(value, (int, float)):
+        return value
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return None
+        try:
+            return int(text)
+        except ValueError:
+            try:
+                return float(text)
+            except ValueError:
+                return None
+    return None
 
 
 def _to_integer(value: Any) -> Optional[int]:
     """Return ``value`` as an int when it is a whole number, otherwise ``None``."""
     number = _to_number(value)
-    if number is None or not number.is_integer():
+    if number is None:
         return None
-    return int(number)
+    if isinstance(number, int):
+        return number
+    if number.is_integer():
+        return int(number)
+    return None
 
 
 class CalculatorTools(Toolkit):

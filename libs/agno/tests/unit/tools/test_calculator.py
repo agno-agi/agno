@@ -276,11 +276,12 @@ def test_division_exception_handling(calculator_tools):
 @pytest.mark.parametrize(
     "operation,args,expected",
     [
-        ("add", ("10", "5"), 15.0),
-        ("subtract", ("10", "5"), 5.0),
-        ("multiply", ("10", "5"), 50.0),
+        ("add", ("10", "5"), 15),
+        ("subtract", ("10", "5"), 5),
+        ("multiply", ("10", "5"), 50),
         ("divide", ("10", "5"), 2.0),
         ("exponentiate", ("2", "10"), 1024.0),
+        ("add", ("2.5", "2.5"), 5.0),
     ],
 )
 def test_numeric_strings_are_used_as_numbers(calculator_tools, operation, args, expected):
@@ -288,13 +289,27 @@ def test_numeric_strings_are_used_as_numbers(calculator_tools, operation, args, 
     result = json.loads(getattr(calculator_tools, operation)(*args))
 
     assert result["result"] == expected
+    assert type(result["result"]) is type(expected)
+
+
+def test_integer_arguments_keep_returning_integers(calculator_tools):
+    """Converting arguments must not turn an integer result into a float."""
+    for operation, args, expected in [
+        ("add", (1, 2), 3),
+        ("subtract", (5, 2), 3),
+        ("multiply", (3, 4), 12),
+    ]:
+        result = json.loads(getattr(calculator_tools, operation)(*args))
+
+        assert result["result"] == expected
+        assert isinstance(result["result"], int)
 
 
 def test_add_does_not_concatenate_string_arguments(calculator_tools):
     """`add("10", "5")` used to return the string "105"."""
     result = json.loads(calculator_tools.add("10", "5"))
 
-    assert result["result"] == 15.0
+    assert result["result"] == 15
 
 
 @pytest.mark.parametrize("operation,args", [("add", ("abc", 5)), ("multiply", (None, 5)), ("divide", (True, 2))])
