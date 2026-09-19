@@ -1113,8 +1113,13 @@ class LearnedKnowledgeStore(LearningStore):
         try:
             conversation_text = get_conversation_text(messages)
 
-            # Search for existing learnings to avoid duplicates
-            existing = self.search(query=conversation_text[:500], limit=5)
+            # Compare against learnings in the same scope used when saving.
+            existing = self.search(
+                query=conversation_text[:500],
+                user_id=user_id,
+                namespace=namespace or self.config.namespace,
+                limit=5,
+            )
             existing_summary = self._summarize_existing(learnings=existing)
 
             extraction_messages = self._build_extraction_messages(
@@ -1165,8 +1170,13 @@ class LearnedKnowledgeStore(LearningStore):
         try:
             conversation_text = get_conversation_text(messages)
 
-            # Search for existing learnings to avoid duplicates
-            existing = await self.asearch(query=conversation_text[:500], limit=5)
+            # Compare against learnings in the same scope used when saving.
+            existing = await self.asearch(
+                query=conversation_text[:500],
+                user_id=user_id,
+                namespace=namespace or self.config.namespace,
+                limit=5,
+            )
             existing_summary = self._summarize_existing(learnings=existing)
 
             extraction_messages = self._build_extraction_messages(
