@@ -285,6 +285,7 @@ def build_run_rows_for_session(session: "Session") -> List[Dict[str, Any]]:
             continue
 
         run_data = run if isinstance(run, dict) else run.to_dict()
+        run_data, status = _canonicalize_run_status(run_data)
         rows.append(
             {
                 "run_id": run_id,
@@ -295,7 +296,7 @@ def build_run_rows_for_session(session: "Session") -> List[Dict[str, Any]]:
                 "workflow_id": run_data.get("workflow_id"),
                 "user_id": session.user_id,
                 "parent_run_id": run_data.get("parent_run_id"),
-                "status": run_data.get("status"),
+                "status": status,
                 "run_index": run_index,
                 "run_data": run_data,
                 "created_at": run_data.get("created_at") or current_time,
@@ -338,6 +339,26 @@ def canonical_run_status(value: Any) -> Any:
         return value
 
 
+def _canonicalize_run_status(run_data: Dict[str, Any]) -> Tuple[Dict[str, Any], Any]:
+    """Return ``(run_data, status)`` with the run status in its stored form.
+
+    The indexed ``status`` column is read case-sensitively:
+    ``HISTORY_SKIP_STATUSES`` is applied as a ``notin_`` list and ``get_runs``
+    compares status filters against ``RunStatus.value``. ``upsert_run`` accepts
+    a plain dict, so a caller passing ``"cancelled"`` would otherwise store it
+    verbatim and that run would stop being excluded from history. ``run_data``
+    is persisted next to the column, so both are normalized together; the dict
+    is only copied when the value actually changes.
+    """
+    status = run_data.get("status")
+    if status is None:
+        return run_data, status
+    canonical = canonical_run_status(status)
+    if canonical != status:
+        run_data = {**run_data, "status": canonical}
+    return run_data, canonical
+
+
 def build_single_run_row(
     run: Any,
     session_id: str,
@@ -375,6 +396,8 @@ def build_single_run_row(
     if effective_run_index is None:
         effective_run_index = run_data.get("run_index")
 
+    run_data, status = _canonicalize_run_status(run_data)
+
     return {
         "run_id": run_id,
         "session_id": session_id,
@@ -384,7 +407,7 @@ def build_single_run_row(
         "workflow_id": run_data.get("workflow_id"),
         "user_id": user_id,
         "parent_run_id": run_data.get("parent_run_id"),
-        "status": run_data.get("status"),
+        "status": status,
         "run_index": effective_run_index,
         "run_data": run_data,
         "created_at": run_data.get("created_at") or current_time,
