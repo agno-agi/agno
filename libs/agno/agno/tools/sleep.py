@@ -1,3 +1,4 @@
+import math
 import time
 
 from agno.tools import Toolkit
@@ -27,7 +28,7 @@ class SleepTools(Toolkit):
             log_warning(f"Invalid sleep duration: {seconds!r}")
             return f"Invalid sleep duration: {seconds!r}. Please provide a non-negative number of seconds."
 
-        if duration < 0:
+        if duration < 0 or not math.isfinite(duration):
             log_warning(f"Invalid sleep duration: {duration}")
             return f"Invalid sleep duration: {duration}. Please provide a non-negative number of seconds."
 

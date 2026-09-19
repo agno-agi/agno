@@ -35,6 +35,14 @@ def test_non_numeric_duration_is_reported(sleep_tools, value):
     assert "Invalid sleep duration" in result
 
 
+@pytest.mark.parametrize("value", ["inf", "-inf", "nan", float("nan")])
+def test_non_finite_duration_is_reported(sleep_tools, value):
+    """`time.sleep` raised OverflowError for infinity and ValueError for NaN."""
+    result = sleep_tools.sleep(value)
+
+    assert "Invalid sleep duration" in result
+
+
 def test_disabled_tool_is_not_registered():
     tools = SleepTools(enable_sleep=False)
 
