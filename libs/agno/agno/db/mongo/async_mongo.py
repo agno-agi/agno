@@ -978,6 +978,7 @@ class AsyncMongoDb(AsyncBaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        include_runs: bool = True,
     ) -> Union[List[Session], Tuple[List[Dict[str, Any]], int]]:
         """Get all sessions.
 
@@ -1059,13 +1060,17 @@ class AsyncMongoDb(AsyncBaseDb):
                 return [] if deserialize else ([], 0)
             sessions_raw = [deserialize_session_json_fields(record) for record in records]
 
-            if runs_collection is not None and sessions_raw:
+            if include_runs and runs_collection is not None and sessions_raw:
                 runs_by_session = await self._get_sessions_runs_docs(
                     runs_collection, [s["session_id"] for s in sessions_raw]
                 )
                 for s in sessions_raw:
                     runs_data = runs_by_session.get(s["session_id"], [])
                     s["runs"] = merge_runs_table_with_legacy_blob(runs_data, s.get("runs"))
+            elif not include_runs:
+                # List views don't need run history; leave it unattached (storage untouched).
+                for s in sessions_raw:
+                    s["runs"] = None
 
             if not deserialize:
                 return sessions_raw, total_count

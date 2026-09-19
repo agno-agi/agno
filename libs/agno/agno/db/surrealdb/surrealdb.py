@@ -640,6 +640,7 @@ class SurrealDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        include_runs: bool = True,
     ) -> Union[List[Session], Tuple[List[Dict[str, Any]], int]]:
         r"""
         Get all sessions in the given table. Can filter by user_id and entity_id.
@@ -745,7 +746,7 @@ class SurrealDb(BaseDb):
         converted_sessions_raw = [desurrealize_session(session) for session in sessions_raw]
 
         # Attach runs from the runs table, merged with legacy blob
-        if converted_sessions_raw:
+        if include_runs and converted_sessions_raw:
             try:
                 runs_by_session = self._get_sessions_runs_data(
                     [s["session_id"] for s in converted_sessions_raw if s.get("session_id")]
@@ -756,6 +757,10 @@ class SurrealDb(BaseDb):
                         s["runs"] = merge_runs_table_with_legacy_blob(runs_by_session.get(sid, []), s.get("runs"))
             except Exception as e:
                 log_error(f"Failed to attach runs to sessions: {str(e)}")
+        elif not include_runs:
+            # List views don't need run history; leave it unattached (storage untouched).
+            for s in converted_sessions_raw:
+                s["runs"] = None
 
         if not deserialize:
             return list(converted_sessions_raw), total_count

@@ -1041,9 +1041,15 @@ class AsyncMySQLDb(AsyncBaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        include_runs: bool = True,
     ) -> Union[List[Session], Tuple[List[Dict[str, Any]], int]]:
         """
         Get all sessions in the given table. Can filter by user_id and entity_id.
+
+        Pass ``include_runs=False`` to skip attaching each session's run history —
+        a large, usually-unnecessary read for list views. The runs are untouched
+        in storage; a single ``get_session`` still returns them. Defaults to True
+        to preserve existing behavior.
 
         Args:
             user_id (Optional[str]): The ID of the user to filter by.
@@ -1125,13 +1131,17 @@ class AsyncMySQLDb(AsyncBaseDb):
 
                 session = [dict(record._mapping) for record in records]
 
-                if runs_table is not None:
+                if include_runs and runs_table is not None:
                     runs_by_session = await self._get_sessions_runs_data(
                         sess=sess, runs_table=runs_table, session_ids=[s["session_id"] for s in session]
                     )
                     for s in session:
                         runs_data = runs_by_session.get(s["session_id"], [])
                         s["runs"] = merge_runs_table_with_legacy_blob(runs_data, s.get("runs"))
+                elif not include_runs:
+                    # List views don't need run history; leave it unattached (storage untouched).
+                    for s in session:
+                        s["runs"] = None
 
                 if not deserialize:
                     return session, total_count

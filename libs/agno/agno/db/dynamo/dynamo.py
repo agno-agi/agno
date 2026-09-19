@@ -756,6 +756,7 @@ class DynamoDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        include_runs: bool = True,
     ) -> Union[List[Session], Tuple[List[Dict[str, Any]], int]]:
         try:
             table_name = self._get_table("sessions")
@@ -891,7 +892,7 @@ class DynamoDb(BaseDb):
                     sessions_data.append(session_data)
 
             # Attach runs from the runs table, merged with legacy blob
-            if sessions_data:
+            if include_runs and sessions_data:
                 try:
                     runs_by_session = self._get_sessions_runs_data([s["session_id"] for s in sessions_data])
                     for s in sessions_data:
@@ -900,6 +901,10 @@ class DynamoDb(BaseDb):
                         )
                 except Exception as e:
                     log_error(f"Failed to attach runs to sessions: {str(e)}")
+            elif not include_runs:
+                # List views don't need run history; leave it unattached (storage untouched).
+                for s in sessions_data:
+                    s["runs"] = None
 
             # Filter by session_name in-memory (stored inside session_data JSON)
             if session_name:

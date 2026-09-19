@@ -720,6 +720,7 @@ class RedisDb(BaseDb):
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
         create_index_if_not_found: Optional[bool] = True,
+        include_runs: bool = True,
     ) -> Union[List[Session], Tuple[List[Dict[str, Any]], int]]:
         """Get all sessions matching the given filters.
 
@@ -778,10 +779,16 @@ class RedisDb(BaseDb):
             sessions = apply_pagination(records=sorted_sessions, limit=limit, page=page)
             sessions = [record for record in sessions]
 
-            # Attach runs from the runs keys, merged with any legacy `runs` blob
-            for s in sessions:
-                runs_data = self._get_session_runs_data(s["session_id"])
-                s["runs"] = merge_runs_table_with_legacy_blob(runs_data, s.get("runs"))
+            # Attach runs from the runs keys, merged with any legacy `runs` blob.
+            # Skipped entirely for list views (include_runs=False): runs are never
+            # surfaced there and the per-key reads are pure overhead.
+            if include_runs:
+                for s in sessions:
+                    runs_data = self._get_session_runs_data(s["session_id"])
+                    s["runs"] = merge_runs_table_with_legacy_blob(runs_data, s.get("runs"))
+            else:
+                for s in sessions:
+                    s["runs"] = None
 
             if not deserialize:
                 return sessions, len(filtered_sessions)
