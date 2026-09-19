@@ -620,16 +620,12 @@ def get_session_metrics_internal(agent: Agent, session: AgentSession) -> Session
 
 
 def update_session_metrics(agent: Agent, session: AgentSession, run_response: RunOutput) -> None:
-    """Calculate session metrics - convert run Metrics to SessionMetrics."""
-    session_metrics = get_session_metrics_internal(agent, session=session)
-    # Add the metrics for the current run to the session metrics
-    if session_metrics is None:
-        return
-    if run_response.metrics is not None:
-        session_metrics.accumulate_from_run(run_response.metrics)
+    """Accumulate new run usage into the session metrics."""
+    from agno.session._metrics import update_session_metrics as update_metrics
 
-    if session.session_data is not None:
-        session.session_data["session_metrics"] = session_metrics.to_dict()
+    session_metrics = get_session_metrics_internal(agent, session=session)
+    if session_metrics is not None:
+        update_metrics(session, session_metrics, run_response)
 
 
 def read_or_create_session(
@@ -640,9 +636,12 @@ def read_or_create_session(
     from time import time
     from uuid import uuid4
 
+    from agno.session._metrics import initialize_session_metrics
+
     # Returning cached session if we have one
     cached_session = agent._get_cached_session(session_id, user_id=user_id)
     if cached_session is not None:
+        initialize_session_metrics(cached_session)
         return cached_session
 
     # Try to load from database
@@ -694,6 +693,7 @@ def read_or_create_session(
                 save_session(agent, session=agent_session)
                 upsert_run(agent, run=introduction_run, session_id=session_id, user_id=user_id, run_index=0)
 
+    initialize_session_metrics(agent_session)
     if agent.cache_session:
         agent._set_cached_session(agent_session)
 
@@ -709,10 +709,12 @@ async def aread_or_create_session(
     from uuid import uuid4
 
     from agno.agent import _init
+    from agno.session._metrics import initialize_session_metrics
 
     # Returning cached session if we have one
     cached_session = agent._get_cached_session(session_id, user_id=user_id)
     if cached_session is not None:
+        initialize_session_metrics(cached_session)
         return cached_session
 
     # Try to load from database
@@ -770,6 +772,7 @@ async def aread_or_create_session(
                     save_session(agent, session=agent_session)
                     upsert_run(agent, run=introduction_run, session_id=session_id, user_id=user_id, run_index=0)
 
+    initialize_session_metrics(agent_session)
     if agent.cache_session:
         agent._set_cached_session(agent_session)
 

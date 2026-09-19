@@ -350,7 +350,7 @@ class TestPersistRunInSession:
         persist_run_in_session(agent, run_response, session, run_context=run_context)
 
         assert run_response.session_state == {"k": "v"}
-        assert session.session_data == {"session_state": {"k": "v"}}
+        assert session.session_data["session_state"] == {"k": "v"}
 
 
 class TestCallbackEndToEnd:

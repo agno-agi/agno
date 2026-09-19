@@ -321,12 +321,14 @@ def _read_or_create_session(team: "Team", session_id: str, user_id: Optional[str
     """
     from time import time
 
+    from agno.session._metrics import initialize_session_metrics
     from agno.session.team import TeamSession
     from agno.team._telemetry import get_team_data
 
     # Return existing session if we have one
     cached_session = team._get_cached_session(session_id, user_id=user_id)
     if cached_session is not None:
+        initialize_session_metrics(cached_session)
         return cached_session
 
     # Try to load from database
@@ -376,6 +378,7 @@ def _read_or_create_session(team: "Team", session_id: str, user_id: Optional[str
                 save_session(team, session=team_session)
                 _upsert_run(team, run=introduction_run, session_id=session_id, user_id=user_id, run_index=0)
 
+    initialize_session_metrics(team_session)
     # Cache the session if relevant
     if team_session is not None and team.cache_session:
         team._set_cached_session(team_session)
@@ -391,6 +394,7 @@ async def _aread_or_create_session(team: "Team", session_id: str, user_id: Optio
     """
     from time import time
 
+    from agno.session._metrics import initialize_session_metrics
     from agno.session.team import TeamSession
     from agno.team._init import _has_async_db
     from agno.team._telemetry import get_team_data
@@ -398,6 +402,7 @@ async def _aread_or_create_session(team: "Team", session_id: str, user_id: Optio
     # Return existing session if we have one
     cached_session = team._get_cached_session(session_id, user_id=user_id)
     if cached_session is not None:
+        initialize_session_metrics(cached_session)
         return cached_session
 
     # Try to load from database
@@ -455,6 +460,7 @@ async def _aread_or_create_session(team: "Team", session_id: str, user_id: Optio
                     save_session(team, session=team_session)
                     _upsert_run(team, run=introduction_run, session_id=session_id, user_id=user_id, run_index=0)
 
+    initialize_session_metrics(team_session)
     # Cache the session if relevant
     if team_session is not None and team.cache_session:
         team._set_cached_session(team_session)

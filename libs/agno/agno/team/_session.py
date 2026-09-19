@@ -739,41 +739,13 @@ async def aget_session_metrics(team: "Team", session_id: Optional[str] = None) -
 
 
 def update_session_metrics(team: "Team", session: TeamSession, run_response: TeamRunOutput) -> None:
-    """Calculate session metrics and write them to session_data.
-
-    Converts run-level Metrics (details: Dict[str, List[ModelMetrics]]) to
-    session-level SessionMetrics (details: List[ModelMetrics]) using
-    SessionMetrics.accumulate_from_run().
-
-    Accumulates metrics from the team leader's own model calls as well as
-    all member agent/team responses (recursively for nested teams).
-    """
+    """Accumulate new leader and member usage into the session metrics."""
+    from agno.session._metrics import update_session_metrics as update_metrics
     from agno.team._storage import get_session_metrics_internal
 
     session_metrics = get_session_metrics_internal(team, session=session)
-    if session_metrics is None:
-        return
-    if run_response.metrics is not None:
-        session_metrics.accumulate_from_run(run_response.metrics)
-
-    # Accumulate metrics from member responses (agent and nested team runs)
-    _accumulate_member_metrics(session_metrics, run_response.member_responses)
-
-    if session.session_data is not None:
-        session.session_data["session_metrics"] = session_metrics.to_dict()
-
-
-def _accumulate_member_metrics(
-    session_metrics: SessionMetrics,
-    member_responses: "List",
-) -> None:
-    """Recursively accumulate metrics from member responses into session metrics."""
-    for member_response in member_responses:
-        if member_response.metrics is not None:
-            session_metrics.accumulate_from_run(member_response.metrics)
-        # Recurse into nested team member responses
-        if isinstance(member_response, TeamRunOutput) and member_response.member_responses:
-            _accumulate_member_metrics(session_metrics, member_response.member_responses)
+    if session_metrics is not None:
+        update_metrics(session, session_metrics, run_response)
 
 
 # ---------------------------------------------------------------------------
