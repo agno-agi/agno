@@ -66,3 +66,36 @@ def test_query_csv_file_path_injection_is_neutralized(tmp_path):
 
     # The path is bound as a parameter, so the injected statement never runs
     assert connection.execute("SELECT COUNT(*) FROM inventory").fetchone()[0] == 1
+
+
+def test_query_csv_file_can_run_twice_on_the_same_connection(tmp_path):
+    """A reused connection must be able to query the same file again."""
+    duckdb = pytest.importorskip("duckdb")
+
+    csv_path = tmp_path / "sales.csv"
+    csv_path.write_text("region,amount\nnorth,10\nsouth,20\n", encoding="utf-8")
+
+    connection = duckdb.connect()
+    tools = CsvTools(csvs=[csv_path], duckdb_connection=connection)
+
+    first = tools.query_csv_file("sales", "SELECT SUM(amount) FROM sales")
+    second = tools.query_csv_file("sales", "SELECT SUM(amount) FROM sales")
+
+    assert "Error" not in first
+    assert "Error" not in second
+    assert first == second
+
+
+def test_query_csv_file_reflects_changes_on_disk(tmp_path):
+    """The table is rebuilt for every query instead of keeping stale rows."""
+    duckdb = pytest.importorskip("duckdb")
+
+    csv_path = tmp_path / "sales.csv"
+    csv_path.write_text("region,amount\nnorth,10\n", encoding="utf-8")
+
+    tools = CsvTools(csvs=[csv_path], duckdb_connection=duckdb.connect())
+    assert "10" in tools.query_csv_file("sales", "SELECT SUM(amount) FROM sales")
+
+    csv_path.write_text("region,amount\nnorth,99\n", encoding="utf-8")
+
+    assert "99" in tools.query_csv_file("sales", "SELECT SUM(amount) FROM sales")
