@@ -758,6 +758,13 @@ class DynamoDb(BaseDb):
         deserialize: Optional[bool] = True,
         include_runs: bool = True,
     ) -> Union[List[Session], Tuple[List[Dict[str, Any]], int]]:
+        """Get all sessions matching the given filters.
+
+        Pass ``include_runs=False`` to skip attaching each session's run history —
+        a large, usually-unnecessary read for list views. The runs are untouched
+        in storage; a single ``get_session`` still returns them. Defaults to True
+        to preserve existing behavior.
+        """
         try:
             table_name = self._get_table("sessions")
             if table_name is None:
