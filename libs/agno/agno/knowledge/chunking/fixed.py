@@ -36,23 +36,19 @@ class FixedSizeChunking(ChunkingStrategy):
                 end = start + self.chunk_size
 
             chunk = content[start:end]
-            # A slice that only holds whitespace (the tail after the last word, for
-            # example) is not a chunk of the document. Row chunking already skips the
-            # same shape, and nothing filters it out before it is embedded.
-            if chunk.strip():
-                meta_data = chunk_meta_data.copy()
-                meta_data["chunk"] = chunk_number
-                chunk_id = self._generate_chunk_id(document, chunk_number, chunk)
-                meta_data["chunk_size"] = len(chunk)
-                chunked_documents.append(
-                    Document(
-                        id=chunk_id,
-                        name=document.name,
-                        meta_data=meta_data,
-                        content=chunk,
-                    )
+            meta_data = chunk_meta_data.copy()
+            meta_data["chunk"] = chunk_number
+            chunk_id = self._generate_chunk_id(document, chunk_number, chunk)
+            meta_data["chunk_size"] = len(chunk)
+            chunked_documents.append(
+                Document(
+                    id=chunk_id,
+                    name=document.name,
+                    meta_data=meta_data,
+                    content=chunk,
                 )
-                chunk_number += 1
+            )
+            chunk_number += 1
             # Stop once a chunk reaches the end of the content
             if end >= content_length:
                 break

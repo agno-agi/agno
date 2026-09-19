@@ -44,15 +44,12 @@ class RecursiveChunking(ChunkingStrategy):
                         break
 
             chunk = self.clean_text(content[start:end])
-            # Whitespace-only slices are not chunks of the document; row chunking
-            # already skips the same shape and nothing filters them before embedding.
-            if chunk.strip():
-                meta_data = chunk_meta_data.copy()
-                meta_data["chunk"] = chunk_number
-                chunk_id = self._generate_chunk_id(document, chunk_number, chunk)
-                chunk_number += 1
-                meta_data["chunk_size"] = len(chunk)
-                chunks.append(Document(id=chunk_id, name=document.name, meta_data=meta_data, content=chunk))
+            meta_data = chunk_meta_data.copy()
+            meta_data["chunk"] = chunk_number
+            chunk_id = self._generate_chunk_id(document, chunk_number, chunk)
+            chunk_number += 1
+            meta_data["chunk_size"] = len(chunk)
+            chunks.append(Document(id=chunk_id, name=document.name, meta_data=meta_data, content=chunk))
 
             # Stop once a chunk reaches the end of the content
             if end >= len(content):

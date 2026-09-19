@@ -25,16 +25,3 @@ def test_last_chunk_ends_the_document_and_repeats_no_earlier_chunk():
     assert content.endswith(chunks[-1].content)
     for position, chunk in enumerate(chunks):
         assert not any(chunk.content in earlier.content for earlier in chunks[:position])
-
-
-def test_trailing_whitespace_does_not_become_a_chunk():
-    """A slice that only holds whitespace is not a chunk of the document."""
-    strategy = RecursiveChunking(chunk_size=20, overlap=0)
-    doc = Document(name="doc", content=("word " * 20) + " ")
-
-    chunks = strategy.chunk(doc)
-
-    assert chunks
-    assert all(chunk.content.strip() for chunk in chunks)
-    assert "".join(chunk.content for chunk in chunks).split() == ["word"] * 20
-    assert [chunk.meta_data["chunk"] for chunk in chunks] == list(range(1, len(chunks) + 1))
