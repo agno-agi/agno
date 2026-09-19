@@ -454,7 +454,8 @@ class Model(ABC):
             message_data.append(msg_dict)
 
         # Include tools parameter in cache key
-        has_tools = bool(kwargs.get("tools"))
+        tools = kwargs.get("tools")
+        has_tools = bool(tools)
 
         cache_data = {
             "model_id": self.id,
@@ -463,6 +464,12 @@ class Model(ABC):
             "response_format": kwargs.get("response_format"),
             "stream": stream,
         }
+
+        if has_tools:
+            # Include the formatted tool definitions so that requests with different
+            # tools (name, description, parameters, or built-in tool settings) don't
+            # collide on the same cache key.
+            cache_data["tools"] = self._format_tools(tools)
 
         def _cache_default(obj: Any) -> Any:
             if isinstance(obj, type):
