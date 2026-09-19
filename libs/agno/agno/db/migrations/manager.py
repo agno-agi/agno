@@ -16,6 +16,7 @@ class MigrationManager:
         ("v2_3_0", packaging_version.parse("2.3.0")),
         ("v2_5_0", packaging_version.parse("2.5.0")),
         ("v2_5_6", packaging_version.parse("2.5.6")),
+        ("v3_0_0", packaging_version.parse("3.0.0")),
     ]
 
     def __init__(self, db: Union[AsyncBaseDb, BaseDb]):
@@ -24,6 +25,11 @@ class MigrationManager:
     @property
     def latest_schema_version(self) -> Version:
         return self.available_versions[-1][1]
+
+    def _invalidate_table(self, table_name: str) -> None:
+        invalidate = getattr(self.db, "_invalidate_table_cache", None)
+        if invalidate is not None:
+            invalidate(table_name)
 
     async def up(self, target_version: Optional[str] = None, table_type: Optional[str] = None, force: bool = False):
         """Handle executing an up migration.
@@ -49,8 +55,11 @@ class MigrationManager:
             "metrics": "metrics_table_name",
             "evals": "eval_table_name",
             "knowledge": "knowledge_table_name",
-            "culture": "culture_table_name",
             "approvals": "approvals_table_name",
+            "components": "components_table_name",
+            "schedules": "schedules_table_name",
+            "schedule_runs": "schedule_runs_table_name",
+            "learnings": "learnings_table_name",
         }
 
         # Select tables to migrate
@@ -65,13 +74,18 @@ class MigrationManager:
         # Handle migrations for each table separately (extend in future if needed):
         for table_type, table_name in tables:
             if isinstance(self.db, AsyncBaseDb):
-                current_version = packaging_version.parse(await self.db.get_latest_schema_version(table_name))
+                raw_version = await self.db.get_latest_schema_version(table_name)
             else:
-                current_version = packaging_version.parse(self.db.get_latest_schema_version(table_name))
+                raw_version = self.db.get_latest_schema_version(table_name)
 
-            if current_version is None:
-                log_info(f"Skipping migration: No version found for table {table_name}.")
+            if raw_version is None:
+                log_warning(
+                    f"Skipping migration for table {table_name}: the adapter returned no schema version. "
+                    "Migrations will NOT run for this table. Adapters must return their stamped version, "
+                    'or "2.0.0" when nothing is stamped yet.'
+                )
                 continue
+            current_version = packaging_version.parse(raw_version)
 
             # If the target version is less or equal to the current version, no migrations needed
             if _target_version <= current_version and not force:
@@ -92,10 +106,20 @@ class MigrationManager:
                         break
 
                     log_info(f"Applying migration {normalised_version} on {table_name}")
-                    migration_executed = await self._up_migration(version, table_type, table_name)
+                    try:
+                        migration_executed = await self._up_migration(version, table_type, table_name)
+                    except BaseException:
+                        # A partial migration may have changed the table shape
+                        self._invalidate_table(table_name)
+                        raise
+                    if migration_executed:
+                        # The migration changed the table shape; the next
+                        # access must re-resolve it. No-op steps keep the cache.
+                        self._invalidate_table(table_name)
+                    # False means "nothing to migrate" — failures raise and abort
+                    # before stamping, so no-ops still advance the stamp.
                     latest_version = normalised_version.public
                     if migration_executed:
-                        latest_version = normalised_version.public
                         log_info(f"Successfully applied migration {normalised_version} on table {table_name}")
                     else:
                         log_info(f"Skipping application of migration {normalised_version} on table {table_name}")
@@ -142,8 +166,11 @@ class MigrationManager:
             "metrics": "metrics_table_name",
             "evals": "eval_table_name",
             "knowledge": "knowledge_table_name",
-            "culture": "culture_table_name",
             "approvals": "approvals_table_name",
+            "components": "components_table_name",
+            "schedules": "schedules_table_name",
+            "schedule_runs": "schedule_runs_table_name",
+            "learnings": "learnings_table_name",
         }
 
         # Select tables to migrate
@@ -157,9 +184,14 @@ class MigrationManager:
 
         for table_type, table_name in tables:
             if isinstance(self.db, AsyncBaseDb):
-                current_version = packaging_version.parse(await self.db.get_latest_schema_version(table_name))
+                raw_version = await self.db.get_latest_schema_version(table_name)
             else:
-                current_version = packaging_version.parse(self.db.get_latest_schema_version(table_name))
+                raw_version = self.db.get_latest_schema_version(table_name)
+
+            if raw_version is None:
+                log_info(f"Skipping down migration: No version found for table {table_name}.")
+                continue
+            current_version = packaging_version.parse(raw_version)
 
             if _target_version >= current_version and not force:
                 log_warning(
@@ -173,7 +205,14 @@ class MigrationManager:
             for version, normalised_version in reversed(self.available_versions):
                 if normalised_version > _target_version:
                     log_info(f"Reverting migration {normalised_version} on table {table_name}")
-                    migration_executed = await self._down_migration(version, table_type, table_name)
+                    try:
+                        migration_executed = await self._down_migration(version, table_type, table_name)
+                    except BaseException:
+                        # A partial revert may have changed the table shape
+                        self._invalidate_table(table_name)
+                        raise
+                    if migration_executed:
+                        self._invalidate_table(table_name)
                     if migration_executed:
                         any_migration_executed = True
                         log_info(f"Successfully reverted migration {normalised_version} on table {table_name}")

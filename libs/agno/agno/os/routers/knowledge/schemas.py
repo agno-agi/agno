@@ -12,6 +12,7 @@ class ContentStatus(str, Enum):
 
     PROCESSING = "processing"
     COMPLETED = "completed"
+    PARTIAL = "partial"
     FAILED = "failed"
 
 
@@ -44,10 +45,15 @@ class ContentResponseSchema(BaseModel):
             try:
                 status = ContentStatus(status.lower())
             except ValueError:
-                # Handle legacy or unknown statuses gracefully
-                if "failed" in status.lower():
+                # Handle legacy or unknown statuses gracefully. "partial" is checked
+                # before "failed"/"completed" so a compound legacy value such as
+                # "partially_failed" is not reported as a total failure.
+                lowered = status.lower()
+                if "partial" in lowered:
+                    status = ContentStatus.PARTIAL
+                elif "failed" in lowered:
                     status = ContentStatus.FAILED
-                elif "completed" in status.lower():
+                elif "completed" in lowered:
                     status = ContentStatus.COMPLETED
                 else:
                     status = ContentStatus.PROCESSING
@@ -106,6 +112,26 @@ class ReaderSchema(BaseModel):
     name: Optional[str] = Field(None, description="Name of the reader")
     description: Optional[str] = Field(None, description="Description of the reader's capabilities")
     chunkers: Optional[List[str]] = Field(None, description="List of supported chunking strategies")
+    content_types: Optional[List[str]] = Field(None, description="Content types this reader can read in this install")
+    unavailable_content_types: Optional[Dict[str, List[str]]] = Field(
+        None, description="Content types this reader supports but cannot read here, and the packages each needs"
+    )
+
+
+class UnavailableReaderSchema(BaseModel):
+    id: str = Field(..., description="Reader key that could not be loaded")
+    name: Optional[str] = Field(None, description="Name of the reader")
+    description: Optional[str] = Field(None, description="Description of the reader's capabilities")
+    missing_packages: List[str] = Field(default_factory=list, description="Packages that are not importable")
+    reason: str = Field(..., description="Verbatim import failure, including its install instruction")
+
+
+class UnavailableChunkerSchema(BaseModel):
+    id: str = Field(..., description="Chunker key that could not be loaded")
+    name: Optional[str] = Field(None, description="Name of the chunker")
+    description: Optional[str] = Field(None, description="Description of the chunking strategy")
+    missing_packages: List[str] = Field(default_factory=list, description="Packages that are not importable")
+    reason: str = Field(..., description="Verbatim import failure, including its install instruction")
 
 
 class ChunkerSchema(BaseModel):
@@ -127,12 +153,14 @@ class VectorDbSchema(BaseModel):
 class VectorSearchResult(BaseModel):
     """Schema for search result documents."""
 
-    id: str = Field(..., description="Unique identifier for the search result document")
+    id: Optional[str] = Field(None, description="Unique identifier for the search result document")
     content: str = Field(..., description="Content text of the document")
     name: Optional[str] = Field(None, description="Name of the document")
     meta_data: Optional[Dict[str, Any]] = Field(None, description="Metadata associated with the document")
     usage: Optional[Dict[str, Any]] = Field(None, description="Usage statistics (e.g., token counts)")
-    reranking_score: Optional[float] = Field(None, description="Reranking score for relevance", ge=0.0, le=1.0)
+    # Not all rerankers score in [0, 1]: MMR subtracts a redundancy term and goes
+    # negative, and cross-encoder rerankers write raw logits.
+    reranking_score: Optional[float] = Field(None, description="Reranking score for relevance", ge=-1.0, le=1.0)
     content_id: Optional[str] = Field(None, description="ID of the source content")
     content_origin: Optional[str] = Field(None, description="Origin URL or source of the content")
     size: Optional[int] = Field(None, description="Size of the content in bytes", ge=0)
@@ -221,4 +249,10 @@ class ConfigResponseSchema(BaseModel):
     vector_dbs: Optional[List[VectorDbSchema]] = Field(None, description="Configured vector databases")
     remote_content_sources: Optional[List[RemoteContentSourceSchema]] = Field(
         None, description="Configured remote content sources (S3, GCS, SharePoint, GitHub)"
+    )
+    unavailable_readers: Optional[Dict[str, UnavailableReaderSchema]] = Field(
+        None, description="Readers that are not usable in this install, and the packages they need"
+    )
+    unavailable_chunkers: Optional[Dict[str, UnavailableChunkerSchema]] = Field(
+        None, description="Chunking strategies that are not usable in this install, and the packages they need"
     )

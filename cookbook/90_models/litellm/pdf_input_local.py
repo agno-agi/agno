@@ -24,7 +24,7 @@ download_file(
 )
 
 agent = Agent(
-    model=LiteLLM(id="gpt-4o"),
+    model=LiteLLM(id="gpt-5.6-luna"),
     markdown=True,
     add_history_to_context=True,
 )

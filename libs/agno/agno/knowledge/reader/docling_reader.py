@@ -1,14 +1,15 @@
 import asyncio
 import json
+import shutil
 from io import BytesIO
 from pathlib import Path
-from typing import IO, Any, Dict, List, Optional, Union
+from typing import IO, Any, Dict, List, Optional, Set, Union
 from uuid import uuid4
 
 from agno.knowledge.chunking.document import DocumentChunking
 from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyType
 from agno.knowledge.document.base import Document
-from agno.knowledge.reader.base import Reader
+from agno.knowledge.reader.base import Reader, package_is_importable
 from agno.knowledge.reader.utils.url_validation import is_host_allowed, validate_allowed_hosts
 from agno.knowledge.types import ContentType
 from agno.utils.log import log_debug, log_error
@@ -173,6 +174,51 @@ class DoclingReader(Reader):
             ContentType.VIDEO_AVI,
             ContentType.VIDEO_MOV,
         ]
+
+    # Docling transcribes with whichever backend it picked at import time: mlx-whisper on
+    # Apple silicon with MPS, native whisper otherwise, and whisper-s2t if configured.
+    _SPEECH_BACKENDS = ("whisper", "mlx_whisper", "whisper_s2t")
+
+    @classmethod
+    def _media_content_type_values(cls) -> Set[str]:
+        """The content types docling sends through its speech pipeline."""
+        return {
+            ContentType.AUDIO_WAV.value,
+            ContentType.AUDIO_MP3.value,
+            ContentType.AUDIO_M4A.value,
+            ContentType.AUDIO_AAC.value,
+            ContentType.AUDIO_OGG.value,
+            ContentType.AUDIO_FLAC.value,
+            ContentType.VIDEO_MP4.value,
+            ContentType.VIDEO_AVI.value,
+            ContentType.VIDEO_MOV.value,
+        }
+
+    @classmethod
+    def get_missing_read_time_packages(cls, content_type: Optional[Union[ContentType, str]] = None) -> List[str]:
+        """What transcription needs here, which a package list on its own cannot express.
+
+        Docling loads its speech stack only when asked, so importing this class proves nothing
+        about audio and video. Two things gate it and neither is a fixed import: the ffmpeg
+        binary has to be on PATH -- docling fails outright without it, whatever else is
+        installed -- and any one of several speech backends will do, chosen by hardware rather
+        than declared. Requiring one named package would both offer formats that cannot run and
+        withdraw formats that can.
+        """
+        media = cls._media_content_type_values()
+        if content_type is not None:
+            value = content_type.value if isinstance(content_type, ContentType) else content_type
+            if value not in media:
+                return []
+
+        missing: List[str] = []
+        if shutil.which("ffmpeg") is None:
+            missing.append("ffmpeg")
+        if not any(package_is_importable(backend) for backend in cls._SPEECH_BACKENDS):
+            # Named rather than the backend docling would pick: native whisper is the one that
+            # works on every platform, so it is always a correct answer to "what do I install".
+            missing.append("openai-whisper")
+        return missing
 
     def read(self, file: Union[Path, str, IO[Any]], name: Optional[str] = None) -> List[Document]:
         """Reads document using Docling.

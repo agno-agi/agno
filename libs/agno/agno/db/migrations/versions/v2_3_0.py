@@ -265,11 +265,6 @@ def _migrate_postgres(db: BaseDb, table_type: str, table_name: str) -> bool:
                 ("metadata", table_name),
             ]
             _convert_json_to_jsonb(sess, db_schema, json_columns, db_type)
-        if table_type == "culture":
-            json_columns = [
-                ("metadata", table_name),
-            ]
-            _convert_json_to_jsonb(sess, db_schema, json_columns, db_type)
 
         sess.commit()
         return True
@@ -436,12 +431,6 @@ async def _migrate_async_postgres(db: AsyncBaseDb, table_type: str, table_name: 
             ]
             await _async_convert_json_to_jsonb(sess, db_schema, json_columns, db_type)
         if table_type == "knowledge":
-            json_columns = [
-                ("metadata", table_name),
-            ]
-            await _async_convert_json_to_jsonb(sess, db_schema, json_columns, db_type)
-
-        if table_type == "culture":
             json_columns = [
                 ("metadata", table_name),
             ]

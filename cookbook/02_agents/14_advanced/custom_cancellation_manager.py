@@ -9,7 +9,7 @@ cancellation state to a JSON file, which could be shared across processes
 via a network filesystem.
 
 Usage:
-    .venvs/demo/bin/python cookbook/02_agents/other/custom_cancellation_manager.py
+    .venvs/demo/bin/python cookbook/02_agents/14_advanced/custom_cancellation_manager.py
 """
 
 import json

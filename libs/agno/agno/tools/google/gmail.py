@@ -41,6 +41,8 @@ How to Get These Credentials:
 
 Note: The first time you run the application, it will open a browser window for OAuth authentication.
 A token.json file will be created to store the authentication credentials for future use.
+On headless servers pass auth=AuthConfig(interactive=False) (or set GOOGLE_OAUTH_NONINTERACTIVE=1):
+expired credentials then raise a clear error instead of blocking on a browser that never opens.
 
 Service Account Authentication (Alternative):
 ---------------------------------------------
@@ -1499,10 +1501,10 @@ class GmailTools(GoogleToolkit):
         Args:
             query: Gmail search query string. Supports all Gmail operators like from:, to:, subject:, is:unread, etc.
             count: Maximum number of threads to return (default 10, max 500).
-            next_page_token: Token for pagination.
+            page_token: Token from a previous response to fetch the next page.
 
         Returns:
-            JSON string with list of matching threads and next_page_token if more results exist.
+            JSON string with list of matching threads and nextPageToken if more results exist.
         """
         try:
             service = self.service
@@ -1621,10 +1623,10 @@ class GmailTools(GoogleToolkit):
 
         Args:
             count: Maximum number of drafts to return (default 10, max 500).
-            next_page_token: Token for pagination.
+            page_token: Token from a previous response to fetch the next page.
 
         Returns:
-            JSON string with list of draft IDs and next_page_token if more results exist.
+            JSON string with list of draft IDs and nextPageToken if more results exist.
         """
         try:
             service = self.service

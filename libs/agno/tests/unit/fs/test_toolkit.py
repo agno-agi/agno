@@ -771,3 +771,14 @@ class TestConcurrentEditsInOneTurn:
 
         content = fs.read("notes/log.md")
         assert "REPLACED" in content and "appended" in content
+
+
+class TestToolkitName:
+    def test_default_name_is_filesystem(self, fs):
+        assert fs.tools().name == "filesystem"
+
+    def test_name_override(self, fs):
+        toolkit = fs.tools(name="agent_files")
+        assert toolkit.name == "agent_files"
+        # The override changes identity only; the tool surface is untouched.
+        assert "read_file" in toolkit.functions
