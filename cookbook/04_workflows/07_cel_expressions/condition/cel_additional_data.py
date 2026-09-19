@@ -24,14 +24,14 @@ if not CEL_AVAILABLE:
 # ---------------------------------------------------------------------------
 high_priority_agent = Agent(
     name="High Priority Agent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     instructions="You handle high-priority tasks. Be thorough and detailed.",
     markdown=True,
 )
 
 low_priority_agent = Agent(
     name="Low Priority Agent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     instructions="You handle standard tasks. Be helpful and concise.",
     markdown=True,
 )

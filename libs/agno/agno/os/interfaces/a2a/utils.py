@@ -753,6 +753,15 @@ async def stream_a2a_response(
         elif isinstance(event, (RunCancelledEvent, TeamRunCancelledEvent, WorkflowCancelledEvent)):
             cancelled_event = event
 
+    # Caller-stamped metadata rides the terminal status-update for out-of-band
+    # delivery. Metrics are excluded - they already flow via .metrics / the history
+    # message, so including them here would duplicate the blob.
+    status_metadata: Optional[Dict[str, Any]] = None
+    if completion_event:
+        completion_metadata = getattr(completion_event, "metadata", None)
+        if completion_metadata:
+            status_metadata = dict(completion_metadata)
+
     # 3. Send final status event
     # If cancelled, send canceled status; otherwise send completed
     if cancelled_event:
@@ -773,6 +782,7 @@ async def stream_a2a_response(
             context_id=context_id,
             status=TaskStatus(state=TaskState.completed),
             final=True,
+            metadata=status_metadata if status_metadata else None,
         )
     response = SendStreamingMessageSuccessResponse(id=request_id, result=final_status_event)
     yield f"event: TaskStatusUpdateEvent\ndata: {json.dumps(response.model_dump(exclude_none=True))}\n\n"

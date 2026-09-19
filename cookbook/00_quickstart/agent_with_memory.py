@@ -10,7 +10,7 @@ persists user-level information: preferences, facts, context.
 Key concepts:
 - MemoryManager: Extracts and stores user memories from conversations
 - enable_agentic_memory: Agent decides when to store/recall via tool calls (efficient)
-- update_memory_on_run: Memory manager runs after every response (guaranteed capture)
+- update_memory_on_run: Attempts extraction after every response
 - user_id: Links memories to a specific user
 
 Example prompts to try:
@@ -29,13 +29,16 @@ from rich.pretty import pprint
 # ---------------------------------------------------------------------------
 # Storage Configuration
 # ---------------------------------------------------------------------------
-agent_db = SqliteDb(db_file="tmp/agents.db")
+agent_db = SqliteDb(
+    id="quickstart-memory-db",
+    db_file="tmp/quickstart/memory.db",
+)
 
 # ---------------------------------------------------------------------------
 # Memory Manager Configuration
 # ---------------------------------------------------------------------------
 memory_manager = MemoryManager(
-    model=Gemini(id="gemini-3.5-flash"),
+    model=Gemini(id="gemini-3.6-flash"),
     db=agent_db,
     additional_instructions="""
     Capture the user's favorite stocks, their risk tolerance, and their investment goals.
@@ -87,9 +90,14 @@ user_id = "investor@example.com"
 
 agent_with_memory = Agent(
     name="Agent with Memory",
-    model=Gemini(id="gemini-3.5-flash"),
+    model=Gemini(id="gemini-3.6-flash"),
     instructions=instructions,
-    tools=[YFinanceTools(all=True)],
+    tools=[
+        YFinanceTools(
+            enable_company_info=True,
+            enable_stock_fundamentals=True,
+        )
+    ],
     db=agent_db,
     memory_manager=memory_manager,
     enable_agentic_memory=True,
@@ -103,17 +111,20 @@ agent_with_memory = Agent(
 # Run the Agent
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    # Tell the agent about yourself
+    # Tell the agent about yourself in one session.
     agent_with_memory.print_response(
         "I'm interested in AI and semiconductor stocks. My risk tolerance is moderate.",
         user_id=user_id,
+        session_id="memory-teaching-session",
         stream=True,
     )
 
-    # The agent now knows your preferences
+    # Start a different session. It has no chat history from the teaching run,
+    # so personalization here comes from durable user memory.
     agent_with_memory.print_response(
-        "What stocks would you recommend for me?",
+        "Which companies fit my interests? Explain how my saved preferences apply.",
         user_id=user_id,
+        session_id="memory-recall-session",
         stream=True,
     )
 
@@ -151,7 +162,7 @@ Two ways to enable memory:
    - More efficient — only runs when needed
 
 2. update_memory_on_run=True
-   - Memory manager runs after every agent response
-   - Guaranteed capture — never misses user info
+   - Memory manager attempts extraction after every agent response
+   - More consistent capture, but still model-driven
    - Higher latency and cost
 """

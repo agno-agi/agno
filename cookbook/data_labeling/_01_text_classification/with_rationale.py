@@ -8,9 +8,9 @@ for training datasets where the reasoning trace is itself an artifact.
 
 from typing import Literal
 
-from agno.agent import Agent, RunOutput  # noqa
+from agno.agent import Agent, RunOutput
 from pydantic import BaseModel, Field
-from rich.pretty import pprint  # noqa
+from rich.pretty import pprint
 
 
 # ---------------------------------------------------------------------------

@@ -64,13 +64,13 @@ VOICE_PATH.mkdir(parents=True)
 knowledge = WikiContextProvider(
     id="company_knowledge",
     backend=FileSystemBackend(path=KNOWLEDGE_PATH),
-    model=OpenAIResponses(id="gpt-5.4-mini"),
+    model=OpenAIResponses(id="gpt-5.6-luna"),
 )
 voice = WikiContextProvider(
     id="company_voice",
     backend=FileSystemBackend(path=VOICE_PATH),
     write=False,  # voice is code-managed; agent reads, doesn't edit
-    model=OpenAIResponses(id="gpt-5.4-mini"),
+    model=OpenAIResponses(id="gpt-5.6-luna"),
 )
 
 # ---------------------------------------------------------------------------

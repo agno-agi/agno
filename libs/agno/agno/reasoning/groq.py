@@ -13,9 +13,8 @@ if TYPE_CHECKING:
 def is_groq_reasoning_model(reasoning_model: Model) -> bool:
     return reasoning_model.__class__.__name__ == "Groq" and (
         "deepseek" in reasoning_model.id.lower()
-        or "openai/gpt-oss-20b" in reasoning_model.id.lower()
-        or "openai/gpt-oss-120b" in reasoning_model.id.lower()
-        or "qwen/qwen3-32b" in reasoning_model.id.lower()
+        or "gpt-oss" in reasoning_model.id.lower()
+        or "qwen3" in reasoning_model.id.lower()
     )
 
 

@@ -11,7 +11,7 @@ from agno.agent import Agent, RemoteAgent
 
 try:
     from agno.os.interfaces.slack.event_handler import SlackEventHandler
-    from agno.os.interfaces.slack.helpers import BotNameResolver
+    from agno.os.interfaces.slack.helpers import BotNameResolver, EventDeduplicator
     from agno.os.interfaces.slack.hitl import HITLHandler
 except ImportError as e:
     raise ImportError("Slack dependencies not installed. Please install using `pip install 'agno[slack]'`") from e
@@ -25,21 +25,8 @@ from agno.os.interfaces.slack.ids import (
 from agno.os.interfaces.slack.security import verify_slack_signature
 from agno.team import RemoteTeam, Team
 from agno.tools.slack import SlackTools
+from agno.utils.log import log_warning
 from agno.workflow import RemoteWorkflow, Workflow
-
-# Slack sends lifecycle events for bots with these subtypes. Without this
-# filter the router would try to process its own messages, causing infinite loops.
-_IGNORED_SUBTYPES = frozenset(
-    {
-        "bot_message",
-        "bot_add",
-        "bot_remove",
-        "bot_enable",
-        "bot_disable",
-        "message_changed",
-        "message_deleted",
-    }
-)
 
 
 class SlackEventResponse(BaseModel):
@@ -68,6 +55,10 @@ def attach_routes(
     buffer_size: int = 100,
     max_file_size: int = 1_073_741_824,  # 1GB
     resolve_user_identity: bool = False,
+    respond_to_other_apps: bool = False,
+    markdown: bool = True,
+    unfurl_links: bool = True,
+    unfurl_media: bool = True,
 ) -> APIRouter:
     # Inner functions capture config via closure to keep each instance isolated
     entity = agent or team or workflow
@@ -86,7 +77,20 @@ def attach_routes(
     entity_id = getattr(entity, "id", None) or entity_name
 
     slack_tools = SlackTools(token=token, user_token=user_token, ssl=ssl, max_file_size=max_file_size)
+
+    # Bot identity for filtering own messages (avoids echo loops)
+    own_bot_id: Optional[str] = None
+    own_bot_user_id: Optional[str] = None
+    try:
+        auth_result = slack_tools.client.auth_test()
+        own_bot_id = auth_result.get("bot_id")
+        own_bot_user_id = auth_result.get("user_id")
+    except Exception:
+        pass
+
     bot_name_resolver = BotNameResolver()
+    # Per-process seen-set for Slack retries; see EventDeduplicator for the multi-replica caveat.
+    event_dedupe = EventDeduplicator()
     if entity is None:
         raise ValueError("attach_routes requires agent, team, or workflow")
     hitl = HITLHandler(
@@ -98,6 +102,9 @@ def attach_routes(
         entity_type=entity_type,
         task_display_mode=task_display_mode,
         buffer_size=buffer_size,
+        unfurl_links=unfurl_links,
+        unfurl_media=unfurl_media,
+        markdown=markdown,
     )
     event_handler = SlackEventHandler(
         slack_tools=slack_tools,
@@ -109,11 +116,17 @@ def attach_routes(
         bot_name_resolver=bot_name_resolver,
         reply_to_mentions_only=reply_to_mentions_only,
         resolve_user_identity=resolve_user_identity,
+        respond_to_other_apps=respond_to_other_apps,
+        own_bot_id=own_bot_id,
+        own_bot_user_id=own_bot_user_id,
         loading_text=loading_text,
         loading_messages=loading_messages,
         task_display_mode=task_display_mode,
         buffer_size=buffer_size,
         suggested_prompts=suggested_prompts,
+        unfurl_links=unfurl_links,
+        unfurl_media=unfurl_media,
+        markdown=markdown,
     )
 
     @router.post(
@@ -142,14 +155,26 @@ def attach_routes(
         if not verify_slack_signature(body, timestamp, slack_signature, signing_secret=signing_secret):
             raise HTTPException(status_code=403, detail="Invalid signature")
 
-        # Slack retries after ~3s if it doesn't get a 200. Since we ACK
-        # immediately and process in background, retries are always duplicates.
-        # Trade-off: if the server crashes mid-processing, the retried event
-        # carrying the same payload won't be reprocessed — acceptable for chat.
-        if request.headers.get("X-Slack-Retry-Num"):
+        try:
+            data = await request.json()
+        except json.JSONDecodeError as e:
+            # Slack treats any non-2xx as a failed delivery and retries it, so an unparseable
+            # body is acked and ignored. Before this guard, first deliveries 500ed here too.
+            log_warning(f"Ignoring Slack event with a non-JSON body: {str(e)}")
             return SlackEventResponse(status="ok")
 
-        data = await request.json()
+        # A retry is a duplicate only if the original delivery reached us, so dedupe on
+        # event_id rather than dropping every retry. Marked on receipt, before dispatch:
+        # a run that dies mid-flight forfeits its retry, as it did under the blanket drop.
+        # Nested on purpose: collapsing the inner check into the outer condition would send a
+        # retry with an unseen event_id into the elif and drop it, the loss this dedupe exists to fix.
+        event_id = data.get("event_id")
+        if isinstance(event_id, str) and event_id:
+            if event_dedupe.is_duplicate(event_id):
+                return SlackEventResponse(status="ok")
+        elif request.headers.get("X-Slack-Retry-Num"):
+            # No usable event_id to dedupe on: keep dropping the retry.
+            return SlackEventResponse(status="ok")
 
         if data.get("type") == "url_verification":
             return SlackChallengeResponse(challenge=data.get("challenge"))
@@ -157,24 +182,14 @@ def attach_routes(
         if "event" in data:
             event = data["event"]
             event_type = event.get("type")
-            # setSuggestedPrompts requires "Agents & AI Apps" mode (streaming UX only)
+
             if event_type == "assistant_thread_started" and streaming:
                 background_tasks.add_task(event_handler.handle_thread_started, event)
-            # Bot self-loop prevention: check bot_id at BOTH the top-level event
-            # AND inside message_changed's nested "message" object. Slack puts
-            # bot_id at different nesting levels depending on event shape — the
-            # nested check catches edited bot messages that would otherwise be
-            # reprocessed as new user events.
-            elif (
-                event.get("bot_id")
-                or (event.get("message") or {}).get("bot_id")
-                or event.get("subtype") in _IGNORED_SUBTYPES
-            ):
-                pass
-            elif streaming:
-                background_tasks.add_task(event_handler.handle_streaming, data)
-            else:
-                background_tasks.add_task(event_handler.handle_non_streaming, data)
+            elif event_handler.should_process(event):
+                if streaming:
+                    background_tasks.add_task(event_handler.handle_streaming, data)
+                else:
+                    background_tasks.add_task(event_handler.handle_non_streaming, data)
 
         return SlackEventResponse(status="ok")
 

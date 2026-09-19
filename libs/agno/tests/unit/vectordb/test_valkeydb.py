@@ -52,11 +52,11 @@ def stub_glide(monkeypatch):
 
 @pytest.fixture()
 def import_valkeydb(stub_glide):
-    """Import ValkeyDB after stubbing dependencies and return (ValkeyDB, ft_mock)."""
-    from agno.vectordb.valkey.valkeydb import ValkeyDB
+    """Import ValkeyDb after stubbing dependencies and return (ValkeyDb, ft_mock)."""
+    from agno.vectordb.valkey.valkeydb import ValkeyDb
 
     ft_mock = stub_glide
-    return ValkeyDB, ft_mock
+    return ValkeyDb, ft_mock
 
 
 @pytest.fixture()
@@ -70,12 +70,12 @@ def sample_documents() -> List[Document]:
 
 @pytest.fixture()
 def valkey_db(import_valkeydb, mock_embedder):
-    ValkeyDB, ft_mock = import_valkeydb
+    ValkeyDb, ft_mock = import_valkeydb
 
-    # Pre-create a mock GlideClient so ValkeyDB never tries to connect
+    # Pre-create a mock GlideClient so ValkeyDb never tries to connect
     client = MagicMock(name="GlideClientInstance")
 
-    db = ValkeyDB(
+    db = ValkeyDb(
         index_name="test_index",
         host="localhost",
         port=6379,
@@ -320,7 +320,17 @@ def test_delete_by_metadata_unindexed_key_is_refused(valkey_db):
 
 
 def test_username_without_password_raises(import_valkeydb, mock_embedder):
-    ValkeyDB, _ft_mock = import_valkeydb
+    ValkeyDb, _ft_mock = import_valkeydb
 
     with pytest.raises(ValueError, match="password"):
-        ValkeyDB(index_name="test_index", username="user", embedder=mock_embedder)
+        ValkeyDb(index_name="test_index", username="user", embedder=mock_embedder)
+
+
+def test_scoped_doc_id_folds_the_owner_behind_a_digest(valkey_db):
+    db, _client, _ft_mock = valkey_db
+
+    # Shared rows keep the document id untouched, so existing keys need no migration
+    assert db._scoped_doc_id("doc-1", None) == "doc-1"
+    assert db._scoped_doc_id("doc-1", "alice") != db._scoped_doc_id("doc-1", "bob")
+    # Joined raw, ("doc_1", "alice") and ("doc", "1_alice") would collide on one key
+    assert db._scoped_doc_id("doc_1", "alice") != db._scoped_doc_id("doc", "1_alice")

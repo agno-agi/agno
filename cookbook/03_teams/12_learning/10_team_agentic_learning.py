@@ -11,8 +11,8 @@ In agentic mode:
 
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
+from agno.learn.config import LearningMode
 from agno.learn.machine import LearningMachine
-from agno.learn.mode import LearningMode
 from agno.models.openai import OpenAIResponses
 from agno.team import Team
 
