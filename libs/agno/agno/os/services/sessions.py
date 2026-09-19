@@ -132,6 +132,9 @@ async def get_sessions_page(
         sort_by=sort_by,
         sort_order=sort_order,
         deserialize=False,
+        # List views never surface run data (SessionSchema has no ``runs`` field),
+        # so attaching each session's runs here is a large, always-discarded read.
+        include_runs=False,
     )
     if isinstance(db, AsyncBaseDb):
         sessions, total_count = await db.get_sessions(**kwargs)
