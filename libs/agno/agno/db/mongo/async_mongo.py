@@ -982,6 +982,11 @@ class AsyncMongoDb(AsyncBaseDb):
     ) -> Union[List[Session], Tuple[List[Dict[str, Any]], int]]:
         """Get all sessions.
 
+        Pass ``include_runs=False`` to skip attaching each session's run history —
+        a large, usually-unnecessary read for list views. The runs are untouched
+        in storage; a single ``get_session`` still returns them. Defaults to True
+        to preserve existing behavior.
+
         Args:
             session_type (Optional[SessionType]): The type of session to get.
             user_id (Optional[str]): The ID of the user to get the session for.
