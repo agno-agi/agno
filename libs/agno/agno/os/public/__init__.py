@@ -43,6 +43,10 @@ class PublicSurface:
     verified JWT callers use the normal REST API with endpoint permissions. MCP
     remains restricted to its explicit tools and public limits. Scheduler and
     service-account credentials retain their existing public request contracts.
+
+    ``enforce_browser_origins=True`` rejects run and workflow-socket requests with
+    an Origin outside AgentOS's exact/regex CORS policy. Requests without Origin
+    retain their native authentication and quotas. It does not trust client IPs.
     """
 
     agents: List[Any] = field(default_factory=list)
@@ -52,6 +56,8 @@ class PublicSurface:
     namespace: Optional[str] = None
     limits: Optional[Dict[str, RateLimit]] = None
     client_id: Optional[Callable] = None
+    # Reject browser run/socket requests outside AgentOS's CORS origin policy.
+    enforce_browser_origins: bool = False
     uploads: Optional[FileUploadLimits] = None
     max_body_bytes: int = 12 * 1024 * 1024
     max_run_seconds: float = 240
