@@ -49,3 +49,13 @@
 **Result:** Completed successfully in 4s.
 
 ---
+
+### jev_guardrail.py
+
+**Status:** PASS
+
+**Description:** `JevGuardrail` as a pre-hook (prompt_injection, pii and a custom off_topic check) and as a post-hook (medical_advice, toxicity) on an OpenAI travel agent. Run with `.venv/Scripts/python.exe` (Windows, Python 3.12, typesafe-sdk 0.7.0), live TypeSafe and OpenAI APIs, 2026-09-21.
+
+**Result:** The Kyoto question passed. The instruction-override message was blocked with PROMPT_INJECTION (0.99), the passport/card message with PII_DETECTED (0.98), and the linked-list request with OFF_TOPIC (0.99). Each block carried the per-check probabilities in `additional_data`. Blocked runs come back with `RunStatus.error`.
+
+---

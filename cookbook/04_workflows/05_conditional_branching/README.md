@@ -7,6 +7,7 @@ Runnable workflow examples under: cookbook/04_workflows/05_conditional_branching
 - loop_in_choices.py: Demonstrates loop in choices.
 - nested_choices.py: Demonstrates nested choices.
 - router_basic.py: Demonstrates router basic.
+- router_jev_classifier.py: Demonstrates a Jev (TypeSafe System One) classification step whose typed result drives the Router selector.
 - router_with_loop.py: Demonstrates router with loop.
 - selector_media_pipeline.py: Demonstrates selector media pipeline.
 - selector_types.py: Demonstrates selector types.

@@ -11,5 +11,6 @@ Examples for team workflows in guardrails.
 ## Files
 
 - openai_moderation.py - Demonstrates openai moderation.
+- jev_guardrail.py - Demonstrates JevGuardrail, screening the team input with Jev (TypeSafe System One).
 - pii_detection.py - Demonstrates pii detection.
 - prompt_injection.py - Demonstrates prompt injection.

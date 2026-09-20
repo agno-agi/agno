@@ -108,6 +108,11 @@ mistral = ["mistralai>=2.0.0"]
 ollama = ["ollama"]
 openai = ["openai>=1.106.0"]  # >=1.106.0: callable api_key (sync+async token provider), openai/openai-python#2588
 portkey = ["portkey-ai"]
+# typesafe-sdk requires Python >= 3.10; the marker keeps `pip install agno[typesafe]`
+# (and the models/tests chains) resolvable on 3.9, where importing
+# agno.models.typesafe then raises its readable ImportError.
+# >=0.7.0: the first release on pydantic, with Score criteria as an ordered list.
+typesafe = ["typesafe-sdk>=0.7.0; python_version >= '3.10'"]
 
 # Dependencies for Token Counting
 tokenizers = ["tiktoken", "tokenizers"]
@@ -288,6 +293,7 @@ models = [
   "agno[ollama]",
   "agno[openai]",
   "agno[portkey]",
+  "agno[typesafe]",
 ]
 
 # All tools
@@ -491,6 +497,7 @@ demo = [
     "langgraph",
     "langchain-openai",
     "dspy",
+    "typesafe-sdk>=0.7.0; python_version >= '3.10'",
 ]
 
 [project.scripts]
@@ -678,6 +685,7 @@ module = [
   "tweepy.*",
   "twelvelabs.*",
   "twilio.*",
+  "typesafe_sdk.*",
   "tzlocal.*",
   "upstash_vector.*",
   "urllib3.*",

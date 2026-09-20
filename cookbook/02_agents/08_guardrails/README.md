@@ -5,6 +5,7 @@ Examples for input/output safety checks and policy enforcement.
 ## Files
 - `custom_guardrail.py` - Demonstrates custom guardrail.
 - `deepkeep_ai_firewall.py` - Demonstrates DeepKeep AI Firewall guardrails.
+- `jev_guardrail.py` - Demonstrates JevGuardrail: built-in and custom yes/no checks scored by Jev (TypeSafe System One), on input and output.
 - `openai_moderation.py` - Demonstrates openai moderation.
 - `output_guardrail.py` - Demonstrates output guardrail.
 - `pii_detection.py` - Demonstrates pii detection.

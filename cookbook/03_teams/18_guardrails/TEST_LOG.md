@@ -91,3 +91,12 @@ DEBUG <description>
 
 ---
 
+### jev_guardrail.py
+
+**Status:** PASS
+
+**Description:** `JevGuardrail(checks=[prompt_injection, harmful_request, self_harm])` as a team pre-hook, run with `arun`. Run with `.venv/Scripts/python.exe` (Windows, Python 3.12, typesafe-sdk 0.7.0), live TypeSafe and OpenAI APIs, 2026-09-21.
+
+**Result:** The Moon question was answered. The DAN role-play message was blocked with PROMPT_INJECTION (0.99) and the weapon request with INPUT_NOT_ALLOWED via harmful_request (0.99), both before the leader ran.
+
+---

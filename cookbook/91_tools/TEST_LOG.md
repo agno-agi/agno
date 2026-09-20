@@ -116,3 +116,23 @@
 **Result:** Both examples completed without errors. Domain-restricted search returned arxiv-sourced MoE papers, and the news agent returned items from the last few days. Note: answer text is model-composed; the domain restriction applies to the search results feeding it.
 
 ---
+
+### jev_tools.py
+
+**Status:** PASS
+
+**Description:** OpenAI agent with `JevTools()`: the agent writes its own typed questions and asks Jev with `ask_jev`. Run with `.venv/Scripts/python.exe` (Windows, Python 3.12, typesafe-sdk 0.7.0), live TypeSafe and OpenAI APIs, 2026-09-21.
+
+**Result:** The agent sent nine noul and score questions about three phone reviews in a single `ask_jev` call, then answered from the returned probabilities in a table (reviewer B most likely to return the phone). The toolkit instructions were followed: one call per state, atomic questions.
+
+---
+
+### jev_tools_fixed_schema.py
+
+**Status:** PASS
+
+**Description:** OpenAI agent with `JevTools(output_schema=ReplyCheck, enable_ask_jev=False)`: a fixed-question `evaluate` tool used to check the agent's own draft reply. Run with `.venv/Scripts/python.exe` (Windows, Python 3.12, typesafe-sdk 0.7.0), live TypeSafe and OpenAI APIs, 2026-09-21.
+
+**Result:** The agent drafted a reply, checked it, rewrote it and checked again, then reported the final check: refund promised 6%, customer blamed 6%, next step given 93%, tone 1.67/2.
+
+---

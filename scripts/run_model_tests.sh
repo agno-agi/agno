@@ -38,6 +38,7 @@ if [ -z "$1" ]; then
     echo "- perplexity"
     echo "- sambanova"
     echo "- together"
+    echo "- typesafe"
     echo "- xai"
     echo "- vercel"
     exit 1
@@ -181,6 +182,17 @@ case $MODEL_NAME in
     "together")
         if [ -z "${TOGETHER_API_KEY}" ]; then
             print_heading "Error: TOGETHER_API_KEY environment variable is not set"
+            exit 1
+        fi
+        ;;
+    "typesafe")
+        if [ -z "${TYPESAFE_API_KEY}" ]; then
+            print_heading "Error: TYPESAFE_API_KEY environment variable is not set"
+            exit 1
+        fi
+        # Jev leads the team; its members answer with an OpenAI model
+        if [ -z "${OPENAI_API_KEY}" ]; then
+            print_heading "Error: OPENAI_API_KEY environment variable is not set"
             exit 1
         fi
         ;;
