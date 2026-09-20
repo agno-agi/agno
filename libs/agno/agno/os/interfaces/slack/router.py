@@ -11,7 +11,7 @@ from agno.agent import Agent, RemoteAgent
 
 try:
     from agno.os.interfaces.slack.event_handler import SlackEventHandler
-    from agno.os.interfaces.slack.helpers import BotNameResolver
+    from agno.os.interfaces.slack.helpers import BotNameResolver, EventDeduplicator
     from agno.os.interfaces.slack.hitl import HITLHandler
 except ImportError as e:
     raise ImportError("Slack dependencies not installed. Please install using `pip install 'agno[slack]'`") from e
@@ -25,6 +25,7 @@ from agno.os.interfaces.slack.ids import (
 from agno.os.interfaces.slack.security import verify_slack_signature
 from agno.team import RemoteTeam, Team
 from agno.tools.slack import SlackTools
+from agno.utils.log import log_warning
 from agno.workflow import RemoteWorkflow, Workflow
 
 
@@ -88,6 +89,8 @@ def attach_routes(
         pass
 
     bot_name_resolver = BotNameResolver()
+    # Per-process seen-set for Slack retries; see EventDeduplicator for the multi-replica caveat.
+    event_dedupe = EventDeduplicator()
     if entity is None:
         raise ValueError("attach_routes requires agent, team, or workflow")
     hitl = HITLHandler(
@@ -152,14 +155,26 @@ def attach_routes(
         if not verify_slack_signature(body, timestamp, slack_signature, signing_secret=signing_secret):
             raise HTTPException(status_code=403, detail="Invalid signature")
 
-        # Slack retries after ~3s if it doesn't get a 200. Since we ACK
-        # immediately and process in background, retries are always duplicates.
-        # Trade-off: if the server crashes mid-processing, the retried event
-        # carrying the same payload won't be reprocessed — acceptable for chat.
-        if request.headers.get("X-Slack-Retry-Num"):
+        try:
+            data = await request.json()
+        except json.JSONDecodeError as e:
+            # Slack treats any non-2xx as a failed delivery and retries it, so an unparseable
+            # body is acked and ignored. Before this guard, first deliveries 500ed here too.
+            log_warning(f"Ignoring Slack event with a non-JSON body: {str(e)}")
             return SlackEventResponse(status="ok")
 
-        data = await request.json()
+        # A retry is a duplicate only if the original delivery reached us, so dedupe on
+        # event_id rather than dropping every retry. Marked on receipt, before dispatch:
+        # a run that dies mid-flight forfeits its retry, as it did under the blanket drop.
+        # Nested on purpose: collapsing the inner check into the outer condition would send a
+        # retry with an unseen event_id into the elif and drop it, the loss this dedupe exists to fix.
+        event_id = data.get("event_id")
+        if isinstance(event_id, str) and event_id:
+            if event_dedupe.is_duplicate(event_id):
+                return SlackEventResponse(status="ok")
+        elif request.headers.get("X-Slack-Retry-Num"):
+            # No usable event_id to dedupe on: keep dropping the retry.
+            return SlackEventResponse(status="ok")
 
         if data.get("type") == "url_verification":
             return SlackChallengeResponse(challenge=data.get("challenge"))
