@@ -2,7 +2,7 @@
 Yapi Basic
 ==========
 
-Cookbook example for `yapi/basic.py`.
+Cookbook example for YAPI, OpenAILike model provider.
 """
 
 import asyncio
