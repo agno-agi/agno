@@ -22,12 +22,20 @@ Injected SDK clients remain caller-owned; Agno does not close them.
 | --- | --- |
 | `questions.py` | SDK `Choice` and `Noul` questions; JSON values as content |
 | `structured_output.py` | Validated input and annotated Pydantic output |
-| `route_team.py` | Jev chooses one member; the member answers and can stream |
-| `workflow.py` | A typed decision step followed by a generative step |
 | `tool_use.py` | One tool dispatch with finite arguments |
-| `llm_tool.py` | Fixed questions and explicitly enabled dynamic questions |
-| `guardrails.py` | Input prompt-injection check and output grounding check |
 | `async_decisions.py` | Async SDK through `Agent.arun` |
+
+Integration examples live with their Agno feature:
+
+| Example | Behavior |
+| --- | --- |
+| [Agent guardrails](../../02_agents/08_guardrails/jev_guardrail.py) | Named checks, custom questions, thresholds, and rejection details |
+| [Grounding](../../02_agents/08_guardrails/jev_grounding.py) | Check a generated answer against explicit evidence |
+| [Team guardrails](../../03_teams/18_guardrails/jev_guardrail.py) | Async input checks before the leader runs |
+| [Support router](../../03_teams/02_modes/route/04_jev_router.py) | Literal routing policies and a fallback member |
+| [Workflow classifier](../../04_workflows/05_conditional_branching/router_jev_classifier.py) | Classify once and branch through a Router |
+| [Feature discovery](../../91_tools/jev_tools.py) | An LLM authors questions with `ask_jev` to compare reviews |
+| [Draft checks](../../91_tools/jev_tools_fixed_schema.py) | Developer-defined questions check a customer-support reply |
 
 Run, for example, `python cookbook/90_models/typesafe/structured_output.py`.
 
@@ -78,6 +86,8 @@ descriptions; Jev never generates a member ID or rewrites the member's task.
 The original request is forwarded through Agno's member delegation path.
 Additional leader tools and a leader output schema are unsupported; put output
 schemas on members. Default routing chooses the best match.
+Jev Team leaders support route mode only; broadcast, coordinate, and tasks modes
+require a generative leader.
 
 `min_confidence` optionally sets a routing threshold. Below it,
 `fallback_member_id` selects a current member; without a fallback the model
@@ -100,23 +110,72 @@ across runs.
 
 ## Jev as a tool
 
+Import `JevTools` from `agno.tools.typesafe`; the original
+`agno.tools.models.typesafe` path remains supported.
+
+`JevTools()` exposes `ask_jev(state, questions)`. The LLM supplies text or a
+JSON-encoded object/array and a list of typed `JevQuestion` objects:
+
+```python
+{"id": "urgent", "type": "noul", "instructions": "Does state.ticket require immediate attention?", "options": []}
+```
+
+The toolkit translates `options` into SDK criteria: an empty list for Noul,
+1–255 distinct labels for Choice, or 2–10 ordered descriptions for Score.
+It validates the questions before calling Jev. JSON objects/arrays are decoded
+and passed directly as state, so `{"ticket": "..."}` is read as `state.ticket`.
+Toolkit instructions explain how to write independent questions and compare
+texts using consistent rubrics. Override `instructions` or set
+`add_instructions=False` to customize that guidance.
+
 `JevTools(questions=...)` or `JevTools(output_schema=...)` exposes `evaluate`.
 An optional `input_schema` validates the caller's state and describes it in the
 function schema. The validated value is available at `state.input`.
+Fixed configurations keep dynamic questions disabled by default; set
+`enable_ask_jev=True` to expose both tools. `enable_evaluate=False` disables
+the fixed operation. An `input_schema` also validates decoded `ask_jev` state.
 
-`allow_dynamic_questions=True` also exposes `evaluate_questions(state, questions)`.
-With no fixed schema, only that operation is registered. The caller may construct
-questions, but cannot change credentials, endpoint, model, or routing policy.
-Both tools return JSON containing `values` and raw `typesafe` metadata.
+The existing `allow_dynamic_questions=True` API still exposes
+`evaluate_questions(state, questions)` with raw SDK question dictionaries and
+`state.input`. Prefer `ask_jev` for LLM-authored questions: Noul uses `options=[]`,
+avoiding the SDK's easy-to-mistype `criteria` keys (`true`/`false`, not `yes`/`no`).
+All operations return JSON containing `values` and raw `typesafe` metadata.
 Async variants register under the same tool names.
 
 ## Guardrails
 
-Use `JevGuardrail(questions=..., block_when=lambda values: ...)` for custom
-checks, or supply an annotated `output_schema` instead of questions. Add the
-guardrail to `pre_hooks` for input checks or `post_hooks` for output checks.
-Presets are `pii(threshold=...)`, `prompt_injection(threshold=...)`, and
-`grounding(threshold=..., state_builder=...)`. All require an explicit threshold.
+Import `JevGuardrail` from `agno.guardrails` or `agno.guardrails.typesafe`.
+Add it to `pre_hooks` for input checks or `post_hooks` for output checks:
+
+```python
+JevGuardrail(
+    checks=["prompt_injection", "pii"],
+    questions={
+        "off_topic": {
+            "instructions": "Is the content unrelated to travel?",
+            "threshold": 0.8,
+            "check_trigger": "off_topic",
+        },
+    },
+    threshold=0.7,
+)
+```
+
+Available checks: `prompt_injection`, `harmful_request`, `self_harm`,
+`medical_advice`, `pii`, and `toxicity`. Presets have distinct questions for
+input and output. The default constructor checks prompt injection and harmful
+requests at 0.7. Supplying only custom `questions` runs only those questions.
+`questions={"off_topic": "Is the content unrelated to travel?"}` is also accepted.
+All checks are batched; a probability at or above its threshold blocks the run.
+Custom dictionaries can include SDK Noul `criteria`, `threshold`, and
+`check_trigger`. Errors include failed IDs, probabilities, thresholds, and raw
+SDK answers. Validate thresholds against your own use cases.
+
+For richer policies, use `JevGuardrail(questions=..., block_when=...)` or an
+annotated `output_schema` with `block_when`. This advanced interface accepts
+Choice, Noul, and Score decisions. The existing `pii(threshold=...)`,
+`prompt_injection(threshold=...)`, and
+`grounding(threshold=..., state_builder=...)` classmethods remain supported.
 
 By default, guardrails receive `state.input` or `state.output`. A `state_builder`
 can accept normal hook context such as `run_input`, `run_output`, `run_context`,

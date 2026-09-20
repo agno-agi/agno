@@ -116,3 +116,23 @@
 **Result:** Both examples completed without errors. Domain-restricted search returned arxiv-sourced MoE papers, and the news agent returned items from the last few days. Note: answer text is model-composed; the domain restriction applies to the search results feeding it.
 
 ---
+
+## Jev integration — 2026-09-21
+
+Validation used `.venv/Scripts/python.exe` with mocked providers. No live API quality or latency claims are established.
+
+### jev_tools.py
+
+**Status:** PASS (mocked)
+
+**Description:** Mocked feature-discovery example using JevTools(). Separate agent-loop tests exercise LLM-authored ask_jev calls in sync and async modes.
+
+**Result:** Cookbook smoke test passed.
+
+### jev_tools_fixed_schema.py
+
+**Status:** PASS (mocked)
+
+**Description:** Mocked draft-checking example using a fixed JevField output schema and explicit boolean thresholds. Regression tests retain evaluate-only defaults.
+
+**Result:** Cookbook smoke test passed.

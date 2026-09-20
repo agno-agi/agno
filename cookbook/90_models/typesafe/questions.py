@@ -4,6 +4,7 @@ from typesafe_sdk import Choice, Noul
 
 from agno.agent import Agent
 from agno.models.typesafe import Jev
+from agno.utils.pprint import pprint_run_response
 
 agent = Agent(
     model=Jev(
@@ -23,4 +24,5 @@ agent = Agent(
 )
 
 if __name__ == "__main__":
-    agent.print_response("I was charged twice for my subscription")
+    response = agent.run("I was charged twice for my subscription")
+    pprint_run_response(response)

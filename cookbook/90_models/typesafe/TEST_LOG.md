@@ -110,3 +110,17 @@ Repository checks:
 
 Validation used the equivalent script commands through `.venv/Scripts/python.exe`
 on Windows. Full diagnostics are retained locally in `.context/jev-mypy.log`.
+
+## Port from integrate-jev — 2026-09-21
+
+**Status:** PASS (mocked regression tests)
+
+**Description:** Added named guardrail checks, shorthand questions, per-check thresholds, typed `ask_jev`, and toolkit guidance. Preserved existing fixed-tool configuration and guardrail failure behavior. Removed broadcast judging, its example, and the change to member streaming; Jev Team leaders support routing only.
+
+**Result:** 507 tests passed, 16 optional-provider tests skipped, including all 107 Jev tests and 11 cookbook smoke cases. Coverage includes rejection of broadcast leaders before execution, sync/async tool calls, local question validation, batched input/output checks, exact thresholds, guardrail error details, routing, hook propagation, Team configuration, provider resolution, and caching.
+
+The examples previously named `route_team.py`, `workflow.py`, `llm_tool.py`, and `guardrails.py` were replaced or moved into their feature folders. The README links their current locations. Model-only examples remain here; all Jev examples use pretty printers, with `team.print_response` in the router example.
+
+The port passed focused mypy before removal of broadcast judging; the model and Team tool module are now restored to their pre-port implementations. All 11 remaining Jev examples use pretty printers. Updated README links resolve.
+
+No live API calls were made. Quality, latency, and threshold tuning remain for private-branch testing.

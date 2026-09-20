@@ -2,6 +2,14 @@
 
 Examples for using and creating tools in Agno.
 
+## Jev decision tools
+
+- [jev_tools.py](jev_tools.py) — Let the LLM discover useful questions with `ask_jev` and compare customer reviews using the same measures.
+- [jev_tools_fixed_schema.py](jev_tools_fixed_schema.py) — Check customer-support drafts against developer-defined questions and thresholds.
+
+Requires Python 3.10+, `typesafe-sdk`, `TYPESAFE_API_KEY`, and `OPENAI_API_KEY`.
+See [Jev setup and API](../90_models/typesafe/README.md).
+
 ## Tool Types
 
 | Type | Description |

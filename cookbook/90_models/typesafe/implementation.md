@@ -13,6 +13,13 @@
 - [x] Cookbook examples and mocked SDK tests.
 - [x] 464 regression tests passed; lint, formatting and focused type checks passed.
 - [x] Recorded full-repository mypy failures in untouched files in TEST_LOG.md.
+- [x] Ported named guardrail checks, shorthand custom questions, per-check thresholds, and diagnostic errors from `integrate-jev`.
+- [x] Added sync/async `ask_jev`, typed question arguments, toolkit guidance, and the `agno.tools.typesafe` import.
+- [x] Retained fixed-tool defaults, custom guardrail policies, service-failure propagation, and output-stream checks.
+- [x] Reorganized cookbooks by feature, including review comparison, draft checks, and workflow routing.
+- [x] Kept Jev Team leaders restricted to route mode; removed broadcast judging and its example.
+- [x] Pretty-printed Jev example results; the support router uses `team.print_response`.
+- [x] Validated the final scope: 507 tests passed, 16 skipped, including rejection of broadcast Jev leaders before execution.
 - [ ] Live API quality, latency, and threshold evaluation (private-branch testing).
 
 This branch uses Python 3.10+ for the optional SDK while retaining Agno's

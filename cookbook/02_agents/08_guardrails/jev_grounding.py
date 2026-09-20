@@ -3,6 +3,7 @@
 from agno.agent import Agent
 from agno.guardrails.typesafe import JevGuardrail
 from agno.models.openai import OpenAIResponses
+from agno.utils.pprint import pprint_run_response
 
 
 def grounding_state(run_output, run_context):
@@ -26,5 +27,4 @@ agent = Agent(
 if __name__ == "__main__":
     # Output checks need the whole response. stream=True is rejected before generation.
     response = agent.run("How many seats does the premium plan allow?", stream=False)
-    print(response.status)
-    print(response.content)
+    pprint_run_response(response)

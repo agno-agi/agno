@@ -593,14 +593,17 @@ async def test_generative_agent_calls_jev_tool(async_mode):
 @pytest.mark.parametrize(
     "filename",
     [
-        "questions.py",
-        "structured_output.py",
-        "route_team.py",
-        "workflow.py",
-        "tool_use.py",
-        "llm_tool.py",
-        "guardrails.py",
-        "async_decisions.py",
+        "90_models/typesafe/questions.py",
+        "90_models/typesafe/structured_output.py",
+        "90_models/typesafe/tool_use.py",
+        "90_models/typesafe/async_decisions.py",
+        "02_agents/08_guardrails/jev_guardrail.py",
+        "02_agents/08_guardrails/jev_grounding.py",
+        "03_teams/18_guardrails/jev_guardrail.py",
+        "03_teams/02_modes/route/04_jev_router.py",
+        "04_workflows/05_conditional_branching/router_jev_classifier.py",
+        "91_tools/jev_tools.py",
+        "91_tools/jev_tools_fixed_schema.py",
     ],
 )
 def test_cookbook_smoke_with_mocked_providers(filename, monkeypatch):
@@ -623,5 +626,233 @@ def test_cookbook_smoke_with_mocked_providers(filename, monkeypatch):
         "invoke_stream",
         lambda *args, **kwargs: iter([ModelResponse(role="assistant", content="The premium plan allows 20 seats.")]),
     )
-    path = Path(__file__).resolve().parents[5] / "cookbook" / "90_models" / "typesafe" / filename
+
+    async def ainvoke(*args, **kwargs):
+        return ModelResponse(role="assistant", content="The premium plan allows 20 seats.")
+
+    monkeypatch.setattr(OpenAIResponses, "ainvoke", ainvoke)
+    path = Path(__file__).resolve().parents[5] / "cookbook" / filename
     runpy.run_path(str(path), run_name="__main__")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("async_mode", [False, True])
+@pytest.mark.parametrize("output", [False, True])
+async def test_guardrail_named_checks_batch_and_per_question_threshold(async_mode, output):
+    from agno.exceptions import CheckTrigger
+    from agno.guardrails import JevGuardrail as PublicGuardrail
+
+    sdk = AsyncSDK() if async_mode else FakeSDK()
+    guardrail = PublicGuardrail(
+        checks=["pii", "prompt_injection"],
+        questions={
+            "off_topic": {
+                "instructions": "Is the content unrelated to travel?",
+                "threshold": 0.8,
+                "check_trigger": "off_topic",
+            }
+        },
+        threshold=0.9,
+        client=sdk,
+        async_client=sdk,
+    )
+    run_output = RunOutput(content="content") if output else None
+    args = {"run_output": run_output} if output else {"run_input": RunInput(input_content="content")}
+    with pytest.raises(OutputCheckError if output else InputCheckError) as exc:
+        if async_mode:
+            await guardrail.async_check(**args)
+        else:
+            guardrail.check(**args)
+    assert len(sdk.calls) == 1
+    assert sdk.calls[0][0] == {"output" if output else "input": "content"}
+    assert set(sdk.calls[0][1]) == {"pii", "prompt_injection", "off_topic"}
+    assert exc.value.additional_data["failed"] == ["off_topic"]
+    assert exc.value.additional_data["thresholds"] == {"pii": 0.9, "prompt_injection": 0.9, "off_topic": 0.8}
+    assert exc.value.check_trigger == (CheckTrigger.OUTPUT_NOT_ALLOWED if output else CheckTrigger.OFF_TOPIC)
+    assert "off_topic (0.80)" in str(exc.value)
+    if output:
+        assert run_output.content is None
+        assert run_output.model_provider_data["typesafe_guardrails"][0]["answers"]["off_topic"]["noul"] == 0.8
+
+
+def test_guardrail_defaults_shorthand_and_distinct_output_questions():
+    defaults = JevGuardrail()
+    assert set(defaults.schema.questions) == {"prompt_injection", "harmful_request"}
+    for name in defaults.schema.questions:
+        assert defaults.schema.questions[name].instructions != defaults.output_check_schema.questions[name].instructions
+    sdk = FakeSDK(probability=0.2)
+    custom = JevGuardrail(questions={"off_topic": "Is the content unrelated to travel?"}, client=sdk)
+    custom.check(run_input=RunInput(input_content="Kyoto"))
+    assert set(sdk.calls[0][1]) == {"off_topic"}
+    with pytest.raises(TypeSafeError, match="unavailable"):
+        JevGuardrail(checks=["pii"], client=FakeSDK(error=TypeSafeError("unavailable"))).check(
+            run_input=RunInput(input_content="content")
+        )
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"checks": ["unknown"]},
+        {"checks": ["pii", "pii"]},
+        {"checks": ["pii"], "questions": {"pii": "Duplicate?"}},
+        {"checks": []},
+        {"threshold": float("nan")},
+        {"threshold": True},
+        {"threshold": 1.1},
+        {"questions": {"risk": {"instructions": "Risk?", "threshold": -0.1}}},
+        {"questions": {"risk": {"instructions": "Risk?", "check_trigger": "missing"}}},
+        {"questions": {"risk": {"type": "choice", "instructions": "Risk?", "criteria": {"a": None}}}},
+        {"questions": {"risk": {"instructions": "Risk?", "criteria": {"yes": "yes", "no": "no"}}}},
+        {"questions": {"risk": ""}},
+        {"output_schema": Decision},
+        {"checks": ["pii"], "block_when": lambda values: False},
+    ],
+)
+def test_guardrail_shorthand_invalid_configuration_fails_locally(kwargs):
+    with pytest.raises(ValueError):
+        JevGuardrail(**kwargs)
+
+
+def ask_questions():
+    return [
+        {"id": "risk", "type": "noul", "instructions": "Is state.ticket risky?", "options": []},
+        {
+            "id": "queue",
+            "type": "choice",
+            "instructions": "Which queue fits state.ticket?",
+            "options": ["billing", "tech"],
+        },
+        {
+            "id": "impact",
+            "type": "score",
+            "instructions": "Rate the impact of state.ticket.",
+            "options": ["low", "medium", "high"],
+        },
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("async_mode", [False, True])
+async def test_ask_jev_typed_questions_and_json_state(async_mode):
+    from jsonschema import Draft202012Validator
+    from agno.tools.typesafe import JevTools as PublicTools
+
+    sdk = AsyncSDK() if async_mode else FakeSDK()
+    toolkit = PublicTools(client=sdk, async_client=sdk)
+    assert set(toolkit.get_functions()) == set(toolkit.get_async_functions()) == {"ask_jev"}
+    args = {"state": '{"ticket": "refund"}', "questions": ask_questions()}
+    parameters = toolkit.get_functions()["ask_jev"].parameters
+    Draft202012Validator.check_schema(parameters)
+    Draft202012Validator(parameters).validate(args)
+    result = await toolkit.aask_jev(**args) if async_mode else toolkit.ask_jev(**args)
+    assert json.loads(result)["values"] == {"risk": 0.8, "queue": "billing", "impact": 1.25}
+    assert json.loads(result)["typesafe"]["answers"]["risk"]["noul"] == 0.8
+    assert len(sdk.calls) == 1
+    assert sdk.calls[0][0] == {"ticket": "refund"}
+    assert sdk.calls[0][1]["risk"].type == "noul"
+    assert set(sdk.calls[0][1]["queue"].criteria) == {"billing", "tech"}
+    assert toolkit.add_instructions and "options=[]" in toolkit.instructions
+
+
+@pytest.mark.parametrize(
+    "questions",
+    [
+        [],
+        [ask_questions()[0], ask_questions()[0]],
+        [{**ask_questions()[0], "id": "  "}],
+        [{**ask_questions()[0], "instructions": ""}],
+        [{**ask_questions()[0], "options": ["yes", "no"]}],
+        [{**ask_questions()[0], "criteria": {"yes": "yes", "no": "no"}}],
+        [{**ask_questions()[1], "options": []}],
+        [{**ask_questions()[1], "options": ["a", "a"]}],
+        [{**ask_questions()[1], "options": ["  "]}],
+        [{**ask_questions()[1], "options": [str(i) for i in range(256)]}],
+        [{**ask_questions()[2], "options": ["only one"]}],
+        [{**ask_questions()[2], "options": [str(i) for i in range(11)]}],
+    ],
+)
+def test_ask_jev_rejects_invalid_questions_before_request(questions):
+    sdk = FakeSDK()
+    with pytest.raises(ValueError):
+        JevTools(client=sdk).ask_jev("content", questions)
+    assert sdk.calls == []
+
+
+def test_ask_jev_registration_and_disable_controls():
+    fixed = JevTools(output_schema=Decision)
+    assert set(fixed.get_functions()) == {"evaluate"}
+    with pytest.raises(ValueError, match="disabled"):
+        fixed.ask_jev("content", ask_questions())
+    both = JevTools(output_schema=Decision, enable_ask_jev=True)
+    assert set(both.get_functions()) == {"evaluate", "ask_jev"}
+    dynamic = JevTools(
+        output_schema=Decision,
+        enable_evaluate=False,
+        enable_ask_jev=True,
+        instructions="Custom guidance",
+        add_instructions=False,
+    )
+    assert set(dynamic.get_functions()) == {"ask_jev"}
+    assert dynamic.instructions == "Custom guidance" and not dynamic.add_instructions
+    with pytest.raises(ValueError):
+        dynamic.evaluate("content")
+    with pytest.raises(ValueError):
+        JevTools(enable_ask_jev=False)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("async_mode", [False, True])
+async def test_generative_agent_calls_ask_jev_with_json_arguments(async_mode):
+    class QuestionAuthor(Echo):
+        def invoke(self, messages, **kwargs):
+            assert any("options=[]" in (m.content or "") for m in messages if m.role == "system")
+            if not any(message.role == "tool" for message in messages):
+                return ModelResponse(
+                    role="assistant",
+                    tool_calls=[
+                        {
+                            "id": "ask",
+                            "type": "function",
+                            "function": {
+                                "name": "ask_jev",
+                                "arguments": json.dumps(
+                                    {"state": '{"ticket": "refund"}', "questions": ask_questions()}
+                                ),
+                            },
+                        }
+                    ],
+                )
+            return ModelResponse(role="assistant", content=messages[-1].content)
+
+    sdk = AsyncSDK() if async_mode else FakeSDK()
+    agent = Agent(model=QuestionAuthor(), tools=[JevTools(client=sdk, async_client=sdk)], telemetry=False)
+    result = await agent.arun("classify") if async_mode else agent.run("classify")
+    assert result.status == RunStatus.completed
+    assert json.loads(result.content)["values"]["impact"] == 1.25
+    assert len(sdk.calls) == 1
+
+
+@pytest.mark.parametrize("mode", ["questions", "route", "tools"])
+def test_jev_rejects_broadcast_leader_before_execution(mode):
+    sdk = FakeSDK()
+    member_model = Echo()
+    team = Team(
+        model=Jev(mode=mode, client=sdk),
+        mode="broadcast",
+        determine_input_for_members=False,
+        output_schema=Decision,
+        members=[Agent(model=member_model, telemetry=False)],
+        telemetry=False,
+    )
+    with pytest.raises(ValueError, match="Team\\(mode='route'\\)"):
+        team.initialize_team()
+    assert sdk.calls == []
+    assert member_model.inputs == []
+
+
+def test_removed_judge_mode_is_rejected():
+    sdk = FakeSDK()
+    with pytest.raises(ValueError, match="Unknown Jev mode: judge"):
+        Jev(mode="judge", client=sdk).invoke([Message(role="user", content="proposal")], response_format=Decision)
+    assert sdk.calls == []

@@ -6,6 +6,7 @@ from typesafe_sdk import Noul
 
 from agno.agent import Agent
 from agno.models.typesafe import Jev
+from agno.utils.pprint import pprint_run_response
 
 agent = Agent(
     model=Jev(
@@ -18,9 +19,10 @@ agent = Agent(
 
 async def main():
     response = await agent.arun("Our production workspace is down")
-    print(response.content)
+    pprint_run_response(response)
     response = await agent.arun("The submit button is wrong color")
-    print(response.content)
+    pprint_run_response(response)
+
 
 if __name__ == "__main__":
     asyncio.run(main())

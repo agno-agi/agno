@@ -49,3 +49,23 @@
 **Result:** Completed successfully in 4s.
 
 ---
+
+## Jev integration — 2026-09-21
+
+Validation used `.venv/Scripts/python.exe` with mocked providers. No live API quality or latency claims are established.
+
+### jev_guardrail.py
+
+**Status:** PASS (mocked)
+
+**Description:** Mocked input/output hooks with built-in checks, custom off-topic policy, thresholds, and pretty-printed rejection diagnostics.
+
+**Result:** Cookbook smoke test passed.
+
+### jev_grounding.py
+
+**Status:** PASS (mocked)
+
+**Description:** Mocked input screening and output grounding against explicit evidence; pretty-printed run result.
+
+**Result:** Cookbook smoke test passed.
