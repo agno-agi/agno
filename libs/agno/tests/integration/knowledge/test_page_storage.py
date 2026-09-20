@@ -88,6 +88,31 @@ def warm_search_pool(knowledge, count):
             stack.enter_context(knowledge._page_engine.connect())
 
 
+@pytest.mark.parametrize("asynchronous", [False, True])
+def test_documentation_transform_publishes_normalized_text_and_reuses_embeddings(corpus, asynchronous):
+    import asyncio
+
+    from agno.knowledge.reader.utils.mdx import DocumentationMarkdown
+
+    knowledge, embedder, site = corpus
+    raw = '# Agent\n\n<Steps>\n<Step title="Configure">\nSet API\\_KEY &amp; tools.\n</Step>\n</Steps>\n'
+    site["https://docs.example.com/agent.md"] = raw
+    transform = DocumentationMarkdown(profile="fumadocs")
+    kwargs = dict(url="https://docs.example.com/llms.txt", transform=transform, index_version="docs-v1")
+
+    def sync():
+        return asyncio.run(knowledge.async_sync_pages(**kwargs)) if asynchronous else knowledge.sync_pages(**kwargs)
+
+    assert sync().updated == 1
+    page = knowledge.read_full_page("/agent.md")
+    assert page == transform(raw, path="/agent.md")
+    assert "API_KEY & tools" in page and "<Step" not in page
+    calls = list(embedder.calls)
+    assert calls and all("<Step" not in text for text in calls)
+    assert sync().updated == 0
+    assert embedder.calls == calls
+
+
 @pytest.mark.parametrize("tuned", [False, True])
 @pytest.mark.parametrize("plan_mode", [None, "force_custom_plan"])
 def test_search_tuning_honors_hnsw_and_operator_defaults_without_leaking(corpus, tuned, plan_mode):

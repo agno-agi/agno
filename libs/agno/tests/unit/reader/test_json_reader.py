@@ -1,6 +1,7 @@
 import json
 from io import BytesIO
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -204,10 +205,14 @@ async def test_async_chunking():
 
     reader = JSONReader()
     reader.chunk = True
-    reader.chunk_document = lambda doc: [
-        Document(name=f"{doc.name}_chunk_{i}", id=f"{doc.id}_chunk_{i}", content=f"chunk_{i}", meta_data={"chunk": i})
-        for i in range(2)
-    ]
+    reader.achunk_document = AsyncMock(
+        side_effect=lambda doc: [
+            Document(
+                name=f"{doc.name}_chunk_{i}", id=f"{doc.id}_chunk_{i}", content=f"chunk_{i}", meta_data={"chunk": i}
+            )
+            for i in range(2)
+        ]
+    )
 
     documents = await reader.async_read(json_bytes)
 
