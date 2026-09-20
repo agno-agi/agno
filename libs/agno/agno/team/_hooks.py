@@ -39,6 +39,7 @@ from agno.utils.hooks import (
     filter_hook_args,
     get_hook_name,
     is_guardrail_hook,
+    propagate_hook_errors,
     should_run_hook_in_background,
 )
 from agno.utils.log import (
@@ -282,6 +283,8 @@ def _execute_pre_hooks(
                 except (InputCheckError, OutputCheckError):
                     raise
                 except Exception:
+                    if propagate_hook_errors(hook):
+                        raise
                     log_exception(f"Background guardrail '{get_hook_name(hook)}' execution failed")
             else:
                 pending_bg_hooks.append(hook)
@@ -326,6 +329,8 @@ def _execute_pre_hooks(
         except (InputCheckError, OutputCheckError) as e:
             raise e
         except Exception:
+            if propagate_hook_errors(hook):
+                raise
             log_exception(f"Pre-hook #{i + 1} execution failed")
         finally:
             # Reset global log mode in case an agent in the pre-hook changed it
@@ -382,6 +387,8 @@ async def _aexecute_pre_hooks(
                 except (InputCheckError, OutputCheckError):
                     raise
                 except Exception:
+                    if propagate_hook_errors(hook):
+                        raise
                     log_exception(f"Background guardrail '{get_hook_name(hook)}' execution failed")
             else:
                 pending_bg_hooks.append(hook)
@@ -429,6 +436,8 @@ async def _aexecute_pre_hooks(
         except (InputCheckError, OutputCheckError) as e:
             raise e
         except Exception:
+            if propagate_hook_errors(hook):
+                raise
             log_exception(f"Pre-hook #{i + 1} execution failed")
         finally:
             # Reset global log mode in case an agent in the pre-hook changed it
@@ -481,6 +490,8 @@ def _execute_post_hooks(
                 except (InputCheckError, OutputCheckError):
                     raise
                 except Exception:
+                    if propagate_hook_errors(hook):
+                        raise
                     log_exception(f"Background guardrail '{get_hook_name(hook)}' execution failed")
             else:
                 pending_bg_hooks.append(hook)
@@ -527,6 +538,8 @@ def _execute_post_hooks(
         except (InputCheckError, OutputCheckError) as e:
             raise e
         except Exception:
+            if propagate_hook_errors(hook):
+                raise
             log_exception(f"Post-hook #{i + 1} execution failed")
         finally:
             # Reset global log mode in case an agent in the post-hook changed it
@@ -579,6 +592,8 @@ async def _aexecute_post_hooks(
                 except (InputCheckError, OutputCheckError):
                     raise
                 except Exception:
+                    if propagate_hook_errors(hook):
+                        raise
                     log_exception(f"Background guardrail '{get_hook_name(hook)}' execution failed")
             else:
                 pending_bg_hooks.append(hook)
@@ -627,6 +642,8 @@ async def _aexecute_post_hooks(
         except (InputCheckError, OutputCheckError) as e:
             raise e
         except Exception:
+            if propagate_hook_errors(hook):
+                raise
             log_exception(f"Post-hook #{i + 1} execution failed")
         finally:
             # Reset global log mode in case an agent in the post-hook changed it

@@ -73,6 +73,20 @@ def is_guardrail_hook(hook: Callable[..., Any]) -> bool:
     return hasattr(hook, "__self__") and isinstance(hook.__self__, BaseGuardrail)
 
 
+def propagate_hook_errors(hook: Callable[..., Any]) -> bool:
+    owner = getattr(hook, "__self__", hook)
+    return isinstance(owner, BaseGuardrail) and owner.propagate_errors
+
+
+def validate_streaming_post_hooks(hooks: Any, stream: bool) -> None:
+    """Refuse output checks that require the entire response before any streaming starts."""
+    if stream:
+        for hook in hooks or []:
+            owner = getattr(hook, "__self__", hook)
+            if isinstance(owner, BaseGuardrail) and owner.requires_non_streaming_output:
+                raise ValueError(f"{type(owner).__name__} output guardrails require stream=False")
+
+
 def normalize_pre_hooks(
     hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail, BaseEval]]],
     async_mode: bool = False,

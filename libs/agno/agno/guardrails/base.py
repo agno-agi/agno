@@ -8,6 +8,9 @@ from agno.run.team import TeamRunInput
 class BaseGuardrail(ABC):
     """Abstract base class for all guardrail implementations."""
 
+    requires_non_streaming_output: bool = False
+    propagate_errors: bool = False
+
     @abstractmethod
     def check(self, run_input: Union[RunInput, TeamRunInput]) -> None:
         """Perform synchronous guardrail check."""
