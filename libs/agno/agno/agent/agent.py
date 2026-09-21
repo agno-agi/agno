@@ -1974,6 +1974,11 @@ def get_agents(
                         # components so they stay visible and fixable.
                         agent = Agent.from_dict(agent_config, registry=registry, strict=False)
                         agent.id = component_id
+                        # Match Agent.load: stored agents without a resolved
+                        # database use the caller's database. Filesystem tools
+                        # need it when the listing builds agent responses.
+                        if agent.db is None:
+                            agent.db = db
                         agent._version = component.get("current_version")
                         agent._stage = config.get("stage")
                         agents.append(agent)

@@ -113,6 +113,8 @@ class FileSystemTools(Toolkit):
     to give each store distinct tool names.
     """
 
+    _registry_id: Optional[str] = None
+
     # The whole surface, exported for callers that want everything explicitly.
     FULL_TOOLS: List[str] = [
         "read_file",

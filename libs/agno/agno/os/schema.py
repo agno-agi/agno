@@ -1034,6 +1034,7 @@ class RegistryResourceType(str, Enum):
     MEMORY_MANAGER = "memory_manager"
     SESSION_SUMMARY_MANAGER = "session_summary_manager"
     LEARNING = "learning"
+    FILESYSTEM = "filesystem"
 
 
 class CallableMetadata(BaseModel):
@@ -1120,6 +1121,17 @@ class KnowledgeMetadata(BaseModel):
     num_readers: Optional[int] = Field(None, description="Number of configured readers")
 
 
+class FileSystemMetadata(BaseModel):
+    """Settings exposed for a named filesystem without connection details or host paths."""
+
+    class_path: str
+    backend_class: str
+    namespace: str
+    read_only: bool
+    max_file_bytes: int
+    max_namespace_bytes: int
+
+
 class MemoryManagerMetadata(BaseModel):
     """Metadata for memory manager registry components."""
 
@@ -1156,6 +1168,7 @@ RegistryMetadata = Union[
     SchemaMetadata,
     FunctionMetadata,
     KnowledgeMetadata,
+    FileSystemMetadata,
     MemoryManagerMetadata,
     SessionSummaryManagerMetadata,
 ]

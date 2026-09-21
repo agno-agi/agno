@@ -14,6 +14,7 @@ from agno.os.schema import (
     BadRequestResponse,
     CallableMetadata,
     DbMetadata,
+    FileSystemMetadata,
     FunctionMetadata,
     InternalServerErrorResponse,
     KnowledgeMetadata,
@@ -523,6 +524,32 @@ def attach_routes(router: APIRouter, registry: Registry) -> APIRouter:
                         type=RegistryResourceType.KNOWLEDGE,
                         description=_safe_str(getattr(kb, "description", None)),
                         metadata=kb_metadata.model_dump(exclude_none=True),
+                    )
+                )
+
+        # Named filesystems. Expose metadata, not serialized backend connections or local roots.
+        if resource_type is None or resource_type == RegistryResourceType.FILESYSTEM:
+            from agno.fs.toolkit import FileSystemTools
+
+            for registry_id in registry.filesystems:
+                store = registry.get_filesystem(registry_id)
+                if store is None:
+                    continue
+                fs = store.fs if isinstance(store, FileSystemTools) else store
+                metadata = FileSystemMetadata(
+                    class_path=_class_path(store),
+                    backend_class=_class_path(fs.backend),
+                    namespace=fs._raw_namespace,
+                    read_only=store.read_only if isinstance(store, FileSystemTools) else False,
+                    max_file_bytes=fs.max_file_bytes,
+                    max_namespace_bytes=fs.max_namespace_bytes,
+                )
+                resources.append(
+                    RegistryContentResponse(
+                        name=registry_id,
+                        id=registry_id,
+                        type=RegistryResourceType.FILESYSTEM,
+                        metadata=metadata.model_dump(),
                     )
                 )
 
