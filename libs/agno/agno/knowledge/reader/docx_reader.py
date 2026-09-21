@@ -12,6 +12,8 @@ from agno.utils.log import log_debug, log_error
 
 try:
     from docx import Document as DocxDocument  # type: ignore
+    from docx.table import Table  # type: ignore
+    from docx.text.paragraph import Paragraph  # type: ignore
 except ImportError:
     raise ImportError("The `python-docx` package is not installed. Please install it via `pip install python-docx`.")
 
@@ -59,9 +61,6 @@ class DocxReader(Reader):
 
             content_parts: List[str] = []
             if hasattr(docx_document, "element") and hasattr(docx_document.element, "body"):
-                from docx.table import Table  # type: ignore
-                from docx.text.paragraph import Paragraph  # type: ignore
-
                 for child in docx_document.element.body.iterchildren():
                     if child.tag.endswith("p"):
                         text = Paragraph(child, docx_document).text
