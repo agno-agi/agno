@@ -42,17 +42,52 @@ def mock_google_response():
 
 @pytest.fixture
 def mock_news_response():
+    """Shaped after a real ``google_news`` response.
+
+    The engine splits articles between ``organic_results`` and ``top_stories``
+    (https://www.searchapi.io/docs/google-news); there is no ``news_results``
+    block, and ``source`` is a plain string.
+    """
     mock = Mock(spec=requests.Response)
     mock.json.return_value = {
-        "news_results": [
+        "organic_results": [
             {
                 "position": 1,
                 "title": "Breaking News",
                 "link": "http://news.example.com",
-                "source": {"name": "BBC"},
+                "source": "BBC",
                 "date": "2 hours ago",
+                "iso_date": "2026-01-01T09:00:00Z",
                 "snippet": "News snippet",
                 "thumbnail": "http://thumb.example.com",
+            }
+        ],
+        "top_stories": [
+            {
+                "title": "A Top Story",
+                "link": "http://news.example.com/top-story",
+                "source": "Reuters",
+                "date": "30 minutes ago",
+                "iso_date": "2026-01-01T10:30:00Z",
+                "thumbnail": "http://thumb.example.com/top.jpg",
+            }
+        ],
+    }
+    mock.raise_for_status.return_value = None
+    return mock
+
+
+@pytest.fixture
+def mock_news_top_stories_only_response():
+    """``google_news`` frequently returns no ``organic_results`` at all."""
+    mock = Mock(spec=requests.Response)
+    mock.json.return_value = {
+        "top_stories": [
+            {
+                "title": "A Top Story",
+                "link": "http://news.example.com/top-story",
+                "source": "Reuters",
+                "date": "30 minutes ago",
             }
         ]
     }
@@ -62,16 +97,24 @@ def mock_news_response():
 
 @pytest.fixture
 def mock_images_response():
+    """Shaped after a real ``google_images`` response.
+
+    Results live under ``images`` (https://www.searchapi.io/docs/google-images),
+    with the page nested under ``source`` and the file under ``original``.
+    """
     mock = Mock(spec=requests.Response)
     mock.json.return_value = {
-        "image_results": [
+        "images": [
             {
                 "position": 1,
                 "title": "Image 1",
-                "link": "http://image.example.com",
-                "original": "http://original.example.com/img.jpg",
+                "source": {"name": "Example", "link": "http://image.example.com"},
+                "original": {
+                    "link": "http://original.example.com/img.jpg",
+                    "width": 800,
+                    "height": 600,
+                },
                 "thumbnail": "http://thumb.example.com/img.jpg",
-                "source": "example.com",
             }
         ]
     }
@@ -278,6 +321,46 @@ def test_search_news_success(api_tools, mock_news_response):
     assert result["news_results"][0]["source"] == "BBC"
 
 
+def test_search_news_includes_top_stories(api_tools, mock_news_response):
+    with patch("requests.get", return_value=mock_news_response):
+        result = json.loads(api_tools.search_news("AI news"))
+    links = [article["link"] for article in result["news_results"]]
+    assert links == ["http://news.example.com", "http://news.example.com/top-story"]
+    assert result["news_results"][1]["source"] == "Reuters"
+
+
+def test_search_news_without_organic_results(api_tools, mock_news_top_stories_only_response):
+    with patch("requests.get", return_value=mock_news_top_stories_only_response):
+        result = json.loads(api_tools.search_news("AI news"))
+    assert len(result["news_results"]) == 1
+    assert result["news_results"][0]["title"] == "A Top Story"
+
+
+def test_search_news_requests_resolved_links(api_tools, mock_news_response):
+    """Google redirect URLs are not fetchable, so ask for destination URLs."""
+    with patch("requests.get", return_value=mock_news_response) as mock_get:
+        api_tools.search_news("AI news")
+    assert mock_get.call_args[1]["params"]["link"] == "resolved"
+
+
+def test_search_news_deduplicates_shared_links(api_tools):
+    mock = Mock(spec=requests.Response)
+    mock.raise_for_status.return_value = None
+    mock.json.return_value = {
+        "organic_results": [{"title": "First", "link": "http://news.example.com/a"}],
+        "top_stories": [
+            {"title": "First, again", "link": "http://news.example.com/a"},
+            {"title": "Second", "link": "http://news.example.com/b"},
+        ],
+    }
+    with patch("requests.get", return_value=mock):
+        result = json.loads(api_tools.search_news("AI news"))
+    assert [article["link"] for article in result["news_results"]] == [
+        "http://news.example.com/a",
+        "http://news.example.com/b",
+    ]
+
+
 def test_search_news_correct_params_sent(api_tools, mock_news_response):
     with patch("requests.get", return_value=mock_news_response) as mock_get:
         api_tools.search_news("AI news", language="en", country="us")
@@ -303,6 +386,15 @@ def test_search_images_success(api_tools, mock_images_response):
         result = json.loads(api_tools.search_images("cats"))
     assert "image_results" in result
     assert result["image_results"][0]["title"] == "Image 1"
+
+
+def test_search_images_unpacks_nested_source_and_original(api_tools, mock_images_response):
+    with patch("requests.get", return_value=mock_images_response):
+        result = json.loads(api_tools.search_images("cats"))
+    image = result["image_results"][0]
+    assert image["link"] == "http://image.example.com"
+    assert image["original"] == "http://original.example.com/img.jpg"
+    assert image["source"] == "Example"
 
 
 def test_search_images_correct_params_sent(api_tools, mock_images_response):
