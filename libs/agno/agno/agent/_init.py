@@ -236,7 +236,11 @@ def set_result_store(agent: Agent) -> None:
 
 def set_filesystem(agent: Agent) -> None:
     """Resolve the filesystem shorthand or attach an explicitly provided instance."""
-    if agent.filesystem is None or agent.filesystem is False:
+    if (
+        agent.filesystem is None
+        or agent.filesystem is False
+        or (isinstance(agent.filesystem, list) and not agent.filesystem)
+    ):
         agent._filesystem = None
         return
     if agent._filesystem is not None:
@@ -253,7 +257,12 @@ def set_filesystem(agent: Agent) -> None:
             "FileSystemTools or disable the filesystem setting."
         )
 
-    if isinstance(agent.filesystem, FileSystemTools):
+    if isinstance(agent.filesystem, list):
+        if any(not isinstance(store, (FileSystem, FileSystemTools)) for store in agent.filesystem):
+            raise TypeError("filesystem lists must contain only FileSystem or FileSystemTools instances")
+        first = agent.filesystem[0]
+        agent._filesystem = first.fs if isinstance(first, FileSystemTools) else first
+    elif isinstance(agent.filesystem, FileSystemTools):
         # A toolkit carries its own permissions (read_only, allow_delete, include_tools).
         agent._filesystem = agent.filesystem.fs
     elif isinstance(agent.filesystem, FileSystem):
@@ -268,7 +277,7 @@ def set_filesystem(agent: Agent) -> None:
         namespace = "users/{user_id}/{agent_id}" if agent._filesystem_user_isolation else "{agent_id}"
         agent._filesystem = FileSystem(agent.db, namespace=namespace).resolve(agent_id=agent.id)
     else:
-        raise TypeError("filesystem must be True, False, None, a FileSystem, or FileSystem.tools(...)")
+        raise TypeError("filesystem must be a bool, FileSystem, FileSystemTools, or a list of stores/toolkits")
 
 
 def _manual_filesystem_tools(agent: Agent) -> List[Any]:
@@ -298,7 +307,10 @@ def get_filesystems(agent: Agent) -> List[Tuple["FileSystem", bool]]:
 
     filesystems: List[Tuple["FileSystem", bool]] = []
     managed = agent.filesystem_instance
-    if managed is not None:
+    if isinstance(agent.filesystem, list):
+        for store in agent.filesystem:
+            filesystems.append((store.fs, store.read_only) if isinstance(store, FileSystemTools) else (store, False))
+    elif managed is not None:
         read_only = agent.filesystem.read_only if isinstance(agent.filesystem, FileSystemTools) else False
         filesystems.append((managed, read_only))
     for toolkit in _manual_filesystem_tools(agent):

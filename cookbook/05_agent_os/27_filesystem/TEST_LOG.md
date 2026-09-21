@@ -34,3 +34,28 @@ before running the cookbook or automated tests.
 **Result:** All returned 200 with the expected entries, and responses carried the resolved `namespace` and `agent_ids`. The former `/files` and `/agents/{agent_id}/files` paths return 404. OpenAPI lists `list_filesystem_files`, `list_filesystem_entries`, `read_filesystem_content` and `search_filesystem`.
 
 ---
+
+### multiple_stores_per_agent.py (filesystem list API update)
+
+**Status:** NOT RUN
+
+**Description:** Updated the example to use a mixed `filesystem` list containing a
+plain writable store and a read-only toolkit. Both stores expose independent read
+tools, and the drafts store also exposes write tools.
+
+**Result:** Awaiting explicit approval to run. Earlier PASS entries describe the
+previous manual-toolkit implementation, not this revision.
+
+---
+
+### read_only_consumer.py (agent access config update)
+
+**Status:** NOT RUN
+
+**Description:** The config now lists agent objects with optional `access`, which
+defaults to `"full"`. Read-only agents carry `access: "read_only"` on their entry.
+
+**Result:** Source and regression expectations updated; tests and cookbook not run.
+Earlier config output in this log records the previous schema.
+
+---

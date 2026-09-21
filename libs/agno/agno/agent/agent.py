@@ -141,10 +141,10 @@ class Agent:
     db: Optional[Union[BaseDb, AsyncBaseDb]] = None
 
     # --- FileSystem ---
-    # Enable a durable filesystem backed by the agent's database, or provide one explicitly.
+    # Enable a durable filesystem backed by the agent's database, or provide one or several stores.
     # AgentOS applies its optional user-isolation policy to the managed ``True`` shorthand.
     # Pass ``FileSystem.tools(...)`` to choose the tool surface, e.g. ``fs.tools(read_only=True)``.
-    filesystem: Optional[Union[bool, FileSystem, FileSystemTools]] = None
+    filesystem: Optional[Union[bool, FileSystem, FileSystemTools, List[Union[FileSystem, FileSystemTools]]]] = None
 
     # --- Checkpointing ---
     # When to persist run state to the database.
@@ -415,7 +415,7 @@ class Agent:
         dependencies: Optional[Dict[str, Any]] = None,
         add_dependencies_to_context: bool = False,
         db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
-        filesystem: Optional[Union[bool, FileSystem, FileSystemTools]] = None,
+        filesystem: Optional[Union[bool, FileSystem, FileSystemTools, List[Union[FileSystem, FileSystemTools]]]] = None,
         checkpoint: Optional[Literal["runs", "tool-batch", "tools"]] = None,
         memory_manager: Optional[MemoryManager] = None,
         enable_agentic_memory: bool = False,
@@ -782,7 +782,7 @@ class Agent:
 
     @property
     def filesystem_instance(self) -> Optional["FileSystem"]:
-        """The configured filesystem instance, if enabled."""
+        """The first configured filesystem, if enabled. Use ``filesystems`` for every store."""
         if self.filesystem and self._filesystem is None:
             _init.set_filesystem(self)
         return self._filesystem

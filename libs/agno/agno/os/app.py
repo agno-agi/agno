@@ -2304,11 +2304,9 @@ class AgentOS:
 
     def _get_filesystem_config(self, user_id: Optional[str] = None) -> "FileSystemConfig":
         from agno.os.routers.filesystem.utils import _filesystem_backend_key
-        from agno.os.schema import FileSystemConfig, FileSystemInstance, _extract_filesystem
+        from agno.os.schema import FileSystemAgent, FileSystemConfig, FileSystemInstance, _extract_filesystem
 
         instances: Dict[tuple, FileSystemInstance] = {}
-        # An agent holding both a writable and a read-only attachment on one store is a writer.
-        writers: Dict[tuple, Set[str]] = {}
         for entry in self.agents or []:
             if not isinstance(entry, Agent) or not entry.id:
                 continue
@@ -2324,12 +2322,15 @@ class AgentOS:
                 instance = instances.get(key)
                 if instance is None:
                     instance = instances[key] = FileSystemInstance(**summary.model_dump(), agents=[])
-                instance.agents = sorted(set(instance.agents + [entry.id]))
-                if not read_only:
-                    writers.setdefault(key, set()).add(entry.id)
+                linked_agent = next((agent for agent in instance.agents if agent.id == entry.id), None)
+                if linked_agent is None:
+                    instance.agents.append(FileSystemAgent(id=entry.id, access="read_only" if read_only else "full"))
+                elif not read_only:
+                    # A writable attachment takes precedence over a read-only one on the same store.
+                    linked_agent.access = "full"
 
-        for key, instance in instances.items():
-            instance.read_only_agents = [a for a in instance.agents if a not in writers.get(key, set())]
+        for instance in instances.values():
+            instance.agents.sort(key=lambda agent: agent.id)
 
         return FileSystemConfig(
             instances=sorted(
@@ -2338,7 +2339,7 @@ class AgentOS:
                     instance.backend_type,
                     instance.db_id or "",
                     instance.namespace,
-                    instance.agents,
+                    [agent.id for agent in instance.agents],
                 ),
             )
         )

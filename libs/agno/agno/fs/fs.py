@@ -38,7 +38,7 @@ from agno.fs.types import ContainsResult, FileData, FileMeta, NamespaceUsage, Se
 
 if TYPE_CHECKING:
     from agno.db.base import BaseDb
-    from agno.tools.toolkit import Toolkit
+    from agno.fs.toolkit import FileSystemTools
 
 DEFAULT_NAMESPACE = "default"
 """Namespace used when the caller does not name one.
@@ -574,7 +574,7 @@ class FileSystem:
     # Agent surface
     # ------------------------------------------------------------------
 
-    def tools(self, *, read_only: bool = False, allow_delete: bool = False, **kwargs) -> "Toolkit":
+    def tools(self, *, read_only: bool = False, allow_delete: bool = False, **kwargs) -> "FileSystemTools":
         """Build the toolkit for this file store.
 
         ``Agent(tools=[fs.tools()], instructions=[..., fs.instructions()])`` is the

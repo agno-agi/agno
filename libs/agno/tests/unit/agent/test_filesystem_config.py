@@ -266,3 +266,118 @@ def test_filesystems_lists_manually_attached_toolkits(tmp_path):
 
     assert agent.filesystem_instance is None
     assert agent.filesystems == [(shared, True)]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("async_tools", [False, True])
+async def test_multiple_filesystems_route_tools_and_preserve_permissions(tmp_path, async_tools):
+    db = SqliteDb(db_file=str(tmp_path / "files.db"))
+    drafts = FileSystem(db, namespace="analyst/drafts")
+    handbook = FileSystem(db, namespace="team/handbook")
+    handbook.write("style.md", "Lead with the conclusion.")
+    reader = FileSystemTools(fs=handbook, read_only=True, add_instructions=True)
+    agent = Agent(id="analyst", filesystem=[drafts, reader])
+
+    if async_tools:
+        tools = await agent.aget_tools(
+            run_response=RunOutput(run_id="run", session_id="multi-fs"),
+            run_context=RunContext(run_id="run", session_id="multi-fs"),
+            session=AgentSession(session_id="multi-fs", session_data={}),
+        )
+        attached = [tool for tool in tools if isinstance(tool, FileSystemTools)]
+        functions = {name: function for tool in attached for name, function in tool.get_async_functions().items()}
+    else:
+        attached = _filesystem_tools(agent)
+        functions = {name: function for tool in attached for name, function in tool.get_functions().items()}
+
+    writer = functions["fs_1_analyst_drafts_write_file"].entrypoint
+    read_draft = functions["fs_1_analyst_drafts_read_file"].entrypoint
+    read_handbook = functions["fs_2_team_handbook_read_file"].entrypoint
+    assert writer is not None and read_draft is not None and read_handbook is not None
+    if async_tools:
+        await writer(path="style.md", content="My draft.")
+        draft_text = await read_draft(path="style.md")
+        handbook_text = await read_handbook(path="style.md")
+    else:
+        writer(path="style.md", content="My draft.")
+        draft_text = read_draft(path="style.md")
+        handbook_text = read_handbook(path="style.md")
+
+    assert "My draft." in draft_text
+    assert "Lead with the conclusion." in handbook_text
+    assert "fs_2_team_handbook_write_file" not in functions
+    assert agent.filesystems == [(drafts, False), (handbook, True)]
+    assert agent.filesystem_instance is drafts
+    assert sorted(reader.functions) == ["list_files", "read_file", "search_content"]
+    assert attached[1] is not reader
+    assert attached[1].instructions is not None
+    assert "fs_2_team_handbook_read_file" in attached[1].instructions
+
+
+def test_multiple_filesystems_round_trip_distinct_databases_and_tool_restrictions(tmp_path):
+    from agno.os.utils import collect_components_from_agent
+
+    first_db = SqliteDb(id="drafts-db", db_file=str(tmp_path / "drafts.db"))
+    second_db = SqliteDb(id="handbook-db", db_file=str(tmp_path / "handbook.db"))
+    drafts = FileSystem(first_db, namespace="drafts")
+    handbook = FileSystem(second_db, namespace="handbook")
+    agent = Agent(
+        id="analyst",
+        filesystem=[
+            drafts.tools(include_tools=["read_file", "write_file"], requires_confirmation_tools=["write_file"]),
+            handbook.tools(read_only=True, include_tools=["read_file"]),
+        ],
+    )
+    registry = Registry()
+    collect_components_from_agent(agent, registry, visited=set())
+
+    restored = Agent.from_dict(agent.to_dict(), registry=registry, strict=True)
+    toolkits = _filesystem_tools(restored)
+
+    assert toolkits[0].fs.backend.db is first_db
+    assert toolkits[1].fs.backend.db is second_db
+    assert sorted(toolkits[0].functions) == ["fs_1_drafts_read_file", "fs_1_drafts_write_file"]
+    assert list(toolkits[1].functions) == ["fs_2_handbook_read_file"]
+    assert toolkits[0].functions["fs_1_drafts_write_file"].requires_confirmation is True
+    assert toolkits[0].async_functions["fs_1_drafts_write_file"].requires_confirmation is True
+    assert toolkits[1].read_only is True
+
+
+def test_multiple_filesystems_disambiguate_normalized_namespace_names(tmp_path):
+    db = SqliteDb(db_file=str(tmp_path / "files.db"))
+    agent = Agent(filesystem=[FileSystem(db, namespace="a/b"), FileSystem(db, namespace="a_b")])
+
+    first, second = _filesystem_tools(agent)
+
+    assert "fs_1_a_b_read_file" in first.functions
+    assert "fs_2_a_b_read_file" in second.functions
+    assert first.functions.keys().isdisjoint(second.functions)
+
+
+@pytest.mark.parametrize("invalid", [True, False, None, "drafts", []])
+def test_filesystem_lists_reject_non_stores(invalid):
+    agent = Agent(filesystem=[invalid])
+
+    with pytest.raises(TypeError, match="filesystem lists must contain only"):
+        agent.initialize_agent()
+
+
+def test_single_item_filesystem_list_keeps_tool_names_and_empty_list_disables(tmp_path):
+    filesystem = FileSystem(SqliteDb(db_file=str(tmp_path / "files.db")), namespace="drafts")
+    agent = Agent(filesystem=[filesystem])
+
+    assert "read_file" in _filesystem_tools(agent)[0].functions
+    assert _filesystem_tools(Agent(filesystem=[])) == []
+
+
+def test_filesystem_list_deep_copy_owns_list_and_shares_stores(tmp_path):
+    db = SqliteDb(db_file=str(tmp_path / "files.db"))
+    first = FileSystem(db, namespace="drafts")
+    second = FileSystem(db, namespace="handbook")
+    agent = Agent(filesystem=[first, second])
+
+    copied = agent.deep_copy()
+
+    assert copied.filesystem is not agent.filesystem
+    assert copied.filesystem == [first, second]
+    assert copied.filesystem_instance is first

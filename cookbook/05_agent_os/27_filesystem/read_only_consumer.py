@@ -7,8 +7,8 @@ the records and gets the full tool surface. The answerer receives
 ``fs.tools(read_only=True)`` through the same ``filesystem`` setting, so it holds
 three read tools and nothing that could change the records.
 
-AgentOS lists both agents on the shared filesystem and reports the answerer in
-``read_only_agents``.
+AgentOS lists both agents as objects on the shared filesystem: the answerer has
+``access="read_only"``; the recorder omits ``access``, which defaults to ``"full"``.
 
 Prerequisites: OPENAI_API_KEY is needed only for agent runs
 Run: .venvs/demo/bin/python cookbook/05_agent_os/27_filesystem/read_only_consumer.py

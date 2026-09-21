@@ -221,6 +221,10 @@ def deep_copy_field(agent: Agent, field_name: str, field_value: Any) -> Any:
             log_warning(f"Failed to process tools for deep copy: {str(e)}")
             return field_value
 
+    if field_name == "filesystem" and isinstance(field_value, list):
+        # Keep durable stores shared, but let the copy change its own attachment list.
+        return list(field_value)
+
     # Share heavy resources - these maintain connections/pools that shouldn't be duplicated
     if field_name in SHARED_BY_REFERENCE_FIELDS:
         return field_value

@@ -376,8 +376,7 @@ def test_config_describes_filesystem_at_os_level(tmp_path):
                 "user_isolation": True,
                 "max_file_bytes": 1_000_000,
                 "max_namespace_bytes": 20_000_000,
-                "agents": ["notes"],
-                "read_only_agents": [],
+                "agents": [{"id": "notes"}],
             }
         ]
     }
@@ -394,8 +393,8 @@ def test_manual_read_only_toolkit_is_discovered_and_browsable(tmp_path):
     shared.write("decisions.md", "vector db: pgvector\n")
 
     config = client.get("/config", headers=_scoped_headers("alice", ["config:read"])).json()
-    assert [(i["namespace"], i["agents"], i["read_only_agents"]) for i in config["filesystem"]["instances"]] == [
-        ("research/decisions", ["answerer", "recorder"], ["answerer"])
+    assert [(i["namespace"], i["agents"]) for i in config["filesystem"]["instances"]] == [
+        ("research/decisions", [{"id": "answerer", "access": "read_only"}, {"id": "recorder"}])
     ]
     agents = client.get("/agents", headers=_headers("alice")).json()
     assert {entry["id"]: entry["filesystem"] for entry in agents} == {"recorder": True, "answerer": True}
@@ -414,7 +413,41 @@ def test_read_only_toolkit_setting_is_reported_read_only(tmp_path):
     client = _client(agent)
 
     config = client.get("/config", headers=_scoped_headers("alice", ["config:read"])).json()
-    assert config["filesystem"]["instances"][0]["read_only_agents"] == ["answerer"]
+    instance = config["filesystem"]["instances"][0]
+    assert instance["agents"] == [{"id": "answerer", "access": "read_only"}]
+    assert "read_only_agents" not in instance
+
+
+@pytest.mark.parametrize("read_only_first", [True, False])
+def test_config_full_access_takes_precedence_on_shared_store(tmp_path, read_only_first):
+    db = SqliteDb(id="shared-db", db_file=str(tmp_path / "agent.db"))
+    shared = FileSystem(db, namespace="shared")
+    reader = shared.tools(read_only=True)
+    attachments = [reader, shared] if read_only_first else [shared, reader]
+    client = _client(Agent(id="analyst", db=db, filesystem=attachments))
+
+    config = client.get("/config", headers=_scoped_headers("alice", ["config:read"])).json()
+
+    assert len(config["filesystem"]["instances"]) == 1
+    assert config["filesystem"]["instances"][0]["agents"] == [{"id": "analyst"}]
+
+
+def test_filesystem_agent_access_defaults_to_full():
+    from agno.os.schema import FileSystemAgent
+
+    agent = FileSystemAgent(id="analyst")
+
+    assert agent.access == "full"
+    assert agent.model_dump() == {"id": "analyst"}
+    assert FileSystemAgent(id="analyst", access="full").model_dump() == {"id": "analyst"}
+    assert FileSystemAgent(id="analyst", access="read_only").model_dump() == {
+        "id": "analyst",
+        "access": "read_only",
+    }
+    schema = FileSystemAgent.model_json_schema(mode="serialization")
+    assert schema["properties"]["access"]["default"] == "full"
+    assert schema["properties"]["access"]["enum"] == ["full", "read_only"]
+    assert schema["required"] == ["id"]
 
 
 def test_namespace_selects_among_an_agents_filesystems(tmp_path):
