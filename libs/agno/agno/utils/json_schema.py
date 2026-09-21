@@ -1,9 +1,29 @@
+import collections.abc as abc
+import datetime
+import uuid
 from enum import Enum
+from pathlib import PurePath
 from typing import Any, Dict, Literal, Optional, Union, get_args, get_origin
 
 from pydantic import BaseModel
 
 from agno.utils.log import logger
+
+# Abstract collection hints (Sequence[str], Mapping[str, int], ...) map to the same JSON
+# shapes as their concrete counterparts. Their get_origin() is the collections.abc class.
+_ARRAY_ORIGINS = (
+    list,
+    tuple,
+    set,
+    frozenset,
+    abc.Sequence,
+    abc.MutableSequence,
+    abc.Collection,
+    abc.Iterable,
+    abc.Set,
+    abc.MutableSet,
+)
+_OBJECT_ORIGINS = (dict, abc.Mapping, abc.MutableMapping)
 
 
 def is_origin_union_type(origin: Any) -> bool:
@@ -102,6 +122,12 @@ def get_json_schema_for_arg(type_hint: Any) -> Optional[Dict[str, Any]]:
     # log_info(f"Type args: {type_args}")
     type_origin = get_origin(type_hint)
     # log_info(f"Type origin: {type_origin}")
+
+    # Any/object place no constraint on the value. Falling through would emit an object schema
+    # with no properties and additionalProperties=False, which only `{}` can satisfy.
+    if type_hint is Any or type_hint is object:
+        return {}
+
     if type_origin is not None:
         if type_origin is Literal:
             # Handle Literal types - check all values to determine the appropriate JSON type
@@ -120,10 +146,10 @@ def get_json_schema_for_arg(type_hint: Any) -> Optional[Dict[str, Any]]:
                     # Fallback for mixed or other types - just provide enum without type
                     return {"enum": list(type_args)}
             return {"type": "string"}
-        elif type_origin in (list, tuple, set, frozenset):
+        elif type_origin in _ARRAY_ORIGINS:
             json_schema_for_items = get_json_schema_for_arg(type_args[0]) if type_args else {"type": "string"}
             return {"type": "array", "items": json_schema_for_items}
-        elif type_origin is dict:
+        elif type_origin in _OBJECT_ORIGINS:
             # Dict[K, V] with type args — use typed additionalProperties
             key_schema = get_json_schema_for_arg(type_args[0]) if type_args else {"type": "string"}
             value_schema = get_json_schema_for_arg(type_args[1]) if len(type_args) > 1 else {"type": "string"}
@@ -133,7 +159,8 @@ def get_json_schema_for_arg(type_hint: Any) -> Optional[Dict[str, Any]]:
             for arg in type_args:
                 try:
                     schema = get_json_schema_for_arg(arg)
-                    if schema:
+                    # `{}` (from Any) is a valid, unconstrained member of the union
+                    if schema is not None:
                         types.append(schema)
                 except Exception:
                     continue
@@ -172,7 +199,7 @@ def get_json_schema_for_arg(type_hint: Any) -> Optional[Dict[str, Any]]:
             else:
                 required.append(field_name)
 
-            if field_schema:
+            if field_schema is not None:
                 properties[field_name] = field_schema
 
         arg_json_schema = {"type": "object", "properties": properties, "additionalProperties": False}
@@ -182,8 +209,21 @@ def get_json_schema_for_arg(type_hint: Any) -> Optional[Dict[str, Any]]:
         return arg_json_schema
 
     # Bare dict means "arbitrary key-value pairs" — allow any properties
-    if type_hint is dict:
+    if type_hint in _OBJECT_ORIGINS:
         return {"type": "object", "additionalProperties": True}
+
+    # Bare Sequence/Iterable/... carry no item type
+    if type_hint in _ARRAY_ORIGINS:
+        return {"type": "array"}
+
+    # Values that travel as strings in JSON. Only date-time carries a `format`, to keep the schema
+    # to the one format every provider dialect accepts; date, time, uuid and path stay plain
+    # strings. Pydantic parses the ISO string back into the Python type when the tool is called.
+    if isinstance(type_hint, type):
+        if issubclass(type_hint, datetime.datetime):
+            return {"type": "string", "format": "date-time"}
+        if issubclass(type_hint, (datetime.date, datetime.time, uuid.UUID, PurePath)):
+            return {"type": "string"}
 
     json_schema: Dict[str, Any] = {"type": get_json_type_for_py_type(type_hint.__name__)}
     if json_schema["type"] == "object":
