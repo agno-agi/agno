@@ -1,13 +1,16 @@
 # Test Log: 26_authorization
 
-Last updated: 2026-09-21 (files renumbered so the folder reads in increasing complexity: the
-built-in setup first (00 to 05), the admin API for a frontend (06 to 08), then the escape hatches
-ordered by how much you write (09 to 14). Six files moved: 08 -> 11 custom_authorization_provider,
-09 -> 12 idp_workos_auth0, 10 -> 14 fga_relationship_based, 11 -> 08 user_management_metrics,
-12 -> 09 idp_roles_claim, 14 -> 10 custom_audit_sink. Entries below dated before this use the old
-numbers. Re-ran all fifteen files after the rename with the demo venv and `PYTHONPATH` on the
-branch's `libs/agno`: 00 to 05 and 08 to 14 exit 0 end to end; 06 and 07 booted with `serve`
-stubbed and mount `/authz` and `/users`. `ruff format --check` and `ruff check` pass on the folder.)
+Last updated: 2026-09-21 (files renumbered so the folder reads in increasing complexity and
+starts at 01 like every other cookbook folder: the built-in setup one piece at a time (01 to 05),
+the complete setup on one page (06) and the admin API for a frontend (07 to 09), then the escape
+hatches ordered by how much you write (10 to 15). Old -> new: 00 quickstart -> 06 complete_setup,
+06 -> 07 manage_users_and_roles, 07 -> 08 manage_users, 08 -> 12 custom_authorization_provider,
+09 -> 13 idp_workos_auth0, 10 -> 15 fga_relationship_based, 11 -> 09 user_management_metrics,
+12 -> 10 idp_roles_claim, 13 -> 14 custom_policy_engine, 14 -> 11 custom_audit_sink; 01 to 05
+unchanged. Entries below dated before this use the old numbers. Re-ran all fifteen files after the
+rename with the demo venv and `PYTHONPATH` on the branch's `libs/agno`: every file except 07 and 08
+exits 0 end to end; 07 and 08 booted with `serve` stubbed and mount `/authz` and `/users`.
+`ruff format --check` and `ruff check` pass on the folder.)
 
 Earlier (2026-09-18): after the store fold: `RoleStore` is private behind `Authorization`
 (`authz.set_role`, `authz.set_role_scopes`, `authz.roles_of`, `authz.audit_log`,
@@ -39,27 +42,6 @@ None of the local examples need a database server, a model key, or an external
 authorization engine: managed roles persist to throwaway SQLite under `tmp/`, the
 FGA example runs on an in-memory store, and the IdP example mints its own
 throwaway keys.
-
-### 00_quickstart_authorization.py
-
-**Status:** PASS
-
-**Test mode:** LIVE (driven via TestClient; no model calls needed)
-
-**Description:** The `Authorization` object carries verification + roles + audit + the
-admin API in one object that borrows the OS db; the user directory is separate, a
-`UserStore` seeded directly and passed as the top-level
-`AgentOS(user_directory=...)`. Defines three roles, bootstraps an admin role, assigns
-two users their roles, and makes real requests.
-
-**Result:** alice (admin) ran vault, carol (runner) ran research, bob (viewer) read
-research -- all ALLOWED; bob running research BLOCKED (viewer is read-only). dave, an
-unknown subject, was JIT-provisioned with the default `viewer` role and could read
-(ALLOWED). An operator token carrying `agent_os:admin` scope but no role ran vault
-(ALLOWED, via `trust_token_scopes`). `/authz/roles` and `/users` were auto-mounted:
-alice (admin) listed both; bob was refused (403). No `include_router` in the file.
-
----
 
 ### 01_managed_roles.py
 
@@ -144,7 +126,28 @@ were written and printed.
 
 ---
 
-### 06_manage_users_and_roles.py
+### 06_complete_setup.py
+
+**Status:** PASS
+
+**Test mode:** LIVE (driven via TestClient; no model calls needed)
+
+**Description:** The `Authorization` object carries verification + roles + audit + the
+admin API in one object that borrows the OS db; the user directory is separate, a
+`UserStore` seeded directly and passed as the top-level
+`AgentOS(user_directory=...)`. Defines three roles, bootstraps an admin role, assigns
+two users their roles, and makes real requests.
+
+**Result:** alice (admin) ran vault, carol (runner) ran research, bob (viewer) read
+research -- all ALLOWED; bob running research BLOCKED (viewer is read-only). dave, an
+unknown subject, was JIT-provisioned with the default `viewer` role and could read
+(ALLOWED). An operator token carrying `agent_os:admin` scope but no role ran vault
+(ALLOWED, via `trust_token_scopes`). `/authz/roles` and `/users` were auto-mounted:
+alice (admin) listed both; bob was refused (403). No `include_router` in the file.
+
+---
+
+### 07_manage_users_and_roles.py
 
 **Status:** PASS
 
@@ -159,7 +162,7 @@ unauthenticated request returned 401; a viewer token on an admin route returned
 
 ---
 
-### 07_manage_users.py
+### 08_manage_users.py
 
 **Status:** PASS
 
@@ -167,7 +170,7 @@ unauthenticated request returned 401; a viewer token on an admin route returned
 
 **Description:** A users-ONLY serving backend -- a user directory with authorization
 (scope plane) but NO role store, mounting only `/users`. The users-only counterpart
-of 06_manage_users_and_roles.py, for a frontend that renders a plain User-Management
+of 07_manage_users_and_roles.py, for a frontend that renders a plain User-Management
 page (no role selector).
 
 **Result:** Admin token (agent_os:admin scope) listed the seeded users
@@ -179,7 +182,7 @@ so a frontend gets a clean users-only API.
 
 ---
 
-### 08_user_management_metrics.py
+### 09_user_management_metrics.py
 
 **Status:** PASS
 
@@ -204,7 +207,7 @@ for the role defined without one), and `GET /users/bob` returned `role_slug anal
 
 ---
 
-### 09_idp_roles_claim.py
+### 10_idp_roles_claim.py
 
 **Status:** PASS
 
@@ -223,7 +226,7 @@ claim-less user with a stored viewer assignment read (200); the token-role admin
 
 ---
 
-### 10_custom_audit_sink.py
+### 11_custom_audit_sink.py
 
 **Status:** PASS
 
@@ -241,7 +244,7 @@ without a database reader.
 
 ---
 
-### 11_custom_authorization_provider.py
+### 12_custom_authorization_provider.py
 
 **Status:** PASS
 
@@ -255,7 +258,7 @@ route gate and the per-resource gate.
 
 ---
 
-### 12_idp_workos_auth0.py
+### 13_idp_workos_auth0.py
 
 **Status:** PASS
 
@@ -275,7 +278,7 @@ verified. It is now enforced, and this example is the regression demo for it.
 
 ---
 
-### 13_custom_policy_engine.py
+### 14_custom_policy_engine.py
 
 **Status:** PASS
 
@@ -294,7 +297,7 @@ the engine's own dict showed the new scope.
 
 ---
 
-### 14_fga_relationship_based.py
+### 15_fga_relationship_based.py
 
 **Status:** PASS
 
@@ -317,7 +320,7 @@ relationship; bob and carol denied.
 
 **Description:** The static browser console for the `/authz` admin API, served
 from `http://localhost:3000` (a CORS-allowed origin) against a running
-`06_manage_users_and_roles.py` and driven end to end in a real browser: connect
+`07_manage_users_and_roles.py` and driven end to end in a real browser: connect
 with the printed admin token, become bob (viewer), exercise the playground,
 change his role live, and read every admin tab.
 

@@ -91,7 +91,7 @@ agent_os = AgentOS(
 )
 app = agent_os.get_app()
 # Inspect and manage the directory through `users` (list / set_disabled / get) and roles through
-# `authz`. See 06_manage_users_and_roles.py for a frontend that drives the admin API.
+# `authz`. See 07_manage_users_and_roles.py for a frontend that drives the admin API.
 
 
 if __name__ == "__main__":

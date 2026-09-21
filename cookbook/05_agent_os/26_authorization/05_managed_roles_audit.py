@@ -20,7 +20,7 @@ never updated or deleted - tamper-evident, the kind of thing an auditor wants):
 
 You turn it on with `Authorization(audit=True)`: one switch, both trails, written to the
 object's database. (Pass your own `AuditSink` instead to ship events elsewhere; see
-10_custom_audit_sink.py.) Every change and every decision is recorded from then on.
+11_custom_audit_sink.py.) Every change and every decision is recorded from then on.
 
 This file makes a few role changes and a couple of real requests, then prints both
 trails. No server, no OpenAI key needed.

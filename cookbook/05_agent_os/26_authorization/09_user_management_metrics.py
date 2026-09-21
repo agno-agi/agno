@@ -14,7 +14,7 @@ can show "Data analyst" without a second request to /authz/roles.
 
 It rides on the same router as /users, so it is admin-only and is mounted wherever
 user management is: AgentOS mounts /users whenever it has a user directory, with or
-without roles (see 07_manage_users.py for the users-only setup). Deleting a user
+without roles (see 08_manage_users.py for the users-only setup). Deleting a user
 moves every number at once.
 
 This example seeds a directory and a role store, then reads the endpoint through
@@ -23,7 +23,7 @@ and no database server are needed.
 
 Run it:
     pip install "agno[os]"
-    python 08_user_management_metrics.py
+    python 09_user_management_metrics.py
 """
 
 import json
