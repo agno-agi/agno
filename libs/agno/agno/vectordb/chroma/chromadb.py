@@ -1750,7 +1750,7 @@ class ChromaDb(VectorDb):
 
                     # Convert to the expected type for ChromaDB
                     chroma_metadatas = cast(List[Mapping[str, Union[str, int, float, bool]]], updated_metadatas)
-                    chroma_metadatas = [{k: v for k, v in m.items() if k and v} for m in chroma_metadatas]
+                    chroma_metadatas = [{k: v for k, v in m.items() if k and v is not None} for m in chroma_metadatas]
                     collection.update(ids=ids, metadatas=chroma_metadatas)  # type: ignore
                     updated += len(ids)
 
