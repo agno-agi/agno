@@ -7,8 +7,9 @@ from agno.utils.log import log_debug, log_info, log_warning, logger
 
 try:
     import duckdb
+    import sqlparse
 except ImportError:
-    raise ImportError("`duckdb` not installed. Please install using `pip install duckdb`.")
+    raise ImportError("`duckdb` and `sqlparse` are required. Please install using `pip install agno[duckdb]`.")
 
 
 class DuckDbTools(Toolkit):
@@ -131,10 +132,12 @@ class DuckDbTools(Toolkit):
         # -*- Format the SQL Query
         # Remove backticks
         formatted_sql = query.replace("`", "")
-        # If there are multiple statements, only run the first one
-        formatted_sql = formatted_sql.split(";")[0]
-
         try:
+            # Split without expanding PRAGMA commands or truncating literals and comments.
+            statements = sqlparse.split(formatted_sql)
+            if not statements:
+                return "No output"
+            formatted_sql = statements[0].rstrip(";")
             log_info(f"Running: {formatted_sql}")
 
             query_result = self.connection.sql(formatted_sql)
