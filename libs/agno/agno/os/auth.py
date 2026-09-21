@@ -157,6 +157,12 @@ def provision_user_with_default_role(
     Returns the provisioned user row (so the caller can read ``disabled`` off it without a
     second query).
     """
+    existing = user_store.get(subject)
+    if existing is not None:
+        # Already in the directory: the row (and its disabled flag) is the answer. Nothing below
+        # applies to an existing person, and this runs on every authenticated request, so it must
+        # not pay for the checks that only guard a create.
+        return existing
     if _is_role_slug(role_store, subject):
         # Subjects and roles share one namespace. A token whose ``sub`` is a role slug is already
         # refused by the engine's collision guard; provisioning it would still create a directory
@@ -218,6 +224,9 @@ async def aprovision_user_with_default_role(
 
     Same single-role, grant-on-first-creation behaviour; awaits the store's async methods so
     JIT provisioning against an async database never blocks the event loop."""
+    existing = await user_store.aget(subject)
+    if existing is not None:
+        return existing  # see the sync twin
     if await _ais_role_slug(role_store, subject):
         log_warning(f"not provisioning {subject!r}: it is a role slug, not a user")  # see the sync twin
         return None

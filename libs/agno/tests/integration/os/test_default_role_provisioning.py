@@ -181,3 +181,38 @@ def test_a_role_slug_is_never_provisioned_as_a_user():
     assert users.get("member") is None
 
     assert provision_user_with_default_role(users, roles, "newbie", {}) is not None  # people still provision
+
+
+def test_an_existing_directory_user_keeps_its_row_when_a_role_later_takes_its_name():
+    """The role-slug refusal is for rows about to be CREATED. A person who was in the directory
+    before an admin defined a role with the same slug must still get their row back on every
+    request, or the middleware reads None as 'not disabled' and a disabled user slips past the
+    revocation check."""
+    roles, users = _roles(), _users()
+    users.upsert("ops", email="ops@co")
+    users.set_disabled("ops", True, actor="admin")
+    roles.set_role_scopes("ops", ["agents:*:read"])  # a role now shares the name
+
+    row = provision_user_with_default_role(users, roles, "ops", {})
+    assert row is not None and row["disabled"] is True
+    assert roles.roles_of("ops") == []  # and nothing was granted
+
+
+def test_provisioning_an_existing_user_does_not_read_the_role_list(monkeypatch):
+    """Provisioning runs on every authenticated request; the role-slug check only matters when a
+    row is about to be created, so an existing user must not pay a role-store read for it."""
+    roles, users = _roles(), _users()
+    roles.set_role_scopes("viewer", ["agents:*:read"])
+    users.upsert("bob", email="bob@co")
+    calls = {"n": 0}
+    real = roles.list_roles
+
+    def counting():
+        calls["n"] += 1
+        return real()
+
+    monkeypatch.setattr(roles, "list_roles", counting)
+    assert provision_user_with_default_role(users, roles, "bob", {}) is not None
+    assert calls["n"] == 0
+    assert provision_user_with_default_role(users, roles, "newbie", {}) is not None  # a create still checks
+    assert calls["n"] == 1
