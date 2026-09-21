@@ -12,11 +12,14 @@ Example prompts to try:
 - "Make a short video of a paper boat drifting on a pond"
 """
 
+import mimetypes
 from pathlib import Path
 
 from agno.agent import Agent
 from agno.models.aimlapi import AIMLAPI
 from agno.tools.models.aimlapi import AIMLAPITools
+
+OUTPUT_DIR = Path("tmp")
 
 # ---------------------------------------------------------------------------
 # Create Agent
@@ -30,6 +33,8 @@ agent = Agent(
             image_model="openai/gpt-image-2",
             speech_model="openai/tts-1",
             speech_voice="alloy",
+            # Local files handed to transcribe_audio are read from here only.
+            base_dir=OUTPUT_DIR,
             # Video takes minutes; leave it off unless the agent should make clips.
             enable_generate_video=False,
         )
@@ -40,31 +45,39 @@ agent = Agent(
     markdown=True,
 )
 
+
+def save(artifact, stem: str) -> Path:
+    """Write a generated artifact next to the others, named by its media type."""
+    extension = (
+        mimetypes.guess_extension(artifact.mime_type or "") or f".{artifact.format}"
+    )
+    path = OUTPUT_DIR / f"{stem}_{artifact.id}{extension}"
+    path.write_bytes(artifact.content)
+    return path
+
+
 # ---------------------------------------------------------------------------
 # Run Agent
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    Path("tmp").mkdir(exist_ok=True)
+    OUTPUT_DIR.mkdir(exist_ok=True)
 
     # Example 1: image
     response = agent.run("Generate an image of a lighthouse in a storm")
     for image in response.images or []:
-        path = Path("tmp") / f"aimlapi_{image.id}.png"
-        path.write_bytes(image.content)
-        print(f"Image saved to {path}")
+        print(f"Image saved to {save(image, 'aimlapi')}")
 
     # Example 2: speech
     response = agent.run(
         "Read this aloud: The quick brown fox jumps over the lazy dog."
     )
-    for audio in response.audio or []:
-        path = Path("tmp") / f"aimlapi_{audio.id}.mp3"
-        path.write_bytes(audio.content)
+    saved_audio = [save(audio, "aimlapi") for audio in response.audio or []]
+    for path in saved_audio:
         print(f"Audio saved to {path}")
 
-    # Example 3: transcription of the speech we just made
-    for audio in response.audio or []:
-        agent.print_response(f"Transcribe the audio file at tmp/aimlapi_{audio.id}.mp3")
+    # Example 3: transcription of the speech we just made (path relative to base_dir)
+    for path in saved_audio:
+        agent.print_response(f"Transcribe the audio file {path.name}")
 
     # Example 4: video, on an agent that has the tool enabled
     video_agent = Agent(
@@ -86,6 +99,4 @@ if __name__ == "__main__":
         "Make a short video of a paper boat drifting on a calm pond"
     )
     for video in response.videos or []:
-        path = Path("tmp") / f"aimlapi_{video.id}.mp4"
-        path.write_bytes(video.content)
-        print(f"Video saved to {path}")
+        print(f"Video saved to {save(video, 'aimlapi')}")
