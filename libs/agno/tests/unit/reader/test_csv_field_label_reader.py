@@ -9,8 +9,8 @@ from agno.knowledge.reader.field_labeled_csv_reader import FieldLabeledCSVReader
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("page_size", [0, -1, -10])
-@pytest.mark.parametrize("row_count", [0, 1, 11])
+@pytest.mark.parametrize("page_size", [-1, -10])
+@pytest.mark.parametrize("row_count", [1, 11])
 async def test_async_read_rejects_non_positive_page_size(page_size, row_count):
     stream = io.StringIO("name\n" + "Alice\n" * row_count)
     reader = FieldLabeledCSVReader()

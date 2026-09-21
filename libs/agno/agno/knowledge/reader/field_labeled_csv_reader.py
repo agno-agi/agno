@@ -179,10 +179,10 @@ class FieldLabeledCSVReader(Reader):
         """Read a CSV file asynchronously and convert each row to a field-labeled document.
 
         Raises:
-            ValueError: If page_size is not greater than zero.
+            ValueError: If page_size is less than zero.
         """
-        if page_size <= 0:
-            raise ValueError("page_size must be greater than zero")
+        if page_size < 0:
+            raise ValueError("page_size cannot be negative value.")
 
         try:
             if isinstance(file, Path):
