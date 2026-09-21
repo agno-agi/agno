@@ -8,6 +8,7 @@ reason on ``content``; the stage is the field for that.
 
 import pytest
 
+from agno.exceptions import RunCancelledException
 from agno.run.agent import RunOutput
 from agno.run.base import CancellationStage, RunStatus
 from agno.run.team import TeamRunOutput
@@ -49,3 +50,22 @@ class TestRoundTrip:
         loaded = cls.from_dict(wire)
         assert loaded.cancellation_stage == "SOMETHING_NEW"
         assert loaded.to_dict()["cancellation_stage"] == "SOMETHING_NEW"
+
+
+class TestMidExecutionHandlers:
+    def test_agent_cancellation_handler_marks_during_execution_and_keeps_partial_output(self):
+        from agno.agent._run import _handle_run_cancellation
+
+        run = RunOutput(run_id="r1", agent_id="a1", content="partial answer", status=RunStatus.running)
+        out = _handle_run_cancellation(run, RunCancelledException("stop"))
+        assert out.status == RunStatus.cancelled
+        assert out.cancellation_stage is CancellationStage.during_execution
+        assert out.content == "partial answer", "partial output is preserved, not replaced by the reason"
+
+    def test_team_cancellation_handler_marks_during_execution(self):
+        from agno.team._run import _handle_team_run_cancellation
+
+        run = TeamRunOutput(run_id="r1", team_id="t1", status=RunStatus.running)
+        out = _handle_team_run_cancellation(run, RunCancelledException("stop"))
+        assert out.status == RunStatus.cancelled
+        assert out.cancellation_stage is CancellationStage.during_execution

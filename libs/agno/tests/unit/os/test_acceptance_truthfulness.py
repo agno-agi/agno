@@ -465,3 +465,38 @@ class TestServerErrorsDoNotEchoInternals:
         assert resp.status_code == 500
         assert self.SECRET not in resp.text, "the app-level handler must not echo str(exc) on 5xx"
         assert "RuntimeError" in resp.json()["detail"]
+
+
+class TestTicketPollCancellationStage:
+    """A cancelled ticket that no worker ever claimed has no run row to say
+    so; the ticket-only poll view carries the stage itself."""
+
+    @pytest.mark.asyncio
+    async def test_unclaimed_cancelled_ticket_reports_before_execution(self):
+        from agno.os.job_queue import aticket_poll_fallback
+
+        store = InMemoryQueueStore()
+        store._jobs["r1"] = QueuedJob(
+            id="r1", component_type="agent", component_id="a1", session_id="s1", payload={}, status="cancelled"
+        ).to_dict()
+        worker = SimpleNamespace(store=store)
+        view = await aticket_poll_fallback(worker, "r1", "s1", "agent", "a1", None, user_scoped=False)
+        assert view is not None and view["status"] == "CANCELLED"
+        assert view["cancellation_stage"] == "BEFORE_EXECUTION"
+
+    @pytest.mark.asyncio
+    async def test_claimed_cancelled_ticket_reports_no_stage(self):
+        """Once claimed the run row is authoritative; the ticket view does not
+        guess a stage it cannot know."""
+        from agno.os.job_queue import aticket_poll_fallback
+
+        store = InMemoryQueueStore()
+        job = QueuedJob(
+            id="r1", component_type="agent", component_id="a1", session_id="s1", payload={}, status="cancelled"
+        ).to_dict()
+        job["attempt"] = 1
+        store._jobs["r1"] = job
+        worker = SimpleNamespace(store=store)
+        view = await aticket_poll_fallback(worker, "r1", "s1", "agent", "a1", None, user_scoped=False)
+        assert view is not None and view["status"] == "CANCELLED"
+        assert "cancellation_stage" not in view

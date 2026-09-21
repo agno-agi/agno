@@ -363,6 +363,7 @@ class TestBackgroundConcurrencyLimit:
             release_first = asyncio.Event()
             executed_run_ids: list[str] = []
             persisted_by_run: dict[str, list[RunStatus]] = {}
+            persisted_stage: dict[str, object] = {}
 
             async def fake_aread_or_create_session(agent, session_id=None, user_id=None):
                 return AgentSession(session_id=session_id or "test-session", user_id=user_id, runs=[])
@@ -371,6 +372,7 @@ class TestBackgroundConcurrencyLimit:
                 if session and session.runs:
                     for run in session.runs:
                         persisted_by_run.setdefault(run.run_id, []).append(run.status)
+                        persisted_stage[run.run_id] = run.cancellation_stage
 
             async def fake_arun(agent, run_response, run_context, **kwargs):
                 executed_run_ids.append(run_response.run_id)
@@ -413,6 +415,10 @@ class TestBackgroundConcurrencyLimit:
 
             assert queued.status == RunStatus.cancelled
             assert RunStatus.cancelled in persisted_by_run["bg-cancel-queued"]
+            # Never started: the persisted row says so in a machine-readable way
+            from agno.run.base import CancellationStage
+
+            assert persisted_stage["bg-cancel-queued"] is CancellationStage.before_execution
             # The queued run never executed and never went RUNNING
             assert "bg-cancel-queued" not in executed_run_ids
             assert RunStatus.running not in persisted_by_run["bg-cancel-queued"]

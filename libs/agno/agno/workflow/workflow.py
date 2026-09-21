@@ -46,7 +46,7 @@ from agno.media.storage.base import AsyncMediaStorage, MediaStorage
 from agno.metrics import RunMetrics, SessionMetrics
 from agno.models.message import Message
 from agno.registry import Registry
-from agno.run import RunContext, RunStatus
+from agno.run import CancellationStage, RunContext, RunStatus
 from agno.run.agent import (
     RunCancelledEvent as AgentRunCancelledEvent,
 )
@@ -2948,6 +2948,7 @@ class Workflow:
             except RunCancelledException as e:
                 logger.info(f"Workflow run {workflow_run_response.run_id} was cancelled")
                 workflow_run_response.status = RunStatus.cancelled
+                workflow_run_response.cancellation_stage = CancellationStage.during_execution
                 workflow_run_response.content = _normalize_workflow_cancellation_reason(workflow_run_response, e)
             finally:
                 if workflow_run_response.metrics:
@@ -3194,6 +3195,7 @@ class Workflow:
             except RunCancelledException as e:
                 logger.info(f"Workflow run {workflow_run_response.run_id} was cancelled")
                 workflow_run_response.status = RunStatus.cancelled
+                workflow_run_response.cancellation_stage = CancellationStage.during_execution
                 workflow_run_response.content = _normalize_workflow_cancellation_reason(workflow_run_response, e)
 
                 # If cancel fired inside a step, append a placeholder so the
@@ -3306,6 +3308,7 @@ class Workflow:
             except RunCancelledException as e:
                 logger.info(f"Workflow run {workflow_run_response.run_id} was cancelled during streaming")
                 workflow_run_response.status = RunStatus.cancelled
+                workflow_run_response.cancellation_stage = CancellationStage.during_execution
                 workflow_run_response.content = _normalize_workflow_cancellation_reason(workflow_run_response, e)
                 if workflow_run_response.metrics:
                     workflow_run_response.metrics.stop_timer()
@@ -3725,6 +3728,7 @@ class Workflow:
                 # Handle run cancellation during streaming
                 logger.info(f"Workflow run {workflow_run_response.run_id} was cancelled during streaming")
                 workflow_run_response.status = RunStatus.cancelled
+                workflow_run_response.cancellation_stage = CancellationStage.during_execution
                 workflow_run_response.content = _normalize_workflow_cancellation_reason(workflow_run_response, e)
 
                 # Capture partial progress from the step that was cancelled mid-stream
@@ -3977,6 +3981,7 @@ class Workflow:
                 # Persistence happens below after the if/else; just mark cancelled and fall through
                 logger.info(f"Workflow run {workflow_run_response.run_id} was cancelled")
                 workflow_run_response.status = RunStatus.cancelled
+                workflow_run_response.cancellation_stage = CancellationStage.during_execution
                 workflow_run_response.content = _normalize_workflow_cancellation_reason(workflow_run_response, e)
                 # Client disconnect: persist on a detached task, then re-raise.
                 # cancel_run() and Ctrl-C fall through to the inline persist below.
@@ -4219,6 +4224,7 @@ class Workflow:
             except (RunCancelledException, asyncio.CancelledError, KeyboardInterrupt) as e:
                 logger.info(f"Workflow run {workflow_run_response.run_id} was cancelled")
                 workflow_run_response.status = RunStatus.cancelled
+                workflow_run_response.cancellation_stage = CancellationStage.during_execution
                 workflow_run_response.content = _normalize_workflow_cancellation_reason(workflow_run_response, e)
 
                 # If cancel fired inside a step, append a placeholder so the
@@ -4352,6 +4358,7 @@ class Workflow:
             except RunCancelledException as e:
                 logger.info(f"Workflow run {workflow_run_response.run_id} was cancelled during streaming")
                 workflow_run_response.status = RunStatus.cancelled
+                workflow_run_response.cancellation_stage = CancellationStage.during_execution
                 workflow_run_response.content = _normalize_workflow_cancellation_reason(workflow_run_response, e)
                 if workflow_run_response.metrics:
                     workflow_run_response.metrics.stop_timer()
@@ -4789,6 +4796,7 @@ class Workflow:
                 # Handle run cancellation during streaming
                 logger.info(f"Workflow run {workflow_run_response.run_id} was cancelled during streaming")
                 workflow_run_response.status = RunStatus.cancelled
+                workflow_run_response.cancellation_stage = CancellationStage.during_execution
                 workflow_run_response.content = _normalize_workflow_cancellation_reason(workflow_run_response, e)
 
                 # Capture partial progress from the step that was cancelled mid-stream
