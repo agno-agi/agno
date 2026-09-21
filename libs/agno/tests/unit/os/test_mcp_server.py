@@ -137,7 +137,7 @@ async def test_custom_plain_callable_is_registered_and_callable():
         """Reverse the given text."""
         return text[::-1]
 
-    os = AgentOS(agents=[_agent()], mcp_server=MCPServerConfig(tools=[reverse_text]))
+    os = AgentOS(agents=[_agent()], mcp_server=MCPServerConfig(default_tools=True, tools=[reverse_text]))
 
     assert "reverse_text" in await _tool_names(os)
     result = await _call_tool(os, "reverse_text", {"text": "abc"})
@@ -165,7 +165,7 @@ async def test_custom_agno_tool_is_registered_with_its_name():
 async def test_unregisterable_custom_tool_raises():
     """A non-callable custom tool fails loudly rather than being silently dropped."""
     with pytest.raises(TypeError):
-        build_mcp_server(AgentOS(agents=[_agent()], mcp_server=MCPServerConfig(tools=[object()])))
+        build_mcp_server(AgentOS(agents=[_agent()], mcp_server=MCPServerConfig(default_tools=True, tools=[object()])))
 
 
 # ==================== Scoping the built-ins ====================
@@ -175,6 +175,36 @@ async def test_default_registers_all_builtin_tools():
     """With plain mcp_server=True, every built-in tool is registered (unchanged behavior)."""
     os = AgentOS(agents=[_agent()], mcp_server=True)
     assert await _tool_names(os) == ALL_BUILTIN_TOOLS
+
+
+@pytest.mark.parametrize("config", [True, MCPConfig(default_tools=True), MCPConfig(enable_builtin_tools=True)])
+async def test_default_tools_are_explicit_with_config(config):
+    os = AgentOS(agents=[_agent()], mcp=config)
+    assert await _tool_names(os) == ALL_BUILTIN_TOOLS
+
+
+@pytest.mark.parametrize("config_class", [MCPConfig, MCPServerConfig])
+async def test_custom_config_defaults_to_only_its_tools(config_class):
+    config = config_class(tools=[_noop_tool])
+    assert config.default_tools is False
+    os = AgentOS(agents=[_agent()], mcp=config)
+    assert await _tool_names(os) == {"_noop_tool"}
+    assert (await _call_tool(os, "_noop_tool", {})).data == "ok"
+
+
+@pytest.mark.parametrize("options", [{}, {"name": "Support"}, {"stateless": True}, {"include_tags": {"core"}}])
+def test_config_without_a_tool_surface_has_migration_guidance(options):
+    with pytest.raises(ValueError) as exc:
+        MCPConfig(**options)
+    message = str(exc.value)
+    assert "MCPConfig(tools=[...])" in message
+    assert "MCPConfig(default_tools=True)" in message
+    assert "AgentOS(mcp=True)" in message
+
+
+async def test_include_tags_does_not_enable_default_tools():
+    os = AgentOS(agents=[_agent()], mcp=MCPConfig(tools=[_noop_tool], include_tags={"core"}))
+    assert await _tool_names(os) == {"_noop_tool"}
 
 
 async def test_disabling_builtins_yields_only_custom_tools():
@@ -230,7 +260,7 @@ def test_tag_scoping_to_zero_builtins_without_custom_tools_warns(monkeypatch, kw
     warnings: list = []
     monkeypatch.setattr("agno.utils.log.log_warning", lambda msg, *a, **kw: warnings.append(msg))
 
-    MCPServerConfig(**kwargs)
+    MCPServerConfig(default_tools=True, **kwargs)
 
     assert len(warnings) == 1
     assert "resolves to zero tools" in warnings[0]
@@ -239,9 +269,9 @@ def test_tag_scoping_to_zero_builtins_without_custom_tools_warns(monkeypatch, kw
 @pytest.mark.parametrize(
     "kwargs",
     [
-        pytest.param({}, id="defaults"),
-        pytest.param({"include_tags": {"core"}}, id="scoped-to-core"),
-        pytest.param({"exclude_tags": {"session"}}, id="drops-session"),
+        pytest.param({"default_tools": True}, id="defaults"),
+        pytest.param({"default_tools": True, "include_tags": {"core"}}, id="scoped-to-core"),
+        pytest.param({"default_tools": True, "exclude_tags": {"session"}}, id="drops-session"),
         pytest.param({"include_tags": set(), "tools": [_noop_tool]}, id="no-builtins-but-custom-tools"),
         pytest.param({"tools": [_noop_tool], "enable_builtin_tools": False}, id="custom-tools-only"),
     ],
@@ -263,17 +293,17 @@ async def test_zero_tool_tag_scoping_still_builds_an_empty_server(monkeypatch):
     # The pre-lifecycle spelling: excluding the two original tags must still resolve to
     # an empty server on upgrade (the dual-tagged pair must not ride back via an
     # implicitly enabled ``lifecycle``).
-    os = AgentOS(agents=[_agent()], mcp_server=MCPServerConfig(exclude_tags={"core", "session"}))
+    os = AgentOS(agents=[_agent()], mcp_server=MCPServerConfig(default_tools=True, exclude_tags={"core", "session"}))
     assert await _tool_names(os) == set()
 
 
 async def test_include_tags_scopes_builtins_to_core():
-    os = AgentOS(agents=[_agent()], mcp_server=MCPServerConfig(include_tags={"core"}))
+    os = AgentOS(agents=[_agent()], mcp_server=MCPServerConfig(default_tools=True, include_tags={"core"}))
     assert await _tool_names(os) == CORE_TOOLS
 
 
 async def test_exclude_tags_drops_session_builtins():
-    os = AgentOS(agents=[_agent()], mcp_server=MCPServerConfig(exclude_tags={"session"}))
+    os = AgentOS(agents=[_agent()], mcp_server=MCPServerConfig(default_tools=True, exclude_tags={"session"}))
     names = await _tool_names(os)
     assert names == CORE_TOOLS
     assert not (names & SESSION_TOOLS)
@@ -283,27 +313,27 @@ async def test_exclude_core_removes_the_lifecycle_pair():
     """continue_run/cancel_run are core tools: excluding ``core`` removes them exactly
     as it did before the ``lifecycle`` tag existed. A read-only surface built with
     ``exclude_tags={"core"}`` must not silently retain run mutation."""
-    os = AgentOS(agents=[_agent()], mcp=MCPConfig(exclude_tags={"core"}))
+    os = AgentOS(agents=[_agent()], mcp=MCPConfig(default_tools=True, exclude_tags={"core"}))
     assert await _tool_names(os) == SESSION_TOOLS
 
 
 async def test_exclude_lifecycle_keeps_the_default_surface_intact():
     """``lifecycle`` gates only the exposure ride-along: excluding it with the default
     surface on leaves the pair in place (they are core tools there)."""
-    os = AgentOS(agents=[_agent()], mcp=MCPConfig(exclude_tags={"lifecycle"}))
+    os = AgentOS(agents=[_agent()], mcp=MCPConfig(default_tools=True, exclude_tags={"lifecycle"}))
     assert await _tool_names(os) == CORE_TOOLS | SESSION_TOOLS
 
 
 async def test_lifecycle_tools_flag_leaves_the_default_surface_alone():
     """``lifecycle_tools=False`` turns off the exposure ride-along, not the pair's core
     membership -- with no exposures configured the default surface is unchanged."""
-    os = AgentOS(agents=[_agent()], mcp=MCPConfig(lifecycle_tools=False))
+    os = AgentOS(agents=[_agent()], mcp=MCPConfig(default_tools=True, lifecycle_tools=False))
     assert await _tool_names(os) == CORE_TOOLS | SESSION_TOOLS
 
 
 async def test_include_lifecycle_alone_serves_only_the_pair():
     """The tag is explicitly includable: a surface of just the run-resumption pair."""
-    os = AgentOS(agents=[_agent()], mcp=MCPConfig(include_tags={"lifecycle"}))
+    os = AgentOS(agents=[_agent()], mcp=MCPConfig(default_tools=True, include_tags={"lifecycle"}))
     assert await _tool_names(os) == {"continue_run", "cancel_run"}
 
 
@@ -311,20 +341,20 @@ def test_unknown_include_tag_is_rejected():
     """A typo like ``{"sessions"}`` (plural) would silently produce an empty server. The
     ``MCPBuiltinTag`` Literal makes pydantic reject it at construction."""
     with pytest.raises(ValueError, match="Input should be 'core', 'session' or 'lifecycle'"):
-        MCPServerConfig(include_tags={"sessions"})
+        MCPServerConfig(default_tools=True, include_tags={"sessions"})
 
 
 def test_removed_memory_tag_is_rejected():
     """The memory tools were removed from the MCP surface; the old tag must fail loudly
     instead of silently scoping nothing."""
     with pytest.raises(ValueError, match="Input should be 'core', 'session' or 'lifecycle'"):
-        MCPServerConfig(exclude_tags={"memory"})
+        MCPServerConfig(default_tools=True, exclude_tags={"memory"})
 
 
 def test_known_tags_are_accepted():
     """Sanity: the typed fields don't fight the documented values."""
-    MCPServerConfig(include_tags={"core", "session"})
-    MCPServerConfig(exclude_tags={"core"})
+    MCPServerConfig(default_tools=True, include_tags={"core", "session"})
+    MCPServerConfig(default_tools=True, exclude_tags={"core"})
 
 
 async def test_custom_tools_coexist_with_scoped_builtins():
@@ -336,7 +366,7 @@ async def test_custom_tools_coexist_with_scoped_builtins():
 
     os = AgentOS(
         agents=[_agent()],
-        mcp_server=MCPServerConfig(tools=[ping], include_tags={"core"}),
+        mcp_server=MCPServerConfig(default_tools=True, tools=[ping], include_tags={"core"}),
     )
     assert await _tool_names(os) == CORE_TOOLS | {"ping"}
 
@@ -633,6 +663,44 @@ async def test_run_agent_omitted_session_end_to_end_returns_distinct_ids(monkeyp
     assert s1 and s2 and s1 != s2
     # No sticky session leaked onto the shared instance.
     assert agent.session_id is None
+
+
+async def test_custom_tool_session_follow_up_needs_no_builtin_tools(monkeypatch, tmp_path):
+    """An exposed agent persists and loads conversation history without lifecycle tools."""
+    from agno.db.sqlite import SqliteDb
+
+    monkeypatch.setattr(mcp_mod, "_resolve_user_id", lambda caller: None)
+    model = _MockModel()
+    histories = []
+
+    async def record_stream(*args, **kwargs):
+        histories.append([(message.role, message.content) for message in kwargs["messages"]])
+        yield model._r
+
+    monkeypatch.setattr(model, "ainvoke_stream", record_stream)
+    agent = Agent(
+        id="product-agent",
+        model=model,
+        db=SqliteDb(db_file=str(tmp_path / "sessions.db")),
+        add_history_to_context=True,
+        num_history_runs=3,
+    )
+    os = AgentOS(agents=[agent], mcp=MCPConfig(tools=[agent.as_tool(name="ask_product_agent")]))
+
+    async with Client(build_mcp_server(os)) as client:
+        assert {tool.name for tool in await client.list_tools()} == {"ask_product_agent"}
+        first = await client.call_tool("ask_product_agent", {"message": "Remember the cycle is two weeks."})
+        session_id = _result_session_id(first)
+        assert session_id
+        second = await client.call_tool(
+            "ask_product_agent", {"message": "How long is the cycle?", "session_id": session_id}
+        )
+
+    assert _result_session_id(second) == session_id
+    assert len(histories) == 2
+    assert ("user", "Remember the cycle is two weeks.") in histories[1]
+    assert ("assistant", "ok") in histories[1]
+    assert ("user", "How long is the cycle?") in histories[1]
 
 
 async def test_continue_run_targets_the_given_session_and_never_mints(monkeypatch):
@@ -1238,7 +1306,7 @@ def _captured_http_app_kwargs(monkeypatch, os_instance) -> dict:
 
 def test_stateless_defaults_off_and_is_not_passed(monkeypatch):
     """Default config leaves fastmcp's own default in place rather than forcing False."""
-    os = AgentOS(agents=[_agent()], mcp=MCPConfig())
+    os = AgentOS(agents=[_agent()], mcp=MCPConfig(default_tools=True))
 
     kwargs = _captured_http_app_kwargs(monkeypatch, os)
 
@@ -1246,8 +1314,8 @@ def test_stateless_defaults_off_and_is_not_passed(monkeypatch):
 
 
 def test_stateless_true_is_passed_to_http_app(monkeypatch):
-    """``MCPConfig(stateless=True)`` reaches fastmcp as ``stateless_http=True``."""
-    os = AgentOS(agents=[_agent()], mcp=MCPConfig(stateless=True))
+    """The stateless flag reaches fastmcp as ``stateless_http=True``."""
+    os = AgentOS(agents=[_agent()], mcp=MCPConfig(default_tools=True, stateless=True))
 
     kwargs = _captured_http_app_kwargs(monkeypatch, os)
 
@@ -1264,8 +1332,8 @@ def test_stateless_is_not_passed_for_plain_mcp_true(monkeypatch):
 
 
 def test_stateless_config_field_defaults_to_false():
-    assert MCPConfig().stateless is False
-    assert MCPConfig(stateless=True).stateless is True
+    assert MCPConfig(default_tools=True).stateless is False
+    assert MCPConfig(default_tools=True, stateless=True).stateless is True
 
 
 # ----------------------------- server identity -----------------------------
@@ -1297,7 +1365,9 @@ def test_mcp_config_identity_overrides_the_agentos_values():
         name="Docs AgentOS",
         version="0.1.0",
         agents=[_agent()],
-        mcp=MCPConfig(name="Docs", version="1.0.0", instructions="Prefer the docs over prior knowledge."),
+        mcp=MCPConfig(
+            default_tools=True, name="Docs", version="1.0.0", instructions="Prefer the docs over prior knowledge."
+        ),
     )
 
     server = build_mcp_server(os)
@@ -1311,7 +1381,7 @@ async def test_initialize_response_carries_name_version_and_instructions():
     """The values reach a client through the handshake, not only the server object."""
     os = AgentOS(
         agents=[_agent()],
-        mcp=MCPConfig(name="Docs", version="1.0.0", instructions="Cite the page you used."),
+        mcp=MCPConfig(default_tools=True, name="Docs", version="1.0.0", instructions="Cite the page you used."),
     )
 
     async with Client(build_mcp_server(os), mode="legacy") as client:
@@ -1329,6 +1399,7 @@ SERVER_CARD_SCHEMA = "https://static.modelcontextprotocol.io/schemas/v1/server-c
 
 
 def _docs_os(**mcp_kwargs) -> AgentOS:
+    mcp_kwargs.setdefault("default_tools", True)
     return AgentOS(
         name="Docs AgentOS",
         version="1.0.0",
@@ -1389,7 +1460,7 @@ async def test_server_card_endpoint_follows_the_proxy_headers(monkeypatch):
         version="1.0.0",
         description="Search the docs.",
         agents=[_agent()],
-        mcp=MCPConfig(name="Agno Docs", allowed_hosts=["example.com", "docs.agno.com"]),
+        mcp=MCPConfig(default_tools=True, name="Agno Docs", allowed_hosts=["example.com", "docs.agno.com"]),
     )
     app = get_mcp_server(os)
 
@@ -1485,7 +1556,7 @@ async def test_card_version_matches_the_runtime_server_info(monkeypatch):
         name="Docs AgentOS",
         description="Search the docs.",
         agents=[_agent()],
-        mcp=MCPConfig(name="Agno Docs", allowed_hosts=["example.com"]),
+        mcp=MCPConfig(default_tools=True, name="Agno Docs", allowed_hosts=["example.com"]),
     )
     app = get_mcp_server(os)
 
@@ -1515,7 +1586,7 @@ async def test_forwarded_headers_are_ignored_without_allowed_hosts(monkeypatch):
         version="1.0.0",
         description="Search the docs.",
         agents=[_agent()],
-        mcp=MCPConfig(name="Agno Docs"),
+        mcp=MCPConfig(default_tools=True, name="Agno Docs"),
     )
     app = get_mcp_server(os)
 
@@ -1561,7 +1632,7 @@ async def test_card_fields_are_clipped_to_the_schema_limits(monkeypatch):
         version="1.0.0",
         description="d" * 400,
         agents=[_agent()],
-        mcp=MCPConfig(name="N" * 400, allowed_hosts=["example.com"]),
+        mcp=MCPConfig(default_tools=True, name="N" * 400, allowed_hosts=["example.com"]),
     )
     app = get_mcp_server(os)
 
@@ -1598,7 +1669,7 @@ async def test_the_card_conforms_to_the_server_card_schema(monkeypatch, descript
         version="1.0.0",
         description=description,
         agents=[_agent()],
-        mcp=MCPConfig(name=server_name, allowed_hosts=["example.com"]),
+        mcp=MCPConfig(default_tools=True, name=server_name, allowed_hosts=["example.com"]),
     )
     app = get_mcp_server(os)
 
@@ -1625,7 +1696,7 @@ async def test_an_unlisted_forwarded_host_is_not_advertised(monkeypatch):
         version="1.0.0",
         description="Search the docs.",
         agents=[_agent()],
-        mcp=MCPConfig(name="Agno Docs", allowed_hosts=["docs.agno.com"]),
+        mcp=MCPConfig(default_tools=True, name="Agno Docs", allowed_hosts=["docs.agno.com"]),
     )
     app = get_mcp_server(os)
 
@@ -1678,7 +1749,7 @@ def test_card_name_keeps_its_namespace_when_the_server_name_is_very_long():
 def test_server_card_url_must_be_an_absolute_http_url(url):
     """The value is published verbatim as the endpoint, so it is checked at construction."""
     with pytest.raises(ValueError, match="absolute http"):
-        MCPConfig(name="Agno Docs", server_card_url=url)
+        MCPConfig(default_tools=True, name="Agno Docs", server_card_url=url)
 
 
 @pytest.mark.parametrize(
@@ -1692,12 +1763,12 @@ def test_server_card_url_must_be_an_absolute_http_url(url):
 def test_server_card_url_must_not_carry_credentials(url):
     """The card is published publicly, so a userinfo segment would leak whatever it holds."""
     with pytest.raises(ValueError, match="must not contain credentials"):
-        MCPConfig(name="Agno Docs", server_card_url=url)
+        MCPConfig(default_tools=True, name="Agno Docs", server_card_url=url)
 
 
 @pytest.mark.parametrize("url", ["http://localhost:7777/mcp", "https://docs.agno.com/mcp", "http://127.0.0.1:7777/mcp"])
 def test_a_valid_server_card_url_is_accepted(url):
-    assert MCPConfig(name="Agno Docs", server_card_url=url).server_card_url == url
+    assert MCPConfig(default_tools=True, name="Agno Docs", server_card_url=url).server_card_url == url
 
 
 @pytest.mark.parametrize("proto", ["javascript", "ftp", "file", "HTTPS"])
@@ -1709,7 +1780,7 @@ async def test_only_http_schemes_are_taken_from_the_forwarded_proto(monkeypatch,
         version="1.0.0",
         description="Search the docs.",
         agents=[_agent()],
-        mcp=MCPConfig(name="Agno Docs", allowed_hosts=["docs.agno.com"]),
+        mcp=MCPConfig(default_tools=True, name="Agno Docs", allowed_hosts=["docs.agno.com"]),
     )
     app = get_mcp_server(os)
 
@@ -1736,7 +1807,7 @@ async def test_only_http_schemes_are_taken_from_the_forwarded_proto(monkeypatch,
 )
 def test_an_uppercase_scheme_is_lowercased(written, published):
     """The card's URL pattern matches lowercase http(s):// only."""
-    assert MCPConfig(name="Agno Docs", server_card_url=written).server_card_url == published
+    assert MCPConfig(default_tools=True, name="Agno Docs", server_card_url=written).server_card_url == published
 
 
 async def test_the_published_url_always_matches_the_schema_pattern(monkeypatch):

@@ -151,11 +151,13 @@ async def test_unknown_and_duplicate_hosts_and_forwarding_headers():
 )
 def test_invalid_configuration(options):
     with pytest.raises(ValueError):
-        MCPConfig(**options)
+        MCPConfig(default_tools=True, **options)
 
 
 def test_transport_cannot_hide_rest_routes():
-    server = AgentOS(agents=[Agent(id="docs", telemetry=False)], mcp=MCPConfig(path="/health"), telemetry=False)
+    server = AgentOS(
+        agents=[Agent(id="docs", telemetry=False)], mcp=MCPConfig(default_tools=True, path="/health"), telemetry=False
+    )
     with pytest.raises(ValueError, match="conflicts"):
         server.get_app()
 
@@ -185,7 +187,7 @@ def test_custom_oauth_routing_fails_before_serving_incorrect_metadata():
 
     server = AgentOS(
         agents=[Agent(id="docs", telemetry=False)],
-        mcp=MCPConfig(root_host="mcp.example.com"),
+        mcp=MCPConfig(default_tools=True, root_host="mcp.example.com"),
         mcp_auth=InMemoryOAuthProvider(base_url="https://mcp.example.com"),
         telemetry=False,
     )
@@ -206,7 +208,10 @@ def test_route_conflicts_respect_included_router_prefixes(prefix, path, conflict
 
     base.include_router(router, prefix=prefix)
     server = AgentOS(
-        agents=[Agent(id="docs", telemetry=False)], base_app=base, mcp=MCPConfig(path=path), telemetry=False
+        agents=[Agent(id="docs", telemetry=False)],
+        base_app=base,
+        mcp=MCPConfig(default_tools=True, path=path),
+        telemetry=False,
     )
     if conflict:
         with pytest.raises(ValueError, match="conflicts"):

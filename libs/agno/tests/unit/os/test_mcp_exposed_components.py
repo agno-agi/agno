@@ -160,8 +160,7 @@ async def test_exposed_agent_is_the_only_tool_with_default_tools_off():
     calls = _stub_arun(agent, RunOutput(content="done", status=RunStatus.completed))
     os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, tools=[agent]))
 
-    # continue_run/cancel_run ride along with exposure so HITL works by default.
-    assert await _tool_names(os) == {"chief", "continue_run", "cancel_run"}
+    assert await _tool_names(os) == {"chief"}
     result = await _call_tool(os, "chief", {"message": "hi"})
     assert calls[0]["message"] == "hi"
     structured = result.structured_content or {}
@@ -181,7 +180,7 @@ async def test_exposed_team_and_workflow_register_and_run():
         mcp=MCPConfig(default_tools=False, tools=[team, workflow]),
     )
 
-    assert await _tool_names(os) == {"support-team", "daily-brief", "continue_run", "cancel_run"}
+    assert await _tool_names(os) == {"support-team", "daily-brief"}
     await _call_tool(os, "support-team", {"message": "help"})
     await _call_tool(os, "daily-brief", {"message": "go"})
     assert team_calls[0]["message"] == "help"
@@ -196,7 +195,7 @@ async def test_exposure_composes_with_default_tools_and_custom_tools():
         return "pong"
 
     agent = _agent()
-    os = AgentOS(agents=[agent], mcp=MCPConfig(tools=[agent, ping]))
+    os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=True, tools=[agent, ping]))
 
     names = await _tool_names(os)
     assert "chief" in names
@@ -526,7 +525,7 @@ async def test_exposed_agent_honours_per_resource_scopes(monkeypatch):
 async def test_exposed_id_colliding_with_default_tool_raises():
     """An exposed component whose tool name matches a default tool is a hard build error."""
     agent = _agent(id="run_agent")
-    os = AgentOS(agents=[agent], mcp=MCPConfig(tools=[agent]))
+    os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=True, tools=[agent]))
     with pytest.raises(ValueError, match='"run_agent"'):
         build_mcp_server(os)
 
@@ -535,7 +534,7 @@ async def test_colliding_default_tool_name_is_fine_when_builtins_off():
     """The same id is fine when the default tools are off -- the name is free."""
     agent = _agent(id="run_agent")
     os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, tools=[agent]))
-    assert await _tool_names(os) == {"run_agent", "continue_run", "cancel_run"}
+    assert await _tool_names(os) == {"run_agent"}
 
 
 def test_exposed_id_colliding_with_custom_tool_raises():
@@ -728,7 +727,7 @@ def test_exposed_id_colliding_with_named_agno_function_raises():
 async def test_exposure_composes_with_include_tags():
     """Tag scoping keeps applying to the default tools while exposure adds its own names."""
     agent = _agent()
-    os = AgentOS(agents=[agent], mcp=MCPConfig(include_tags={"core"}, tools=[agent]))
+    os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=True, include_tags={"core"}, tools=[agent]))
 
     names = await _tool_names(os)
     core = {name for name, tags in mcp_mod._BUILTIN_TOOL_NAMES.items() if "core" in tags}
@@ -744,7 +743,7 @@ async def test_named_component_without_id_gets_its_deterministic_id():
     _stub_arun(agent, RunOutput(content="ok"))
     os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, tools=[agent]))
 
-    assert await _tool_names(os) == {"solo-named", "continue_run", "cancel_run"}
+    assert await _tool_names(os) == {"solo-named"}
     assert agent.id == "solo-named"
 
 
@@ -753,7 +752,7 @@ async def test_tool_name_cap_is_128():
     (probed live in review) -- so 65 registers fine and 129 is the hard error."""
     ok_agent = _agent(id="a" * 65)
     os = AgentOS(agents=[ok_agent], mcp=MCPConfig(default_tools=False, tools=[ok_agent]))
-    assert await _tool_names(os) == {"a" * 65, "continue_run", "cancel_run"}
+    assert await _tool_names(os) == {"a" * 65}
 
     long_agent = _agent(id="b" * 129)
     os2 = AgentOS(agents=[long_agent], mcp=MCPConfig(default_tools=False, tools=[long_agent]))
@@ -866,7 +865,7 @@ def test_exposure_only_config_does_not_warn(caplog):
 
     agent = _agent()
     with caplog.at_level(logging.WARNING):
-        MCPConfig(include_tags=set(), tools=[agent])
+        MCPConfig(default_tools=True, include_tags=set(), tools=[agent])
     assert "zero tools" not in caplog.text
 
 
@@ -874,6 +873,28 @@ def test_zero_tools_validator_accepts_exposure_and_still_rejects_empty():
     MCPConfig(default_tools=False, tools=[_agent()])
     with pytest.raises(ValueError, match="zero tools"):
         MCPConfig(default_tools=False)
+
+
+@pytest.mark.parametrize("kind", ["agents", "teams", "workflows"])
+@pytest.mark.parametrize(
+    "options, expected_builtins",
+    [
+        ({}, set()),
+        ({"default_tools": False, "lifecycle_tools": False}, set()),
+        ({"lifecycle_tools": True}, {"continue_run", "cancel_run"}),
+        ({"lifecycle_tools": True, "exclude_tags": {"lifecycle"}}, set()),
+        ({"include_tags": {"lifecycle"}}, set()),
+        ({"default_tools": True}, set(mcp_mod._BUILTIN_TOOL_NAMES)),
+        ({"default_tools": True, "lifecycle_tools": False}, set(mcp_mod._BUILTIN_TOOL_NAMES)),
+        ({"default_tools": True, "lifecycle_tools": True}, set(mcp_mod._BUILTIN_TOOL_NAMES)),
+        ({"default_tools": True, "include_tags": {"session"}}, {"get_sessions", "get_session_runs"}),
+    ],
+)
+async def test_custom_surface_capabilities_are_explicit(kind, options, expected_builtins):
+    component = {"agents": _agent, "teams": _team, "workflows": _workflow}[kind]()
+    config = MCPConfig(tools=[component.as_tool(name="ask_product")], **options)
+    os = AgentOS(**{kind: [component]}, mcp=config)
+    assert await _tool_names(os) == {"ask_product"} | expected_builtins
 
 
 async def test_builtin_tool_name_map_matches_registered_tools():
@@ -903,7 +924,7 @@ def test_conflicting_default_tools_spellings_raise():
 
 def test_enable_builtin_tools_assignment_still_works():
     """Pre-rename this was a plain field write; the alias keeps assignment working."""
-    config = MCPConfig(tools=[lambda: "x"])
+    config = MCPConfig(default_tools=True, tools=[lambda: "x"])
     config.enable_builtin_tools = False
     assert config.default_tools is False
     assert config.enable_builtin_tools is False
@@ -918,7 +939,7 @@ def test_enable_builtin_tools_survives_model_copy_update():
         """Return ok."""
         return "ok"
 
-    config = MCPConfig(tools=[noop])
+    config = MCPConfig(default_tools=True, tools=[noop])
     copied = config.model_copy(update={"enable_builtin_tools": False})
     assert copied.default_tools is False
     assert copied.enable_builtin_tools is False
@@ -926,7 +947,7 @@ def test_enable_builtin_tools_survives_model_copy_update():
 
 
 def test_conflicting_spellings_in_model_copy_update_raise():
-    config = MCPConfig()
+    config = MCPConfig(default_tools=True)
     with pytest.raises(ValueError, match="deprecated alias"):
         config.model_copy(update={"enable_builtin_tools": False, "default_tools": True})
 
@@ -976,7 +997,7 @@ def test_agentos_equal_mcp_spellings_are_accepted():
 def test_assigning_config_to_mcp_property_applies_config():
     os = AgentOS(agents=[_agent()])
     assert os.mcp is False
-    config = MCPConfig(tools=[lambda: "x"])
+    config = MCPConfig(default_tools=True, tools=[lambda: "x"])
     os.mcp = config
     assert os.mcp is True
     assert os.mcp_config is config
@@ -984,7 +1005,7 @@ def test_assigning_config_to_mcp_property_applies_config():
 
 def test_assigning_via_deprecated_mcp_server_property_applies_config():
     os = AgentOS(agents=[_agent()])
-    config = MCPConfig(tools=[lambda: "x"])
+    config = MCPConfig(default_tools=True, tools=[lambda: "x"])
     os.mcp_server = config
     assert os.mcp is True
     assert os.mcp_config is config
@@ -1055,7 +1076,7 @@ async def test_paused_run_without_continue_run_points_at_rest():
     )
     agent = _agent()
     _stub_arun(agent, paused)
-    os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, tools=[agent], lifecycle_tools=False))
+    os = AgentOS(agents=[agent], mcp=MCPConfig(tools=[agent]))
     result = await _call_tool(os, "chief", {"message": "hi"})
     assert "continue_run tool is not registered" in result.content[0].text
     # The recovery hint must reach structuredContent-only clients too: the "content"
@@ -1065,10 +1086,10 @@ async def test_paused_run_without_continue_run_points_at_rest():
     assert structured.get("content") == result.content[0].text
     assert "REST" in (structured.get("content") or "")
 
-    # Default: the lifecycle pair rides along, so the hint must NOT appear.
+    # Explicit lifecycle opt-in makes continuation available, so the hint is absent.
     agent2 = _agent(id="chief2")
     _stub_arun(agent2, paused)
-    os2 = AgentOS(agents=[agent2], mcp=MCPConfig(default_tools=False, tools=[agent2]))
+    os2 = AgentOS(agents=[agent2], mcp=MCPConfig(tools=[agent2], lifecycle_tools=True))
     result2 = await _call_tool(os2, "chief2", {"message": "hi"})
     assert "continue_run tool is not registered" not in result2.content[0].text
 
@@ -1195,7 +1216,7 @@ async def test_team_and_workflow_as_tool_work():
             tools=[team.as_tool(name="ask_support"), workflow.as_tool(name="run_brief")],
         ),
     )
-    assert await _tool_names(os) == {"ask_support", "run_brief", "continue_run", "cancel_run"}
+    assert await _tool_names(os) == {"ask_support", "run_brief"}
 
 
 async def test_structured_content_carries_the_component_id():
@@ -1257,7 +1278,10 @@ async def test_explicit_lifecycle_exclude_is_honoured():
     pair are core tools (test_exclude_lifecycle_keeps_the_default_surface_intact in
     test_mcp_server.py pins that side)."""
     agent = _agent()
-    os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, tools=[agent], exclude_tags={"lifecycle"}))
+    os = AgentOS(
+        agents=[agent],
+        mcp=MCPConfig(lifecycle_tools=True, default_tools=False, tools=[agent], exclude_tags={"lifecycle"}),
+    )
     assert await _tool_names(os) == {"chief"}
 
 
@@ -1266,17 +1290,19 @@ async def test_exposure_with_exclude_core_still_rides_lifecycle():
     run tools AND the pair's core membership, but the exposure adds ``lifecycle`` back
     so a paused exposed run stays resumable."""
     agent = _agent()
-    os = AgentOS(agents=[agent], mcp=MCPConfig(tools=[agent], exclude_tags={"core"}))
+    os = AgentOS(
+        agents=[agent], mcp=MCPConfig(lifecycle_tools=True, default_tools=True, tools=[agent], exclude_tags={"core"})
+    )
     names = await _tool_names(os)
     assert names == {"chief", "continue_run", "cancel_run", "get_sessions", "get_session_runs"}
     assert "run_agent" not in names
 
 
 async def test_exposed_id_collides_with_riding_lifecycle_tool():
-    """With the lifecycle pair riding along by default, an exposed id 'continue_run'
+    """With the lifecycle pair explicitly enabled, an exposed id 'continue_run'
     collides -- and is free again once the deployer opts out."""
     agent = _agent(id="continue_run")
-    os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, tools=[agent]))
+    os = AgentOS(agents=[agent], mcp=MCPConfig(lifecycle_tools=True, default_tools=False, tools=[agent]))
     with pytest.raises(ValueError, match='"continue_run"'):
         build_mcp_server(os)
 
@@ -1294,7 +1320,7 @@ async def test_custom_tool_named_like_riding_builtin_raises():
         return message
 
     agent = _agent()
-    os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, tools=[agent, continue_run]))
+    os = AgentOS(agents=[agent], mcp=MCPConfig(lifecycle_tools=True, default_tools=False, tools=[agent, continue_run]))
     with pytest.raises(ValueError, match='custom tool name "continue_run"'):
         build_mcp_server(os)
 
@@ -1306,7 +1332,7 @@ async def test_custom_tool_named_like_default_tool_raises_on_default_surface():
         """Impostor."""
         return "no"
 
-    os = AgentOS(agents=[_agent()], mcp=MCPConfig(tools=[run_agent]))
+    os = AgentOS(agents=[_agent()], mcp=MCPConfig(default_tools=True, tools=[run_agent]))
     with pytest.raises(ValueError, match='custom tool name "run_agent"'):
         build_mcp_server(os)
 
@@ -1323,13 +1349,15 @@ async def test_lifecycle_collision_advice_matches_how_the_name_was_claimed():
         return message
 
     # Exposure-only surface: the pair rides along, core is off -> lifecycle advice.
-    ride_only = AgentOS(agents=[_agent()], mcp=MCPConfig(default_tools=False, tools=[_agent(), continue_run]))
+    ride_only = AgentOS(
+        agents=[_agent()], mcp=MCPConfig(lifecycle_tools=True, default_tools=False, tools=[_agent(), continue_run])
+    )
     with pytest.raises(ValueError) as exc_ride:
         build_mcp_server(ride_only)
     assert "lifecycle_tools=False" in str(exc_ride.value)
 
     # Default surface: the pair is core-registered; lifecycle_tools=False can't free it.
-    core_on = AgentOS(agents=[_agent()], mcp=MCPConfig(tools=[continue_run]))
+    core_on = AgentOS(agents=[_agent()], mcp=MCPConfig(default_tools=True, tools=[continue_run]))
     with pytest.raises(ValueError) as exc_core:
         build_mcp_server(core_on)
     assert "lifecycle_tools=False" not in str(exc_core.value)
@@ -1341,7 +1369,7 @@ async def test_exposed_id_collision_advice_is_lifecycle_aware_on_core_surface():
     that collides with the core-registered lifecycle pair must not be told to flip the
     lifecycle switches (they don't free a core-served name)."""
     agent = _agent(id="cancel_run")
-    core_on = AgentOS(agents=[agent], mcp=MCPConfig(tools=[agent]))
+    core_on = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=True, tools=[agent]))
     with pytest.raises(ValueError) as exc:
         build_mcp_server(core_on)
     assert "lifecycle_tools=False" not in str(exc.value)
@@ -1414,7 +1442,10 @@ async def test_hitl_pause_and_continue_loop_through_exposed_tool(monkeypatch):
         return RunOutput(agent_id="chief", run_id=run_id, session_id=session_id, content="resumed")
 
     agent.acontinue_run = fake_acontinue_run  # type: ignore[method-assign]
-    os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, tools=[agent.as_tool(name="ask_chief")]))
+    os = AgentOS(
+        agents=[agent],
+        mcp=MCPConfig(lifecycle_tools=True, default_tools=False, tools=[agent.as_tool(name="ask_chief")]),
+    )
 
     async with Client(build_mcp_server(os)) as client:
         names = {t.name for t in await client.list_tools()}
@@ -1472,7 +1503,7 @@ async def test_riding_pair_refuses_unpublished_components(monkeypatch):
         return RunOutput(agent_id="internal-treasury", content="resumed")
 
     internal.acontinue_run = fake_acontinue_run  # type: ignore[method-assign]
-    os = AgentOS(agents=[public, internal], mcp=MCPConfig(default_tools=False, tools=[public]))
+    os = AgentOS(agents=[public, internal], mcp=MCPConfig(lifecycle_tools=True, default_tools=False, tools=[public]))
 
     continued = await _call_tool(
         os,
@@ -1506,7 +1537,7 @@ async def test_riding_pair_gate_is_keyed_by_kind(monkeypatch):
         reached.append(run_id)
 
     monkeypatch.setattr(mcp_mod.run_service, "cancel_component_run", spy_cancel)
-    os = AgentOS(agents=[agent], teams=[team], mcp=MCPConfig(default_tools=False, tools=[agent]))
+    os = AgentOS(agents=[agent], teams=[team], mcp=MCPConfig(lifecycle_tools=True, default_tools=False, tools=[agent]))
 
     refused = await _call_tool(
         os, "cancel_run", {"team_id": "shared", "run_id": "r1", "session_id": "s1"}, raise_on_error=False
@@ -1539,7 +1570,7 @@ async def test_pair_reaches_roster_when_core_is_served(monkeypatch):
         return RunOutput(agent_id="unexposed-agent", run_id=run_id, session_id=session_id, content="resumed")
 
     unexposed.acontinue_run = fake_acontinue_run  # type: ignore[method-assign]
-    os = AgentOS(agents=[exposed, unexposed], mcp=MCPConfig(tools=[exposed]))
+    os = AgentOS(agents=[exposed, unexposed], mcp=MCPConfig(default_tools=True, tools=[exposed]))
 
     result = await _call_tool(
         os,
@@ -1570,7 +1601,7 @@ async def test_explicit_lifecycle_include_is_roster_wide(monkeypatch):
     unexposed.acontinue_run = fake_acontinue_run  # type: ignore[method-assign]
     os = AgentOS(
         agents=[exposed, unexposed],
-        mcp=MCPConfig(include_tags={"lifecycle"}, tools=[exposed]),
+        mcp=MCPConfig(default_tools=True, include_tags={"lifecycle"}, tools=[exposed]),
     )
 
     result = await _call_tool(
@@ -1588,7 +1619,7 @@ async def test_riding_pair_scope_route_uses_the_target_kind(monkeypatch):
     teams:run passes -- the pair's scope path is built from the target's kind."""
     _patch_request(monkeypatch, _pat_request(["agents:run"]))
     team = _team()
-    os = AgentOS(teams=[team], mcp=MCPConfig(default_tools=False, tools=[team]))
+    os = AgentOS(teams=[team], mcp=MCPConfig(lifecycle_tools=True, default_tools=False, tools=[team]))
 
     denied = await _call_tool(os, "cancel_run", {"team_id": "support-team", "run_id": "r1"}, raise_on_error=False)
     assert denied.is_error
@@ -1681,7 +1712,7 @@ async def test_remote_cancel_propagates_the_caller_bearer_token(monkeypatch):
         return True
 
     remote.acancel_run = fake_acancel_run  # type: ignore[method-assign]
-    os = AgentOS(agents=[remote], mcp=MCPConfig(default_tools=False, tools=[remote]))
+    os = AgentOS(agents=[remote], mcp=MCPConfig(lifecycle_tools=True, default_tools=False, tools=[remote]))
 
     _patch_request(monkeypatch, _request_with_bearer("tok-cancel"))
     result = await _call_tool(os, "cancel_run", {"agent_id": "downstream", "run_id": "r1"}, raise_on_error=False)
@@ -1713,7 +1744,7 @@ async def test_remote_cancel_never_touches_the_local_queue(monkeypatch):
         return True
 
     remote.acancel_run = fake_acancel_run  # type: ignore[method-assign]
-    os = AgentOS(agents=[remote], mcp=MCPConfig(default_tools=False, tools=[remote]))
+    os = AgentOS(agents=[remote], mcp=MCPConfig(lifecycle_tools=True, default_tools=False, tools=[remote]))
 
     result = await _call_tool(
         os,
@@ -1777,7 +1808,7 @@ async def test_remote_workflow_run_propagates_the_caller_bearer_token(monkeypatc
 
     remote.arun = fake_arun  # type: ignore[method-assign]
     # default_tools on so the generic run_workflow registers alongside the exposure.
-    os = AgentOS(workflows=[remote], mcp=MCPConfig(tools=[remote]))
+    os = AgentOS(workflows=[remote], mcp=MCPConfig(default_tools=True, tools=[remote]))
 
     _patch_request(monkeypatch, _request_with_bearer("tok-wf"))
     await _call_tool(os, "far-flow", {"message": "go"})
@@ -1866,7 +1897,9 @@ async def test_cancel_refuses_a_run_of_an_unpublished_component(monkeypatch):
         reached.append(run_id)
 
     monkeypatch.setattr(mcp_mod.run_service, "cancel_component_run", spy_cancel)
-    os = AgentOS(agents=[public], teams=[hidden], mcp=MCPConfig(default_tools=False, tools=[public]))
+    os = AgentOS(
+        agents=[public], teams=[hidden], mcp=MCPConfig(lifecycle_tools=True, default_tools=False, tools=[public])
+    )
 
     result = await _call_tool(
         os,
@@ -1896,7 +1929,7 @@ async def test_cancel_of_the_named_components_own_run_succeeds(monkeypatch):
         reached.append(run_id)
 
     monkeypatch.setattr(mcp_mod.run_service, "cancel_component_run", spy_cancel)
-    os = AgentOS(agents=[public], mcp=MCPConfig(default_tools=False, tools=[public]))
+    os = AgentOS(agents=[public], mcp=MCPConfig(lifecycle_tools=True, default_tools=False, tools=[public]))
 
     result = await _call_tool(
         os,
@@ -1927,7 +1960,7 @@ async def test_cancel_cross_kind_same_id_is_rejected(monkeypatch):
 
     monkeypatch.setattr(mcp_mod.run_service, "cancel_component_run", spy_cancel)
     # Expose only the agent; the team is unpublished.
-    os = AgentOS(agents=[agent], teams=[team], mcp=MCPConfig(default_tools=False, tools=[agent]))
+    os = AgentOS(agents=[agent], teams=[team], mcp=MCPConfig(lifecycle_tools=True, default_tools=False, tools=[agent]))
 
     result = await _call_tool(
         os,
@@ -1957,7 +1990,7 @@ async def test_cancel_of_an_in_flight_run_succeeds_for_admin(monkeypatch):
         reached.append(run_id)
 
     monkeypatch.setattr(mcp_mod.run_service, "cancel_component_run", spy_cancel)
-    os = AgentOS(agents=[public], mcp=MCPConfig(default_tools=False, tools=[public]))
+    os = AgentOS(agents=[public], mcp=MCPConfig(lifecycle_tools=True, default_tools=False, tools=[public]))
 
     # Cancel-before-start / burst cancel: no session_id, no rows anywhere.
     result = await _call_tool(
@@ -1993,7 +2026,7 @@ async def test_scoped_caller_cancel_requires_session_ownership(monkeypatch):
         reached.append(run_id)
 
     monkeypatch.setattr(mcp_mod.run_service, "cancel_component_run", spy_cancel)
-    os = AgentOS(agents=[public], mcp=MCPConfig(default_tools=False, tools=[public]))
+    os = AgentOS(agents=[public], mcp=MCPConfig(lifecycle_tools=True, default_tools=False, tools=[public]))
 
     result = await _call_tool(
         os, "cancel_run", {"agent_id": "public-agent", "run_id": "some-run"}, raise_on_error=False
@@ -2066,7 +2099,7 @@ async def test_factory_run_cancels_statically_without_building_the_factory(monke
 
     monkeypatch.setattr(agent_run_mod, "acancel_run", fake_static_cancel)
 
-    os = AgentOS(agents=[factory], mcp=MCPConfig(default_tools=False, tools=[factory]))
+    os = AgentOS(agents=[factory], mcp=MCPConfig(lifecycle_tools=True, default_tools=False, tools=[factory]))
     result = await _call_tool(
         os,
         "cancel_run",
@@ -2097,7 +2130,7 @@ async def test_scoped_caller_cannot_cancel_another_users_run_in_a_matching_sessi
         reached.append(run_id)
 
     monkeypatch.setattr(mcp_mod.run_service, "cancel_component_run", spy_cancel)
-    os = AgentOS(agents=[public], mcp=MCPConfig(default_tools=False, tools=[public]))
+    os = AgentOS(agents=[public], mcp=MCPConfig(lifecycle_tools=True, default_tools=False, tools=[public]))
 
     # Caller is sa:bot (from _request_with_bearer), not alice.
     result = await _call_tool(
@@ -2131,7 +2164,7 @@ async def test_admin_binding_fails_open_when_the_db_read_raises(monkeypatch):
         reached.append(run_id)
 
     monkeypatch.setattr(mcp_mod.run_service, "cancel_component_run", spy_cancel)
-    os = AgentOS(agents=[public], mcp=MCPConfig(default_tools=False, tools=[public]))
+    os = AgentOS(agents=[public], mcp=MCPConfig(lifecycle_tools=True, default_tools=False, tools=[public]))
 
     # Admin / non-isolated caller (no scoped request patched): the read raises, but the
     # cancel must still proceed rather than fail closed.
@@ -2169,7 +2202,9 @@ async def test_cancel_of_a_hidden_persisted_run_is_refused_regardless_of_session
         reached.append(run_id)
 
     monkeypatch.setattr(mcp_mod.run_service, "cancel_component_run", spy_cancel)
-    os = AgentOS(agents=[public], teams=[hidden], mcp=MCPConfig(default_tools=False, tools=[public]))
+    os = AgentOS(
+        agents=[public], teams=[hidden], mcp=MCPConfig(lifecycle_tools=True, default_tools=False, tools=[public])
+    )
 
     for session_id in (None, "no-such-session", "hidden-sess"):
         args = {"agent_id": "public-agent", "run_id": "hidden-run"}
@@ -2200,7 +2235,9 @@ async def test_continue_run_refuses_a_run_of_an_unpublished_component():
         return RunOutput(agent_id="public-agent", content="resumed")
 
     public.acontinue_run = fake_acontinue_run  # type: ignore[method-assign]
-    os = AgentOS(agents=[public], teams=[hidden], mcp=MCPConfig(default_tools=False, tools=[public]))
+    os = AgentOS(
+        agents=[public], teams=[hidden], mcp=MCPConfig(lifecycle_tools=True, default_tools=False, tools=[public])
+    )
 
     result = await _call_tool(
         os,
@@ -2214,11 +2251,11 @@ async def test_continue_run_refuses_a_run_of_an_unpublished_component():
 
 
 async def test_riding_lifecycle_pair_is_scope_gated(monkeypatch):
-    """continue_run/cancel_run ride along with every exposure, so their scope gate is
+    """Opted-in continue_run/cancel_run accompany exposures, so their scope gate is
     the only thing between a read-only PAT and run mutation -- pin the refusal."""
     _patch_request(monkeypatch, _pat_request(["sessions:read"]))
     agent = _agent()
-    os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, tools=[agent]))
+    os = AgentOS(agents=[agent], mcp=MCPConfig(lifecycle_tools=True, default_tools=False, tools=[agent]))
 
     continued = await _call_tool(
         os, "continue_run", {"agent_id": "chief", "run_id": "r1", "session_id": "s1"}, raise_on_error=False
