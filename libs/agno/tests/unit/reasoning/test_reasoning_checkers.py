@@ -315,6 +315,77 @@ def test_openai_like_without_deepseek_r1():
 
 
 # ============================================================================
+# Gateway / Router Client Tests (supports_native_reasoning)
+# ============================================================================
+
+
+def test_openai_like_with_supports_native_reasoning():
+    """Test OpenAILike declaring the capability returns True despite an opaque id."""
+    from agno.models.openai.like import OpenAILike
+
+    model = OpenAILike(
+        id="my-gateway-router-alias",
+        name="Gateway",
+        supports_native_reasoning=True,
+    )
+    assert is_openai_reasoning_model(model) is True
+
+
+def test_openai_like_defaults_to_no_native_reasoning():
+    """Test the capability is opt-in: an opaque id alone is still not enough."""
+    from agno.models.openai.like import OpenAILike
+
+    model = OpenAILike(
+        id="my-gateway-router-alias",
+        name="Gateway",
+    )
+    assert model.supports_native_reasoning is False
+    assert is_openai_reasoning_model(model) is False
+
+
+def test_openrouter_subclass_with_supports_native_reasoning():
+    """Test an OpenRouter subclass is reached by the OpenAI checker.
+
+    The OpenRouter checker matches on the exact class name, so a subclass falls through
+    to the OpenAI checker, which is the correct family: reasoning dispatch treats
+    "openai" and "openrouter" identically.
+    """
+    from agno.models.openrouter import OpenRouter
+
+    class GatewayRouter(OpenRouter):
+        pass
+
+    model = GatewayRouter(id="openrouter/auto", api_key="test", supports_native_reasoning=True)
+    assert is_openai_reasoning_model(model) is True
+
+
+def test_non_openai_like_model_ignores_supports_native_reasoning():
+    """Test the capability is scoped to OpenAILike and does not leak to other providers."""
+    model = MockModel(
+        class_name="Claude",
+        model_id="claude-3-5-sonnet",
+        supports_native_reasoning=True,
+    )
+    assert is_openai_reasoning_model(model) is False
+
+
+def test_reasoning_manager_detects_flagged_gateway_client():
+    """Test the flag survives the full detector chain, not just the OpenAI checker.
+
+    Every checker ahead of OpenAI gates on an exact class name and bails immediately, so
+    a flagged gateway client must resolve to the "openai" family.
+    """
+    from agno.models.openai.like import OpenAILike
+    from agno.reasoning.manager import ReasoningConfig, ReasoningManager
+
+    model = OpenAILike(id="my-gateway-router-alias", supports_native_reasoning=True)
+    manager = ReasoningManager(ReasoningConfig(reasoning_model=model))
+
+    assert manager._detect_model_type(model) == "openai"
+    assert manager.is_native_reasoning_model(model) is True
+
+
+# ============================================================================
 # Anthropic Reasoning Model Tests
 # ============================================================================
 
