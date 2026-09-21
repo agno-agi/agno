@@ -1095,8 +1095,11 @@ class AuthMiddleware(BaseHTTPMiddleware):
         )
 
         if not result.allowed:
-            held_roles, roles_from_token = self._token_roles(request)
-            role_store = getattr(request.app.state, "role_store", None)
+            # Explain through the role store only when its engine is the plane that decided; under
+            # an authorization_provider= override the roles never took part, so citing them would
+            # send an operator to the wrong place.
+            role_store = self._deciding_role_store(request)
+            held_roles, roles_from_token = self._token_roles(request, role_store)
             subject = getattr(request.state, "user_id", None)
             if held_roles is None and role_store is not None and subject:
                 try:
@@ -1104,13 +1107,13 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 except Exception:
                     held_roles = None  # a store read failure must not turn a denial into a 500
             # A directory user with no assignment is evaluated through the role flagged default
-            # (decision time only, never written), so that role, not "no role", decided.
+            # (decision time only, never written), so that role, not "no role", decided. Ask the
+            # engine's own rule: on a split db it never applied the default, and neither do we.
             via_default = False
-            user_store = getattr(request.app.state, "user_store", None)
-            if held_roles == [] and role_store is not None and user_store is not None and subject:
+            if held_roles == [] and role_store is not None and subject:
                 try:
-                    default_role = role_store.default_role()
-                    if default_role and user_store.get(subject) is not None:
+                    default_role = role_store._default_role_applied(subject)
+                    if default_role:
                         held_roles, via_default = [default_role], True
                 except Exception:
                     via_default = False
@@ -1149,6 +1152,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
                     roles_from_token,
                     explicit_deny,
                     via_default,
+                    token_scopes_ignored=role_store is not None and not role_store.trust_token_scopes,
                 )
             )
             return self._create_error_response(
@@ -1166,11 +1170,19 @@ class AuthMiddleware(BaseHTTPMiddleware):
         return None
 
     @staticmethod
-    def _token_roles(request: Request) -> Tuple[Optional[List[str]], bool]:
-        """(roles, True) when the role store reads a ``roles_claim`` and this token carries one --
-        the roles the engine actually decided on for an external-IdP caller -- else (None, False)
-        so the caller falls back to the subject's stored assignments."""
+    def _deciding_role_store(request: Request) -> Optional[Any]:
+        """The Authorization object on the app, but only when its managed-role engine is the plane
+        that decided (``roles_decide``). Under an ``authorization_provider=`` override the object is
+        still on ``app.state`` (for provisioning and ``/authz``) yet the override decided alone, so
+        a denial explanation must not read roles from it."""
         role_store = getattr(request.app.state, "role_store", None)
+        return role_store if role_store is not None and getattr(role_store, "roles_decide", False) else None
+
+    @staticmethod
+    def _token_roles(request: Request, role_store: Optional[Any]) -> Tuple[Optional[List[str]], bool]:
+        """(roles, True) when the deciding role store reads a ``roles_claim`` and this token carries
+        one -- the roles the engine actually decided on for an external-IdP caller -- else
+        (None, False) so the caller falls back to the subject's stored assignments."""
         claim = getattr(role_store, "roles_claim", None) if role_store is not None else None
         if not claim:
             return None, False
@@ -1190,6 +1202,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
         roles_from_token: bool = False,
         explicit_deny: Optional[str] = None,
         via_default: bool = False,
+        token_scopes_ignored: bool = False,
     ) -> str:
         """The log line for a route-gate denial, worded for the plane that actually decided.
 
@@ -1204,6 +1217,9 @@ class AuthMiddleware(BaseHTTPMiddleware):
         deny-overrides the role may well grant the route's scope, so "does not grant" would send
         an operator to add a grant that already exists. ``via_default`` marks ``held_roles`` as the
         role flagged default, applied at decision time to a directory user with no assignment.
+        ``token_scopes_ignored`` is True only when managed roles decided with
+        ``trust_token_scopes=False``, the one case where that flag is why the token's scopes did not
+        count; under any other provider the flag is not the reason and is not cited.
         """
         from agno.os.auth import caller_scopes_are_authoritative
 
@@ -1224,7 +1240,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
             line += " The subject holds no role in the role store."
         if explicit_deny:
             line += f" An explicit deny on '{explicit_deny}' applies (deny overrides any wider allow)."
-        if scopes:
+        if scopes and token_scopes_ignored:
             on_token = [sc for sc in scopes if sc in required_scopes] or scopes
             line += (
                 " Token scopes are not trusted under this provider (Authorization(trust_token_scopes=False)), "
@@ -1268,22 +1284,20 @@ class AuthMiddleware(BaseHTTPMiddleware):
         )
 
         if not result.allowed:
-            held_roles, roles_from_token = self._token_roles(request)
-            role_store = getattr(request.app.state, "role_store", None)
+            # See _check_scopes: explain through the role store only when its engine decided.
+            role_store = self._deciding_role_store(request)
+            held_roles, roles_from_token = self._token_roles(request, role_store)
             subject = getattr(request.state, "user_id", None)
             if held_roles is None and role_store is not None and subject:
                 try:
                     held_roles = list(await role_store.aroles_of(subject))
                 except Exception:
                     held_roles = None  # a store read failure must not turn a denial into a 500
-            # A directory user with no assignment is evaluated through the role flagged default
-            # (decision time only, never written), so that role, not "no role", decided.
             via_default = False
-            user_store = getattr(request.app.state, "user_store", None)
-            if held_roles == [] and role_store is not None and user_store is not None and subject:
+            if held_roles == [] and role_store is not None and subject:
                 try:
-                    default_role = await role_store.adefault_role()
-                    if default_role and await user_store.aget(subject) is not None:
+                    default_role = await role_store._adefault_role_applied(subject)
+                    if default_role:
                         held_roles, via_default = [default_role], True
                 except Exception:
                     via_default = False
@@ -1322,6 +1336,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
                     roles_from_token,
                     explicit_deny,
                     via_default,
+                    token_scopes_ignored=role_store is not None and not role_store.trust_token_scopes,
                 )
             )
             return self._create_error_response(

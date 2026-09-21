@@ -221,3 +221,98 @@ def test_denial_of_a_directory_user_with_no_assignment_names_the_default_role(tm
     line = [m for m in messages if "/config" in m][-1]
     assert "holds no role" not in line
     assert "default role ['viewer']" in line and "does not authorize GET /config" in line
+
+
+# ------------------------------------------------------------------ the explanation follows the plane that decided
+# Three ways the line could say something untrue: blaming roles when a custom provider decided,
+# citing trust_token_scopes=False when that flag was not the reason, and claiming the default role
+# applied when the engine (reading through its own db) never applied it.
+
+
+def test_denial_under_a_custom_provider_does_not_blame_managed_roles(tmp_path):
+    """Authorization(authorization_provider=...) decides alone even when roles are defined on the
+    object, so the line must not cite roles or token-scope trust that never took part."""
+    from agno.os.authz import AuthorizationContext, AuthorizationProvider
+
+    class _DenyAll(AuthorizationProvider):
+        def check(self, ctx: AuthorizationContext) -> bool:
+            return False
+
+        def accessible_resource_ids(self, ctx: AuthorizationContext):
+            return set()
+
+        def authorize_route(self, ctx: AuthorizationContext, required_scopes) -> bool:
+            return False
+
+    db = SqliteDb(db_file=str(tmp_path / "custom.db"))
+    authz = Authorization(
+        db=db,
+        verification_keys=[SECRET],
+        algorithm="HS256",
+        verify_audience=True,
+        audience=OS_ID,
+        authorization_provider=_DenyAll(),
+        trust_token_scopes=True,
+    )
+    authz.define_role("viewer", ["agents:*:read"])  # defined, but the override decides
+    authz.assign("vic", "viewer")
+    agents = [Agent(id="a", name="A", db=InMemoryDb())]
+    client = TestClient(AgentOS(id=OS_ID, db=db, agents=agents, authorization=authz).get_app())
+    with _warnings() as messages:
+        r = client.get("/agents/a", headers=_token("vic", ["agents:read"]))
+    assert r.status_code == 403
+    line = [m for m in messages if "/agents/a" in m][-1]
+    assert "the configured authorization provider refused it" in line
+    assert "role" not in line.lower()
+    assert "trust_token_scopes" not in line
+
+
+def test_denial_with_trusted_token_scopes_keeps_the_scope_wording(tmp_path):
+    """Under trust_token_scopes=True the caller's scopes are authoritative, so the honest line is
+    required-versus-held; it must never cite trust_token_scopes=False."""
+    db = SqliteDb(db_file=str(tmp_path / "trust.db"))
+    authz = Authorization(
+        db=db,
+        verification_keys=[SECRET],
+        algorithm="HS256",
+        verify_audience=True,
+        audience=OS_ID,
+        trust_token_scopes=True,
+    )
+    authz.define_role("viewer", ["agents:*:read"])
+    authz.assign("bob", "viewer")
+    agents = [Agent(id="a", name="A", db=InMemoryDb())]
+    client = TestClient(AgentOS(id=OS_ID, db=db, agents=agents, authorization=authz).get_app())
+    with _warnings() as messages:
+        r = client.get("/config", headers=_token("bob", ["agents:read"]))  # a scope, not the one needed
+    assert r.status_code == 403
+    line = [m for m in messages if "/config" in m][-1]
+    assert line.startswith("Insufficient scopes for GET /config")
+    assert "trust_token_scopes=False" not in line
+
+
+def test_denial_on_a_split_db_does_not_claim_a_default_role_that_never_applied(tmp_path):
+    """The engine applies the default role only to a directory user it can see through ITS db; with
+    the directory on another db it fails closed. The line must report what the engine did, not what
+    the directory alone suggests."""
+    from agno.os.authz import UserDirectory
+
+    roles_db = SqliteDb(db_file=str(tmp_path / "roles.db"))
+    users_db = SqliteDb(db_file=str(tmp_path / "users.db"))
+    authz = Authorization(
+        db=roles_db, verification_keys=[SECRET], algorithm="HS256", verify_audience=True, audience=OS_ID
+    )
+    authz.define_role("admin", ["agent_os:admin"])
+    authz.define_role("viewer", ["agents:*:read"], default=True)
+    users = UserDirectory(db=users_db, auto_provision=False)
+    users.upsert("dana", email="d@co")
+    agents = [Agent(id="a", name="A", db=InMemoryDb())]
+    client = TestClient(
+        AgentOS(id=OS_ID, db=roles_db, agents=agents, authorization=authz, user_directory=users).get_app()
+    )
+    with _warnings() as messages:
+        r = client.get("/agents/a", headers=_token("dana", []))
+    assert r.status_code == 403  # the default never applied: the engine cannot see dana
+    line = [m for m in messages if "/agents/a" in m][-1]
+    assert "default role" not in line
+    assert "holds no role" in line
