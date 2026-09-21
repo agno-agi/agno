@@ -12,14 +12,16 @@ from fastapi.testclient import TestClient
 from httpx import ASGITransport
 from pydantic import BaseModel
 
+from agno.client import AgentOSClient
 from agno.db.base import ComponentType
 from agno.db.sqlite import SqliteDb
 from agno.os import AgentOS
 from agno.os.config import AuthorizationConfig
 from agno.os.routers.workflows.router import handle_workflow_via_websocket
+from agno.run.workflow import StepProgressEvent, WorkflowCompletedEvent
 from agno.workflow.factory import WorkflowFactory
 from agno.workflow.step import Step
-from agno.workflow.types import StepInput, StepOutput
+from agno.workflow.types import StepInput, StepOutput, StepProgress
 from agno.workflow.workflow import Workflow
 
 
@@ -543,3 +545,41 @@ async def test_aget_workflow_nonexistent_version_returns_404(versioned_workflow_
     async with httpx.AsyncClient(transport=ASGITransport(app=versioned_workflow_app), base_url="http://test") as client:
         response = await client.get("/workflows/versioned-wf", params={"version": 999})
         assert response.status_code == 404
+
+
+async def _sync_with_progress(step_input: StepInput):
+    yield StepProgress(content="Processed 1 of 2 pages", data={"processed": 1, "discovered": 2})
+    yield StepProgress(content="Processed 2 of 2 pages", data={"processed": 2, "discovered": 2})
+    yield StepOutput(content={"status": "completed", "discovered": 2, "updated": 2})
+
+
+@pytest.mark.asyncio
+async def test_function_step_progress_reaches_the_agentos_client_before_the_result(temp_storage_db_file, monkeypatch):
+    """The REST/SSE route carries a function step's progress to AgentOSClient as typed events,
+    ahead of completion, without replacing the run's final content. Twice, so nothing carries over."""
+    workflow = Workflow(
+        id="sync-docs",
+        db=SqliteDb(db_file=temp_storage_db_file),
+        steps=[Step(name="reconcile", executor=_sync_with_progress)],
+    )
+    app = AgentOS(workflows=[workflow], telemetry=False).get_app()
+    async with httpx.AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as http_client:
+        monkeypatch.setattr("agno.utils.http._global_async_client", http_client)
+        client = AgentOSClient(base_url="http://test")
+        runs = []
+        for _ in range(2):
+            runs.append([event async for event in client.run_workflow_stream("sync-docs", "go")])
+
+    for events in runs:
+        names = [event.event for event in events]
+        progress = [event for event in events if isinstance(event, StepProgressEvent)]
+        completed = events[-1]
+        assert isinstance(completed, WorkflowCompletedEvent)
+        assert [event.content for event in progress] == ["Processed 1 of 2 pages", "Processed 2 of 2 pages"]
+        assert progress[0].data == {"processed": 1, "discovered": 2}
+        assert {(event.run_id, event.step_name, event.attempt) for event in progress} == {
+            (completed.run_id, "reconcile", 1)
+        }
+        assert names.index("StepProgress") < names.index("StepCompleted") < names.index("WorkflowCompleted")
+        assert completed.content == {"status": "completed", "discovered": 2, "updated": 2}
+    assert runs[0][-1].run_id != runs[1][-1].run_id

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from concurrent.futures import ThreadPoolExecutor
 from uuid import uuid4
@@ -16,7 +17,9 @@ from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.os import AgentOS
 from agno.os.public import PublicSurface, RateLimit
+from agno.run.workflow import workflow_run_output_event_from_dict
 from agno.workflow import Step, StepInput, StepOutput, Workflow
+from agno.workflow.types import StepProgress
 
 pytestmark = pytest.mark.skipif(not os.getenv("AGNO_PAGE_TEST_DB_URL"), reason="requires isolated local PostgreSQL")
 
@@ -144,6 +147,36 @@ def test_workflow_authentication_while_chat_is_anonymous(engine):
             ).status_code
             == 400
         )
+
+
+async def sync_step_with_progress(step_input: StepInput):
+    yield StepProgress(content="Processed 1 of 1 pages", data={"processed": 1, "discovered": 1})
+    yield StepOutput(content={"status": "completed", "discovered": 1, "updated": 1})
+
+
+def test_protected_sync_streams_step_progress_only_to_the_trusted_token(engine):
+    app, _ = application(engine, "test-" + uuid4().hex[:8], executor=sync_step_with_progress)
+    payload = {"message": '{"reason":"test"}', "stream": "true"}
+    with TestClient(app) as client:
+        assert client.post("/workflows/sync-docs/runs", data=payload).status_code == 401
+        with client.stream(
+            "POST",
+            "/workflows/sync-docs/runs",
+            data=payload,
+            headers={"Authorization": "Bearer shared-internal-token"},
+        ) as response:
+            assert response.status_code == 200, response.read()
+            events = [
+                workflow_run_output_event_from_dict(json.loads(line[6:]))
+                for line in response.iter_lines()
+                if line.startswith("data: ")
+            ]
+
+    names = [event.event for event in events]
+    progress = events[names.index("StepProgress")]
+    assert (progress.content, progress.data) == ("Processed 1 of 1 pages", {"processed": 1, "discovered": 1})
+    assert names.index("StepProgress") < names.index("WorkflowCompleted")
+    assert events[names.index("WorkflowCompleted")].content == {"status": "completed", "discovered": 1, "updated": 1}
 
 
 @pytest.mark.parametrize("internal", [False, True])
