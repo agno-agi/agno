@@ -6,6 +6,9 @@ from agno.knowledge.reader.reader_factory import ReaderFactory
 from agno.knowledge.types import ContentType
 
 RESERVED_AGNO_KEY = "_agno"
+# Metadata key under which a vector db reports when a document last changed, for
+# rerankers that weight by recency.
+RECENCY_METADATA_KEY = "updated_at"
 
 
 def merge_user_metadata(
