@@ -26,7 +26,7 @@ makes ONE bootstrap admin (so someone can call the admin API).
 
 Run it:
     pip install "agno[os]"
-    python 06_manage_users_and_roles.py
+    python 07_manage_users_and_roles.py
 Then point your frontend at http://localhost:7777 (CORS is open to the usual dev
 ports). The server keeps running until you Ctrl-C.
 
@@ -52,7 +52,7 @@ To MANAGE roles/users over /authz you must be an admin. That comes from either a
 ``agent_os:admin`` scope on the token, OR being seeded in the store - so set
 ADMIN_SUBJECT to the `sub` of your token (decode it: the `sub` claim). e.g.
     OS_ID="<your-os-id>" JWT_VERIFICATION_KEY="<os public key>" \\
-    ADMIN_SUBJECT="you@company.com" python 06_manage_users_and_roles.py
+    ADMIN_SUBJECT="you@company.com" python 07_manage_users_and_roles.py
 """
 
 import os

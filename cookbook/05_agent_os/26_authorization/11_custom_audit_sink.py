@@ -33,7 +33,7 @@ requests, then prints the file. No server and no model key needed.
 
 Run it:
     pip install "agno[os]"
-    python 14_custom_audit_sink.py
+    python 11_custom_audit_sink.py
 """
 
 import json

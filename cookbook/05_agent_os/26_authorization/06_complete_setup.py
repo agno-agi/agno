@@ -1,27 +1,29 @@
 """
-Authorization quickstart - one object for the whole setup
+The complete built-in setup on one page - roles, users, audit and the admin API together
 
-New to this? Start here. "Authorization" means deciding who is allowed to do what.
-Two pieces make it work:
+(Read 01_managed_roles.py to 05_managed_roles_audit.py first; each of those introduces one
+piece. This file puts every piece together the way a real deployment wires them, and
+07_manage_users_and_roles.py serves exactly this setup for a frontend.)
 
-1. A token. When a user signs in they get a token: a small signed ID card sent with
-   every request. It says who they are (e.g. "bob") and can't be faked.
-2. Permissions, written as ROLES. A role is a named bundle of permissions you hand
-   to people. Change the role and everyone with it changes too.
+What is on the page:
+
+1. A user directory (the roster), seeded with three people and set to auto-provision anyone
+   else who arrives with a valid token.
+2. Roles: admin, viewer (the default a brand-new user gets) and runner, with alice bootstrapped
+   as the admin and the others handed a role. Safe to run on every start.
+3. The audit trail, on with one switch.
+4. Two enforcement planes at once: the managed roles for end users, and the token's own scopes
+   for an operator token minted elsewhere (trust_token_scopes=True).
+5. The admin API, mounted for you: /authz for roles and /users for the directory.
 
 Permissions are written as "scopes":
 - "agents:*:read"             -> can look at any agent
 - "agents:research:run"       -> can run the one agent called research
 - "agent_os:admin"            -> can do everything
 
-The core object is Authorization: token verification, the roles, the audit trail, and
-the admin API. The user directory (the roster) is a separate top-level AgentOS switch,
-seeded on its own store. Authorization borrows the AgentOS database, so you never wire
-the same db by hand.
-
 Run it:
     pip install "agno[os]"
-    python 00_quickstart_authorization.py
+    python 06_complete_setup.py
 (no OpenAI key needed here - we only check who is allowed, not actually chat)
 """
 
@@ -36,10 +38,10 @@ from agno.os import AgentOS
 from agno.os.authz import Authorization, UserDirectory
 
 JWT_SECRET = os.getenv("JWT_VERIFICATION_KEY", "your-secret-key-at-least-256-bits-long")
-OS_ID = "authz-quickstart-os"
+OS_ID = "authz-complete-setup-os"
 
 os.makedirs("tmp", exist_ok=True)
-db = SqliteDb(db_file="tmp/authz_quickstart.db")
+db = SqliteDb(db_file="tmp/authz_complete_setup.db")
 
 # The user directory (roster) is separate from authorization: create the store and seed people on it.
 users = UserDirectory(db=db, auto_provision=True)
