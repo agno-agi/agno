@@ -424,3 +424,40 @@ def test_full_text_search_uses_schema_for_qualified_table(duckdb_tools_instance,
     call_args = mock_duckdb_connection.sql.call_args[0][0]
     assert "\"fts_myschema_docs\".match_bm25(id, 'butter')" in call_args
     assert "fts_main_docs" not in call_args
+
+
+@pytest.mark.parametrize(
+    "query, expected",
+    [
+        ("SELECT 'a;b' AS value", "value\na;b"),
+        ("SELECT 'it''s;a' AS value", "value\nit's;a"),
+        ("SELECT $$a;b$$ AS value", "value\na;b"),
+        ("SELECT /* ; */ 1 AS value", "value\n1"),
+        ("SELECT 1 AS value -- ; ignored\n", "value\n1"),
+    ],
+)
+def test_run_query_preserves_sql_statement_contents(query, expected):
+    """SQL literals and comments must survive selection of the first statement."""
+    import duckdb
+
+    with duckdb.connect() as connection:
+        tools = DuckDbTools(connection=connection)
+        assert tools.run_query(query) == expected
+
+
+def test_run_query_only_executes_first_statement():
+    """A later statement must not run, including when the first contains a semicolon."""
+    import duckdb
+
+    with duckdb.connect() as connection:
+        tools = DuckDbTools(connection=connection)
+        assert tools.run_query("SELECT 'a;b' AS value; CREATE TABLE unwanted (id INT)") == "value\na;b"
+        assert connection.sql("SHOW TABLES").fetchall() == []
+
+
+@pytest.mark.parametrize("query", ["", "   ", "-- no statement"])
+def test_run_query_empty_input(query):
+    import duckdb
+
+    with duckdb.connect() as connection:
+        assert DuckDbTools(connection=connection).run_query(query) == "No output"
