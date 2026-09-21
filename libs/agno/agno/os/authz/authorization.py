@@ -658,22 +658,24 @@ class Authorization:
         return await self._store().aexplicit_denials(resource_type, action, subject=subject, roles=roles)
 
     def _default_role_applied(self, subject: str) -> Optional[str]:
-        """The default role the engine applied to ``subject`` at decision time, or None. Mirrors the
-        engine's own rule (a directory user it can see through ITS db, holding no assignment), so a
-        denial explanation reports what decided rather than what the directory alone suggests."""
+        """The default role the engine applied to ``subject`` at decision time, or None. Asks the
+        engine's own subject resolution rather than re-deriving its rules (a directory user it can
+        see through ITS db, holding no assignment, whose id does not collide with a role name), so a
+        denial explanation reports exactly what decided. Only meaningful for a subject with no
+        assignment, which is the only case the gate asks about."""
         default = self.default_role()
         if not default:
             return None
-        seen = getattr(self._store()._engine, "_subject_in_directory", None)
-        return default if callable(seen) and seen(subject) else None
+        closure = getattr(self._store()._engine, "_subject_closure", None)
+        return default if callable(closure) and default in closure(subject) else None
 
     async def _adefault_role_applied(self, subject: str) -> Optional[str]:
         """Async twin of :meth:`_default_role_applied`."""
         default = await self.adefault_role()
         if not default:
             return None
-        seen = getattr(self._store()._engine, "_asubject_in_directory", None)
-        return default if callable(seen) and await seen(subject) else None
+        closure = getattr(self._store()._engine, "_asubject_closure", None)
+        return default if callable(closure) and default in await closure(subject) else None
 
     def _roles_of_many(self, subjects: List[str]) -> Dict[str, List[str]]:
         """Roles of each subject in one call; used where a caller needs the whole"""

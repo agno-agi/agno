@@ -316,3 +316,24 @@ def test_denial_on_a_split_db_does_not_claim_a_default_role_that_never_applied(t
     line = [m for m in messages if "/agents/a" in m][-1]
     assert "default role" not in line
     assert "holds no role" in line
+
+
+def test_denial_of_a_directory_user_named_like_a_role_does_not_claim_the_default(tmp_path):
+    """A subject whose id equals a role slug is refused by the engine's collision guard before the
+    default role is ever considered, so the line must not report the default as having decided."""
+    from agno.os.authz import UserDirectory
+
+    db = SqliteDb(db_file=str(tmp_path / "collide.db"))
+    authz = Authorization(db=db, verification_keys=[SECRET], algorithm="HS256", verify_audience=True, audience=OS_ID)
+    authz.define_role("admin", ["agent_os:admin"])
+    authz.define_role("viewer", ["agents:*:read"], default=True)
+    users = UserDirectory(db=db, auto_provision=False)
+    users.upsert("viewer", email="v@co")  # a directory user named like the default role, no assignment
+    agents = [Agent(id="a", name="A", db=InMemoryDb())]
+    client = TestClient(AgentOS(id=OS_ID, db=db, agents=agents, authorization=authz, user_directory=users).get_app())
+    with _warnings() as messages:
+        r = client.get("/agents/a", headers=_token("viewer", []))
+    assert r.status_code == 403  # refused by the collision guard, although 'viewer' would grant the read
+    line = [m for m in messages if "Denied GET /agents/a" in m][-1]
+    assert "default role" not in line
+    assert "holds no role" in line
