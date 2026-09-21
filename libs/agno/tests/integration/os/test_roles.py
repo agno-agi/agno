@@ -559,3 +559,19 @@ def test_patch_role_scopes_validates_the_whole_diff_before_writing(tmp_path):
 
     store._patch_role_scopes("member", upsert=["agents:*:run"], remove=["agents:*:read"])  # a valid diff still applies
     assert store.get_role_scopes("member") == ["agents:run"]
+
+
+def test_patch_remove_of_an_unparseable_scope_points_at_put(tmp_path):
+    """A legacy ``agent_os/*`` row reads back as ``agent_os:*:admin``, which the parser now refuses,
+    so PATCH remove of that string cannot name it. PUT without the entry does clean it; say so."""
+    import asyncio
+
+    from agno.db.sqlite import SqliteDb
+
+    store = Authorization(db=SqliteDb(db_file=str(tmp_path / "legacy.db")))
+    store.set_role_scopes("member", ["agents:*:read"])
+    with pytest.raises(ValueError, match="PUT"):
+        store._patch_role_scopes("member", remove=["agent_os:*:admin"])
+    with pytest.raises(ValueError, match="PUT"):
+        asyncio.run(store._apatch_role_scopes("member", remove=["agent_os:*:admin"]))
+    assert store.get_role_scopes("member") == ["agents:read"]

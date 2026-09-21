@@ -51,6 +51,21 @@ if TYPE_CHECKING:
 ScopeInput = Union[str, Tuple[str, str], Dict[str, str]]
 
 
+def _check_removable(role: str, scope: str) -> None:
+    """Validate a PATCH ``remove`` entry, and when the parser refuses it say how to clean the row:
+    a legacy entry that the parser no longer accepts (an ``agent_os/*`` row reads back as
+    ``agent_os:*:admin``) cannot be named here, but PUT of the role's scopes without it drops it."""
+    from agno.os.authz._scope_policy import scope_to_resource_action
+
+    try:
+        scope_to_resource_action(scope)
+    except ValueError as exc:
+        raise ValueError(
+            f"{exc} A stored entry that the parser no longer accepts cannot be removed by name; replace "
+            f"the role's scopes without it via PUT /authz/roles/{role}/scopes."
+        ) from None
+
+
 def _normalize_scope(entry: ScopeInput) -> Tuple[str, str]:
     """Coerce a scope input into ``(scope, effect)`` with effect in {allow, deny}."""
     if isinstance(entry, str):
@@ -350,7 +365,7 @@ class RoleStore:
         # caller with a 422, and no audit event for the grants that did land.
         removals = [_normalize_scope(entry)[0] for entry in remove or []]
         for scope in removals:
-            scope_to_resource_action(scope)  # raises on an unrecognised scope, with nothing written yet
+            _check_removable(role, scope)  # raises on an unrecognised scope, with nothing written yet
         for scope, effect in staged.values():
             self._engine.add_scope(role, scope, effect)
         for scope in removals:
@@ -758,7 +773,7 @@ class RoleStore:
                 staged[key] = (scope, eff)
         removals = [_normalize_scope(entry)[0] for entry in remove or []]
         for scope in removals:
-            scope_to_resource_action(scope)  # validate before the first write (see the sync twin)
+            _check_removable(role, scope)  # validate before the first write (see the sync twin)
         for scope, effect in staged.values():
             await self._engine.aadd_scope(role, scope, effect)
         for scope in removals:
