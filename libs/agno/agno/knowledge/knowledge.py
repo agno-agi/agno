@@ -10,7 +10,21 @@ from enum import Enum
 from io import BytesIO
 from os.path import basename
 from pathlib import Path
-from typing import Any, AsyncIterator, Callable, Dict, Iterator, List, Literal, Optional, Set, Tuple, Union, cast, overload
+from typing import (
+    Any,
+    AsyncIterator,
+    Callable,
+    Dict,
+    Iterator,
+    List,
+    Literal,
+    Optional,
+    Set,
+    Tuple,
+    Union,
+    cast,
+    overload,
+)
 
 from httpx import AsyncClient
 
@@ -350,15 +364,17 @@ class Knowledge(RemoteKnowledge):
 
     async def astream_sync_pages(self, **kwargs: Any) -> AsyncIterator[Union[PageSyncProgress, SyncReport]]:
         """Async stream_sync_pages; use aclosing when stopping iteration early."""
-        from contextlib import aclosing
-
         from agno.knowledge.page._coordinator import SYNC_WORKERS
 
         if "on_progress" in kwargs:
             raise ValueError("astream_sync_pages manages its own progress observer")
-        async with aclosing(SYNC_WORKERS.astream(self._pages().sync, seconds=3900, **kwargs)) as events:
+        events = SYNC_WORKERS.astream(self._pages().sync, seconds=3900, **kwargs)
+        # try/finally rather than contextlib.aclosing, which does not exist on Python 3.9.
+        try:
             async for event in events:
                 yield event
+        finally:
+            await events.aclose()
 
     def inspect_page_source(self) -> PageSourceBinding:
         """Inspect the namespace's current storage/source binding without mutations."""
