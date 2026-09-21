@@ -17,15 +17,17 @@ Requirements:
 - export OPENAI_API_KEY="your_api_key"
 """
 
+import json
 from typing import Annotated
+
+from pydantic import BaseModel
+from rich.pretty import pprint
+from typesafe_sdk import Noul, Score
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIResponses
 from agno.models.typesafe import JevField
 from agno.tools.typesafe import JevTools
-from agno.utils.pprint import pprint_run_response
-from pydantic import BaseModel
-from typesafe_sdk import Noul, Score
 
 # ---------------------------------------------------------------------------
 # Define the Questions
@@ -89,6 +91,7 @@ agent = Agent(
         "If the check fails, rewrite and check again, at most twice. Then give the final reply and the check results.",
     ],
     markdown=True,
+    cache_session=True,
 )
 
 # ---------------------------------------------------------------------------
@@ -96,8 +99,21 @@ agent = Agent(
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    response = agent.run(
+    agent.print_response(
         "Customer: 'My blender arrived with a cracked jug. This is the second time. I want my money back.'",
         stream=True,
     )
-    pprint_run_response(response, markdown=True)
+    response = agent.get_last_run_output()
+    if response is not None:
+        for tool_call in response.tools or []:
+            if tool_call.tool_name == "evaluate":
+                pprint(
+                    {
+                        "arguments": tool_call.tool_args,
+                        "result": (
+                            json.loads(tool_call.result)
+                            if tool_call.result and not tool_call.tool_call_error
+                            else tool_call.result
+                        ),
+                    }
+                )

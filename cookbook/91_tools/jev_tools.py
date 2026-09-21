@@ -20,10 +20,13 @@ Requirements:
 - export OPENAI_API_KEY="your_api_key"
 """
 
+import json
+
+from rich.pretty import pprint
+
 from agno.agent import Agent
 from agno.models.openai import OpenAIResponses
 from agno.tools.typesafe import JevTools
-from agno.utils.pprint import pprint_run_response
 
 # ---------------------------------------------------------------------------
 # Create Agent
@@ -38,6 +41,7 @@ agent = Agent(
         "then answer from the numbers and show them in a table.",
     ],
     markdown=True,
+    cache_session=True,
 )
 
 REVIEWS = """\
@@ -51,9 +55,22 @@ C: "Fine for calls and email. Camera is mediocre. You get what you pay for."
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    response = agent.run(
+    agent.print_response(
         f"Here are three phone reviews:\n{REVIEWS}\n"
         "Which reviewer is most likely to return the phone, and which qualities drive that?",
         stream=True,
     )
-    pprint_run_response(response, markdown=True)
+    response = agent.get_last_run_output()
+    if response is not None:
+        for tool_call in response.tools or []:
+            if tool_call.tool_name == "ask_jev":
+                pprint(
+                    {
+                        "arguments": tool_call.tool_args,
+                        "result": (
+                            json.loads(tool_call.result)
+                            if tool_call.result and not tool_call.tool_call_error
+                            else tool_call.result
+                        ),
+                    }
+                )

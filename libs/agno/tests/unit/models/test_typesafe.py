@@ -948,8 +948,35 @@ def test_smart_home_cookbook_does_not_fallback_on_sdk_failure(monkeypatch):
 
 
 @pytest.mark.parametrize("stream", [False, True])
-@pytest.mark.parametrize("department", ["billing", "technical"])
-def test_agent_os_cookbook_classifies_and_routes_via_api(monkeypatch, stream, department):
+@pytest.mark.parametrize("safety", ["allow", "input_blocked"])
+@pytest.mark.parametrize(
+    "member,tool_name,arguments,filename",
+    [
+        (
+            "backend",
+            "generate_code_file",
+            {"code": "print('hello')", "language": "python", "filename": "hello.py"},
+            "hello.py",
+        ),
+        (
+            "backend",
+            "generate_code_file",
+            {"code": "console.log('hello');", "language": "javascript", "filename": "hello.js"},
+            "hello.js",
+        ),
+        (
+            "frontend",
+            "generate_html_file",
+            {"content": "<!doctype html><html><body>Hello</body></html>", "filename": "index.html"},
+            "index.html",
+        ),
+        ("shell", "run_shell_command", {"args": ["python", "--version"]}, None),
+        ("research", "web_search", {"query": "FastAPI documentation"}, None),
+    ],
+)
+def test_agent_os_cookbook_classifies_and_routes_via_api(
+    monkeypatch, tmp_path, stream, safety, member, tool_name, arguments, filename
+):
     import runpy
     from pathlib import Path
 
@@ -958,28 +985,75 @@ def test_agent_os_cookbook_classifies_and_routes_via_api(monkeypatch, stream, de
 
     from agno.db.in_memory import InMemoryDb
 
+    pytest.importorskip("ddgs")
+    tool_calls = []
+
+    def run_shell_command(self, args: list[str], tail: int = 100) -> str:
+        tool_calls.append(("shell", args))
+        return "Python test version"
+
+    def web_search(self, query: str, max_results: int = 5) -> str:
+        tool_calls.append(("research", query))
+        return '[{"title": "FastAPI", "href": "https://fastapi.tiangolo.com/"}]'
+
+    class Specialist(Echo):
+        def invoke(self, messages, **kwargs):
+            if self.inputs:
+                return ModelResponse(role="assistant", content="member result")
+            self.inputs.append(messages[-1].content)
+            return ModelResponse(
+                role="assistant",
+                tool_calls=[
+                    {
+                        "id": "call-demo",
+                        "type": "function",
+                        "function": {"name": tool_name, "arguments": json.dumps(arguments)},
+                    }
+                ],
+            )
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("agno.tools.shell.ShellTools.run_shell_command", run_shell_command)
+    monkeypatch.setattr("agno.tools.websearch.WebSearchTools.web_search", web_search)
     monkeypatch.setenv("AGNO_TELEMETRY", "false")
     monkeypatch.delenv("OS_SECURITY_KEY", raising=False)
     monkeypatch.setattr("agno.db.sqlite.SqliteDb", lambda **kwargs: InMemoryDb())
     path = Path(__file__).resolve().parents[5] / "cookbook/90_models/typesafe/agent_os.py"
     example = runpy.run_path(str(path))
+
+    class GuardSDK(AsyncSDK):
+        def __deepcopy__(self, memo):
+            # AgentOS clones guards per request; keep the injected client's call log shared.
+            return self
+
+    input_sdk = GuardSDK(probability=0.9 if safety == "input_blocked" else 0.1)
+    example["request_guardrail"].sdk.async_client = input_sdk
+    department = "billing" if member == "backend" else "technical"
     classifier_sdk = AsyncSDK(choices={"q0": department})
-    router_sdk = AsyncSDK(choices={"select": department})
+    router_sdk = AsyncSDK(choices={"select": member})
     example["classifier"].model.async_client = classifier_sdk
-    example["support_team"].model.async_client = router_sdk
-    billing_model, technical_model = Echo(), Echo()
-    example["billing"].model = billing_model
-    example["technical"].model = technical_model
-    message = "Please refund a duplicate charge" if department == "billing" else "Our workspace is down"
+    example["tech_team"].model.async_client = router_sdk
+    models = {name: Specialist() for name in ("backend", "frontend", "shell", "research")}
+    for name, model in models.items():
+        example[name].model = model
+    message = f"Please complete this {member} task: {json.dumps(arguments)}"
     data = {"message": message, "stream": str(stream).lower()}
 
     with TestClient(example["app"]) as client:
         assert client.get("/config").status_code == 200
         assert client.get("/openapi.json").status_code == 200
         classification = client.post("/agents/ticket-classifier/runs", data=data)
-        routed = client.post("/teams/support-router/runs", data=data)
+        routed = client.post("/teams/tech-team/runs", data=data)
 
-    assert classification.status_code == routed.status_code == 200
+    assert classification.status_code == 200
+    if safety == "input_blocked":
+        assert "unsafe request" in routed.text
+        assert len(input_sdk.calls) == 1
+        assert not router_sdk.calls and not tool_calls
+        assert all(not model.inputs for model in models.values())
+        return
+    assert routed.status_code == 200
+    assert len(input_sdk.calls) == 2, routed.text  # Team input, then selected specialist input.
     if stream:
         assert classification.headers["content-type"].startswith("text/event-stream")
         assert department in classification.text
@@ -989,8 +1063,16 @@ def test_agent_os_cookbook_classifies_and_routes_via_api(monkeypatch, stream, de
         assert classification.json()["content"] == {"department": department, "urgent": True}
         assert routed.json()["content"] == "member result"
     assert len(classifier_sdk.calls) == len(router_sdk.calls) == 1
-    selected = billing_model if department == "billing" else technical_model
-    unselected = technical_model if department == "billing" else billing_model
-    assert len(selected.inputs) == 1
-    assert message in selected.inputs[0]
-    assert unselected.inputs == []
+    assert set(router_sdk.calls[0][1]["select"].criteria) == set(models)
+    for name, model in models.items():
+        assert len(model.inputs) == int(name == member)
+    assert message in models[member].inputs[0]
+    if filename:
+        artifact = tmp_path / "tmp/jev_tech_team" / filename
+        assert artifact.read_text(encoding="utf-8") == arguments.get("code", arguments.get("content"))
+        assert filename in routed.text
+        if not stream:
+            assert routed.json()["files"][0]["filename"] == filename
+    else:
+        assert len(tool_calls) == 1
+        assert tool_calls[0][0] == member

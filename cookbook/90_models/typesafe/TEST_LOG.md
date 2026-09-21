@@ -207,6 +207,36 @@ Validation: **119 tests passed**, including all 17 Jev cookbook smoke cases. Ruf
 
 **Result:** Four parameterized API checks pass: billing and technical requests, each with JSON and streamed responses. `/config` and `/openapi.json` load successfully. Each request makes one async Jev call; routing invokes only the selected specialist with the original input. The example uses `TeamMode.route` so the AgentOS configuration can serialize its mode. Ruff lint and formatting pass. No live API calls were made.
 
+### agent_os.py — tech team
+
+**Status:** PASS (mocked API checks)
+
+**Description:** Jev routes to backend code generation, frontend HTML generation,
+shell execution, or web research. Backend coverage includes Python and Node.js.
+
+**Result:** All 10 checks pass (five requests, each using JSON and streaming).
+Each request makes one Jev routing call and invokes only the selected specialist
+with the original input. Real file-generation tools save the expected Python,
+JavaScript, and HTML content under a temporary workspace, and generated artifacts
+reach the API response. Shell execution and web search are mocked; both tools
+are invoked once for their selected route. `/config`, `/openapi.json`, and the
+standalone Ticket Classifier continue to work. Ruff lint and formatting pass.
+No live routing calibration, external search, or generated code execution was performed.
+
+### agent_os.py — Jev input guards
+
+**Status:** PASS (mocked)
+
+**Description:** One shared `JevGuardrail` checks user input through the team and
+specialist `pre_hooks`. Tool wrappers, local-file review, and execution checks
+were removed to keep this example focused on input checks.
+
+**Result:** All 20 focused checks pass across five specialist tasks in JSON/streaming
+modes with allowed and rejected inputs. Rejected inputs stop before routing or
+tool calls; allowed inputs reach the selected specialist and preserve generated
+artifacts. Provider decisions are mocked, so this checks integration rather than
+live harmful-request detection quality. Ruff lint and formatting pass.
+
 ### accuracy_eval.py — 2026-09-21
 
 **Status:** PASS (mocked)

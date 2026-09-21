@@ -31,7 +31,7 @@ Injected SDK clients remain caller-owned; Agno does not close them.
 | --- | --- |
 | `route_team.py` | Minimal two-member team: Jev routes, the selected specialist answers |
 | `workflow.py` | Linear pipeline: Jev classifies a ticket, a generative model explains next steps |
-| `agent_os.py` | Serve a typed classifier and a Jev-led routing team through AgentOS |
+| `agent_os.py` | Serve a typed classifier and a Jev-routed tech team with code, HTML, shell, and web-search tools |
 | `accuracy_eval.py` | Display a generated answer, then score that same run against a reference |
 | `structured_output.py` | Validated input and annotated Pydantic output |
 | `basic.py` | Customer-support department, urgency, and fractional frustration score |
@@ -96,7 +96,7 @@ custom scorer directly or through `Case(scorer=..., expected=...)`.
 Install the server dependencies and start the example from the repository root:
 
 ```sh
-pip install -e 'libs/agno[typesafe,openai,os]'
+pip install -e 'libs/agno[typesafe,openai,os]' ddgs
 python cookbook/90_models/typesafe/agent_os.py
 ```
 
@@ -105,13 +105,32 @@ to try the API, or connect `http://localhost:7777` at `https://os.agno.com`.
 
 - **Ticket Classifier** (`POST /agents/ticket-classifier/runs`) returns typed
   department and urgency decisions using only Jev.
-- **Support Router** (`POST /teams/support-router/runs`) uses Jev to choose
-  billing or technical support, then streams the selected specialist's answer.
+- **Tech Team** (`POST /teams/tech-team/runs`) uses Jev to choose one specialist,
+  forwards the original request, and returns that specialist's response and artifacts.
 
-For either endpoint, submit the `message` form field with one of these inputs:
+The tech team reuses four agents with `OpenAIResponses`:
 
-- Billing: "I was charged twice for my subscription. Please refund the duplicate."
-- Technical: "Our workspace returns a 500 error. Nobody can log in and all work is blocked."
+| Specialist | Built-in tool | Example request |
+| --- | --- | --- |
+| Backend Engineer | `FileGenerationTools.generate_code_file` | "Generate a Python FastAPI service with a health endpoint as health_api.py." |
+| Backend Engineer | `FileGenerationTools.generate_code_file` | "Generate a Node.js HTTP server with a health endpoint as server.js." |
+| Frontend Engineer | `FileGenerationTools.generate_html_file` | "Create a responsive HTML landing page for a developer conference." |
+| Shell Engineer | `ShellTools.run_shell_command` | "Run a command to list the generated files and show the Python version." |
+| Research Engineer | `WebSearchTools.web_search` | "Search the web for FastAPI deployment documentation and summarize the options." |
+
+Submit a request in the `message` form field. Route mode selects one specialist
+per request, so ask separately to generate code and then execute it. Source and
+HTML files are returned as artifacts and also saved to `tmp/jev_tech_team`.
+The shell uses that directory as its working directory and executes on the host;
+the directory is not a sandbox. Web search uses `ddgs` and needs no extra API key.
+
+One shared `JevGuardrail` checks user input through `pre_hooks` on the team and
+each specialist. It checks for prompt injection, harmful requests, and requests
+to create or execute harmful code, using a configurable `0.7` risk threshold.
+This example checks user input only; generated code and tool calls are not reviewed.
+
+The separate Ticket Classifier still accepts billing or technical tickets, such
+as "I was charged twice" or "Nobody can log in", and returns department/urgency.
 
 Set the `stream` form field to `false` for a single JSON response or `true`
 for events. Sessions are stored locally in `tmp/jev_agent_os.db`.

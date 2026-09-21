@@ -125,14 +125,19 @@ Validation used `.venv/Scripts/python.exe` with mocked providers. No live API qu
 
 **Status:** PASS (mocked)
 
-**Description:** Mocked feature-discovery example using JevTools(). Separate agent-loop tests exercise LLM-authored ask_jev calls in sync and async modes.
+**Description:** Stream the feature-discovery response through `agent.print_response`, retrieve the cached run, and display each `ask_jev` call's arguments and decoded JSON result with Rich `pprint`.
 
-**Result:** Cookbook smoke test passed.
+**Result:** Both Jev tool cookbook smoke tests pass. An additional mocked streaming
+check confirms one Jev call, the generation/tool/final-answer cycle, and one decoded
+result printed from the same saved run. Lint and formatting pass. No live API calls.
 
 ### jev_tools_fixed_schema.py
 
 **Status:** PASS (mocked)
 
-**Description:** Mocked draft-checking example using a fixed JevField output schema and explicit boolean thresholds. Regression tests retain evaluate-only defaults.
+**Description:** Stream the draft-checking reply through `agent.print_response`, retrieve the cached run, and display each `evaluate` call's arguments and decoded result with Rich `pprint`.
 
-**Result:** Cookbook smoke test passed.
+**Result:** Both Jev tool cookbook smoke tests pass. An additional mocked streaming
+check confirms one Jev evaluation, the generation/tool/final-answer cycle, and
+decoded boolean results displayed from the same saved run. Lint and formatting
+pass. No live API calls.

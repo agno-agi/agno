@@ -29,6 +29,8 @@
 - [x] Added `agent_os.py` with a typed Jev classifier, a Jev-led routing team, local session storage, and API checks for JSON and streamed responses from both departments.
 - [x] Added `JevAccuracyScorer` with one native Noul comparison, sync/async clients, probability thresholds, metadata, and stable scoring fingerprints. Existing accuracy and AgentOS eval APIs remain unchanged.
 - [x] Added supplied-answer, concurrent, and suite examples in the accuracy cookbook plus a generated-answer introduction in the model cookbook.
+- [x] Expanded the AgentOS routing demo into a tech team: Python/Node.js source artifacts, HTML artifacts, host shell commands, and web research, selected one specialist at a time by Jev.
+- [x] Added one shared Jev input guardrail through team and specialist `pre_hooks`, keeping the example focused on user-input checks.
 
 This branch uses Python 3.10+ for the optional SDK while retaining Agno's
 existing core Python requirement. No PR or publication is part of this work.
