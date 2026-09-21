@@ -636,6 +636,35 @@ class TestTeamSingletonIsolation:
         assert session.metadata == {"env": "test"}
         assert session.metadata is not team.metadata
 
+    def test_precreated_session_hydrates_missing_persistence_data(self):
+        from agno.db.in_memory import InMemoryDb
+        from agno.session import TeamSession
+        from agno.team._storage import _read_or_create_session
+
+        db = InMemoryDb()
+        db.upsert_session(TeamSession(session_id="session-a", team_id="team-1"))
+        team = _make_team(id="team-1", db=db, session_state={"region": "cn"})
+
+        session = _read_or_create_session(team, session_id="session-a")
+
+        assert session.team_data == {"team_id": "team-1"}
+        assert session.session_data == {"session_state": {"region": "cn"}}
+
+    @pytest.mark.asyncio
+    async def test_precreated_session_hydrates_missing_persistence_data_async(self):
+        from agno.db.in_memory import InMemoryDb
+        from agno.session import TeamSession
+        from agno.team._storage import _aread_or_create_session
+
+        db = InMemoryDb()
+        db.upsert_session(TeamSession(session_id="session-a", team_id="team-1"))
+        team = _make_team(id="team-1", db=db, session_state={"region": "cn"})
+
+        session = await _aread_or_create_session(team, session_id="session-a")
+
+        assert session.team_data == {"team_id": "team-1"}
+        assert session.session_data == {"session_state": {"region": "cn"}}
+
 
 # ---------------------------------------------------------------------------
 # Session metadata precedence on the full run() path

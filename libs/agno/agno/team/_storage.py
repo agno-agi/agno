@@ -194,6 +194,20 @@ def get_session_metrics_internal(team: "Team", session: TeamSession) -> SessionM
 # ---------------------------------------------------------------------------
 
 
+def _hydrate_precreated_session(team: "Team", session: TeamSession) -> None:
+    """Add the Team-owned persistence containers omitted by API session creation."""
+    from copy import deepcopy
+
+    from agno.team._telemetry import get_team_data
+
+    if session.team_data is None:
+        session.team_data = get_team_data(team)
+    if session.session_data is None:
+        session.session_data = {}
+        if team.session_state is not None:
+            session.session_data["session_state"] = deepcopy(team.session_state)
+
+
 def _read_session(
     team: "Team", session_id: str, session_type: SessionType = SessionType.TEAM, user_id: Optional[str] = None
 ) -> Optional[Union[TeamSession, WorkflowSession]]:
@@ -334,6 +348,13 @@ def _read_or_create_session(team: "Team", session_id: str, user_id: Optional[str
     if team.db is not None and team.parent_team_id is None and team.workflow_id is None:
         team_session = cast(TeamSession, _read_session(team, session_id=session_id, user_id=user_id))
 
+    # A session created through the sessions API is intentionally minimal and
+    # can have neither data column populated yet. Hydrate only missing values so
+    # a subsequent Team run has the same persistence containers as a session
+    # created by the Team itself, without overwriting stored state.
+    if team_session is not None:
+        _hydrate_precreated_session(team, team_session)
+
     # Create new session if none found
     if team_session is None:
         log_debug(f"Creating new TeamSession: {session_id}")
@@ -407,6 +428,11 @@ async def _aread_or_create_session(team: "Team", session_id: str, user_id: Optio
             team_session = cast(TeamSession, await _aread_session(team, session_id=session_id, user_id=user_id))
         else:
             team_session = cast(TeamSession, _read_session(team, session_id=session_id, user_id=user_id))
+
+    # Keep the async read path behaviorally identical to the sync path above.
+    # Pre-created sessions do not yet carry Team-owned persistence containers.
+    if team_session is not None:
+        _hydrate_precreated_session(team, team_session)
 
     # Create new session if none found
     if team_session is None:
