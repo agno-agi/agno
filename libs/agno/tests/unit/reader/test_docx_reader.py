@@ -1,181 +1,116 @@
 import asyncio
 from io import BytesIO
-from pathlib import Path
-from unittest.mock import Mock, patch
 
 import pytest
+from docx import Document as DocxDocument
 
-from agno.knowledge.document.base import Document
 from agno.knowledge.reader.docx_reader import DocxReader
 
 
 @pytest.fixture
-def mock_docx():
-    """Mock a DOCX document with some paragraphs"""
-    mock_para1 = Mock()
-    mock_para1.text = "First paragraph"
-    mock_para2 = Mock()
-    mock_para2.text = "Second paragraph"
-
-    mock_doc = Mock()
-    mock_doc.paragraphs = [mock_para1, mock_para2]
-    return mock_doc
+def docx_file(tmp_path):
+    document = DocxDocument()
+    document.add_paragraph("First paragraph")
+    document.add_paragraph("Second paragraph")
+    path = tmp_path / "test.docx"
+    document.save(path)
+    return path
 
 
-def test_docx_reader_read_file(mock_docx):
-    """Test reading a DOCX file"""
-    with (
-        patch("pathlib.Path.exists", return_value=True),
-        patch("agno.knowledge.reader.docx_reader.DocxDocument", return_value=mock_docx),
-    ):
-        reader = DocxReader()
-        documents = reader.read(Path("test.docx"))
+@pytest.fixture(
+    params=[("read", "path"), ("read", "bytesio"), ("async_read", "path"), ("async_read", "bytesio")],
+    ids=["sync-path", "sync-bytesio", "async-path", "async-bytesio"],
+)
+def read_docx(request, tmp_path):
+    """Save a real DOCX and exercise each reader method and input type."""
+    method, file_type = request.param
 
-        assert len(documents) == 1
-        assert documents[0].name == "test"
-        assert documents[0].content == "First paragraph\n\nSecond paragraph"
+    async def read(document, **kwargs):
+        source = tmp_path / "tables.docx" if file_type == "path" else BytesIO()
+        document.save(source)
+        if isinstance(source, BytesIO):
+            source.seek(0)
+        reader = DocxReader(**{"chunk": False, **kwargs})
+        if method == "async_read":
+            return await reader.async_read(source)
+        return reader.read(source)
+
+    return read
+
+
+def test_docx_reader_read_file(docx_file):
+    documents = DocxReader().read(docx_file)
+
+    assert len(documents) == 1
+    assert documents[0].name == "test"
+    assert documents[0].content == "First paragraph\n\nSecond paragraph"
 
 
 @pytest.mark.asyncio
-async def test_docx_reader_async_read_file(mock_docx):
-    """Test reading a DOCX file asynchronously"""
-    with (
-        patch("pathlib.Path.exists", return_value=True),
-        patch("agno.knowledge.reader.docx_reader.DocxDocument", return_value=mock_docx),
-    ):
-        reader = DocxReader()
-        documents = await reader.async_read(Path("test.docx"))
+async def test_docx_reader_async_read_file(docx_file):
+    documents = await DocxReader().async_read(docx_file)
 
-        assert len(documents) == 1
-        assert documents[0].name == "test"
-        assert documents[0].content == "First paragraph\n\nSecond paragraph"
+    assert len(documents) == 1
+    assert documents[0].name == "test"
+    assert documents[0].content == "First paragraph\n\nSecond paragraph"
 
 
-def test_docx_reader_with_chunking():
-    """Test reading a DOCX file with chunking enabled"""
-    mock_doc = Mock()
-    mock_para = Mock()
-    mock_para.text = "Test content"
-    mock_doc.paragraphs = [mock_para]
+def test_docx_reader_with_chunking(docx_file):
+    documents = DocxReader(chunk_size=20).read(docx_file)
 
-    chunked_docs = [
-        Document(name="test", id="test_1", content="Chunk 1"),
-        Document(name="test", id="test_2", content="Chunk 2"),
-    ]
-
-    with (
-        patch("pathlib.Path.exists", return_value=True),
-        patch("agno.knowledge.reader.docx_reader.DocxDocument", return_value=mock_doc),
-    ):
-        reader = DocxReader()
-        reader.chunk = True
-        reader.chunk_document = Mock(return_value=chunked_docs)
-
-        documents = reader.read(Path("test.docx"))
-
-        reader.chunk_document.assert_called_once()
-        assert len(documents) == 2
-        assert documents[0].content == "Chunk 1"
-        assert documents[1].content == "Chunk 2"
+    assert [document.content for document in documents] == ["First paragraph", "Second paragraph"]
+    assert [document.meta_data["chunk"] for document in documents] == [1, 2]
+    assert all(document.name == "test" for document in documents)
 
 
-def test_docx_reader_bytesio(mock_docx):
-    """Test reading a DOCX from BytesIO"""
-    file_obj = BytesIO(b"dummy content")
+def test_docx_reader_bytesio(docx_file):
+    file_obj = BytesIO(docx_file.read_bytes())
     file_obj.name = "test.docx"
 
-    with patch("agno.knowledge.reader.docx_reader.DocxDocument", return_value=mock_docx):
-        reader = DocxReader()
-        documents = reader.read(file_obj)
+    documents = DocxReader().read(file_obj)
 
-        assert len(documents) == 1
-        assert documents[0].name == "test"
-        assert documents[0].content == "First paragraph\n\nSecond paragraph"
+    assert len(documents) == 1
+    assert documents[0].name == "test"
+    assert documents[0].content == "First paragraph\n\nSecond paragraph"
 
 
-def test_docx_reader_invalid_file():
-    """Test reading an invalid file"""
-    with patch("pathlib.Path.exists", return_value=False):
-        reader = DocxReader()
-        documents = reader.read(Path("nonexistent.docx"))
-        assert len(documents) == 0
+def test_docx_reader_invalid_file(tmp_path):
+    assert DocxReader().read(tmp_path / "nonexistent.docx") == []
 
 
 def test_docx_reader_file_error():
-    """Test handling of file reading errors"""
-    with (
-        patch("pathlib.Path.exists", return_value=True),
-        patch("agno.knowledge.reader.docx_reader.DocxDocument", side_effect=Exception("File error")),
-    ):
-        reader = DocxReader()
-        documents = reader.read(Path("test.docx"))
-        assert len(documents) == 0
+    assert DocxReader().read(BytesIO(b"not a DOCX package")) == []
 
 
 @pytest.mark.asyncio
-async def test_async_docx_processing(mock_docx):
-    """Test concurrent async processing"""
-    with (
-        patch("pathlib.Path.exists", return_value=True),
-        patch("agno.knowledge.reader.docx_reader.DocxDocument", return_value=mock_docx),
-    ):
-        reader = DocxReader()
-        tasks = [reader.async_read(Path("test.docx")) for _ in range(3)]
-        results = await asyncio.gather(*tasks)
+async def test_async_docx_processing(docx_file):
+    reader = DocxReader()
+    results = await asyncio.gather(*(reader.async_read(docx_file) for _ in range(3)))
 
-        assert len(results) == 3
-        assert all(len(docs) == 1 for docs in results)
-        assert all(docs[0].name == "test" for docs in results)
-        assert all(docs[0].content == "First paragraph\n\nSecond paragraph" for docs in results)
+    assert len(results) == 3
+    assert all(len(documents) == 1 for documents in results)
+    assert all(documents[0].name == "test" for documents in results)
+    assert all(documents[0].content == "First paragraph\n\nSecond paragraph" for documents in results)
 
 
 @pytest.mark.asyncio
-async def test_docx_reader_async_with_chunking():
-    """Test async reading with chunking enabled"""
-    mock_doc = Mock()
-    mock_para = Mock()
-    mock_para.text = "Test content"
-    mock_doc.paragraphs = [mock_para]
+async def test_docx_reader_async_with_chunking(docx_file):
+    documents = await DocxReader(chunk_size=20).async_read(docx_file)
 
-    # Create a chunked document
-    chunked_docs = [
-        Document(name="test", id="test_1", content="Chunk 1"),
-        Document(name="test", id="test_2", content="Chunk 2"),
-    ]
-
-    with (
-        patch("pathlib.Path.exists", return_value=True),
-        patch("agno.knowledge.reader.docx_reader.DocxDocument", return_value=mock_doc),
-    ):
-        reader = DocxReader()
-        reader.chunk = True
-        # Mock the chunk_document method to return our predefined chunks
-        reader.chunk_document = Mock(return_value=chunked_docs)
-
-        documents = await reader.async_read(Path("test.docx"))
-
-        reader.chunk_document.assert_called_once()
-        assert len(documents) == 2
-        assert documents[0].content == "Chunk 1"
-        assert documents[1].content == "Chunk 2"
+    assert [document.content for document in documents] == ["First paragraph", "Second paragraph"]
+    assert [document.meta_data["chunk"] for document in documents] == [1, 2]
+    assert all(document.name == "test" for document in documents)
 
 
-def test_docx_reader_metadata(mock_docx):
-    """Test document metadata"""
-    with (
-        patch("pathlib.Path.exists", return_value=True),
-        patch("agno.knowledge.reader.docx_reader.DocxDocument", return_value=mock_docx),
-    ):
-        reader = DocxReader()
-        documents = reader.read(Path("test_doc.docx"))
+def test_docx_reader_metadata(docx_file):
+    documents = DocxReader().read(docx_file, name="Custom document")
 
-        assert len(documents) == 1
-        assert documents[0].name == "test_doc"
-        assert documents[0].content == "First paragraph\n\nSecond paragraph"
+    assert len(documents) == 1
+    assert documents[0].name == "Custom document"
+    assert documents[0].content == "First paragraph\n\nSecond paragraph"
 
 
 def test_docx_reader_chunk_size_propagation():
-    """Test that chunk_size is propagated to default chunking strategy"""
     from agno.knowledge.chunking.document import DocumentChunking
 
     reader = DocxReader(chunk_size=350)
@@ -185,10 +120,110 @@ def test_docx_reader_chunk_size_propagation():
 
 
 def test_docx_reader_default_chunk_size():
-    """Test default chunk_size is 5000"""
     from agno.knowledge.chunking.document import DocumentChunking
 
     reader = DocxReader()
     assert reader.chunk_size == 5000
     assert reader.chunking_strategy.chunk_size == 5000
     assert isinstance(reader.chunking_strategy, DocumentChunking)
+
+
+@pytest.mark.asyncio
+async def test_docx_reader_table_only(read_docx):
+    document = DocxDocument()
+    table = document.add_table(rows=2, cols=2)
+    table.cell(0, 0).text = "Item"
+    table.cell(0, 1).text = "Quantity"
+    table.cell(1, 0).text = "Apples"
+    table.cell(1, 1).text = "12"
+
+    documents = await read_docx(document)
+
+    assert len(documents) == 1
+    assert documents[0].content == "Item\tQuantity\nApples\t12"
+
+
+@pytest.mark.asyncio
+async def test_docx_reader_preserves_paragraph_and_table_order(read_docx):
+    document = DocxDocument()
+    document.add_paragraph("Before")
+    document.add_table(rows=1, cols=1).cell(0, 0).text = "First table"
+    document.add_paragraph("Between")
+    document.add_table(rows=1, cols=1).cell(0, 0).text = "Second table"
+    document.add_paragraph("After")
+
+    documents = await read_docx(document)
+
+    assert documents[0].content == "Before\n\nFirst table\n\nBetween\n\nSecond table\n\nAfter"
+
+
+@pytest.mark.asyncio
+async def test_docx_reader_horizontal_merged_cells(read_docx):
+    document = DocxDocument()
+    table = document.add_table(rows=2, cols=3)
+    table.cell(0, 0).merge(table.cell(0, 1)).text = "Merged heading"
+    table.cell(0, 2).text = "Other heading"
+    table.cell(1, 0).text = "Repeated"
+    table.cell(1, 1).text = "Repeated"
+    table.cell(1, 2).text = "Last"
+
+    documents = await read_docx(document)
+
+    assert documents[0].content == "Merged heading\tOther heading\nRepeated\tRepeated\tLast"
+
+
+@pytest.mark.asyncio
+async def test_docx_reader_vertical_merged_cells(read_docx):
+    document = DocxDocument()
+    table = document.add_table(rows=2, cols=2)
+    table.cell(0, 0).merge(table.cell(1, 0)).text = "Merged label"
+    table.cell(0, 1).text = "First value"
+    table.cell(1, 1).text = "Second value"
+
+    documents = await read_docx(document)
+
+    assert documents[0].content == "Merged label\tFirst value\nSecond value"
+
+
+@pytest.mark.asyncio
+async def test_docx_reader_nested_table(read_docx):
+    document = DocxDocument()
+    document.add_paragraph("Document before")
+    cell = document.add_table(rows=1, cols=1).cell(0, 0)
+    cell.paragraphs[0].text = "Cell before"
+    nested_table = cell.add_table(rows=1, cols=2)
+    nested_table.cell(0, 0).text = "Nested left"
+    nested_table.cell(0, 1).text = "Nested right"
+    cell.paragraphs[-1].text = "Cell after"
+    document.add_paragraph("Document after")
+
+    documents = await read_docx(document)
+
+    assert documents[0].content == (
+        "Document before\n\nCell before\nNested left\tNested right\nCell after\n\nDocument after"
+    )
+
+
+@pytest.mark.asyncio
+async def test_docx_reader_preserves_paragraph_whitespace(read_docx):
+    document = DocxDocument()
+    document.add_paragraph("  First\tline\nSecond line  ")
+    document.add_paragraph("")
+    document.add_paragraph("Last")
+
+    documents = await read_docx(document)
+
+    assert documents[0].content == "  First\tline\nSecond line  \n\n\n\nLast"
+
+
+@pytest.mark.asyncio
+async def test_docx_reader_chunks_table_content(read_docx):
+    document = DocxDocument()
+    document.add_paragraph("Before")
+    document.add_table(rows=1, cols=1).cell(0, 0).text = "Inside"
+    document.add_paragraph("After")
+
+    documents = await read_docx(document, chunk=True, chunk_size=6)
+
+    assert [document.content for document in documents] == ["Before", "Inside", "After"]
+    assert [document.meta_data["chunk"] for document in documents] == [1, 2, 3]

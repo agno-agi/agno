@@ -12,6 +12,11 @@ from agno.utils.log import log_debug, log_error
 
 try:
     from docx import Document as DocxDocument  # type: ignore
+    from docx.document import Document as DocxDocumentType
+    from docx.oxml.table import CT_Tbl
+    from docx.oxml.text.paragraph import CT_P
+    from docx.table import Table, _Cell
+    from docx.text.paragraph import Paragraph
 except ImportError:
     raise ImportError("The `python-docx` package is not installed. Please install it via `pip install python-docx`.")
 
@@ -43,6 +48,35 @@ class DocxReader(Reader):
         # legacy OLE2 .doc fails to open, so advertising it offers a format that never reads.
         return [ContentType.DOCX]
 
+    def _extract_text(self, parent: Union[DocxDocumentType, _Cell]) -> str:
+        """Read paragraphs and tables in their document or cell order."""
+        if isinstance(parent, DocxDocumentType):
+            container = parent.element.body
+            separator = "\n\n"
+        else:
+            container = parent._tc
+            separator = "\n"
+
+        blocks: List[str] = []
+        for element in container.iterchildren():
+            if isinstance(element, CT_P):
+                blocks.append(Paragraph(element, parent).text)
+            elif isinstance(element, CT_Tbl):
+                rows: List[str] = []
+                seen_cells = set()
+                for row in Table(element, parent).rows:
+                    cells: List[str] = []
+                    for cell in row.cells:
+                        # A merged cell appears at each grid position it spans.
+                        if cell._tc in seen_cells:
+                            continue
+                        seen_cells.add(cell._tc)
+                        cells.append(self._extract_text(cell))
+                    if cells:
+                        rows.append("\t".join(cells))
+                blocks.append("\n".join(rows))
+        return separator.join(blocks)
+
     def read(self, file: Union[Path, IO[Any]], name: Optional[str] = None) -> List[Document]:
         """Read a docx file and return a list of documents"""
         try:
@@ -57,7 +91,7 @@ class DocxReader(Reader):
                 docx_document = DocxDocument(file)
                 doc_name = name or getattr(file, "name", "docx_file").split(".")[0]
 
-            doc_content = "\n\n".join([para.text for para in docx_document.paragraphs])
+            doc_content = self._extract_text(docx_document)
 
             documents = [
                 Document(
