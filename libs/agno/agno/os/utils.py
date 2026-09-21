@@ -1335,13 +1335,16 @@ def draft_preview_identity(request: Any) -> tuple:
     even when ``user_isolation`` is off - that flag widens reads, never the
     right to run another owner's draft.
 
-    "Admin" is decided the way every other gate decides it
-    (:func:`~agno.os.middleware.user_scope.caller_is_admin`): the token's
-    admin scope counts only when the caller's scopes are their authority. Under
-    a managed-roles or ReBAC plane a JWT's ``scopes`` claim is inert everywhere
-    else, so reading it raw here let any validly-signed token carrying
+    "Admin" is decided the way every other gate decides it: the token's admin
+    scope counts only when the caller's scopes are their authority
+    (:func:`~agno.os.middleware.user_scope.caller_is_admin`), and under managed
+    roles an admin ROLE counts (the store's ``can_manage``, as on the ``/authz``
+    gate). Under a managed-roles or ReBAC plane a JWT's ``scopes`` claim is inert
+    everywhere else, so reading it raw here let any validly-signed token carrying
     ``agent_os:admin`` preview every owner's drafts while being denied every
-    other admin action.
+    other admin action. Prefer :func:`adraft_preview_identity` on an async path:
+    the store may be bound to an async database, which its sync read refuses (a
+    managed-role admin then reads as a plain caller here).
     """
     if request is None:
         return None, True
@@ -1354,7 +1357,45 @@ def draft_preview_identity(request: Any) -> tuple:
         return None, True
     if caller_is_admin(request):
         return None, True
+    role_store = _deciding_role_store(request)
+    if role_store is not None:
+        try:
+            if role_store.can_manage(user_id, getattr(request.state, "claims", None) or {}):
+                return None, True
+        except Exception:
+            pass  # an async-bound store refuses a sync read; a read failure is never a privilege
     return (user_id if isinstance(user_id, str) else None), False
+
+
+async def adraft_preview_identity(request: Any) -> tuple:
+    """Async twin of :func:`draft_preview_identity`: the managed-admin check awaits the store, so
+    it works against an async database."""
+    if request is None:
+        return None, True
+    from agno.os.middleware.user_scope import caller_is_admin
+
+    user_id = getattr(request.state, "user_id", None)
+    scopes = getattr(request.state, "scopes", None)
+    if scopes is None and user_id is None:
+        return None, True
+    if caller_is_admin(request):
+        return None, True
+    role_store = _deciding_role_store(request)
+    if role_store is not None:
+        try:
+            if await role_store.acan_manage(user_id, getattr(request.state, "claims", None) or {}):
+                return None, True
+        except Exception:
+            pass
+    return (user_id if isinstance(user_id, str) else None), False
+
+
+def _deciding_role_store(request: Any) -> Any:
+    """The Authorization object on the app, only when its managed-role engine is the plane that
+    decides (``roles_decide``); under an authorization_provider= override roles never took part."""
+    state = getattr(getattr(request, "app", None), "state", None)
+    role_store = getattr(state, "role_store", None) if state is not None else None
+    return role_store if role_store is not None and getattr(role_store, "roles_decide", False) else None
 
 
 def may_read_draft_configs(
@@ -2815,7 +2856,7 @@ async def resolve_agent(
 
         scoped_user_id = get_scoped_user_id(request)
     # An explicit draft version is a control-plane preview: owner/admin only.
-    preview_actor, preview_privileged = draft_preview_identity(request)
+    preview_actor, preview_privileged = await adraft_preview_identity(request)
     if not allow_draft_preview(db, agent_id, version, preview_actor, privileged=preview_privileged):
         # Byte-identical to the route's plain not-found: the denial must not
         # read differently from the component being absent.
@@ -2894,7 +2935,7 @@ async def resolve_team(
 
         scoped_user_id = get_scoped_user_id(request)
     # An explicit draft version is a control-plane preview: owner/admin only.
-    preview_actor, preview_privileged = draft_preview_identity(request)
+    preview_actor, preview_privileged = await adraft_preview_identity(request)
     if not allow_draft_preview(db, team_id, version, preview_actor, privileged=preview_privileged):
         # Byte-identical to the route's plain not-found: the denial must not
         # read differently from the component being absent.
@@ -2973,7 +3014,7 @@ async def resolve_workflow(
 
         scoped_user_id = get_scoped_user_id(request)
     # An explicit draft version is a control-plane preview: owner/admin only.
-    preview_actor, preview_privileged = draft_preview_identity(request)
+    preview_actor, preview_privileged = await adraft_preview_identity(request)
     if not allow_draft_preview(db, workflow_id, version, preview_actor, privileged=preview_privileged):
         # Byte-identical to the route's plain not-found: the denial must not
         # read differently from the component being absent.

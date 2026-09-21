@@ -953,3 +953,35 @@ def test_provider_outage_is_a_denial_with_an_audit_row_and_no_backend_text(tmp_p
         assert "10.0.0.5" not in r.text and "openfga" not in r.text
     denied = [e for e in sink.events if e.action == "access.denied"]
     assert denied and all(e.metadata.get("reason") == "provider_error" for e in denied)
+
+
+def test_draft_preview_recognises_a_managed_role_admin(tmp_path):
+    """The other half of the draft-preview rule: under managed roles a token's admin scope is inert,
+    but an admin ROLE is not. An admin-role holder previews any owner's drafts; a viewer does not,
+    whatever their token says."""
+    db = SqliteDb(db_file=str(tmp_path / "drafts-admin.db"))
+    authz = Authorization(db=db, verification_keys=[SECRET], algorithm="HS256", verify_audience=True, audience=OS_ID)
+    authz.define_role("admin", ["agent_os:admin"])
+    authz.define_role("builder", ["components:write", "components:read", "agents:*:read"])
+    authz.define_role("viewer", ["components:read", "agents:*:read"])
+    authz.assign("root", "admin")
+    authz.assign("alice", "builder")
+    authz.assign("dave", "viewer")
+    client = TestClient(AgentOS(id=OS_ID, db=db, agents=_agents(), authorization=authz).get_app())
+    body = {
+        "name": "Alice draft",
+        "component_type": "agent",
+        "stage": "draft",
+        "config": {"model": {"provider": "openai", "id": "gpt-5.6-luna"}},
+    }
+    created = client.post("/components", headers=_auth("alice"), json=body)
+    assert created.status_code == 201, created.text
+    cid = created.json().get("component_id") or created.json()["id"]
+
+    def stages(headers):
+        r = client.get(f"/components/{cid}/configs", headers=headers)
+        assert r.status_code == 200, r.text
+        return sorted({c.get("stage") for c in r.json()})
+
+    assert stages(_auth("root")) == ["draft"]  # admin by ROLE, no scope on the token
+    assert stages(_auth("dave", scopes=["agent_os:admin"])) == []  # a raw scope still changes nothing
