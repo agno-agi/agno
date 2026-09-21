@@ -24,7 +24,7 @@ from agno.agent import Agent  # noqa: E402
 from agno.db.in_memory import InMemoryDb  # noqa: E402
 from agno.db.sqlite import SqliteDb  # noqa: E402
 from agno.os import AgentOS  # noqa: E402
-from agno.os.authz import Authorization, RoleStore, UserStore  # noqa: E402
+from agno.os.authz import Authorization, UserDirectory  # noqa: E402
 from agno.os.authz._db import supports_authz  # noqa: E402
 
 SECRET = "collection-transposition-secret-at-least-256-bits-long-xx"
@@ -56,7 +56,7 @@ def _served(tmp_path):
         agents=[Agent(id="research-agent", name="R", db=db), Agent(id="other-agent", name="O", db=db)],
         authorization=authz,
     )
-    return TestClient(os_.get_app()), authz.role_store
+    return TestClient(os_.get_app()), authz
 
 
 # ------------------------------------------------------------------ 1. collection requests
@@ -64,7 +64,7 @@ def test_two_part_write_scope_passes_the_collection_route(tmp_path):
     """``sessions:write`` is stored as ``sessions/*``; a create on the collection must be evaluated
     against that same key, so the holder can actually create."""
     client, store = _served(tmp_path)
-    engine = store._engine
+    engine = store._store()._engine
 
     # the engine agrees with itself: the scope check and the id-less resource check say the same
     assert engine.check_scope("sessions:write", subject="bob") is True
@@ -99,23 +99,23 @@ def test_list_gate_still_filters_for_a_single_id_grant(tmp_path):
 # ------------------------------------------------------------------ 2. transposed assign
 def test_store_refuses_a_role_slug_as_the_subject(tmp_path):
     """``assign("viewer", "admin")`` would make every viewer an admin through role inheritance."""
-    roles = RoleStore(db=SqliteDb(db_file=str(tmp_path / "roles.db")))
+    roles = Authorization(db=SqliteDb(db_file=str(tmp_path / "roles.db")))
     roles.set_role_scopes("admin", ["agent_os:admin"])
     roles.set_role_scopes("viewer", ["agents:*:read"])
-    roles.assign("carol", "viewer")
+    roles.set_role("carol", "viewer")
     assert roles.can_manage("carol") is False
 
     with pytest.raises(ValueError, match="'viewer' is a role, not a user"):
-        roles.assign("viewer", "admin")
+        roles.set_role("viewer", "admin")
 
     assert roles.roles_of("viewer") == []  # nothing was written
     assert roles.can_manage("carol") is False  # and carol is still just a viewer
     # a role that exists only as metadata (created in the UI, no scopes yet) is a role too
-    roles.create_role("drafts", name="Drafts")
+    roles._create_role("drafts", name="Drafts")
     with pytest.raises(ValueError, match="'drafts' is a role"):
-        roles.assign("drafts", "admin")
+        roles.set_role("drafts", "admin")
     # the intended direction still works
-    roles.assign("dave", "admin")
+    roles.set_role("dave", "admin")
     assert roles.can_manage("dave") is True
 
 
@@ -128,7 +128,7 @@ def test_authorization_assign_inherits_the_guard(tmp_path):
     eager.define_role("viewer", ["agents:*:read"])
     with pytest.raises(ValueError, match="'viewer' is a role"):
         eager.assign("viewer", "admin")
-    assert eager.role_store.roles_of("viewer") == []
+    assert eager.roles_of("viewer") == []
 
     buffered = Authorization(verification_keys=[SECRET], audience=OS_ID)
     buffered.define_role("admin", ["agent_os:admin"])
@@ -174,10 +174,10 @@ def test_supports_authz_rejects_a_non_database_object(tmp_path):
 
     # every store refuses a non-database at construction, not on the first served request
     with pytest.raises(RuntimeError, match="does not support authorization storage"):
-        RoleStore(db=object())
+        Authorization(db=object())
     with pytest.raises(RuntimeError, match="does not support authorization storage"):
-        UserStore(db=object())
+        UserDirectory(db=object())
     # and a store built without a db does not adopt one that cannot store it
-    unbound = UserStore()
+    unbound = UserDirectory()
     unbound.attach_db(object())
     assert unbound.is_bound is False

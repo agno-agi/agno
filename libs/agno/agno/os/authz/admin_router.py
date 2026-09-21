@@ -1,4 +1,4 @@
-"""HTTP management API for :class:`RoleStore` — the governance product surface.
+"""HTTP management API for managed roles and the user directory — the governance product surface.
 
 Admin-only REST API to create roles, set their permissions (in agno scope terms,
 with allow/deny), and grant or revoke them at runtime.
@@ -21,12 +21,11 @@ of the MCP catch-all mount. That ordering matters: a router included AFTER
 ``get_app()`` sits behind that mount, where every call 404s.
 
 That caveat still applies to the multi-plane setup, which composes providers instead
-of naming a store (``authorization_provider=[ScopeAuthorizationProvider(), roles.provider]``)
-and so has no ``role_store`` for AgentOS to find. Mount it yourself there -- and if you
-also run ``mcp_server=True``, mount it before the MCP app is added or it will 404:
+and so has no role store for AgentOS to find. Mount the routers yourself there, passing the
+Authorization object and the UserDirectory:
 
-    app.include_router(get_roles_router(roles))
-    app.include_router(get_users_router(users, role_store=roles))  # the /users directory
+    app.include_router(get_roles_router(authz))
+    app.include_router(get_users_router(users, role_store=authz))  # the /users directory
 
 Response shapes mirror the agno cloud RBAC API so a frontend can reuse its
 integration: roles are objects (slug/name/description/is_default/created_at/
@@ -72,13 +71,13 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from agno.os.authz.audit import AUDIT_SORT_FIELDS, DEFAULT_AUDIT_SORT_FIELD
-from agno.os.authz.user_store import DEFAULT_USER_SORT_FIELD, USER_SORT_FIELDS
+from agno.os.authz.user_directory import DEFAULT_USER_SORT_FIELD, USER_SORT_FIELDS
 from agno.os.schema import PaginatedResponse, PaginationInfo, SortOrder
 from agno.os.scopes import AgentOSScope
 
 if TYPE_CHECKING:
-    from agno.os.authz.role_store import RoleStore
-    from agno.os.authz.user_store import UserStore
+    from agno.os.authz.authorization import Authorization
+    from agno.os.authz.user_directory import UserDirectory
 
 
 # --------------------------------------------------------------------- schemas
@@ -313,7 +312,7 @@ def _token_scopes_enforced(request: Request) -> bool:
     return token_scopes_are_authoritative(request)
 
 
-def _make_require_admin(role_store: "Optional[RoleStore]" = None, *, auth_enabled: bool = True) -> Any:
+def _make_require_admin(role_store: "Optional[Authorization]" = None, *, auth_enabled: bool = True) -> Any:
     """Build the admin gate shared by the roles admin API and the user-directory API.
 
     Admin can come from two planes (both run in parallel on one OS):
@@ -356,7 +355,7 @@ def _make_require_admin(role_store: "Optional[RoleStore]" = None, *, auth_enable
 
 
 def get_roles_router(
-    store: "RoleStore",
+    store: "Authorization",
     prefix: str = "/authz",
     tags: Optional[List[Union[str, Enum]]] = None,
 ) -> APIRouter:
@@ -385,7 +384,7 @@ def get_roles_router(
         limit: int = Query(default=20, ge=1, le=100, description="Items per page"),
         page: int = Query(default=1, ge=1, description="Page number (1-indexed)"),
     ):
-        roles = [RoleSchema.from_record(r) for r in store.list_roles_detailed()]
+        roles = [RoleSchema.from_record(r) for r in store._list_roles_detailed()]
         return _page(roles, page, limit)
 
     @router.post("/roles", response_model=RoleSchema, status_code=201)
@@ -393,7 +392,7 @@ def get_roles_router(
         """Create a role (metadata only — RESTful). Add permissions afterwards via
         PUT/PATCH /roles/{slug}/scopes. Mirrors the cloud POST /roles."""
         try:
-            store.create_role(
+            store._create_role(
                 body.slug, name=body.name, description=body.description, is_default=body.is_default, actor=actor
             )
         except FileExistsError:
@@ -434,7 +433,7 @@ def get_roles_router(
             store.set_role_scopes(slug, _to_store_scopes(body.scopes), actor=actor)
         except ValueError as e:
             raise HTTPException(status_code=422, detail=str(e))
-        return [RoleScopeSchema.from_entry(e) for e in store.get_role_scope_entries(slug)]
+        return [RoleScopeSchema.from_entry(e) for e in store._get_role_scope_entries(slug)]
 
     @router.patch("/roles/{slug}/scopes", response_model=RoleSchema)
     def patch_role_scopes(slug: str, body: PatchScopesRequest, actor: str = Depends(require_admin)):
@@ -442,7 +441,7 @@ def get_roles_router(
         kept). Mirrors the cloud PATCH /roles/{slug}/scopes; returns the full role."""
         _role_or_404(slug)
         try:
-            store.patch_role_scopes(
+            store._patch_role_scopes(
                 slug, upsert=_to_store_scopes(body.upsert), remove=_to_store_scopes(body.remove), actor=actor
             )
         except ValueError as e:
@@ -484,7 +483,7 @@ def get_roles_router(
         404 when the change trail is off (no readable audit sink), so a frontend can tell "audit
         disabled" from "enabled but empty" and hide the tab. Mirrors how the whole ``/authz`` and
         ``/users`` surfaces 404 when their capability is not configured."""
-        if not store.audit_readable:
+        if not store._audit_readable:
             raise HTTPException(status_code=404, detail="Change audit is not enabled")
         start_ms = time.time() * 1000
         events = store.audit_log(
@@ -494,7 +493,7 @@ def get_roles_router(
             sort_by=_validated_sort_field(sort_by),
             order=sort_order.value,
         )
-        total = store.audit_count(search=search)
+        total = store._audit_count(search=search)
         return _paginated(events, page, limit, total, search_time_ms=round(time.time() * 1000 - start_ms, 2))
 
     @router.get("/decisions")
@@ -549,7 +548,7 @@ def get_roles_router(
         # silently denying that user all access with no trace in the role views.
         _role_or_404(body.role)
         try:
-            store.assign(subject, body.role, actor=actor)
+            store.set_role(subject, body.role, actor=actor)
         except ValueError as e:
             # The subject is itself a role slug (the transposed call the comment above describes,
             # the other way round): the store refuses it because it would be role inheritance,
@@ -624,8 +623,8 @@ def _build_user_management_metrics(
 
 
 def collect_user_management_metrics(
-    user_store: "UserStore",
-    role_store: "Optional[RoleStore]" = None,
+    user_store: "UserDirectory",
+    role_store: "Optional[Authorization]" = None,
     starting_at: Optional[int] = None,
     ending_before: Optional[int] = None,
 ) -> UserManagementMetrics:
@@ -640,14 +639,14 @@ def collect_user_management_metrics(
     """
     status = user_store.count_by_status()
     created_rows = user_store.created_by_day(starting_at=starting_at, ending_before=ending_before)
-    roles_of = role_store.roles_of_many(user_store.ids()) if role_store is not None else None
-    role_names = role_store.role_names() if role_store is not None else None
+    roles_of = role_store._roles_of_many(user_store.ids()) if role_store is not None else None
+    role_names = role_store._role_names() if role_store is not None else None
     return _build_user_management_metrics(status, created_rows, roles_of, role_names)
 
 
 async def acollect_user_management_metrics(
-    user_store: "UserStore",
-    role_store: "Optional[RoleStore]" = None,
+    user_store: "UserDirectory",
+    role_store: "Optional[Authorization]" = None,
     starting_at: Optional[int] = None,
     ending_before: Optional[int] = None,
 ) -> UserManagementMetrics:
@@ -655,14 +654,14 @@ async def acollect_user_management_metrics(
     bound to a sync or an async database."""
     status = await user_store.acount_by_status()
     created_rows = await user_store.acreated_by_day(starting_at=starting_at, ending_before=ending_before)
-    roles_of = await role_store.aroles_of_many(await user_store.aids()) if role_store is not None else None
-    role_names = await role_store.arole_names() if role_store is not None else None
+    roles_of = await role_store._aroles_of_many(await user_store.aids()) if role_store is not None else None
+    role_names = await role_store._arole_names() if role_store is not None else None
     return _build_user_management_metrics(status, created_rows, roles_of, role_names)
 
 
 def get_users_router(
-    user_store: "UserStore",
-    role_store: "Optional[RoleStore]" = None,
+    user_store: "UserDirectory",
+    role_store: "Optional[Authorization]" = None,
     prefix: str = "/users",
     tags: Optional[List[Union[str, Enum]]] = None,
     auth_enabled: bool = True,
@@ -691,7 +690,7 @@ def get_users_router(
     def _role_names() -> Dict[str, str]:
         """Slug to display name for every role, one metadata read. Read once per request and
         shared across a page of users, so the list view does not do one read per row."""
-        return role_store.role_names() if role_store is not None else {}
+        return role_store._role_names() if role_store is not None else {}
 
     def _user(user: dict, names: Optional[Dict[str, str]] = None) -> UserSchema:
         role = _role_of(user["id"])

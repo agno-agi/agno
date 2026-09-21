@@ -1213,7 +1213,7 @@ async def test_assigning_config_to_mcp_server_attribute_applies_config():
 def test_managed_role_provider_is_mirrored_onto_mcp_subapp():
     """The MCP tools are a mounted sub-app whose ``request.app`` is the sub-app, not the
     main AgentOS app. The tool gate resolves its AuthorizationProvider from that ``.app``,
-    so a role_store / custom provider must be mirrored onto the sub-app's state. Without
+    so a managed-roles / custom provider must be mirrored onto the sub-app's state. Without
     the mirror the gate silently falls back to the default ScopeAuthorizationProvider and a
     scope-less (role-only) token is denied every tool -- managed RBAC degrades to scope-only
     over MCP. This locks the mirror in.
@@ -1222,16 +1222,15 @@ def test_managed_role_provider_is_mirrored_onto_mcp_subapp():
 
     from agno.db.sqlite import SqliteDb
     from agno.os.authz import Authorization
-    from agno.os.authz.role_store import RoleStore
 
     with tempfile.NamedTemporaryFile(suffix=".db") as f:
-        roles = RoleStore(db=SqliteDb(db_file=f.name))
+        roles = Authorization(db=SqliteDb(db_file=f.name), verification_keys=["x" * 40], algorithm="HS256")
         roles.set_role_scopes("admin", ["agent_os:admin"])
         os = AgentOS(
             id="mcp-authz",
             agents=[_agent()],
             mcp_server=True,
-            authorization=Authorization(verification_keys=["x" * 40], algorithm="HS256", role_store=roles),
+            authorization=roles,
         )
         app = os.get_app()
         main_provider = getattr(app.state, "authorization_provider", None)
@@ -1254,17 +1253,16 @@ def test_authz_mirror_survives_a_rebuilt_mcp_subapp():
     from agno.db.sqlite import SqliteDb
     from agno.os.authz import Authorization
     from agno.os.authz.audit import LoggingAuditSink
-    from agno.os.authz.role_store import RoleStore
 
     with tempfile.NamedTemporaryFile(suffix=".db") as f:
-        roles = RoleStore(db=SqliteDb(db_file=f.name))
-        roles.set_role_scopes("admin", ["agent_os:admin"])
         sink = LoggingAuditSink()
+        roles = Authorization(db=SqliteDb(db_file=f.name), verification_keys=["x" * 40], algorithm="HS256", audit=sink)
+        roles.set_role_scopes("admin", ["agent_os:admin"])
         os = AgentOS(
             id="mcp-mirror",
             agents=[_agent()],
             mcp_server=True,
-            authorization=Authorization(verification_keys=["x" * 40], algorithm="HS256", role_store=roles, audit=sink),
+            authorization=roles,
         )
         app = os.get_app()
         provider = app.state.authorization_provider
@@ -1308,7 +1306,7 @@ def test_mcp_identity_bridge_carries_the_role_store_for_first_provision():
         os.get_app()
 
         kw = _identity_bridge_kwargs(os)
-        assert kw["role_store"] is authz.role_store  # the store, so the default role can be granted
+        assert kw["role_store"] is authz  # the object owns the roles, so the default role can be granted
         assert kw["user_auto_provision"] is True
 
 

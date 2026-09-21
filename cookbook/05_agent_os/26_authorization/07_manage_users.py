@@ -38,7 +38,7 @@ from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS, create_dev_token
-from agno.os.authz import Authorization, UserDirectory, UserStore
+from agno.os.authz import Authorization, UserDirectory
 
 OS_ID = os.getenv("OS_ID", "manage-users-os")  # the token audience (your os_id)
 ADMIN_SUBJECT = os.getenv("ADMIN_SUBJECT", "admin@example.com")
@@ -77,7 +77,7 @@ db = SqliteDb(db_file="tmp/manage_users.db")
 
 # The directory (roster) is seeded on the store directly so a freshly-connected frontend isn't empty.
 # No roles here -- admin of /users is the agent_os:admin scope on the caller's token, not a seeded role.
-users = UserStore(db=db)
+users = UserDirectory(db=db, auto_provision=True)
 users.upsert(ADMIN_SUBJECT, name="Bootstrap admin")
 users.upsert("bob", email="bob@co", name="Bob")
 users.upsert("carol", email="carol@co", name="Carol")
@@ -108,7 +108,7 @@ agent_os = AgentOS(
     agents=[research_agent],
     cors_allowed_origins=CORS_ORIGINS,
     # the directory is a top-level switch; pass the store you seeded above
-    user_directory=UserDirectory(user_store=users, auto_provision=True),
+    user_directory=users,
     authorization=authz,  # verify-only (no roles) -> mounts /users, no /authz surface
 )
 app = agent_os.get_app()

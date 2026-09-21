@@ -1,4 +1,4 @@
-"""The swappable-backend seam: RoleStore works with ANY PolicyEngine.
+"""The swappable-backend seam: Authorization works with ANY PolicyEngine.
 
 Proves the engine port by backing the store with a tiny in-memory engine (no
 Casbin) and exercising the full agno-native surface + the provider through it.
@@ -6,9 +6,9 @@ Casbin) and exercising the full agno-native surface + the provider through it.
 
 from typing import List, Set
 
+from agno.os.authz import Authorization
 from agno.os.authz.engine import PolicyEngine, ScopeEntry
 from agno.os.authz.provider import AuthorizationContext
-from agno.os.authz.role_store import RoleStore
 
 
 def _db_url() -> str:
@@ -83,18 +83,18 @@ class DictPolicyEngine(PolicyEngine):
 
 
 def test_store_runs_on_a_custom_engine_no_casbin():
-    store = RoleStore(engine=DictPolicyEngine(), db_url=_db_url())  # no casbin involved
+    store = Authorization(engine=DictPolicyEngine(), db_url=_db_url())  # no casbin involved
 
     # agno-native surface works through the port
     store.set_role_scopes("viewer", ["agents:read"], name="Viewer", description="read only")
-    store.assign("bob", "viewer")
+    store.set_role("bob", "viewer")
     assert store.roles_of("bob") == ["viewer"]
     assert store.list_roles() == ["viewer"]
 
     # metadata is store-owned (not the engine), so it works regardless of backend
     rec = store.get_role("viewer")
     assert rec["name"] == "Viewer" and rec["description"] == "read only"
-    assert store.get_role_scope_entries("viewer") == [{"scope": "agents:read", "effect": "allow"}]
+    assert store._get_role_scope_entries("viewer") == [{"scope": "agents:read", "effect": "allow"}]
 
     # the provider delegates decisions to the engine
     prov = store.provider
@@ -104,16 +104,16 @@ def test_store_runs_on_a_custom_engine_no_casbin():
     # admin gate delegates too
     assert store.can_manage("bob") is False
     store.set_role_scopes("admin", ["agent_os:admin"])
-    store.assign("alice", "admin")
+    store.set_role("alice", "admin")
     assert store.can_manage("alice") is True
 
 
 def test_patch_and_remove_through_engine():
-    store = RoleStore(engine=DictPolicyEngine(), db_url=_db_url())
-    store.create_role("editor", name="Editor")
-    store.patch_role_scopes("editor", upsert=["agents:read", "agents:run"])
-    store.patch_role_scopes("editor", remove=["agents:run"])
-    assert [e["scope"] for e in store.get_role_scope_entries("editor")] == ["agents:read"]
+    store = Authorization(engine=DictPolicyEngine(), db_url=_db_url())
+    store._create_role("editor", name="Editor")
+    store._patch_role_scopes("editor", upsert=["agents:read", "agents:run"])
+    store._patch_role_scopes("editor", remove=["agents:run"])
+    assert [e["scope"] for e in store._get_role_scope_entries("editor")] == ["agents:read"]
     store.remove_role("editor")
     assert store.get_role("editor") is None
 

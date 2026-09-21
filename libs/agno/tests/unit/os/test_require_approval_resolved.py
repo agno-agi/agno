@@ -219,13 +219,13 @@ async def test_approval_admin_bypass_is_provider_aware():
     import tempfile
     from types import SimpleNamespace
 
-    from agno.os.authz.role_store import RoleStore
+    from agno.os.authz import Authorization
 
     fd, path = tempfile.mkstemp(suffix=".db")
     os.close(fd)
-    store = RoleStore(db_url=f"sqlite:///{path}")
+    store = Authorization(db_url=f"sqlite:///{path}")
     store.set_role_scopes("approver", ["approvals:write"])
-    store.assign("val", "approver")
+    store.set_role("val", "approver")
     provider = store.provider
 
     db = MagicMock()

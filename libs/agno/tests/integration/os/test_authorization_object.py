@@ -22,9 +22,9 @@ from agno.db.sqlite import SqliteDb  # noqa: E402
 from agno.os import AgentOS  # noqa: E402
 from agno.os.authz import (  # noqa: E402
     Authorization,
-    UserDirectory,  # noqa: E402
-    UserStore,
+    UserDirectory,
 )
+from agno.os.authz.native_engine import NativePolicyEngine  # noqa: E402
 
 SECRET = "authz-object-secret-at-least-256-bits-xxxxxxxxxx"
 OS_ID = "authz-object-os"
@@ -60,7 +60,7 @@ def test_verify_only_object_builds_no_stores(tmp_path):
     db = SqliteDb(db_file=str(tmp_path / "vo.db"))
     authz = Authorization(verification_keys=[SECRET], audience=OS_ID)  # the exact documented shape
     authz._bind(db)
-    assert authz.role_store is None
+    assert authz.uses_roles is False
     assert authz.provider is None  # AgentOS defaults to ScopeAuthorizationProvider
     cfg = authz.authorization_config()
     assert cfg.verification_keys == [SECRET] and cfg.audience == OS_ID
@@ -73,14 +73,13 @@ def test_user_directory_is_not_on_the_authorization_object(tmp_path):
     import inspect
 
     from agno.os.authz import UserDirectory
-    from agno.os.authz.user_store import UserStore
 
     params = inspect.signature(Authorization.__init__).parameters
     assert "user_directory" not in params  # moved out to AgentOS
     assert "auto_provision" not in params  # a directory concern, on UserDirectory now
 
     db = SqliteDb(db_file=str(tmp_path / "onedir.db"))
-    store = UserStore(db=db)
+    store = UserDirectory(db=db, auto_provision=False)
     authz = Authorization(db=db, verification_keys=[SECRET], audience=OS_ID)
     authz.define_role("viewer", ["agents:*:read"])
     os_ = AgentOS(
@@ -88,9 +87,9 @@ def test_user_directory_is_not_on_the_authorization_object(tmp_path):
         db=db,
         agents=_agents(),
         authorization=authz,
-        user_directory=UserDirectory(user_store=store, auto_provision=False),
+        user_directory=store,
     )
-    assert os_.user_directory.user_store is store  # your store is used, configured on AgentOS
+    assert os_.user_directory is store  # your store is used, configured on AgentOS
 
 
 def test_borrowed_db_applies_buffered_definitions(tmp_path):
@@ -101,20 +100,20 @@ def test_borrowed_db_applies_buffered_definitions(tmp_path):
     assert authz._bound is False
 
     db = SqliteDb(db_file=str(tmp_path / "borrow.db"))
-    users = UserStore(db=db)
+    users = UserDirectory(db=db, auto_provision=False)
     users.upsert("carol", email="c@co")  # directory row, seeded on the store directly
     os_ = AgentOS(
         id=OS_ID,
         db=db,
         agents=_agents(),
-        user_directory=UserDirectory(user_store=users, auto_provision=False),
+        user_directory=users,
         authorization=authz,
     )
     os_.get_app()  # binds the object -> buffered role defs apply
-    authz.role_store.assign("carol", "runner")  # role assigned through the now-bound store
-    assert authz.role_store.list_roles() == ["runner"]
-    assert authz.role_store.roles_of("carol") == ["runner"]
-    assert os_.user_directory.user_store.get("carol") is not None
+    authz.set_role("carol", "runner")  # role assigned through the now-bound store
+    assert authz.list_roles() == ["runner"]
+    assert authz.roles_of("carol") == ["runner"]
+    assert os_.user_directory.get("carol") is not None
 
 
 def test_seed_is_idempotent(tmp_path):
@@ -126,11 +125,11 @@ def test_seed_is_idempotent(tmp_path):
     authz.define_role("viewer", ["agents:*:read"], default=True)
     authz.seed(admin="root")
     authz.seed(admin="root")  # again -> no-op
-    authz.role_store.assign("bob", "viewer")
-    authz.role_store.assign("bob", "viewer")  # again -> no-op
-    assert authz.role_store.roles_of("root") == ["admin"]
-    assert authz.role_store.roles_of("bob") == ["viewer"]
-    assert authz.role_store.default_role() == "viewer"
+    authz.set_role("bob", "viewer")
+    authz.set_role("bob", "viewer")  # again -> no-op
+    assert authz.roles_of("root") == ["admin"]
+    assert authz.roles_of("bob") == ["viewer"]
+    assert authz.default_role() == "viewer"
 
 
 def test_reboot_preserves_runtime_operator_edits(tmp_path):
@@ -143,19 +142,19 @@ def test_reboot_preserves_runtime_operator_edits(tmp_path):
         a = Authorization(db=SqliteDb(db_file=dbfile))
         a.define_role("viewer", ["agents:*:read"], default=True)
         a.define_role("runner", ["agents:*:read", "agents:*:run"])
-        if not a.role_store.roles_of("bob"):  # bootstrap: assign only if new, so a promotion survives
-            a.role_store.assign("bob", "viewer")
+        if not a.roles_of("bob"):  # bootstrap: assign only if new, so a promotion survives
+            a.set_role("bob", "viewer")
         return a
 
     a1 = boot()
-    assert a1.role_store.roles_of("bob") == ["viewer"]
+    assert a1.roles_of("bob") == ["viewer"]
     # operator edits at runtime, through the store (the /authz admin API path)
-    a1.role_store.assign("bob", "runner")  # promote bob
-    a1.role_store.set_role_scopes("viewer", ["agents:*:read", "agents:*:run"])  # widen viewer
+    a1.set_role("bob", "runner")  # promote bob
+    a1.set_role_scopes("viewer", ["agents:*:read", "agents:*:run"])  # widen viewer
 
     a2 = boot()  # a restart re-runs define_role + seed on the same db
-    assert a2.role_store.roles_of("bob") == ["runner"]  # promotion survived
-    assert "agents:run" in a2.role_store.get_role_scopes("viewer")  # widened scope survived
+    assert a2.roles_of("bob") == ["runner"]  # promotion survived
+    assert "agents:run" in a2.get_role_scopes("viewer")  # widened scope survived
 
 
 def test_seed_admin_role_configurable_and_warns_when_missing(tmp_path):
@@ -165,10 +164,10 @@ def test_seed_admin_role_configurable_and_warns_when_missing(tmp_path):
     authz = Authorization(db=db)
     authz.define_role("superuser", ["agent_os:admin"])
     authz.seed(admin="alice", admin_role="superuser")
-    assert authz.role_store.can_manage("alice") is True  # custom admin role confers admin
+    assert authz.can_manage("alice") is True  # custom admin role confers admin
 
     authz.seed(admin="bob")  # default admin_role "admin" was never defined
-    assert authz.role_store.can_manage("bob") is False
+    assert authz.can_manage("bob") is False
 
     # The mismatch is warned at finalize (authorization_config), so order of define_role vs seed
     # cannot cause a false positive. Capture the agno logger directly (propagate=False).
@@ -227,7 +226,7 @@ def test_seed_admin_warning_survives_define_after_seed_order(tmp_path):
         for lg, lvl in zip(_agno_loggers, _prev_levels):
             lg.removeHandler(handler)
             lg.setLevel(lvl)
-    assert authz.role_store.can_manage("alice") is True
+    assert authz.can_manage("alice") is True
     assert not messages  # no false-positive warning despite seed-before-define
 
 
@@ -256,10 +255,10 @@ def test_object_prebuilt_async_store_no_setup_ok(tmp_path):
     """An object with a pre-configured async store and NO define_role/seed works against an async db:
     only the sync setup writes are refused, not the provider wiring / request-time path."""
     from agno.db.sqlite.async_sqlite import AsyncSqliteDb
-    from agno.os.authz.role_store import RoleStore
+    from agno.os.authz import Authorization
 
     adb = AsyncSqliteDb(db_file=str(tmp_path / "a.db"))
-    authz = Authorization(role_store=RoleStore(db=adb), verification_keys=[SECRET], audience=OS_ID)
+    authz = Authorization(engine=NativePolicyEngine(db=adb), verification_keys=[SECRET], audience=OS_ID)
     authz._bind(adb)
     authz.authorization_config()  # no writes
     assert authz.provider is not None  # just wires the provider
@@ -309,7 +308,7 @@ def _served(tmp_path, *, borrow_db, trust_token_scopes=False):
     # The directory is a separate top-level store, a peer of user_isolation; seed rows on it directly.
     # Include the admin: with auto_provision + a default role, a subject not in the directory is
     # provisioned to the default role on first request, which would demote the seeded admin.
-    users = UserStore(db=db)
+    users = UserDirectory(db=db, auto_provision=True)
     users.upsert("root", name="Bootstrap admin")
     users.upsert("bob", email="bob@co", name="Bob")
     users.upsert("carol")
@@ -317,12 +316,12 @@ def _served(tmp_path, *, borrow_db, trust_token_scopes=False):
         id=OS_ID,
         db=db,
         agents=_agents(),
-        user_directory=UserDirectory(user_store=users, auto_provision=True),
+        user_directory=users,
         authorization=authz,
     )
     # AgentOS bound the object's role store; assign the seeded users their roles through it.
-    authz.role_store.assign("bob", "viewer")
-    authz.role_store.assign("carol", "runner")
+    authz.set_role("bob", "viewer")
+    authz.set_role("carol", "runner")
     return os_
 
 
@@ -396,7 +395,7 @@ def test_authorization_config_is_deprecated_not_a_second_spelling(tmp_path):
 def test_directory_is_explicit_top_level_never_inferred_from_roles(tmp_path):
     """The directory is a top-level AgentOS(user_directory=...) concern, never inferred from roles. A
     roles-only deployment gets no directory and no /users; adding user_directory=True gives both.
-    Authorization no longer seeds users at all: seeding is on the UserStore, and seed(users=...)
+    Authorization no longer seeds users at all: seeding is on the UserDirectory, and seed(users=...)
     is rejected."""
     # Roles only, no top-level directory -> role store, but no directory and no /users.
     roles_only = Authorization(
@@ -409,7 +408,7 @@ def test_directory_is_explicit_top_level_never_inferred_from_roles(tmp_path):
     roles_only.define_role("admin", ["agent_os:admin"])
     roles_only.seed(admin="root")  # an admin role, but no users= -> no directory
     os_ro = AgentOS(id=OS_ID, db=roles_only._db, agents=_agents(), authorization=roles_only)
-    assert roles_only.role_store is not None
+    assert roles_only.uses_roles is True
     assert os_ro.user_directory is None  # roles do not imply a directory
     client = TestClient(os_ro.get_app())
     assert client.get("/authz/roles", headers=_auth("root")).status_code == 200
@@ -419,12 +418,12 @@ def test_directory_is_explicit_top_level_never_inferred_from_roles(tmp_path):
     idp = Authorization(
         db=SqliteDb(db_file=str(tmp_path / "idp.db")), verification_keys=[SECRET], audience=OS_ID, roles_claim="role"
     )
-    assert idp.role_store is not None
+    assert idp.uses_roles is True
 
     # Ask for the directory top-level -> it exists and /users mounts (under auth). People are seeded on
     # the store; Authorization only bootstraps the admin role.
     adb = SqliteDb(db_file=str(tmp_path / "asked.db"))
-    store = UserStore(db=adb)
+    store = UserDirectory(db=adb, auto_provision=False)
     store.upsert("bob", email="bob@co")
     asked = Authorization(verification_keys=[SECRET], algorithm="HS256", verify_audience=True, audience=OS_ID)
     asked.define_role("admin", ["agent_os:admin"])
@@ -433,11 +432,11 @@ def test_directory_is_explicit_top_level_never_inferred_from_roles(tmp_path):
         id=OS_ID,
         db=adb,
         agents=_agents(),
-        user_directory=UserDirectory(user_store=store, auto_provision=False),
+        user_directory=store,
         authorization=asked,
     )
     client2 = TestClient(os_asked.get_app())
-    assert os_asked.user_directory.user_store.get("bob") is not None  # the seeded person is in the directory
+    assert os_asked.user_directory.get("bob") is not None  # the seeded person is in the directory
     assert client2.get("/users", headers=_auth("root")).status_code == 200
 
     # seed(users=...) no longer exists: user seeding is a directory concern, off the Authorization object.
@@ -461,21 +460,21 @@ def test_seed_admin_heals_a_lockout_but_respects_a_handover(tmp_path):
         return a
 
     a1 = boot()
-    assert a1.role_store.admin_subjects() == ["root"]
+    assert a1.admin_subjects() == ["root"]
 
     # Handover: root demoted, carol promoted. A restart must not undo it.
-    a1.role_store.assign("carol", "admin")
-    a1.role_store.assign("root", "viewer")
+    a1.set_role("carol", "admin")
+    a1.set_role("root", "viewer")
     a2 = boot()
-    assert a2.role_store.roles_of("root") == ["viewer"]
-    assert a2.role_store.admin_subjects() == ["carol"]
+    assert a2.roles_of("root") == ["viewer"]
+    assert a2.admin_subjects() == ["carol"]
 
     # Lockout: carol demoted too, nobody is admin. A restart heals it.
-    a2.role_store.assign("carol", "viewer")
-    assert a2.role_store.admin_subjects() == []
+    a2.set_role("carol", "viewer")
+    assert a2.admin_subjects() == []
     a3 = boot()
-    assert a3.role_store.roles_of("root") == ["admin"]
-    assert a3.role_store.roles_of("carol") == ["viewer"]  # only the bootstrap subject is touched
+    assert a3.roles_of("root") == ["admin"]
+    assert a3.roles_of("carol") == ["viewer"]  # only the bootstrap subject is touched
 
 
 def test_seed_admin_respects_a_handover_that_removed_the_bootstrap_role(tmp_path):
@@ -495,19 +494,19 @@ def test_seed_admin_respects_a_handover_that_removed_the_bootstrap_role(tmp_path
 
     # Handover by removal: carol promoted, root's only role revoked outright (root now has none).
     a1 = boot()
-    a1.role_store.assign("carol", "admin")
-    a1.role_store.unassign("root", "admin")
-    assert a1.role_store.roles_of("root") == [] and a1.role_store.admin_subjects() == ["carol"]
+    a1.set_role("carol", "admin")
+    a1.unassign("root", "admin")
+    assert a1.roles_of("root") == [] and a1.admin_subjects() == ["carol"]
 
     a2 = boot()  # a restart must NOT restore root just because it has no role
-    assert a2.role_store.roles_of("root") == []
-    assert a2.role_store.admin_subjects() == ["carol"]
+    assert a2.roles_of("root") == []
+    assert a2.admin_subjects() == ["carol"]
 
     # But a true lockout reached by removal (nobody holds admin) still heals on the next boot.
-    a2.role_store.unassign("carol", "admin")
-    assert a2.role_store.admin_subjects() == []
+    a2.unassign("carol", "admin")
+    assert a2.admin_subjects() == []
     a3 = boot()
-    assert a3.role_store.roles_of("root") == ["admin"]
+    assert a3.roles_of("root") == ["admin"]
 
 
 def test_seed_admin_falls_back_to_create_if_absent_when_holders_cannot_be_listed(tmp_path):
@@ -517,31 +516,35 @@ def test_seed_admin_falls_back_to_create_if_absent_when_holders_cannot_be_listed
     left alone (rather than guessing at a handover it cannot see)."""
     from unittest.mock import patch
 
-    from agno.os.authz.role_store import RoleStore
+    from agno.os.authz import Authorization
 
     authz = Authorization(db=SqliteDb(db_file=str(tmp_path / "fallback.db")))
     authz.define_role("admin", ["agent_os:admin"])
     authz.define_role("viewer", ["agents:*:read"])
-    authz.role_store.assign("carol", "admin")  # another admin exists; the enumerable path would skip root
+    authz.set_role("carol", "admin")  # another admin exists; the enumerable path would skip root
 
     # Holders cannot be listed -> fall back to create-if-absent. root has no role, so it is granted
     # (a fresh deploy must still bootstrap), even though carol is admin, because the fallback is blind.
+    from agno.os.authz._role_store import RoleStore
+
     with patch.object(RoleStore, "admin_subjects", side_effect=NotImplementedError):
         authz.seed(admin="root")
-    assert authz.role_store.roles_of("root") == ["admin"]
+    assert authz.roles_of("root") == ["admin"]
 
     # A subject that already holds a role is not overridden by the blind fallback.
-    authz.role_store.assign("dave", "viewer")
+    authz.set_role("dave", "viewer")
+    from agno.os.authz._role_store import RoleStore
+
     with patch.object(RoleStore, "admin_subjects", side_effect=NotImplementedError):
         authz.seed(admin="dave")
-    assert authz.role_store.roles_of("dave") == ["viewer"]
+    assert authz.roles_of("dave") == ["viewer"]
 
 
 def test_provider_override_takes_no_store(tmp_path):
     """authorization_provider= is the full override: combining it with a role store or engine
     would leave a store nothing enforces behind a mounted /authz, so it is refused."""
+    from agno.os.authz import Authorization
     from agno.os.authz.provider import AuthorizationContext, AuthorizationProvider
-    from agno.os.authz.role_store import RoleStore
 
     class AllowAll(AuthorizationProvider):
         def check(self, ctx: AuthorizationContext) -> bool:
@@ -552,7 +555,7 @@ def test_provider_override_takes_no_store(tmp_path):
 
     db = SqliteDb(db_file=str(tmp_path / "xor.db"))
     with pytest.raises(ValueError, match="engine="):
-        Authorization(db=db, authorization_provider=AllowAll(), role_store=RoleStore(db=db))
+        Authorization(db=db, authorization_provider=AllowAll(), engine=NativePolicyEngine(db=db))
 
 
 def test_served_verify_only_mounts_no_admin_api(tmp_path):
@@ -619,7 +622,7 @@ def test_idp_roles_claim_one_liner(tmp_path):
     )
     authz.define_role("admin", ["agent_os:admin"])
     authz.define_role("viewer", ["agents:*:read"])
-    assert authz.role_store is not None  # roles_claim alone puts roles in play
+    assert authz.uses_roles is True  # roles_claim alone puts roles in play
 
     def htok(sub, role):
         payload = {"sub": sub, "aud": OS_ID, "role": role, "exp": int(time.time()) + 3600}
@@ -728,15 +731,14 @@ def test_audit_api_404s_when_audit_is_off(tmp_path):
 
 
 def test_seeded_admin_not_in_directory_is_not_demoted_on_first_request(tmp_path):
-    """A subject granted a role (seed(admin=) / role_store.assign) but never added to the directory
+    """A subject granted a role (seed(admin=) / set_role) but never added to the directory
     keeps that role on their first request. Auto-provision creates the directory row but must NOT
     grant the default role over an existing one -- that would silently demote an admin. A truly
     role-less user still gets the default, so provisioning is not broken, only the demotion is."""
     from agno.os.authz import UserDirectory
-    from agno.os.authz.user_store import UserStore
 
     db = SqliteDb(db_file=str(tmp_path / "demote.db"))
-    users = UserStore(db=db)  # alice deliberately NOT seeded into the directory
+    users = UserDirectory(db=db, auto_provision=True)  # alice deliberately NOT seeded into the directory
     authz = Authorization(db=db, verification_keys=[SECRET], algorithm="HS256", verify_audience=True, audience=OS_ID)
     authz.define_role("viewer", ["agents:*:read"], default=True)
     authz.define_role("admin", ["agent_os:admin"])
@@ -747,21 +749,21 @@ def test_seeded_admin_not_in_directory_is_not_demoted_on_first_request(tmp_path)
             id=OS_ID,
             db=db,
             agents=_agents(),
-            user_directory=UserDirectory(user_store=users, auto_provision=True),
+            user_directory=users,
             authorization=authz,
         ).get_app()
     )
     client.get("/agents/research", headers=_auth("alice"))  # first request auto-provisions alice
     client.get("/agents/research", headers=_auth("dave"))  # unknown, role-less
 
-    assert authz.role_store.roles_of("alice") == ["admin"]  # kept, NOT demoted to the default
-    assert authz.role_store.roles_of("dave") == ["viewer"]  # role-less still gets the default
+    assert authz.roles_of("alice") == ["admin"]  # kept, NOT demoted to the default
+    assert authz.roles_of("dave") == ["viewer"]  # role-less still gets the default
     assert users.get("alice") is not None and users.get("dave") is not None  # both provisioned
 
 
 def test_assign_is_bootstrap_safe_and_buffers(tmp_path):
     """Authorization.assign(subject, role) is the object's bootstrap-safe role grant: create-if-absent
-    (a runtime promotion survives re-running the boot sequence, unlike role_store.assign which
+    (a runtime promotion survives re-running the boot sequence, unlike set_role which
     overwrites), and buffered so it needs no db of its own -- applied when AgentOS lends the db."""
     dbfile = str(tmp_path / "assign.db")
 
@@ -774,7 +776,102 @@ def test_assign_is_bootstrap_safe_and_buffers(tmp_path):
         return a
 
     a1 = boot()
-    assert a1.role_store.roles_of("bob") == ["viewer"]
-    a1.role_store.assign("bob", "runner")  # an admin promotes bob at runtime
+    assert a1.roles_of("bob") == ["viewer"]
+    a1.set_role("bob", "runner")  # an admin promotes bob at runtime
     a2 = boot()  # a restart re-runs the identical authz.assign("bob", "viewer")
-    assert a2.role_store.roles_of("bob") == ["runner"]  # create-if-absent: the promotion is NOT clobbered
+    assert a2.roles_of("bob") == ["runner"]  # create-if-absent: the promotion is NOT clobbered
+
+
+# ------------------------------------------------------------------ roles in play is declared, never inferred
+# Whether managed roles are enforced (and /authz mounted) is decided when AgentOS wires the object.
+# So "roles in play" has to come from what was declared: define_role / seed / assign / engine= /
+# roles_claim=, or a runtime WRITE before wiring. A read must never flip it (before wiring it just
+# answers from the db), and any use after wiring on an object that had no roles must fail loudly
+# instead of landing in, or answering from, a store nothing reads.
+
+
+def _verify_only(db):
+    return Authorization(db=db, verification_keys=[SECRET], algorithm="HS256", verify_audience=True, audience=OS_ID)
+
+
+def test_a_read_on_a_verify_only_object_does_not_put_roles_in_play(tmp_path):
+    db = SqliteDb(db_file=str(tmp_path / "os.db"))
+    authz = _verify_only(db)
+    assert authz.uses_roles is False
+    assert authz.list_roles() == []  # answered from the (empty) db, honestly
+    assert authz.roles_of("bob") == []
+    assert authz.uses_roles is False  # the reads changed nothing
+
+    # and the OS still enforces scope RBAC: an operator token with agents:read gets in, /authz is absent
+    client = TestClient(AgentOS(id=OS_ID, agents=_agents(), db=db, authorization=authz).get_app())
+    assert client.get("/agents", headers=_auth("op", ["agents:read"])).status_code == 200
+    assert client.get("/authz/roles", headers=_auth("op", ["agent_os:admin"])).status_code == 404
+    # after wiring, the object's role API is not live, so a read is refused rather than answered
+    with pytest.raises(ValueError, match="wired into AgentOS without managed roles"):
+        authz.list_roles()
+    assert authz.uses_roles is False
+
+
+def test_a_fresh_object_on_an_existing_store_reads_it_without_declaring(tmp_path):
+    db = SqliteDb(db_file=str(tmp_path / "os.db"))
+    first = _verify_only(db)
+    first.define_role("viewer", ["agents:*:read"]).assign("bob", "viewer")
+    fresh = _verify_only(db)  # an admin script inspecting the same database
+    assert fresh.roles_of("bob") == ["viewer"]
+    assert fresh.list_roles() == ["viewer"]
+    assert fresh.uses_roles is False  # reading is not declaring
+
+
+def test_a_failed_read_on_an_unbound_object_does_not_put_roles_in_play():
+    authz = Authorization(verification_keys=[SECRET], algorithm="HS256", verify_audience=True, audience=OS_ID)
+    with pytest.raises(ValueError):
+        authz.roles_of("bob")
+    assert authz.uses_roles is False
+
+
+def test_a_runtime_write_after_wiring_a_verify_only_object_fails_loud(tmp_path):
+    db = SqliteDb(db_file=str(tmp_path / "os.db"))
+    authz = _verify_only(db)
+    client = TestClient(AgentOS(id=OS_ID, agents=_agents(), db=db, authorization=authz).get_app())
+
+    with pytest.raises(ValueError, match="before AgentOS"):
+        authz.set_role_scopes("viewer", ["agents:*:read"])
+    with pytest.raises(ValueError, match="before AgentOS"):
+        authz.set_role("bob", "viewer")
+    with pytest.raises(ValueError, match="before AgentOS"):
+        authz.define_role("viewer", ["agents:*:read"])
+    with pytest.raises(ValueError, match="before AgentOS"):
+        authz.assign("bob", "viewer")
+    with pytest.raises(ValueError, match="before AgentOS"):
+        authz.seed(admin="alice")
+    assert authz.uses_roles is False
+    # the OS is still the scope-RBAC OS it was wired as
+    assert client.get("/agents", headers=_auth("op", ["agents:read"])).status_code == 200
+
+
+def test_a_runtime_write_before_wiring_puts_roles_in_play(tmp_path):
+    """A write on a bound object before AgentOS is a declaration, like define_role."""
+    db = SqliteDb(db_file=str(tmp_path / "os.db"))
+    authz = _verify_only(db)
+    authz.set_role_scopes("viewer", ["agents:*:read"])
+    authz.set_role("bob", "viewer")
+    assert authz.uses_roles is True
+    client = TestClient(AgentOS(id=OS_ID, agents=_agents(), db=db, authorization=authz).get_app())
+    assert client.get("/agents/research", headers=_auth("bob")).status_code == 200
+    assert client.get("/agents/research", headers=_auth("nobody")).status_code == 403
+    # once roles are in play, runtime writes after wiring are live (the provider reads the store)
+    authz.set_role("nobody", "viewer")
+    assert client.get("/agents/research", headers=_auth("nobody")).status_code == 200
+
+
+def test_seed_alone_puts_roles_in_play(tmp_path):
+    """seed() on an unbound object with no define_role must still count as declaring roles."""
+    db = SqliteDb(db_file=str(tmp_path / "os.db"))
+    authz = Authorization(verification_keys=[SECRET], algorithm="HS256", verify_audience=True, audience=OS_ID)
+    authz.seed(admin="alice")
+    assert authz.uses_roles is True
+    client = TestClient(AgentOS(id=OS_ID, agents=_agents(), db=db, authorization=authz).get_app())
+    assert authz.roles_of("alice") == ["admin"]
+    # /authz is mounted (roles are in play). alice is refused there only because nothing defined what
+    # "admin" grants; that is the seeded-admin-without-admin-scope warning case, not an unmounted API.
+    assert client.get("/authz/roles", headers=_auth("alice")).status_code == 403
