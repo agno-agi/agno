@@ -40,7 +40,7 @@ role definitions and the admin seed are buffered and applied once the db binds (
 ``AgentOS(user_directory=True)`` adopts the OS db).
 """
 
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple, Union
 
 from agno.os.authz._db import is_async_authz_db, resolve_authz_db
 from agno.utils.log import log_debug, log_warning
@@ -633,6 +633,50 @@ class Authorization:
         """Async twin of :meth:`_role_names`."""
         return await self._store().arole_names()
 
+    def _explicit_denials(
+        self,
+        resource_type: str,
+        action: Optional[str],
+        *,
+        subject: Optional[str] = None,
+        roles: Optional[List[str]] = None,
+    ) -> Set[str]:
+        """Ids of ``resource_type`` the identity is explicitly denied for ``action`` (``{"*"}`` for a
+        collection-wide deny). The route gate uses it to name the deny that decided instead of
+        reporting a grant as missing."""
+        return self._store().explicit_denials(resource_type, action, subject=subject, roles=roles)
+
+    async def _aexplicit_denials(
+        self,
+        resource_type: str,
+        action: Optional[str],
+        *,
+        subject: Optional[str] = None,
+        roles: Optional[List[str]] = None,
+    ) -> Set[str]:
+        """Async twin of :meth:`_explicit_denials`."""
+        return await self._store().aexplicit_denials(resource_type, action, subject=subject, roles=roles)
+
+    def _default_role_applied(self, subject: str) -> Optional[str]:
+        """The default role the engine applied to ``subject`` at decision time, or None. Asks the
+        engine's own subject resolution rather than re-deriving its rules (a directory user it can
+        see through ITS db, holding no assignment, whose id does not collide with a role name), so a
+        denial explanation reports exactly what decided. Only meaningful for a subject with no
+        assignment, which is the only case the gate asks about."""
+        default = self.default_role()
+        if not default:
+            return None
+        closure = getattr(self._store()._engine, "_subject_closure", None)
+        return default if callable(closure) and default in closure(subject) else None
+
+    async def _adefault_role_applied(self, subject: str) -> Optional[str]:
+        """Async twin of :meth:`_default_role_applied`."""
+        default = await self.adefault_role()
+        if not default:
+            return None
+        closure = getattr(self._store()._engine, "_asubject_closure", None)
+        return default if callable(closure) and default in await closure(subject) else None
+
     def _roles_of_many(self, subjects: List[str]) -> Dict[str, List[str]]:
         """Roles of each subject in one call; used where a caller needs the whole"""
         return self._store().roles_of_many(subjects)
@@ -697,6 +741,18 @@ class Authorization:
         when AgentOS wires the object (it mounts ``/authz`` and provisions default roles only when
         this is True); a read never changes it."""
         return self._roles_defined
+
+    @property
+    def roles_decide(self) -> bool:
+        """Whether the managed-role engine is the plane that decides requests: roles are in play and
+        no ``authorization_provider=`` override was given. False under an override even when roles
+        are defined on the object, since the override decides alone."""
+        return self.uses_roles and self._provider_override is None
+
+    @property
+    def trust_token_scopes(self) -> bool:
+        """Whether a scope plane runs alongside managed roles (the ``trust_token_scopes`` switch)."""
+        return self._trust_token_scopes
 
     @property
     def roles_claim(self) -> Optional[str]:
