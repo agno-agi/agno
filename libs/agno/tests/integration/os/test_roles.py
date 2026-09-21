@@ -543,19 +543,19 @@ def test_patch_role_scopes_validates_the_whole_diff_before_writing(tmp_path):
             self.events.append(event)
 
     sink = Capture()
-    store = RoleStore(db=SqliteDb(db_file=str(tmp_path / "patch.db")), audit=sink)
+    store = Authorization(db=SqliteDb(db_file=str(tmp_path / "patch.db")), audit=sink)
     store.set_role_scopes("member", ["agents:*:read"])
     sink.events.clear()
 
     with pytest.raises(ValueError):
-        store.patch_role_scopes("member", upsert=["agents:*:run", "sessions:write"], remove=["not-a-scope"])
+        store._patch_role_scopes("member", upsert=["agents:*:run", "sessions:write"], remove=["not-a-scope"])
     assert store.get_role_scopes("member") == ["agents:read"]  # nothing from the failed diff landed
     assert sink.events == []  # and nothing was audited
 
     with pytest.raises(ValueError):
-        asyncio.run(store.apatch_role_scopes("member", upsert=["agents:*:run"], remove=["x:y:z:w"]))
+        asyncio.run(store._apatch_role_scopes("member", upsert=["agents:*:run"], remove=["x:y:z:w"]))
     assert store.get_role_scopes("member") == ["agents:read"]
     assert sink.events == []
 
-    store.patch_role_scopes("member", upsert=["agents:*:run"], remove=["agents:*:read"])  # a valid diff still applies
+    store._patch_role_scopes("member", upsert=["agents:*:run"], remove=["agents:*:read"])  # a valid diff still applies
     assert store.get_role_scopes("member") == ["agents:run"]

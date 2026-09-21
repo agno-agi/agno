@@ -801,11 +801,11 @@ def test_users_api_refuses_reserved_principals_and_role_slugs():
     so a row for one is dead weight and disabling it is a revocation that never happens; a role slug
     is not a person and breaks the roster and its metrics. Both are refused on create and on the
     create-on-PATCH path."""
-    roles = RoleStore(db_url=_db_url())
+    roles = _roles()
     roles.set_role_scopes("admin", ["agent_os:admin"])
     roles.set_role_scopes("viewer", ["agents:*:read"])
-    roles.assign("alice", "admin")
-    users = UserStore(db_url=_db_url())
+    roles.set_role("alice", "admin")
+    users = UserDirectory(db_url=_db_url())
     client = TestClient(_os(roles, users).get_app())
     for bad in ("sa:svc", "__scheduler__", "__oauth__:client", "viewer"):
         assert client.post("/users", headers=_auth("alice"), json={"id": bad}).status_code == 422, bad

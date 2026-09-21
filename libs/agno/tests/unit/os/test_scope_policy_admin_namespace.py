@@ -12,7 +12,7 @@ import pytest
 pytest.importorskip("sqlalchemy")
 
 from agno.db.sqlite import SqliteDb  # noqa: E402
-from agno.os.authz import RoleStore  # noqa: E402
+from agno.os.authz import Authorization  # noqa: E402
 from agno.os.authz._scope_policy import ADMIN_SCOPE, resource_action_to_scope, scope_to_resource_action  # noqa: E402
 
 
@@ -34,13 +34,13 @@ def test_round_trip_cannot_promote_a_legacy_row_to_admin(tmp_path):
     back as the three-part form, still grants nothing, and re-saving what the UI shows raises
     instead of escalating."""
     db = SqliteDb(db_file=str(tmp_path / "legacy.db"))
-    store = RoleStore(db=db)
+    store = Authorization(db=db)
     with pytest.raises(ValueError):
         store.set_role_scopes("ops", ["agent_os:*:admin"])  # refused on save now
     db.upsert_authz_policy(role="ops", resource="agent_os/*", action="admin", effect="allow")  # legacy row
-    entries = store.get_role_scope_entries("ops")
+    entries = store._get_role_scope_entries("ops")
     assert entries == [{"scope": "agent_os:*:admin", "effect": "allow"}]
-    assert store._engine.check_scope(ADMIN_SCOPE, roles=["ops"]) is False
+    assert store._store()._engine.check_scope(ADMIN_SCOPE, roles=["ops"]) is False
     with pytest.raises(ValueError):
         store.set_role_scopes("ops", entries)  # the edit-and-save that used to escalate
-    assert store._engine.check_scope(ADMIN_SCOPE, roles=["ops"]) is False
+    assert store._store()._engine.check_scope(ADMIN_SCOPE, roles=["ops"]) is False
