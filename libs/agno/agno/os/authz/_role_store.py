@@ -145,13 +145,6 @@ class RoleStore:
         than report a grant as missing."""
         return self._engine.denied_resource_ids(resource_type, action, subject=subject, roles=roles)
 
-    @property
-    def roles_claim(self) -> Optional[str]:
-        """The JWT claim a caller's roles are read from (the external-IdP case), or None when roles
-        come from this store's own assignments. Exposed so a gate explaining a denial can name the
-        roles the engine actually decided on."""
-        return self._roles_claim
-
     def attach_audit(self, sink: Optional["AuditSink"]) -> None:
         """Adopt ``sink`` as the change-audit sink if one wasn't set explicitly.
 

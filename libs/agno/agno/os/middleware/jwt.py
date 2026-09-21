@@ -1125,10 +1125,10 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 and resource_type
                 and resource_id
                 and route_action is not None
-                and hasattr(role_store, "explicit_denials")
+                and hasattr(role_store, "_explicit_denials")
             ):
                 try:
-                    denied = role_store.explicit_denials(
+                    denied = role_store._explicit_denials(
                         resource_type,
                         route_action,
                         subject=subject,
@@ -1298,10 +1298,10 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 and resource_type
                 and resource_id
                 and route_action is not None
-                and hasattr(role_store, "explicit_denials")
+                and hasattr(role_store, "_aexplicit_denials")
             ):
                 try:
-                    denied = await role_store.aexplicit_denials(
+                    denied = await role_store._aexplicit_denials(
                         resource_type,
                         route_action,
                         subject=subject,

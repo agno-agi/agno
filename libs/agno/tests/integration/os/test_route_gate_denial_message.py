@@ -196,13 +196,13 @@ async def test_ambiguous_route_action_does_not_report_an_unrelated_deny(tmp_path
 def test_denial_of_a_directory_user_with_no_assignment_names_the_default_role(tmp_path):
     """A known directory user with no assignment is evaluated through the is_default role at
     decision time, so 'holds no role' would be wrong: the default role decided."""
-    from agno.os.authz import UserDirectory, UserStore
+    from agno.os.authz import UserDirectory
 
     db = SqliteDb(db_file=str(tmp_path / "default.db"))
     authz = Authorization(db=db, verification_keys=[SECRET], algorithm="HS256", verify_audience=True, audience=OS_ID)
     authz.define_role("admin", ["agent_os:admin"])
     authz.define_role("viewer", ["agents:*:read"], default=True)
-    users = UserStore(db=db)
+    users = UserDirectory(db=db, auto_provision=False)
     users.upsert("dana", email="d@co")  # in the directory, never assigned a role
     agents = [Agent(id="a", name="A", db=InMemoryDb())]
     client = TestClient(
@@ -211,7 +211,7 @@ def test_denial_of_a_directory_user_with_no_assignment_names_the_default_role(tm
             db=db,
             agents=agents,
             authorization=authz,
-            user_directory=UserDirectory(user_store=users, auto_provision=False),
+            user_directory=users,
         ).get_app()
     )
     with _warnings() as messages:

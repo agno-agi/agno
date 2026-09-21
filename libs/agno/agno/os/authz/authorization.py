@@ -40,7 +40,7 @@ role definitions and the admin seed are buffered and applied once the db binds (
 ``AgentOS(user_directory=True)`` adopts the OS db).
 """
 
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple, Union
 
 from agno.os.authz._db import is_async_authz_db, resolve_authz_db
 from agno.utils.log import log_debug, log_warning
@@ -632,6 +632,30 @@ class Authorization:
     async def _arole_names(self) -> Dict[str, str]:
         """Async twin of :meth:`_role_names`."""
         return await self._store().arole_names()
+
+    def _explicit_denials(
+        self,
+        resource_type: str,
+        action: Optional[str],
+        *,
+        subject: Optional[str] = None,
+        roles: Optional[List[str]] = None,
+    ) -> Set[str]:
+        """Ids of ``resource_type`` the identity is explicitly denied for ``action`` (``{"*"}`` for a
+        collection-wide deny). The route gate uses it to name the deny that decided instead of
+        reporting a grant as missing."""
+        return self._store().explicit_denials(resource_type, action, subject=subject, roles=roles)
+
+    async def _aexplicit_denials(
+        self,
+        resource_type: str,
+        action: Optional[str],
+        *,
+        subject: Optional[str] = None,
+        roles: Optional[List[str]] = None,
+    ) -> Set[str]:
+        """Async twin of :meth:`_explicit_denials`."""
+        return await self._store().aexplicit_denials(resource_type, action, subject=subject, roles=roles)
 
     def _roles_of_many(self, subjects: List[str]) -> Dict[str, List[str]]:
         """Roles of each subject in one call; used where a caller needs the whole"""
