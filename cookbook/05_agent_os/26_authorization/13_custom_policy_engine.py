@@ -2,7 +2,7 @@
 Custom PolicyEngine - keep managed roles and the /authz admin API, swap the backend
 
 (New to this? Read 01_managed_roles.py first. If you want to replace the DECISION MODEL itself,
-not just where policy is stored, see 08_custom_authorization_provider.py.)
+not just where policy is stored, see 11_custom_authorization_provider.py.)
 
 Managed roles are two layers:
 

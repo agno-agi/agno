@@ -1,6 +1,15 @@
 # Test Log: 26_authorization
 
-Last updated: 2026-09-18 (after the store fold: `RoleStore` is private behind `Authorization`
+Last updated: 2026-09-21 (files renumbered so the folder reads in increasing complexity: the
+built-in setup first (00 to 05), the admin API for a frontend (06 to 08), then the escape hatches
+ordered by how much you write (09 to 14). Six files moved: 08 -> 11 custom_authorization_provider,
+09 -> 12 idp_workos_auth0, 10 -> 14 fga_relationship_based, 11 -> 08 user_management_metrics,
+12 -> 09 idp_roles_claim, 14 -> 10 custom_audit_sink. Entries below dated before this use the old
+numbers. Re-ran all fifteen files after the rename with the demo venv and `PYTHONPATH` on the
+branch's `libs/agno`: 00 to 05 and 08 to 14 exit 0 end to end; 06 and 07 booted with `serve`
+stubbed and mount `/authz` and `/users`. `ruff format --check` and `ruff check` pass on the folder.)
+
+Earlier (2026-09-18): after the store fold: `RoleStore` is private behind `Authorization`
 (`authz.set_role`, `authz.set_role_scopes`, `authz.roles_of`, `authz.audit_log`,
 `authz.decisions`, ...), `UserStore` is folded into `UserDirectory` (the directory IS the roster:
 `users.upsert`, `users.set_disabled`, ...), and the plumbing exports are gone. Re-ran
@@ -85,6 +94,28 @@ ALLOWED (200) immediately with `role=viewer` rather than landing inert.
 
 ---
 
+### 03_directory_without_auth.py
+
+**Status:** PASS
+
+**Test mode:** LIVE (real gpt-5.5 runs via OpenAIResponses)
+
+**Description:** The `AgentOS(db=db, user_isolation=True, user_directory=True)`
+shape -- a user directory and per-user isolation with NO auth at all. Drives real,
+unauthenticated runs through a `TestClient` (a form `user_id`, no Authorization
+header) and checks the directory auto-provisions from them, then shows the
+`disabled` flag is advisory without a verified identity.
+
+**Result:** Boot logged the expected one-line warning that the disabled kill
+switch and isolation are advisory. Directory started empty; a no-token run as
+`chegizkhan` auto-registered him (`get` False -> True), and `subotai` registered
+on his run too, leaving a two-person roster. After `set_disabled("chegizkhan",
+True)`, his next no-token run still returned ALLOWED (200) -- confirming the flag
+is advisory, not enforced, without auth. Points to 02_managed_users.py for the
+enforced kill switch.
+
+---
+
 ### 04_managed_roles_sessions.py
 
 **Status:** PASS
@@ -113,20 +144,6 @@ were written and printed.
 
 ---
 
-### 08_custom_authorization_provider.py
-
-**Status:** PASS
-
-**Test mode:** LIVE
-
-**Description:** A hand-written `AuthorizationProvider` enforced at the same
-choke points as the built-in one.
-
-**Result:** Exit 0, no traceback. The custom decision was honoured on both the
-route gate and the per-resource gate.
-
----
-
 ### 06_manage_users_and_roles.py
 
 **Status:** PASS
@@ -139,85 +156,6 @@ in the background and driven over HTTP, then terminated.
 **Result:** Admin `GET /users` and `GET /authz/roles` returned 200; an
 unauthenticated request returned 401; a viewer token on an admin route returned
 403; a viewer read returned 200.
-
----
-
-### 10_fga_relationship_based.py
-
-**Status:** PASS
-
-**Test mode:** LIVE (in-memory FGA store)
-
-**Description:** Relationship-based access through the `FGAClient` protocol. No
-OpenFGA server is required — the example ships a stand-in implementing the same
-two methods `OpenFGAClient` implements.
-
-**Result:** Exit 0, no traceback. alice read and run allowed via her
-relationship; bob and carol denied.
-
----
-
-### 09_idp_workos_auth0.py
-
-**Status:** PASS
-
-**Test mode:** LIVE (offline, self-minted JWKS)
-
-**Description:** An external identity provider owns identity while AgentOS
-enforces what each role may do. Also exercises the token plumbing: a foreign
-signing key and a foreign issuer.
-
-**Result:** Exit 0, no traceback. Member run and read 200; guest and no-role 403;
-admin 200; a token signed by a different key 401; a token from an untrusted
-issuer 401.
-
-Note: the wrong-issuer case returned 200 before `AuthorizationConfig(issuer=...)`
-was implemented — the kwarg was silently dropped and the `iss` claim was never
-verified. It is now enforced, and this example is the regression demo for it.
-
----
-
-### console.html
-
-**Status:** PASS
-
-**Test mode:** LIVE (driven in a real Chrome via playwriter)
-
-**Description:** The static browser console for the `/authz` admin API, served
-from `http://localhost:3000` (a CORS-allowed origin) against a running
-`06_manage_users_and_roles.py` and driven end to end in a real browser: connect
-with the printed admin token, become bob (viewer), exercise the playground,
-change his role live, and read every admin tab.
-
-**Result:** Connect succeeded (`GET /authz/scopes` 200) and the persona bar
-loaded. As bob (viewer): look 200, run 403 with the correct required-scope
-message. After promoting bob to runner from the console (same token), the same
-run returned 200; demoting back to viewer also took effect. Users, Roles and
-Scope-catalog tabs rendered from the API; the Change-audit tab showed the live
-`user.assigned bob ["viewer"] -> ["runner"]` entry and the Decisions tab showed
-every allow/deny with its jti reference. No console errors.
-
----
-
-### 03_directory_without_auth.py
-
-**Status:** PASS
-
-**Test mode:** LIVE (real gpt-5.5 runs via OpenAIResponses)
-
-**Description:** The `AgentOS(db=db, user_isolation=True, user_directory=True)`
-shape -- a user directory and per-user isolation with NO auth at all. Drives real,
-unauthenticated runs through a `TestClient` (a form `user_id`, no Authorization
-header) and checks the directory auto-provisions from them, then shows the
-`disabled` flag is advisory without a verified identity.
-
-**Result:** Boot logged the expected one-line warning that the disabled kill
-switch and isolation are advisory. Directory started empty; a no-token run as
-`chegizkhan` auto-registered him (`get` False -> True), and `subotai` registered
-on his run too, leaving a two-person roster. After `set_disabled("chegizkhan",
-True)`, his next no-token run still returned ALLOWED (200) -- confirming the flag
-is advisory, not enforced, without auth. Points to 02_managed_users.py for the
-enforced kill switch.
 
 ---
 
@@ -241,7 +179,7 @@ so a frontend gets a clean users-only API.
 
 ---
 
-### 11_user_management_metrics.py
+### 08_user_management_metrics.py
 
 **Status:** PASS
 
@@ -266,7 +204,7 @@ for the role defined without one), and `GET /users/bob` returned `role_slug anal
 
 ---
 
-### 12_idp_roles_claim.py
+### 09_idp_roles_claim.py
 
 **Status:** PASS
 
@@ -282,6 +220,58 @@ role on the token.
 the undefined `guest` role and the claim-less unassigned user were refused (403); the
 claim-less user with a stored viewer assignment read (200); the token-role admin listed
 `/authz/roles` (200) and the member was refused there (403).
+
+---
+
+### 10_custom_audit_sink.py
+
+**Status:** PASS
+
+**Test mode:** LIVE (driven via TestClient; no model calls needed)
+
+**Description:** `Authorization(audit=<AuditSink>)` with a JSON-lines sink written in the
+file. Makes three role changes (one by the system, two by an admin actor) and two real
+requests, then tails the file.
+
+**Result:** Exit 0. The file held five lines: three change events (`role.set_scopes` x2,
+`user.assigned`) with actor and before/after, and two decision events (`access.allowed`
+for the viewer's read, `access.denied` for the unknown caller's run) with the required
+scopes in metadata. `authz.decisions()` returned an empty list, as documented for a sink
+without a database reader.
+
+---
+
+### 11_custom_authorization_provider.py
+
+**Status:** PASS
+
+**Test mode:** LIVE
+
+**Description:** A hand-written `AuthorizationProvider` enforced at the same
+choke points as the built-in one.
+
+**Result:** Exit 0, no traceback. The custom decision was honoured on both the
+route gate and the per-resource gate.
+
+---
+
+### 12_idp_workos_auth0.py
+
+**Status:** PASS
+
+**Test mode:** LIVE (offline, self-minted JWKS)
+
+**Description:** An external identity provider owns identity while AgentOS
+enforces what each role may do. Also exercises the token plumbing: a foreign
+signing key and a foreign issuer.
+
+**Result:** Exit 0, no traceback. Member run and read 200; guest and no-role 403;
+admin 200; a token signed by a different key 401; a token from an untrusted
+issuer 401.
+
+Note: the wrong-issuer case returned 200 before `AuthorizationConfig(issuer=...)`
+was implemented — the kwarg was silently dropped and the `iss` claim was never
+verified. It is now enforced, and this example is the regression demo for it.
 
 ---
 
@@ -304,19 +294,37 @@ the engine's own dict showed the new scope.
 
 ---
 
-### 14_custom_audit_sink.py
+### 14_fga_relationship_based.py
 
 **Status:** PASS
 
-**Test mode:** LIVE (driven via TestClient; no model calls needed)
+**Test mode:** LIVE (in-memory FGA store)
 
-**Description:** `Authorization(audit=<AuditSink>)` with a JSON-lines sink written in the
-file. Makes three role changes (one by the system, two by an admin actor) and two real
-requests, then tails the file.
+**Description:** Relationship-based access through the `FGAClient` protocol. No
+OpenFGA server is required — the example ships a stand-in implementing the same
+two methods `OpenFGAClient` implements.
 
-**Result:** Exit 0. The file held five lines: three change events (`role.set_scopes` x2,
-`user.assigned`) with actor and before/after, and two decision events (`access.allowed`
-for the viewer's read, `access.denied` for the unknown caller's run) with the required
-scopes in metadata. `authz.decisions()` returned an empty list, as documented for a sink
-without a database reader.
+**Result:** Exit 0, no traceback. alice read and run allowed via her
+relationship; bob and carol denied.
 
+---
+
+### console.html
+
+**Status:** PASS
+
+**Test mode:** LIVE (driven in a real Chrome via playwriter)
+
+**Description:** The static browser console for the `/authz` admin API, served
+from `http://localhost:3000` (a CORS-allowed origin) against a running
+`06_manage_users_and_roles.py` and driven end to end in a real browser: connect
+with the printed admin token, become bob (viewer), exercise the playground,
+change his role live, and read every admin tab.
+
+**Result:** Connect succeeded (`GET /authz/scopes` 200) and the persona bar
+loaded. As bob (viewer): look 200, run 403 with the correct required-scope
+message. After promoting bob to runner from the console (same token), the same
+run returned 200; demoting back to viewer also took effect. Users, Roles and
+Scope-catalog tabs rendered from the API; the Change-audit tab showed the live
+`user.assigned bob ["viewer"] -> ["runner"]` entry and the Decisions tab showed
+every allow/deny with its jti reference. No console errors.

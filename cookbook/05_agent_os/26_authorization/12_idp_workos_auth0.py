@@ -29,7 +29,7 @@ own WHAT those words are allowed to do.
 
 Run it:
     pip install agno
-    python 09_idp_workos_auth0.py
+    python 12_idp_workos_auth0.py
 (no extra services, no database, no OpenAI key - we only check who is allowed.)
 """
 

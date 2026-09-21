@@ -23,7 +23,7 @@ and no database server are needed.
 
 Run it:
     pip install "agno[os]"
-    python 11_user_management_metrics.py
+    python 08_user_management_metrics.py
 """
 
 import json
