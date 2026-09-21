@@ -132,3 +132,38 @@ For isolated files, use `namespace="users/{user_id}/agents/{agent_id}"` instead.
 Existing files written with the earlier case-folding bug need a deliberate
 migration if IDs contained uppercase characters; case-collided data cannot be
 assigned to distinct identities automatically.
+
+## Filesystems in the Studio registry
+
+`registry_filesystem.py` registers named stores for Studio's agent File System
+section, including a read-only handbook:
+
+```python
+registry = Registry(
+    filesystems={
+        "personal-notes": notes,
+        "handbook": handbook.tools(read_only=True, add_instructions=True),
+    },
+)
+```
+
+In Studio's File System section, choose one or more entries under
+**Or select filesystems**. This turns off the **Use agent database** toggle.
+The saved agent config uses `{"filesystem": {"registry_id": "personal-notes"}}`
+(or an array of references). Backend, namespace, limits, and tool permissions
+stay in the SDK registry; references cannot override those settings. Register
+custom backends the same way without serializing their connections.
+
+**Use agent database** enables `filesystem=True` and clears any selected entries.
+With the toggle off and no selections, filesystem access is disabled. Existing
+inline filesystem objects and mixed arrays remain editable as configuration.
+Registered namespace templates retain their configured isolation policy; use
+`users/{user_id}/{agent_id}` when files must be isolated by authenticated user.
+
+Run the example:
+
+```bash
+.venvs/demo/bin/python cookbook/05_agent_os/27_filesystem/registry_filesystem.py
+```
+
+The example uses `tmp/studio_filesystem.db` for local storage; remove that file only when its saved agents and files are no longer needed.

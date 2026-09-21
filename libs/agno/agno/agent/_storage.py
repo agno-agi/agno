@@ -897,9 +897,12 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
         from agno.fs.toolkit import FileSystemTools
 
         stores = agent.filesystem if isinstance(agent.filesystem, list) else [agent.filesystem]
-        serialized_stores = []
+        serialized_stores: List[Dict[str, Any]] = []
         for store in stores:
-            if isinstance(store, FileSystemTools):
+            registry_id = getattr(store, "_registry_id", None)
+            if isinstance(registry_id, str) and registry_id:
+                serialized_stores.append({"registry_id": registry_id})
+            elif isinstance(store, FileSystemTools):
                 serialized_stores.append(
                     {**store.fs.to_dict(), "tools": {key: getattr(store, key) for key in _FILESYSTEM_TOOL_OPTIONS}}
                 )
@@ -1329,6 +1332,17 @@ def from_dict(
             for store_config in store_configs:
                 if not isinstance(store_config, dict):
                     raise TypeError("each serialized filesystem must be an object")
+                if "registry_id" in store_config:
+                    registry_id = store_config["registry_id"]
+                    if not isinstance(registry_id, str) or not registry_id:
+                        raise ValueError("filesystem registry_id must be a non-empty string")
+                    if set(store_config) != {"registry_id"}:
+                        raise ValueError("registered filesystem settings must be configured in the registry")
+                    registered_store = registry.get_filesystem(registry_id) if registry is not None else None
+                    if registered_store is None:
+                        raise ValueError(f"filesystem {registry_id!r} was not found in the registry")
+                    restored_stores.append(registered_store)
+                    continue
                 filesystem_db_id = (store_config.get("backend") or {}).get("db_id")
                 agent_db = config.get("db")
                 filesystem_db = None

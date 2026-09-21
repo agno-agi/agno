@@ -17,6 +17,8 @@ from agno.vectordb.base import VectorDb
 
 if TYPE_CHECKING:
     from agno.agent import Agent
+    from agno.fs import FileSystem
+    from agno.fs.toolkit import FileSystemTools
     from agno.team import Team
     from agno.workflow import Workflow
 
@@ -117,11 +119,36 @@ class Registry:
     agents: List[Agent] = field(default_factory=list)
     teams: List[Team] = field(default_factory=list)
     workflows: List[Workflow] = field(default_factory=list)
+    # Stable names used by stored agent configs; values retain their backend and tool policy.
+    filesystems: Dict[str, Union[FileSystem, FileSystemTools]] = field(default_factory=dict)
     # The db behind the component catalog, named by the AgentOS holding this
     # registry (see declare_component_db). None once declared means this OS
     # has no db that can serve the catalog.
     component_db: Optional[BaseDb] = field(default=None, init=False, repr=False)
     component_db_declared: bool = field(default=False, init=False, repr=False)
+
+    def get_filesystem(self, registry_id: str) -> Optional[Union[FileSystem, FileSystemTools]]:
+        """Resolve a named filesystem, retaining its reference when an agent is serialized."""
+        from copy import copy
+
+        from agno.fs import FileSystem
+        from agno.fs.toolkit import FileSystemTools
+
+        if not isinstance(registry_id, str) or not registry_id.strip():
+            raise ValueError("Filesystem registry names must be non-empty strings")
+        store = self.filesystems.get(registry_id)
+        if store is None:
+            return None
+        if not isinstance(store, (FileSystem, FileSystemTools)):
+            raise TypeError("Registry filesystems must be FileSystem or FileSystemTools instances")
+        # Do not attach reference metadata to the deployer's shared object.
+        resolved = copy(store)
+        resolved._registry_id = registry_id
+        return resolved
+
+    async def aget_filesystem(self, registry_id: str) -> Optional[Union[FileSystem, FileSystemTools]]:
+        """Resolve a named filesystem without performing I/O."""
+        return self.get_filesystem(registry_id)
 
     @cached_property
     def _entrypoint_lookup(self) -> Dict[EntrypointKey, EntrypointSource]:

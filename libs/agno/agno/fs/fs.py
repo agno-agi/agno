@@ -134,6 +134,8 @@ class FileSystem:
     engine/pool and is shared across instances.
     """
 
+    _registry_id: Optional[str] = None
+
     def __init__(
         self,
         backend: Any = None,
