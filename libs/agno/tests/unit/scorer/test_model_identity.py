@@ -109,6 +109,7 @@ _PINNED_OPENAI_RESPONSES_FIELDS = [
     "tool_message_role",
     "top_p",
     "truncation",
+    "use_previous_response_id",
     "verbosity",
 ]
 
