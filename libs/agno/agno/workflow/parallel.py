@@ -927,8 +927,10 @@ class Parallel:
                 # Signal completion for this step
                 await event_queue.put(("complete", idx, step_outputs, step_session_state))
                 return idx, step_outputs, step_session_state
-            except RunCancelledException:
-                raise
+            except RunCancelledException as cancelled:
+                # The consumer is waiting on the queue, not on this task.
+                await event_queue.put(("cancelled", idx, cancelled, step_outputs, step_session_state))
+                return idx, step_outputs, step_session_state
             except UnresolvableCallableError as unresolved:
                 # A placeholder for an unresolved reference can never succeed,
                 # and raising here would leave the consumer awaiting a
@@ -957,37 +959,58 @@ class Parallel:
         # Process events as they arrive and track completion
         completed_steps = 0
         total_steps = len(self.steps)
+        cancellation_error: Optional[RunCancelledException] = None
 
-        while completed_steps < total_steps:
-            try:
-                message_type, step_idx, *data = await event_queue.get()
+        try:
+            while completed_steps < total_steps:
+                try:
+                    message_type, step_idx, *data = await event_queue.get()
 
-                if message_type == "event":
-                    event = data[0]
-                    if not isinstance(event, StepOutput):
-                        yield event
+                    if message_type == "event":
+                        event = data[0]
+                        if not isinstance(event, StepOutput):
+                            yield event
 
-                elif message_type == "complete":
-                    step_outputs, step_session_state = data
-                    step_results.extend(step_outputs)
-                    modified_session_states.append(step_session_state)
+                    elif message_type == "complete":
+                        step_outputs, step_session_state = data
+                        step_results.extend(step_outputs)
+                        modified_session_states.append(step_session_state)
+                        completed_steps += 1
+
+                        step_name = getattr(self.steps[step_idx], "name", f"step_{step_idx}")
+                        log_debug(f"Parallel step {step_name} async streaming completed")
+
+                    elif message_type == "cancelled":
+                        cancellation_error, step_outputs, step_session_state = data
+                        step_results.extend(step_outputs)
+                        modified_session_states.append(step_session_state)
+                        break
+
+                    elif message_type == "unresolvable":
+                        raise data[0]
+
+                except UnresolvableCallableError:
+                    raise
+                except Exception:
+                    logger.exception("Error processing parallel step events")
                     completed_steps += 1
+        finally:
+            # This generator owns the producers, including when its caller closes
+            # the stream or is cancelled while waiting for the next event.
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
 
-                    step_name = getattr(self.steps[step_idx], "name", f"step_{step_idx}")
-                    log_debug(f"Parallel step {step_name} async streaming completed")
-
-                elif message_type == "unresolvable":
-                    for task in tasks:
-                        task.cancel()
-                    raise data[0]
-
-            except UnresolvableCallableError:
-                raise
-            except Exception:
-                logger.exception("Error processing parallel step events")
-                completed_steps += 1
-
-        await asyncio.gather(*tasks, return_exceptions=True)
+        if cancellation_error is not None:
+            # Let Workflow retain completed branches while draining after cancel,
+            # without emitting a successful ParallelExecutionCompleted event.
+            if step_results:
+                partial_result = self._aggregate_results(step_results)
+                partial_result.success = False
+                partial_result.error = str(cancellation_error)
+                yield partial_result
+            raise cancellation_error
 
         # Merge all session_state changes back into the original session_state
         if run_context is None and session_state is not None:
