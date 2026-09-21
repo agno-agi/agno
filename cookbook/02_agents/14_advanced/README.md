@@ -34,7 +34,15 @@ Advanced examples covering caching, compression, concurrency, events, retries, d
 
 `followup_instructions.py` uses `FollowupConfig` with an agent that answers only
 Python documentation questions. The same configuration works on `Team`.
-`FollowupConfig` carries custom instructions and an optional separate model.
+`followups` takes `False`, `True` for the defaults, or a `FollowupConfig` that enables
+follow-ups and carries the count, custom instructions and an optional separate model:
+`followups=FollowupConfig(num_followups=5, model=..., instructions="...")`. After
+construction `followups` reads back as a bool and the config is on `followup_config`.
+The earlier arguments still work: `followups=True` with `num_followups`,
+`followup_model` or `followup_config`. A count set on the config wins over
+`num_followups`; left unset (`None`) it falls back to `num_followups`, default 3.
+Passing two different config objects as `followups` and `followup_config` raises
+`ValueError`, even when their contents are equal.
 `FollowupConfig.model` takes precedence over `followup_model`, then the main model;
 either slot accepts a `Model` object or a `provider:model_id` string, resolved when
 the component is built. Only the question, answer and follow-up instructions are
@@ -45,8 +53,8 @@ still reaches the follow-up model.
 `num_followups` is a maximum: a successful result holds zero to N suggestions,
 excess suggestions are clipped, and `[]` is a valid result. The default prompt asks
 the model to respect refusals and stay within the answer's scope; this is prompt
-guidance, not enforcement, and it applies to every `followups=True` component, with
-or without a `FollowupConfig`. Failed, cancelled or malformed generation produces
+guidance, not enforcement, and it applies to every component with follow-ups enabled,
+with or without a `FollowupConfig`. Failed, cancelled or malformed generation produces
 `None`. Streaming completion events and persisted run output preserve the list,
 including `[]`. Consumers should hide suggestion controls for an empty list.
 

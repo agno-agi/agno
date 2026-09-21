@@ -29,7 +29,7 @@ from uuid import uuid4
 from pydantic import BaseModel
 
 from agno.agent import Agent
-from agno.agent.followup import FollowupConfig
+from agno.agent.followup import FollowupConfig, _resolve_followups
 from agno.compression.manager import CompressionManager
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.eval.base import BaseEval
@@ -163,7 +163,7 @@ def __init__(
     metadata: Optional[Dict[str, Any]] = None,
     reasoning_model: Optional[Union[Model, str]] = None,
     reasoning_agent: Optional[Agent] = None,
-    followups: bool = False,
+    followups: Union[bool, FollowupConfig] = False,
     num_followups: int = 3,
     followup_model: Optional[Union[Model, str]] = None,
     followup_config: Optional[FollowupConfig] = None,
@@ -362,12 +362,10 @@ def __init__(
     team.reasoning_model = reasoning_model  # type: ignore[assignment]
     team.reasoning_agent = reasoning_agent
 
-    team.followups = followups
-    if num_followups < 1:
-        raise ValueError("num_followups must be at least 1")
-    team.num_followups = num_followups
+    team.followups, team.num_followups, team.followup_config = _resolve_followups(
+        followups, num_followups, followup_config
+    )
     team.followup_model = followup_model  # type: ignore[assignment]
-    team.followup_config = followup_config
 
     team.stream = stream
     team.stream_events = stream_events

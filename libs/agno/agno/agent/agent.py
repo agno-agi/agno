@@ -32,7 +32,7 @@ from agno.agent import (
     _tools,
     _utils,
 )
-from agno.agent.followup import FollowupConfig
+from agno.agent.followup import FollowupConfig, _resolve_followups
 from agno.compression.manager import CompressionManager
 from agno.db.base import AsyncBaseDb, BaseDb, ComponentType, UserMemory
 from agno.eval.base import BaseEval
@@ -324,13 +324,14 @@ class Agent:
     save_response_to_file: Optional[str] = None
 
     # --- Followups ---
-    # If True, generate followup prompts after the main response
+    # If True, generate followup prompts after the main response. The constructor also takes a
+    # FollowupConfig here: it enables followups and is kept on followup_config, so this stays a bool.
     followups: bool = False
-    # Maximum number of followup prompts to generate (default 3)
+    # Maximum number of followup prompts to generate (default 3); FollowupConfig.num_followups wins when set
     num_followups: int = 3
     # Optional model to use for generating followups (defaults to agent's model)
     followup_model: Optional[Model] = None
-    # Optional follow-up model and instructions; followups and num_followups stay on the component
+    # Follow-up model, instructions and count; set by followups=FollowupConfig(...) or passed here directly
     followup_config: Optional[FollowupConfig] = None
 
     # --- Agent Streaming ---
@@ -484,7 +485,7 @@ class Agent:
         structured_outputs: Optional[bool] = None,
         use_json_mode: bool = False,
         save_response_to_file: Optional[str] = None,
-        followups: bool = False,
+        followups: Union[bool, FollowupConfig] = False,
         num_followups: int = 3,
         followup_model: Optional[Union[Model, str]] = None,
         followup_config: Optional[FollowupConfig] = None,
@@ -658,12 +659,10 @@ class Agent:
         self.use_json_mode = use_json_mode
         self.save_response_to_file = save_response_to_file
 
-        self.followups = followups
-        if num_followups < 1:
-            raise ValueError("num_followups must be at least 1")
-        self.num_followups = num_followups
+        self.followups, self.num_followups, self.followup_config = _resolve_followups(
+            followups, num_followups, followup_config
+        )
         self.followup_model = followup_model  # type: ignore[assignment]
-        self.followup_config = followup_config
 
         self.stream = stream
         self.stream_events = stream_events

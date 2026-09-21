@@ -9,9 +9,8 @@ from agno.models.openai import OpenAIResponses
 agent = Agent(
     model=OpenAIResponses(id="gpt-5.6-luna"),
     instructions="Help with Python documentation. Decline unrelated requests briefly.",
-    followups=True,
-    num_followups=3,
-    followup_config=FollowupConfig(
+    followups=FollowupConfig(
+        num_followups=3,
         model=OpenAIResponses(id="gpt-5.6-luna"),
         instructions="Suggest only Python documentation questions. Do not repeat an out-of-scope request.",
     ),
