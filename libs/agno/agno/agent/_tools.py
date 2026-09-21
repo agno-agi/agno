@@ -144,6 +144,10 @@ def _append_filesystem_tools(
             "filesystem manages its own FileSystemTools. Remove the manually configured "
             "FileSystemTools or disable the filesystem setting."
         )
+    if isinstance(agent.filesystem, FileSystemTools):
+        # The developer built the toolkit, so its permissions and instruction settings stand.
+        agent_tools.append(agent.filesystem)
+        return
     agent_tools.append(filesystem.tools(add_instructions=True))
 
 

@@ -229,3 +229,40 @@ def test_stored_filesystem_agent_rehydrates_namespace_and_toolkit(tmp_path):
     assert loaded.filesystem_instance is not None
     assert loaded.filesystem_instance.namespace == "research-agent"
     assert len(_filesystem_tools(loaded)) == 1
+
+
+def test_toolkit_setting_keeps_its_permissions(tmp_path):
+    db = SqliteDb(db_file=str(tmp_path / "agents.db"))
+    filesystem = FileSystem(db, namespace="research/decisions")
+    toolkit = filesystem.tools(read_only=True)
+    agent = Agent(id="answerer", db=db, filesystem=toolkit)
+
+    agent.initialize_agent()
+
+    assert agent.filesystem_instance is filesystem
+    assert _filesystem_tools(agent) == [toolkit]
+    assert sorted(toolkit.functions) == ["list_files", "read_file", "search_content"]
+    assert agent.filesystems == [(filesystem, True)]
+
+
+def test_toolkit_setting_round_trips_permissions(tmp_path):
+    db = SqliteDb(db_file=str(tmp_path / "agents.db"))
+    toolkit = FileSystem(db, namespace="research/decisions").tools(read_only=True, add_instructions=True)
+    agent = Agent(id="answerer", db=db, filesystem=toolkit)
+
+    restored = Agent.from_dict(agent.to_dict())
+
+    assert isinstance(restored.filesystem, FileSystemTools)
+    assert restored.filesystem.read_only is True
+    assert restored.filesystem.add_instructions is True
+    assert restored.filesystem.fs.namespace == "research/decisions"
+    assert sorted(restored.filesystem.functions) == ["list_files", "read_file", "search_content"]
+
+
+def test_filesystems_lists_manually_attached_toolkits(tmp_path):
+    db = SqliteDb(db_file=str(tmp_path / "agents.db"))
+    shared = FileSystem(db, namespace="shared")
+    agent = Agent(id="reader", db=db, tools=[shared.tools(read_only=True)])
+
+    assert agent.filesystem_instance is None
+    assert agent.filesystems == [(shared, True)]

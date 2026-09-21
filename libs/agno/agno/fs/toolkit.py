@@ -151,6 +151,7 @@ class FileSystemTools(Toolkit):
     ):
         self.fs = fs
         self.read_only = read_only
+        self.allow_delete = allow_delete
         # Every mutating tool is a read-modify-write over one row, and a model's
         # tool calls for one turn are gathered concurrently (models/base.py) -
         # the path AgentOS REST and /mcp take. Two replace_lines on one note

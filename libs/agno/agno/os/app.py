@@ -2307,26 +2307,29 @@ class AgentOS:
         from agno.os.schema import FileSystemConfig, FileSystemInstance, _extract_filesystem
 
         instances: Dict[tuple, FileSystemInstance] = {}
+        # An agent holding both a writable and a read-only attachment on one store is a writer.
+        writers: Dict[tuple, Set[str]] = {}
         for entry in self.agents or []:
             if not isinstance(entry, Agent) or not entry.id:
                 continue
 
-            summary = _extract_filesystem(entry, user_id=user_id)
-            filesystem = entry.filesystem_instance
-            if summary is None or filesystem is None:
-                continue
+            for filesystem, read_only in entry.filesystems:
+                summary = _extract_filesystem(filesystem, entry, user_id=user_id)
+                key = (
+                    _filesystem_backend_key(filesystem),
+                    summary.namespace,
+                    summary.max_file_bytes,
+                    summary.max_namespace_bytes,
+                )
+                instance = instances.get(key)
+                if instance is None:
+                    instance = instances[key] = FileSystemInstance(**summary.model_dump(), agents=[])
+                instance.agents = sorted(set(instance.agents + [entry.id]))
+                if not read_only:
+                    writers.setdefault(key, set()).add(entry.id)
 
-            key = (
-                _filesystem_backend_key(filesystem),
-                summary.namespace,
-                summary.max_file_bytes,
-                summary.max_namespace_bytes,
-            )
-            existing = instances.get(key)
-            if existing is None:
-                instances[key] = FileSystemInstance(**summary.model_dump(), agents=[entry.id])
-            else:
-                existing.agents = sorted(set(existing.agents + [entry.id]))
+        for key, instance in instances.items():
+            instance.read_only_agents = [a for a in instance.agents if a not in writers.get(key, set())]
 
         return FileSystemConfig(
             instances=sorted(

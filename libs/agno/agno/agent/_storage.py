@@ -877,10 +877,23 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
         config["filesystem"] = True
     elif agent.filesystem:
         from agno.fs import FileSystem
+        from agno.fs.toolkit import FileSystemTools
 
-        if not isinstance(agent.filesystem, FileSystem):
-            raise TypeError("filesystem must be True, False, None, or a FileSystem instance")
-        config["filesystem"] = agent.filesystem.to_dict()
+        if isinstance(agent.filesystem, FileSystemTools):
+            # The toolkit's permissions travel with the filesystem. An include_tools or
+            # exclude_tools selection is not stored; configure that from application code.
+            config["filesystem"] = {
+                **agent.filesystem.fs.to_dict(),
+                "tools": {
+                    "read_only": agent.filesystem.read_only,
+                    "allow_delete": agent.filesystem.allow_delete,
+                    "add_instructions": agent.filesystem.add_instructions,
+                },
+            }
+        elif isinstance(agent.filesystem, FileSystem):
+            config["filesystem"] = agent.filesystem.to_dict()
+        else:
+            raise TypeError("filesystem must be True, False, None, a FileSystem, or FileSystem.tools(...)")
 
     # --- Agentic Memory settings ---
     # Stored as a registry reference by id, like knowledge: the manager holds
@@ -1309,7 +1322,16 @@ def from_dict(
                 filesystem_db = registry.get_db(filesystem_db_id)
             if filesystem_db_id is not None and filesystem_db is None:
                 raise ValueError(f"database {filesystem_db_id!r} was not found on the agent or in the registry")
-            config["filesystem"] = FileSystem.from_dict(filesystem_config, db=filesystem_db)
+            restored_filesystem = FileSystem.from_dict(filesystem_config, db=filesystem_db)
+            tools_config = filesystem_config.get("tools")
+            if isinstance(tools_config, dict):
+                config["filesystem"] = restored_filesystem.tools(
+                    read_only=bool(tools_config.get("read_only", False)),
+                    allow_delete=bool(tools_config.get("allow_delete", False)),
+                    add_instructions=bool(tools_config.get("add_instructions", False)),
+                )
+            else:
+                config["filesystem"] = restored_filesystem
         except (TypeError, ValueError) as e:
             if strict:
                 raise ComponentRehydrationError(f"{component_label} filesystem could not be restored: {e}") from e

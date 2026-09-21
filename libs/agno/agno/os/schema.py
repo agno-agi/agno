@@ -205,6 +205,10 @@ class FileSystemSummary(BaseModel):
 
 class FileSystemInstance(FileSystemSummary):
     agents: List[str] = Field(..., description="IDs of agents using this filesystem instance")
+    read_only_agents: List[str] = Field(
+        default_factory=list,
+        description="Subset of agents holding only read tools on this filesystem instance",
+    )
 
 
 class FileSystemConfig(BaseModel):
@@ -214,12 +218,8 @@ class FileSystemConfig(BaseModel):
     )
 
 
-def _extract_filesystem(agent: Any, user_id: Optional[str] = None) -> Optional[FileSystemSummary]:
-    if not getattr(agent, "filesystem", False):
-        return None
-    filesystem = getattr(agent, "filesystem_instance", None)
-    if filesystem is None:
-        return None
+def _extract_filesystem(filesystem: Any, agent: Any, user_id: Optional[str] = None) -> FileSystemSummary:
+    """Describe one of the agent's filesystems, with its namespace resolved for the caller."""
     user_isolation = "user_id" in filesystem._placeholders
     filesystem = filesystem.resolve(user_id=user_id, agent_id=agent.id)
     backend = filesystem.backend

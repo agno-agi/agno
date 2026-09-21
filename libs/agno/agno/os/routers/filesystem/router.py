@@ -11,7 +11,6 @@ from agno.os.auth import (
     check_resource_access,
     get_accessible_resources,
     get_authentication_dependency,
-    require_resource_access,
 )
 from agno.os.middleware.user_scope import get_scoped_user_id
 from agno.os.routers.filesystem.schema import (
@@ -45,7 +44,8 @@ _MAX_PREVIEW_CHARS = 100_000
 _MAX_CONCURRENT_FILESYSTEM_READS = 8
 
 
-async def _get_agent_filesystem(os: "AgentOS", agent_id: str, request: Request) -> FileSystem:
+async def _get_agent_filesystems(os: "AgentOS", agent_id: str, request: Request) -> list[FileSystem]:
+    """Every filesystem the agent holds, resolved for the caller: the setting first, then its tools."""
     user_isolation_enabled = bool(getattr(request.state, "user_isolation_enabled", False))
     scoped_user_id = get_scoped_user_id(request)
 
@@ -72,27 +72,75 @@ async def _get_agent_filesystem(os: "AgentOS", agent_id: str, request: Request) 
         raise HTTPException(status_code=404, detail="Agent not found")
     if not isinstance(agent, Agent):
         raise HTTPException(status_code=501, detail="This agent does not support filesystem browsing")
-    if not agent.filesystem:
-        raise HTTPException(status_code=404, detail="This agent does not have a filesystem")
-
     try:
-        filesystem = agent.filesystem_instance
+        filesystems = [filesystem for filesystem, _ in agent.filesystems]
     except Exception as e:
         log_error(f"Error initializing filesystem for agent '{agent_id}': {e}")
         raise HTTPException(status_code=503, detail="Agent filesystem is unavailable")
-    if filesystem is None:
-        raise HTTPException(status_code=503, detail="Agent filesystem is unavailable")
+    if not filesystems:
+        raise HTTPException(status_code=404, detail="This agent does not have a filesystem")
     effective_user_id = scoped_user_id or getattr(request.state, "user_id", None)
     if user_isolation_enabled and (not isinstance(effective_user_id, str) or not effective_user_id.strip()):
         raise HTTPException(status_code=403, detail="A user identity is required when user isolation is enabled")
-    try:
-        return filesystem._resolve_from_context(
-            agent=agent,
-            user_id=effective_user_id,
-            agent_id=agent.id,
+
+    resolved: list[FileSystem] = []
+    seen: set[tuple] = set()
+    unresolved: Optional[InvalidPathError] = None
+    for filesystem in filesystems:
+        try:
+            bound = filesystem._resolve_from_context(agent=agent, user_id=effective_user_id, agent_id=agent.id)
+        except InvalidPathError as e:
+            # One unbindable template must not hide the agent's other filesystems.
+            unresolved = unresolved or e
+            continue
+        key = (_filesystem_backend_key(bound), bound.namespace)
+        if key not in seen:
+            seen.add(key)
+            resolved.append(bound)
+    if not resolved:
+        raise HTTPException(status_code=400, detail=str(unresolved))
+    return resolved
+
+
+async def _resolve_filesystem(
+    os: "AgentOS", request: Request, agent_id: Optional[str], namespace: Optional[str]
+) -> tuple[FileSystem, list[str]]:
+    """The one filesystem a browse request addresses, with the caller's agents that hold it.
+
+    Storage is addressed by namespace. ``agent_id`` narrows the search to one agent,
+    and alone selects that agent's first filesystem. Access always derives from the
+    agents the caller may read, so a namespace no accessible agent holds is not found.
+    """
+    if agent_id is None and namespace is None:
+        raise HTTPException(status_code=400, detail="Provide a namespace, an agent_id, or both")
+
+    agent_ids = await _get_global_filesystem_agent_ids(os, request, agent_id)
+    matches: dict[tuple, tuple[FileSystem, list[str]]] = {}
+    for candidate_id in agent_ids:
+        try:
+            agent_filesystems = await _get_agent_filesystems(os, candidate_id, request)
+        except HTTPException as e:
+            if agent_id is None and e.status_code in (400, 404, 501):
+                continue
+            raise
+        if namespace is None:
+            agent_filesystems = agent_filesystems[:1]
+        for filesystem in agent_filesystems:
+            if namespace is not None and filesystem.namespace != namespace:
+                continue
+            key = (_filesystem_backend_key(filesystem), filesystem.namespace)
+            matches.setdefault(key, (filesystem, []))[1].append(candidate_id)
+
+    if not matches:
+        # A namespace the caller's agents do not hold is indistinguishable from one that does not exist.
+        raise HTTPException(status_code=404, detail="Filesystem not found")
+    if len(matches) > 1:
+        raise HTTPException(
+            status_code=409,
+            detail="Several filesystems use this namespace on different backends; pass agent_id to choose one",
         )
-    except InvalidPathError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    filesystem, holders = next(iter(matches.values()))
+    return filesystem, sorted(holders)
 
 
 def _list_entries(filesystem: FileSystem, directory: str) -> list[FileSystemEntry]:
@@ -187,21 +235,22 @@ async def _get_global_files(
     filesystems: dict[tuple, tuple[FileSystem, list[str]]] = {}
     for agent_id in agent_ids:
         try:
-            filesystem = await _get_agent_filesystem(os, agent_id, request)
+            agent_filesystems = await _get_agent_filesystems(os, agent_id, request)
         except HTTPException as e:
             if not strict and e.status_code in (400, 404, 501):
                 continue
             raise
 
-        if namespace is not None and filesystem.namespace != namespace:
-            continue
+        for filesystem in agent_filesystems:
+            if namespace is not None and filesystem.namespace != namespace:
+                continue
 
-        key = (_filesystem_backend_key(filesystem), filesystem.namespace)
-        existing = filesystems.get(key)
-        if existing is None:
-            filesystems[key] = (filesystem, [agent_id])
-        else:
-            existing[1].append(agent_id)
+            key = (_filesystem_backend_key(filesystem), filesystem.namespace)
+            existing = filesystems.get(key)
+            if existing is None:
+                filesystems[key] = (filesystem, [agent_id])
+            else:
+                existing[1].append(agent_id)
 
     async def _read_files(filesystem: FileSystem, linked_agent_ids: list[str]) -> list[FileSystemTableEntry]:
         metadata = await filesystem.alist()
@@ -270,17 +319,17 @@ def get_filesystem_router(
     )
 
     @router.get(
-        "/files",
+        "/filesystem/files",
         response_model=FileSystemTableResponse,
         tags=["FileSystem"],
-        operation_id="list_files",
-        summary="List Files",
+        operation_id="list_filesystem_files",
+        summary="List Filesystem Files",
         description=(
             "List files across the configured agent filesystems visible to the caller. "
             "Use agent_id or namespace to narrow the result, and query to search file contents."
         ),
     )
-    async def list_files(
+    async def list_filesystem_files(
         request: Request,
         agent_id: Optional[str] = Query(None, description="Filter by agent ID"),
         namespace: Optional[str] = Query(None, description="Filter by resolved namespace"),
@@ -311,20 +360,24 @@ def get_filesystem_router(
         )
 
     @router.get(
-        "/agents/{agent_id}/files",
+        "/filesystem/entries",
         response_model=FileSystemListResponse,
         tags=["FileSystem"],
-        operation_id="list_agent_files",
-        dependencies=[Depends(require_resource_access("agents", "read", "agent_id"))],
+        operation_id="list_filesystem_entries",
+        summary="List Filesystem Entries",
+        description="List the files and directories directly under a directory of one filesystem.",
     )
-    async def list_agent_files(
-        agent_id: str,
+    async def list_filesystem_entries(
         request: Request,
-        directory: str = Query("", description="Relative directory inside the agent filesystem"),
+        namespace: Optional[str] = Query(None, description="Resolved namespace of the filesystem to browse"),
+        agent_id: Optional[str] = Query(
+            None, description="Agent holding the filesystem; alone, selects that agent's first filesystem"
+        ),
+        directory: str = Query("", description="Relative directory inside the filesystem"),
         page: int = Query(1, ge=1, description="1-indexed page number"),
         limit: int = Query(50, ge=1, le=100, description="Page size"),
     ) -> FileSystemListResponse:
-        filesystem = await _get_agent_filesystem(os, agent_id, request)
+        filesystem, holder_ids = await _resolve_filesystem(os, request, agent_id, namespace)
         try:
             normalized_directory = normalize_directory(directory)
             entries = await asyncio.to_thread(_list_entries, filesystem, normalized_directory)
@@ -336,7 +389,8 @@ def get_filesystem_router(
         total_pages = (total_count + limit - 1) // limit if total_count else 0
         start = (page - 1) * limit
         return FileSystemListResponse(
-            agent_id=agent_id,
+            namespace=filesystem.namespace,
+            agent_ids=holder_ids,
             directory=normalized_directory,
             entries=entries[start : start + limit],
             usage=FileSystemUsage(
@@ -353,20 +407,24 @@ def get_filesystem_router(
         )
 
     @router.get(
-        "/agents/{agent_id}/files/content",
+        "/filesystem/content",
         response_model=FileSystemContentResponse,
         tags=["FileSystem"],
-        operation_id="read_agent_file",
-        dependencies=[Depends(require_resource_access("agents", "read", "agent_id"))],
+        operation_id="read_filesystem_content",
+        summary="Read Filesystem Content",
+        description="Read a preview of one file, continuing from offset when the file is longer than limit.",
     )
-    async def read_agent_file(
-        agent_id: str,
+    async def read_filesystem_content(
         request: Request,
-        path: str = Query(..., description="Relative file path inside the agent filesystem"),
+        namespace: Optional[str] = Query(None, description="Resolved namespace of the filesystem to browse"),
+        agent_id: Optional[str] = Query(
+            None, description="Agent holding the filesystem; alone, selects that agent's first filesystem"
+        ),
+        path: str = Query(..., description="Relative file path inside the filesystem"),
         offset: int = Query(0, ge=0, description="Character offset into the file"),
         limit: int = Query(_MAX_PREVIEW_CHARS, ge=1, le=_MAX_PREVIEW_CHARS, description="Characters to return"),
     ) -> FileSystemContentResponse:
-        filesystem = await _get_agent_filesystem(os, agent_id, request)
+        filesystem, holder_ids = await _resolve_filesystem(os, request, agent_id, namespace)
         try:
             normalized_path = normalize_path(path)
             file_data = await filesystem.aread_with_meta(normalized_path)
@@ -379,7 +437,8 @@ def get_filesystem_router(
         end = min(offset + limit, len(content))
         preview = content[offset:end]
         return FileSystemContentResponse(
-            agent_id=agent_id,
+            namespace=filesystem.namespace,
+            agent_ids=holder_ids,
             path=metadata.path,
             content=preview,
             size_bytes=metadata.size_bytes,
@@ -393,21 +452,25 @@ def get_filesystem_router(
         )
 
     @router.get(
-        "/agents/{agent_id}/files/search",
+        "/filesystem/search",
         response_model=FileSystemSearchResponse,
         tags=["FileSystem"],
-        operation_id="search_agent_files",
-        dependencies=[Depends(require_resource_access("agents", "read", "agent_id"))],
+        operation_id="search_filesystem",
+        summary="Search Filesystem",
+        description="Search file contents within one filesystem.",
     )
-    async def search_agent_files(
-        agent_id: str,
+    async def search_filesystem(
         request: Request,
+        namespace: Optional[str] = Query(None, description="Resolved namespace of the filesystem to browse"),
+        agent_id: Optional[str] = Query(
+            None, description="Agent holding the filesystem; alone, selects that agent's first filesystem"
+        ),
         query: str = Query(..., min_length=1, max_length=200),
         directory: str = Query(""),
         page: int = Query(1, ge=1, description="1-indexed page number"),
         limit: int = Query(50, ge=1, le=100, description="Page size"),
     ) -> FileSystemSearchResponse:
-        filesystem = await _get_agent_filesystem(os, agent_id, request)
+        filesystem, holder_ids = await _resolve_filesystem(os, request, agent_id, namespace)
         try:
             normalized_directory = normalize_directory(directory)
             files = await filesystem.alist(normalized_directory)
@@ -423,7 +486,8 @@ def get_filesystem_router(
         total_pages = (total_count + limit - 1) // limit if total_count else 0
         start = (page - 1) * limit
         return FileSystemSearchResponse(
-            agent_id=agent_id,
+            namespace=filesystem.namespace,
+            agent_ids=holder_ids,
             query=query,
             directory=normalized_directory,
             entries=[
