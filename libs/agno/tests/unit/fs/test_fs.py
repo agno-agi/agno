@@ -1,4 +1,4 @@
-"""Unit tests for the FileSystem programmatic API (spec D2) over LocalFileSystem."""
+"""Unit tests for the FileSystem programmatic API over LocalFileSystem."""
 
 import asyncio
 
@@ -7,16 +7,6 @@ import pytest
 from agno.fs import DEFAULT_NAMESPACE, FileSystem
 from agno.fs.errors import InvalidPathError, QuotaExceededError, UnsupportedOperationError
 from agno.fs.local import LocalFileSystem
-
-
-@pytest.fixture
-def local_backend(tmp_path) -> LocalFileSystem:
-    return LocalFileSystem(root=tmp_path)
-
-
-@pytest.fixture
-def fs(local_backend) -> FileSystem:
-    return FileSystem(backend=local_backend, namespace="radar")
 
 
 class TestEdgeBehaviors:
@@ -85,7 +75,7 @@ class TestEdgeBehaviors:
         assert meta.path == "seen/log.md"
 
     def test_list_sorted_by_path_segments(self, fs):
-        # The three paths that collate differently in Postgres (spec D2).
+        # Path-segment ordering must match across local and database backends.
         fs.write("seen/a.md", "1")
         fs.write("seen.md", "2")
         fs.write("seen-old/a.md", "3")
@@ -111,7 +101,7 @@ class TestEdgeBehaviors:
 
 
 class TestRoundTrip:
-    """The dedupe regression: one line transform, both sides (spec D6/D13)."""
+    """Append and membership checks must normalize lines identically."""
 
     def test_append_then_contains_crlf_and_spaces(self, fs):
         fs.append("seen/2026-07-24.md", "  a\r\nb  \r\n")
@@ -142,7 +132,7 @@ class TestRoundTrip:
 
     def test_u2028_stored_as_one_line_and_found(self, fs):
         # The split-choice regression: a splitlines() append would store two
-        # rows and return missing forever (spec D9 step 1 / D13).
+        # rows and make membership checks report the original line as missing.
         fs.append("seen/log.md", "a\u2028b\n")
         assert fs.read("seen/log.md") == "a\u2028b\n"
         assert fs.contains(["a\u2028b"]).found == ["a\u2028b"]
@@ -396,7 +386,7 @@ class TestBackendDispatch:
 
     def test_import_agno_fs_stays_dependency_light(self):
         # The dispatch imports its backend lazily; `import agno.fs` must not drag
-        # SQLAlchemy in (spec D1).
+        # SQLAlchemy in.
         import subprocess
         import sys
 
@@ -409,7 +399,7 @@ class TestBackendDispatch:
 
 
 class TestNamespaceSanitization:
-    """Namespaces are lowercase, URL-safe identifiers (spec D6)."""
+    """Namespaces are lowercase, URL-safe identifiers."""
 
     def test_case_folds_to_one_store(self, local_backend):
         FileSystem(local_backend, namespace="BANK").write("secret.md", "x")
@@ -452,7 +442,7 @@ class TestNamespaceSanitization:
         assert len(resolved) == len(names)
 
     def test_file_paths_stay_case_sensitive(self, local_backend):
-        # Only the namespace is an identifier; paths keep the D6 grammar.
+        # Only namespace identifiers are case-normalized; file paths preserve case.
         fs = FileSystem(local_backend, namespace="n")
         fs.write("Notes/README.md", "x")
         assert [m.path for m in fs.list()] == ["Notes/README.md"]

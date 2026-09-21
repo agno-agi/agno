@@ -11,6 +11,15 @@ from agno.run.agent import RunOutput
 from agno.session import AgentSession
 
 
+@pytest.fixture
+def db(tmp_path):
+    database = SqliteDb(id="filesystem-db", db_file=str(tmp_path / "files.db"))
+    try:
+        yield database
+    finally:
+        database.db_engine.dispose()
+
+
 def _filesystem_tools(agent: Agent) -> list[FileSystemTools]:
     session_id = "filesystem-config-test"
     tools = agent.get_tools(
@@ -21,10 +30,10 @@ def _filesystem_tools(agent: Agent) -> list[FileSystemTools]:
     return [tool for tool in tools if isinstance(tool, FileSystemTools)]
 
 
-def test_filesystem_true_adds_one_isolated_toolkit(tmp_path):
+def test_filesystem_true_adds_one_isolated_toolkit(db):
     agent = Agent(
         id="research-agent",
-        db=SqliteDb(db_file=str(tmp_path / "agents.db")),
+        db=db,
         filesystem=True,
     )
 
@@ -35,8 +44,7 @@ def test_filesystem_true_adds_one_isolated_toolkit(tmp_path):
     assert len(_filesystem_tools(agent)) == 1
 
 
-def test_explicit_filesystem_uses_supplied_instance(tmp_path):
-    db = SqliteDb(db_file=str(tmp_path / "agents.db"))
+def test_explicit_filesystem_uses_supplied_instance(db):
     filesystem = FileSystem(db, namespace="agents/research-agent")
     agent = Agent(filesystem=filesystem)
 
@@ -47,8 +55,7 @@ def test_explicit_filesystem_uses_supplied_instance(tmp_path):
     assert _filesystem_tools(agent)[0].fs is filesystem
 
 
-def test_explicit_filesystem_round_trips_with_agent_config(tmp_path):
-    db = SqliteDb(db_file=str(tmp_path / "agents.db"))
+def test_explicit_filesystem_round_trips_with_agent_config(db):
     filesystem = FileSystem(
         db,
         namespace="agents/research-agent",
@@ -66,8 +73,7 @@ def test_explicit_filesystem_round_trips_with_agent_config(tmp_path):
     assert restored_filesystem.max_namespace_bytes == 10_000
 
 
-def test_encoded_namespace_round_trip_does_not_double_encode(tmp_path):
-    db = SqliteDb(db_file=str(tmp_path / "agents.db"))
+def test_encoded_namespace_round_trip_does_not_double_encode(db):
     agent = Agent(id="research-agent", db=db, filesystem=FileSystem(db, namespace="My Namespace"))
 
     restored = Agent.from_dict(agent.to_dict())
@@ -76,9 +82,9 @@ def test_encoded_namespace_round_trip_does_not_double_encode(tmp_path):
     assert restored.filesystem_instance.namespace == "my%20namespace"
 
 
-def test_template_values_preserve_identity_case(tmp_path):
+def test_template_values_preserve_identity_case(db):
     filesystem = FileSystem(
-        SqliteDb(db_file=str(tmp_path / "agents.db")),
+        db,
         namespace="Users/{user_id}/Agents/{agent_id}",
     )
 
@@ -115,36 +121,41 @@ def test_strict_restore_refuses_missing_filesystem_database(tmp_path):
         Agent.from_dict(agent.to_dict(), strict=True)
 
 
-def test_filesystem_namespace_isolated_by_agent_id(tmp_path):
-    db = SqliteDb(db_file=str(tmp_path / "agents.db"))
+def test_filesystem_namespace_isolated_by_agent_id(db):
     first = Agent(id="first-agent", db=db, filesystem=True)
     second = Agent(id="second-agent", db=db, filesystem=True)
     first.initialize_agent()
     second.initialize_agent()
 
-    first.filesystem_instance.write("notes/state.md", "first")  # type: ignore[union-attr]
+    first_files = first.filesystem_instance
+    second_files = second.filesystem_instance
+    assert first_files is not None
+    assert second_files is not None
 
-    assert second.filesystem_instance.read("notes/state.md") is None  # type: ignore[union-attr]
+    first_files.write("notes/state.md", "first")
+
+    assert second_files.read("notes/state.md") is None
 
 
-def test_filesystem_namespace_isolated_by_user_id(tmp_path):
+def test_filesystem_namespace_isolated_by_user_id(db):
     agent = Agent(
         id="research-agent",
-        db=SqliteDb(db_file=str(tmp_path / "agents.db")),
+        db=db,
         filesystem=True,
     )
     agent._filesystem_user_isolation = True
     agent.initialize_agent()
-    alice_files = agent.filesystem_instance.resolve(user_id="alice")  # type: ignore[union-attr]
-    bob_files = agent.filesystem_instance.resolve(user_id="bob")  # type: ignore[union-attr]
+    filesystem = agent.filesystem_instance
+    assert filesystem is not None
+    alice_files = filesystem.resolve(user_id="alice")
+    bob_files = filesystem.resolve(user_id="bob")
 
     alice_files.write("notes/state.md", "alice")
 
     assert bob_files.read("notes/state.md") is None
 
 
-def test_managed_filesystem_preserves_agent_id_case(tmp_path):
-    db = SqliteDb(db_file=str(tmp_path / "agents.db"))
+def test_managed_filesystem_preserves_agent_id_case(db):
     upper = Agent(id="Research", db=db, filesystem=True)
     lower = Agent(id="research", db=db, filesystem=True)
     upper.initialize_agent()
@@ -160,10 +171,10 @@ def test_managed_filesystem_preserves_agent_id_case(tmp_path):
     assert lower_filesystem.read("state.md") is None
 
 
-def test_managed_filesystem_toolkit_is_not_serialized_as_user_tool(tmp_path):
+def test_managed_filesystem_toolkit_is_not_serialized_as_user_tool(db):
     agent = Agent(
         id="research-agent",
-        db=SqliteDb(db_file=str(tmp_path / "agents.db")),
+        db=db,
         filesystem=True,
     )
     agent.initialize_agent()
@@ -174,10 +185,10 @@ def test_managed_filesystem_toolkit_is_not_serialized_as_user_tool(tmp_path):
     assert "tools" not in config
 
 
-def test_callable_tools_factory_keeps_managed_filesystem(tmp_path):
+def test_callable_tools_factory_keeps_managed_filesystem(db):
     agent = Agent(
         id="research-agent",
-        db=SqliteDb(db_file=str(tmp_path / "agents.db")),
+        db=db,
         filesystem=True,
         tools=lambda: [],
     )
@@ -186,10 +197,10 @@ def test_callable_tools_factory_keeps_managed_filesystem(tmp_path):
     assert len(_filesystem_tools(agent)) == 1
 
 
-def test_set_tools_does_not_drop_managed_filesystem(tmp_path):
+def test_set_tools_does_not_drop_managed_filesystem(db):
     agent = Agent(
         id="research-agent",
-        db=SqliteDb(db_file=str(tmp_path / "agents.db")),
+        db=db,
         filesystem=True,
     )
     agent.initialize_agent()
@@ -199,10 +210,10 @@ def test_set_tools_does_not_drop_managed_filesystem(tmp_path):
     assert len(_filesystem_tools(agent)) == 1
 
 
-def test_deep_copy_rebuilds_managed_filesystem_toolkit(tmp_path):
+def test_deep_copy_rebuilds_managed_filesystem_toolkit(db):
     agent = Agent(
         id="research-agent",
-        db=SqliteDb(db_file=str(tmp_path / "agents.db")),
+        db=db,
         filesystem=True,
     )
     agent._filesystem_user_isolation = True
@@ -211,8 +222,10 @@ def test_deep_copy_rebuilds_managed_filesystem_toolkit(tmp_path):
     copied = agent.deep_copy()
     copied.initialize_agent()
 
-    assert copied.filesystem_instance is not agent.filesystem_instance
-    assert copied.filesystem_instance.namespace == "users/{user_id}/research-agent"  # type: ignore[union-attr]
+    copied_filesystem = copied.filesystem_instance
+    assert copied_filesystem is not None
+    assert copied_filesystem is not agent.filesystem_instance
+    assert copied_filesystem.namespace == "users/{user_id}/research-agent"
     assert len(_filesystem_tools(copied)) == 1
 
 
@@ -231,8 +244,7 @@ def test_stored_filesystem_agent_rehydrates_namespace_and_toolkit(tmp_path):
     assert len(_filesystem_tools(loaded)) == 1
 
 
-def test_toolkit_setting_keeps_its_permissions(tmp_path):
-    db = SqliteDb(db_file=str(tmp_path / "agents.db"))
+def test_toolkit_setting_keeps_its_permissions(db):
     filesystem = FileSystem(db, namespace="research/decisions")
     toolkit = filesystem.tools(read_only=True)
     agent = Agent(id="answerer", db=db, filesystem=toolkit)
@@ -245,8 +257,7 @@ def test_toolkit_setting_keeps_its_permissions(tmp_path):
     assert agent.filesystems == [(filesystem, True)]
 
 
-def test_toolkit_setting_round_trips_permissions(tmp_path):
-    db = SqliteDb(db_file=str(tmp_path / "agents.db"))
+def test_toolkit_setting_round_trips_permissions(db):
     toolkit = FileSystem(db, namespace="research/decisions").tools(read_only=True, add_instructions=True)
     agent = Agent(id="answerer", db=db, filesystem=toolkit)
 
@@ -259,8 +270,7 @@ def test_toolkit_setting_round_trips_permissions(tmp_path):
     assert sorted(restored.filesystem.functions) == ["list_files", "read_file", "search_content"]
 
 
-def test_filesystems_lists_manually_attached_toolkits(tmp_path):
-    db = SqliteDb(db_file=str(tmp_path / "agents.db"))
+def test_filesystems_lists_manually_attached_toolkits(db):
     shared = FileSystem(db, namespace="shared")
     agent = Agent(id="reader", db=db, tools=[shared.tools(read_only=True)])
 
@@ -270,8 +280,7 @@ def test_filesystems_lists_manually_attached_toolkits(tmp_path):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("async_tools", [False, True])
-async def test_multiple_filesystems_route_tools_and_preserve_permissions(tmp_path, async_tools):
-    db = SqliteDb(db_file=str(tmp_path / "files.db"))
+async def test_multiple_filesystems_qualify_tools_and_preserve_permissions(db, async_tools):
     drafts = FileSystem(db, namespace="analyst/drafts")
     handbook = FileSystem(db, namespace="team/handbook")
     handbook.write("style.md", "Lead with the conclusion.")
@@ -343,8 +352,7 @@ def test_multiple_filesystems_round_trip_distinct_databases_and_tool_restriction
     assert toolkits[1].read_only is True
 
 
-def test_multiple_filesystems_disambiguate_normalized_namespace_names(tmp_path):
-    db = SqliteDb(db_file=str(tmp_path / "files.db"))
+def test_multiple_filesystems_disambiguate_normalized_namespace_names(db):
     agent = Agent(filesystem=[FileSystem(db, namespace="a/b"), FileSystem(db, namespace="a_b")])
 
     first, second = _filesystem_tools(agent)
@@ -362,16 +370,23 @@ def test_filesystem_lists_reject_non_stores(invalid):
         agent.initialize_agent()
 
 
-def test_single_item_filesystem_list_keeps_tool_names_and_empty_list_disables(tmp_path):
-    filesystem = FileSystem(SqliteDb(db_file=str(tmp_path / "files.db")), namespace="drafts")
+def test_single_item_filesystem_list_keeps_tool_names(db):
+    filesystem = FileSystem(db, namespace="drafts")
     agent = Agent(filesystem=[filesystem])
 
     assert "read_file" in _filesystem_tools(agent)[0].functions
-    assert _filesystem_tools(Agent(filesystem=[])) == []
 
 
-def test_filesystem_list_deep_copy_owns_list_and_shares_stores(tmp_path):
-    db = SqliteDb(db_file=str(tmp_path / "files.db"))
+@pytest.mark.parametrize("setting", [None, False, []], ids=["unset", "disabled", "empty-list"])
+def test_disabled_filesystem_has_no_stores_or_tools(setting):
+    agent = Agent(filesystem=setting)
+
+    assert agent.filesystem_instance is None
+    assert agent.filesystems == []
+    assert _filesystem_tools(agent) == []
+
+
+def test_filesystem_list_deep_copy_owns_list_and_shares_stores(db):
     first = FileSystem(db, namespace="drafts")
     second = FileSystem(db, namespace="handbook")
     agent = Agent(filesystem=[first, second])

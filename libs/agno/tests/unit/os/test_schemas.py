@@ -8,6 +8,7 @@ from agno.agent import Agent
 from agno.knowledge import Knowledge
 from agno.os.routers.agents.schema import AgentResponse
 from agno.os.routers.memory.schemas import UserMemorySchema
+from agno.os.schema import FileSystemAgent
 
 
 def test_user_memory_schema():
@@ -190,3 +191,19 @@ def test_team_run_schema_lineage_defaults_to_none_when_absent():
     assert schema.forked_from_session_id is None
     assert schema.regenerated_from is None
     assert schema.last_checkpoint_at_message_index is None
+
+
+def test_filesystem_agent_access_defaults_to_full():
+    agent = FileSystemAgent(id="analyst")
+
+    assert agent.access == "full"
+    assert agent.model_dump() == {"id": "analyst"}
+    assert FileSystemAgent(id="analyst", access="full").model_dump() == {"id": "analyst"}
+    assert FileSystemAgent(id="analyst", access="read_only").model_dump() == {
+        "id": "analyst",
+        "access": "read_only",
+    }
+    schema = FileSystemAgent.model_json_schema(mode="serialization")
+    assert schema["properties"]["access"]["default"] == "full"
+    assert schema["properties"]["access"]["enum"] == ["full", "read_only"]
+    assert schema["required"] == ["id"]
