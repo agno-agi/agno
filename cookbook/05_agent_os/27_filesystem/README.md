@@ -1,5 +1,14 @@
 # AgentOS File System
 
+`postgres_filesystem.py` follows `custom_filesystem.py` with a `PostgresDb`
+backend. It uses the local PostgreSQL database started by
+`./cookbook/scripts/run_pgvector.sh` and requires `psycopg` in the cookbook
+environment. Set `OPENAI_API_KEY` for agent runs.
+
+```bash
+.venvs/demo/bin/python cookbook/05_agent_os/27_filesystem/postgres_filesystem.py
+```
+
 `basic.py` enables durable files with one agent setting:
 
 ```python
