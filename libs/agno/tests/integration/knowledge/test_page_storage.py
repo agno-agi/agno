@@ -3071,7 +3071,10 @@ def test_native_sync_progress_stream_counts_and_terminal_partial_status(corpus, 
     assert any(isinstance(event, PageSyncProgress) and event.failed == 1 for event in events)
 
 
-def test_failed_progress_observer_does_not_fail_publication(corpus):
+@pytest.mark.parametrize("asynchronous", [False, True])
+def test_failed_progress_observer_does_not_fail_publication(corpus, asynchronous):
+    import asyncio
+
     knowledge, _, _ = corpus
     seen = []
 
@@ -3079,6 +3082,7 @@ def test_failed_progress_observer_does_not_fail_publication(corpus):
         seen.append(event)
         raise RuntimeError("observer failed")
 
-    report = knowledge.sync_pages(url="https://docs.example.com/llms.txt", on_progress=observer)
+    kwargs = dict(url="https://docs.example.com/llms.txt", on_progress=observer)
+    report = asyncio.run(knowledge.async_sync_pages(**kwargs)) if asynchronous else knowledge.sync_pages(**kwargs)
     assert report.updated == 1 and report.status == "completed"
     assert len(seen) == 1

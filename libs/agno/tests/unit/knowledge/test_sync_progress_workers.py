@@ -1,9 +1,10 @@
 import asyncio
-from contextlib import aclosing, closing
+from contextlib import closing
 from threading import Event
 
 import pytest
 
+from agno.knowledge.knowledge import Knowledge
 from agno.utils.bounded import BoundedWorkers
 
 
@@ -51,8 +52,12 @@ async def test_early_close_requests_cancellation_and_retains_capacity_until_clea
 
     try:
         if asynchronous:
-            async with aclosing(workers.astream(work, seconds=10)) as stream:
+            # try/finally rather than contextlib.aclosing, which does not exist on Python 3.9.
+            stream = workers.astream(work, seconds=10)
+            try:
                 assert await stream.__anext__() == "started"
+            finally:
+                await stream.aclose()
         else:
             with closing(workers.stream(work, seconds=10)) as stream:
                 assert next(stream) == "started"
@@ -83,3 +88,16 @@ async def test_worker_errors_propagate_without_terminal_success(asynchronous):
             seen.extend(workers.stream(work, seconds=5))
     assert seen == ["working"]
     workers._executor.shutdown(wait=True)
+
+
+@pytest.mark.asyncio
+async def test_async_sync_pages_forwards_the_progress_observer_to_the_worker(monkeypatch):
+    class Pages:
+        def sync(self, *, on_progress, budget, **kwargs):
+            on_progress("snapshot")
+            return "report"
+
+    monkeypatch.setattr(Knowledge, "_pages", lambda self: Pages())
+    seen = []
+    report = await Knowledge().async_sync_pages(url="https://docs.example.com/llms.txt", on_progress=seen.append)
+    assert report == "report" and seen == ["snapshot"]
