@@ -388,6 +388,26 @@ class RunStatus(str, Enum):
     regenerated = "REGENERATED"
 
 
+class CancellationStage(str, Enum):
+    """Where a CANCELLED run was when it was cancelled.
+
+    A machine-readable companion to the CANCELLED status: the same status
+    covers a run that never started, a run stopped mid-execution with partial
+    output, and a run stopped while parked for a human-in-the-loop
+    continuation, and a UI treats those differently. The human-readable
+    reason stays on ``content``.
+
+    Absent (``None``) means unknown: runs written before the field existed,
+    and shutdown interrupts, carry no stage. Consumers must therefore hide
+    only on ``before_execution`` and never "show only on ``during_execution``".
+    Values are a wire contract: extend, never rename.
+    """
+
+    before_execution = "BEFORE_EXECUTION"
+    during_execution = "DURING_EXECUTION"
+    paused = "PAUSED"
+
+
 # Canonical set of run statuses excluded when rebuilding message history/context.
 # Single source of truth: session.get_messages (agent + team) and the DB-level
 # bounded-history read (agno.db.utils.HISTORY_SKIP_STATUSES) both derive from this,
