@@ -3,6 +3,18 @@
 All end-to-end runs used the demo venv (`.venvs/demo/bin/python`)
 against real OpenAI (`gpt-5.4` / `gpt-5.6-luna`).
 
+## 2026-09-21
+
+### 26_web_anysearch.py
+
+**Status:** PASS (run on DeepSeek; no OPENAI_API_KEY in the test environment)
+
+**Description:** Added `AnySearchBackend` (`agno/context/web/anysearch.py`) for `WebContextProvider`: four tools (`web_search`, `web_search_batch`, `web_extract`, `web_sub_domains`) behind the provider's `query_web` sub-agent, against AnySearch's REST API. Keyless (anonymous) access means the example needs no signup.
+
+**Result:** 89 unit tests pass (`pytest libs/agno/tests/unit/context/test_anysearch_backend.py`), network mocked with `httpx.MockTransport`: tool surface, request shape, result mapping, envelope drift, credential withholding, per-entry batch isolation, and the page-fetcher mapping, plus a second review round covering params that cannot be encoded, a non-positive length limit, and the extract cap. The example ran end to end: the calling agent called `query_web`, the sub-agent's searches came back with cited URLs, and the printed answer cited python.org. `status()` reports `api.anysearch.com (keyless)`; `fetch_many` and `afetch_many` each returned one page carrying `extractor='anysearch'`; and the same fetch through `ParallelPageFetcher(backend=AnySearchBackend())` recorded `batch_size == 1` with `attempts=[{'extractor': 'anysearch', 'outcome': 'ok'}]`.
+
+---
+
 ## 2026-05-14
 
 ### 15a_wiki_notion.py
