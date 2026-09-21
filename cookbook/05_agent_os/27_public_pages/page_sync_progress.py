@@ -1,66 +1,71 @@
-"""Native progress from a function step, without a synthetic agent/executor run."""
+"""Start the protected page sync on AgentOS and print its progress as it arrives.
+
+Run `public_pages.py serve` first; see README.md. Needs PAGE_DEMO_SYNC_TOKEN, the same
+trusted token the server was started with. The page source is the server's
+PAGE_DEMO_INDEX_URL; this client cannot choose one.
+"""
 
 import argparse
 import asyncio
-from contextlib import aclosing
+import json
+import sys
+from os import getenv
 
-from agno.knowledge.page import SyncReport
-from agno.workflow import Workflow
-from agno.workflow.step import Step
-from agno.workflow.types import StepOutput, StepProgress
-
-
-async def sync_pages(step_input):
-    from public_pages import knowledge
-
-    await knowledge.asetup()
-    async with aclosing(knowledge.astream_sync_pages(url=step_input.input)) as updates:
-        async for update in updates:
-            if isinstance(update, SyncReport):
-                yield StepOutput(
-                    content=update.model_dump(), success=update.status != "partial"
-                )
-            else:
-                yield StepProgress(content=update.stage, data=update.model_dump())
+from agno.client import AgentOSClient
+from agno.run.workflow import (
+    StepProgressEvent,
+    WorkflowCancelledEvent,
+    WorkflowCompletedEvent,
+    WorkflowErrorEvent,
+)
 
 
-async def check_step(step_input):
-    yield StepProgress(content="Checking one page", data={"processed": 1})
-    yield StepOutput(content="done")
-
-
-async def main():
+async def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("url", nargs="?", help="HTTPS documentation llms.txt URL")
     parser.add_argument(
-        "--check",
-        action="store_true",
-        help="Run a function-only workflow without storage/provider calls",
+        "--reindex", action="store_true", help="Re-embed unchanged pages too"
     )
     args = parser.parse_args()
-    if not args.check and not args.url:
-        parser.error("provide a source URL or --check")
-    workflow = Workflow(
-        id="page-sync",
-        steps=[
-            Step(
-                name="sync",
-                executor=check_step if args.check else sync_pages,
-                max_retries=0,
-            )
-        ],
-        telemetry=False,
+    token = getenv("PAGE_DEMO_SYNC_TOKEN")
+    if not token:
+        print(
+            "Set PAGE_DEMO_SYNC_TOKEN to the token the server was started with.",
+            file=sys.stderr,
+        )
+        return 2
+
+    # A page sync may run for its whole 65 minute budget; the client default is 60 seconds.
+    client = AgentOSClient(
+        base_url=getenv("PAGE_DEMO_SERVER_URL", "http://127.0.0.1:7777"), timeout=3900
     )
-    events = []
-    async for event in workflow.arun(
-        args.url or "check", stream=True, stream_events=True
+    request = json.dumps({"reason": "page_sync_progress.py", "reindex": args.reindex})
+    progress, report = 0, None
+    async for event in client.run_workflow_stream(
+        workflow_id="sync-docs",
+        message=request,
+        headers={"Authorization": f"Bearer {token}"},
     ):
-        events.append(event)
-        print(event.to_json())
-    if args.check:
-        assert any(event.event == "StepProgress" for event in events)
-        assert events[-1].event == "WorkflowCompleted"
+        if isinstance(event, StepProgressEvent) and event.content:
+            progress += 1
+            print(event.content)
+        elif isinstance(event, WorkflowErrorEvent):
+            print(f"Sync failed: {event.error}", file=sys.stderr)
+            return 1
+        elif isinstance(event, WorkflowCancelledEvent):
+            print(f"Sync was cancelled: {event.reason}", file=sys.stderr)
+            return 1
+        elif isinstance(event, WorkflowCompletedEvent):
+            report = event.content
+
+    if not isinstance(report, dict):
+        print("The sync ended without a report.", file=sys.stderr)
+        return 1
+    print(json.dumps(report, indent=2))
+    if not progress:
+        print("The sync reported no page progress.", file=sys.stderr)
+        return 1
+    return 1 if report.get("status") == "partial" else 0
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    raise SystemExit(asyncio.run(main()))

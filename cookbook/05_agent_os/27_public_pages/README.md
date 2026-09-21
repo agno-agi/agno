@@ -344,16 +344,59 @@ one-based retry attempt. Progress never enters final function output and creates
 no synthetic AgentRun or executor history. Non-streaming execution ignores it.
 Existing step/workflow completion, failure and cancellation remain authoritative.
 
-Run `page_sync_progress.py --check` without storage/provider calls, or provide a
-docs source URL to sync the configured example namespace. The example shows the
-small application adapter: translate progress snapshots and the terminal report
-into StepProgress/StepOutput. Source selection and sync policy remain explicit.
+The `sync-docs` workflow in `public_pages.py` uses this. Its function step consumes
+`astream_sync_pages`, yields one `StepProgress` per snapshot with a readable
+`content` and the full snapshot in `data`, then one `StepOutput` holding the
+`SyncReport`; a `partial` report marks the step unsuccessful. AgentOS streams the
+events over its existing workflow REST/SSE route, and the existing
+`AgentOSClient.run_workflow_stream()` parses them into `StepProgressEvent`.
+AgentOS stores the events of every run it serves, and there is one progress event
+per page, so the workflow sets `events_to_skip=[WorkflowRunEvent.step_progress]`:
+progress is streamed live and left out of the saved run, which keeps the report.
 
-Consumers must support the new `StepProgress` event to render its content. Native
-SSE/event-stream delivery and durable queue execution are tested here; Control
-Plane visual rendering is a separate adoption gate. Existing AG-UI progress work
-can map this event into its presentation layer; no AG-UI/Control Plane renderer is
-changed by this PR. SSE transport keepalives remain separate from page milestones.
+One server does everything, on port 7777. Anonymous users can chat, search and read
+documentation. They cannot start a sync: the workflow trigger requires the bearer
+token in `PAGE_DEMO_SYNC_TOKEN`, as described under Setup. A trusted operator who
+holds it watches a sync from a second terminal.
+
+Terminal 1, with the Setup environment exported:
+
+```sh
+.venvs/demo/bin/python cookbook/05_agent_os/27_public_pages/public_pages.py serve
+```
+
+Terminal 2:
+
+```sh
+export PAGE_DEMO_SYNC_TOKEN=...   # the same value the server was started with
+.venvs/demo/bin/python cookbook/05_agent_os/27_public_pages/page_sync_progress.py
+```
+
+`page_sync_progress.py` prints each `StepProgressEvent.content` as it arrives and
+then the final report:
+
+```text
+Waiting to synchronize pages
+Discovered 2 pages
+Processed 1 of 2 pages (1 updated, 0 failed)
+Processed 2 of 2 pages (2 updated, 0 failed)
+{
+  "schema_version": 1,
+  "status": "completed",
+  ...
+}
+```
+
+It exits non-zero when the workflow errors or is cancelled, when no progress or no
+report arrives, and when the report is `partial`. `--reindex` re-embeds unchanged
+pages too. `PAGE_DEMO_SERVER_URL` overrides `http://127.0.0.1:7777`. The token is
+sent only in the `Authorization` header and is never printed. The page source is
+always the server's `PAGE_DEMO_INDEX_URL`; the client sends the typed request and
+cannot choose a source.
+
+MCP delivery of step progress, and Control Plane or AG-UI rendering of
+`StepProgress`, are separate consumers and are not part of this example. SSE
+transport keepalives remain separate from page milestones.
 
 ## Dedicated MCP hostname
 
