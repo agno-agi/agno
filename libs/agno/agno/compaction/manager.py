@@ -75,7 +75,12 @@ class Compaction:
     #
     # Runs rather than messages: a run is one turn, so a tail measured in runs never cuts
     # through the middle of one, which is what the pair-safe boundary walk wants anyway.
-    keep_last_runs: Optional[int] = 5
+    #
+    # Below Agent's own num_history_runs default of 3, because keep_last_runs is the part of
+    # that window kept verbatim: a larger default would collide with it and leave nothing to
+    # fold. Compaction is at its most useful with num_history_runs unset, where history
+    # accumulates and the foldable span grows without bound.
+    keep_last_runs: Optional[int] = 2
 
     # -- archive --------------------------------------------------------
     # Write replaced messages to the filesystem so they stay recoverable.
@@ -91,15 +96,15 @@ class Compaction:
     # Also compact reactively when the provider rejects a request as too long.
     on_context_overflow: bool = True
 
-    # Skip a compaction unless the folded span is at least this many times the kept tail.
+    # Skip a compaction unless it would fold at least this many tokens.
     #
-    # A summary has a floor cost - the structured sections alone run to hundreds of tokens - so
-    # folding a span barely larger than what it replaces leaves the context BIGGER than it
-    # started, and discards the prompt-cache prefix to do it. Sizing the guard relative to the
-    # tail, rather than as an absolute char count, is what makes it hold at every scale: it is
-    # the ratio of folded-to-kept that decides whether a summary can pay for itself.
-    # Set to 0 to always compact.
-    min_fold_ratio: float = 2.0
+    # A summary costs a few hundred tokens whatever it replaces - the structured sections alone
+    # run to that - so folding a smaller span leaves the context BIGGER than it started and
+    # discards the prompt-cache prefix to do it. The cost is a floor, not a proportion, which is
+    # why this is absolute: a fold of 100k tokens pays for the same few hundred as a fold of 2k,
+    # so measuring worth against the kept tail declines folds that would reclaim most of the
+    # context. Set to 0 to always compact.
+    min_fold_tokens: int = 2_000
 
     stats: CompactionStats = field(default_factory=CompactionStats)
 
@@ -178,7 +183,7 @@ class Compaction:
             # fold. Returning 0 here would name a boundary at the start of the list, which
             # reads downstream as "fold nothing but measure anyway" - and on a run whose
             # answers keep growing that produces a tail that grows without bound and a ratio
-            # that collapses toward zero, reported as if min_fold_ratio had declined a real
+            # that collapses toward zero, reported as if the size guard had declined a real
             # fold. None says plainly that this pass has nothing to do.
             return None
         return user_indexes[-keep_runs]
@@ -345,6 +350,26 @@ class Compaction:
             tokens_before=tokens_before,
         )
 
+    def _fold_paid_off(self, record: CompactionRecord) -> bool:
+        """Whether the summary this fold produced is actually smaller than what it replaced.
+
+        min_fold_tokens bounds the INPUT - it cannot know how large the summary will be until
+        the model has written it. On a span that is mostly raw data the prompt requires
+        identifiers be reproduced verbatim, so a summary can come back larger than the span it
+        stands in for, and accepting it would make the context bigger while reporting a
+        compaction. This is the only check that sees the real outcome.
+        """
+        before, after = record.tokens_before, record.tokens_after
+        if not before or not after or after < before:
+            return True
+        log_warning(
+            f"Compaction: discarding this fold - the summary came back larger than the span it "
+            f"replaces ({before} -> {after} tokens), so applying it would grow the context. The "
+            f"transcript is unchanged. This happens on spans that are mostly raw data, where the "
+            f"summary must reproduce identifiers verbatim."
+        )
+        return False
+
     def measure(self, record: CompactionRecord, before: List[Message], after: List[Message]) -> None:
         """Record what this fold cost and saved.
 
@@ -422,34 +447,36 @@ class Compaction:
         return 0
 
     def _worth_compacting(self, to_compact: List[Message], kept: List[Message]) -> bool:
-        """Whether folding this span can pay for the summary that replaces it.
+        """Whether folding this span reclaims more than the summary replacing it costs.
 
-        Measured as a ratio against the kept tail rather than an absolute size: a summary's
-        floor cost is roughly fixed, so what decides whether it pays for itself is how much
-        more it is replacing than it is keeping. Below the ratio, leaving the transcript alone
-        is strictly better.
+        Measured as an absolute token count because a summary's cost is a floor, not a
+        proportion: the structured sections run to a few hundred tokens whether they stand in
+        for 2,000 tokens or 200,000. Sizing the guard against the kept tail instead would
+        decline a fold that reclaims most of the context simply because the tail happened to be
+        large - observed refusing to reclaim 104,000 tokens at a ratio of 0.98.
 
-        Offload envelopes are excluded from the tail. They are pinned there - their result_id is
-        the only handle on the stored payload, so the cut must stay ahead of them - which means
-        their cost is not something folding could ever reclaim. Counting them would let a single
-        envelope make every subsequent fold look worthless and stall compaction entirely.
+        Offload envelopes are excluded. They are pinned in the tail - their result_id is the
+        only handle on the stored payload, so the cut must stay ahead of them - which means
+        their cost is not something folding could ever reclaim.
         """
-        if self.min_fold_ratio <= 0:
+        if self.min_fold_tokens <= 0:
             return True
         fold_tokens = estimate_tokens([m for m in to_compact if not is_offload_envelope(m)])
+        if fold_tokens >= self.min_fold_tokens:
+            return True
+
         keep_tokens = max(estimate_tokens([m for m in kept if not is_offload_envelope(m)]), 1)
-        ratio = fold_tokens / keep_tokens
-        if ratio < self.min_fold_ratio:
-            # log_info, not debug: a threshold was crossed and the user was told so. Going
-            # quiet after that reads as a bug. Say what was declined and why.
-            log_info(
-                f"Compaction: threshold reached but skipping this fold - it would replace "
-                f"{fold_tokens} tokens with a summary while keeping a {keep_tokens}-token tail "
-                f"(ratio {ratio:.2f} < min_fold_ratio {self.min_fold_ratio}), which would not "
-                f"shrink the context. Lower min_fold_ratio or keep_last_runs to fold sooner."
-            )
-            return False
-        return True
+        # log_info, not debug: a threshold was crossed and the user was told so. Going quiet
+        # after that reads as a bug. Report the measurement that decided it and what is being
+        # kept - a share of the context says nothing about whether the request fits, and the
+        # only thing that can establish that is a provider rejection.
+        log_info(
+            f"Compaction: skipping this fold - {fold_tokens} foldable tokens is below "
+            f"min_fold_tokens={self.min_fold_tokens}, and a summary costs a few hundred tokens "
+            f"whatever it replaces. Keeping {keep_tokens} tokens verbatim. Continue the "
+            f"conversation, or lower min_fold_tokens to fold sooner."
+        )
+        return False
 
     def plan(self, messages: List[Message], previous: Optional[CompactionRecord] = None) -> Optional[int]:
         """The boundary this compaction would use, or None if it should not run.
@@ -488,19 +515,16 @@ class Compaction:
             return None, CompactionStatus.ALREADY_COMPACTED, reason
         if not self._worth_compacting(messages[already:boundary], messages[boundary:]):
             # Carry the numbers, not just the verdict: "not worth it" with no figures leaves a
-            # caller unable to tell a fold that missed by a hair from one that was never close,
-            # and the ratio is the one thing that says which lever to reach for.
+            # caller unable to tell a fold that missed by a hair from one that was never close.
             fold_tokens = estimate_tokens([m for m in messages[already:boundary] if not is_offload_envelope(m)])
             keep_tokens = max(estimate_tokens([m for m in messages[boundary:] if not is_offload_envelope(m)]), 1)
-            return (
-                None,
-                CompactionStatus.NOT_WORTH_IT,
-                f"This fold would replace {fold_tokens} tokens against a {keep_tokens}-token tail "
-                f"(ratio {fold_tokens / keep_tokens:.2f}, needs {self.min_fold_ratio}), so the "
-                f"context would not shrink. Continue the conversation, or lower "
-                f"keep_last_runs={self.keep_last_runs} or "
-                f"min_fold_ratio to fold sooner.",
+            reason = (
+                f"{fold_tokens} foldable tokens is below min_fold_tokens={self.min_fold_tokens}, "
+                f"and a summary costs a few hundred tokens whatever it replaces. "
+                f"{keep_tokens} tokens are kept verbatim. Continue the conversation, or lower "
+                f"min_fold_tokens to fold sooner."
             )
+            return None, CompactionStatus.NOT_WORTH_IT, reason
         return boundary, CompactionStatus.COMPACTED, "Ready to compact."
 
     def compact(
@@ -546,8 +570,16 @@ class Compaction:
         record.elision_watermark_message_id = self._watermark(messages, boundary, previous)
         # Size the fold before persisting: the row is written once and never updated, so a
         # measurement taken afterwards would never reach it.
+        #
+        # The "before" side is the view the model was actually being sent, not the raw stored
+        # history. On a repeat fold those differ by everything the previous fold already
+        # replaced, so measuring raw history overstates the saving and leaves _fold_paid_off
+        # comparing a number the provider never saw against one it will.
         prefix = context_prefix or []
-        self.measure(record, prefix + messages, prefix + self.apply_record(messages, record))
+        before_view = self.apply_record(messages, previous) if previous is not None else messages
+        self.measure(record, prefix + before_view, prefix + self.apply_record(messages, record))
+        if not self._fold_paid_off(record):
+            return None
         if archive is not None:
             record.archived = archive.write(record, to_compact)
         self.stats.record(record)
@@ -590,8 +622,16 @@ class Compaction:
         record.elision_watermark_message_id = self._watermark(messages, boundary, previous)
         # Size the fold before persisting: the row is written once and never updated, so a
         # measurement taken afterwards would never reach it.
+        #
+        # The "before" side is the view the model was actually being sent, not the raw stored
+        # history. On a repeat fold those differ by everything the previous fold already
+        # replaced, so measuring raw history overstates the saving and leaves _fold_paid_off
+        # comparing a number the provider never saw against one it will.
         prefix = context_prefix or []
-        self.measure(record, prefix + messages, prefix + self.apply_record(messages, record))
+        before_view = self.apply_record(messages, previous) if previous is not None else messages
+        self.measure(record, prefix + before_view, prefix + self.apply_record(messages, record))
+        if not self._fold_paid_off(record):
+            return None
         if archive is not None:
             record.archived = archive.write(record, to_compact)
         self.stats.record(record)

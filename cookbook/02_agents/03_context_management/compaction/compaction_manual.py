@@ -44,9 +44,9 @@ agent = Agent(
     session_id="compaction_manual",
     add_history_to_context=True,
     # No automatic trigger at all: this session folds only when asked to.
-    # keep_last_runs=1 because a fold still has to clear min_fold_ratio - calling
-    # compact() does not override that, and a 2-turn tail would need twice as much
-    # conversation in front of it before any fold could pay for itself.
+    # keep_last_runs=1 because a fold still has to clear min_fold_tokens - calling
+    # compact() does not override that, and a 2-turn tail leaves less in front of it
+    # to fold.
     compaction=Compaction(compact_at_tokens=None, keep_last_runs=1),
 )
 

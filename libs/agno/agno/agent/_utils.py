@@ -165,6 +165,13 @@ def deep_copy(agent: Agent, *, update: Optional[Dict[str, Any]] = None) -> Agent
         fields_for_new_agent.update(update)
 
     # Create a new Agent
+    # num_history_runs always has a value by now, so the copy cannot tell a framework default
+    # from the user's own choice. Pass that across at construction - restoring it afterwards is
+    # too late, because __init__ validates the pair and would reject a window nobody set.
+    if getattr(agent, "_num_history_runs_defaulted", False) and "num_history_runs" not in (update or {}):
+        fields_for_new_agent["num_history_runs"] = None
+        fields_for_new_agent.pop("num_history_messages", None)
+
     try:
         new_agent = agent.__class__(**fields_for_new_agent)
         log_debug(f"Created new {agent.__class__.__name__}")

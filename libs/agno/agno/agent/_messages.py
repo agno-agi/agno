@@ -21,7 +21,11 @@ from pydantic import BaseModel
 if TYPE_CHECKING:
     from agno.agent.agent import Agent
 
+from dataclasses import replace
+
 from agno.agent._utils import convert_dependencies_to_string, convert_documents_to_string
+from agno.compaction._cut import leading_system_count
+from agno.compaction._tokens import estimate_tokens
 from agno.filters import FilterExpr
 from agno.media import Audio, File, Image, Video
 from agno.models.message import Message, MessageReferences
@@ -80,6 +84,25 @@ def _compaction_as_of(run_response: Optional[RunOutput]) -> Optional[str]:
     if run_response is None:
         return None
     return getattr(run_response, "forked_from_run_id", None) or getattr(run_response, "regenerated_from", None)
+
+
+def _input_preview(input: Any) -> List[Message]:
+    """The current turn's input, as messages, for sizing only.
+
+    Compaction runs before the user message is built, so the threshold would otherwise miss
+    this turn's input entirely - fine for a one-line question, wrong when someone pastes a
+    document, which is exactly when the request overflows. Only the text is needed: this is
+    never sent, only measured.
+    """
+    if input is None:
+        return []
+    if isinstance(input, Message):
+        return [input]
+    if isinstance(input, str):
+        return [Message(role="user", content=input)]
+    if isinstance(input, list):
+        return [m for m in input if isinstance(m, Message)] or [Message(role="user", content=str(input))]
+    return [Message(role="user", content=str(input))]
 
 
 def _estimated_context_tokens(
@@ -148,27 +171,23 @@ _PLANNER_WINDOW_MAX_RUNS = 500
 
 
 def _compaction_history_runs(agent: "Agent") -> Optional[int]:
-    """How many runs the compaction planner may read, or None for no extra limit.
+    """How many runs the compaction planner may read.
 
-    num_history_runs governs how much history a RUN replays and defaults to 3. Compaction folds
-    what sits in FRONT of the kept tail, so a 3-run window leaves it nothing to fold and it never
-    fires - and worse, an anchor outside that window cannot resolve, which drops the summary
-    silently along with the turns it replaced.
+    An explicit num_history_runs is used as given - Agent.__init__ has already rejected a
+    window that cannot hold the kept tail, so it is always workable here.
 
-    So the planner reads its own window. Bounded, not unlimited: capped so a long session costs
-    no more than a short one.
+    A defaulted window is not the user's decision, and 3 runs against a 5-run tail would leave
+    compaction nothing to fold. More importantly a finite window slides: a few runs after a
+    fold the boundary anchor falls outside it, stops resolving, and the view fails open - the
+    model then loses the folded turns AND the summary that replaced them. So an unset window
+    reads wide, capped so a long session costs no more than a short one.
     """
     compaction = getattr(agent, "compaction", None)
     if compaction is None:
         return agent.num_history_runs
-
-    explicit = agent.num_history_runs if not getattr(agent, "_num_history_runs_defaulted", False) else None
-    if explicit is not None:
-        # An explicit window is the user's call on replay, but it must not silently disable
-        # compaction or strand an anchor. Keep whichever is larger.
-        keep = compaction.keep_last_runs or 0
-        return max(explicit, keep + 1) if keep else explicit
-    return _PLANNER_WINDOW_MAX_RUNS
+    if getattr(agent, "_num_history_runs_defaulted", False):
+        return _PLANNER_WINDOW_MAX_RUNS
+    return agent.num_history_runs
 
 
 def _history_for_compaction(agent: "Agent", session: AgentSession) -> List[Message]:
@@ -197,6 +216,100 @@ def _compaction_result(new_record: Any) -> Any:
         ),
         record=new_record,
     )
+
+
+def _recompact_after_overflow(
+    agent: "Agent",
+    session: AgentSession,
+    run_messages: Any,
+    run_response: Optional[RunOutput] = None,
+) -> bool:
+    """Fold harder after the provider rejected a request as too long. True if the payload shrank.
+
+    Nobody can know a model's context window ahead of time - no provider exposes it, and the
+    same model id has different limits across deployments - so a threshold set in advance is
+    always a guess. The rejection is the one authoritative signal that the guess was wrong, and
+    this is the only path that can act on it.
+
+    Folds against the messages actually sent, so it reaches spans the run-start pass could not:
+    the current turn's input, and anything a tool loop appended since. ``min_fold_tokens`` is not
+    consulted - the request has already failed, so a fold that merely helps is better than the
+    run dying - but the pair-safe boundary still is: an unsendable payload is not an improvement
+    on a too-long one.
+    """
+    compaction = getattr(agent, "compaction", None)
+    if compaction is None or not getattr(compaction, "on_context_overflow", False):
+        return False
+
+    messages = getattr(run_messages, "messages", None)
+    if not messages:
+        return False
+
+    lead = leading_system_count(messages)
+    # keep_last_runs is a promise about ordinary runs, not a reason to let this one die: the
+    # request has already been rejected, so a smaller tail beats no answer at all. Give up the
+    # tail one run at a time, largest first, and stop at the first cut that exists.
+    # Keep the configured tail when it works. Only when folding in front of it reclaims too
+    # little to be worth retrying - an oversized turn sitting INSIDE the tail, which no cut in
+    # front of it can reach - is the tail given up, one run at a time. The request has already
+    # been rejected, so a smaller tail beats no answer, but the setting is still the default.
+    folder, chosen_keep = None, compaction.keep_last_runs
+    for keep in range(compaction.keep_last_runs or 1, 0, -1):
+        candidate = replace(compaction, keep_last_runs=keep, stats=compaction.stats)
+        boundary = candidate.boundary_for(messages, min_index=lead)
+        if boundary is None or boundary <= lead:
+            continue
+        folder, chosen_keep = candidate, keep
+        if estimate_tokens(messages[lead:boundary]) >= compaction.min_fold_tokens:
+            break
+    if folder is not None and chosen_keep != compaction.keep_last_runs:
+        log_info(
+            f"Compaction: keeping {chosen_keep} run(s) instead of {compaction.keep_last_runs} - "
+            f"the request was rejected as too long, and the configured tail leaves too little "
+            f"in front of it to fold."
+        )
+    if folder is None:
+        log_warning(
+            "Compaction: the request exceeded the model's context window and there is no safe "
+            "cut left to make - the most recent turn alone is too large to send. Shorten what "
+            "it produces, or use a model with a larger context window."
+        )
+        return False
+
+    before = estimate_tokens(messages)
+    record = folder.compact(
+        messages,
+        session_id=session.session_id,
+        db=agent.db,
+        previous=_stored_compaction(agent, session),
+        run_id=run_response.run_id if run_response is not None else None,
+        tokens_before=before,
+    )
+    if record is None:
+        return False
+
+    compacted = compaction.apply_record(messages, record)
+    after = estimate_tokens(compacted)
+    if after >= before:
+        # A summary has a floor cost, so a fold that reclaims nothing leaves the request no
+        # more sendable than it was. Retrying an identical payload just fails twice.
+        log_warning(
+            f"Compaction: folding after a context-window rejection did not shrink the request "
+            f"({before} -> {after} tokens), so it is not worth retrying."
+        )
+        return False
+
+    # Mutate the list in place rather than rebinding it. The caller has already passed this
+    # exact list object into the model call's kwargs, so a new list would leave the retry
+    # sending the payload that was just rejected.
+    messages[:] = compacted
+    if run_response is not None:
+        run_response.compaction = record
+    log_info(
+        f"Compaction: request exceeded the context window, folded {record.messages_compacted} "
+        f"messages ({before} -> {after} tokens) and retrying once."
+    )
+    return True
 
 
 def compact_now(agent: "Agent", session: AgentSession, history: List[Message]) -> Any:
@@ -303,6 +416,7 @@ def apply_compaction(
     events: Optional[List[Any]] = None,
     context_prefix: Optional[List[Message]] = None,
     tools: Optional[List[Any]] = None,
+    pending_input: Any = None,
 ) -> List[Message]:
     """Replace the head of ``history`` with a summary once it grows too long.
 
@@ -320,7 +434,9 @@ def apply_compaction(
     in_context = compaction.apply_record(history, record) if record is not None else history
 
     prefix = context_prefix or []
-    inputs = _compaction_inputs(agent, prefix + in_context, tools)
+    # The pending input rides in the same request, so it counts toward the threshold even
+    # though it is appended after this seam.
+    inputs = _compaction_inputs(agent, prefix + in_context + _input_preview(pending_input), tools)
     if not compaction.should_compact(in_context, **inputs):
         return in_context
 
@@ -370,6 +486,7 @@ async def aapply_compaction(
     events: Optional[List[Any]] = None,
     context_prefix: Optional[List[Message]] = None,
     tools: Optional[List[Any]] = None,
+    pending_input: Any = None,
 ) -> List[Message]:
     compaction = getattr(agent, "compaction", None)
     if compaction is None or not history:
@@ -379,7 +496,9 @@ async def aapply_compaction(
     in_context = compaction.apply_record(history, record) if record is not None else history
 
     prefix = context_prefix or []
-    inputs = _compaction_inputs(agent, prefix + in_context, tools)
+    # The pending input rides in the same request, so it counts toward the threshold even
+    # though it is appended after this seam.
+    inputs = _compaction_inputs(agent, prefix + in_context + _input_preview(pending_input), tools)
     if not compaction.should_compact(in_context, **inputs):
         return in_context
 
@@ -1580,6 +1699,7 @@ def get_run_messages(
                 events=run_messages.events,
                 context_prefix=run_messages.messages,
                 tools=tools,
+                pending_input=input,
             )
 
             log_debug(f"Adding {len(history_copy)} messages from history")
@@ -1798,6 +1918,7 @@ async def aget_run_messages(
                 events=run_messages.events,
                 context_prefix=run_messages.messages,
                 tools=tools,
+                pending_input=input,
             )
 
             log_debug(f"Adding {len(history_copy)} messages from history")

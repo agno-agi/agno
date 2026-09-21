@@ -1830,7 +1830,7 @@ def get_agent_router(
                                     "status": "not_worth_it",
                                     "message": (
                                         "This fold would cost more in summary than it reclaims, so "
-                                        "the context would not shrink. Lower min_fold_ratio or "
+                                        "the context would not shrink. Lower min_fold_tokens or "
                                         "keep_last_runs to fold sooner."
                                     ),
                                     "compacted": False,

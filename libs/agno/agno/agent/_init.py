@@ -208,20 +208,30 @@ def set_compaction(agent: Agent) -> None:
     if isinstance(agent.compaction, Compaction) and agent.compaction.model is None:
         agent.compaction.model = agent.model
 
-    # A replay window at or below the kept tail cannot express a working compaction: the tail
-    # would not fit inside what the planner may read, so the boundary anchor could never be
-    # found again and every summary would be dropped on the next run. The planner widens its
-    # own read to keep that from happening - say so, because silently ignoring a number the
-    # user set is worse than the misconfiguration it works around.
+    # keep_last_runs is the part of num_history_runs kept verbatim, so it has to be the smaller
+    # of the two. Equal or larger leaves nothing in front of the tail to fold, and the boundary
+    # anchor could never be found again - every summary would be dropped on the next run.
+    # Raise rather than widen the window silently: ignoring a number the user set is worse than
+    # the misconfiguration it works around.
     if isinstance(agent.compaction, Compaction) and not getattr(agent, "_num_history_runs_defaulted", False):
         keep = agent.compaction.keep_last_runs
         window = agent.num_history_runs
         if keep is not None and window is not None and window <= keep:
+            raise ValueError(
+                f"keep_last_runs ({keep}) must be less than num_history_runs ({window}) when "
+                f"compaction is enabled - otherwise the kept tail covers the whole window and "
+                f"there is nothing to fold. Increase num_history_runs, decrease keep_last_runs, "
+                f"or unset num_history_runs to let history accumulate."
+            )
+        # Passing the check is not the same as compacting usefully. With a finite window the
+        # foldable share is fixed at (window - keep) / window however long the session runs,
+        # and below roughly half the summary rarely pays for itself.
+        if keep is not None and window is not None and (window - keep) / window < 0.5:
             log_warning(
-                f"num_history_runs={window} is not larger than compaction's keep_last_runs={keep}, "
-                f"so there would be no history in front of the kept tail to fold. Compaction will "
-                f"read {keep + 1} runs instead; num_history_runs still governs what the model "
-                f"replays. Set keep_last_runs below num_history_runs to silence this."
+                f"num_history_runs={window} with keep_last_runs={keep} leaves only "
+                f"{window - keep} of {window} runs foldable, so compaction will rarely pay for "
+                f"the summary it writes. Raise num_history_runs, or unset it so history can "
+                f"accumulate - that is where compaction earns its cost."
             )
 
 
