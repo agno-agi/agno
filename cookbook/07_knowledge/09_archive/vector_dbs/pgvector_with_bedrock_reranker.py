@@ -33,10 +33,12 @@ knowledge_cohere = Knowledge(
             id="cohere.embed-multilingual-v3",
             input_type="search_document",
         ),
-        reranker=AwsBedrockReranker(
-            model="cohere.rerank-v3-5:0",
-            top_n=5,
-        ),
+    ),
+    # Reranking belongs on Knowledge: it applies to every vector db and can
+    # widen the candidate pool for rerankers that need one.
+    reranker=AwsBedrockReranker(
+        model="cohere.rerank-v3-5:0",
+        top_n=5,
     ),
 )
 
@@ -49,8 +51,10 @@ knowledge_convenience = Knowledge(
             output_dimension=1024,
             input_type="search_document",
         ),
-        reranker=CohereBedrockReranker(top_n=5),
     ),
+    # Reranking belongs on Knowledge: it applies to every vector db and can
+    # widen the candidate pool for rerankers that need one.
+    reranker=CohereBedrockReranker(top_n=5),
 )
 
 knowledge_amazon = Knowledge(
@@ -61,10 +65,12 @@ knowledge_amazon = Knowledge(
             id="cohere.embed-multilingual-v3",
             input_type="search_document",
         ),
-        reranker=AmazonReranker(
-            top_n=5,
-            aws_region="us-west-2",
-        ),
+    ),
+    # Reranking belongs on Knowledge: it applies to every vector db and can
+    # widen the candidate pool for rerankers that need one.
+    reranker=AmazonReranker(
+        top_n=5,
+        aws_region="us-west-2",
     ),
 )
 
@@ -83,9 +89,7 @@ agent = Agent(
 # Run Agent
 # ---------------------------------------------------------------------------
 def main() -> None:
-    knowledge_cohere.insert(
-        name="Agno Docs", url="https://docs.agno.com/introduction.md"
-    )
+    knowledge_cohere.insert(name="Agno Docs", url="https://docs.agno.com/introduction")
     _ = knowledge_convenience
     _ = knowledge_amazon
     agent.print_response("What are the key features?")
