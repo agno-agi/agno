@@ -8,8 +8,9 @@ decisions and reserves those models for steps that need written answers.
 Through the official TypeSafe Python SDK, Jev selects labels, estimates yes/no
 probabilities, and scores against an ordered rubric. Its outputs are structured
 decisions, not conversational replies. The same capabilities power classifier
-tools and guardrails. Start with `route_team.py` to route requests to a specialist
-or `workflow.py` to classify a ticket before a generative explanation step.
+tools, guardrails, and reference-based accuracy scoring. Start with `route_team.py`
+to route requests to a specialist or `workflow.py` to classify a ticket before
+a generative explanation step.
 
 Install on Python 3.10 or newer:
 
@@ -20,7 +21,8 @@ pip install -e 'libs/agno[typesafe,openai]'
 Set `TYPESAFE_API_KEY`. Examples using OpenAI also need `OPENAI_API_KEY`.
 The default model is `jev-latest`; use `Jev(id="...")` to pin a model.
 `api_key`, `base_url`, `timeout`, `client` and `async_client` are available on
-all three interfaces (`model` names the model on tools and guardrails).
+the model, tools, guardrails, and accuracy scorer (`model` names the model on
+tools, guardrails, and the scorer).
 The SDK reads `TYPESAFE_BASE_URL` when no explicit URL is supplied.
 For custom retries, pass a configured `TypeSafeClient` / `AsyncTypeSafeClient`.
 Injected SDK clients remain caller-owned; Agno does not close them.
@@ -30,6 +32,7 @@ Injected SDK clients remain caller-owned; Agno does not close them.
 | `route_team.py` | Minimal two-member team: Jev routes, the selected specialist answers |
 | `workflow.py` | Linear pipeline: Jev classifies a ticket, a generative model explains next steps |
 | `agent_os.py` | Serve a typed classifier and a Jev-led routing team through AgentOS |
+| `accuracy_eval.py` | Display a generated answer, then score that same run against a reference |
 | `structured_output.py` | Validated input and annotated Pydantic output |
 | `basic.py` | Customer-support department, urgency, and fractional frustration score |
 | `raw_questions.py` | Refund-policy decisions using all three primitives and explicit thresholds |
@@ -52,6 +55,7 @@ adds conditional branching. They complement the minimal examples above.
 | [Workflow classifier](../../04_workflows/05_conditional_branching/router_jev_classifier.py) | Classify once and branch through a Router |
 | [Feature discovery](../../91_tools/jev_tools.py) | An LLM authors questions with `ask_jev` to compare reviews |
 | [Draft checks](../../91_tools/jev_tools_fixed_schema.py) | Developer-defined questions check a customer-support reply |
+| [Accuracy scoring](../../09_evals/accuracy/README.md#jev-accuracy-scoring) | Supplied answers, concurrent scoring, and reference-backed eval suites |
 
 Run, for example, `python cookbook/90_models/typesafe/structured_output.py`.
 
@@ -70,6 +74,22 @@ Both `Jev` and `JevTools` lazily create the official `TypeSafeClient` for sync
 calls and `AsyncTypeSafeClient` for async calls. You can inject them with `client`
 and `async_client`. `Agent.run`/`arun` choose the model's corresponding path;
 toolkit pairs include `evaluate`/`aevaluate` and `ask_jev`/`aask_jev`.
+
+## Accuracy scoring
+
+Import `JevAccuracyScorer` from `agno.scorer.typesafe` to compare completed Agent
+or Team runs with a reference using `score(run, expected=...)` or
+`await ascore(run, expected=...)`. One Noul question produces a correctness
+probability; an inclusive threshold (default 0.8) determines pass/fail.
+The reason is a threshold explanation, and `Score.detail` retains provider
+metadata. Calibrate the threshold on your data; mean probability is not dataset
+accuracy. SDK failures remain errors rather than ordinary failing scores.
+
+The [accuracy cookbook](../../09_evals/accuracy/README.md#jev-accuracy-scoring)
+contains three full examples and setup instructions. The supplied-answer and
+async examples need only `TYPESAFE_API_KEY`; generated-answer examples also need
+OpenAI credentials. `AccuracyEval(model=Jev())` remains unsupported; use the
+custom scorer directly or through `Case(scorer=..., expected=...)`.
 
 ## Serve with AgentOS
 

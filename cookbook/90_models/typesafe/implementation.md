@@ -27,6 +27,8 @@
 - [x] Restored minimal `route_team.py` and linear `workflow.py` model examples alongside the expanded feature-folder examples, demonstrating classification and routing with generative models reserved for prose.
 - [x] Led the README with Jev's classification and routing role and added one request per department option in `basic.py` and `questions.py`.
 - [x] Added `agent_os.py` with a typed Jev classifier, a Jev-led routing team, local session storage, and API checks for JSON and streamed responses from both departments.
+- [x] Added `JevAccuracyScorer` with one native Noul comparison, sync/async clients, probability thresholds, metadata, and stable scoring fingerprints. Existing accuracy and AgentOS eval APIs remain unchanged.
+- [x] Added supplied-answer, concurrent, and suite examples in the accuracy cookbook plus a generated-answer introduction in the model cookbook.
 
 This branch uses Python 3.10+ for the optional SDK while retaining Agno's
 existing core Python requirement. No PR or publication is part of this work.

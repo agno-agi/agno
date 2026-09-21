@@ -206,3 +206,22 @@ Validation: **119 tests passed**, including all 17 Jev cookbook smoke cases. Ruf
 **Description:** Serve a typed Jev ticket classifier and a Jev-led support routing team through AgentOS. The example uses SQLite for local sessions; tests substitute an in-memory database and mocked providers.
 
 **Result:** Four parameterized API checks pass: billing and technical requests, each with JSON and streamed responses. `/config` and `/openapi.json` load successfully. Each request makes one async Jev call; routing invokes only the selected specialist with the original input. The example uses `TeamMode.route` so the AgentOS configuration can serialize its mode. Ruff lint and formatting pass. No live API calls were made.
+
+### accuracy_eval.py — 2026-09-21
+
+**Status:** PASS (mocked)
+
+**Description:** Display a generated answer through `agent.print_response`, then
+retrieve the same completed run and compare it against a reference with Jev.
+
+**Result:** Exactly one generation call and one scoring call occur. The score is
+displayed with Rich `pprint`. Full accuracy examples live in
+`cookbook/09_evals/accuracy/`; their test log records all four example smoke checks.
+
+All **52** new scorer tests pass. The combined scorer, eval, and Jev regression
+run reports **406 passed, 1 failed**: an unchanged MCP cleanup test cannot import
+`MCPError` from the installed package, which exposes `McpError`. The failure
+reproduces in isolation. No existing accuracy or AgentOS eval APIs were changed.
+Ruff lint, formatting, and whitespace checks pass. The focused mypy check passes
+for the new scorer with the repository configuration and `--follow-imports=silent`.
+Live judgment quality and threshold calibration remain for private-branch testing.
