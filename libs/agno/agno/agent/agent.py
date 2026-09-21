@@ -582,6 +582,33 @@ class Agent:
             self.num_history_runs = 3
             self._num_history_runs_defaulted = True
 
+        # keep_last_runs is the part of num_history_runs kept verbatim, so it has to be the
+        # smaller of the two. Equal or larger leaves nothing in front of the tail to fold, and
+        # the boundary anchor could never be found again - every summary would be dropped on
+        # the next run. Raised here rather than at first run: it is a configuration error, and
+        # the useful moment to hear about it is when the Agent is built.
+        _keep = getattr(getattr(self, "compaction", None), "keep_last_runs", None)
+        if _keep is not None and self.num_history_runs is not None and not self._num_history_runs_defaulted:
+            if self.num_history_runs <= _keep:
+                raise ValueError(
+                    f"keep_last_runs ({_keep}) must be less than num_history_runs "
+                    f"({self.num_history_runs}) when compaction is enabled - otherwise the kept "
+                    f"tail covers the whole window and there is nothing to fold. Increase "
+                    f"num_history_runs, decrease keep_last_runs, or unset num_history_runs to "
+                    f"let history accumulate."
+                )
+            # Passing that check is not the same as compacting usefully. With a finite window
+            # the foldable share is fixed at (window - keep) / window however long the session
+            # runs, and below roughly half the summary rarely pays for itself.
+            if self.num_history_runs != 3 and (self.num_history_runs - _keep) / self.num_history_runs < 0.5:
+                log_warning(
+                    f"num_history_runs={self.num_history_runs} with keep_last_runs={_keep} leaves "
+                    f"only {self.num_history_runs - _keep} of {self.num_history_runs} runs "
+                    f"foldable, so compaction will rarely pay for the summary it writes. Raise "
+                    f"num_history_runs, or unset it so history can accumulate - that is where "
+                    f"compaction earns its cost."
+                )
+
         self.max_tool_calls_from_history = max_tool_calls_from_history
 
         self.store_media = store_media

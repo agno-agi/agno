@@ -22,8 +22,8 @@ db = PostgresDb(db_url=db_url)
 # ---------------------------------------------------------------------------
 # Create Agent
 # ---------------------------------------------------------------------------
-# A fold has to be at least min_fold_ratio (2x) the tail it keeps, so a short demo
-# keeps a 1-turn tail; at keep_last_runs=2 these few turns would not clear the bar.
+# A fold has to reclaim at least min_fold_tokens, so a short demo keeps a 1-turn
+# tail; at keep_last_runs=2 these few turns would leave too little to fold.
 compaction = Compaction(keep_last_runs=1)
 
 agent = Agent(

@@ -177,24 +177,63 @@ def test_context_size_is_estimated_locally_when_not_supplied():
     assert c.should_compact(_transcript(), model=ExplodingModel()) is True
 
 
-def test_replay_window_below_the_tail_warns(caplog):
-    """Widening a number the user set must not be silent.
+def test_replay_window_at_or_below_the_tail_is_rejected():
+    """keep_last_runs is the part of num_history_runs kept verbatim, so it must be smaller.
 
-    num_history_runs at or below keep_last_runs cannot express a working compaction - the tail
-    would not fit in what the planner may read, so no anchor could ever resolve. The planner
-    widens its own read to avoid dropping every summary, and says so: quietly ignoring a
-    setting is worse than the misconfiguration it works around.
+    Equal or larger leaves nothing in front of the tail to fold, and the boundary anchor could
+    never be found again - every summary would be dropped on the next run. Raised at
+    construction rather than widened silently: ignoring a number the user set is worse than the
+    misconfiguration it works around.
     """
-    from agno.agent import Agent, _init
+    from agno.agent import Agent
 
     for window, keep in ((3, 5), (5, 5)):
-        caplog.clear()
-        agent = Agent(num_history_runs=window, compaction=Compaction(keep_last_runs=keep))
-        with caplog.at_level(logging.WARNING, logger="agno"):
-            _init.set_compaction(agent)
-        assert any("keep_last_runs" in r.message for r in caplog.records), (window, keep)
-        # The replay setting itself is untouched; only the planner reads wider.
-        assert agent.num_history_runs == window
+        with pytest.raises(ValueError, match="must be less than num_history_runs"):
+            Agent(num_history_runs=window, compaction=Compaction(keep_last_runs=keep))
+
+
+def test_defaults_do_not_collide():
+    """The two defaults have to satisfy the rule the validation enforces.
+
+    keep_last_runs defaulted to 5 against Agent's own num_history_runs default of 3, so the
+    one-flag setup could never fold - and once the collision raises, it could not even be
+    constructed.
+    """
+    from agno.agent import Agent
+
+    agent = Agent(compaction=Compaction())
+
+    assert agent.compaction.keep_last_runs < agent.num_history_runs
+
+
+def test_a_copied_agent_is_not_validated_as_if_the_user_chose_the_default(caplog):
+    """deep_copy rebuilds from fields, so num_history_runs always arrives looking explicit.
+
+    AgentOS copies an agent per request, so a framework default validated as a user choice
+    would fail every route rather than just an odd configuration.
+    """
+    from agno.agent import Agent
+
+    with caplog.at_level(logging.WARNING, logger="agno"):
+        copy = Agent(compaction=Compaction()).deep_copy()
+
+    assert copy is not None
+    assert not [r for r in caplog.records if "keep_last_runs" in r.message]
+
+
+def test_a_barely_foldable_window_warns_rather_than_raising(caplog):
+    """Passing the check is not the same as compacting usefully.
+
+    With a finite window the foldable share is fixed at (window - keep) / window however long
+    the session runs - four runs out of ten rarely pay for a summary. Legal, so it warns
+    rather than raising.
+    """
+    from agno.agent import Agent
+
+    with caplog.at_level(logging.WARNING, logger="agno"):
+        Agent(num_history_runs=10, compaction=Compaction(keep_last_runs=6))
+
+    assert any("rarely pay for the summary" in r.message for r in caplog.records)
 
 
 def test_workable_replay_window_is_not_warned_about(caplog):
@@ -235,20 +274,18 @@ def test_compaction_is_not_starved_by_the_default_history_window():
     assert _compaction_history_runs(agent) > 5  # but the planner sees past it
 
 
-def test_explicit_history_window_is_respected_but_never_strands_the_anchor():
-    """An explicit window is the user's call on replay - until it would lose data.
+def test_an_explicit_history_window_is_used_verbatim():
+    """A workable explicit window is the user's decision and is not second-guessed.
 
-    Below the kept tail the boundary anchor falls outside the window and stops resolving, which
-    discards the summary silently. The window is raised just enough to prevent that.
+    The window that could strand an anchor is rejected at construction, so anything reaching
+    the planner is already usable as given.
     """
     from agno.agent import Agent
     from agno.agent._messages import _compaction_history_runs
 
-    roomy = Agent(num_history_runs=50, compaction=Compaction(keep_last_runs=5))
-    assert _compaction_history_runs(roomy) == 50
+    agent = Agent(num_history_runs=20, compaction=Compaction(keep_last_runs=5))
 
-    too_small = Agent(num_history_runs=2, compaction=Compaction(keep_last_runs=5))
-    assert _compaction_history_runs(too_small) > 5
+    assert _compaction_history_runs(agent) == 20
 
 
 def test_history_window_untouched_without_compaction():
@@ -322,26 +359,26 @@ def test_manual_compact_still_honours_the_ratio_guard():
     assert not result.compacted
     assert result.record is None
     assert result.status is CompactionStatus.NOT_WORTH_IT
-    assert "would not shrink" in result.message or "reclaims" in result.message
+    assert "min_fold_tokens" in result.message
 
 
 def test_not_worth_it_message_carries_the_numbers():
     """The verdict alone is not actionable.
 
-    "not worth it" with no figures leaves a caller unable to tell a fold that missed by a
-    hair from one that was never close - and the ratio is what says which lever to reach for.
+    "not worth it" with no figures leaves a caller unable to tell a fold that missed by a hair
+    from one that was never close, and the token count is what says whether waiting will help.
     """
     from agno.agent import Agent
     from agno.agent._messages import compact_now
     from agno.session.agent import AgentSession
 
-    # 4 turns with keep_last_runs=2 puts the fold and the tail at the same size: ratio 1.00.
+    # Short turns, so the foldable span stays well under the default min_fold_tokens.
     history = [
         m
         for i in range(4)
         for m in (
             Message(role="user", content="q " * 15, id=f"u{i}"),
-            Message(role="assistant", content="a " * 600, id=f"a{i}"),
+            Message(role="assistant", content="a " * 30, id=f"a{i}"),
         )
     ]
     agent = Agent(compaction=Compaction(keep_last_runs=2, archive=False, model=_StubModel()))
@@ -349,10 +386,10 @@ def test_not_worth_it_message_carries_the_numbers():
     result = compact_now(agent, AgentSession(session_id="s1", runs=[]), history)
 
     assert result.status is CompactionStatus.NOT_WORTH_IT
-    assert "ratio 1.00" in result.message
-    assert "needs 2.0" in result.message
-    # The usual fix is more conversation, so it is named before the config knobs.
-    assert result.message.index("Continue") < result.message.index("keep_last_runs")
+    assert "tokens" in result.message
+    assert "min_fold_tokens" in result.message
+    # The usual fix is more conversation, so it is named before the knob to lower.
+    assert result.message.index("Continue") < result.message.index("lower min_fold_tokens")
 
 
 def test_compaction_result_serializes_for_an_api():
@@ -411,6 +448,347 @@ def test_compaction_not_enabled_is_a_status_not_a_crash():
 
     assert result.status is CompactionStatus.NOT_ENABLED
     assert not result.compacted
+
+
+def test_context_overflow_folds_and_asks_for_a_retry():
+    """The provider's rejection is the only authoritative signal that a threshold was wrong.
+
+    No provider exposes its context window, and the same model id differs across deployments,
+    so compact_at_tokens is always a guess. This path folds against the messages actually sent -
+    reaching the current turn and anything a tool loop appended, which the run-start pass
+    cannot - and reports whether the payload is worth resending.
+    """
+    from agno.agent import Agent
+    from agno.agent._messages import _recompact_after_overflow
+    from agno.compaction._tokens import estimate_tokens
+    from agno.session.agent import AgentSession
+
+    class _RunMessages:
+        def __init__(self, messages):
+            self.messages = messages
+
+    messages = [Message(role="system", content="sys", id="s0")]
+    messages += [
+        m
+        for i in range(30)
+        for m in (
+            Message(role="user", content=f"q{i} " * 30, id=f"u{i}"),
+            Message(role="assistant", content=f"a{i} " * 800, id=f"a{i}"),
+        )
+    ]
+    run_messages = _RunMessages(messages)
+    before = estimate_tokens(messages)
+    agent = Agent(compaction=Compaction(keep_last_runs=5, archive=False, model=_StubModel()))
+
+    assert _recompact_after_overflow(agent, AgentSession(session_id="s1", runs=[]), run_messages, None) is True
+    # The payload is replaced in place, so the retry sends the smaller list.
+    assert estimate_tokens(run_messages.messages) < before
+
+
+def test_overflow_retry_sends_the_compacted_payload():
+    """The retry has to reach the provider, not just the helper's own variable.
+
+    The model call already holds the message list object in its kwargs, so rebinding
+    run_messages.messages to a new list leaves the retry sending exactly the payload that was
+    just rejected - two identical failures instead of a recovery. Asserted on what the model
+    received, because asserting on the helper's attribute passes either way.
+    """
+    from agno.compaction._tokens import estimate_tokens
+    from agno.exceptions import ContextWindowExceededError
+    from agno.models.fallback import call_model_with_fallback
+    from agno.models.response import ModelResponse
+
+    received = []
+
+    class _Model:
+        id = "m"
+
+        def __init__(self):
+            self.calls = 0
+
+        def response(self, **kwargs):
+            self.calls += 1
+            received.append(estimate_tokens(kwargs["messages"]))
+            if self.calls == 1:
+                raise ContextWindowExceededError("too long")
+            return ModelResponse(content="ok")
+
+    messages = [Message(role="user", content="q " * 2000)]
+
+    def _fold() -> bool:
+        messages[:] = [Message(role="user", content="tiny")]
+        return True
+
+    call_model_with_fallback(_Model(), None, on_context_overflow=_fold, messages=messages)
+
+    assert len(received) == 2
+    assert received[1] < received[0]
+
+
+def test_a_valid_agent_can_always_be_copied():
+    """deep_copy must not reject a configuration that constructed successfully.
+
+    A defaulted history window is not the user's choice, so the copy has to be told that -
+    restoring the flag after construction is too late, because __init__ has already validated.
+    AgentOS copies an agent per request, so this would fail every route.
+    """
+    from agno.agent import Agent
+
+    for compaction in (Compaction(), Compaction(keep_last_runs=5)):
+        agent = Agent(compaction=compaction)
+        copy = agent.deep_copy()
+        assert copy._num_history_runs_defaulted is True
+
+    explicit = Agent(num_history_runs=20, compaction=Compaction(keep_last_runs=5)).deep_copy()
+    assert explicit.num_history_runs == 20
+    assert explicit._num_history_runs_defaulted is False
+
+
+def test_context_overflow_gives_up_the_tail_when_the_tail_is_the_problem(caplog):
+    """keep_last_runs is a promise about ordinary runs, not a reason to let this one die.
+
+    An oversized turn INSIDE the kept tail cannot be reached by any cut in front of it, so
+    honouring the setting here means folding a few hundred tokens and failing again. The tail
+    is given up one run at a time, and only when the fold in front of it is too small to help.
+    """
+    from agno.agent import Agent
+    from agno.agent._messages import _recompact_after_overflow
+    from agno.compaction._tokens import estimate_tokens
+    from agno.session.agent import AgentSession
+
+    class _RunMessages:
+        def __init__(self, messages):
+            self.messages = messages
+
+    # 3 runs with keep_last_runs=3: the tail covers everything, and run 2 is enormous.
+    messages = [Message(role="system", content="sys", id="s0")]
+    for i in range(3):
+        messages.append(Message(role="user", content=f"q{i} " * 20, id=f"u{i}"))
+        messages.append(Message(role="assistant", content=("f " * 40000 if i == 1 else f"a{i} " * 100), id=f"a{i}"))
+    run_messages = _RunMessages(messages)
+    before = estimate_tokens(messages)
+    agent = Agent(compaction=Compaction(keep_last_runs=3, archive=False, model=_StubModel()))
+
+    with caplog.at_level(logging.INFO, logger="agno"):
+        assert _recompact_after_overflow(agent, AgentSession(session_id="s1", runs=[]), run_messages, None) is True
+
+    assert estimate_tokens(run_messages.messages) < before / 10
+    assert any("keeping 1 run(s) instead of 3" in r.message for r in caplog.records)
+
+
+def test_context_overflow_keeps_the_configured_tail_when_it_works(caplog):
+    """Giving up the tail is a last resort, not the overflow path's default.
+
+    A long session where folding in front of the tail already reclaims plenty must keep the
+    runs the user asked for - the rejection says the request was too big, not that the setting
+    was wrong.
+    """
+    from agno.agent import Agent
+    from agno.agent._messages import _recompact_after_overflow
+    from agno.compaction._tokens import estimate_tokens
+    from agno.session.agent import AgentSession
+
+    class _RunMessages:
+        def __init__(self, messages):
+            self.messages = messages
+
+    messages = [Message(role="system", content="sys", id="s0")]
+    messages += [
+        m
+        for i in range(30)
+        for m in (
+            Message(role="user", content=f"q{i} " * 30, id=f"u{i}"),
+            Message(role="assistant", content=f"a{i} " * 800, id=f"a{i}"),
+        )
+    ]
+    run_messages = _RunMessages(messages)
+    before = estimate_tokens(messages)
+    agent = Agent(compaction=Compaction(keep_last_runs=5, archive=False, model=_StubModel()))
+
+    with caplog.at_level(logging.INFO, logger="agno"):
+        assert _recompact_after_overflow(agent, AgentSession(session_id="s1", runs=[]), run_messages, None) is True
+
+    assert estimate_tokens(run_messages.messages) < before
+    assert not [r for r in caplog.records if "run(s) instead of" in r.message]
+
+
+def test_context_overflow_does_not_retry_what_it_cannot_shrink(caplog):
+    """Retrying an identical payload just fails twice.
+
+    When the most recent turn alone exceeds the window there is no safe cut left, and the
+    caller needs to hear why rather than watch a silent second failure.
+    """
+    from agno.agent import Agent
+    from agno.agent._messages import _recompact_after_overflow
+    from agno.session.agent import AgentSession
+
+    class _RunMessages:
+        def __init__(self, messages):
+            self.messages = messages
+
+    run_messages = _RunMessages(
+        [
+            Message(role="system", content="sys", id="s0"),
+            Message(role="user", content="analyse", id="u0"),
+            Message(role="assistant", content="f " * 60000, id="a0"),
+        ]
+    )
+    agent = Agent(compaction=Compaction(keep_last_runs=1, archive=False, model=_StubModel()))
+
+    with caplog.at_level(logging.WARNING, logger="agno"):
+        assert _recompact_after_overflow(agent, AgentSession(session_id="s1", runs=[]), run_messages, None) is False
+    assert any("no safe cut left" in r.message for r in caplog.records)
+
+
+def test_context_overflow_is_a_no_op_without_compaction():
+    """An agent with no compaction configured must not be changed by the overflow path."""
+    from agno.agent import Agent
+    from agno.agent._messages import _recompact_after_overflow
+    from agno.session.agent import AgentSession
+
+    class _RunMessages:
+        def __init__(self, messages):
+            self.messages = messages
+
+    run_messages = _RunMessages([Message(role="user", content="hi", id="u0")])
+
+    assert _recompact_after_overflow(Agent(), AgentSession(session_id="s1", runs=[]), run_messages, None) is False
+
+
+def test_a_repeat_fold_measures_against_what_the_model_was_sent():
+    """tokens_before is the view in flight, not the raw stored history.
+
+    On a repeat fold those differ by everything the previous fold already replaced, so raw
+    history overstates the saving - and _fold_paid_off would be comparing a number the provider
+    never saw against one it will. The row is written once and never updated, so a wrong value
+    here is permanent.
+    """
+    from agno.compaction._tokens import estimate_tokens
+    from agno.models.response import ModelResponse
+
+    class _Summarizer:
+        id = "stub"
+
+        def response(self, messages, **kwargs):
+            return ModelResponse(content="summary " * 400)
+
+    messages = [
+        m
+        for i in range(12)
+        for m in (
+            Message(role="user", content=f"q{i} " * 20, id=f"u{i}"),
+            Message(role="assistant", content=f"a{i} " * 300, id=f"a{i}"),
+        )
+    ]
+    c = Compaction(keep_last_runs=2, archive=False, model=_Summarizer())
+
+    first = c.compact(messages, session_id="s", db=None)
+    assert first is not None
+
+    # Grow the conversation so a second fold has a new boundary to cut at.
+    messages += [
+        m
+        for i in range(12, 20)
+        for m in (
+            Message(role="user", content=f"q{i} " * 20, id=f"u{i}"),
+            Message(role="assistant", content=f"a{i} " * 300, id=f"a{i}"),
+        )
+    ]
+    in_flight = estimate_tokens(c.apply_record(messages, first))
+
+    second = c.compact(messages, session_id="s", db=None, previous=first)
+
+    assert second is not None
+    assert second.tokens_before == in_flight
+    assert second.tokens_after == estimate_tokens(c.apply_record(messages, second))
+
+
+def test_a_fold_that_grows_the_context_is_discarded(caplog):
+    """min_fold_tokens bounds the input; only this check sees the outcome.
+
+    The summarizer is asked to reproduce identifiers verbatim, so on a span that is mostly raw
+    data the summary can come back larger than what it replaces. Accepting that grows the
+    context while reporting a compaction - the one thing the guard exists to prevent.
+    """
+    from agno.compaction._tokens import estimate_tokens
+    from agno.models.response import ModelResponse
+
+    class _FatSummarizer:
+        id = "stub"
+
+        def response(self, messages, **kwargs):
+            return ModelResponse(content="verbose summary text " * 2000)
+
+    messages = [
+        m
+        for i in range(8)
+        for m in (
+            Message(role="user", content=f"q{i} " * 20, id=f"u{i}"),
+            Message(role="assistant", content=f"a{i} " * 300, id=f"a{i}"),
+        )
+    ]
+    before = estimate_tokens(messages)
+    c = Compaction(keep_last_runs=2, archive=False, model=_FatSummarizer())
+
+    with caplog.at_level(logging.WARNING, logger="agno"):
+        assert c.compact(messages, session_id="s", db=None) is None
+
+    assert estimate_tokens(messages) == before
+    assert any("came back larger" in r.message for r in caplog.records)
+
+
+def test_a_fold_that_shrinks_the_context_is_kept():
+    """The outcome check must not reject folds that work."""
+    from agno.compaction._tokens import estimate_tokens
+    from agno.models.response import ModelResponse
+
+    class _ThinSummarizer:
+        id = "stub"
+
+        def response(self, messages, **kwargs):
+            return ModelResponse(content="short summary")
+
+    messages = [
+        m
+        for i in range(8)
+        for m in (
+            Message(role="user", content=f"q{i} " * 20, id=f"u{i}"),
+            Message(role="assistant", content=f"a{i} " * 300, id=f"a{i}"),
+        )
+    ]
+    c = Compaction(keep_last_runs=2, archive=False, model=_ThinSummarizer())
+
+    record = c.compact(messages, session_id="s", db=None)
+
+    assert record is not None
+    assert estimate_tokens(c.apply_record(messages, record)) < estimate_tokens(messages)
+
+
+def test_the_pending_input_counts_toward_the_threshold():
+    """Compaction runs before the user message is built, so it would otherwise be invisible.
+
+    Fine for a one-line question, wrong when someone pastes a document - which is exactly when
+    the request overflows and the trigger most needs to see it coming.
+    """
+    from agno.agent import Agent
+    from agno.agent._messages import _estimated_context_tokens, _input_preview
+
+    agent = Agent()
+    history = [
+        m
+        for i in range(5)
+        for m in (
+            Message(role="user", content=f"q{i} " * 20),
+            Message(role="assistant", content=f"a{i} " * 200),
+        )
+    ]
+    pasted = "Here is a document: " + "word " * 4000
+
+    measured = _estimated_context_tokens(agent, history + _input_preview(pasted))
+    actually_sent = _estimated_context_tokens(agent, history + [Message(role="user", content=pasted)])
+
+    assert measured == actually_sent
+    assert measured > _estimated_context_tokens(agent, history) * 2
 
 
 # --- boundary safety -----------------------------------------------------
@@ -608,8 +986,8 @@ def test_second_compaction_only_covers_what_is_new():
     actually shrinks and every subsequent run compacts again.
     """
     messages = _transcript(runs=4)
-    # min_fold_ratio=0: this exercises the boundary, not the size floor.
-    c = Compaction(keep_last_runs=1, min_fold_ratio=0, model=_StubModel())
+    # min_fold_tokens=0: this exercises the boundary, not the size floor.
+    c = Compaction(keep_last_runs=1, min_fold_tokens=0, model=_StubModel())
     previous = _record(messages, 2, summary="earlier")
 
     record = c.compact(messages, session_id="s", db=None, previous=previous)
@@ -640,21 +1018,26 @@ def test_skips_a_fold_that_cannot_pay_for_its_summary():
     assert c.compact(tiny, session_id="s", db=None) is None
 
 
-def test_fold_ratio_can_be_disabled():
+def test_the_size_floor_can_be_disabled():
+    """min_fold_tokens=0 folds spans the floor would decline.
+
+    The outcome check still applies - it is about whether the summary actually shrank the
+    context, not about how large the input was - so this span is big enough to shrink.
+    """
     messages = [
-        Message(role="user", content="hi"),
-        Message(role="assistant", content="hello"),
+        Message(role="user", content="word " * 200),
+        Message(role="assistant", content="text " * 200),
         Message(role="user", content="more"),
     ]
-    c = Compaction(keep_last_runs=1, min_fold_ratio=0, model=_StubModel())
+    c = Compaction(keep_last_runs=1, min_fold_tokens=0, model=_StubModel())
 
     assert c.compact(messages, session_id="s", db=None) is not None
 
 
-def test_large_fold_against_a_small_tail_clears_the_ratio():
+def test_large_fold_clears_the_size_floor():
     big = [
-        Message(role="user", content="x" * 5_000),
-        Message(role="assistant", content="y" * 5_000),
+        Message(role="user", content="word " * 1_500),
+        Message(role="assistant", content="text " * 1_500),
         Message(role="user", content="tiny"),
     ]
     c = Compaction(keep_last_runs=1, model=_StubModel())
@@ -679,8 +1062,8 @@ def test_plan_refuses_what_compact_would_refuse():
 
 def test_plan_agrees_with_compact_when_worthwhile():
     big = [
-        Message(role="user", content="x" * 5_000),
-        Message(role="assistant", content="y" * 5_000),
+        Message(role="user", content="word " * 1_500),
+        Message(role="assistant", content="text " * 1_500),
         Message(role="user", content="tiny"),
     ]
     c = Compaction(keep_last_runs=1, model=_StubModel())
@@ -775,7 +1158,7 @@ def test_boundary_never_anchors_on_a_message_that_will_not_persist():
     assert boundary is None or not messages[boundary].temporary
 
 
-def test_envelopes_do_not_count_against_the_fold_ratio():
+def test_envelopes_do_not_count_against_the_size_floor():
     """A pinned envelope must not make every later fold look worthless.
 
     Envelopes are held in the kept tail by design, so their cost is not something folding could
@@ -787,7 +1170,7 @@ def test_envelopes_do_not_count_against_the_fold_ratio():
         tool_name="dump",
         content='<result id="res_abc" tool="dump">' + "preview " * 400 + "</result>",
     )
-    folded = [Message(role="user", content="q " * 300), Message(role="assistant", content="a " * 300)]
+    folded = [Message(role="user", content="q " * 1_500), Message(role="assistant", content="a " * 1_500)]
     tail = [envelope, Message(role="user", content="tiny")]
 
     c = Compaction()
@@ -999,7 +1382,7 @@ async def test_acompact_matches_compact():
             return self.response(messages, **kwargs)
 
     messages = _transcript(runs=4)
-    kwargs = dict(keep_last_runs=1, min_fold_ratio=0)
+    kwargs = dict(keep_last_runs=1, min_fold_tokens=0)
 
     sync = Compaction(**kwargs, model=_AsyncStub()).compact(messages, session_id="s", db=None)
     asyn = await Compaction(**kwargs, model=_AsyncStub()).acompact(messages, session_id="s", db=None)

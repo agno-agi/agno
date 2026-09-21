@@ -41,9 +41,9 @@ BASE_URL = os.getenv("AGENT_OS_BASE_URL", "http://localhost:7777")
 # for. Point this at "compaction-agent" instead to watch the two paths interleave.
 AGENT_ID = "manual-compaction-agent"
 
-# Enough turns that the fold clears min_fold_ratio: the folded span has to be at
-# least twice the tail that is kept, so a handful of long answers is the minimum
-# that can demonstrate anything. Asking for detail is what makes them long.
+# Enough turns that the fold clears min_fold_tokens: a summary costs a few hundred
+# tokens whatever it replaces, so a handful of long answers is the minimum that can
+# demonstrate anything. Asking for detail is what makes them long.
 QUESTIONS = [
     "Explain database indexing in detail, with worked examples.",
     "Explain B-tree indexes in depth and when they are the right choice.",
