@@ -873,3 +873,24 @@ def test_users_api_stays_open_with_no_auth_at_all(tmp_path):
     db = SqliteDb(db_file=str(tmp_path / "open.db"))
     app = AgentOS(id=OS_ID, agents=[Agent(id="a", name="A", db=db)], db=db, user_directory=True).get_app()
     assert TestClient(app).get("/users").status_code == 200
+
+
+def test_users_api_still_manages_an_existing_user_whose_name_a_role_later_took():
+    """The role-slug refusal guards a row about to be CREATED. A person who was in the directory
+    before an admin defined a role with the same slug must stay manageable: disabling them is the
+    revocation an admin reaches for, and refusing it would leave the token's grants effective."""
+    roles = _roles()
+    roles.set_role_scopes("admin", ["agent_os:admin"])
+    roles.set_role("alice", "admin")
+    users = UserDirectory(db_url=_db_url())
+    users.upsert("ops", email="ops@co")  # in the directory first
+    roles.set_role_scopes("ops", ["agents:*:read"])  # a role takes the name afterwards
+    client = TestClient(_os(roles, users).get_app())
+
+    assert client.patch("/users/ops", headers=_auth("alice"), json={"disabled": True}).status_code == 200
+    assert users.get("ops")["disabled"] is True
+    assert client.get("/users/ops", headers=_auth("alice")).status_code == 200
+    # creating a NEW row under a role's name stays refused, on POST and on create-by-PATCH
+    assert client.post("/users", headers=_auth("alice"), json={"id": "admin"}).status_code == 422
+    assert client.patch("/users/admin", headers=_auth("alice"), json={"disabled": True}).status_code == 422
+    assert users.get("admin") is None

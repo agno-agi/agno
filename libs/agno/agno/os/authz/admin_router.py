@@ -796,7 +796,11 @@ def get_users_router(
     def update_user(user_id: str, body: UpdateUserRequest, actor: str = Depends(require_admin)):
         """Update a user. ``disabled`` is the revocation kill-switch: a disabled user is
         denied at the enforcement point on their next request, even with a still-valid token."""
-        _refuse_non_user_id(user_id)  # PATCH creates an unknown id, so it needs the same check
+        if user_store.get(user_id) is None:
+            # PATCH creates an unknown id, so a create needs the same check as POST. An existing
+            # row is exempt: a person who was in the directory before a role took their name must
+            # stay manageable, since disabling them is the revocation an admin reaches for.
+            _refuse_non_user_id(user_id)
         user = user_store.upsert(user_id, email=body.email, name=body.name, actor=actor)
         if body.disabled is not None and body.disabled != user["disabled"]:
             user = user_store.set_disabled(user_id, body.disabled, actor=actor)
