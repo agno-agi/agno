@@ -192,3 +192,30 @@ def test_docx_reader_default_chunk_size():
     assert reader.chunk_size == 5000
     assert reader.chunking_strategy.chunk_size == 5000
     assert isinstance(reader.chunking_strategy, DocumentChunking)
+
+
+def test_docx_reader_reads_tables():
+    """Test reading a real DOCX file with tables and paragraphs"""
+    from docx import Document as RealDocument
+
+    doc = RealDocument()
+    doc.add_paragraph("Before table")
+    table = doc.add_table(rows=2, cols=2)
+    table.cell(0, 0).text = "Product"
+    table.cell(0, 1).text = "Revenue"
+    table.cell(1, 0).text = "Agno"
+    table.cell(1, 1).text = "100"
+    doc.add_paragraph("After table")
+
+    source = BytesIO()
+    doc.save(source)
+    source.seek(0)
+
+    reader = DocxReader(chunk=False)
+    documents = reader.read(source)
+    assert len(documents) == 1
+    content = documents[0].content
+    assert "Before table" in content
+    assert "Product | Revenue" in content
+    assert "Agno | 100" in content
+    assert "After table" in content

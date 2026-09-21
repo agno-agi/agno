@@ -57,8 +57,26 @@ class DocxReader(Reader):
                 docx_document = DocxDocument(file)
                 doc_name = name or getattr(file, "name", "docx_file").split(".")[0]
 
-            doc_content = "\n\n".join([para.text for para in docx_document.paragraphs])
+            content_parts: List[str] = []
+            if hasattr(docx_document, "element") and hasattr(docx_document.element, "body"):
+                from docx.table import Table  # type: ignore
+                from docx.text.paragraph import Paragraph  # type: ignore
 
+                for child in docx_document.element.body.iterchildren():
+                    if child.tag.endswith("p"):
+                        text = Paragraph(child, docx_document).text
+                        if text:
+                            content_parts.append(text)
+                    elif child.tag.endswith("tbl"):
+                        table = Table(child, docx_document)
+                        for row in table.rows:
+                            row_cells = [cell.text.strip() for cell in row.cells if cell.text.strip()]
+                            if row_cells:
+                                content_parts.append(" | ".join(row_cells))
+            else:
+                content_parts = [para.text for para in getattr(docx_document, "paragraphs", []) if para.text]
+
+            doc_content = "\n\n".join(content_parts)
             documents = [
                 Document(
                     name=doc_name,
