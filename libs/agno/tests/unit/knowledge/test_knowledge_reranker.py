@@ -537,6 +537,27 @@ def test_a_knowledge_level_reranker_does_not_warn_about_deprecation(monkeypatch)
     messages: List[str] = []
     monkeypatch.setattr(vectordb_base, "log_warning", lambda message, *a, **k: messages.append(str(message)))
 
-    Knowledge(vector_db=RerankerAwareVectorDb(), reranker=ReverseReranker())
+    # Through a real adapter, so the base setter runs rather than a stub's override.
+    lancedb = pytest.importorskip("agno.vectordb.lancedb")
+    store = lancedb.LanceDb(table_name="t", uri="/tmp/agno-deprecation-test")
+
+    Knowledge(vector_db=store, reranker=ReverseReranker())
 
     assert not any("deprecated" in message for message in messages)
+
+
+def test_replacing_an_existing_vector_db_reranker_still_warns(monkeypatch):
+    # Reassignment is itself a use of the deprecated API, so it must not go quiet just
+    # because a reranker was already set.
+    import agno.vectordb.base as vectordb_base
+
+    messages: List[str] = []
+    monkeypatch.setattr(vectordb_base, "log_warning", lambda message, *a, **k: messages.append(str(message)))
+
+    lancedb = pytest.importorskip("agno.vectordb.lancedb")
+    store = lancedb.LanceDb(table_name="t", uri="/tmp/agno-deprecation-test", reranker=ReverseReranker())
+    messages.clear()
+
+    store.reranker = ReverseReranker()
+
+    assert any("deprecated" in message for message in messages)

@@ -128,7 +128,7 @@ class VectorDb(ABC):
 
     @reranker.setter
     def reranker(self, value: Optional[Any]) -> None:
-        if value is not None and self._reranker is None:
+        if value is not None:
             log_warning(
                 "Setting a reranker on the vector db is deprecated. Pass it to Knowledge "
                 "instead, which applies it to every vector db and can widen the candidate "
