@@ -56,6 +56,27 @@ class PageResult(BaseModel):
     schema_version: Literal[1] = 1
 
 
+class PageSourceBinding(PageResult):
+    namespace: str
+    filesystem: str
+    catalog: str
+    vectors: str
+    source: Optional[str]
+    revision: int
+
+
+class PageSourceMigration(PageResult):
+    before: PageSourceBinding
+    after: PageSourceBinding
+    target_source: str
+    dry_run: bool
+    changed: bool
+
+
+class PageSourceBusy(PageError):
+    code = "page_source_busy"
+
+
 class Page(PageResult):
     content_id: str
     namespace: str
