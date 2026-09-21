@@ -182,7 +182,7 @@ class FieldLabeledCSVReader(Reader):
             ValueError: If page_size is less than zero.
         """
         if page_size < 0:
-            raise ValueError("page_size cannot be negative value.")
+            raise ValueError("page_size cannot be a negative value.")
 
         try:
             if isinstance(file, Path):
