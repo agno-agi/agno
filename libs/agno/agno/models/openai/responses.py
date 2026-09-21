@@ -121,6 +121,66 @@ class OpenAIResponses(Model):
         """
         return self.use_previous_response_id and self._effective_store() is not False
 
+    def _chain_rejected(self, request_params: Dict[str, Any], exc: "APIStatusError") -> bool:
+        """Whether the request failed only because the response Agno chained from no longer exists.
+
+        OpenAI answers a stale, expired, or foreign previous_response_id with a 400. The
+        conversation itself is intact, so the request can be sent again with the context
+        replayed. An id the caller pinned through request_params is not Agno's to replace.
+        """
+        if "previous_response_id" not in request_params:
+            return False
+        if self.request_params and "previous_response_id" in self.request_params:
+            return False
+        if exc.status_code != 400:
+            return False
+        try:
+            error_body = exc.response.json().get("error", {})
+        except Exception:
+            error_body = {}
+        detail = error_body.get("message", "") if isinstance(error_body, dict) else ""
+        text = f"{detail} {exc.message}".lower()
+        return "previous response" in text and "not found" in text
+
+    @staticmethod
+    def _without_response_ids(messages: List[Message]) -> List[Message]:
+        """Copies of the messages with their stored response ids removed.
+
+        Every chaining decision keys on those ids, so a request built from these messages
+        replays the full context instead of continuing a response the provider cannot find.
+        """
+        stripped: List[Message] = []
+        for message in messages:
+            if message.provider_data and "response_id" in message.provider_data:
+                provider_data = {key: value for key, value in message.provider_data.items() if key != "response_id"}
+                message = message.model_copy(update={"provider_data": provider_data})
+            stripped.append(message)
+        return stripped
+
+    def _replay_request(
+        self,
+        messages: List[Message],
+        response_format: Optional[Union[Dict, Type[BaseModel]]],
+        tools: Optional[List[Dict[str, Any]]],
+        tool_choice: Optional[Union[str, Dict[str, Any]]],
+        run_response: Optional[RunOutput],
+        compress_tool_results: bool,
+        stream: bool,
+    ) -> Tuple[Dict[str, Any], List[Union[Dict[str, Any], ResponseReasoningItem]]]:
+        """Rebuild a rejected chained request so it replays the full context instead."""
+        log_warning("OpenAI could not find the chained previous_response_id; retrying with the full context replayed.")
+        retry_messages = self._without_response_ids(messages)
+        request_params = self.get_request_params(
+            messages=retry_messages,
+            response_format=response_format,
+            tools=tools,
+            tool_choice=tool_choice,
+            run_response=run_response,
+        )
+        if stream:
+            request_params.pop("background", None)
+        return request_params, self._format_messages(retry_messages, compress_tool_results, tools=tools)  # type: ignore[arg-type]
+
     def _set_reasoning_request_param(self, base_params: Dict[str, Any]) -> Dict[str, Any]:
         """Set the reasoning request parameter."""
         base_params["reasoning"] = self.reasoning or {}
@@ -652,9 +712,10 @@ class OpenAIResponses(Model):
         fc_id_to_call_id = self._build_fc_id_to_call_id_map(messages)
 
         for message in messages_to_format:
-            # Without chaining, replay reasoning before the assistant's text or function calls.
+            # Without a response to chain from, replay reasoning before the assistant's text or function calls.
+            replayed_reasoning = False
             if (
-                not self._chains_responses()
+                previous_response_id is None
                 and message.role == "assistant"
                 and message.provider_data is not None
                 and message.provider_data.get("reasoning_output") is not None
@@ -662,6 +723,7 @@ class OpenAIResponses(Model):
                 formatted_messages.append(
                     ResponseReasoningItem.model_validate(message.provider_data["reasoning_output"])
                 )
+                replayed_reasoning = True
 
             if message.role in ["user", "system"]:
                 message_dict: Dict[str, Any] = {
@@ -719,17 +781,23 @@ class OpenAIResponses(Model):
                 if self._using_reasoning_model() and previous_response_id is not None:
                     continue
 
+                # A stored reasoning model binds each call to its reasoning item by id and rejects
+                # the call without it. Send the id only when that item is replayed alongside; the
+                # call_id is what pairs the call with its output, and always goes.
+                include_item_ids = (
+                    replayed_reasoning or not self._using_reasoning_model() or self._effective_store() is False
+                )
                 for tool_call in message.tool_calls:
-                    formatted_messages.append(
-                        {
-                            "type": "function_call",
-                            "id": tool_call.get("id"),
-                            "call_id": tool_call.get("call_id", tool_call.get("id")),
-                            "name": tool_call["function"]["name"],
-                            "arguments": tool_call["function"]["arguments"],
-                            "status": "completed",
-                        }
-                    )
+                    function_call: Dict[str, Any] = {
+                        "type": "function_call",
+                        "call_id": tool_call.get("call_id", tool_call.get("id")),
+                        "name": tool_call["function"]["name"],
+                        "arguments": tool_call["function"]["arguments"],
+                        "status": "completed",
+                    }
+                    if include_item_ids:
+                        function_call["id"] = tool_call.get("id")
+                    formatted_messages.append(function_call)
             elif message.role == "assistant":
                 # Handle null content by converting to empty string
                 content = message.content if message.content is not None else ""
@@ -804,11 +872,23 @@ class OpenAIResponses(Model):
 
             assistant_message.metrics.start_timer()
 
-            provider_response = self.get_client().responses.create(
-                **self._get_model_request_kwargs(),
-                input=self._format_messages(messages, compress_tool_results, tools=tools),  # type: ignore
-                **request_params,
-            )
+            try:
+                provider_response = self.get_client().responses.create(
+                    **self._get_model_request_kwargs(),
+                    input=self._format_messages(messages, compress_tool_results, tools=tools),  # type: ignore
+                    **request_params,
+                )
+            except APIStatusError as exc:
+                if not self._chain_rejected(request_params, exc):
+                    raise
+                request_params, replayed_input = self._replay_request(
+                    messages, response_format, tools, tool_choice, run_response, compress_tool_results, stream=False
+                )
+                provider_response = self.get_client().responses.create(
+                    **self._get_model_request_kwargs(),
+                    input=replayed_input,  # type: ignore
+                    **request_params,
+                )
 
             # Stop the timer before polling so wall-clock polling wait is not counted as inference time.
             # For background mode, the initial create() measures submission latency; the polling loop
@@ -913,11 +993,23 @@ class OpenAIResponses(Model):
 
             assistant_message.metrics.start_timer()
 
-            provider_response = await self.get_async_client().responses.create(
-                **self._get_model_request_kwargs(),
-                input=self._format_messages(messages, compress_tool_results, tools=tools),  # type: ignore
-                **request_params,
-            )
+            try:
+                provider_response = await self.get_async_client().responses.create(
+                    **self._get_model_request_kwargs(),
+                    input=self._format_messages(messages, compress_tool_results, tools=tools),  # type: ignore
+                    **request_params,
+                )
+            except APIStatusError as exc:
+                if not self._chain_rejected(request_params, exc):
+                    raise
+                request_params, replayed_input = self._replay_request(
+                    messages, response_format, tools, tool_choice, run_response, compress_tool_results, stream=False
+                )
+                provider_response = await self.get_async_client().responses.create(
+                    **self._get_model_request_kwargs(),
+                    input=replayed_input,  # type: ignore
+                    **request_params,
+                )
 
             # Stop the timer before polling so wall-clock polling wait is not counted as inference time.
             # For background mode, the initial create() measures submission latency; the polling loop
@@ -1026,12 +1118,28 @@ class OpenAIResponses(Model):
 
             assistant_message.metrics.start_timer()
 
-            for chunk in self.get_client().responses.create(
-                **self._get_model_request_kwargs(),
-                input=self._format_messages(messages, compress_tool_results, tools=tools),  # type: ignore
-                stream=True,
-                **request_params,
-            ):
+            # The SDK sends the request inside create(), so a rejected chain surfaces here, before iteration.
+            try:
+                stream = self.get_client().responses.create(
+                    **self._get_model_request_kwargs(),
+                    input=self._format_messages(messages, compress_tool_results, tools=tools),  # type: ignore
+                    stream=True,
+                    **request_params,
+                )
+            except APIStatusError as exc:
+                if not self._chain_rejected(request_params, exc):
+                    raise
+                request_params, replayed_input = self._replay_request(
+                    messages, response_format, tools, tool_choice, run_response, compress_tool_results, stream=True
+                )
+                stream = self.get_client().responses.create(
+                    **self._get_model_request_kwargs(),
+                    input=replayed_input,  # type: ignore
+                    stream=True,
+                    **request_params,
+                )
+
+            for chunk in stream:
                 model_response, tool_use = self._parse_provider_response_delta(
                     stream_event=chunk,  # type: ignore
                     assistant_message=assistant_message,
@@ -1119,12 +1227,26 @@ class OpenAIResponses(Model):
 
             assistant_message.metrics.start_timer()
 
-            async_stream = await self.get_async_client().responses.create(
-                **self._get_model_request_kwargs(),
-                input=self._format_messages(messages, compress_tool_results, tools=tools),  # type: ignore
-                stream=True,
-                **request_params,
-            )
+            # The SDK sends the request inside create(), so a rejected chain surfaces here, before iteration.
+            try:
+                async_stream = await self.get_async_client().responses.create(
+                    **self._get_model_request_kwargs(),
+                    input=self._format_messages(messages, compress_tool_results, tools=tools),  # type: ignore
+                    stream=True,
+                    **request_params,
+                )
+            except APIStatusError as exc:
+                if not self._chain_rejected(request_params, exc):
+                    raise
+                request_params, replayed_input = self._replay_request(
+                    messages, response_format, tools, tool_choice, run_response, compress_tool_results, stream=True
+                )
+                async_stream = await self.get_async_client().responses.create(
+                    **self._get_model_request_kwargs(),
+                    input=replayed_input,  # type: ignore
+                    stream=True,
+                    **request_params,
+                )
             async for chunk in async_stream:  # type: ignore
                 model_response, tool_use = self._parse_provider_response_delta(chunk, assistant_message, tool_use)  # type: ignore
                 yield model_response
