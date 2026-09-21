@@ -839,3 +839,37 @@ def test_users_api_admits_the_security_key_as_root(tmp_path, monkeypatch):
     assert client.get("/users", headers=root).status_code == 200
     assert client.post("/users", headers=root, json={"id": "bob"}).status_code == 200
     assert client.patch("/users/bob", headers=root, json={"disabled": True}).status_code == 200
+
+
+def test_users_api_is_gated_under_a_manually_added_jwt_middleware(tmp_path, monkeypatch):
+    """The third way JWT gets turned on: app.add_middleware(JWTMiddleware, ...) after get_app(),
+    with authorization=False. /info reports auth_mode jwt for it, so /users must be gated too;
+    keying the gate on the mount-time flag alone left it open to any signed token."""
+    from agno.db.sqlite import SqliteDb
+    from agno.os.middleware import JWTMiddleware
+
+    monkeypatch.delenv("JWT_VERIFICATION_KEY", raising=False)
+    monkeypatch.delenv("JWT_JWKS_FILE", raising=False)
+    db = SqliteDb(db_file=str(tmp_path / "manual.db"))
+    users = UserDirectory(db=db, auto_provision=False)
+    users.upsert("victim", email="v@co")
+    app = AgentOS(id=OS_ID, agents=[Agent(id="a", name="A", db=db)], db=db, user_directory=users).get_app()
+    app.add_middleware(JWTMiddleware, verification_keys=[SECRET], algorithm="HS256", authorization=True)
+    client = TestClient(app)
+
+    assert client.get("/users").status_code == 401  # anonymous
+    plain = _auth("someone", scopes=[])
+    assert client.get("/users", headers=plain).status_code == 403
+    assert client.patch("/users/victim", headers=plain, json={"disabled": True}).status_code == 403
+    assert users.get("victim")["disabled"] is False  # nothing was disabled
+    assert client.get("/users", headers=_auth("op", scopes=["agent_os:admin"])).status_code == 200
+
+
+def test_users_api_stays_open_with_no_auth_at_all(tmp_path):
+    """The request-time check must not close the no-auth OS: with no middleware at all the roster
+    is open like every other route (the run's user_id is the only identity there is)."""
+    from agno.db.sqlite import SqliteDb
+
+    db = SqliteDb(db_file=str(tmp_path / "open.db"))
+    app = AgentOS(id=OS_ID, agents=[Agent(id="a", name="A", db=db)], db=db, user_directory=True).get_app()
+    assert TestClient(app).get("/users").status_code == 200

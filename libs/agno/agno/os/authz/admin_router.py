@@ -332,12 +332,15 @@ def _make_require_admin(role_store: "Optional[Authorization]" = None, *, auth_en
     # Async, and the token plane is checked first: the managed plane is a DB read, and
     # the role store may be bound to an async database, which its sync methods refuse.
     async def require_admin(request: Request) -> str:
-        if not auth_enabled:
-            # No authorization configured: the whole OS serves anonymous callers, so the directory
-            # admin API is open too. The roster is already writable by anyone (a run with a new
-            # user_id provisions a row) and the disabled switch is advisory without a verified
-            # identity, so gating /users alone would be inconsistent. Turn authorization on to make it
-            # a real boundary. The actor recorded is whatever user_id the request asserts.
+        if not auth_enabled and not getattr(request.state, "authenticated", False):
+            # No auth middleware at mount time AND none ran for this request: the whole OS serves
+            # anonymous callers, so the directory admin API is open too. The roster is already
+            # writable by anyone (a run with a new user_id provisions a row) and the disabled switch
+            # is advisory without a verified identity, so gating /users alone would be inconsistent.
+            # Turn authorization on to make it a real boundary. The request-time half matters for a
+            # JWTMiddleware added by hand after get_app(): the mount saw no auth, but the request
+            # carries a verified identity, so it is gated like any other. The actor recorded on the
+            # open path is whatever user_id the request asserts.
             return getattr(request.state, "user_id", None) or ""
         if not getattr(request.state, "authenticated", False):
             raise HTTPException(status_code=401, detail="Not authenticated")
