@@ -118,3 +118,39 @@ class TestReadSuccessPathStillWorks:
 
         result = db._read_json_file("sessions", create_table_if_not_found=False)
         assert result == [{"a": 1}, {"a": 2}]
+
+
+class TestGetMetricsSkipsUnreadableDates:
+    def test_get_metrics_skips_unreadable_date(self):
+        import sys
+        from datetime import date
+        from unittest.mock import MagicMock, patch
+
+        # Ensure gcs_json_db import succeeds even if google.cloud.storage is not installed
+        mock_google = MagicMock()
+        with patch.dict(sys.modules, {"google.cloud": mock_google, "google.cloud.storage": mock_google}):
+            from agno.db.gcs_json.gcs_json_db import GcsJsonDb
+
+            db = GcsJsonDb.__new__(GcsJsonDb)
+            bucket = MagicMock()
+            db.bucket = bucket
+            db.prefix = "test"
+            db.metrics_table_name = "metrics"
+
+            rows = [
+                {"id": "m1", "date": "2026-09-01", "user_id": "u1", "aggregation_period": "daily", "updated_at": 1},
+                {"id": "m2", "date": "2026-09-02T00:00:00", "user_id": "u1", "aggregation_period": "daily", "updated_at": 2},
+                {"id": "m3", "date": "", "user_id": "u1", "aggregation_period": "daily", "updated_at": 3},
+            ]
+
+            with patch.object(db, "_read_json_file", return_value=rows):
+                metrics, latest_updated = db.get_metrics(
+                    starting_date=date(2026, 9, 1), ending_date=date(2026, 9, 30), user_id="u1"
+                )
+
+            assert len(metrics) == 2
+            assert metrics[0]["id"] == "m1"
+            assert metrics[1]["id"] == "m2"
+            assert latest_updated == 2
+
+

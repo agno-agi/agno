@@ -25,6 +25,7 @@ from agno.db.utils import (
     drop_legacy_metrics,
     filter_context_runs,
     merge_runs_table_with_legacy_blob,
+    metric_record_day,
     metrics_starting_date_from_records,
 )
 from agno.run.agent import RunOutput
@@ -1250,7 +1251,9 @@ class GcsJsonDb(BaseDb):
             latest_updated_at = None
 
             for metric in metrics:
-                metric_date = datetime.strptime(metric.get("date", ""), "%Y-%m-%d").date()
+                metric_date = metric_record_day(metric)
+                if metric_date is None:
+                    continue
 
                 if starting_date and metric_date < starting_date:
                     continue
