@@ -1,7 +1,7 @@
 """
 Roles on the token: Authorization(roles_claim=...) for an external identity provider
 
-(New to this? Read 01_managed_roles.py first. 09_idp_workos_auth0.py shows the same IdP
+(New to this? Read 01_managed_roles.py first. 13_idp_workos_auth0.py shows the same IdP
 setup with a custom provider and real RS256/JWKS verification; this file is the built-in
 version of that integration.)
 
@@ -27,7 +27,7 @@ Two details worth knowing:
 
 Run it:
     pip install "agno[os]"
-    python 12_idp_roles_claim.py
+    python 10_idp_roles_claim.py
 (no external services and no model key: it decides who is allowed, without calling a model.)
 """
 
@@ -42,7 +42,7 @@ from agno.os import AgentOS
 from agno.os.authz import Authorization
 
 # HS256 keeps this file self-contained. A real IdP signs with RS256 and publishes its keys;
-# swap in jwks_file=... and issuer=... exactly as 09_idp_workos_auth0.py does.
+# swap in jwks_file=... and issuer=... exactly as 13_idp_workos_auth0.py does.
 JWT_SECRET = os.getenv("JWT_VERIFICATION_KEY", "your-secret-key-at-least-256-bits-long")
 OS_ID = "idp-roles-claim-os"
 

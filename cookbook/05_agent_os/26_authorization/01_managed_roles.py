@@ -59,7 +59,7 @@ os.makedirs("tmp", exist_ok=True)
 #                and hand the object to AgentOS(db=...) to borrow the OS db.
 #   verification_keys / algorithm / audience / verify_audience  how tokens are verified.
 #   roles_claim  read a caller's role from a JWT claim (external-IdP case). Omitted here,
-#                so roles come from the assignments below. See 09_idp_workos_auth0.py.
+#                so roles come from the assignments below. See 13_idp_workos_auth0.py.
 #   audit=True   record every role/assignment change (actor + before/after). Off here.
 #                See 05_managed_roles_audit.py.
 authz = Authorization(
