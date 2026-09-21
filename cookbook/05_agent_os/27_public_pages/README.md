@@ -329,8 +329,10 @@ one final `SyncReport`. Errors propagate; a partial report stays partial.
 Snapshots carry absolute discovery/processed/update/delete/failure/uncertain
 counts. At most 32 pending observer updates are retained, so a slow consumer may
 skip intermediate snapshots without losing the terminal report. The same bounded
-sync worker pool owns the operation. Use `closing`/`aclosing` when stopping early;
-cancellation requests propagate and capacity remains held until worker cleanup.
+sync worker pool owns the operation. Close the iterator when stopping early:
+`contextlib.closing` for the sync one, and for the async one `contextlib.aclosing`
+(Python 3.10+) or `await stream.aclose()` in a `finally`. Closing requests
+cancellation, and capacity remains held until worker cleanup.
 
 For callback consumers, `sync_pages`/`async_sync_pages` accept a synchronous
 `on_progress(PageSyncProgress)` observer. A failing observer is logged and disabled
@@ -338,9 +340,11 @@ without failing publication. Keep observer work short. Intentional index-shrink
 validation still belongs in `validate_discovery` and retains its failure semantics.
 
 A function executor can yield `StepProgress(content=..., data=...)` followed by
-its normal `StepOutput`. With workflow event streaming enabled, Agno emits native
+its normal `StepOutput`. When the run streams events (`stream=True,
+stream_events=True`, which the AgentOS workflow route uses), Agno emits native
 `StepProgressEvent` values under the existing workflow run ID and step ID, with a
-one-based retry attempt. Progress never enters final function output and creates
+one-based retry attempt; a retried step reports its progress again with the next
+attempt number. Progress never enters final function output and creates
 no synthetic AgentRun or executor history. Non-streaming execution ignores it.
 Existing step/workflow completion, failure and cancellation remain authoritative.
 
@@ -350,9 +354,10 @@ The `sync-docs` workflow in `public_pages.py` uses this. Its function step consu
 `SyncReport`; a `partial` report marks the step unsuccessful. AgentOS streams the
 events over its existing workflow REST/SSE route, and the existing
 `AgentOSClient.run_workflow_stream()` parses them into `StepProgressEvent`.
-AgentOS stores the events of every run it serves, and there is one progress event
-per page, so the workflow sets `events_to_skip=[WorkflowRunEvent.step_progress]`:
-progress is streamed live and left out of the saved run, which keeps the report.
+AgentOS stores the events of every run it serves, and a sync emits roughly one
+progress event per page, so the workflow sets
+`events_to_skip=[WorkflowRunEvent.step_progress]`: progress is streamed live and
+left out of the saved run, which keeps the report.
 
 One server does everything, on port 7777. Anonymous users can chat, search and read
 documentation. They cannot start a sync: the workflow trigger requires the bearer
@@ -380,6 +385,7 @@ Waiting to synchronize pages
 Discovered 2 pages
 Processed 1 of 2 pages (1 updated, 0 failed)
 Processed 2 of 2 pages (2 updated, 0 failed)
+Pruned 0 stale pages
 {
   "schema_version": 1,
   "status": "completed",
@@ -387,12 +393,19 @@ Processed 2 of 2 pages (2 updated, 0 failed)
 }
 ```
 
-It exits non-zero when the workflow errors or is cancelled, when no progress or no
-report arrives, and when the report is `partial`. `--reindex` re-embeds unchanged
-pages too. `PAGE_DEMO_SERVER_URL` overrides `http://127.0.0.1:7777`. The token is
-sent only in the `Authorization` header and is never printed. The page source is
-always the server's `PAGE_DEMO_INDEX_URL`; the client sends the typed request and
-cannot choose a source.
+The `Pruned` line appears only when discovery was complete and no page failed. It
+is printed once when pruning starts and again after each stale page is removed.
+
+It exits 1 when the workflow errors or is cancelled, when no progress or no report
+arrives, and when the report is `partial`, and exits 2 without calling the server
+when `PAGE_DEMO_SYNC_TOKEN` is unset. Cancelling the run marks it cancelled and
+stops progress delivery, but the page sync itself still runs to its end: a workflow
+drains a function step after a cancel.
+
+`--reindex` re-embeds unchanged pages too. `PAGE_DEMO_SERVER_URL` overrides
+`http://127.0.0.1:7777`. The token is sent only in the `Authorization` header and
+is never printed. The page source is always the server's `PAGE_DEMO_INDEX_URL`; the
+client sends the typed request and cannot choose a source.
 
 MCP delivery of step progress, and Control Plane or AG-UI rendering of
 `StepProgress`, are separate consumers and are not part of this example. SSE
