@@ -1,6 +1,7 @@
 import pytest
 
 from agno.agent import Agent
+from agno.agent.agent import get_agents
 from agno.db.sqlite import SqliteDb
 from agno.exceptions import ComponentRehydrationError
 from agno.fs import FileSystem
@@ -42,6 +43,56 @@ def test_filesystem_true_adds_one_isolated_toolkit(db):
     assert agent.filesystem_instance is not None
     assert agent.filesystem_instance.namespace == "research-agent"
     assert len(_filesystem_tools(agent)) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("db_config", [None, {"id": "filesystem-db"}])
+async def test_listed_filesystem_agent_uses_catalog_database(db, monkeypatch, db_config):
+    from agno.os.routers.agents.schema import AgentResponse
+
+    config = {"id": "stored-agent", "filesystem": True}
+    if db_config is not None:
+        config["db"] = db_config
+    monkeypatch.setattr(db, "list_components", lambda **kwargs: ([{"component_id": "stored-agent"}], 1))
+    monkeypatch.setattr(db, "get_config", lambda **kwargs: {"config": config})
+
+    agents = get_agents(db=db)
+
+    assert len(agents) == 1
+    agent = agents[0]
+    assert agent.db is db
+    response = await AgentResponse.from_agent(agent, is_component=True)
+    assert response.id == "stored-agent"
+    assert response.db_id == db.id
+    assert response.tools is not None
+    assert response.tools["tools"]
+    assert agent.filesystem_instance is not None
+    assert agent.filesystem_instance.backend.db is db  # type: ignore[attr-defined]
+
+
+@pytest.mark.parametrize("registered", [False, True])
+def test_listed_filesystem_agent_preserves_configured_database(db, tmp_path, monkeypatch, registered):
+    agent_db = SqliteDb(
+        id="agent-db",
+        db_file=str(tmp_path / "agent.db"),
+        session_table="custom_sessions",
+    )
+    config = {"id": "stored-agent", "filesystem": True, "db": agent_db.to_dict()}
+    monkeypatch.setattr(db, "list_components", lambda **kwargs: ([{"component_id": "stored-agent"}], 1))
+    monkeypatch.setattr(db, "get_config", lambda **kwargs: {"config": config})
+
+    agents = get_agents(db=db, registry=Registry(dbs=[agent_db]) if registered else None)
+
+    assert len(agents) == 1
+    agent = agents[0]
+    assert agent.db is not None
+    assert agent.db is not db
+    assert agent.db.id == "agent-db"
+    assert agent.db.session_table_name == "custom_sessions"
+    if registered:
+        assert agent.db is agent_db
+    assert agent.filesystem_instance is not None
+    assert agent.filesystem_instance.backend.db is agent.db  # type: ignore[attr-defined]
 
 
 def test_explicit_filesystem_uses_supplied_instance(db):
