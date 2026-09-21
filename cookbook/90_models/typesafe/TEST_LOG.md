@@ -21,7 +21,7 @@ calibration remain for private-branch testing.
 
 **Result:** Choice labels, thresholded booleans and fractional scores retain
 their declared types; raw probabilities remain in provider metadata.
-The mocked cookbook smoke test also passes with `pprint_run_response(response)`
+The mocked cookbook smoke test also passes with `agent.print_response(...)`
 for the structured content and Rich `pprint` for provider metadata. Ruff lint
 and formatting checks pass for the updated example.
 
@@ -76,7 +76,7 @@ before output validation.
 
 **Status:** PASS (mocked)
 
-**Description:** Execute `Agent.arun` with an asynchronous SDK client.
+**Description:** Execute `Agent.aprint_response` with an asynchronous SDK client.
 
 **Result:** The asynchronous path returns the expected decision.
 
@@ -124,3 +124,85 @@ The examples previously named `route_team.py`, `workflow.py`, `llm_tool.py`, and
 The port passed focused mypy before removal of broadcast judging; the model and Team tool module are now restored to their pre-port implementations. All 11 remaining Jev examples use pretty printers. Updated README links resolve.
 
 No live API calls were made. Quality, latency, and threshold tuning remain for private-branch testing.
+
+### CI type checking without the optional SDK
+
+**Status:** PASS (targeted reproduction)
+
+**Description:** Run mypy with the repository configuration and `--no-site-packages` against the SDK imports used by the integration. This reproduces the missing `typesafe_sdk` dependency in the CI development environment.
+
+**Result:** The import failed before adding `typesafe_sdk.*` to the existing optional-dependency overrides and passed afterward. An unrelated missing-module control still fails, confirming missing imports are not ignored globally. Runtime SDK dependency handling is unchanged.
+
+Focused mypy also passes for the seven Jev model, guardrail, and toolkit source files.
+
+## Additional examples and response panels — 2026-09-21
+
+### basic.py
+
+**Status:** PASS (mocked)
+
+**Description:** Classify support department, urgency, and fractional frustration.
+
+**Result:** Executes through `agent.print_response`; the saved run supplies provider metadata and metrics.
+
+### async_basic.py
+
+**Status:** PASS (mocked)
+
+**Description:** Classify three reviews concurrently through `agent.aprint_response`, sharing one async client with separate sessions.
+
+**Result:** Three requests overlap and each calls the SDK once. Saved outputs retain nested topic flags and recommendation intent. Separate buffered consoles keep response panels together; saved dictionaries are validated back into the review schema for diagnostics.
+
+### raw_questions.py
+
+**Status:** PASS (mocked)
+
+**Description:** Evaluate refund intent, policy eligibility, next action, and effort using raw question dictionaries.
+
+**Result:** The response panel renders, and application code applies explicit probability thresholds to the saved decision values.
+
+### tools_use_with_fallback.py
+
+**Status:** PASS (mocked)
+
+**Description:** Simulate lights, thermostat, and multi-door commands, with an explicit generative fallback for no-tool decisions.
+
+**Result:** Parameterized tests verify selected tools, arguments, omitted defaults, and original-input forwarding to the fallback. SDK failures do not invoke fallback. The original support-queue `tool_use.py` remains and passes its own smoke test.
+
+All eight model examples use `print_response` or `aprint_response`; Rich `pprint` handles diagnostics. Final focused suite: **117 passed**, including 15 cookbook smoke cases. Ruff lint and formatting checks pass for the model cookbooks and Jev tests. These checks use mocked providers, not live API calls.
+
+## Restored minimal model examples — 2026-09-21
+
+### route_team.py
+
+**Status:** PASS (mocked)
+
+**Description:** Restore the two-member billing/technical team with Jev as the routing leader and explicit generative member models.
+
+**Result:** Both sample requests execute through `team.print_response(..., stream=True)`. The expanded support-router example remains in the teams folder.
+
+### workflow.py
+
+**Status:** PASS (mocked)
+
+**Description:** Restore the linear Jev classification followed by a generative explanation step.
+
+**Result:** The workflow executes through `workflow.print_response`. The conditional Router example remains in the workflows folder. README guidance explains why classification and routing use Jev while prose generation uses a generative model.
+
+Validation: **119 tests passed**, including all 17 Jev cookbook smoke cases. Ruff lint and formatting pass for the model examples and Jev unit tests. No live API calls or cost measurements were made.
+
+### basic.py and questions.py — department examples
+
+**Status:** PASS (mocked)
+
+**Description:** Run one sample input per department option: billing, technical, and sales in `basic.py`; billing and technical in `questions.py`. Both reuse their agent and render each request through `agent.print_response`.
+
+**Result:** All four smoke cases selected by `cookbook_smoke and (basic or questions)` pass, including both updated files. Lint and formatting pass. These mocked checks verify execution; live classification quality remains untested.
+
+### agent_os.py
+
+**Status:** PASS (mocked API checks)
+
+**Description:** Serve a typed Jev ticket classifier and a Jev-led support routing team through AgentOS. The example uses SQLite for local sessions; tests substitute an in-memory database and mocked providers.
+
+**Result:** Four parameterized API checks pass: billing and technical requests, each with JSON and streamed responses. `/config` and `/openapi.json` load successfully. Each request makes one async Jev call; routing invokes only the selected specialist with the original input. The example uses `TeamMode.route` so the AgentOS configuration can serialize its mode. Ruff lint and formatting pass. No live API calls were made.

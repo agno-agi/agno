@@ -594,9 +594,15 @@ async def test_generative_agent_calls_jev_tool(async_mode):
     "filename",
     [
         "90_models/typesafe/questions.py",
+        "90_models/typesafe/basic.py",
+        "90_models/typesafe/async_basic.py",
+        "90_models/typesafe/raw_questions.py",
         "90_models/typesafe/structured_output.py",
         "90_models/typesafe/tool_use.py",
+        "90_models/typesafe/tools_use_with_fallback.py",
         "90_models/typesafe/async_decisions.py",
+        "90_models/typesafe/route_team.py",
+        "90_models/typesafe/workflow.py",
         "02_agents/08_guardrails/jev_guardrail.py",
         "02_agents/08_guardrails/jev_grounding.py",
         "03_teams/18_guardrails/jev_guardrail.py",
@@ -856,3 +862,135 @@ def test_removed_judge_mode_is_rejected():
     with pytest.raises(ValueError, match="Unknown Jev mode: judge"):
         Jev(mode="judge", client=sdk).invoke([Message(role="user", content="proposal")], response_format=Decision)
     assert sdk.calls == []
+
+
+@pytest.mark.asyncio
+async def test_review_cookbook_concurrent_requests_share_async_client(monkeypatch):
+    import asyncio
+    import runpy
+    from pathlib import Path
+
+    class ConcurrentSDK(FakeSDK):
+        active = 0
+        peak = 0
+
+        async def system_one(self, *args, **kwargs):
+            self.active += 1
+            self.peak = max(self.peak, self.active)
+            await asyncio.sleep(0)
+            self.active -= 1
+            return super().system_one(*args, **kwargs)
+
+    monkeypatch.setenv("AGNO_TELEMETRY", "false")
+    monkeypatch.setattr("rich.pretty.pprint", lambda *args, **kwargs: None)
+    path = Path(__file__).resolve().parents[5] / "cookbook/90_models/typesafe/async_basic.py"
+    example = runpy.run_path(str(path))
+    sdk = ConcurrentSDK()
+    example["agent"].model.async_client = sdk
+    await example["main"]()
+    runs = [await example["agent"].aget_last_run_output(session_id=f"review-{index}") for index in range(3)]
+    assert sdk.peak == 3
+    assert len(sdk.calls) == len(runs) == 3
+    assert {run.session_id for run in runs} == {"review-0", "review-1", "review-2"}
+    assert {call[0]["input"] for call in sdk.calls} == set(example["REVIEWS"])
+    for run in runs:
+        assert run.status == RunStatus.completed
+        review = example["Review"].model_validate(run.content)
+        assert review.topics.model_dump() == dict.fromkeys(("price", "quality", "shipping", "support"), True)
+        assert review.would_recommend is True
+
+
+@pytest.mark.parametrize(
+    "choices, expected, fallback",
+    [
+        # Agno orders function names as lock_doors, set_lights, set_thermostat.
+        ({"select": "t1", "arg1_0": "v1", "arg1_1": "v0", "present1_2": "omit"}, "bedroom lights off (warm)", False),
+        ({"select": "t2", "arg2_0": "v0"}, "thermostat set to heat", False),
+        ({"select": "t0", "arg0_0": "v1", "arg0_2": "v1"}, "locked: front, garage", False),
+        ({"select": "none"}, "member result", True),
+    ],
+)
+def test_smart_home_cookbook_tool_selection_and_explicit_fallback(monkeypatch, choices, expected, fallback):
+    import runpy
+    from pathlib import Path
+
+    monkeypatch.setenv("AGNO_TELEMETRY", "false")
+    path = Path(__file__).resolve().parents[5] / "cookbook/90_models/typesafe/tools_use_with_fallback.py"
+    example = runpy.run_path(str(path))
+    sdk = FakeSDK(choices=choices)
+    example["agent"].model.client = sdk
+    fallback_model = Echo()
+    example["fallback_agent"].model = fallback_model
+    result = example["respond_to_command"]("original command")
+    assert result.status == RunStatus.completed
+    assert result.content == expected
+    assert len(sdk.calls) == 1
+    assert len(fallback_model.inputs) == int(fallback)
+    if fallback:
+        assert "original command" in fallback_model.inputs[0]
+    else:
+        assert len(result.tools) == 1
+
+
+def test_smart_home_cookbook_does_not_fallback_on_sdk_failure(monkeypatch):
+    import runpy
+    from pathlib import Path
+
+    monkeypatch.setenv("AGNO_TELEMETRY", "false")
+    path = Path(__file__).resolve().parents[5] / "cookbook/90_models/typesafe/tools_use_with_fallback.py"
+    example = runpy.run_path(str(path))
+    example["agent"].model.client = FakeSDK(error=TypeSafeError("unavailable"))
+    fallback_model = Echo()
+    example["fallback_agent"].model = fallback_model
+    result = example["respond_to_command"]("original command")
+    assert result.status == RunStatus.error
+    assert fallback_model.inputs == []
+
+
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("department", ["billing", "technical"])
+def test_agent_os_cookbook_classifies_and_routes_via_api(monkeypatch, stream, department):
+    import runpy
+    from pathlib import Path
+
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    from agno.db.in_memory import InMemoryDb
+
+    monkeypatch.setenv("AGNO_TELEMETRY", "false")
+    monkeypatch.delenv("OS_SECURITY_KEY", raising=False)
+    monkeypatch.setattr("agno.db.sqlite.SqliteDb", lambda **kwargs: InMemoryDb())
+    path = Path(__file__).resolve().parents[5] / "cookbook/90_models/typesafe/agent_os.py"
+    example = runpy.run_path(str(path))
+    classifier_sdk = AsyncSDK(choices={"q0": department})
+    router_sdk = AsyncSDK(choices={"select": department})
+    example["classifier"].model.async_client = classifier_sdk
+    example["support_team"].model.async_client = router_sdk
+    billing_model, technical_model = Echo(), Echo()
+    example["billing"].model = billing_model
+    example["technical"].model = technical_model
+    message = "Please refund a duplicate charge" if department == "billing" else "Our workspace is down"
+    data = {"message": message, "stream": str(stream).lower()}
+
+    with TestClient(example["app"]) as client:
+        assert client.get("/config").status_code == 200
+        assert client.get("/openapi.json").status_code == 200
+        classification = client.post("/agents/ticket-classifier/runs", data=data)
+        routed = client.post("/teams/support-router/runs", data=data)
+
+    assert classification.status_code == routed.status_code == 200
+    if stream:
+        assert classification.headers["content-type"].startswith("text/event-stream")
+        assert department in classification.text
+        assert "member result" in routed.text
+        assert "RunError" not in classification.text + routed.text
+    else:
+        assert classification.json()["content"] == {"department": department, "urgent": True}
+        assert routed.json()["content"] == "member result"
+    assert len(classifier_sdk.calls) == len(router_sdk.calls) == 1
+    selected = billing_model if department == "billing" else technical_model
+    unselected = technical_model if department == "billing" else billing_model
+    assert len(selected.inputs) == 1
+    assert message in selected.inputs[0]
+    assert unselected.inputs == []

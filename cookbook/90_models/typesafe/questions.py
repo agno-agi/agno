@@ -4,7 +4,6 @@ from typesafe_sdk import Choice, Noul
 
 from agno.agent import Agent
 from agno.models.typesafe import Jev
-from agno.utils.pprint import pprint_run_response
 
 agent = Agent(
     model=Jev(
@@ -24,5 +23,9 @@ agent = Agent(
 )
 
 if __name__ == "__main__":
-    response = agent.run("I was charged twice for my subscription")
-    pprint_run_response(response)
+    # One request for each department: billing and technical.
+    for request in (
+        "I was charged twice for my subscription",
+        "Our workspace returns a 500 error and nobody can log in. All work is blocked.",
+    ):
+        agent.print_response(request)

@@ -3,12 +3,11 @@
 from typing import Annotated, Literal
 
 from pydantic import BaseModel
+from rich.pretty import pprint
 from typesafe_sdk import Choice, Noul, Score
 
 from agno.agent import Agent
 from agno.models.typesafe import Jev, JevField
-from agno.utils.pprint import pprint_run_response
-from rich.pretty import pprint
 
 
 class Ticket(BaseModel):
@@ -55,14 +54,16 @@ agent = Agent(
     model=Jev(),
     input_schema=Ticket,
     output_schema=Triage,
+    cache_session=True,
     instructions="Premium customers with blocked work require immediate attention.",
 )
 
 if __name__ == "__main__":
-    response = agent.run(
+    agent.print_response(
         Ticket(
             message="Our workspace is completely unavailable", customer_tier="premium"
         )
     )
-    pprint_run_response(response)
-    pprint(response.model_provider_data)  # Raw probabilities, usage and request ID.
+    response = agent.get_last_run_output()
+    if response is not None:
+        pprint(response.model_provider_data)  # Raw probabilities, usage and request ID.

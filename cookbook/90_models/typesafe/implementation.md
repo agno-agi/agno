@@ -20,7 +20,13 @@
 - [x] Kept Jev Team leaders restricted to route mode; removed broadcast judging and its example.
 - [x] Pretty-printed Jev example results; the support router uses `team.print_response`.
 - [x] Validated the final scope: 507 tests passed, 16 skipped, including rejection of broadcast Jev leaders before execution.
+- [x] Added the optional TypeSafe SDK to mypy's missing-import overrides for CI environments using only `agno[dev]`.
+- [x] Added the selected support-triage, concurrent-review, refund-policy, and smart-home tool-selection scenarios with the existing schema API and pretty printers.
+- [x] Preserved the original support-queue `tool_use.py`; added smart-home selection separately as `tools_use_with_fallback.py`. Model examples use `print_response`/`aprint_response` and retrieve saved runs for diagnostics without repeated model calls.
 - [ ] Live API quality, latency, and threshold evaluation (private-branch testing).
+- [x] Restored minimal `route_team.py` and linear `workflow.py` model examples alongside the expanded feature-folder examples, demonstrating classification and routing with generative models reserved for prose.
+- [x] Led the README with Jev's classification and routing role and added one request per department option in `basic.py` and `questions.py`.
+- [x] Added `agent_os.py` with a typed Jev classifier, a Jev-led routing team, local session storage, and API checks for JSON and streamed responses from both departments.
 
 This branch uses Python 3.10+ for the optional SDK while retaining Agno's
 existing core Python requirement. No PR or publication is part of this work.

@@ -681,6 +681,7 @@ module = [
   "tweepy.*",
   "twelvelabs.*",
   "twilio.*",
+  "typesafe_sdk.*",
   "tzlocal.*",
   "upstash_vector.*",
   "urllib3.*",
