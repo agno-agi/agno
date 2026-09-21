@@ -1,0 +1,9 @@
+{
+  "dependencies": {
+    "@mastra/core": "1.67.0",
+    "agentfs-sdk": "0.6.4"
+  },
+  "name": "agno-filesystem-benchmark",
+  "private": true,
+  "type": "module"
+}
