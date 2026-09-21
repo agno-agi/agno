@@ -451,3 +451,67 @@ async def test_invalid_continuation_does_not_resolve_dependencies(async_mode, st
             **kwargs,
         )
     assert calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("async_mode", [False, True])
+@pytest.mark.parametrize("stream", [False, True])
+async def test_page_evidence_dependency_is_rendered_once_per_run_not_per_model_attempt(async_mode, stream):
+    from types import SimpleNamespace
+
+    from agno.knowledge.page import SearchHit, SearchResult, arender_page_evidence, render_page_evidence
+
+    calls = []
+    reads = []
+    hits = SearchResult(
+        results=(
+            SearchHit(
+                path="/a.md",
+                url="https://example.com/a",
+                title="A",
+                revision="r1",
+                chunk_id="c",
+                content="excerpt",
+                score=1,
+                rank=1,
+            ),
+        )
+    )
+
+    def read(path, **kwargs):
+        reads.append((path, kwargs["revision"]))
+        return "unique full-page evidence"
+
+    async def aread(path, **kwargs):
+        return read(path, **kwargs)
+
+    knowledge = SimpleNamespace(read_full_page=read, aread_full_page=aread)
+
+    def resolve(run_input, session):
+        calls.append((run_input.input_content, session.session_id))
+        return render_page_evidence(knowledge, hits).text
+
+    async def aresolve(run_input, session):
+        calls.append((run_input.input_content, session.session_id))
+        return (await arender_page_evidence(knowledge, hits)).text
+
+    model = RecordingModel(fail_first=True)
+    agent = Agent(
+        model=model,
+        dependencies={"evidence": aresolve if async_mode else resolve},
+        instructions="<prefetched_docs>{evidence}</prefetched_docs>",
+        add_dependencies_to_context=False,
+        retries=1,
+        delay_between_retries=0,
+        telemetry=False,
+    )
+    response = await _execute(agent, async_mode=async_mode, stream=stream, input="question", session_id="s")
+    assert response.content == "ok"
+    assert calls == [("question", "s")]
+    assert len(model.calls) == 2
+    assert model.calls[0] == model.calls[1]
+
+    assert reads == [("/a.md", "r1")]
+    assert str(model.calls[0]).count("unique full-page evidence") == 1
+    await _execute(agent, async_mode=async_mode, stream=stream, input="next", session_id="s")
+    assert reads == [("/a.md", "r1"), ("/a.md", "r1")]

@@ -47,6 +47,8 @@ def test_page_public_imports_preserve_types_without_loading_storage():
                 }
                 assert set(page.__all__) == expected | {
                     "PageFileSystem", "DocumentationMarkdown", "normalize_mdx",
+                    "EvidencePage", "PageEvidence", "render_page_evidence",
+                    "arender_page_evidence", "format_evidence_page",
                 }
                 for name in expected:
                     assert getattr(page, name) is getattr(types, name)
