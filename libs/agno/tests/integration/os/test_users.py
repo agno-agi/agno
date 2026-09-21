@@ -122,7 +122,8 @@ def test_store_created_by_day_and_ids(tmp_path, db_url):
 
 def test_store_emits_audit_with_actor_and_diff():
     sink = _CapturingSink()
-    store = UserDirectory(audit=sink)
+    store = UserDirectory()
+    store._attach_audit(sink)  # what AgentOS does at wiring; no OS in this test
 
     store.upsert("u1", email="u1@co", actor="admin")
     store.upsert("u1", name="One", actor="admin")  # update

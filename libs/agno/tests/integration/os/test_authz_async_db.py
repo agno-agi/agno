@@ -95,7 +95,8 @@ def test_managed_stores_and_audit_async_on_async_db(tmp_path):
         db = AsyncSqliteDb(db_file=str(tmp_path / "stores.db"))
         audit = DbAuditSink(db=db)
         roles = Authorization(db=db, audit=audit)
-        users = UserDirectory(db=db, audit=audit)
+        users = UserDirectory(db=db)
+        users._attach_audit(audit)  # what AgentOS does at wiring; no OS in this scenario
 
         await roles.aset_role_scopes("member", ["agents:*:read"], name="Member", is_default=True, actor="admin")
         await roles.aset_role("bob", "member", actor="admin")

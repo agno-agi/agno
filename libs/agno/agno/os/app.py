@@ -2128,11 +2128,9 @@ class AgentOS:
         directory = self.user_directory
         user_store = directory  # the directory is the roster store
         if user_store is not None:
-            # Change trail: adopt the Authorization object's audit sink if the directory store has
-            # none of its own, so one switch records directory changes too (user.created/disabled).
-            attach_audit = getattr(user_store, "attach_audit", None)
-            if callable(attach_audit):
-                attach_audit(self.audit)
+            # Change trail: the directory records its changes (user.created/disabled, ...) through
+            # the Authorization object's audit sink, so one switch covers both trails.
+            user_store._attach_audit(self.audit)
         fastapi_app.state.user_store = user_store
         fastapi_app.state.user_auto_provision = directory.auto_provision if directory is not None else False
         fastapi_app.state.user_email_claim = directory.email_claim if directory is not None else "email"

@@ -78,7 +78,9 @@ class UserDirectory:
     enforced by the middleware and ``/users`` is mounted for admins.
 
     The roster itself is managed here: ``upsert``, ``get``, ``list``, ``set_disabled``, ``remove``
-    (and their async twins), each change emitting an audit event when a sink is attached.
+    (and their async twins). Audit is owned by ``Authorization``: at wiring, AgentOS hands this
+    directory the ``Authorization(audit=...)`` sink, so every directory change (``user.created``,
+    ``user.disabled``, ...) lands in the same change trail as role changes.
     """
 
     def __init__(
@@ -90,7 +92,6 @@ class UserDirectory:
         email_claim: str = "email",
         name_claim: str = "name",
         fail_closed: bool = False,
-        audit: Optional["AuditSink"] = None,
     ):
         """
         Args:
@@ -106,15 +107,12 @@ class UserDirectory:
                 False (default) lets the request through -- availability over the kill switch.
                 True rejects with 503, so a directory outage cannot silently re-enable a
                 disabled account.
-            audit: optional :class:`~agno.os.authz.audit.AuditSink` of your own. AgentOS attaches
-                the ``Authorization(audit=...)`` sink to a directory that has none, so every
-                directory change lands in the same trail as role changes.
         """
         self.auto_provision = auto_provision
         self.email_claim = email_claim
         self.name_claim = name_claim
         self.fail_closed = fail_closed
-        self._audit = audit
+        self._audit: Optional["AuditSink"] = None  # handed over by AgentOS from Authorization(audit=)
         self._mem: Optional[Dict[str, dict]] = None
         from agno.os.authz._db import is_async_authz_db, require_authz_db, resolve_authz_db
 
@@ -168,13 +166,10 @@ class UserDirectory:
         for row in pending:
             self._write(row, insert=True)
 
-    def attach_audit(self, sink: Optional["AuditSink"]) -> None:
-        """Adopt ``sink`` as the change-audit sink if one wasn't set explicitly.
-
-        Mirrors :meth:`attach_db`: ``Authorization(audit=...)`` feeds both the decision trail and this
-        directory's change trail, but an ``audit=`` passed to the store directly wins. No-op when
-        the store already has a sink or ``sink`` is None."""
-        if self._audit is None and sink is not None:
+    def _attach_audit(self, sink: Optional["AuditSink"]) -> None:
+        """What AgentOS calls at wiring: adopt the ``Authorization(audit=...)`` sink as this
+        directory's change-audit sink, so one switch records directory changes too. Idempotent."""
+        if sink is not None:
             self._audit = sink
 
     # ------------------------------------------------------------------ audit

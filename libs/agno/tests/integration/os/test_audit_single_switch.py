@@ -1,8 +1,8 @@
-"""Authorization(audit=...) is a single switch for BOTH audit trails.
+"""Authorization(audit=...) is the single switch for BOTH audit trails.
 
-The object owns the decision trail (every allow/deny) and its own role-change trail, and it
-lends the sink to the user directory for its change trail. A directory with an explicit sink
-of its own keeps it. No sink anywhere -> both trails stay off. These pin the wiring so a
+The object owns the decision trail (every allow/deny) and its own role-change trail, and AgentOS
+hands the same sink to the user directory for its change trail. The directory has no audit knob
+of its own: audit has one owner. No sink -> both trails stay off. These pin the wiring so a
 one-line switch never quietly leaves half the audit off.
 """
 
@@ -52,16 +52,17 @@ def test_single_audit_switch_feeds_change_and_decision_trails(tmp_path):
     assert users._audit is sink  # directory change trail
 
 
-def test_explicit_directory_sink_wins_over_the_switch(tmp_path):
+def test_the_directory_records_its_changes_through_the_switch(tmp_path):
     db = _db(tmp_path)
-    top, explicit = DbAuditSink(db=db), DbAuditSink(db=db)
-    roles = _roles(db, audit=top)
-    users = UserDirectory(db=db, audit=explicit)  # explicit on the directory
-    app = _os(db, roles, users).get_app()
+    sink = DbAuditSink(db=db)
+    roles, users = _roles(db, audit=sink), UserDirectory(db=db)
+    _os(db, roles, users).get_app()
 
-    assert getattr(app.state, "authz_audit", None) is top  # the switch feeds the decision trail
-    assert roles.audit_sink is top
-    assert users._audit is explicit  # the directory keeps its own
+    users.upsert("bob", actor="alice")
+    users.set_disabled("bob", True, actor="alice")
+    actions = [(e["action"], e["target"], e["actor"]) for e in sink.read(limit=10)]
+    assert ("user.created", "bob", "alice") in actions
+    assert ("user.disabled", "bob", "alice") in actions
 
 
 def test_no_audit_leaves_both_trails_off(tmp_path):
