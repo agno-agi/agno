@@ -1542,10 +1542,10 @@ async def test_followup_config_model_gets_fresh_provider_calls_per_attempt(tmp_p
 def test_string_followup_config_model_is_resolved_before_isolation(tmp_path, argument):
     # A "provider:model_id" string resolves at construction, so deep_copy hands the
     # attempt a Model instance and the isolation pass can give it a cache-off copy.
-    config = FollowupConfig(model="openai:gpt-4o-mini")
+    config = FollowupConfig(model="openai:gpt-5.5")
     kwargs = {"followups": config} if argument == "followups" else {"followups": True, "followup_config": config}
     caller = Agent(model=RecordingFakeModel("main"), db=InMemoryDb(), telemetry=False, **kwargs)
-    assert config.model == "openai:gpt-4o-mini"  # the caller's object is left unresolved
+    assert config.model == "openai:gpt-5.5"  # the caller's object is left unresolved
     assert isinstance(caller.followup_config.model, Model)
     caller.followup_config.model.cache_response = True
     caller.followup_config.model.cache_dir = str(tmp_path / "cache")

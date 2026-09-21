@@ -25,7 +25,7 @@ from agno.team import Team
 
 FOLLOWUP_PROMPT_START = "Based on the user's message and the assistant's response below"
 INSTRUCTIONS = "Suggest only documentation questions."
-MODEL_STRING = "openai:gpt-4o-mini"
+MODEL_STRING = "openai:gpt-5.5"
 
 
 def _is_followup_call(messages) -> bool:

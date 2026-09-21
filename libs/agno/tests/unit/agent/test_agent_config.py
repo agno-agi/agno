@@ -1788,24 +1788,24 @@ class TestAgentFollowupConfigRoundtrip:
     def test_legacy_followup_model_roundtrip(self):
         from agno.models.openai import OpenAIChat
 
-        model = OpenAIChat(id="gpt-4o-mini")
+        model = OpenAIChat(id="gpt-5.5")
         config = Agent(followups=True, followup_model=model).to_dict()
         assert config["followup_model"] == model.to_dict()
         assert set(config["followup_model"]) <= {"id", "name", "provider"}
         reconstructed = Agent.from_dict(config)
         assert isinstance(reconstructed.followup_model, OpenAIChat)
-        assert reconstructed.followup_model.id == "gpt-4o-mini"
+        assert reconstructed.followup_model.id == "gpt-5.5"
 
     def test_followup_config_model_roundtrip(self):
         from agno.agent import FollowupConfig
         from agno.models.openai import OpenAIResponses
 
-        model = OpenAIResponses(id="gpt-4o-mini")
+        model = OpenAIResponses(id="gpt-5.5")
         config = Agent(followups=True, followup_config=FollowupConfig(model=model, instructions="Only docs.")).to_dict()
         assert config["followup_config"] == {"model": model.to_dict(), "instructions": "Only docs."}
         reconstructed = Agent.from_dict(config)
         assert isinstance(reconstructed.followup_config.model, OpenAIResponses)
-        assert reconstructed.followup_config.model.id == "gpt-4o-mini"
+        assert reconstructed.followup_config.model.id == "gpt-5.5"
         assert reconstructed.followup_config.instructions == "Only docs."
 
     def test_all_three_model_slots_survive_distinctly(self):
@@ -1836,7 +1836,7 @@ class TestAgentFollowupConfigRoundtrip:
         from agno.agent import FollowupConfig
         from agno.models.openai import OpenAIResponses
 
-        model = OpenAIResponses(id="gpt-4o-mini")
+        model = OpenAIResponses(id="gpt-5.5")
         config = Agent(followups=True, followup_config=FollowupConfig(model=model)).to_dict()
         assert config["followup_config"] == {"model": model.to_dict()}
         assert Agent.from_dict(config).followup_config.instructions is None
@@ -1889,13 +1889,13 @@ class TestAgentFollowupConfigRoundtrip:
 
         agent = Agent(
             followups=True,
-            followup_model="openai:gpt-4o-mini",
-            followup_config=FollowupConfig(model="openai:gpt-4o-mini"),
+            followup_model="openai:gpt-5.5",
+            followup_config=FollowupConfig(model="openai:gpt-5.5"),
         )
         config = agent.to_dict()
         # Resolved at construction, so both slots serialize as model dicts.
-        assert config["followup_model"]["id"] == "gpt-4o-mini"
-        assert config["followup_config"]["model"]["id"] == "gpt-4o-mini"
+        assert config["followup_model"]["id"] == "gpt-5.5"
+        assert config["followup_config"]["model"]["id"] == "gpt-5.5"
         reconstructed = Agent.from_dict(config)
         assert isinstance(reconstructed.followup_model, Model)
         assert isinstance(reconstructed.followup_config.model, Model)
@@ -1906,8 +1906,8 @@ class TestAgentFollowupConfigRoundtrip:
         config = {
             "id": "string-agent",
             "followups": True,
-            "followup_model": "openai:gpt-4o-mini",
-            "followup_config": {"model": "openai:gpt-4o-mini", "instructions": "Only docs."},
+            "followup_model": "openai:gpt-5.5",
+            "followup_config": {"model": "openai:gpt-5.5", "instructions": "Only docs."},
         }
         reconstructed = Agent.from_dict(config)
         assert isinstance(reconstructed.followup_model, OpenAIResponses)
@@ -1918,7 +1918,7 @@ class TestAgentFollowupConfigRoundtrip:
         from agno.agent import FollowupConfig
         from agno.models.openai import OpenAIResponses
 
-        live = OpenAIResponses(id="gpt-4o-mini", base_url="http://localhost:1/v1")
+        live = OpenAIResponses(id="gpt-5.5", base_url="http://localhost:1/v1")
         agent = Agent(followups=True, followup_model=live, followup_config=FollowupConfig(model=live))
         reconstructed = Agent.from_dict(agent.to_dict(), registry=Registry(models=[live]))
         assert reconstructed.followup_model is live
@@ -1930,7 +1930,7 @@ class TestAgentFollowupConfigRoundtrip:
         from agno.models.openai import OpenAIResponses
 
         secret = "sk-review-not-a-real-key"
-        live = OpenAIResponses(id="gpt-4o-mini", api_key=secret, base_url="http://localhost:1/v1")
+        live = OpenAIResponses(id="gpt-5.5", api_key=secret, base_url="http://localhost:1/v1")
         agent = Agent(followups=True, followup_model=live, followup_config=FollowupConfig(model=live, instructions="x"))
         serialized = repr(agent.to_dict())
         assert secret not in serialized

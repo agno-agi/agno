@@ -1991,25 +1991,25 @@ class TestTeamFollowupConfigRoundtrip:
     def test_legacy_followup_model_roundtrip(self):
         from agno.models.openai import OpenAIChat
 
-        model = OpenAIChat(id="gpt-4o-mini")
+        model = OpenAIChat(id="gpt-5.5")
         config = Team(members=[], followups=True, followup_model=model).to_dict()
         assert config["followup_model"] == model.to_dict()
         assert set(config["followup_model"]) <= {"id", "name", "provider"}
         reconstructed = Team.from_dict(config)
         assert isinstance(reconstructed.followup_model, OpenAIChat)
-        assert reconstructed.followup_model.id == "gpt-4o-mini"
+        assert reconstructed.followup_model.id == "gpt-5.5"
 
     def test_followup_config_model_roundtrip(self):
         from agno.agent import FollowupConfig
         from agno.models.openai import OpenAIResponses
 
-        model = OpenAIResponses(id="gpt-4o-mini")
+        model = OpenAIResponses(id="gpt-5.5")
         team = Team(members=[], followups=True, followup_config=FollowupConfig(model=model, instructions="Only docs."))
         config = team.to_dict()
         assert config["followup_config"] == {"model": model.to_dict(), "instructions": "Only docs."}
         reconstructed = Team.from_dict(config)
         assert isinstance(reconstructed.followup_config.model, OpenAIResponses)
-        assert reconstructed.followup_config.model.id == "gpt-4o-mini"
+        assert reconstructed.followup_config.model.id == "gpt-5.5"
         assert reconstructed.followup_config.instructions == "Only docs."
 
     def test_all_three_model_slots_survive_distinctly(self):
@@ -2041,7 +2041,7 @@ class TestTeamFollowupConfigRoundtrip:
         from agno.agent import FollowupConfig
         from agno.models.openai import OpenAIResponses
 
-        model = OpenAIResponses(id="gpt-4o-mini")
+        model = OpenAIResponses(id="gpt-5.5")
         config = Team(members=[], followups=True, followup_config=FollowupConfig(model=model)).to_dict()
         assert config["followup_config"] == {"model": model.to_dict()}
         assert Team.from_dict(config).followup_config.instructions is None
@@ -2094,12 +2094,12 @@ class TestTeamFollowupConfigRoundtrip:
         team = Team(
             members=[],
             followups=True,
-            followup_model="openai:gpt-4o-mini",
-            followup_config=FollowupConfig(model="openai:gpt-4o-mini"),
+            followup_model="openai:gpt-5.5",
+            followup_config=FollowupConfig(model="openai:gpt-5.5"),
         )
         config = team.to_dict()
-        assert config["followup_model"]["id"] == "gpt-4o-mini"
-        assert config["followup_config"]["model"]["id"] == "gpt-4o-mini"
+        assert config["followup_model"]["id"] == "gpt-5.5"
+        assert config["followup_config"]["model"]["id"] == "gpt-5.5"
         reconstructed = Team.from_dict(config)
         assert isinstance(reconstructed.followup_model, Model)
         assert isinstance(reconstructed.followup_config.model, Model)
@@ -2110,8 +2110,8 @@ class TestTeamFollowupConfigRoundtrip:
         config = {
             "id": "string-team",
             "followups": True,
-            "followup_model": "openai:gpt-4o-mini",
-            "followup_config": {"model": "openai:gpt-4o-mini", "instructions": "Only docs."},
+            "followup_model": "openai:gpt-5.5",
+            "followup_config": {"model": "openai:gpt-5.5", "instructions": "Only docs."},
         }
         reconstructed = Team.from_dict(config)
         assert isinstance(reconstructed.followup_model, OpenAIResponses)
@@ -2122,7 +2122,7 @@ class TestTeamFollowupConfigRoundtrip:
         from agno.agent import FollowupConfig
         from agno.models.openai import OpenAIResponses
 
-        live = OpenAIResponses(id="gpt-4o-mini", base_url="http://localhost:1/v1")
+        live = OpenAIResponses(id="gpt-5.5", base_url="http://localhost:1/v1")
         team = Team(members=[], followups=True, followup_model=live, followup_config=FollowupConfig(model=live))
         reconstructed = Team.from_dict(team.to_dict(), registry=Registry(models=[live]))
         assert reconstructed.followup_model is live
@@ -2134,7 +2134,7 @@ class TestTeamFollowupConfigRoundtrip:
         from agno.models.openai import OpenAIResponses
 
         secret = "sk-review-not-a-real-key"
-        live = OpenAIResponses(id="gpt-4o-mini", api_key=secret, base_url="http://localhost:1/v1")
+        live = OpenAIResponses(id="gpt-5.5", api_key=secret, base_url="http://localhost:1/v1")
         team = Team(
             members=[],
             followups=True,

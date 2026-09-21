@@ -7,11 +7,11 @@ from agno.agent import Agent, FollowupConfig
 from agno.models.openai import OpenAIResponses
 
 agent = Agent(
-    model=OpenAIResponses(id="gpt-5.6-luna"),
+    model=OpenAIResponses(id="gpt-5.5"),
     instructions="Help with Python documentation. Decline unrelated requests briefly.",
     followups=FollowupConfig(
         num_followups=3,
-        model=OpenAIResponses(id="gpt-5.6-luna"),
+        model=OpenAIResponses(id="gpt-5.5"),
         instructions="Suggest only Python documentation questions. Do not repeat an out-of-scope request.",
     ),
 )
