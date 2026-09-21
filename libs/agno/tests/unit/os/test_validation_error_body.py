@@ -116,8 +116,9 @@ class TestValidatorInDependencyOwnedModel:
         agent = Agent(id="qa-agent", name="QA Agent", db=db)
         agent_os = AgentOS(agents=[agent], db=db, telemetry=False, interfaces=[AGUI(agent=agent)])
         client = TestClient(agent_os.get_app(), raise_server_exceptions=False)
-        # A binary content item with no id, url, or data trips BinaryInputContent's
-        # model_validator inside the ag_ui dependency.
+        # A binary content item with no id, url, or data. ag-ui-protocol before 1.0 rejects it
+        # from BinaryInputContent's model_validator (a ValueError); 1.0 dropped the binary part
+        # and rejects it as an unknown union tag, so only pre-1.0 SDKs reach the ValueError path here.
         bad_content = [{"type": "binary", "mimeType": "application/octet-stream"}]
         resp = client.post(
             "/agui",
@@ -132,9 +133,15 @@ class TestValidatorInDependencyOwnedModel:
             },
         )
         assert resp.status_code == 422, f"expected 422, got {resp.status_code}: {resp.text[:200]}"
-        assert "BinaryInputContent requires id, url, or data" in resp.text, (
-            f"message missing from body: {resp.text[:300]}"
+        detail = resp.json()["detail"]
+        assert detail and all(err["loc"][:3] == ["body", "messages", 0] for err in detail), (
+            f"errors do not name the offending message: {resp.text[:300]}"
         )
+        for err in detail:
+            if err["type"] == "value_error":
+                assert "BinaryInputContent requires id, url, or data" in err["msg"], (
+                    f"validator message missing from body: {resp.text[:300]}"
+                )
 
 
 class TestOwnedAndBorrowedAppsAgree:

@@ -85,7 +85,9 @@ class Knowledge(RemoteKnowledge):
 
     # Reorders results after the vector db returns them, so a strategy that needs to
     # compare candidates against each other (diversity, recency) sees a real pool.
-    # Runs after any reranker configured on the vector db itself.
+    # Applied to the search results. This is where a reranker belongs: setting one on the
+    # vector db is deprecated, works only on the adapters that implement it, and cannot
+    # widen the candidate pool.
     reranker: Optional[Reranker] = None
 
     def __init__(
@@ -132,8 +134,8 @@ class Knowledge(RemoteKnowledge):
             log_warning(
                 "A reranker is set on both Knowledge and the vector db. Only the one on "
                 "Knowledge is applied and the vector db's is ignored: running both would "
-                "rerank a pool that was already reordered. Prefer the one on Knowledge, "
-                "which works with every vector db and can widen the candidate pool."
+                "rerank a pool that was already reordered. The vector db one is deprecated, "
+                "so remove it and keep the reranker on Knowledge."
             )
         self.__post_init__()
 

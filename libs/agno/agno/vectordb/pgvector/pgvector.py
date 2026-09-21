@@ -113,7 +113,7 @@ class PgVector(VectorDb):
             vector_score_weight (float): Weight for vector similarity in hybrid search.
             content_language (str): Language for full-text search.
             schema_version (int): Version of the database schema.
-            reranker (Optional[Reranker]): Reranker instance for reranking search results.
+            reranker (Optional[Reranker]): Reranker instance for reranking search results. Deprecated: pass the reranker to Knowledge instead.
             create_schema (bool): Whether to automatically create the database schema if it doesn't exist.
                 Set to False if schema is managed externally (e.g., via migrations). Defaults to True.
             similarity_threshold (Optional[float]): Minimum similarity score (0.0-1.0) to filter results.
