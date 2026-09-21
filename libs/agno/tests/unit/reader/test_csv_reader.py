@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from agno.knowledge.chunking.row import RowChunking
 from agno.knowledge.document.base import Document
 from agno.knowledge.reader.csv_reader import CSVReader
 
@@ -228,6 +229,21 @@ async def test_async_read_multi_page_csv(csv_reader, multi_page_csv_file):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("skip_header", [False, True])
+@pytest.mark.parametrize("page_size", [1, 5, 1000])
+async def test_async_read_multi_page_csv_preserves_rows_and_numbers(multi_page_csv_file, skip_header, page_size):
+    reader = CSVReader(chunking_strategy=RowChunking(skip_header=skip_header))
+
+    sync_documents = reader.read(multi_page_csv_file)
+    async_documents = await reader.async_read(multi_page_csv_file, page_size=page_size)
+
+    assert [document.content for document in async_documents] == [document.content for document in sync_documents]
+    assert [document.meta_data["row_number"] for document in async_documents] == list(
+        range(2 if skip_header else 1, 12)
+    )
+
+
+@pytest.mark.asyncio
 async def test_async_read_with_chunking(csv_reader, csv_file):
     async def mock_achunk(doc):
         return [
@@ -371,3 +387,78 @@ def test_default_chunking_strategy_is_not_shared_between_instances():
     reader_a.chunking_strategy.skip_header = True
 
     assert reader_b.chunking_strategy.skip_header is False
+
+
+# ---------------------------------------------------------------------------
+# File-like inputs that are already text
+# ---------------------------------------------------------------------------
+# Both read paths used to call `.decode()` on whatever `file.read()` returned. For a
+# `StringIO`, or a file opened in text mode, that value is already a `str`, so the call
+# raised `AttributeError`, the surrounding `except Exception` swallowed it, and the
+# reader returned an empty list with no signal to the caller.
+
+
+def test_read_text_stream(csv_reader):
+    """A StringIO must be read like a binary stream rather than silently yield nothing."""
+    documents = csv_reader.read(io.StringIO(SAMPLE_CSV))
+
+    # The default fixture chunks by row: header plus the three data rows.
+    assert len(documents) == 4
+    assert [doc.content for doc in documents] == [
+        "name, age, city",
+        "John, 30, New York",
+        "Jane, 25, San Francisco",
+        "Bob, 40, Chicago",
+    ]
+
+
+def test_read_text_stream_unchunked_matches_binary(csv_reader):
+    """The same content is produced whether the stream is text or bytes."""
+    text_docs = CSVReader(chunk=False).read(io.StringIO(SAMPLE_CSV))
+    binary_docs = CSVReader(chunk=False).read(io.BytesIO(SAMPLE_CSV.encode("utf-8")))
+
+    assert len(text_docs) == 1
+    assert len(binary_docs) == 1
+    assert text_docs[0].content == binary_docs[0].content
+    assert "John" in text_docs[0].content
+    assert "Chicago" in text_docs[0].content
+
+
+def test_read_file_opened_in_text_mode(csv_reader, csv_file):
+    """A file handle opened with mode="r" already yields str, so it must not be decoded."""
+    with open(csv_file, "r", encoding="utf-8", newline="") as handle:
+        documents = csv_reader.read(handle)
+
+    assert len(documents) == 4
+    assert "John" in documents[1].content
+
+
+def test_read_text_stream_honours_encoding():
+    """A non-utf-8 byte stream is still decoded with the reader's encoding."""
+    documents = CSVReader(chunk=False, encoding="latin-1").read(
+        io.BytesIO("name,city\nAndré,München".encode("latin-1"))
+    )
+
+    assert len(documents) == 1
+    assert "André" in documents[0].content
+    assert "München" in documents[0].content
+
+
+@pytest.mark.asyncio
+async def test_async_read_text_stream(csv_reader):
+    """The async path has the same contract for text streams."""
+    documents = await csv_reader.async_read(io.StringIO(SAMPLE_CSV))
+
+    assert len(documents) == 4
+    assert "John" in documents[1].content
+
+
+@pytest.mark.asyncio
+async def test_async_read_text_stream_unchunked_matches_binary():
+    text_docs = await CSVReader(chunk=False).async_read(io.StringIO(SAMPLE_CSV))
+    binary_docs = await CSVReader(chunk=False).async_read(io.BytesIO(SAMPLE_CSV.encode("utf-8")))
+
+    assert len(text_docs) == 1
+    assert len(binary_docs) == 1
+    assert text_docs[0].content == binary_docs[0].content
+    assert "John" in text_docs[0].content
