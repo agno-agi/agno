@@ -502,3 +502,41 @@ async def test_no_reranker_returns_the_adapter_result_untouched_async():
     results = await knowledge.asearch("q", max_results=5)
 
     assert len(results) == 7
+
+
+def test_setting_a_reranker_on_the_vector_db_warns_that_it_is_deprecated(monkeypatch):
+    import agno.vectordb.base as vectordb_base
+
+    messages: List[str] = []
+    monkeypatch.setattr(vectordb_base, "log_warning", lambda message, *a, **k: messages.append(str(message)))
+
+    # Through a real adapter, so the base setter runs rather than a stub's override.
+    lancedb = pytest.importorskip("agno.vectordb.lancedb")
+    store = lancedb.LanceDb(table_name="t", uri="/tmp/agno-deprecation-test")
+    store.reranker = ReverseReranker()
+
+    assert any("deprecated" in message for message in messages)
+
+
+def test_clearing_the_vector_db_reranker_does_not_warn(monkeypatch):
+    import agno.vectordb.base as vectordb_base
+
+    messages: List[str] = []
+    monkeypatch.setattr(vectordb_base, "log_warning", lambda message, *a, **k: messages.append(str(message)))
+
+    lancedb = pytest.importorskip("agno.vectordb.lancedb")
+    store = lancedb.LanceDb(table_name="t", uri="/tmp/agno-deprecation-test")
+    store.reranker = None
+
+    assert not messages
+
+
+def test_a_knowledge_level_reranker_does_not_warn_about_deprecation(monkeypatch):
+    import agno.vectordb.base as vectordb_base
+
+    messages: List[str] = []
+    monkeypatch.setattr(vectordb_base, "log_warning", lambda message, *a, **k: messages.append(str(message)))
+
+    Knowledge(vector_db=RerankerAwareVectorDb(), reranker=ReverseReranker())
+
+    assert not any("deprecated" in message for message in messages)
