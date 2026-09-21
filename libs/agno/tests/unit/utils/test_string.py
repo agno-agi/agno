@@ -5,6 +5,7 @@ from pydantic import BaseModel
 from agno.utils.string import (
     _extract_json_objects,
     generate_id_from_name,
+    parse_response_dict_str,
     parse_response_model_str,
     sanitize_postgres_string,
     url_safe_string,
@@ -439,3 +440,21 @@ def test_sanitize_postgres_string_other_illegal_chars():
     assert sanitize_postgres_string("hello\x0e\x1fworld") == "helloworld"
     # Unicode replacement characters
     assert sanitize_postgres_string("hello\ufffe\uffffworld") == "helloworld"
+
+
+def test_extract_json_objects_ignores_unmatched_closing_brace():
+    """A stray closing brace in prose must not hide the objects that follow.
+
+    Regression test: the depth counter went negative on an unmatched '}', so
+    every later '{' failed the start-of-object check and extraction returned
+    nothing.
+    """
+    assert _extract_json_objects('Some prose } then {"a": 1}') == ['{"a": 1}']
+    assert _extract_json_objects('{"a": 1}} {"b": 2}') == ['{"a": 1}', '{"b": 2}']
+    assert _extract_json_objects("}") == []
+
+
+def test_parse_response_dict_str_ignores_unmatched_closing_brace():
+    content = 'Here is the payload } {"name": "agno", "value": "1"}'
+    result = parse_response_dict_str(content)
+    assert result == {"name": "agno", "value": "1"}

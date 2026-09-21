@@ -89,6 +89,10 @@ def _extract_json_objects(text: str) -> list[str]:
         if ch == "{":
             brace_depth += 1
         elif ch == "}":
+            # An unmatched closing brace is prose, not structure. Ignoring it
+            # keeps a stray brace from hiding every object that follows.
+            if brace_depth == 0:
+                continue
             brace_depth -= 1
             if brace_depth == 0 and start_idx is not None:
                 objs.append(text[start_idx : idx + 1])
