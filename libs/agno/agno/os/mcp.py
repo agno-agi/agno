@@ -1976,6 +1976,7 @@ def _register_exposed_components(
         mcp.tool(name=tool_name, title=title, description=description, annotations=annotations)(fn)
 
 
+# Mandated by the schema's $schema pattern; not hosted until the extension graduates.
 SERVER_CARD_SCHEMA = "https://static.modelcontextprotocol.io/schemas/v1/server-card.schema.json"
 SERVER_CARD_MEDIA_TYPE = "application/mcp-server-card+json"
 _MCP_PATH = "/mcp"
@@ -2131,8 +2132,7 @@ def _register_server_card(
                 "Vary": vary,
                 "Access-Control-Allow-Origin": "*",
                 "Access-Control-Allow-Methods": "GET",
-                "Access-Control-Allow-Headers": "Content-Type, If-None-Match",
-                "Access-Control-Expose-Headers": "ETag",
+                "Access-Control-Allow-Headers": "Content-Type",
             },
         )
 

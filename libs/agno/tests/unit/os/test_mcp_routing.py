@@ -213,3 +213,43 @@ def test_route_conflicts_respect_included_router_prefixes(prefix, path, conflict
             server.get_app()
     else:
         server.get_app()
+
+
+@asynccontextmanager
+async def bare_client(*, mounted=False):
+    """``mcp=True`` with no ``MCPConfig``: the routing layer must still apply."""
+    server = AgentOS(
+        id="mcp-routing-bare",
+        agents=[Agent(id="docs", telemetry=False)],
+        authorization=True,
+        authorization_config=AuthorizationConfig(verification_keys=[KEY], algorithm="HS256"),
+        mcp=True,
+        telemetry=False,
+    )
+    app = server.get_app()
+    if mounted:
+        parent = FastAPI()
+        parent.mount("/runtime", app)
+        app = parent
+    async with server._mcp_app.lifespan(server._mcp_app):
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url="http://localhost") as http:
+            yield http
+
+
+async def test_bare_mcp_true_rejects_a_malformed_host_like_a_configured_server():
+    """The card is publicly cacheable; a Host carrying a path must never be echoed into it."""
+    async with bare_client() as http:
+        response = await http.get("/mcp/server-card", headers={"host": "evil.example/x?y="})
+        assert response.status_code == 400, response.text
+        assert "evil.example" not in response.text
+
+
+async def test_bare_mcp_true_advertises_the_mount_prefix():
+    async with bare_client(mounted=True) as http:
+        card = await http.get("/runtime/mcp/server-card")
+        assert card.status_code == 200, card.text
+        assert card.json()["remotes"][0]["url"] == "http://localhost/runtime/mcp"
+        # The endpoint itself is behind auth, but the redirect must still stay inside the mount.
+        browser = await http.get("/runtime/mcp", headers={"Accept": "text/html", "Authorization": "Bearer bad"})
+        if browser.status_code == 302:
+            assert browser.headers["location"] == "/runtime/mcp/server-card"
