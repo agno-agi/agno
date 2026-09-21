@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import copy
 from dataclasses import asdict, dataclass
-from typing import Any, Dict, List, Mapping, Optional, Tuple, Union
+from typing import Any, Callable, Dict, Iterator, List, Mapping, Optional, Sequence, Set, Tuple, Union
 
 from pydantic import BaseModel
 
@@ -12,6 +12,61 @@ from agno.run.base import HISTORY_SKIP_STATUSES
 from agno.run.team import TeamRunOutput
 from agno.session.summary import SessionSummary
 from agno.utils.log import log_debug, log_warning
+
+
+def _walk_runs_depth_first(
+    runs: Sequence[Union[TeamRunOutput, RunOutput]],
+) -> Iterator[Union[TeamRunOutput, RunOutput]]:
+    """Yield the given runs and every nested member response, depth-first and in run order.
+
+    Delegated runs are stored inside their parent run's ``member_responses``, so a flat pass
+    over ``session.runs`` only ever sees the first level of delegation. Walking the tree keeps
+    history lookups working for teams and members nested at any depth.
+
+    Runs already yielded are skipped (by object identity) so a run that is reachable both as a
+    top-level entry and as a member response is visited once, and a cyclic reference cannot
+    loop forever.
+    """
+    visited: Set[int] = set()
+    pending = list(reversed(list(runs)))
+
+    while pending:
+        run = pending.pop()
+        run_identity = id(run)
+        if run_identity in visited:
+            continue
+        visited.add(run_identity)
+
+        yield run
+
+        member_responses = getattr(run, "member_responses", None) or []
+        pending.extend(reversed(member_responses))
+
+
+def _collect_matching_runs(
+    runs: Sequence[Union[TeamRunOutput, RunOutput]],
+    matches: Callable[[Union[TeamRunOutput, RunOutput]], bool],
+) -> List[Union[TeamRunOutput, RunOutput]]:
+    """Return the runs in the (possibly nested) run tree that satisfy ``matches``.
+
+    A run is returned at most once: storage can hold the same run both flat in ``session.runs``
+    and nested in a parent's ``member_responses``, and replaying both copies would duplicate
+    messages (and tool call ids) in the history handed to the model.
+    """
+    matching_runs: List[Union[TeamRunOutput, RunOutput]] = []
+    seen_run_ids: Set[str] = set()
+
+    for run in _walk_runs_depth_first(runs):
+        if not matches(run):
+            continue
+        run_id = getattr(run, "run_id", None)
+        if run_id is not None:
+            if run_id in seen_run_ids:
+                continue
+            seen_run_ids.add(run_id)
+        matching_runs.append(run)
+
+    return matching_runs
 
 
 @dataclass
@@ -181,49 +236,11 @@ class TeamSession:
 
         # Filter by team_id and member_ids
         if team_id:
-            filtered_team_runs = []
-            seen_team_run_ids: set[str] = set()
-            visited_team_runs: set[int] = set()
-            pending_team_runs = list(reversed(session_runs))
-
-            while pending_team_runs:
-                run = pending_team_runs.pop()
-                run_identity = id(run)
-                if run_identity in visited_team_runs:
-                    continue
-                visited_team_runs.add(run_identity)
-
-                if getattr(run, "team_id", None) == team_id:
-                    run_id = getattr(run, "run_id", None)
-                    if not run_id or run_id not in seen_team_run_ids:
-                        filtered_team_runs.append(run)
-                        if run_id:
-                            seen_team_run_ids.add(run_id)
-
-                member_responses = getattr(run, "member_responses", None) or []
-                pending_team_runs.extend(reversed(member_responses))
-
-            session_runs = filtered_team_runs
+            session_runs = _collect_matching_runs(session_runs, lambda run: getattr(run, "team_id", None) == team_id)
         if member_ids:
-            filtered_runs = []
-            seen_run_ids: set[str] = set()
-
-            def _add_if_unseen(run: Union[TeamRunOutput, RunOutput]) -> None:
-                run_id = getattr(run, "run_id", None)
-                if run_id and run_id in seen_run_ids:
-                    return
-                if run_id:
-                    seen_run_ids.add(run_id)
-                filtered_runs.append(run)
-
-            for run in session_runs:
-                if hasattr(run, "agent_id") and run.agent_id in member_ids:  # type: ignore
-                    _add_if_unseen(run)
-                elif hasattr(run, "member_responses"):
-                    for member_run in run.member_responses:
-                        if hasattr(member_run, "agent_id") and member_run.agent_id in member_ids:  # type: ignore
-                            _add_if_unseen(member_run)
-            session_runs = filtered_runs
+            session_runs = _collect_matching_runs(
+                session_runs, lambda run: getattr(run, "agent_id", None) in member_ids
+            )
 
         if skip_member_messages:
             # Filter for the top-level runs (main team runs or agent runs when sharing session)
@@ -346,11 +363,13 @@ class TeamSession:
 
         # Get completed runs only (exclude current/pending run)
         if team_id is not None:
-            completed_runs = [
-                run
-                for run in self.runs
-                if run.status == RunStatus.completed and getattr(run, "team_id", None) == team_id
-            ]
+            # Nested team runs live inside their parent's member_responses, so walk the run
+            # tree instead of only the top level - this is what makes the lookup work
+            # "regardless of nesting depth".
+            completed_runs = _collect_matching_runs(
+                self.runs,
+                lambda run: run.status == RunStatus.completed and getattr(run, "team_id", None) == team_id,
+            )
         else:
             completed_runs = [
                 run for run in self.runs if run.status == RunStatus.completed and run.parent_run_id is None

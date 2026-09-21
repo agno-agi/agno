@@ -430,6 +430,9 @@ class Team:
     _cached_session: Optional[TeamSession] = None
     # The db the cached session was loaded from; the cache is only valid for that db
     _cached_session_db: Optional[Union[BaseDb, AsyncBaseDb]] = None
+    # Parent session handed down in-memory while this team runs as a delegated sub-team.
+    # Sub-teams skip the database read, so this is how they still see the shared run tree.
+    _delegated_session: Optional[TeamSession] = None
     # Tool instructions
     _tool_instructions: Optional[List[str]] = None
     # Member response model
