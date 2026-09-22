@@ -6,9 +6,8 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 from pydantic import BaseModel
 
 from agno.media import Audio, File, Image, Video
-from agno.models.metrics import RunMetrics
+from agno.metrics import RunMetrics
 from agno.session.workflow import WorkflowSession
-from agno.utils.log import log_warning
 from agno.utils.media import (
     reconstruct_audio_list,
     reconstruct_files,
@@ -16,20 +15,6 @@ from agno.utils.media import (
     reconstruct_videos,
 )
 from agno.utils.timer import Timer
-
-_session_state_param_deprecation_warned: set = set()
-
-
-def warn_session_state_param_deprecated(func: Any, component: str) -> None:
-    """Warn once per function that the injected session_state parameter is deprecated."""
-    key = component + ":" + getattr(func, "__name__", repr(func))
-    if key in _session_state_param_deprecation_warned:
-        return
-    _session_state_param_deprecation_warned.add(key)
-    log_warning(
-        f"The 'session_state' parameter for {component} is deprecated and will be removed in a future release. "
-        "Accept 'run_context: RunContext' and use 'run_context.session_state' instead."
-    )
 
 
 class OnReject(str, Enum):
@@ -66,8 +51,8 @@ class OnError(str, Enum):
     """Action to take when a step encounters an error during execution.
 
     Attributes:
-        fail: Fail the workflow immediately when an error occurs (default).
-        skip: Skip the failed step and continue with the next step.
+        fail: Fail the workflow immediately when an error occurs.
+        skip: Skip the failed step and continue with the next step (default).
         pause: Pause the workflow and allow the user to decide (retry or skip) via HITL.
     """
 
@@ -102,6 +87,9 @@ class HumanReview:
     user_input_message: Optional[str] = None
     user_input_schema: Optional[List[Dict[str, Any]]] = None
 
+    # Route selection (Router only): allow the user to pick more than one route
+    allow_multiple_selections: bool = False
+
     # Post-execution output review (Step, Router only)
     requires_output_review: Union[bool, Any] = False  # Union[bool, Callable[[StepOutput], bool]]
     output_review_message: Optional[str] = None
@@ -133,6 +121,7 @@ class HumanReview:
             "requires_user_input": self.requires_user_input,
             "user_input_message": self.user_input_message,
             "user_input_schema": self.user_input_schema,
+            "allow_multiple_selections": self.allow_multiple_selections,
             "requires_output_review": self.requires_output_review
             if isinstance(self.requires_output_review, bool)
             else True,
@@ -155,6 +144,7 @@ class HumanReview:
             requires_user_input=data.get("requires_user_input", False),
             user_input_message=data.get("user_input_message"),
             user_input_schema=data.get("user_input_schema"),
+            allow_multiple_selections=data.get("allow_multiple_selections", False),
             requires_output_review=data.get("requires_output_review", False),
             output_review_message=data.get("output_review_message"),
             requires_iteration_review=data.get("requires_iteration_review", False),
@@ -399,12 +389,16 @@ class StepInput:
             # Return dict with {step_name: content} for each sub-step
             parallel_content = {}
             for sub_step in step_output.steps:
-                if sub_step.step_name and sub_step.content:
+                if sub_step.step_name and sub_step.content is not None and str(sub_step.content).strip():
                     # Check if this sub-step has its own nested steps (like Condition -> Research Step)
                     if sub_step.steps and len(sub_step.steps) > 0:
                         # This is a composite step (like Condition) - get content from its nested steps
                         for nested_step in sub_step.steps:
-                            if nested_step.step_name and nested_step.content:
+                            if (
+                                nested_step.step_name
+                                and nested_step.content is not None
+                                and str(nested_step.content).strip()
+                            ):
                                 parallel_content[nested_step.step_name] = str(nested_step.content)
                     else:
                         # This is a direct step - use its content
@@ -435,7 +429,7 @@ class StepInput:
 
         content_parts = []
         for step_name, output in self.previous_step_outputs.items():
-            if output.content:
+            if output.content is not None and str(output.content).strip():
                 content_parts.append(f"=== {step_name} ===\n{output.content}")
 
         return "\n\n".join(content_parts)

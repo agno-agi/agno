@@ -9,9 +9,10 @@ from typing_extensions import Literal
 
 from agno.exceptions import ContextWindowExceededError, ModelAuthenticationError, ModelProviderError
 from agno.media import File
+from agno.metrics import MessageMetrics
 from agno.models.base import Model
 from agno.models.message import Citations, Message, UrlCitation
-from agno.models.metrics import MessageMetrics
+from agno.models.openai.types import ReasoningEffort, ReasoningSummary, ServiceTier, Verbosity
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 from agno.tools.function import Function
@@ -47,15 +48,19 @@ class OpenAIResponses(Model):
     metadata: Optional[Dict[str, Any]] = None
     parallel_tool_calls: Optional[bool] = None
     reasoning: Optional[Dict[str, Any]] = None
-    verbosity: Optional[Literal["low", "medium", "high"]] = None
-    reasoning_effort: Optional[Literal["minimal", "low", "medium", "high"]] = None
-    reasoning_summary: Optional[Literal["auto", "concise", "detailed"]] = None
+    verbosity: Optional[Verbosity] = None
+    reasoning_effort: Optional[ReasoningEffort] = None
+    reasoning_summary: Optional[ReasoningSummary] = None
+    # Provider response storage is independent of automatic conversation chaining.
     store: Optional[bool] = None
+    # Set False to replay the supplied context even when responses are stored by OpenAI.
+    # Defaults to automatic chaining for supported reasoning models when store is not False.
+    use_previous_response_id: bool = True
     temperature: Optional[float] = None
     top_p: Optional[float] = None
     truncation: Optional[Literal["auto", "disabled"]] = None
     user: Optional[str] = None
-    service_tier: Optional[Literal["auto", "default", "flex", "priority"]] = None
+    service_tier: Optional[ServiceTier] = None
     strict_output: bool = True  # When True, guarantees schema adherence for structured outputs. When False, attempts to follow schema as a guide but may occasionally deviate
     background: Optional[bool] = (
         None  # When True, enables background mode for long-running tasks. The API returns immediately and the response is polled until completion. Not supported for streaming.
@@ -248,12 +253,21 @@ class OpenAIResponses(Model):
                 )
             await asyncio.sleep(self.background_poll_interval)
 
+    def _get_model_request_kwargs(self) -> Dict[str, Any]:
+        """The model selector sent with each request.
+
+        Providers that pick the model server-side from a candidate list override this to omit
+        `model`, which they reject alongside their own selector.
+        """
+        return {"model": self.id}
+
     def get_request_params(
         self,
         messages: Optional[List[Message]] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        run_response: Optional[RunOutput] = None,
     ) -> Dict[str, Any]:
         """
         Returns keyword arguments for API requests.
@@ -353,21 +367,16 @@ class OpenAIResponses(Model):
 
         # Handle reasoning tools for o3 and o4-mini models
         if self._using_reasoning_model() and messages is not None:
-            if store is False:
-                request_params["store"] = False
+            request_params["store"] = store is not False
 
+            if store is False or not self.use_previous_response_id:
                 # Add encrypted reasoning content to include if not already present
-                include_list = request_params.get("include", []) or []
+                include_list = list(request_params.get("include") or [])
                 if "reasoning.encrypted_content" not in include_list:
                     include_list.append("reasoning.encrypted_content")
-                    if request_params.get("include") is None:
-                        request_params["include"] = include_list
-                    elif isinstance(request_params["include"], list):
-                        request_params["include"].extend(include_list)
+                request_params["include"] = include_list
 
             else:
-                request_params["store"] = True
-
                 # Check if the last assistant message has a previous_response_id to continue from
                 previous_response_id = None
                 for msg in reversed(messages):
@@ -611,7 +620,7 @@ class OpenAIResponses(Model):
         messages_to_format = messages
         previous_response_id: Optional[str] = None
 
-        if self._using_reasoning_model() and self.store is not False:
+        if self.use_previous_response_id and self._using_reasoning_model() and self.store is not False:
             # Detect whether we're chaining via previous_response_id. If so, we should NOT
             # re-send prior function_call items; the Responses API already has the state and
             # expects only the corresponding function_call_output items.
@@ -634,6 +643,17 @@ class OpenAIResponses(Model):
         fc_id_to_call_id = self._build_fc_id_to_call_id_map(messages)
 
         for message in messages_to_format:
+            # Without chaining, replay reasoning before the assistant's text or function calls.
+            if (
+                (self.store is False or not self.use_previous_response_id)
+                and message.role == "assistant"
+                and message.provider_data is not None
+                and message.provider_data.get("reasoning_output") is not None
+            ):
+                formatted_messages.append(
+                    ResponseReasoningItem.model_validate(message.provider_data["reasoning_output"])
+                )
+
             if message.role in ["user", "system"]:
                 message_dict: Dict[str, Any] = {
                     "role": self.role_map[message.role],
@@ -706,12 +726,6 @@ class OpenAIResponses(Model):
                 content = message.content if message.content is not None else ""
                 formatted_messages.append({"role": self.role_map[message.role], "content": content})
 
-                if self.store is False and hasattr(message, "provider_data") and message.provider_data is not None:
-                    if message.provider_data.get("reasoning_output") is not None:
-                        reasoning_output = ResponseReasoningItem.model_validate(
-                            message.provider_data["reasoning_output"]
-                        )
-                        formatted_messages.append(reasoning_output)
         return formatted_messages
 
     def count_tokens(
@@ -772,13 +786,17 @@ class OpenAIResponses(Model):
         """
         try:
             request_params = self.get_request_params(
-                messages=messages, response_format=response_format, tools=tools, tool_choice=tool_choice
+                messages=messages,
+                response_format=response_format,
+                tools=tools,
+                tool_choice=tool_choice,
+                run_response=run_response,
             )
 
             assistant_message.metrics.start_timer()
 
             provider_response = self.get_client().responses.create(
-                model=self.id,
+                **self._get_model_request_kwargs(),
                 input=self._format_messages(messages, compress_tool_results, tools=tools),  # type: ignore
                 **request_params,
             )
@@ -877,13 +895,17 @@ class OpenAIResponses(Model):
         """
         try:
             request_params = self.get_request_params(
-                messages=messages, response_format=response_format, tools=tools, tool_choice=tool_choice
+                messages=messages,
+                response_format=response_format,
+                tools=tools,
+                tool_choice=tool_choice,
+                run_response=run_response,
             )
 
             assistant_message.metrics.start_timer()
 
             provider_response = await self.get_async_client().responses.create(
-                model=self.id,
+                **self._get_model_request_kwargs(),
                 input=self._format_messages(messages, compress_tool_results, tools=tools),  # type: ignore
                 **request_params,
             )
@@ -982,7 +1004,11 @@ class OpenAIResponses(Model):
         """
         try:
             request_params = self.get_request_params(
-                messages=messages, response_format=response_format, tools=tools, tool_choice=tool_choice
+                messages=messages,
+                response_format=response_format,
+                tools=tools,
+                tool_choice=tool_choice,
+                run_response=run_response,
             )
             # Background mode is not supported for streaming. Strip the flag and warn.
             if request_params.pop("background", None):
@@ -992,7 +1018,7 @@ class OpenAIResponses(Model):
             assistant_message.metrics.start_timer()
 
             for chunk in self.get_client().responses.create(
-                model=self.id,
+                **self._get_model_request_kwargs(),
                 input=self._format_messages(messages, compress_tool_results, tools=tools),  # type: ignore
                 stream=True,
                 **request_params,
@@ -1071,7 +1097,11 @@ class OpenAIResponses(Model):
         """
         try:
             request_params = self.get_request_params(
-                messages=messages, response_format=response_format, tools=tools, tool_choice=tool_choice
+                messages=messages,
+                response_format=response_format,
+                tools=tools,
+                tool_choice=tool_choice,
+                run_response=run_response,
             )
             # Background mode is not supported for streaming. Strip the flag and warn.
             if request_params.pop("background", None):
@@ -1081,7 +1111,7 @@ class OpenAIResponses(Model):
             assistant_message.metrics.start_timer()
 
             async_stream = await self.get_async_client().responses.create(
-                model=self.id,
+                **self._get_model_request_kwargs(),
                 input=self._format_messages(messages, compress_tool_results, tools=tools),  # type: ignore
                 stream=True,
                 **request_params,
@@ -1228,8 +1258,8 @@ class OpenAIResponses(Model):
 
             # Handle reasoning output items
             elif output.type == "reasoning":
-                # Save encrypted reasoning content for ZDR mode
-                if self.store is False:
+                # Preserve reasoning for replay when automatic chaining is disabled.
+                if self.store is False or not self.use_previous_response_id:
                     if model_response.provider_data is None:
                         model_response.provider_data = {}
                     model_response.provider_data["reasoning_output"] = output.model_dump(exclude_none=True)
@@ -1262,10 +1292,12 @@ class OpenAIResponses(Model):
         Parse the streaming response from the model provider into a ModelResponse object.
 
         Args:
-            response: Raw response chunk from the model provider
+            stream_event: Raw streaming event from the model provider
+            assistant_message: The assistant message to populate
+            tool_use: The current tool being built across chunks
 
         Returns:
-            ModelResponse: Parsed response delta
+            Tuple[ModelResponse, Dict[str, Any]]: The parsed model response delta and updated tool_use
         """
         model_response = ModelResponse()
 
@@ -1347,8 +1379,8 @@ class OpenAIResponses(Model):
         elif stream_event.type == "response.completed":
             model_response = ModelResponse()
 
-            # Handle reasoning output items for ZDR mode (store=False)
-            if self.store is False:
+            # Preserve reasoning for replay when automatic chaining is disabled.
+            if self.store is False or not self.use_previous_response_id:
                 for out in getattr(stream_event.response, "output", []) or []:
                     if getattr(out, "type", None) == "reasoning":
                         if hasattr(out, "encrypted_content"):
@@ -1367,7 +1399,7 @@ class OpenAIResponses(Model):
         Parse the given OpenAI-specific usage into an Agno MessageMetrics object.
 
         Args:
-            response: The response from the provider.
+            response_usage: Usage data from OpenAI
 
         Returns:
             MessageMetrics: Parsed metrics data

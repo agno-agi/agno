@@ -4,7 +4,9 @@ Inspect Registry resources and manage persisted components
 
 The Registry endpoint lists code-defined primitives. The Components endpoints
 manage versioned Agent, Team, and Workflow configurations in the AgentOS
-database. Components require a synchronous BaseDb; this example uses SqliteDb.
+database. The demo walks the 3.0 lifecycle over HTTP: create a draft, observe
+that dispatch refuses it, append a guarded config version, publish, archive
+with DELETE, and bring it back with the restore route.
 
 Prerequisites: none for the HTTP demo; provider keys are needed only to run the catalog Agent
 Run: .venvs/demo/bin/python cookbook/05_agent_os/22_studio/registry_and_components.py
@@ -61,7 +63,7 @@ catalog_agent = Agent(
 agent_os = AgentOS(
     id="registry-components-os",
     name="Registry and Components AgentOS",
-    description="Read-only Registry discovery plus persisted component CRUD.",
+    description="Read-only Registry discovery plus persisted component lifecycle.",
     agents=[catalog_agent],
     registry=registry,
     db=db,
@@ -75,9 +77,9 @@ app = agent_os.get_app()
 
 
 def run_demo() -> None:
-    """List registry resources and complete one component CRUD lifecycle."""
-    component_id = f"registry-crud-agent-{uuid4().hex[:8]}"
-    component_name = "Registry CRUD Agent"
+    """List registry resources and complete one component lifecycle."""
+    component_id = f"registry-lifecycle-agent-{uuid4().hex[:8]}"
+    component_name = "Registry Lifecycle Agent"
     component_config = Agent(
         id=component_id,
         name=component_name,
@@ -98,6 +100,8 @@ def run_demo() -> None:
         if not {"calculator", "gpt-5.5", "claude-sonnet-4-6"}.issubset(resource_names):
             raise RuntimeError(f"Registry omitted expected resources: {resource_names}")
 
+        # 1. Create the component with a DRAFT version 1. A draft has no
+        #    current_version: it is readable and editable, never dispatchable.
         response = client.post(
             "/components",
             json={
@@ -107,17 +111,27 @@ def run_demo() -> None:
                 "description": "Created through the Components API.",
                 "metadata": {"owner": "cookbook"},
                 "config": component_config,
-                "stage": "published",
+                "stage": "draft",
                 "label": "initial",
             },
         )
         response.raise_for_status()
         created = response.json()
-        if response.status_code != 201 or created.get("current_version") != 1:
+        if response.status_code != 201 or created.get("current_version") is not None:
             raise RuntimeError(f"Unexpected create response: {created}")
 
-        get_response = client.get(f"/components/{component_id}")
-        get_response.raise_for_status()
+        # 2. A draft-only component is not runnable: the run route answers 404
+        #    until a version is published. (An explicit 'version' form field
+        #    on this route previews an exact draft version; it is owner- or
+        #    admin-gated and would invoke the model, so it is not used here.)
+        run_response = client.post(
+            f"/agents/{component_id}/runs",
+            data={"message": "Are you live yet?", "stream": "false"},
+        )
+        if run_response.status_code != 404:
+            raise RuntimeError(
+                f"Expected 404 for a draft-only component, got {run_response.status_code}"
+            )
 
         list_response = client.get(
             "/components",
@@ -128,38 +142,90 @@ def run_demo() -> None:
         if component_id not in listed_ids:
             raise RuntimeError("Created component was missing from the filtered list")
 
+        # 3. Append config version 2 with a compare-and-set guard: the write
+        #    succeeds only if the latest version is still the one we read.
+        append_response = client.post(
+            f"/components/{component_id}/configs",
+            json={
+                "config": component_config,
+                "stage": "draft",
+                "label": "guarded-append",
+                "guard": {"latest_version": 1},
+            },
+        )
+        append_response.raise_for_status()
+        appended = append_response.json()
+        if appended["version"] != 2:
+            raise RuntimeError(f"Expected appended version 2, got {appended}")
+
+        # The same guard is now stale: the latest version is 2, so a second
+        # append claiming latest_version 1 is refused with 409.
+        stale_response = client.post(
+            f"/components/{component_id}/configs",
+            json={
+                "config": component_config,
+                "stage": "draft",
+                "guard": {"latest_version": 1},
+            },
+        )
+        if stale_response.status_code != 409:
+            raise RuntimeError(
+                f"Expected 409 for a stale guard, got {stale_response.status_code}"
+            )
+
+        # 4. Publish draft version 2: PATCH with stage 'published' promotes it
+        #    and makes it the current (dispatchable) version.
+        publish_response = client.patch(
+            f"/components/{component_id}/configs/2",
+            json={"stage": "published"},
+        )
+        publish_response.raise_for_status()
+
+        config_response = client.get(f"/components/{component_id}/configs/current")
+        config_response.raise_for_status()
+        current_config = config_response.json()
+        if current_config["version"] != 2 or current_config["stage"] != "published":
+            raise RuntimeError(f"Unexpected current config: {current_config}")
+
         update_response = client.patch(
             f"/components/{component_id}",
             json={
-                "name": "Updated Registry CRUD Agent",
+                "name": "Updated Registry Lifecycle Agent",
                 "description": "Updated through PATCH /components/{component_id}.",
                 "metadata": {"owner": "cookbook", "reviewed": True},
             },
         )
         update_response.raise_for_status()
         updated = update_response.json()
-        if updated["name"] != "Updated Registry CRUD Agent":
+        if updated["name"] != "Updated Registry Lifecycle Agent":
             raise RuntimeError(f"Component update did not persist: {updated}")
 
-        config_response = client.get(f"/components/{component_id}/configs/current")
-        config_response.raise_for_status()
-        current_config = config_response.json()
-        if current_config["version"] != 1 or current_config["stage"] != "published":
-            raise RuntimeError(f"Unexpected current config: {current_config}")
-
+        # 5. DELETE archives: the id stays reserved and history survives, but
+        #    the component stops resolving.
         delete_response = client.delete(f"/components/{component_id}")
         if delete_response.status_code != 204:
             raise RuntimeError(
                 f"Expected DELETE 204, got {delete_response.status_code}"
             )
         if client.get(f"/components/{component_id}").status_code != 404:
-            raise RuntimeError("Deleted component remained visible")
+            raise RuntimeError("Archived component remained visible")
+
+        # 6. The restore route reverses the archive at the version that was
+        #    live when it was archived.
+        restore_response = client.post(f"/components/{component_id}/restore")
+        restore_response.raise_for_status()
+        restored = restore_response.json()
+        if restored.get("current_version") != 2:
+            raise RuntimeError(f"Unexpected restore response: {restored}")
 
     print(f"Registry resources: {registry_payload['meta']['total_count']}")
-    print(f"Created: {created['component_id']} v{created['current_version']}")
-    print(f"Updated name: {updated['name']}")
+    print(f"Created: {created['component_id']} (draft, no current version)")
+    print("Draft dispatch: HTTP 404 before publish")
+    print(f"Guarded append: v{appended['version']}; stale guard: HTTP 409")
     print(f"Current config: v{current_config['version']} ({current_config['stage']})")
-    print("Deleted component: HTTP 204; follow-up GET: HTTP 404")
+    print(f"Updated name: {updated['name']}")
+    print("Archive: HTTP 204; follow-up GET: HTTP 404")
+    print(f"Restored: {restored['component_id']} v{restored['current_version']}")
 
 
 if __name__ == "__main__":

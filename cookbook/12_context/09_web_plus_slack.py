@@ -38,7 +38,7 @@ from agno.context.web import ParallelBackend, WebContextProvider
 from agno.models.openai import OpenAIResponses
 
 # Sub-agents do the tool work — cheaper model. Outer agent synthesizes.
-provider_model = OpenAIResponses(id="gpt-5.4-mini")
+provider_model = OpenAIResponses(id="gpt-5.6-luna")
 
 backend = ParallelBackend()  # reads PARALLEL_API_KEY from env
 web = WebContextProvider(backend=backend, model=provider_model)

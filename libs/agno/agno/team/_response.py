@@ -14,12 +14,12 @@ from typing import (
     Type,
     Union,
     cast,
-    get_args,
 )
 from uuid import uuid4
 
 from pydantic import BaseModel
 
+from agno.agent._tools import result_store_kwargs
 from agno.exceptions import RunCancelledException
 from agno.media import Audio
 from agno.models.base import Model
@@ -28,10 +28,11 @@ from agno.models.message import Message
 from agno.models.response import ModelResponse, ModelResponseEvent
 from agno.reasoning.step import NextAction, ReasoningStep, ReasoningSteps
 from agno.run import RunContext
-from agno.run.agent import RunOutput, RunOutputEvent
+from agno.run.agent import RUN_OUTPUT_EVENT_TYPES, RunOutput, RunOutputEvent
 from agno.run.messages import RunMessages
 from agno.run.requirement import RunRequirement
 from agno.run.team import (
+    TEAM_RUN_OUTPUT_EVENT_TYPES,
     TeamRunEvent,
     TeamRunOutput,
     TeamRunOutputEvent,
@@ -664,7 +665,7 @@ def handle_reasoning_event(
 def handle_reasoning(
     team: "Team", run_response: TeamRunOutput, run_messages: RunMessages, run_context: Optional[RunContext] = None
 ) -> None:
-    if team.reasoning or team.reasoning_model is not None:
+    if team.reasoning_model is not None:
         reasoning_generator = reason(
             team, run_response=run_response, run_messages=run_messages, run_context=run_context, stream_events=False
         )
@@ -680,7 +681,7 @@ def handle_reasoning_stream(
     run_context: Optional[RunContext] = None,
     stream_events: bool = False,
 ) -> Iterator[TeamRunOutputEvent]:
-    if team.reasoning or team.reasoning_model is not None:
+    if team.reasoning_model is not None:
         reasoning_generator = reason(
             team,
             run_response=run_response,
@@ -694,7 +695,7 @@ def handle_reasoning_stream(
 async def ahandle_reasoning(
     team: "Team", run_response: TeamRunOutput, run_messages: RunMessages, run_context: Optional[RunContext] = None
 ) -> None:
-    if team.reasoning or team.reasoning_model is not None:
+    if team.reasoning_model is not None:
         reason_generator = areason(
             team, run_response=run_response, run_messages=run_messages, run_context=run_context, stream_events=False
         )
@@ -710,7 +711,7 @@ async def ahandle_reasoning_stream(
     run_context: Optional[RunContext] = None,
     stream_events: bool = False,
 ) -> AsyncIterator[TeamRunOutputEvent]:
-    if team.reasoning or team.reasoning_model is not None:
+    if team.reasoning_model is not None:
         reason_generator = areason(
             team,
             run_response=run_response,
@@ -732,28 +733,18 @@ def reason(
     """
     Run reasoning using the ReasoningManager.
 
-    Handles both native reasoning models (DeepSeek, Anthropic, etc.) and
-    default Chain-of-Thought reasoning with a clean, unified interface.
+    Handles native reasoning models (DeepSeek-R1, OpenAI o1/o3, Anthropic Claude
+    with thinking, Gemini Flash Thinking, etc.).
     """
     from agno.reasoning.manager import ReasoningConfig, ReasoningManager
 
-    # Get the reasoning model (use copy of main model if not provided)
     reasoning_model: Optional[Model] = team.reasoning_model
-    if reasoning_model is None and team.model is not None:
-        from copy import deepcopy
-
-        reasoning_model = deepcopy(team.model)
 
     # Create reasoning manager with config
     manager = ReasoningManager(
         ReasoningConfig(
             reasoning_model=reasoning_model,
             reasoning_agent=team.reasoning_agent,
-            min_steps=team.reasoning_min_steps,
-            max_steps=team.reasoning_max_steps,
-            tools=team.tools if isinstance(team.tools, list) else None,
-            tool_call_limit=team.tool_call_limit,
-            use_json_mode=team.use_json_mode,
             telemetry=team.telemetry,
             debug_mode=team.debug_mode,
             debug_level=team.debug_level,
@@ -777,28 +768,18 @@ async def areason(
     """
     Run reasoning asynchronously using the ReasoningManager.
 
-    Handles both native reasoning models (DeepSeek, Anthropic, etc.) and
-    default Chain-of-Thought reasoning with a clean, unified interface.
+    Handles native reasoning models (DeepSeek-R1, OpenAI o1/o3, Anthropic Claude
+    with thinking, Gemini Flash Thinking, etc.).
     """
     from agno.reasoning.manager import ReasoningConfig, ReasoningManager
 
-    # Get the reasoning model (use copy of main model if not provided)
     reasoning_model: Optional[Model] = team.reasoning_model
-    if reasoning_model is None and team.model is not None:
-        from copy import deepcopy
-
-        reasoning_model = deepcopy(team.model)
 
     # Create reasoning manager with config
     manager = ReasoningManager(
         ReasoningConfig(
             reasoning_model=reasoning_model,
             reasoning_agent=team.reasoning_agent,
-            min_steps=team.reasoning_min_steps,
-            max_steps=team.reasoning_max_steps,
-            tools=team.tools if isinstance(team.tools, list) else None,
-            tool_call_limit=team.tool_call_limit,
-            use_json_mode=team.use_json_mode,
             telemetry=team.telemetry,
             debug_mode=team.debug_mode,
             debug_level=team.debug_level,
@@ -1046,6 +1027,7 @@ def _handle_model_response_stream(
         run_response=run_response,
         send_media_to_model=team.send_media_to_model,
         compression_manager=team.compression_manager if team.compress_tool_results else None,
+        **result_store_kwargs(team),
         after_tool_results=build_team_after_tool_results_callback(
             team, run_response, session, run_messages, run_context
         ),
@@ -1206,6 +1188,7 @@ async def _ahandle_model_response_stream(
         send_media_to_model=team.send_media_to_model,
         run_response=run_response,
         compression_manager=team.compression_manager if team.compress_tool_results else None,
+        **result_store_kwargs(team),
         after_tool_results=abuild_team_after_tool_results_callback(
             team, run_response, session, run_messages, run_context
         ),
@@ -1337,8 +1320,8 @@ def _handle_model_response_chunk(
     session_state: Optional[Dict[str, Any]] = None,
     run_context: Optional[RunContext] = None,
 ) -> Iterator[Union[TeamRunOutputEvent, RunOutputEvent]]:
-    if isinstance(model_response_event, tuple(get_args(RunOutputEvent))) or isinstance(
-        model_response_event, tuple(get_args(TeamRunOutputEvent))
+    if isinstance(model_response_event, RUN_OUTPUT_EVENT_TYPES) or isinstance(
+        model_response_event, TEAM_RUN_OUTPUT_EVENT_TYPES
     ):
         if team.stream_member_events:
             if model_response_event.event == TeamRunEvent.custom_event:  # type: ignore

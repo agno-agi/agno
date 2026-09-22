@@ -242,15 +242,20 @@ def test_get_metrics_refreshes_lazily_and_throttles(stats_db: PostgresDb):
 
     # No calculate_metrics call: get_metrics must refresh on its own
     rows, _ = stats_db.get_metrics()
-    assert len(rows) == 1
-    assert rows[0]["agent_sessions_count"] == 1
+    assert {row["user_id"] for row in rows} == {"user-1"}
+    assert sum(row["agent_sessions_count"] for row in rows) == 1
 
     # A second read within the throttle window must not recompute
     seed_session("user-2")
     rows, _ = stats_db.get_metrics()
-    assert rows[0]["agent_sessions_count"] == 1
+    assert {row["user_id"] for row in rows} == {"user-1"}
+    assert sum(row["agent_sessions_count"] for row in rows) == 1
 
-    # Expiring the throttle picks the new session up
+    # Expiring the throttle picks the new session up. Metrics bucket per owner,
+    # so a second owner arrives as its own row instead of raising the first
+    # row's count, and get_metrics does not order its rows - assert on the set
+    # of owners and the total, never on a positional row.
     stats_db._metrics_refreshed_at = 0.0
     rows, _ = stats_db.get_metrics()
-    assert rows[0]["agent_sessions_count"] == 2
+    assert {row["user_id"] for row in rows} == {"user-1", "user-2"}
+    assert sum(row["agent_sessions_count"] for row in rows) == 2

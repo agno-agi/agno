@@ -14,7 +14,7 @@ surreal start -u root -p root
 Then, run this test like this:
 
 ```
-uv run cookbook/db/surrealdb/surrealdb_for_agent.py
+uv run cookbook/06_storage/surrealdb/surrealdb_for_agent.py
 ```
 """
 

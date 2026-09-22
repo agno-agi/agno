@@ -11,7 +11,7 @@ from agnoctl.commands.disconnect import disconnect
 from agnoctl.commands.lifecycle import down, restart, up
 from agnoctl.commands.status import status
 from agnoctl.commands.tokens import tokens_app
-from agnoctl.console import console, print_info
+from agnoctl.console import BRAND_COLOR, MUTED_COLOR, console, print_info
 
 app = typer.Typer(
     name="agno",
@@ -30,8 +30,6 @@ app.command(name="up")(up)
 app.command(name="down")(down)
 app.command(name="restart")(restart)
 
-
-ORANGE = "color(208)"
 
 _BANNER = r""" █████╗  ██████╗ ███╗   ██╗ ██████╗
 ██╔══██╗██╔════╝ ████╗  ██║██╔═══██╗
@@ -69,14 +67,14 @@ _GROUPS: List[Tuple[str, List[Tuple[str, str]]]] = [
 def render_home() -> None:
     """Print the branded home screen shown for a bare `agno` invocation."""
     console.print()
-    console.print(Text(_BANNER, style=f"bold {ORANGE}"))
+    console.print(Text(_BANNER, style="bold " + BRAND_COLOR))
     console.print()
     console.print(Text("The CLI for AgentOS, built for humans and agents", style="dim"))
     console.print()
 
     grid = Table.grid(padding=(0, 3))
-    grid.add_column(style=ORANGE, no_wrap=True)
-    grid.add_column(style="grey74")
+    grid.add_column(style=BRAND_COLOR, no_wrap=True)
+    grid.add_column(style=MUTED_COLOR)
     for i, (heading, rows) in enumerate(_GROUPS):
         if i:
             grid.add_row("", "")

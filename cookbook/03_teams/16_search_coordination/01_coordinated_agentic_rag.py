@@ -22,8 +22,10 @@ knowledge = Knowledge(
         table_name="agno_docs_team",
         search_type=SearchType.hybrid,
         embedder=CohereEmbedder(id="embed-v4.0"),
-        reranker=CohereReranker(model="rerank-v3.5"),
     ),
+    # Reranking belongs on Knowledge: it applies to every vector db and can
+    # widen the candidate pool for rerankers that need one.
+    reranker=CohereReranker(model="rerank-v3.5"),
 )
 
 knowledge.insert_many(urls=["https://docs.agno.com/agents/overview.md"])

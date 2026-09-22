@@ -4,7 +4,8 @@ Serve a Studio Agent that composes persisted components
 
 AgentOS exposes code-defined Agents alongside components created by StudioTools.
 The Studio Agent can discover registry primitives and compose Agents, Teams, and
-Workflows while versioning keeps edits in drafts until publication.
+Workflows. Creates are drafts by default; the demo passes publish=true so the
+new component is live immediately, and verifies it through the Components API.
 
 Prerequisites: OPENAI_API_KEY
 Run: .venvs/demo/bin/python cookbook/05_agent_os/22_studio/studio_tools_agent.py
@@ -68,12 +69,14 @@ reporter = Agent(
     db=db,
 )
 
+# Versioning is on by default: this construction carries the full lifecycle
+# (drafts, validate, publish, rollback). Passing include_agents makes the two
+# code-defined Agents available as Team members and Workflow steps.
 studio_tools = StudioTools(
     registry=registry,
     db=db,
-    agents_list=[greeter, reporter],
+    include_agents=[greeter, reporter],
     default_model_id="gpt-5.5",
-    versions=True,
 )
 
 studio_agent = Agent(
@@ -84,7 +87,8 @@ studio_agent = Agent(
     instructions=[
         "Use StudioTools to compose persisted components from registry primitives.",
         "Discover exact model and tool names before creating a component.",
-        "Report the component id, database version, and next versioning action.",
+        "Creates are drafts unless the user asks you to publish.",
+        "Report the component id, version, stage, and next lifecycle action.",
     ],
     db=db,
     markdown=True,
@@ -107,7 +111,7 @@ app = agent_os.get_app()
 
 
 def run_demo() -> None:
-    """Use the live Studio Agent to create one persisted Agent."""
+    """Use the live Studio Agent to create and publish one persisted Agent."""
     component_id = f"api-math-guide-{uuid4().hex[:8]}"
     with httpx.Client(base_url=BASE_URL, timeout=180.0) as client:
         registry_response = client.get("/registry", params={"limit": 100})
@@ -123,9 +127,16 @@ def run_demo() -> None:
                     "Call list_models and list_tools, then create an agent named "
                     f"'{component_id}' with model 'gpt-5.5', exact tool name "
                     "'calculator', and instructions 'Explain arithmetic clearly.' "
+                    "Pass publish=true so it is live immediately. "
                     "Do not edit or run it."
                 ),
                 "session_id": f"studio-tools-{component_id}",
+                # The framework injects this caller's RunContext into every
+                # StudioTools call: the created component is OWNED by this
+                # user. It publishes on create, so other users can read and
+                # run it, but only this user can edit or archive it; while a
+                # component is draft-only, other users get component_not_found.
+                "user_id": "studio-demo-user",
                 "stream": "false",
             },
         )
@@ -142,6 +153,7 @@ def run_demo() -> None:
 
     print(f"Run: {run['run_id']} -> {run['status']}")
     print(f"Component: {component['component_id']} v{component['current_version']}")
+    print(f"Owner: {component.get('user_id')}")
     print(run.get("content"))
 
 

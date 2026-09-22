@@ -43,7 +43,11 @@ def _now_ms() -> int:
 
 
 def _clip_text(value: Any, limit: int = MAX_TEXT_CHARS) -> str:
-    text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, default=str)
+    text = (
+        value
+        if isinstance(value, str)
+        else json.dumps(value, ensure_ascii=False, default=str)
+    )
     text = text.strip()
     if len(text) <= limit:
         return text
@@ -92,7 +96,9 @@ def _sanitize_tool_calls(tool_calls: Any) -> list[dict[str, Any]] | None:
     return result or None
 
 
-def _format_items(label: str, items: Sequence[dict[str, Any]], *, max_items: int, max_chars: int) -> str:
+def _format_items(
+    label: str, items: Sequence[dict[str, Any]], *, max_items: int, max_chars: int
+) -> str:
     if not items:
         return f"- {label}: none"
 
@@ -104,12 +110,23 @@ def _format_items(label: str, items: Sequence[dict[str, Any]], *, max_items: int
             parts.append(f"score={score:.3f}")
         header = " | ".join(parts)
         lines.append(f"  - {header}")
-        for field_name in ("subject", "summary", "description", "content", "episode", "approach", "task_intent", "key_insight"):
+        for field_name in (
+            "subject",
+            "summary",
+            "description",
+            "content",
+            "episode",
+            "approach",
+            "task_intent",
+            "key_insight",
+        ):
             value = item.get(field_name)
             if value:
                 lines.append(f"    {field_name}: {_clip_text(value, max_chars)}")
         if item.get("profile_data"):
-            lines.append(f"    profile_data: {_clip_text(item['profile_data'], max_chars)}")
+            lines.append(
+                f"    profile_data: {_clip_text(item['profile_data'], max_chars)}"
+            )
     if len(items) > max_items:
         lines.append(f"  - … {len(items) - max_items} more")
     return "\n".join(lines)
@@ -119,10 +136,14 @@ def _format_items(label: str, items: Sequence[dict[str, Any]], *, max_items: int
 class EverOSLearningStore:
     """Thin REST client for EverOS learning storage."""
 
-    base_url: str = field(default_factory=lambda: os.getenv("EVEROS_BASE_URL", "http://127.0.0.1:8000"))
+    base_url: str = field(
+        default_factory=lambda: os.getenv("EVEROS_BASE_URL", "http://127.0.0.1:8000")
+    )
     api_key: str | None = field(default_factory=lambda: os.getenv("EVEROS_API_KEY"))
     app_id: str = field(default_factory=lambda: os.getenv("EVEROS_APP_ID", "agno"))
-    project_id: str = field(default_factory=lambda: os.getenv("EVEROS_PROJECT_ID", "demo"))
+    project_id: str = field(
+        default_factory=lambda: os.getenv("EVEROS_PROJECT_ID", "demo")
+    )
     timeout_seconds: float = 10.0
     max_results: int = MAX_RESULTS
     max_text_chars: int = MAX_TEXT_CHARS
@@ -175,11 +196,25 @@ class EverOSLearningStore:
         agent_hits = data.get("agent", [])
         if user_hits:
             parts.append("<user_memory>")
-            parts.append(_format_items("user", user_hits, max_items=self.max_results, max_chars=self.max_text_chars))
+            parts.append(
+                _format_items(
+                    "user",
+                    user_hits,
+                    max_items=self.max_results,
+                    max_chars=self.max_text_chars,
+                )
+            )
             parts.append("</user_memory>")
         if agent_hits:
             parts.append("<agent_memory>")
-            parts.append(_format_items("agent", agent_hits, max_items=self.max_results, max_chars=self.max_text_chars))
+            parts.append(
+                _format_items(
+                    "agent",
+                    agent_hits,
+                    max_items=self.max_results,
+                    max_chars=self.max_text_chars,
+                )
+            )
             parts.append("</agent_memory>")
         parts.append("</everos_memory>")
         return "\n".join(parts)
@@ -250,7 +285,11 @@ class EverOSLearningStore:
         if self.flush_after_process and session_id:
             self._post_json(
                 "/api/v2/memory/flush",
-                {"session_id": session_id, "app_id": self.app_id, "project_id": self.project_id},
+                {
+                    "session_id": session_id,
+                    "app_id": self.app_id,
+                    "project_id": self.project_id,
+                },
             )
         self._updated = True
 
@@ -264,7 +303,11 @@ class EverOSLearningStore:
         if self.flush_after_process and session_id:
             await self._apost_json(
                 "/api/v2/memory/flush",
-                {"session_id": session_id, "app_id": self.app_id, "project_id": self.project_id},
+                {
+                    "session_id": session_id,
+                    "app_id": self.app_id,
+                    "project_id": self.project_id,
+                },
             )
         self._updated = True
 
@@ -330,7 +373,9 @@ class EverOSLearningStore:
             "messages": serialized,
         }
 
-    def _serialize_message(self, message: Any, *, user_id: str | None, agent_id: str | None) -> dict[str, Any] | None:
+    def _serialize_message(
+        self, message: Any, *, user_id: str | None, agent_id: str | None
+    ) -> dict[str, Any] | None:
         role = _get_value(message, "role")
         if role not in {"user", "assistant", "tool"}:
             return None
@@ -366,7 +411,17 @@ class EverOSLearningStore:
 
         return row
 
-    def _owner_payload(self, owner_kind: str, owner_id: str, *, query: str | None = None, include_profile: bool = False, page: int = 1, page_size: int = MAX_RESULTS, memory_type: str | None = None) -> dict[str, Any]:
+    def _owner_payload(
+        self,
+        owner_kind: str,
+        owner_id: str,
+        *,
+        query: str | None = None,
+        include_profile: bool = False,
+        page: int = 1,
+        page_size: int = MAX_RESULTS,
+        memory_type: str | None = None,
+    ) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "app_id": self.app_id,
             "project_id": self.project_id,
@@ -398,7 +453,15 @@ class EverOSLearningStore:
         requested = int(requested or self.max_results)
         return max(1, min(requested, self.max_results))
 
-    def _search_owner(self, *, owner_kind: str, owner_id: str, query: str, include_profile: bool, top_k: int) -> list[dict[str, Any]]:
+    def _search_owner(
+        self,
+        *,
+        owner_kind: str,
+        owner_id: str,
+        query: str,
+        include_profile: bool,
+        top_k: int,
+    ) -> list[dict[str, Any]]:
         payload = self._owner_payload(
             owner_kind,
             owner_id,
@@ -408,7 +471,12 @@ class EverOSLearningStore:
         )
         response = self._post_json("/api/v2/memory/search", payload)
         data = response.get("data", {})
-        hits = self._collect_search_hits(owner_kind, data, include_profile=include_profile, limit=self._bounded_count(top_k))
+        hits = self._collect_search_hits(
+            owner_kind,
+            data,
+            include_profile=include_profile,
+            limit=self._bounded_count(top_k),
+        )
         if hits:
             return hits
 
@@ -416,12 +484,25 @@ class EverOSLearningStore:
             time.sleep(self.search_retry_delay_seconds * attempt)
             response = self._post_json("/api/v2/memory/search", payload)
             data = response.get("data", {})
-            hits = self._collect_search_hits(owner_kind, data, include_profile=include_profile, limit=self._bounded_count(top_k))
+            hits = self._collect_search_hits(
+                owner_kind,
+                data,
+                include_profile=include_profile,
+                limit=self._bounded_count(top_k),
+            )
             if hits:
                 return hits
         return hits
 
-    async def _asearch_owner(self, *, owner_kind: str, owner_id: str, query: str, include_profile: bool, top_k: int) -> list[dict[str, Any]]:
+    async def _asearch_owner(
+        self,
+        *,
+        owner_kind: str,
+        owner_id: str,
+        query: str,
+        include_profile: bool,
+        top_k: int,
+    ) -> list[dict[str, Any]]:
         payload = self._owner_payload(
             owner_kind,
             owner_id,
@@ -431,7 +512,12 @@ class EverOSLearningStore:
         )
         response = await self._apost_json("/api/v2/memory/search", payload)
         data = response.get("data", {})
-        hits = self._collect_search_hits(owner_kind, data, include_profile=include_profile, limit=self._bounded_count(top_k))
+        hits = self._collect_search_hits(
+            owner_kind,
+            data,
+            include_profile=include_profile,
+            limit=self._bounded_count(top_k),
+        )
         if hits:
             return hits
 
@@ -439,12 +525,24 @@ class EverOSLearningStore:
             await asyncio.sleep(self.search_retry_delay_seconds * attempt)
             response = await self._apost_json("/api/v2/memory/search", payload)
             data = response.get("data", {})
-            hits = self._collect_search_hits(owner_kind, data, include_profile=include_profile, limit=self._bounded_count(top_k))
+            hits = self._collect_search_hits(
+                owner_kind,
+                data,
+                include_profile=include_profile,
+                limit=self._bounded_count(top_k),
+            )
             if hits:
                 return hits
         return hits
 
-    def _collect_search_hits(self, owner_kind: str, data: dict[str, Any], *, include_profile: bool, limit: int) -> list[dict[str, Any]]:
+    def _collect_search_hits(
+        self,
+        owner_kind: str,
+        data: dict[str, Any],
+        *,
+        include_profile: bool,
+        limit: int,
+    ) -> list[dict[str, Any]]:
         hits: list[dict[str, Any]] = []
         if owner_kind == "user":
             for item in data.get("episodes", []) or []:
@@ -462,34 +560,81 @@ class EverOSLearningStore:
     def _normalize_hit(self, kind: str, item: Any) -> dict[str, Any]:
         normalized = _jsonable(item)
         if not isinstance(normalized, dict):
-            return {"kind": kind, "content": _clip_text(normalized, self.max_text_chars)}
+            return {
+                "kind": kind,
+                "content": _clip_text(normalized, self.max_text_chars),
+            }
         normalized["kind"] = kind
         if "summary" in normalized:
-            normalized["summary"] = _clip_text(normalized["summary"], self.max_text_chars)
+            normalized["summary"] = _clip_text(
+                normalized["summary"], self.max_text_chars
+            )
         if "content" in normalized:
-            normalized["content"] = _clip_text(normalized["content"], self.max_text_chars)
+            normalized["content"] = _clip_text(
+                normalized["content"], self.max_text_chars
+            )
         if "description" in normalized:
-            normalized["description"] = _clip_text(normalized["description"], self.max_text_chars)
+            normalized["description"] = _clip_text(
+                normalized["description"], self.max_text_chars
+            )
         if "episode" in normalized:
-            normalized["episode"] = _clip_text(normalized["episode"], self.max_text_chars)
+            normalized["episode"] = _clip_text(
+                normalized["episode"], self.max_text_chars
+            )
         if "approach" in normalized:
-            normalized["approach"] = _clip_text(normalized["approach"], self.max_text_chars)
+            normalized["approach"] = _clip_text(
+                normalized["approach"], self.max_text_chars
+            )
         if "task_intent" in normalized:
-            normalized["task_intent"] = _clip_text(normalized["task_intent"], self.max_text_chars)
+            normalized["task_intent"] = _clip_text(
+                normalized["task_intent"], self.max_text_chars
+            )
         if "key_insight" in normalized and normalized["key_insight"] is not None:
-            normalized["key_insight"] = _clip_text(normalized["key_insight"], self.max_text_chars)
+            normalized["key_insight"] = _clip_text(
+                normalized["key_insight"], self.max_text_chars
+            )
         return normalized
 
-    def _list_owner(self, *, owner_kind: str, owner_id: str, memory_type: str, page: int, page_size: int) -> dict[str, Any]:
-        payload = self._owner_payload(owner_kind, owner_id, page=page, page_size=page_size, memory_type=memory_type)
+    def _list_owner(
+        self,
+        *,
+        owner_kind: str,
+        owner_id: str,
+        memory_type: str,
+        page: int,
+        page_size: int,
+    ) -> dict[str, Any]:
+        payload = self._owner_payload(
+            owner_kind,
+            owner_id,
+            page=page,
+            page_size=page_size,
+            memory_type=memory_type,
+        )
         return self._post_json("/api/v2/memory/get", payload)
 
-    async def _alist_owner(self, *, owner_kind: str, owner_id: str, memory_type: str, page: int, page_size: int) -> dict[str, Any]:
-        payload = self._owner_payload(owner_kind, owner_id, page=page, page_size=page_size, memory_type=memory_type)
+    async def _alist_owner(
+        self,
+        *,
+        owner_kind: str,
+        owner_id: str,
+        memory_type: str,
+        page: int,
+        page_size: int,
+    ) -> dict[str, Any]:
+        payload = self._owner_payload(
+            owner_kind,
+            owner_id,
+            page=page,
+            page_size=page_size,
+            memory_type=memory_type,
+        )
         return await self._apost_json("/api/v2/memory/get", payload)
 
     def _make_search_user_tool(self, user_id: str) -> Callable:
-        def search_user_memory(query: str, top_k: int = MAX_RESULTS, include_profile: bool = False) -> str:
+        def search_user_memory(
+            query: str, top_k: int = MAX_RESULTS, include_profile: bool = False
+        ) -> str:
             hits = self._search_owner(
                 owner_kind="user",
                 owner_id=user_id,
@@ -523,7 +668,9 @@ class EverOSLearningStore:
                 page=page,
                 page_size=page_size,
             )
-            return self._format_list_response("user episodes", data.get("data", {}), "episodes")
+            return self._format_list_response(
+                "user episodes", data.get("data", {}), "episodes"
+            )
 
         return list_user_episodes
 
@@ -536,7 +683,9 @@ class EverOSLearningStore:
                 page=page,
                 page_size=page_size,
             )
-            return self._format_list_response("agent cases", data.get("data", {}), "agent_cases")
+            return self._format_list_response(
+                "agent cases", data.get("data", {}), "agent_cases"
+            )
 
         return list_agent_cases
 
@@ -549,12 +698,16 @@ class EverOSLearningStore:
                 page=page,
                 page_size=page_size,
             )
-            return self._format_list_response("agent skills", data.get("data", {}), "agent_skills")
+            return self._format_list_response(
+                "agent skills", data.get("data", {}), "agent_skills"
+            )
 
         return list_agent_skills
 
     def _make_async_search_user_tool(self, user_id: str) -> Callable:
-        async def search_user_memory(query: str, top_k: int = MAX_RESULTS, include_profile: bool = False) -> str:
+        async def search_user_memory(
+            query: str, top_k: int = MAX_RESULTS, include_profile: bool = False
+        ) -> str:
             hits = await self._asearch_owner(
                 owner_kind="user",
                 owner_id=user_id,
@@ -580,7 +733,9 @@ class EverOSLearningStore:
         return search_agent_memory
 
     def _make_async_list_user_episodes_tool(self, user_id: str) -> Callable:
-        async def list_user_episodes(page: int = 1, page_size: int = MAX_RESULTS) -> str:
+        async def list_user_episodes(
+            page: int = 1, page_size: int = MAX_RESULTS
+        ) -> str:
             data = await self._alist_owner(
                 owner_kind="user",
                 owner_id=user_id,
@@ -588,7 +743,9 @@ class EverOSLearningStore:
                 page=page,
                 page_size=page_size,
             )
-            return self._format_list_response("user episodes", data.get("data", {}), "episodes")
+            return self._format_list_response(
+                "user episodes", data.get("data", {}), "episodes"
+            )
 
         return list_user_episodes
 
@@ -601,7 +758,9 @@ class EverOSLearningStore:
                 page=page,
                 page_size=page_size,
             )
-            return self._format_list_response("agent cases", data.get("data", {}), "agent_cases")
+            return self._format_list_response(
+                "agent cases", data.get("data", {}), "agent_cases"
+            )
 
         return list_agent_cases
 
@@ -614,17 +773,32 @@ class EverOSLearningStore:
                 page=page,
                 page_size=page_size,
             )
-            return self._format_list_response("agent skills", data.get("data", {}), "agent_skills")
+            return self._format_list_response(
+                "agent skills", data.get("data", {}), "agent_skills"
+            )
 
         return list_agent_skills
 
     def _format_list_response(self, label: str, data: dict[str, Any], key: str) -> str:
         items = data.get(key, []) or []
-        lines = [f"<everos_{key}>", f"{label}: {len(items)} items", f"total_count: {data.get('total_count', 0)}"]
+        lines = [
+            f"<everos_{key}>",
+            f"{label}: {len(items)} items",
+            f"total_count: {data.get('total_count', 0)}",
+        ]
         for item in items[: self.max_results]:
             normalized = self._normalize_hit(label.rstrip("s"), item)
             lines.append(f"- {normalized.get('id', '?')}")
-            for field_name in ("subject", "summary", "description", "content", "episode", "task_intent", "approach", "key_insight"):
+            for field_name in (
+                "subject",
+                "summary",
+                "description",
+                "content",
+                "episode",
+                "task_intent",
+                "approach",
+                "key_insight",
+            ):
                 value = normalized.get(field_name)
                 if value:
                     lines.append(f"  {field_name}: {value}")
@@ -690,11 +864,16 @@ def _build_mock_transport() -> httpx.MockTransport:
                 200,
                 json={
                     "request_id": "mock-add",
-                    "data": {"message_count": len(body.get("messages", [])), "status": "accumulated"},
+                    "data": {
+                        "message_count": len(body.get("messages", [])),
+                        "status": "accumulated",
+                    },
                 },
             )
         if path.endswith("/flush"):
-            return httpx.Response(200, json={"request_id": "mock-flush", "data": {"status": "extracted"}})
+            return httpx.Response(
+                200, json={"request_id": "mock-flush", "data": {"status": "extracted"}}
+            )
         if path.endswith("/search"):
             if "user_id" in body:
                 return httpx.Response(
@@ -716,7 +895,13 @@ def _build_mock_transport() -> httpx.MockTransport:
                                     "episode": "The user likes local-first, portable memory with inspectable Markdown and bounded retrieval.",
                                     "type": "Conversation",
                                     "score": 0.91,
-                                    "atomic_facts": [{"id": "af1", "content": "The user prefers portable memory.", "score": 0.91}],
+                                    "atomic_facts": [
+                                        {
+                                            "id": "af1",
+                                            "content": "The user prefers portable memory.",
+                                            "score": 0.91,
+                                        }
+                                    ],
                                 }
                             ],
                             "profiles": [
@@ -725,7 +910,9 @@ def _build_mock_transport() -> httpx.MockTransport:
                                     "user_id": body["user_id"],
                                     "app_id": body.get("app_id", "agno"),
                                     "project_id": body.get("project_id", "demo"),
-                                    "profile_data": {"preferred_stack": "Python, local-first memory, markdown"},
+                                    "profile_data": {
+                                        "preferred_stack": "Python, local-first memory, markdown"
+                                    },
                                     "score": None,
                                 }
                             ],
@@ -828,41 +1015,76 @@ def _build_mock_transport() -> httpx.MockTransport:
                 ]
             return httpx.Response(
                 200,
-                json={"request_id": "mock-get", "data": {key: rows, "total_count": len(rows), "count": len(rows)}},
+                json={
+                    "request_id": "mock-get",
+                    "data": {key: rows, "total_count": len(rows), "count": len(rows)},
+                },
             )
         return httpx.Response(404, json={"message": f"Unhandled path: {path}"})
 
     return httpx.MockTransport(handler)
 
 
+# -----------------------------------------------------------------------------
+# Create demo store
+# -----------------------------------------------------------------------------
 def create_demo_store(*, real: bool = False) -> EverOSLearningStore:
     transport = None if real else _build_mock_transport()
-    return EverOSLearningStore(transport=transport, async_transport=transport if not real else None)
+    return EverOSLearningStore(
+        transport=transport, async_transport=transport if not real else None
+    )
 
 
+# -----------------------------------------------------------------------------
+# Run sync and async demos
+# -----------------------------------------------------------------------------
 def run_sync_demo(store: EverOSLearningStore) -> None:
     user_id = "demo-user"
     agent_id = "demo-agent"
     session_id = "demo-sync"
     messages = [
-        {"role": "user", "content": "I like local-first memory.", "created_at": 1722168000},
+        {
+            "role": "user",
+            "content": "I like local-first memory.",
+            "created_at": 1722168000,
+        },
         {
             "role": "assistant",
             "content": "I will keep the memory store bounded.",
-            "tool_calls": [{"id": "call_1", "type": "function", "function": {"name": "search_user_memory", "arguments": "{}"}}],
+            "tool_calls": [
+                {
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {"name": "search_user_memory", "arguments": "{}"},
+                }
+            ],
             "created_at": 1722168001,
         },
-        {"role": "tool", "tool_call_id": "call_1", "content": "search result", "created_at": 1722168002},
+        {
+            "role": "tool",
+            "tool_call_id": "call_1",
+            "content": "search result",
+            "created_at": 1722168002,
+        },
     ]
 
     store.process(messages, user_id=user_id, agent_id=agent_id, session_id=session_id)
-    recall = store.recall(user_id=user_id, agent_id=agent_id, query="local-first memory")
+    recall = store.recall(
+        user_id=user_id, agent_id=agent_id, query="local-first memory"
+    )
     print("\nSync recall:\n")
     print(store.build_context(recall))
 
-    tools = {tool.__name__: tool for tool in store.get_tools(user_id=user_id, agent_id=agent_id, session_id=session_id)}
+    tools = {
+        tool.__name__: tool
+        for tool in store.get_tools(
+            user_id=user_id, agent_id=agent_id, session_id=session_id
+        )
+    }
     print("\nSync tools:\n")
-    print(tools["search_user_memory"]("local-first memory", top_k=2, include_profile=True))
+    print(
+        tools["search_user_memory"]("local-first memory", top_k=2, include_profile=True)
+    )
     print(tools["list_user_episodes"]())
     print(tools["search_agent_memory"]("bounded retrieval", top_k=2))
     print(tools["list_agent_skills"]())
@@ -873,16 +1095,27 @@ async def run_async_demo(store: EverOSLearningStore) -> None:
     agent_id = "demo-agent"
     session_id = "demo-async"
     messages = [
-        {"role": "user", "content": "Please keep this portable.", "created_at": 1722168003},
+        {
+            "role": "user",
+            "content": "Please keep this portable.",
+            "created_at": 1722168003,
+        },
         {"role": "assistant", "content": "I will.", "created_at": 1722168004},
     ]
 
-    await store.aprocess(messages, user_id=user_id, agent_id=agent_id, session_id=session_id)
+    await store.aprocess(
+        messages, user_id=user_id, agent_id=agent_id, session_id=session_id
+    )
     recall = await store.arecall(user_id=user_id, agent_id=agent_id, query="portable")
     print("\nAsync recall:\n")
     print(store.build_context(recall))
 
-    tools = {tool.__name__: tool for tool in await store.aget_tools(user_id=user_id, agent_id=agent_id, session_id=session_id)}
+    tools = {
+        tool.__name__: tool
+        for tool in await store.aget_tools(
+            user_id=user_id, agent_id=agent_id, session_id=session_id
+        )
+    }
     print("\nAsync tools:\n")
     print(await tools["search_user_memory"]("portable", top_k=2, include_profile=True))
     print(await tools["list_user_episodes"]())
