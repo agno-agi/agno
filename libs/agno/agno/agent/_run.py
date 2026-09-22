@@ -6246,44 +6246,13 @@ def flush_in_flight_messages_on_error(
     run_response: RunOutput,
     run_messages: Optional["RunMessages"],
 ) -> None:
-    """Copy in-flight conversation into ``run_response.messages`` for the
-    terminal ERROR write.
+    """Persist the latest complete exchanges before a terminal ERROR write.
 
-    During a normal run, ``run_response.messages`` is populated by
-    ``update_run_response`` only **after** the model loop returns
-    successfully. If the model loop raises (e.g. provider API failure,
-    malformed response, exception in a pre-hook) before any tool batch
-    boundary fires, neither ``update_run_response`` nor the mid-run
-    checkpoint hook has a chance to flush ``run_messages.messages`` into
-    ``run_response.messages``. The terminal ERROR write would then persist
-    an empty-message row, losing the conversation that led to the failure
-    and making post-mortem debugging impossible.
-
-    Call this from every ``except Exception`` block right before
-    ``cleanup_and_store``. It only sets ``run_response.messages`` if it's
-    still empty — preserves a partial state that the mid-run hook already
-    captured.
-
-    The filter ``m.add_to_agent_memory`` mirrors what the checkpoint hook
-    does, so the persisted shape is consistent regardless of which path
-    captured it.
-
-    KNOWN GAP (tombstone): the detached background wrappers
-    (_background_task / _background_producer) do NOT flush - run_messages
-    lives inside _arun*/_acontinue_run*, never in the wrappers' locals, so
-    their old locals().get("run_messages") calls were unconditional no-ops
-    and were deleted rather than left implying coverage. A background run
-    that errors at the WRAPPER level (outside the inner run's own error
-    handling) persists without its in-flight conversation. Threading the
-    real flush out to the wrappers - with a wrapper-level-error test -
-    is a known follow-up.
+    A pause or checkpoint may already have populated messages. That snapshot
+    must not suppress exchanges completed during the continued model loop.
+    Without current context, retain the previously stored transcript.
     """
     if run_messages is None:
-        return
-    if run_response.messages:
-        # Already populated (e.g. by a mid-run checkpoint hook). Don't
-        # overwrite — it may be more complete than run_messages.messages
-        # if intervening processing happened.
         return
     if not run_messages.messages:
         return
