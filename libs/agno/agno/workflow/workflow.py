@@ -6749,6 +6749,7 @@ class Workflow:
                 if rejected_step.max_retries and rejected_step.retry_count >= rejected_step.max_retries:
                     # Max retries reached — cancel
                     run_response.status = RunStatus.cancelled
+                    run_response.cancellation_stage = CancellationStage.paused
                     run_response.content = (
                         f"Max retries ({rejected_step.max_retries}) reached for step '{rejected_step.step_name}'"
                     )
@@ -6802,6 +6803,7 @@ class Workflow:
             else:
                 # Cancel workflow (default behavior for "cancel")
                 run_response.status = RunStatus.cancelled
+                run_response.cancellation_stage = CancellationStage.paused
                 run_response.content = f"Workflow cancelled: Step '{rejected_step.step_name}' was rejected"
 
                 # Save and return
@@ -7499,6 +7501,9 @@ class Workflow:
         except RunCancelledException as e:
             logger.info(f"Workflow run {workflow_run_response.run_id} was cancelled")
             workflow_run_response.status = RunStatus.cancelled
+            workflow_run_response.cancellation_stage = (
+                CancellationStage.executing if isinstance(e, RunCancelledException) else None
+            )
             workflow_run_response.content = _normalize_workflow_cancellation_reason(workflow_run_response, e)
             # Preserve any completed step outputs before cancellation
             if collected_step_outputs:
@@ -8557,6 +8562,9 @@ class Workflow:
         except RunCancelledException as e:
             logger.info(f"Workflow run {workflow_run_response.run_id} was cancelled")
             workflow_run_response.status = RunStatus.cancelled
+            workflow_run_response.cancellation_stage = (
+                CancellationStage.executing if isinstance(e, RunCancelledException) else None
+            )
             workflow_run_response.content = _normalize_workflow_cancellation_reason(workflow_run_response, e)
             # Preserve any completed step outputs before cancellation
             if collected_step_outputs:
@@ -8781,6 +8789,7 @@ class Workflow:
                 # Retry the rejected step
                 if rejected_step.max_retries and rejected_step.retry_count >= rejected_step.max_retries:
                     run_response.status = RunStatus.cancelled
+                    run_response.cancellation_stage = CancellationStage.paused
                     run_response.content = (
                         f"Max retries ({rejected_step.max_retries}) reached for step '{rejected_step.step_name}'"
                     )
@@ -8832,6 +8841,7 @@ class Workflow:
             else:
                 # Cancel workflow (default behavior for "cancel")
                 run_response.status = RunStatus.cancelled
+                run_response.cancellation_stage = CancellationStage.paused
                 run_response.content = f"Workflow cancelled: Step '{rejected_step.step_name}' was rejected"
 
                 # Save and return
@@ -9545,6 +9555,9 @@ class Workflow:
         except RunCancelledException as e:
             logger.info(f"Workflow run {workflow_run_response.run_id} was cancelled")
             workflow_run_response.status = RunStatus.cancelled
+            workflow_run_response.cancellation_stage = (
+                CancellationStage.executing if isinstance(e, RunCancelledException) else None
+            )
             workflow_run_response.content = _normalize_workflow_cancellation_reason(workflow_run_response, e)
             # Preserve any completed step outputs before cancellation
             if collected_step_outputs:
@@ -10317,6 +10330,9 @@ class Workflow:
         except (RunCancelledException, asyncio.CancelledError, KeyboardInterrupt, GeneratorExit) as e:
             logger.info(f"Workflow run {workflow_run_response.run_id} was cancelled")
             workflow_run_response.status = RunStatus.cancelled
+            workflow_run_response.cancellation_stage = (
+                CancellationStage.executing if isinstance(e, RunCancelledException) else None
+            )
             workflow_run_response.content = _normalize_workflow_cancellation_reason(workflow_run_response, e)
             # Preserve any completed step outputs before cancellation
             if collected_step_outputs:
@@ -10499,8 +10515,26 @@ class Workflow:
                     f"Background continue-run stream {workflow_run_response.run_id} cancelled while waiting for a slot"
                 )
                 workflow_run_response.status = RunStatus.cancelled
-                session.upsert_run(run=workflow_run_response)
-                await self.asave_session(session=session)
+                workflow_run_response.cancellation_stage = CancellationStage.pending
+                # The fenced transition, as the initial-run twin and the agent
+                # and team twins use: on databases that persist runs
+                # separately from the session, a whole-session save does not
+                # write the run at all, and this cancel never landed.
+                try:
+                    await apersist_run_transition(
+                        self,
+                        "workflow",
+                        workflow_run_response.session_id or session.session_id,
+                        workflow_run_response,
+                        user_id=workflow_run_response.user_id,
+                    )
+                except Exception:
+                    # A failed persist must not skip the cleanup below
+                    log_error(
+                        f"Failed to persist cancelled state for background continue-run stream "
+                        f"{workflow_run_response.run_id}",
+                        exc_info=True,
+                    )
                 if workflow_run_response.run_id:
                     await acleanup_run(workflow_run_response.run_id)
             except Exception as e:
