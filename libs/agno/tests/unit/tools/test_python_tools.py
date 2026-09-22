@@ -204,3 +204,47 @@ def test_run_python_file_blocks_path_traversal(temp_dir):
 
     result = python_tools.run_python_file_return_variable("../malicious.py")
     assert "outside the allowed base directory" in result
+
+
+# restrict_to_base_dir does not sandbox executed code — pin the documented limitation
+# so nobody later mistakes the path-traversal guards above for a code sandbox.
+def test_run_python_code_ignores_restrict_to_base_dir(temp_dir):
+    """run_python_code executes regardless of restrict_to_base_dir: it can read outside base_dir.
+
+    The path-traversal guards only cover file-path arguments to the file helpers.
+    Executed code goes straight to exec(), so restrict_to_base_dir is not a sandbox.
+    """
+    outside = temp_dir.parent / "outside_secret.txt"
+    outside.write_text("top-secret")
+    try:
+        python_tools = PythonTools(base_dir=temp_dir / "sandbox", restrict_to_base_dir=True)
+        code = f"data = open({str(outside)!r}).read()"
+        result = python_tools.run_python_code(code, "data")
+        assert result == "top-secret"
+    finally:
+        outside.unlink(missing_ok=True)
+
+
+def test_requires_confirmation_gates_execution_tools(temp_dir):
+    """The documented mitigation works: requires_confirmation_tools marks exec tools for HITL approval."""
+    python_tools = PythonTools(
+        base_dir=temp_dir,
+        requires_confirmation_tools=["run_python_code", "save_to_file_and_run"],
+    )
+    assert python_tools.functions["run_python_code"].requires_confirmation is True
+    assert python_tools.functions["save_to_file_and_run"].requires_confirmation is True
+
+
+def test_exclude_tools_drops_execution_tools(temp_dir):
+    """The documented mitigation works: exclude_tools removes the code-execution entry points."""
+    python_tools = PythonTools(
+        base_dir=temp_dir,
+        exclude_tools=["run_python_code", "save_to_file_and_run", "run_python_file_return_variable"],
+    )
+    registered = set(python_tools.functions.keys())
+    assert "run_python_code" not in registered
+    assert "save_to_file_and_run" not in registered
+    assert "run_python_file_return_variable" not in registered
+    # Benign helpers remain available.
+    assert "read_file" in registered
+    assert "list_files" in registered
