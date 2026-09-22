@@ -396,3 +396,48 @@ the current binding, the dry-run result and what remains to be done; add
 `--apply` only after reviewing them. It uses the database configured by
 `public_pages.py`. No HTTP route or model/MCP tool is added automatically; keep
 this an operator action.
+
+### Typed page tools
+
+`PageFileSystem.run_command_result` and `arun_command_result` return a
+`PageCommandResult` with text, explicit errors, partial/truncated state, stop
+reason and an optional line-based continuation command. Error status comes from
+execution, never from matching words in documentation. Missing paths, invalid
+grammar and unavailable storage are distinguished; incomplete grep is successful
+but partial. Existing `run_command` and default chat tool text remain compatible.
+
+The typed result's `max_output_bytes` bounds its full UTF-8 JSON value, including
+metadata. Byte clipping clears line-based continuation so it cannot skip unseen
+text. Narrow the command when no continuation is available. MCP protocol envelope
+overhead is additional and remains subject to AgentOS's transport output limits.
+
+Use `files.tools(transport="mcp", tool_name=..., description=...)` for native MCP
+output schemas and `isError` failures. Successful structured results contain the
+same command text plus status metadata. Applications can use the direct typed
+result's `.text` or `.model_dump_json()` in custom chat presentation; product error
+wording stays explicit. Default chat command tools keep their existing character
+bound; typed direct/MCP results add the JSON byte bound.
+
+`knowledge.get_tools(page_results=True, tool_name=..., tool_description=...)`
+exposes native ranked SearchResult JSON through chat. Add `transport="mcp"` for
+the same search result as MCP structured content/schema and execution errors,
+and `async_mode=True` for async tools (`aget_tools` defaults to async). Both use
+public page search and preserve alternatives, revisions, completeness and supplied
+run reference tracking. Names, descriptions and score interpretation remain
+application choices. Generic results expose `score`; an existing `confidence`
+field remains a small application compatibility mapping. No feedback tool or
+business rules move into the framework.
+
+`page_tool_results.py` defaults to `check`, which validates configuration without
+IO. It needs only `./cookbook/scripts/run_pgvector.sh` and `OPENAI_API_KEY`, and
+uses the same `ai` database as the other cookbooks:
+
+```sh
+.venvs/demo/bin/python cookbook/05_agent_os/27_public_pages/page_tool_results.py
+.venvs/demo/bin/python cookbook/05_agent_os/27_public_pages/page_tool_results.py sync
+.venvs/demo/bin/python cookbook/05_agent_os/27_public_pages/page_tool_results.py run "cat /installation.md"
+```
+
+`sync` publishes the example corpus once; `run` executes one command and prints
+the typed result, then a missing path so the execution-derived error status is
+visible. No tool is exposed automatically.
