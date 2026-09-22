@@ -240,10 +240,12 @@ async def test_cancelling_sync_docs_stops_the_page_sync_worker(monkeypatch):
     demo = _load_public_pages_cookbook("public_pages", monkeypatch)
     workers = BoundedWorkers(1, "test-sync-cancel")
     monkeypatch.setattr(_coordinator, "SYNC_WORKERS", workers)
+    budgets = []
     observed, ended = threading.Event(), threading.Event()
 
     def sync(*, budget, on_progress, **kwargs):
         # A page worker learns of cancellation only through its budget, as the real coordinator does.
+        budgets.append(budget)
         try:
             on_progress(PageSyncProgress(stage="discovered", discovered=3))
             if budget.cancelled.wait(5):
@@ -271,12 +273,16 @@ async def test_cancelling_sync_docs_stops_the_page_sync_worker(monkeypatch):
                 break
 
         # Closing the workflow's stream cancelled the worker's budget before the stream ended.
-        assert observed.is_set()
+        # The worker thread notices on its own schedule, so its side is awaited rather than polled.
+        assert budgets[-1].cancelled.is_set()
+        assert await asyncio.to_thread(observed.wait, 5)
         assert await asyncio.to_thread(ended.wait, 5)
         assert [event.event for event in events][-2:] == ["WorkflowCancelled", "WorkflowCompleted"]
         saved = await demo.sync.aget_run_output(run_id=events[-1].run_id, session_id="s")
         assert saved.status == RunStatus.cancelled
-        # The worker's capacity is back once it has ended.
+        # Capacity returns from the worker future's done callback, just after ended is set: wait for that too.
+        assert await asyncio.to_thread(workers._capacity.acquire, True, 5)
+        workers._capacity.release()
         workers.run_sync(lambda **kwargs: None, seconds=1)
     workers._executor.shutdown(wait=True)
 
