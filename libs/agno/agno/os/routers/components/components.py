@@ -1,6 +1,8 @@
+import copy
 import logging
 import re
 import time
+from types import SimpleNamespace
 from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, Request
@@ -42,6 +44,13 @@ from agno.os.schema import (
 )
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import AgnoHTTPException, draft_preview_identity, may_read_draft_configs
+from agno.prompt.prompt import (
+    PROMPT_FIELDS,
+    Prompt,
+    is_prompt_reference,
+    pin_stored_prompt_references,
+    prompt_links_for_save,
+)
 from agno.registry import Registry
 from agno.utils.log import log_error, log_warning
 from agno.utils.string import generate_component_id_from_name, hash_string_sha256, validate_component_id
@@ -221,7 +230,7 @@ def _collect_referenced_component_ids(
     Collect every component ID a config or links list references.
 
     Args:
-        config: The component config to walk for agent_id/team_id/workflow_id references
+        config: The component config to walk for agent_id/team_id/workflow_id/prompt_id references
         links: Optional explicit links whose child_component_id is included
 
     Returns:
@@ -231,7 +240,7 @@ def _collect_referenced_component_ids(
 
     def _walk(node: Any) -> None:
         if isinstance(node, dict):
-            for key in ("agent_id", "team_id", "workflow_id"):
+            for key in ("agent_id", "team_id", "workflow_id", "prompt_id"):
                 value = node.get(key)
                 if isinstance(value, str):
                     referenced_ids.add(value)
@@ -551,6 +560,173 @@ def _resolve_member_links(
     return links, unresolved
 
 
+def _resolve_prompt_links(
+    config: Dict[str, Any],
+    db: BaseDb,
+    host_label: str,
+    previous_links: Optional[List[Dict[str, Any]]] = None,
+) -> List[Dict[str, Any]]:
+    """Build ``component_links`` rows for the Prompt references in an agent or team config.
+
+    A config references a Prompt as ``{"prompt_id": ..., "version": ...}`` on
+    ``system_message`` or ``instructions``. The rows are the ones the SDK save
+    writes, built by the same helper: the selectors are bound to a bare host so
+    ``prompt_links_for_save`` validates and builds them. An omitted selector
+    pins the current published version, an integer pin must be published,
+    "latest" stores NULL, and every target must be an active Prompt with that
+    version published, whoever the caller is. The config's own reference is then
+    updated to carry the integer pin, so the stored reference and the row agree
+    and a later version written without links still loads pinned.
+
+    Fallback text is consumer-owned and lives in ``link.meta``, never in the
+    config: a field kept on the same Prompt keeps the fallback its
+    ``previous_links`` row stored, and a field moved to another Prompt or
+    dropped gets none.
+
+    Raises:
+        ValueError: A malformed reference or an unpublishable target. Raised
+            before any write; the routes answer 400.
+    """
+    host = SimpleNamespace()
+    for field_name in PROMPT_FIELDS:
+        reference = config.get(field_name)
+        if not isinstance(reference, dict) or not is_prompt_reference(reference):
+            continue
+        previous = next(
+            (
+                row
+                for row in previous_links or []
+                if row.get("link_kind") == "prompt"
+                and row.get("link_key") == field_name
+                and row.get("child_component_id") == reference.get("prompt_id")
+            ),
+            None,
+        )
+        fallback = (previous.get("meta") or {}).get("fallback") if previous is not None else None
+        prompt_id = reference["prompt_id"]
+        # A non-string id is caller garbage; the empty string makes Prompt refuse it as such.
+        setattr(
+            host,
+            field_name,
+            Prompt(
+                id=prompt_id if isinstance(prompt_id, str) else "",
+                version=reference.get("version"),
+                fallback=fallback,
+            ),
+        )
+    links = prompt_links_for_save(host, db=db, host_label=host_label)
+    pin_stored_prompt_references(config, links)
+    return links
+
+
+def _validate_explicit_prompt_links(
+    links: List[Dict[str, Any]],
+    db: BaseDb,
+    host_label: str,
+    config: Optional[Dict[str, Any]] = None,
+) -> None:
+    """Hold caller-supplied ``prompt`` links to the published-only rule and to the config.
+
+    A member pin may name the owner's own draft; a Prompt link may not, and
+    the rule does not bend for privilege. The rows are validated by the helper
+    the SDK save uses and stored as the caller sent them.
+
+    The explicit set stays the whole set, as for members, but a Prompt row is
+    the text source of the consumer's own field: a row that disagrees with
+    the config's reference would silently change model input, and a
+    reference without a row would float and stop protecting the Prompt from
+    deletion. So the rows are compared with the rows the config itself
+    derives: one row per referenced field, same Prompt, same selector. An
+    omitted selector is normalized to the current published integer first
+    and the reference is updated to carry it, so an explicit row pinning an
+    older version is refused rather than redefining the default; ``latest``
+    must be spelled in the reference and stored as NULL.
+
+    Raises:
+        ValueError: A link on a field that is not Prompt-backed, two rows for
+            one field, an unpublishable target, or a row set that disagrees
+            with the config; the routes answer 400.
+    """
+    host = SimpleNamespace()
+    explicit: Dict[str, Dict[str, Any]] = {}
+    for link in links:
+        if not isinstance(link, dict) or link.get("link_kind") != "prompt":
+            continue
+        field_name = link.get("link_key")
+        if field_name not in PROMPT_FIELDS:
+            raise ValueError(
+                f"Prompt link key {field_name!r} is not a Prompt-backed field; use one of {', '.join(PROMPT_FIELDS)}."
+            )
+        if field_name in explicit:
+            raise ValueError(f"Two prompt links name `{field_name}`; send one row per field.")
+        explicit[field_name] = link
+        child_id = link.get("child_component_id")
+        child_version = link.get("child_version")
+        setattr(
+            host,
+            field_name,
+            Prompt(
+                id=child_id if isinstance(child_id, str) else "",
+                version="latest" if child_version is None else child_version,
+                fallback=(link.get("meta") or {}).get("fallback"),
+            ),
+        )
+    prompt_links_for_save(host, db=db, host_label=host_label)
+    if config is None:
+        return
+    expected = {row["link_key"]: row for row in _resolve_prompt_links(config, db, host_label)}
+    for field_name, row in expected.items():
+        sent = explicit.get(field_name)
+        if sent is None:
+            raise ValueError(
+                f"{host_label} `{field_name}` references Prompt '{row['child_component_id']}' but the link set has "
+                f"no prompt row for it; send that row or drop the reference."
+            )
+        if sent.get("child_component_id") != row["child_component_id"]:
+            raise ValueError(
+                f"{host_label} `{field_name}` references Prompt '{row['child_component_id']}' but its prompt row "
+                f"names '{sent.get('child_component_id')}'; make them agree."
+            )
+        if sent.get("child_version") != row["child_version"]:
+            wanted = "NULL" if row["child_version"] is None else row["child_version"]
+            raise ValueError(
+                f"{host_label} `{field_name}` selects version {wanted} of Prompt '{row['child_component_id']}' but "
+                f"its prompt row pins {sent.get('child_version')}; write the version you want in the reference "
+                '(an integer, or "latest" for a NULL row).'
+            )
+    for field_name in explicit:
+        if field_name not in expected:
+            raise ValueError(
+                f"{host_label} `{field_name}` does not reference a Prompt, but the link set carries a prompt row "
+                "for it; drop the row or reference the Prompt."
+            )
+
+
+def _stored_prompt_links(db: BaseDb, component_id: str, version: Optional[int]) -> List[Dict[str, Any]]:
+    """The ``prompt`` rows a config version stores; empty when there is no such version to read."""
+    if not isinstance(version, int):
+        return []
+    try:
+        return db.get_links(component_id, version=version, link_kind="prompt") or []
+    except NotImplementedError:
+        return []
+
+
+def _latest_visible_version(db: BaseDb, component_id: str) -> Optional[int]:
+    """The newest non-tombstoned version, draft or published; None when the adapter has no such reader.
+
+    This read is not guarded: an in-place edit of that draft racing the write
+    that follows is not detected, as on every route today. An append is,
+    when the caller sends ``guard.latest_version``.
+    """
+    try:
+        latest = db.get_latest_config(component_id)
+    except NotImplementedError:
+        return None
+    version = latest.get("version") if isinstance(latest, dict) else None
+    return version if isinstance(version, int) else None
+
+
 def _resolve_step_links(
     config: Dict[str, Any],
     db: BaseDb,
@@ -604,8 +780,9 @@ def _derived_links_for_config(
     links: Optional[List[Dict[str, Any]]],
     db: BaseDb,
     registry: Optional[Registry] = None,
+    base_version: Optional[int] = None,
 ) -> Optional[List[Dict[str, Any]]]:
-    """Link rows for a team or workflow config saved through the config routes.
+    """Link rows for an agent, team or workflow config saved through the config routes.
 
     ``create_component`` derives these from the config; the config routes only
     persisted caller-supplied ``links``, so a member or step added by editing a
@@ -613,26 +790,35 @@ def _derived_links_for_config(
     archives freely and the parent keeps a reference that resolves to nothing,
     while the same child at create time correctly conflicts.
 
-    Explicit links win - a caller that sent its own link set is authoritative.
-    None means "nothing to derive from", which leaves the version's existing
-    rows alone; a config that derives nothing returns an empty list, which
-    clears them. Collapsing the two would leave a version storing an empty
-    composition next to a live link row, and the ex-child could never be
-    archived.
+    Explicit links win - a caller that sent its own link set is authoritative,
+    though its Prompt links are still held to the published-only rule. None
+    means "nothing to derive from", which leaves the version's existing rows
+    alone; a config that derives nothing returns an empty list, which clears
+    them. Collapsing the two would leave a version storing an empty composition
+    next to a live link row, and the ex-child could never be archived.
+
+    ``base_version`` names the version this write edits or supersedes - the
+    edited version itself for an update, the latest visible version for a new
+    one - and is where a Prompt field kept on the same Prompt takes its
+    fallback from.
     """
-    if links is not None:
-        return links
-    if not isinstance(config, dict):
-        return None
     existing = db.get_component(component_id)
-    if existing is None:
+    component_type = str(existing.get("component_type")) if existing is not None else ""
+    host_label = component_type.capitalize()
+    if links is not None:
+        _validate_explicit_prompt_links(links, db, host_label, config if isinstance(config, dict) else None)
+        return links
+    if not isinstance(config, dict) or existing is None:
         return None
-    component_type = str(existing.get("component_type"))
+    if component_type == ComponentType.AGENT.value:
+        return _resolve_prompt_links(config, db, host_label, _stored_prompt_links(db, component_id, base_version))
     if component_type == ComponentType.TEAM.value:
         derived, _unresolved = _resolve_member_links(config, db, registry)
         # Unresolved members are not raised here: unlike create, an edit may
         # legitimately reference a code-defined member this process cannot see.
-        return derived
+        return derived + _resolve_prompt_links(
+            config, db, host_label, _stored_prompt_links(db, component_id, base_version)
+        )
     if component_type == ComponentType.WORKFLOW.value:
         return _resolve_step_links(config, db, registry)
     return None
@@ -711,7 +897,9 @@ def attach_routes(
     )
     async def list_components(
         request: Request,
-        component_type: Optional[ComponentType] = Query(None, description="Filter by type: agent, team, workflow"),
+        component_type: Optional[ComponentType] = Query(
+            None, description="Filter by type: agent, team, workflow, prompt"
+        ),
         page: int = Query(1, ge=1, description="Page number"),
         limit: int = Query(20, ge=1, le=100, description="Items per page"),
         include_deleted: bool = Query(
@@ -735,6 +923,11 @@ def attach_routes(
                 exclude_ids = registry.get_team_ids()
             elif component_type == ComponentType.WORKFLOW:
                 exclude_ids = registry.get_workflow_ids()
+            elif component_type == ComponentType.PROMPT:
+                # The registry holds no Prompts; the untyped union below would
+                # hide a stored Prompt that merely shares an id with a code
+                # object of another type.
+                exclude_ids = None
             else:
                 # No type filter, so the exclusion is one flat set of ids and
                 # cannot tell same-type shadowing (intended: the code object
@@ -782,7 +975,7 @@ def attach_routes(
         status_code=201,
         operation_id="create_component",
         summary="Create Component",
-        description="Create a new component (agent, team, or workflow) with initial config.",
+        description="Create a new component (agent, team, workflow, or prompt) with initial config.",
     )
     async def create_component(
         request: Request,
@@ -849,6 +1042,12 @@ def attach_routes(
             _validate_referenced_component_ownership(
                 db, config, links=links, scoped_user_id=scoped_user_id, own_component_id=component_id
             )
+            # After the ownership check, so a refusal here cannot confirm a
+            # Prompt the caller may not see. A team keeps its member rows.
+            if body.component_type in (ComponentType.AGENT, ComponentType.TEAM):
+                prompt_links = _resolve_prompt_links(config, db, body.component_type.value.capitalize())
+                if prompt_links:
+                    links = (links or []) + prompt_links
 
             component, _config = db.create_component_with_config(
                 component_id=component_id,
@@ -1202,7 +1401,14 @@ def attach_routes(
             _validate_pinned_versions_readable(db, body.links, request)
 
             _reject_unsupported_guard(body.guard, "latest_version")
-            links = _derived_links_for_config(component_id, config_data, body.links, db, registry)
+            links = _derived_links_for_config(
+                component_id,
+                config_data,
+                body.links,
+                db,
+                registry,
+                base_version=_latest_visible_version(db, component_id),
+            )
             config = db.upsert_config(
                 component_id=component_id,
                 version=None,  # Always create new
@@ -1255,6 +1461,19 @@ def attach_routes(
             config_data = body.config
             if config_data is not None:
                 config_data = _resolve_db_in_config(config_data, db, registry)
+            # Explicit Prompt rows are checked against the config they will
+            # sit next to. With no body config that is the stored one, read
+            # into an independent deep copy (a normalized selector lands in a
+            # nested reference) and persisted only when that happened; the
+            # stored config is otherwise left exactly as it is, unresolved and
+            # unwalked, as a links-only update has always left it.
+            effective_config = config_data
+            stored_config: Optional[Dict[str, Any]] = None
+            if config_data is None and body.links is not None:
+                stored = db.get_config(component_id, version=version)
+                if stored is not None and isinstance(stored.get("config"), dict):
+                    stored_config = stored["config"]
+                    effective_config = copy.deepcopy(stored_config)
 
             _validate_referenced_component_ownership(
                 db,
@@ -1269,7 +1488,11 @@ def attach_routes(
             _validate_pinned_versions_readable(db, body.links, request)
 
             _reject_unsupported_guard(body.guard, "latest_version")
-            links = _derived_links_for_config(component_id, config_data, body.links, db, registry)
+            links = _derived_links_for_config(
+                component_id, effective_config, body.links, db, registry, base_version=version
+            )
+            if stored_config is not None and effective_config != stored_config:
+                config_data = effective_config
             config = db.upsert_config(
                 component_id=component_id,
                 version=version,  # Always update existing

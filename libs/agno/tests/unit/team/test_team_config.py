@@ -543,7 +543,7 @@ class TestTeamFromDict:
             team = Team.from_dict(config, db=mock_db, strict=True)
 
             mock_get_agent.assert_called_once_with(
-                id="agent-1", db=mock_db, version=None, registry=None, user_id=None, strict=True
+                id="agent-1", db=mock_db, version=None, registry=None, user_id=None, strict=True, resolve_prompts=True
             )
             assert team.members == [mock_agent]
 
@@ -905,7 +905,7 @@ class TestTeamLoad:
         registry = Registry(agents=[member_agent])
 
         # DB lookup only resolves the graph-backed member; registry resolves the other
-        def fake_get_agent(id, db, version=None, registry=None, user_id=None, strict=True):  # noqa: A002
+        def fake_get_agent(id, db, version=None, registry=None, user_id=None, strict=True, resolve_prompts=True):  # noqa: A002
             if id == "db-agent":
                 agent = Agent(id="db-agent", name="DB Agent")
                 return agent

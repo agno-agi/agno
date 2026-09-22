@@ -28,6 +28,14 @@ from agno.exceptions import ComponentRehydrationError
 from agno.metrics import RunMetrics, SessionMetrics
 from agno.models.base import Model
 from agno.models.message import Message
+from agno.prompt.prompt import (
+    bind_prompt_references,
+    pin_saved_prompt_selectors,
+    pin_stored_prompt_references,
+    prompt_links_for_save,
+    resolve_prompt_fields,
+    retained_prompt_handle,
+)
 from agno.registry.registry import Registry, _memory_manager_resource_name
 from agno.run.agent import RunOutput
 from agno.session import AgentSession, TeamSession, WorkflowSession
@@ -1037,9 +1045,13 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
         config["store_history_messages"] = agent.store_history_messages
 
     # --- System message settings ---
+    # A Prompt-backed field stores its identity-only reference, never the text.
+    system_prompt = retained_prompt_handle(agent, "system_message")
+    if system_prompt is not None:
+        config["system_message"] = system_prompt.prompt._to_reference()
     # Skip system_message if it's a callable or Message object
     # TODO: Support Message objects
-    if agent.system_message is not None and isinstance(agent.system_message, str):
+    elif agent.system_message is not None and isinstance(agent.system_message, str):
         config["system_message"] = agent.system_message
     if agent.system_message_role != "system":
         config["system_message_role"] = agent.system_message_role
@@ -1050,7 +1062,10 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
     if agent.description is not None:
         config["description"] = agent.description
     # Handle instructions (can be str, list, or callable)
-    if agent.instructions is not None:
+    instructions_prompt = retained_prompt_handle(agent, "instructions")
+    if instructions_prompt is not None:
+        config["instructions"] = instructions_prompt.prompt._to_reference()
+    elif agent.instructions is not None:
         if isinstance(agent.instructions, str):
             config["instructions"] = agent.instructions
         elif isinstance(agent.instructions, list):
@@ -1178,7 +1193,13 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
 
 
 def from_dict(
-    cls: Type[Agent], data: Dict[str, Any], registry: Optional[Registry] = None, strict: bool = False
+    cls: Type[Agent],
+    data: Dict[str, Any],
+    registry: Optional[Registry] = None,
+    strict: bool = False,
+    db: Optional[BaseDb] = None,
+    links: Optional[List[Dict[str, Any]]] = None,
+    resolve_prompts: bool = True,
 ) -> Agent:
     """
     Create an agent from a dictionary.
@@ -1193,6 +1214,14 @@ def from_dict(
             and falls back to the caller's db in both modes. Pass False to
             reconstruct as much as possible, e.g. for listings that must show
             degraded components.
+        db: Database used to resolve Prompt references; without it they stay
+            unresolved and the agent refuses to run.
+        links: Component links of this agent version; Prompt links carry the
+            selector and fallback saved for each field.
+        resolve_prompts: Resolve Prompt-bound fields against ``db``. Listings
+            pass False so a Prompt that no longer resolves cannot drop the
+            agent; it stays visible with the field unresolved, and the run
+            guard refuses to run it.
 
     Returns:
         Agent: Reconstructed agent instance
@@ -1366,7 +1395,9 @@ def from_dict(
     config.pop("team_id", None)
     config.pop("workflow_id", None)
 
-    return cls(
+    bind_prompt_references(config, links)
+
+    agent = cls(
         # --- Agent settings ---
         model=config.get("model"),
         name=config.get("name"),
@@ -1478,6 +1509,9 @@ def from_dict(
         debug_level=config.get("debug_level", 1),
         telemetry=config.get("telemetry", True),
     )
+    if db is not None and resolve_prompts:
+        resolve_prompt_fields(agent, db=db, strict=strict, host_label=component_label)
+    return agent
 
 
 # ---------------------------------------------------------------------------
@@ -1515,6 +1549,9 @@ def save(
     if agent.id is None:
         agent.id = generate_id_from_name(agent.name)
 
+    # Every Prompt target is validated, and its link row built, before the first write.
+    prompt_links = prompt_links_for_save(agent, db=db_, host_label="Agent")
+
     try:
         # Create or update component
         db_.upsert_component(
@@ -1525,14 +1562,20 @@ def save(
             metadata=getattr(agent, "metadata", None),
         )
 
+        # The saved reference records the pin its link row stores; the live selector changes only after the write.
+        config_body = to_dict(agent)
+        pin_stored_prompt_references(config_body, prompt_links)
+
         # Create or update config
         config = db_.upsert_config(
             component_id=agent.id,
-            config=to_dict(agent),
+            config=config_body,
+            links=prompt_links or None,
             label=label,
             stage=stage,
             notes=notes,
         )
+        pin_saved_prompt_selectors(agent, prompt_links)
 
         return config.get("version")
 
@@ -1586,7 +1629,12 @@ def load(
     if config is None:
         return None
 
-    agent = cls.from_dict(config, registry=registry, strict=strict)
+    # Prompt links of this exact version drive Prompt resolution.
+    try:
+        links = db.get_links(component_id=id, version=data["version"]) if data.get("version") else []
+    except NotImplementedError:
+        links = []
+    agent = cls.from_dict(config, registry=registry, strict=strict, db=db, links=links)
     agent.id = id
     # Only fall back to the caller-provided db if the config didn't
     # reconstruct one. Otherwise we'd clobber any custom table names

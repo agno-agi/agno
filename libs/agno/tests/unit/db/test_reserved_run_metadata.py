@@ -22,7 +22,10 @@ from agno.db.schemas.scheduler import (
     COMPONENT_VERSION_METADATA_KEY,
     DISPATCH_CHAIN_METADATA_KEY,
     DISPATCH_DEPTH_METADATA_KEY,
+    PROMPT_VERSIONS_METADATA_KEY,
     RESERVED_RUN_METADATA_KEYS,
+    assign_prompt_versions,
+    restore_reserved_run_metadata,
     strip_reserved_run_metadata,
 )
 from agno.db.sqlite import SqliteDb
@@ -148,3 +151,55 @@ class TestTheKeyCannotRideAStoredConfig:
             },
         )
         assert Workflow.from_dict(db.get_config("chain-flow")["config"]).metadata == {"k": "v"}
+
+
+_RECORD = {
+    "prompt_id": "support",
+    "field": "instructions",
+    "selection": "pinned",
+    "requested_version": 1,
+    "resolved_version": 1,
+    "source": "published",
+    "fallback": False,
+    "fallback_reason": None,
+}
+
+
+class TestThePromptVersionsKey:
+    def test_the_key_is_reserved(self):
+        assert PROMPT_VERSIONS_METADATA_KEY == "agno_prompt_versions"
+        assert PROMPT_VERSIONS_METADATA_KEY in RESERVED_RUN_METADATA_KEYS
+
+    def test_a_forged_value_is_stripped_like_every_reserved_key(self):
+        assert strip_reserved_run_metadata({PROMPT_VERSIONS_METADATA_KEY: [_RECORD], "team": "growth"}) == {
+            "team": "growth"
+        }
+
+    def test_a_continued_run_keeps_the_stored_records(self):
+        restored = restore_reserved_run_metadata(
+            {PROMPT_VERSIONS_METADATA_KEY: "forged", "team": "growth"}, {PROMPT_VERSIONS_METADATA_KEY: [_RECORD]}
+        )
+        assert restored == {"team": "growth", PROMPT_VERSIONS_METADATA_KEY: [_RECORD]}
+
+    def test_an_agent_config_cannot_carry_it(self):
+        assert Agent.from_dict({"metadata": {PROMPT_VERSIONS_METADATA_KEY: [_RECORD]}}).metadata is None
+
+    def test_assign_replaces_a_user_value(self):
+        metadata = {PROMPT_VERSIONS_METADATA_KEY: "forged", "team": "growth"}
+        assigned = assign_prompt_versions(metadata, [_RECORD])
+        assert assigned == {"team": "growth", PROMPT_VERSIONS_METADATA_KEY: [_RECORD]}
+        assert assigned is not metadata
+        assert metadata[PROMPT_VERSIONS_METADATA_KEY] == "forged"
+
+    def test_assign_removes_the_key_when_nothing_was_effective(self):
+        assert assign_prompt_versions({PROMPT_VERSIONS_METADATA_KEY: "forged", "team": "growth"}, []) == {
+            "team": "growth"
+        }
+        assert assign_prompt_versions({PROMPT_VERSIONS_METADATA_KEY: "forged"}, []) is None
+        assert assign_prompt_versions(None, []) is None
+
+    def test_assign_copies_the_records(self):
+        records = [_RECORD]
+        assigned = assign_prompt_versions(None, records)
+        assert assigned == {PROMPT_VERSIONS_METADATA_KEY: [_RECORD]}
+        assert assigned[PROMPT_VERSIONS_METADATA_KEY] is not records

@@ -11,6 +11,7 @@ import pytest
 
 from agno.db.base import (
     DELETED_CONFIG_STAGE,
+    PIN_LINK_KINDS,
     ComponentArchivedError,
     ComponentCycleError,
     ComponentDependencyError,
@@ -1061,3 +1062,114 @@ class TestThePointerMeansPublished:
                 user_id="alice",
             )
         assert db.get_component("ptr4", user_id="bob") is None
+
+
+class TestPromptLinkVersions:
+    """A "prompt" link may leave child_version NULL to follow the child's
+    current published version on every graph load; each pin kind in
+    PIN_LINK_KINDS, and any other kind, still requires an integer."""
+
+    def _prompt(self, db, cid="support", content="v1"):
+        db.create_component_with_config(
+            component_id=cid,
+            component_type=ComponentType.PROMPT,
+            name=cid,
+            config={"type": "prompt", "id": cid, "content": content},
+            stage="published",
+        )
+        return cid
+
+    def _link(self, child, version, kind="prompt", key="instructions"):
+        return {
+            "link_kind": kind,
+            "link_key": key,
+            "child_component_id": child,
+            "child_version": version,
+            "position": 1,
+        }
+
+    def _parent(self, db, cid, links):
+        db.create_component_with_config(
+            component_id=cid,
+            component_type=ComponentType.AGENT,
+            name=cid,
+            config={"name": cid},
+            stage="published",
+            links=links,
+        )
+        return cid
+
+    def test_create_accepts_a_floating_prompt_link(self, db):
+        self._prompt(db)
+        self._parent(db, "agent-float", [self._link("support", None)])
+        [link] = db.get_links("agent-float", version=1)
+        assert link["link_kind"] == "prompt"
+        assert link["child_version"] is None
+
+    def test_upsert_config_accepts_a_floating_prompt_link(self, db):
+        self._prompt(db)
+        _mk(db, component_id="agent-up")
+        result = db.upsert_config(
+            component_id="agent-up",
+            config={"name": "agent-up"},
+            stage="published",
+            links=[self._link("support", None)],
+        )
+        [link] = db.get_links("agent-up", version=result["version"])
+        assert link["child_version"] is None
+
+    def test_an_exact_prompt_version_stays_an_integer(self, db):
+        self._prompt(db)
+        self._parent(db, "agent-pin", [self._link("support", 1)])
+        [link] = db.get_links("agent-pin", version=1)
+        assert link["child_version"] == 1
+
+    @pytest.mark.parametrize("kind", PIN_LINK_KINDS)
+    def test_pin_kinds_still_require_a_version_on_create(self, db, kind):
+        self._prompt(db)
+        with pytest.raises(ValueError, match="child_version is required"):
+            self._parent(db, f"agent-{kind}", [self._link("support", None, kind=kind, key=f"{kind}-key")])
+
+    @pytest.mark.parametrize("kind", PIN_LINK_KINDS)
+    def test_pin_kinds_still_require_a_version_on_upsert(self, db, kind):
+        self._prompt(db)
+        _mk(db, component_id="agent-up")
+        with pytest.raises(ValueError, match="child_version is required"):
+            db.upsert_config(
+                component_id="agent-up",
+                config={"name": "agent-up"},
+                links=[self._link("support", None, kind=kind, key=f"{kind}-key")],
+            )
+
+    @pytest.mark.parametrize("kind", ["tool", "note"])
+    def test_other_link_kinds_still_require_a_version(self, db, kind):
+        self._prompt(db)
+        with pytest.raises(ValueError, match="child_version is required"):
+            self._parent(db, f"agent-{kind}", [self._link("support", None, kind=kind)])
+
+    def test_graph_follows_the_current_prompt_version(self, db):
+        self._prompt(db, content="v1")
+        self._parent(db, "agent-float", [self._link("support", None)])
+        self._parent(db, "agent-pin", [self._link("support", 1)])
+
+        graph = db.load_component_graph("agent-float")
+        assert graph["resolved_versions"]["support"] == 1
+        [child] = graph["children"]
+        assert child["link"]["child_version"] is None
+        assert child["graph"]["config"]["version"] == 1
+
+        # Publish v2: a fresh load follows it, the stored link stays NULL, the pin stays on v1.
+        db.upsert_config(
+            component_id="support",
+            config={"type": "prompt", "id": "support", "content": "v2"},
+            stage="published",
+        )
+        assert db.get_component("support")["current_version"] == 2
+        graph = db.load_component_graph("agent-float")
+        assert graph["resolved_versions"]["support"] == 2
+        assert graph["children"][0]["graph"]["config"]["config"]["content"] == "v2"
+        assert db.get_links("agent-float", version=1)[0]["child_version"] is None
+
+        pinned = db.load_component_graph("agent-pin")
+        assert pinned["resolved_versions"]["support"] == 1
+        assert pinned["children"][0]["graph"]["config"]["config"]["content"] == "v1"

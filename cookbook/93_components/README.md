@@ -35,6 +35,9 @@ The Agent-as-Config feature allows you to:
 | `auto_populate_registry.py` | Inspect how AgentOS auto-discovers components from teams and workflows |
 | `auto_populate_registry_os.py` | Serve an AgentOS and see the auto-discovered components over the API |
 | `user_isolation_os.py` | Serve an AgentOS with per-user component isolation |
+| `save_prompt.py` | Publish a reusable Prompt and load current and earlier versions |
+| `prompt_version_selection.py` | Pin a Prompt version at save time, pin explicitly, or follow latest on load |
+| `shared_prompt.py` | Reuse one Prompt across Agents and a Team, with a consumer-owned fallback |
 
 ---
 
@@ -337,6 +340,131 @@ Details:
 
 See `auto_populate_registry.py` (offline inspection) and
 `auto_populate_registry_os.py` (served app).
+
+---
+
+## Prompts as Components
+
+A `Prompt` is a reusable block of instructions, a `str` or a `List[str]`, stored
+in the component catalogue. Agents and Teams point at it instead of carrying the
+text themselves, so one Prompt can serve many components and be updated in one
+place.
+
+### Publishing a Prompt
+
+```python
+from agno.db.sqlite import SqliteDb
+from agno.prompt import Prompt
+
+db = SqliteDb(db_file="tmp/prompts.db", id="prompts-db")
+
+version = Prompt(id="support", content=["Be concise."]).save(db=db)  # publishes version 1
+current = Prompt.load("support", db=db)  # current published version
+```
+
+- Every explicit `Prompt.save()` publishes a new immutable version, even for
+  identical content, and moves the current-version pointer to it.
+- Saving an Agent or Team never publishes Prompt content. Publish the Prompt
+  first; a component can only be saved against published versions.
+- A Prompt cannot be deleted while a saved Agent or Team references it.
+
+### Referencing a Prompt
+
+`instructions` and `system_message` accept a Prompt on both Agent and Team.
+`instructions` takes string or list content; `system_message` takes string
+content only.
+
+A Prompt in `system_message` completely replaces the generated system message.
+For a Team that includes the member roster and delegation instructions. Any
+`instructions` behind a custom `system_message` are not used, so they are not
+attributed either.
+
+### Choosing a version
+
+```python
+Agent(instructions=Prompt(id="support"))                    # pin the current version when the Agent is saved
+Agent(instructions=Prompt(id="support", version=3))         # pin version 3
+Agent(instructions=Prompt(id="support", version="latest"))  # follow the current version on each load
+```
+
+- Omitted is not floating: the pin is resolved once, when the Agent or Team is
+  saved, and stored in the saved reference and its link row.
+- An integer pins that exact version.
+- `version="latest"` resolves the current published version each time the
+  component is loaded.
+- Resolution happens at load time. An Agent or Team already in memory keeps the
+  version it resolved when it was loaded; publishing a new Prompt version
+  changes what the next load sees.
+
+### Loading: strict, lenient and fallback
+
+```python
+Agent(instructions=Prompt(id="support", version="latest", fallback=["Answer safely."]))
+```
+
+- `strict=True` raises when the requested version cannot be resolved.
+- Lenient loading (the default) tries the requested version, then the current
+  published version, then the component's own inline `fallback` text.
+- `fallback` belongs to one Agent or Team relationship and is stored on its
+  link row, never in the Prompt. This is Prompt resolution, not model fallback.
+- With no usable version and no fallback, loading fails in both modes. A
+  Prompt-backed field is never silently dropped, and a component whose Prompt
+  is unresolved refuses to run.
+
+### Run attribution
+
+A successful run records which Prompt actually shaped its system message under
+the run metadata key `agno_prompt_versions`: one record with `prompt_id`,
+`field`, `selection` (`pinned` or `latest`), `requested_version`,
+`resolved_version`, `source` (`published` or `inline`), `fallback` and
+`fallback_reason`. Prompt text is never copied into metadata. Only the effective
+field is recorded, so a custom `system_message` Prompt appears and the
+`instructions` it replaces do not.
+
+### Listing views
+
+`get_agents()` and `get_teams()` return listing views. They keep every Prompt
+reference and fallback but intentionally do not resolve Prompt text, so a
+Prompt-backed field reads `None` there. Load the component normally to get the
+text.
+
+### Removing a Prompt from an Agent or Team
+
+- On a normally loaded component, assign `instructions = None` and save: the
+  reference and its link row are removed.
+- A listing view may already show `instructions is None` because the Prompt
+  text was not loaded. Assigning `None` to it again changes nothing, so saving
+  it keeps the relationship; a list-then-save cannot delete a Prompt by accident.
+- To clear the relationship from a listing object, either load the component
+  normally first and then assign `None`, or save
+  `component.deep_copy(update={"instructions": None})`.
+- Through the components API a config is a whole document: a version written
+  without the reference, or with it set to `null`, removes the relationship;
+  a `PATCH` without a `config` body leaves it unchanged.
+
+### Out of scope for v1
+
+These are separate follow-ups, not part of this release:
+
+- Structured chat Prompts made of system, user and assistant messages.
+- Studio Prompt authoring and management UI. AgentOS and Studio already load
+  and run saved Prompt-backed Agents and Teams; the deferred work is the editing
+  interface, not runtime reconstruction.
+- Workflow Prompt attribution and Workflow-owned run metadata.
+- Async Prompt persistence and additional external storage adapters.
+- Restore protection for a consumer restored while its Prompt is still archived.
+- An optional explicit clearing method such as `clear_prompt()`, if users need it.
+
+### Examples
+
+The three Prompt examples use a local SQLite file, call no model, and can be
+re-run; each run publishes further versions.
+
+```bash
+python cookbook/93_components/save_prompt.py
+python cookbook/93_components/prompt_version_selection.py
+python cookbook/93_components/shared_prompt.py
+```
 
 ---
 

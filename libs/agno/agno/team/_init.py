@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from agno.learn.machine import LearningMachine
     from agno.offload.store import ResultStore
+    from agno.prompt.prompt import Prompt
     from agno.team.mode import TeamMode
     from agno.team.team import Team
 
@@ -40,6 +41,7 @@ from agno.models.base import Model
 from agno.models.fallback import FallbackConfig
 from agno.models.message import Message
 from agno.models.utils import get_model
+from agno.prompt.prompt import bind_prompt_field
 from agno.run.agent import RunEvent
 from agno.run.team import (
     TeamRunEvent,
@@ -91,7 +93,7 @@ def __init__(
     num_past_sessions_to_search: Optional[int] = None,
     num_past_session_runs_in_search: Optional[int] = None,
     description: Optional[str] = None,
-    instructions: Optional[Union[str, List[str], Callable]] = None,
+    instructions: Optional[Union[str, List[str], Callable, Prompt]] = None,
     use_instruction_tags: bool = False,
     expected_output: Optional[str] = None,
     additional_context: Optional[str] = None,
@@ -102,7 +104,7 @@ def __init__(
     timezone_identifier: Optional[str] = None,
     add_name_to_context: bool = False,
     add_member_tools_to_context: bool = False,
-    system_message: Optional[Union[str, Callable, Message]] = None,
+    system_message: Optional[Union[str, Callable, Message, Prompt]] = None,
     system_message_role: str = "system",
     introduction: Optional[str] = None,
     additional_input: Optional[List[Union[str, Dict, BaseModel, Message]]] = None,
@@ -256,7 +258,9 @@ def __init__(
     team.num_past_session_runs_in_search = num_past_session_runs_in_search
 
     team.description = description
-    team.instructions = instructions
+    # A Prompt on either field is copied into a retained handle; the field keeps plain text.
+    team._prompt_handles = {}
+    team.instructions = bind_prompt_field(team, "instructions", instructions)
     team.use_instruction_tags = use_instruction_tags
     team.expected_output = expected_output
     team.additional_context = additional_context
@@ -267,7 +271,7 @@ def __init__(
     team.add_name_to_context = add_name_to_context
     team.timezone_identifier = timezone_identifier
     team.add_member_tools_to_context = add_member_tools_to_context
-    team.system_message = system_message
+    team.system_message = bind_prompt_field(team, "system_message", system_message)
     team.system_message_role = system_message_role
     team.introduction = introduction
     team.additional_input = additional_input

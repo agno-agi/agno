@@ -42,6 +42,7 @@ from agno.models.base import Model
 from agno.models.fallback import acall_model_with_fallback, call_model_with_fallback
 from agno.models.message import Message
 from agno.models.response import ModelResponse, ToolExecution
+from agno.prompt.prompt import require_resolved_member_prompts, require_resolved_prompts, retained_prompt_handle
 from agno.run import RunContext, RunStatus
 from agno.run.agent import (
     RunCancelledEvent as AgentRunCancelledEvent,
@@ -1897,6 +1898,24 @@ def _run_stream(
         cleanup_run(run_response.run_id)  # type: ignore
 
 
+def _stamp_prompt_versions(team: "Team", run_context: RunContext, run_response: TeamRunOutput) -> None:
+    """Record the Prompt-backed field that shapes this run's system message.
+
+    Mirrors the team get_system_message: a custom system_message replaces the
+    generated message, so instructions behind it are omitted as ineffective.
+    A never-published inline Prompt leaves no record either; only catalog text
+    and the inline fallback that stood in for it are attributed. The list is
+    assigned fresh and a caller-supplied value under the key is dropped.
+    """
+    from agno.db.schemas.scheduler import assign_prompt_versions, prompt_version_record
+
+    effective = retained_prompt_handle(team, "system_message")
+    if effective is None and team.system_message is None:
+        effective = retained_prompt_handle(team, "instructions")
+    records = [prompt_version_record(effective)] if effective is not None and effective.attributable else []
+    run_context.metadata = run_response.metadata = assign_prompt_versions(run_context.metadata, records)
+
+
 def run_dispatch(
     team: "Team",
     input: Union[str, List, Dict, Message, BaseModel, List[Message]],
@@ -1924,6 +1943,8 @@ def run_dispatch(
     **kwargs: Any,
 ) -> Union[TeamRunOutput, Iterator[Union[RunOutputEvent, TeamRunOutputEvent]]]:
     """Run the Team and return the response."""
+    require_resolved_prompts(team, "Team")
+    require_resolved_member_prompts(team, "Team")
     from agno.media.storage.base import AsyncMediaStorage
     from agno.team._init import _has_async_db, _initialize_session, _initialize_session_state
     from agno.team._response import get_response_format
@@ -2028,6 +2049,7 @@ def run_dispatch(
         team.model = cast(Model, team.model)
 
         # Initialize run context
+        caller_run_context = run_context is not None
         run_context = run_context or RunContext(
             run_id=run_id,
             session_id=session_id,
@@ -2070,6 +2092,8 @@ def run_dispatch(
 
         run_response.model = team.model.id if team.model is not None else None
         run_response.model_provider = team.model.provider if team.model is not None else None
+        if not caller_run_context:
+            _stamp_prompt_versions(team, run_context, run_response)
 
         # Start the run metrics timer, to calculate the run duration
         run_response.metrics = RunMetrics()
@@ -4296,6 +4320,8 @@ def arun_dispatch(  # type: ignore
     **kwargs: Any,
 ) -> Union[TeamRunOutput, AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent]]]:
     """Run the Team asynchronously and return the response."""
+    require_resolved_prompts(team, "Team")
+    require_resolved_member_prompts(team, "Team")
 
     # Set the id for the run and register it immediately for cancellation tracking
     from agno.team._init import _initialize_session
@@ -4369,6 +4395,7 @@ def arun_dispatch(  # type: ignore
     team.model = cast(Model, team.model)
 
     # Initialize run context
+    caller_run_context = run_context is not None
     run_context = run_context or RunContext(
         run_id=run_id,
         session_id=session_id,
@@ -4407,6 +4434,8 @@ def arun_dispatch(  # type: ignore
 
     run_response.model = team.model.id if team.model is not None else None
     run_response.model_provider = team.model.provider if team.model is not None else None
+    if not caller_run_context:
+        _stamp_prompt_versions(team, run_context, run_response)
 
     # Start the run metrics timer, to calculate the run duration
     run_response.metrics = RunMetrics()
@@ -7531,6 +7560,8 @@ def continue_run_dispatch(
     COMPLETED team run produces a new ``run_id`` with the member rows
     cloned (per ADR — forked teams own their member rows).
     """
+    require_resolved_prompts(team, "Team")
+    require_resolved_member_prompts(team, "Team")
     from agno.media.storage.base import AsyncMediaStorage
     from agno.team._init import _has_async_db, _initialize_session
     from agno.team._response import get_response_format
@@ -9274,6 +9305,8 @@ def acontinue_run_dispatch(  # type: ignore
     ``replace_original``, ``additional_instructions``, ``input``) flow
     through to the inner functions which apply them after loading the run.
     """
+    require_resolved_prompts(team, "Team")
+    require_resolved_member_prompts(team, "Team")
     from agno.team._init import _initialize_session
     from agno.team._response import get_response_format
     from agno.team._run_options import resolve_run_options
