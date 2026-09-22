@@ -82,6 +82,10 @@ def _extract_json_objects(text: str) -> list[str]:
                 in_string = False
             continue
         if ch == '"':
+            if start_idx is None:
+                # A quote in prose must not open a string literal: the scanner would
+                # then consume the object that follows as string content.
+                continue
             in_string = True
             continue
         if ch == "{" and brace_depth == 0:

@@ -458,3 +458,15 @@ def test_parse_response_dict_str_ignores_unmatched_closing_brace():
     content = 'Here is the payload } {"name": "agno", "value": "1"}'
     result = parse_response_dict_str(content)
     assert result == {"name": "agno", "value": "1"}
+
+
+def test_extract_json_objects_ignores_unmatched_quote_in_prose():
+    """A stray quote in prose must not swallow the object that follows.
+
+    Regression test: the scanner entered a string literal on any '"', including one
+    in the surrounding text, and then treated the object and its closing brace as
+    string content.
+    """
+    text = 'The user asked "what is the config: {"theme": "dark"}'
+    assert _extract_json_objects(text) == ['{"theme": "dark"}']
+    assert parse_response_dict_str(text) == {"theme": "dark"}
