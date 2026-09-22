@@ -44,8 +44,8 @@ import jwt
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
-from agno.os import AgentOS
-from agno.os.authz import Authorization, PolicyEngine
+from agno.os import AgentOS, Authorization
+from agno.os.authz import PolicyEngine
 
 JWT_SECRET = os.getenv("JWT_VERIFICATION_KEY", "your-secret-key-at-least-256-bits-long")
 OS_ID = "custom-engine-os"

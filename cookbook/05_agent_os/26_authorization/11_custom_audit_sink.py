@@ -43,8 +43,8 @@ from datetime import UTC, datetime, timedelta
 import jwt
 from agno.agent import Agent
 from agno.db.in_memory import InMemoryDb
-from agno.os import AgentOS
-from agno.os.authz import AuditEvent, AuditSink, Authorization
+from agno.os import AgentOS, Authorization
+from agno.os.authz import AuditEvent, AuditSink
 
 SECRET = "custom-audit-sink-demo-secret-at-least-256-bits-long-x"
 OS_ID = "custom-audit-sink-os"

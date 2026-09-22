@@ -35,8 +35,7 @@ from datetime import UTC, datetime, timedelta
 import jwt
 from agno.agent import Agent
 from agno.db.in_memory import InMemoryDb
-from agno.os import AgentOS
-from agno.os.authz import Authorization
+from agno.os import AgentOS, Authorization
 from fastapi.testclient import TestClient
 
 SECRET = "managed-roles-audit-demo-secret-at-least-256-bits-long-xx"

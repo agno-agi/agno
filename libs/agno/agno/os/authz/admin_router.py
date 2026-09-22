@@ -9,7 +9,7 @@ DIRECTORY (who the users are + the disabled kill-switch) is a PEER concern serve
 :func:`get_users_router` at ``/users`` -- mounted from ``AgentOS(user_directory=...)``, not this
 router.
 
-    from agno.os.authz import Authorization
+    from agno.os import Authorization
 
     authz = Authorization(db_url="postgresql+psycopg://...", verification_keys=KEYS, audience=OS_ID)
     authz.define_role("admin", ["agent_os:admin"])

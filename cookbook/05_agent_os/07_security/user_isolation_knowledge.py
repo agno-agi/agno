@@ -22,8 +22,7 @@ from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.sqlite import SqliteDb
 from agno.knowledge.knowledge import Knowledge
 from agno.models.openai import OpenAIResponses
-from agno.os import AgentOS
-from agno.os.authz import Authorization
+from agno.os import AgentOS, Authorization
 from fastapi.testclient import TestClient
 
 # ---------------------------------------------------------------------------

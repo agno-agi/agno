@@ -105,7 +105,7 @@ Some routes should be public even when JWT authentication is enabled. Use
 `Authorization(excluded_route_paths=[...])` to mark them:
 
 ```python
-from agno.os.authz import Authorization
+from agno.os import Authorization
 
 AgentOS(
     authorization=Authorization(

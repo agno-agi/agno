@@ -3,6 +3,7 @@ from typing import TYPE_CHECKING, Any
 from agno.job_queue import QueueConfig, RedisCoordination
 from agno.os.app import AgentOS
 from agno.os.auth import create_dev_token
+from agno.os.authz import Authorization, UserDirectory
 from agno.os.config import MCP_BUILTIN_TAGS, MCPBuiltinTag, MCPConfig, MCPServerConfig
 
 if TYPE_CHECKING:
@@ -10,6 +11,8 @@ if TYPE_CHECKING:
 
 __all__ = [
     "AgentOS",
+    "Authorization",  # verification + roles + audit + the /authz admin API, wired into AgentOS
+    "UserDirectory",  # the credential-less roster, AgentOS(user_directory=...)
     "MCPConfig",
     "MCPServerConfig",  # deprecated alias of MCPConfig
     "MCPBuiltinTag",

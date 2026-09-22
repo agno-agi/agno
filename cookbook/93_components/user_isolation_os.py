@@ -30,8 +30,7 @@ A token for a different user sees none of it:
 """
 
 from agno.db.postgres import PostgresDb
-from agno.os import AgentOS
-from agno.os.authz import Authorization
+from agno.os import AgentOS, Authorization
 
 # ---------------------------------------------------------------------------
 # Setup
