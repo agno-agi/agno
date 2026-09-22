@@ -63,6 +63,23 @@ class MetricsRefreshStatusResponse(BaseModel):
     error: Optional[str] = Field(None, description="Error message if the most recent refresh failed")
 
 
+class OSMetricsRefreshStatusResponse(MetricsRefreshStatusResponse):
+    """The refresh state of the AgentOS database plus how fresh each OS metrics answer is.
+
+    updated_at is None when the window holds no daily metrics. A computed_at entry is None when
+    that route's answer has not been computed on this server process since it started or the
+    cache was cleared.
+    """
+
+    updated_at: Optional[datetime] = Field(
+        None, description="When the daily metrics of this window were last written, as the database records it"
+    )
+    computed_at: Dict[str, Optional[datetime]] = Field(
+        ...,
+        description="When each OS metrics route's answer for this owner and window was last computed on this server process",
+    )
+
+
 class ModelUsage(BaseModel):
     """The runs one model served across the window"""
 

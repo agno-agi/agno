@@ -95,9 +95,11 @@ one agent run, one agent session, one user, and 42 total tokens.
 **Description:** Started the checked-in metrics AgentOS server on a clean
 database, ran `metrics-researcher` (`gpt-5.5`) twice in session `s-a` and
 `metrics-summarizer` (`gpt-5.6-luna`) once in session `s-b` through
-`POST /agents/{agent_id}/runs`, called `POST /metrics/refresh`, then read
+`POST /agents/{agent_id}/runs`, called `POST /os/metrics/refresh`, then read
 `GET /os/metrics?starting_date=<6 days ago>` twice and
-`GET /os/metrics/sessions?starting_date=<6 days ago>` once.
+`GET /os/metrics/sessions?starting_date=<6 days ago>` once, with
+`GET /os/metrics/refresh/status` before the refresh, after the reads and
+after a second `POST /os/metrics/refresh`.
 
 **Result:** `GET /os/metrics` reported `window_days` 7 and 3 runs that
 recorded a model: `gpt-5.5` at 66.7% run share over 2 runs and `gpt-5.6-luna`
@@ -105,6 +107,11 @@ at 33.3% over 1. The second read returned the same `computed_at`, so it was
 served from the cache. `GET /os/metrics/sessions` reported 7 entries, one per
 day, every earlier day at 0 and 2 sessions today, `previous_total_sessions` 0
 and `change_percent` null, since the seven days before held no sessions.
+`GET /os/metrics/refresh/status` reported `idle` with `updated_at` null and
+both `computed_at` entries null on the clean database, `completed` with `updated_at` set once
+the refresh ran, both entries carrying each route's `computed_at` after the reads,
+and both null again after the second refresh. `?background=true` returned
+202 `started`, and `GET /metrics/refresh/status` showed the same state.
 
 ---
 

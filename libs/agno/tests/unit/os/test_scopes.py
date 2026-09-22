@@ -60,6 +60,14 @@ class TestCheckRouteScopes:
         result = check_route_scopes(["metrics:read"], get_default_scope_mappings(), "GET", "/os/metrics/sessions")
         assert result.allowed is True
 
+    def test_os_metrics_refresh_needs_the_metrics_write_scope(self):
+        result = check_route_scopes(["metrics:read"], get_default_scope_mappings(), "POST", "/os/metrics/refresh")
+        assert result.allowed is False
+        result = check_route_scopes(["metrics:write"], get_default_scope_mappings(), "POST", "/os/metrics/refresh")
+        assert result.allowed is True
+        result = check_route_scopes(["metrics:read"], get_default_scope_mappings(), "GET", "/os/metrics/refresh/status")
+        assert result.allowed is True
+
 
 class TestParseScope:
     def test_parses_global_scope(self):

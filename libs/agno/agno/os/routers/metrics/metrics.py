@@ -20,6 +20,7 @@ from agno.os.routers.metrics.schemas import (
     MetricsRefreshStatusResponse,
     MetricsResponse,
     ModelUsage,
+    OSMetricsRefreshStatusResponse,
     OSMetricsResponse,
     OSSessionMetricsResponse,
 )
@@ -216,14 +217,20 @@ def attach_routes(
     # one recompute between them rather than one each.
     recomputing: Set[Tuple[str, Optional[str], date, date]] = set()
 
+    # Bumped each time the cache is dropped, so a read that was computing across the drop
+    # can tell its answer predates the rebuild.
+    generation = 0
+
     def _drop_os_metrics_cache(db: Union[BaseDb, AsyncBaseDb, RemoteDb]) -> None:
         """Forget the OS metrics once the daily metrics they are built from have been rebuilt."""
+        nonlocal generation
         if os_db is None or db is not os_db:
             return
         cache.clear()
         # A recompute already in flight read the metrics before the rebuild, so its result is
         # dropped rather than written back over the entry this just cleared
         recomputing.clear()
+        generation += 1
 
     def _cache_get(key: Tuple[str, Optional[str], date, date]) -> Optional[Tuple[Any, bool]]:
         entry = cache.get(key)
@@ -483,11 +490,11 @@ def attach_routes(
     ) -> List[Dict[str, Any]]:
         """The daily metrics the AgentOS database holds for the window, scoped the way GET /metrics scopes them."""
         if isinstance(db, AsyncBaseDb):
-            metrics, _ = await db.get_metrics(
+            metrics, latest_updated_at = await db.get_metrics(
                 starting_date=starting_date, ending_date=ending_date, user_id=effective_user_id
             )
         else:
-            metrics, _ = await run_in_threadpool(
+            metrics, latest_updated_at = await run_in_threadpool(
                 db.get_metrics,
                 starting_date=starting_date,
                 ending_date=ending_date,
@@ -651,8 +658,11 @@ def attach_routes(
                         )
                     return metrics
 
+            generation_before = generation
             metrics = await _compute_os_metrics(os_db, effective_user_id, starting_date, ending_date)
-            _cache_put(cache_key, metrics)
+            # A rebuild since this read started makes these numbers stale, so they are returned but not kept
+            if generation_before == generation:
+                _cache_put(cache_key, metrics)
             return metrics
 
         except HTTPException:
@@ -797,8 +807,11 @@ def attach_routes(
                         )
                     return metrics
 
+            generation_before = generation
             metrics = await _compute_os_session_metrics(os_db, effective_user_id, starting_date, ending_date)
-            _cache_put(cache_key, metrics)
+            # A rebuild since this read started makes these numbers stale, so they are returned but not kept
+            if generation_before == generation:
+                _cache_put(cache_key, metrics)
             return metrics
 
         except HTTPException:
@@ -808,5 +821,216 @@ def attach_routes(
         except Exception as e:
             log_exception("GET /os/metrics/sessions failed")
             raise HTTPException(status_code=500, detail=f"Error getting OS session metrics: {str(e)}")
+
+    # The OS metrics routes, by the name each keeps its cache entries under
+    os_metrics_routes = {"os_metrics": "metrics", "os_session_metrics": "session_metrics"}
+
+    async def _daily_metrics_updated_at(
+        db: Union[BaseDb, AsyncBaseDb], effective_user_id: Optional[str], starting_date: date, ending_date: date
+    ) -> Optional[datetime]:
+        """When the daily metrics of the window were last written, as the database records it.
+
+        Bounded to the window so a status poll reads as many rows as the answers it describes,
+        not the whole table.
+        """
+        if isinstance(db, AsyncBaseDb):
+            metrics, latest_updated_at = await db.get_metrics(
+                starting_date=starting_date, ending_date=ending_date, user_id=effective_user_id
+            )
+        else:
+            metrics, latest_updated_at = await run_in_threadpool(
+                db.get_metrics, starting_date=starting_date, ending_date=ending_date, user_id=effective_user_id
+            )
+        return to_utc_datetime(latest_updated_at)
+
+    async def _os_metrics_refresh_status(
+        db: Union[BaseDb, AsyncBaseDb],
+        effective_user_id: Optional[str],
+        starting_date: date,
+        ending_date: date,
+    ) -> OSMetricsRefreshStatusResponse:
+        state = refresh_states.get(str(db.id))
+        computed_at: Dict[str, Optional[datetime]] = {}
+        for prefix, name in os_metrics_routes.items():
+            entry = cache.get((prefix, effective_user_id, starting_date, ending_date))
+            computed_at[name] = entry[0].computed_at if entry is not None else None
+        return OSMetricsRefreshStatusResponse(
+            status=state.status if state is not None else "idle",
+            started_at=state.started_at if state is not None else None,
+            finished_at=state.finished_at if state is not None else None,
+            error=state.error if state is not None else None,
+            updated_at=await _daily_metrics_updated_at(db, effective_user_id, starting_date, ending_date),
+            computed_at=computed_at,
+        )
+
+    @router.post(
+        "/os/metrics/refresh",
+        response_model=Union[MetricsRefreshStatusResponse, MetricsRefreshResponse],
+        status_code=200,
+        operation_id="refresh_os_metrics",
+        summary="Refresh OS Metrics",
+        description=(
+            "Rebuild the daily metrics of the AgentOS database and forget every cached OS metrics "
+            "answer, so the next read of any OS metrics route recomputes from the rebuilt metrics. "
+            "No db_id: the AgentOS database is always the one refreshed, the one the OS metrics routes read.\n\n"
+            "By default the refresh runs synchronously and returns its outcome. Pass background=true "
+            "to run the refresh in the background instead: the endpoint returns 202 Accepted "
+            "immediately and GET /os/metrics/refresh/status can be polled. If a refresh is already in "
+            "progress for the database, returns status 'already_running' without starting a new one. "
+            "When the daily metrics were last written, and when each OS metrics route last computed "
+            "its answer, are reported by GET /os/metrics/refresh/status."
+        ),
+        responses={
+            200: {
+                "description": "Daily metrics rebuilt and the cached answers dropped",
+                "content": {
+                    "application/json": {
+                        "example": {
+                            "status": "completed",
+                            "started_at": "2025-08-12T08:01:47Z",
+                            "finished_at": "2025-08-12T08:01:49Z",
+                            "error": None,
+                        }
+                    }
+                },
+            },
+            202: {
+                "description": "Background refresh started",
+                "content": {
+                    "application/json": {
+                        "example": {"status": "started", "message": "Metrics refresh started in background"}
+                    }
+                },
+            },
+            500: {"description": "Failed to refresh metrics", "model": InternalServerErrorResponse},
+            503: {"description": "No AgentOS database configured", "model": InternalServerErrorResponse},
+        },
+    )
+    async def refresh_os_metrics(
+        request: Request,
+        response: Response,
+        background_tasks: BackgroundTasks,
+        background: bool = Query(
+            default=False, description="Run the refresh in the background and return 202 immediately"
+        ),
+    ) -> Union[MetricsRefreshStatusResponse, MetricsRefreshResponse]:
+        try:
+            if os_db is None:
+                raise HTTPException(
+                    status_code=503,
+                    detail="Metrics not available: pass a `db` to AgentOS to enable this feature.",
+                )
+
+            # Resolved before the background branch so an identity-less token cannot start a refresh.
+            get_scoped_user_id(request)
+            refresh_key = str(os_db.id)
+
+            if background:
+                response.status_code = 202
+                if _refresh_is_running(refresh_key):
+                    return _already_running_response()
+
+                _mark_refresh_running(refresh_key)
+                background_tasks.add_task(_do_refresh, os_db, None, None, None)
+
+                return MetricsRefreshResponse(status="started", message="Metrics refresh started in background")
+
+            # The same guard the background path has: without it every concurrent caller
+            # starts its own full recalculation of every date the database still needs
+            if _refresh_is_running(refresh_key):
+                return _already_running_response()
+
+            _mark_refresh_running(refresh_key)
+            try:
+                if isinstance(os_db, AsyncBaseDb):
+                    await os_db.calculate_metrics()
+                else:
+                    await run_in_threadpool(os_db.calculate_metrics)
+            except Exception as e:
+                _record_refresh_outcome(refresh_key, error=str(e))
+                raise
+            _record_refresh_outcome(refresh_key)
+            _drop_os_metrics_cache(os_db)
+
+            return refresh_states[refresh_key]
+
+        except HTTPException:
+            raise
+        except AgnoError as e:
+            raise AgnoHTTPException(e)
+        except Exception as e:
+            log_exception("POST /os/metrics/refresh failed")
+            raise HTTPException(status_code=500, detail=f"Error refreshing OS metrics: {str(e)}")
+
+    @router.get(
+        "/os/metrics/refresh/status",
+        response_model=OSMetricsRefreshStatusResponse,
+        status_code=200,
+        operation_id="get_os_metrics_refresh_status",
+        summary="Get OS Metrics Refresh Status",
+        description=(
+            "Get the status of the most recent refresh of the AgentOS database's daily metrics, "
+            "when those metrics were last written, and when each OS metrics route's answer was last computed "
+            "for the caller's owner and window.\n\n"
+            "Returns 'running' while a refresh is in progress, then 'completed' or 'failed' with the "
+            "finish timestamp, or 'idle' if no refresh has been triggered since this server process "
+            "started. updated_at comes from the database, so it is the same on every server process; "
+            "the computed_at times are this process's own cache. Intended for the home page header and for "
+            "polling after POST /os/metrics/refresh?background=true."
+        ),
+        responses={
+            200: {
+                "description": "Current refresh status",
+                "content": {
+                    "application/json": {
+                        "example": {
+                            "status": "completed",
+                            "started_at": "2025-08-12T08:01:47Z",
+                            "finished_at": "2025-08-12T08:01:49Z",
+                            "error": None,
+                            "updated_at": "2025-08-12T08:01:49Z",
+                            "computed_at": {"metrics": "2025-08-12T08:03:10Z", "session_metrics": None},
+                        }
+                    }
+                },
+            },
+            500: {"description": "Failed to get refresh status", "model": InternalServerErrorResponse},
+            503: {"description": "No AgentOS database configured", "model": InternalServerErrorResponse},
+        },
+    )
+    async def get_os_metrics_refresh_status(
+        request: Request,
+        starting_date: Optional[date] = Query(
+            default=None,
+            description="Starting date of the window the computed_at times refer to (YYYY-MM-DD format). Defaults to 29 days before ending_date",
+        ),
+        ending_date: Optional[date] = Query(
+            default=None,
+            description="Ending date of the window the computed_at times refer to (YYYY-MM-DD format). Defaults to today",
+        ),
+        user_id: Optional[str] = Query(
+            default=None, description="Report this user's computed_at times. Ignored for non-admin callers"
+        ),
+    ) -> OSMetricsRefreshStatusResponse:
+        try:
+            if os_db is None:
+                raise HTTPException(
+                    status_code=503,
+                    detail="Metrics not available: pass a `db` to AgentOS to enable this feature.",
+                )
+
+            starting_date, ending_date = _window(starting_date, ending_date)
+            scoped_user_id = get_scoped_user_id(request)
+            effective_user_id = scoped_user_id if scoped_user_id is not None else user_id
+
+            return await _os_metrics_refresh_status(os_db, effective_user_id, starting_date, ending_date)
+
+        except HTTPException:
+            raise
+        except AgnoError as e:
+            raise AgnoHTTPException(e)
+        except Exception as e:
+            log_exception("GET /os/metrics/refresh/status failed")
+            raise HTTPException(status_code=500, detail=f"Error getting OS metrics refresh status: {str(e)}")
 
     return router
