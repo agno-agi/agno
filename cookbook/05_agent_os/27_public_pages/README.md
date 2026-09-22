@@ -398,9 +398,17 @@ is printed once when pruning starts and again after each stale page is removed.
 
 It exits 1 when the workflow errors or is cancelled, when no progress or no report
 arrives, and when the report is `partial`, and exits 2 without calling the server
-when `PAGE_DEMO_SYNC_TOKEN` is unset. Cancelling the run marks it cancelled and
-stops progress delivery, but the page sync itself still runs to its end: a workflow
-drains a function step after a cancel.
+when `PAGE_DEMO_SYNC_TOKEN` is unset.
+
+Cancelling the run through AgentOS (`POST /workflows/sync-docs/runs/{run_id}/cancel`,
+or `AgentOSClient.cancel_workflow_run`) stops the synchronization. The cancel is
+observed at the step's next progress snapshot; the step's stream is then closed,
+which cancels the page worker's budget, the worker stops before its next page, the
+writer lock is released and the run is stored as cancelled. No progress is delivered
+after the cancel and nothing is pruned. The window is cooperative: a snapshot reports
+a page that has just been published, so that page and any page already in progress
+complete their own transactions first. Against a three-page source, one and then two
+pages completed after the cancel request; on a large index that tail is negligible.
 
 `--reindex` re-embeds unchanged pages too. `PAGE_DEMO_SERVER_URL` overrides
 `http://127.0.0.1:7777`. The token is sent only in the `Authorization` header and

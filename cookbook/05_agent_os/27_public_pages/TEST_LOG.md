@@ -339,3 +339,78 @@ responses. Source `https://llmstxt.org/llms.txt`: HTTP 200, three links, all on
   part of this example and were not exercised.
 
 ---
+
+### Cancellation, reindex and saved events (2026-09-22)
+
+**Status:** PASS offline and live.
+
+**Description:** The tree of this commit series: cancelling a workflow stops a
+function step at its next yield (`Step._function_events` / `_afunction_events`),
+`BoundedWorkers.stream`/`astream` deliver a finished worker's buffered snapshots
+and result however late the consumer resumes, and `astream_sync_pages` documents
+`aclose()` for Python 3.9. Environment: Python 3.12.13, pytest 9.1.1, PostgreSQL 18.1
+with pgvector 0.8.1 on port 5532, `PYTHONPATH=libs/agno`, `AGNO_TELEMETRY=false`.
+Every test written for a fix was seen failing first; stateful suites ran twice.
+
+**Result:**
+- `pytest libs/agno/tests/unit/knowledge/test_sync_progress_workers.py`: 11 passed,
+  twice. A worker that emits two snapshots and finishes inside a 0.2 s budget still
+  delivers both and its result to a consumer that resumes after 0.35 s; an unfinished
+  worker still raises `operation_deadline`; sync and async.
+- `pytest libs/agno/tests/integration/workflows/test_workflow_cancellation.py
+  -k TestFunctionStepCancellationStopsTheFunction`: 4 passed, twice. A function step
+  yielding ten pages, cancelled after the first, works on no further page, its
+  `finally` runs before the stream ends, exactly one `WorkflowCancelled` then
+  `WorkflowCompleted`, the run is stored as cancelled with the events streamed
+  before the cancel and no step result; sync and async, streaming and not, two
+  runs each.
+- `pytest libs/agno/tests/integration/os/test_workflow_runs.py`: 20 passed, twice.
+  A cancel through `POST /workflows/sync-docs/runs/{run_id}/cancel` while the step is
+  between pages stops it the same way, twice in one process.
+- `pytest libs/agno/tests/unit/knowledge/test_page_contract.py`: cancelling the
+  cookbook's `sync-docs` run cancels the page worker's budget, the worker ends and
+  its capacity returns, twice. Focused set (client, page contract, function
+  progress, event stream, sync workers, Python 3.9 compatibility): 112 passed,
+  2 skipped by design, twice.
+- `pytest libs/agno/tests/unit/workflow`: 795 passed, 9 skipped.
+  `pytest libs/agno/tests/unit/knowledge`: 1110 passed, 13 skipped.
+  `pytest libs/agno/tests/unit/os`: 3331 passed, 26 skipped.
+  `pytest libs/agno/tests/integration/workflows`: 470 passed, 42 skipped; the 41
+  failures need `OPENAI_API_KEY` and fail the same way on main.
+- `AGNO_PAGE_TEST_DB_URL=... pytest libs/agno/tests/integration/os/test_public_surface.py`:
+  7 passed, twice. `... test_page_storage.py`: 159 passed, progress tests twice;
+  no temporary database left behind.
+- Python 3.9.6: every changed file parses; `utils/bounded.py` runs the late-consumer
+  scenario there. `ruff check` and `ruff format --check` clean on every changed
+  file. `validate.sh`: 53 mypy diagnostics, identical to main.
+
+**Live results (2026-09-22):** `public_pages.py serve` on `127.0.0.1:7777`, database
+`page_demo` (kept from the previous entry), `text-embedding-3-small`, source
+`https://llmstxt.org/llms.txt` (three pages). Commands ran with
+`PAGE_DEMO_DB_URL=postgresql+psycopg://ai:<password>@localhost:5532/page_demo`,
+`PAGE_DEMO_SYNC_TOKEN=<token>` and `OPENAI_API_KEY=<key>` in the environment only.
+- Startup clean; the only listening socket was `127.0.0.1:7777`; `/health` 200,
+  `/readyz` all `ok`; `/config` and `/sessions` 404; anonymous and wrong-token
+  `POST /workflows/sync-docs/runs` returned 401.
+- `page_sync_progress.py`: six progress lines, report `unchanged`, exit 0.
+- `page_sync_progress.py --reindex`: `Processed n of 3 pages (n updated, 0 failed)`,
+  report `completed`, updated 3, exit 0; binding revision 3 to 6. Both saved runs
+  hold exactly `WorkflowStarted > StepStarted > StepCompleted > WorkflowCompleted`;
+  no `StepProgress` is stored.
+- Cancellation, twice: a client started `--reindex` through `AgentOSClient` and
+  called `cancel_workflow_run` after `Discovered 3 pages`. Each time: no progress
+  after the cancel, then `WorkflowCancelled` and `WorkflowCompleted`; the server
+  logged the cancel at the workflow and the step; the run was stored `CANCELLED`
+  with `WorkflowStarted > StepStarted`; `pg_locks` held no advisory lock; the
+  binding revision moved 6 to 7, then 7 to 9: one page, then two pages, completed
+  after the request and the third never started; nothing was pruned. A normal sync
+  straight after each cancel acquired the writer lock and reported `unchanged`,
+  the second one after both cancels, so the two-slot sync pool had lost no worker.
+- Shutdown on interrupt completed promptly. Afterwards: port 7777 closed, no demo
+  process, no advisory lock, no temporary database, the token in no repository
+  file; the token file and Keychain entry were removed. `git status` unchanged.
+- Known limitation: cancellation is cooperative. It is observed at the next
+  progress snapshot, which reports a page already published, and the page in
+  progress finishes its transaction; a function step that never yields cannot be
+  stopped. NOT RUN: MCP delivery and Control Plane or AG-UI rendering, which are
+  not part of this example.
