@@ -185,7 +185,6 @@ def _roles(**kw):
 
 
 def _os(role_store, user_store, *, auto_provision=False):
-
     agent = Agent(id="research-agent", name="Research Agent", db=InMemoryDb())
     return AgentOS(
         id=OS_ID,
