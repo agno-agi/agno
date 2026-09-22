@@ -8,6 +8,7 @@ from contextlib import contextmanager
 from copy import deepcopy
 from typing import (
     TYPE_CHECKING,
+    Annotated,
     Any,
     Callable,
     Dict,
@@ -29,6 +30,7 @@ from fastmcp.server.http import (
 )
 from fastmcp.tools import ToolResult
 from mcp.types import ToolAnnotations
+from pydantic import Field
 
 from agno.db.base import SessionType
 from agno.os.mcp_results import build_custom_tool_result, build_run_tool_result, trim_session_run
@@ -1743,6 +1745,23 @@ def _split_tool_entries(mcp_config: "Optional[MCPConfig]", os: "AgentOS") -> "tu
     return customs, exposures
 
 
+# Argument descriptions for the built-in and exposed tools. They are published in each tool's
+# inputSchema, which every MCP client sends to its model verbatim on tools/list, so each one is
+# prompt text: a short phrase the calling model can act on, nothing about how the server
+# resolves the value. Operator-facing semantics stay in comments here.
+_RunMessage = Annotated[str, Field(description="The message to send.")]
+# Advisory only: an authenticated caller's identity always replaces it (``_resolve_user_id``).
+_RunUserId = Annotated[Optional[str], Field(description="User to attribute the run to.")]
+_RunSessionId = Annotated[Optional[str], Field(description="Session to continue. Omit to start a new one.")]
+# Ignored for a caller scoped by user isolation, who always reads their own sessions.
+_ReadUserId = Annotated[Optional[str], Field(description="Filter to one user.")]
+_DbId = Annotated[Optional[str], Field(description="Only when get_agentos_config lists several databases.")]
+_ReadSessionType = Annotated[
+    Optional[Literal["agent", "team", "workflow"]], Field(description="Auto-detected when omitted.")
+]
+_OwnerId = Annotated[Optional[str], Field(description="Set exactly one of agent_id, team_id, workflow_id.")]
+
+
 def _make_exposed_run_tool(
     os: "AgentOS",
     kind: "Literal['agents', 'teams']",
@@ -1757,10 +1776,10 @@ def _make_exposed_run_tool(
     label_prefix = "Agent" if kind == "agents" else "Team"
 
     async def run_exposed(
-        message: str,
+        message: _RunMessage,
         ctx: Context,
-        user_id: Optional[str] = None,
-        session_id: Optional[str] = None,
+        user_id: _RunUserId = None,
+        session_id: _RunSessionId = None,
     ) -> ToolResult:
         _require_tool_scopes("POST", f"/{kind}/{component_id}/runs")
         resolved_user_id = _resolve_user_id(user_id)
@@ -1796,10 +1815,10 @@ def _make_exposed_workflow_tool(
     """A run tool bound to one workflow: the ``run_workflow`` body with the id fixed."""
 
     async def run_exposed_workflow(
-        message: str,
+        message: _RunMessage,
         ctx: Context,
-        user_id: Optional[str] = None,
-        session_id: Optional[str] = None,
+        user_id: _RunUserId = None,
+        session_id: _RunSessionId = None,
     ) -> ToolResult:
         from agno.workflow.remote import RemoteWorkflow
 
@@ -1976,6 +1995,7 @@ def _register_exposed_components(
         mcp.tool(name=tool_name, title=title, description=description, annotations=annotations)(fn)
 
 
+# Mandated by the schema's $schema pattern; not hosted until the extension graduates.
 SERVER_CARD_SCHEMA = "https://static.modelcontextprotocol.io/schemas/v1/server-card.schema.json"
 SERVER_CARD_MEDIA_TYPE = "application/mcp-server-card+json"
 _MCP_PATH = "/mcp"
@@ -2131,8 +2151,7 @@ def _register_server_card(
                 "Vary": vary,
                 "Access-Control-Allow-Origin": "*",
                 "Access-Control-Allow-Methods": "GET",
-                "Access-Control-Allow-Headers": "Content-Type, If-None-Match",
-                "Access-Control-Expose-Headers": "ETag",
+                "Access-Control-Allow-Headers": "Content-Type",
             },
         )
 
@@ -2362,20 +2381,18 @@ def build_mcp_server(
         name="run_agent",
         title="Run Agent",
         description=(
-            "Run an agent with a message and get its response. Pass a session_id from get_sessions to "
-            "continue that conversation; omit it to start a new one (the session_id comes back in "
-            "structuredContent). If the result status is PAUSED, resolve the returned requirements and "
-            "call continue_run. Agent ids come from get_agentos_config."
+            "Run an agent with a message and get its response. If the result status is PAUSED, resolve "
+            "the returned requirements and call continue_run."
         ),
         tags={"core"},
         annotations={"readOnlyHint": False, "destructiveHint": True, "openWorldHint": True},
     )  # type: ignore
     async def run_agent(
-        agent_id: str,
-        message: str,
+        agent_id: Annotated[str, Field(description="Agent id from get_agentos_config.")],
+        message: _RunMessage,
         ctx: Context,
-        user_id: Optional[str] = None,
-        session_id: Optional[str] = None,
+        user_id: _RunUserId = None,
+        session_id: _RunSessionId = None,
     ) -> ToolResult:
         _require_tool_scopes("POST", f"/agents/{agent_id}/runs")
         user_id = _resolve_user_id(user_id)
@@ -2392,18 +2409,18 @@ def build_mcp_server(
         name="run_team",
         title="Run Team",
         description=(
-            "Run a team of agents with a message and get its response. Same session and PAUSED semantics "
-            "as run_agent. Team ids come from get_agentos_config."
+            "Run a team of agents with a message and get its response. If the result status is PAUSED, "
+            "resolve the returned requirements and call continue_run."
         ),
         tags={"core"},
         annotations={"readOnlyHint": False, "destructiveHint": True, "openWorldHint": True},
     )  # type: ignore
     async def run_team(
-        team_id: str,
-        message: str,
+        team_id: Annotated[str, Field(description="Team id from get_agentos_config.")],
+        message: _RunMessage,
         ctx: Context,
-        user_id: Optional[str] = None,
-        session_id: Optional[str] = None,
+        user_id: _RunUserId = None,
+        session_id: _RunSessionId = None,
     ) -> ToolResult:
         _require_tool_scopes("POST", f"/teams/{team_id}/runs")
         user_id = _resolve_user_id(user_id)
@@ -2421,18 +2438,18 @@ def build_mcp_server(
         title="Run Workflow",
         description=(
             "Run a workflow with an input message and get its result. Can be long-running: progress is "
-            "reported per step when the client supports it. Same session and PAUSED semantics as "
-            "run_agent. Workflow ids come from get_agentos_config."
+            "reported per step when the client supports it. If the result status is PAUSED, resolve the "
+            "returned requirements and call continue_run."
         ),
         tags={"core"},
         annotations={"readOnlyHint": False, "destructiveHint": True, "openWorldHint": True},
     )  # type: ignore
     async def run_workflow(
-        workflow_id: str,
-        message: str,
+        workflow_id: Annotated[str, Field(description="Workflow id from get_agentos_config.")],
+        message: _RunMessage,
         ctx: Context,
-        user_id: Optional[str] = None,
-        session_id: Optional[str] = None,
+        user_id: _RunUserId = None,
+        session_id: _RunSessionId = None,
     ) -> ToolResult:
         from agno.workflow.remote import RemoteWorkflow
 
@@ -2467,24 +2484,27 @@ def build_mcp_server(
         name="continue_run",
         title="Continue Paused Run",
         description=(
-            "Resume a PAUSED run after resolving its requirements (human-in-the-loop). "
-            "When a run tool returns status=PAUSED, its structuredContent carries the unresolved "
-            "requirements; set the resolution fields on them (e.g. confirmation=true) and pass them "
-            "back here unchanged otherwise. Provide exactly one of agent_id / team_id / workflow_id "
-            "(the component that owns the run) plus the run_id and session_id from the paused result."
+            "Resume a PAUSED run after resolving its requirements (human-in-the-loop). The paused "
+            "result's structuredContent carries the run_id, session_id, owning component id, and the "
+            "unresolved requirements."
         ),
         tags={"core", "lifecycle"},
         annotations={"readOnlyHint": False, "destructiveHint": True, "openWorldHint": True},
     )  # type: ignore
     async def continue_run(
-        run_id: str,
+        run_id: Annotated[str, Field(description="run_id from the PAUSED result.")],
+        session_id: Annotated[str, Field(description="session_id from the PAUSED result.")],
         ctx: Context,
-        session_id: Optional[str] = None,
-        agent_id: Optional[str] = None,
-        team_id: Optional[str] = None,
-        workflow_id: Optional[str] = None,
-        requirements: Optional[List[Dict[str, Any]]] = None,
-        user_id: Optional[str] = None,
+        agent_id: _OwnerId = None,
+        team_id: _OwnerId = None,
+        workflow_id: _OwnerId = None,
+        requirements: Annotated[
+            Optional[List[Dict[str, Any]]],
+            Field(
+                description="The PAUSED result's requirements with their resolution fields set, e.g. confirmation=true."
+            ),
+        ] = None,
+        user_id: _RunUserId = None,
     ) -> ToolResult:
         component_type, component_id = _classify_lifecycle_target(agent_id, team_id, workflow_id)
         _require_published_component("continue_run", component_type, component_id)
@@ -2542,18 +2562,21 @@ def build_mcp_server(
         title="Cancel Run",
         description=(
             "Request cancellation of a running run. Irreversible: the run stops and is marked CANCELLED "
-            "(if it has not started yet, the intent is recorded and applied when it does). Provide the "
-            "run_id, its session_id, and exactly one of agent_id / team_id / workflow_id."
+            "(if it has not started yet, the intent is recorded and applied when it does)."
         ),
         tags={"core", "lifecycle"},
         annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": True, "openWorldHint": True},
     )  # type: ignore
     async def cancel_run(
-        run_id: str,
-        session_id: Optional[str] = None,
-        agent_id: Optional[str] = None,
-        team_id: Optional[str] = None,
-        workflow_id: Optional[str] = None,
+        run_id: Annotated[str, Field(description="Run to cancel.")],
+        # Mandatory for a caller scoped by user isolation (ownership is proven through the
+        # session); an admin's cancel is keyed on run_id alone.
+        session_id: Annotated[
+            Optional[str], Field(description="Session the run belongs to. Pass it when you have it.")
+        ] = None,
+        agent_id: _OwnerId = None,
+        team_id: _OwnerId = None,
+        workflow_id: _OwnerId = None,
     ) -> str:
         component_type, component_id = _classify_lifecycle_target(agent_id, team_id, workflow_id)
         _require_published_component("cancel_run", component_type, component_id)
@@ -2590,24 +2613,26 @@ def build_mcp_server(
         name="get_sessions",
         title="List Sessions",
         description=(
-            "List past sessions (conversations), newest first. Filter by session_type, component_id "
-            "(an agent/team/workflow id from get_agentos_config), user, or session_name. Use a returned "
-            "session_id with the run tools to continue that conversation, or with get_session_runs to "
-            "read its history. db_id is only needed when get_agentos_config lists multiple databases."
+            "List past sessions (conversations), newest first. Use a returned session_id with the run "
+            "tools to continue that conversation, or with get_session_runs to read its history."
         ),
         tags={"session"},
         annotations={"readOnlyHint": True, "destructiveHint": False, "openWorldHint": False},
     )  # type: ignore
     async def get_sessions(
-        session_type: Literal["agent", "team", "workflow"] = "agent",
-        component_id: Optional[str] = None,
-        user_id: Optional[str] = None,
-        session_name: Optional[str] = None,
-        limit: int = 20,
-        page: int = 1,
-        sort_by: str = "created_at",
-        sort_order: Literal["asc", "desc"] = "desc",
-        db_id: Optional[str] = None,
+        session_type: Annotated[
+            Literal["agent", "team", "workflow"], Field(description="Defaults to agent.")
+        ] = "agent",
+        component_id: Annotated[Optional[str], Field(description="Filter to one agent, team, or workflow id.")] = None,
+        user_id: _ReadUserId = None,
+        session_name: Annotated[Optional[str], Field(description="Filter by name.")] = None,
+        limit: Annotated[int, Field(ge=1, description="Sessions per page.")] = 20,
+        page: Annotated[int, Field(ge=1, description="Page number, starting at 1.")] = 1,
+        # An unknown column is ignored by the DB layer (results come back unsorted), so the
+        # description names the two useful ones rather than explaining the fallback.
+        sort_by: Annotated[str, Field(description="created_at or updated_at.")] = "created_at",
+        sort_order: Annotated[Literal["asc", "desc"], Field(description="Sort direction.")] = "desc",
+        db_id: _DbId = None,
     ) -> Dict[str, Any]:
         _require_tool_scopes("GET", "/sessions")
         user_id = _scoped_read_user_id(user_id)
@@ -2652,21 +2677,25 @@ def build_mcp_server(
         description=(
             "Read a session's conversation history: each run's input and response content with its "
             "run_id, status, and timestamp, oldest first. Returns the answer content only, not the full "
-            "message transcript. Pass run_id to get that one run in FULL, untrimmed detail -- the complete "
-            "message transcript INCLUDING the system prompt/instructions, plus every event and metric. "
-            "This is the debugging escape hatch and can be large (a long run returns a lot of tokens), so "
-            "request a specific run_id deliberately, not by default. session_type is auto-detected when "
-            "omitted; db_id is only needed when get_agentos_config lists multiple databases."
+            "message transcript."
         ),
         tags={"session"},
         annotations={"readOnlyHint": True, "destructiveHint": False, "openWorldHint": False},
     )  # type: ignore
     async def get_session_runs(
-        session_id: str,
-        run_id: Optional[str] = None,
-        session_type: Optional[Literal["agent", "team", "workflow"]] = None,
-        user_id: Optional[str] = None,
-        db_id: Optional[str] = None,
+        session_id: Annotated[str, Field(description="Session to read.")],
+        run_id: Annotated[
+            Optional[str],
+            Field(
+                description=(
+                    "One run in full detail, system prompt and every event included. Large; omit for the "
+                    "trimmed history of every run."
+                )
+            ),
+        ] = None,
+        session_type: _ReadSessionType = None,
+        user_id: _ReadUserId = None,
+        db_id: _DbId = None,
     ) -> List[Dict[str, Any]]:
         _require_tool_scopes("GET", f"/sessions/{session_id}/runs")
         user_id = _scoped_read_user_id(user_id)
