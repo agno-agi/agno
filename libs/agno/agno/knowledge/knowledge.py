@@ -363,7 +363,8 @@ class Knowledge(RemoteKnowledge):
         yield from SYNC_WORKERS.stream(self._pages().sync, seconds=3900, **kwargs)
 
     async def astream_sync_pages(self, **kwargs: Any) -> AsyncIterator[Union[PageSyncProgress, SyncReport]]:
-        """Async stream_sync_pages; use aclosing when stopping iteration early."""
+        """Async stream_sync_pages. To stop early, await the iterator's aclose() in a
+        finally; contextlib.aclosing does the same but only exists on Python 3.10+."""
         from agno.knowledge.page._coordinator import SYNC_WORKERS
 
         if "on_progress" in kwargs:
