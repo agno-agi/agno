@@ -59,9 +59,11 @@ Serve two agents on different models to read model usage:
 
 After running both agents, open `GET /os/metrics` for the model usage
 breakdown of the last 30 days, or narrow it with
-`?starting_date=YYYY-MM-DD&ending_date=YYYY-MM-DD`. Insights are built from
-the daily metrics, so to include runs made after the first read, call
-`POST /metrics/refresh` and pass `refresh=true`.
+`?starting_date=YYYY-MM-DD&ending_date=YYYY-MM-DD`. `GET /os/metrics/sessions`
+counts the sessions created per day and compares the window with the one of
+the same length before it. Both are built from the daily metrics, so to include
+runs made after the first read, call `POST /metrics/refresh` and pass
+`refresh=true`.
 
 The other files generate and inspect their own data in one process:
 
