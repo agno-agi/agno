@@ -34,6 +34,7 @@ route gating), since FGA has no notion of non-resource routes like ``/config``::
 """
 
 import asyncio
+from dataclasses import replace
 from typing import List, Optional, Set
 
 from agno.os.authz._request_scope import memoize
@@ -167,9 +168,19 @@ class FGAAuthorizationProvider(AuthorizationProvider):
         # routes the FGA model doesn't describe) we ABSTAIN on by returning False,
         # so it never fail-opens a /config or /sessions route when OR-composed —
         # a scope provider in the list is expected to authorize those.
-        if ctx.resource_type:
+        if not ctx.resource_type:
+            return False
+        if ctx.action:
             return self.check(ctx)
-        return False
+        # A resource route whose required scopes span more than one action reaches here with
+        # no single action. ``check`` treats a missing action as a non-resource question and
+        # DEFERS (returns True), which here would admit anyone, anonymous callers included.
+        # Require every action the route lists instead, each as its own relationship check,
+        # matching the AND the scope and engine providers apply to the same route.
+        actions = [scope.rsplit(":", 1)[1] for scope in required_scopes if ":" in scope]
+        if not actions:
+            return False
+        return all(self.check(replace(ctx, action=action)) for action in actions)
 
     # Async variants thread the provider's OWN sync methods (the OpenFGA SDK client is
     # sync), so the async path keeps FGA's exact semantics -- including this method's

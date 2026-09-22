@@ -623,6 +623,71 @@ async def verify_run_in_session_via_db(
         raise HTTPException(status_code=404, detail="Run not found")
 
 
+async def verify_run_belongs_to_component(
+    request: Request,
+    db: Union["BaseDb", "AsyncBaseDb", None],
+    *,
+    component_type: ComponentType,
+    component_id: str,
+    run_id: Optional[str] = None,
+    session_id: Optional[str] = None,
+) -> None:
+    """Bind the run and session a request names to the path component the per-resource
+    gate authorised, for RBAC callers who are NOT isolation-scoped.
+
+    The gate on ``/agents/{agent_id}/runs/{run_id}/cancel`` (and continue, resume, fork)
+    decides on the path's ``agent_id``; the handler then acts on ``run_id`` and
+    ``session_id``, which the client chose. The owner check
+    (:func:`verify_run_in_session`) already ties them to the component, but it only runs
+    for an isolation-scoped caller. Without isolation, a caller granted ``run`` on one
+    agent could cancel or continue another agent's run through that agent's route, so
+    the per-resource grant was not per-resource for these verbs. This closes that gap
+    with the component half of the same check and no owner predicate.
+
+    Dormant when authorization is off (there is no per-resource grant to defend) and
+    for internal callers. A session or run that cannot be found is left to the handler:
+    cancel-before-start legitimately targets a run that has no row yet, and the other
+    verbs 404 on their own. A mismatch is a 404, masking the run's existence exactly as
+    the owner check does.
+    """
+    if not getattr(request.state, "authorization_enabled", False):
+        return
+    if getattr(request.state, "is_internal_service", False):
+        return
+    if db is None or isinstance(db, RemoteDb):
+        return
+
+    async def _get_session(sid: str):
+        if isinstance(db, AsyncBaseDb):
+            return await db.get_session(session_id=sid)
+        return db.get_session(session_id=sid)
+
+    async def _get_run(rid: str):
+        getter = getattr(db, "get_run", None)
+        if getter is None:
+            return None
+        try:
+            if isinstance(db, AsyncBaseDb):
+                return await getter(run_id=rid)
+            return getter(run_id=rid)
+        except NotImplementedError:
+            return None
+
+    run = None
+    if session_id:
+        session = await _get_session(session_id)
+        if session is not None:
+            if not session_matches_component(session, component_type, component_id):
+                raise HTTPException(status_code=404, detail="Run not found" if run_id else SESSION_NOT_FOUND)
+            get_run = getattr(session, "get_run", None)
+            if run_id and get_run is not None:
+                run = get_run(run_id=run_id)
+    if run_id and run is None:
+        run = await _get_run(run_id)
+    if run is not None and not run_matches_component(run, component_type, component_id):
+        raise HTTPException(status_code=404, detail="Run not found")
+
+
 def resolve_owned_agent(os: "AgentOS") -> Callable:
     """Return a FastAPI dependency yielding the Agent for a run the caller owns.
 

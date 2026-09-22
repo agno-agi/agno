@@ -70,6 +70,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
+from agno.os.authz._role_store import RoleChangeRefused
 from agno.os.authz.audit import AUDIT_SORT_FIELDS, DEFAULT_AUDIT_SORT_FIELD
 from agno.os.authz.user_directory import DEFAULT_USER_SORT_FIELD, USER_SORT_FIELDS
 from agno.os.schema import PaginatedResponse, PaginationInfo, SortOrder
@@ -380,52 +381,64 @@ def get_roles_router(
     require_admin = _make_require_admin(store)
     router = APIRouter(prefix=prefix, tags=tags, dependencies=[Depends(require_admin)])
 
-    def _role_or_404(slug: str) -> dict:
-        rec = store.get_role(slug)
+    async def _role_or_404(slug: str) -> dict:
+        rec = await store.aget_role(slug)
         if rec is None:
             raise HTTPException(status_code=404, detail=f"Role {slug!r} not found")
         return rec
 
+    def _refused(e: RoleChangeRefused) -> HTTPException:
+        # A well-formed request the store refuses on safety grounds (last admin, admin default,
+        # role named after a user): a conflict with the store's state, not a validation error.
+        return HTTPException(status_code=409, detail=str(e))
+
     # ---- roles ----------------------------------------------------------
     @router.get("/roles", response_model=PaginatedResponse[RoleSchema])
-    def list_roles(
+    async def list_roles(
         limit: int = Query(default=20, ge=1, le=100, description="Items per page"),
         page: int = Query(default=1, ge=1, description="Page number (1-indexed)"),
     ):
-        roles = [RoleSchema.from_record(r) for r in store._list_roles_detailed()]
+        roles = [RoleSchema.from_record(r) for r in await store._alist_roles_detailed()]
         return _page(roles, page, limit)
 
     @router.post("/roles", response_model=RoleSchema, status_code=201)
-    def create_role(body: CreateRoleRequest, actor: str = Depends(require_admin)):
+    async def create_role(body: CreateRoleRequest, actor: str = Depends(require_admin)):
         """Create a role (metadata only — RESTful). Add permissions afterwards via
         PUT/PATCH /roles/{slug}/scopes. Mirrors the cloud POST /roles."""
         try:
-            store._create_role(
+            await store._acreate_role(
                 body.slug, name=body.name, description=body.description, is_default=body.is_default, actor=actor
             )
         except FileExistsError:
             raise HTTPException(status_code=409, detail=f"Role {body.slug!r} already exists")
-        return RoleSchema.from_record(_role_or_404(body.slug))
+        except RoleChangeRefused as e:
+            raise _refused(e)
+        return RoleSchema.from_record(await _role_or_404(body.slug))
 
     @router.get("/roles/{slug}", response_model=RoleSchema)
-    def get_role(slug: str):
-        return RoleSchema.from_record(_role_or_404(slug))
+    async def get_role(slug: str):
+        return RoleSchema.from_record(await _role_or_404(slug))
 
     @router.patch("/roles/{slug}", response_model=RoleSchema)
-    def update_role(slug: str, body: UpdateRoleRequest, actor: str = Depends(require_admin)):
+    async def update_role(slug: str, body: UpdateRoleRequest, actor: str = Depends(require_admin)):
         """Update a role's metadata only (name/description/is_default) — scopes
         untouched. Mirrors the cloud PATCH /roles/{slug}."""
         try:
-            store.set_role_meta(
+            await store.aset_role_meta(
                 slug, name=body.name, description=body.description, is_default=body.is_default, actor=actor
             )
         except KeyError:
             raise HTTPException(status_code=404, detail=f"Role {slug!r} not found")
-        return RoleSchema.from_record(_role_or_404(slug))
+        except RoleChangeRefused as e:
+            raise _refused(e)
+        return RoleSchema.from_record(await _role_or_404(slug))
 
     @router.delete("/roles/{slug}")
-    def delete_role(slug: str, actor: str = Depends(require_admin)) -> dict:
-        store.remove_role(slug, actor=actor)
+    async def delete_role(slug: str, actor: str = Depends(require_admin)) -> dict:
+        try:
+            await store.aremove_role(slug, actor=actor)
+        except RoleChangeRefused as e:
+            raise _refused(e)
         return {"slug": slug, "deleted": True}
 
     # ---- role scopes (subresource) -------------------------------------
@@ -433,32 +446,36 @@ def get_roles_router(
         return [s if isinstance(s, str) else {"scope": s.scope, "effect": s.effect} for s in items]
 
     @router.put("/roles/{slug}/scopes", response_model=List[RoleScopeSchema])
-    def replace_role_scopes(slug: str, body: ReplaceScopesRequest, actor: str = Depends(require_admin)):
+    async def replace_role_scopes(slug: str, body: ReplaceScopesRequest, actor: str = Depends(require_admin)):
         """Replace ALL of a role's scopes (metadata preserved). Mirrors the cloud
         PUT /roles/{slug}/scopes; returns the resulting scope list."""
-        _role_or_404(slug)
+        await _role_or_404(slug)
         try:
-            store.set_role_scopes(slug, _to_store_scopes(body.scopes), actor=actor)
+            await store.aset_role_scopes(slug, _to_store_scopes(body.scopes), actor=actor)
+        except RoleChangeRefused as e:
+            raise _refused(e)
         except ValueError as e:
             raise HTTPException(status_code=422, detail=str(e))
-        return [RoleScopeSchema.from_entry(e) for e in store._get_role_scope_entries(slug)]
+        return [RoleScopeSchema.from_entry(e) for e in await store._aget_role_scope_entries(slug)]
 
     @router.patch("/roles/{slug}/scopes", response_model=RoleSchema)
-    def patch_role_scopes(slug: str, body: PatchScopesRequest, actor: str = Depends(require_admin)):
+    async def patch_role_scopes(slug: str, body: PatchScopesRequest, actor: str = Depends(require_admin)):
         """Apply a scope diff: add/flip ``upsert``, drop ``remove`` (everything else
         kept). Mirrors the cloud PATCH /roles/{slug}/scopes; returns the full role."""
-        _role_or_404(slug)
+        await _role_or_404(slug)
         try:
-            store._patch_role_scopes(
+            await store._apatch_role_scopes(
                 slug, upsert=_to_store_scopes(body.upsert), remove=_to_store_scopes(body.remove), actor=actor
             )
+        except RoleChangeRefused as e:
+            raise _refused(e)
         except ValueError as e:
             raise HTTPException(status_code=422, detail=str(e))
-        return RoleSchema.from_record(_role_or_404(slug))
+        return RoleSchema.from_record(await _role_or_404(slug))
 
     # ---- scope catalog --------------------------------------------------
     @router.get("/scopes", response_model=List[AvailableScopeItem], response_model_exclude_none=True)
-    def list_scopes() -> List[AvailableScopeItem]:
+    async def list_scopes() -> List[AvailableScopeItem]:
         """All scopes this AgentOS understands, as a flat list.
 
         Derived from the OS's own route→scope map (so it always matches what the OS
@@ -479,7 +496,7 @@ def get_roles_router(
         return sort_by
 
     @router.get("/audit")
-    def list_audit(
+    async def list_audit(
         limit: int = Query(default=100, ge=1, le=1000, description="Items per page"),
         page: int = Query(default=1, ge=1, description="Page number (1-indexed)"),
         search: Optional[str] = Query(default=None, description="Filter by actor/action/target (case-insensitive)"),
@@ -494,18 +511,18 @@ def get_roles_router(
         if not store._audit_readable:
             raise HTTPException(status_code=404, detail="Change audit is not enabled")
         start_ms = time.time() * 1000
-        events = store.audit_log(
+        events = await store.aaudit_log(
             limit,
             offset=(page - 1) * limit,
             search=search,
             sort_by=_validated_sort_field(sort_by),
             order=sort_order.value,
         )
-        total = store._audit_count(search=search)
+        total = await store._aaudit_count(search=search)
         return _paginated(events, page, limit, total, search_time_ms=round(time.time() * 1000 - start_ms, 2))
 
     @router.get("/decisions")
-    def list_decisions(
+    async def list_decisions(
         request: Request,
         limit: int = Query(default=100, ge=1, le=1000, description="Items per page"),
         page: int = Query(default=1, ge=1, description="Page number (1-indexed)"),
@@ -525,28 +542,30 @@ def get_roles_router(
         if sink is None or not hasattr(sink, "read_decisions"):
             raise HTTPException(status_code=404, detail="Decision audit is not enabled")
         start_ms = time.time() * 1000
-        events = sink.read_decisions(
+        events = await _await_sink(
+            sink,
+            "read_decisions",
             limit,
             offset=(page - 1) * limit,
             search=search,
             sort_by=_validated_sort_field(sort_by),
             order=sort_order.value,
         )
-        total = sink.count_decisions(search=search)
+        total = await _await_sink(sink, "count_decisions", search=search)
         return _paginated(events, page, limit, total, search_time_ms=round(time.time() * 1000 - start_ms, 2))
 
     # ---- assignments ----------------------------------------------------
-    def _role_of(subject: str) -> Optional[str]:
+    async def _role_of(subject: str) -> Optional[str]:
         """The subject's single role, or None (one role per user)."""
-        roles = store.roles_of(subject)
+        roles = await store.aroles_of(subject)
         return roles[0] if roles else None
 
     @router.get("/subjects/{subject}/roles")
-    def get_user_role(subject: str) -> dict:
-        return {"subject": subject, "role": _role_of(subject)}
+    async def get_user_role(subject: str) -> dict:
+        return {"subject": subject, "role": await _role_of(subject)}
 
     @router.post("/subjects/{subject}/roles")
-    def assign_role(subject: str, body: AssignRoleRequest, actor: str = Depends(require_admin)) -> dict:
+    async def assign_role(subject: str, body: AssignRoleRequest, actor: str = Depends(require_admin)) -> dict:
         """Set the subject's role. One role per subject: this REPLACES any
         current role (a role select in a UI, not a multi-grant)."""
         # Validate the role exists first. Without this, an arbitrary string is written as
@@ -554,22 +573,39 @@ def get_roles_router(
         # {"role": "<a user id>"}) would turn that user id into a "role name" in the shared
         # subject/role namespace, which the collision guard then refuses on every request,
         # silently denying that user all access with no trace in the role views.
-        _role_or_404(body.role)
+        await _role_or_404(body.role)
         try:
-            store.set_role(subject, body.role, actor=actor)
+            await store.aset_role(subject, body.role, actor=actor)
+        except RoleChangeRefused as e:
+            raise _refused(e)
         except ValueError as e:
             # The subject is itself a role slug (the transposed call the comment above describes,
             # the other way round): the store refuses it because it would be role inheritance,
             # not a user grant. Surface that as a client error, not a 500.
             raise HTTPException(status_code=400, detail=str(e))
-        return {"subject": subject, "role": _role_of(subject)}
+        return {"subject": subject, "role": await _role_of(subject)}
 
     @router.delete("/subjects/{subject}/roles/{role}")
-    def revoke_role(subject: str, role: str, actor: str = Depends(require_admin)) -> dict:
-        store.unassign(subject, role, actor=actor)
-        return {"subject": subject, "role": _role_of(subject)}
+    async def revoke_role(subject: str, role: str, actor: str = Depends(require_admin)) -> dict:
+        try:
+            await store.aunassign(subject, role, actor=actor)
+        except RoleChangeRefused as e:
+            raise _refused(e)
+        return {"subject": subject, "role": await _role_of(subject)}
 
     return router
+
+
+async def _await_sink(sink: Any, name: str, *args: Any, **kwargs: Any) -> Any:
+    """Call a decision-sink read through its async twin (``a<name>``) when the sink has one,
+    else run the sync method in a worker thread, so the handler never blocks the loop and a
+    sink over an async database works."""
+    import asyncio
+
+    afn = getattr(sink, f"a{name}", None)
+    if callable(afn):
+        return await afn(*args, **kwargs)
+    return await asyncio.to_thread(getattr(sink, name), *args, **kwargs)
 
 
 def _day_bounds(starting_date: Optional[date_type], ending_date: Optional[date_type]) -> tuple:
@@ -689,27 +725,27 @@ def get_users_router(
     require_admin = _make_require_admin(role_store, auth_enabled=auth_enabled)
     router = APIRouter(prefix=prefix, tags=tags, dependencies=[Depends(require_admin)])
 
-    def _role_of(subject: str) -> Optional[str]:
+    async def _role_of(subject: str) -> Optional[str]:
         if role_store is None:
             return None
-        roles = role_store.roles_of(subject)
+        roles = await role_store.aroles_of(subject)
         return roles[0] if roles else None
 
-    def _role_names() -> Dict[str, str]:
+    async def _role_names() -> Dict[str, str]:
         """Slug to display name for every role, one metadata read. Read once per request and
         shared across a page of users, so the list view does not do one read per row."""
-        return role_store._role_names() if role_store is not None else {}
+        return await role_store._arole_names() if role_store is not None else {}
 
-    def _user(user: dict, names: Optional[Dict[str, str]] = None) -> UserSchema:
-        role = _role_of(user["id"])
+    async def _user(user: dict, names: Optional[Dict[str, str]] = None) -> UserSchema:
+        role = await _role_of(user["id"])
         if role is None:
             return UserSchema.from_user(user, None)
         if names is None:
-            names = _role_names()
+            names = await _role_names()
         return UserSchema.from_user(user, role, names.get(role))
 
     @router.get("", response_model=PaginatedResponse[UserSchema])
-    def list_users(
+    async def list_users(
         include_disabled: bool = True,
         limit: int = Query(default=20, ge=1, le=100, description="Items per page"),
         page: int = Query(default=1, ge=1, description="Page number (1-indexed)"),
@@ -723,7 +759,7 @@ def get_users_router(
         # directory and resolve roles for every user on each call. `search` filters before
         # pagination, so meta counts the matches.
         start_ms = time.time() * 1000
-        rows = user_store.list(
+        rows = await user_store.alist(
             limit=limit,
             offset=(page - 1) * limit,
             include_disabled=include_disabled,
@@ -731,17 +767,17 @@ def get_users_router(
             sort_by=sort_by,
             order=sort_order.value,
         )
-        total = user_store.count(include_disabled=include_disabled, search=search)
-        names = _role_names()
+        total = await user_store.acount(include_disabled=include_disabled, search=search)
+        names = await _role_names()
         return _paginated(
-            [_user(u, names) for u in rows],
+            [await _user(u, names) for u in rows],
             page,
             limit,
             total,
             search_time_ms=round(time.time() * 1000 - start_ms, 2),
         )
 
-    def _refuse_non_user_id(user_id: str) -> None:
+    async def _refuse_non_user_id(user_id: str) -> None:
         """The directory holds people. A system-reserved principal (``sa:*``, ``__scheduler__``,
         ``__oauth__:*``) is never a directory user: those identities skip the directory entirely,
         so a row for one is dead weight and disabling it looks like a revocation that never
@@ -756,7 +792,7 @@ def get_users_router(
                 "and system identities are never stored in the directory, so disabling them here would "
                 "have no effect; revoke the credential instead.",
             )
-        if role_store is not None and role_store.get_role(user_id) is not None:
+        if role_store is not None and await role_store.aget_role(user_id) is not None:
             raise HTTPException(
                 status_code=422,
                 detail=f"{user_id!r} is a role, not a user. Subjects and roles share one namespace; use "
@@ -764,9 +800,9 @@ def get_users_router(
             )
 
     @router.post("", response_model=UserSchema)
-    def create_user(body: CreateUserRequest, actor: str = Depends(require_admin)):
-        _refuse_non_user_id(body.id)
-        return _user(user_store.upsert(body.id, email=body.email, name=body.name, actor=actor))
+    async def create_user(body: CreateUserRequest, actor: str = Depends(require_admin)):
+        await _refuse_non_user_id(body.id)
+        return await _user(await user_store.aupsert(body.id, email=body.email, name=body.name, actor=actor))
 
     # Declared before /{user_id} so the path parameter does not swallow it.
     @router.get("/metrics", response_model=UserManagementMetrics)
@@ -786,28 +822,28 @@ def get_users_router(
         )
 
     @router.get("/{user_id}", response_model=UserSchema)
-    def get_user(user_id: str):
-        user = user_store.get(user_id)
+    async def get_user(user_id: str):
+        user = await user_store.aget(user_id)
         if user is None:
             raise HTTPException(status_code=404, detail=f"User {user_id!r} not found")
-        return _user(user)
+        return await _user(user)
 
     @router.patch("/{user_id}", response_model=UserSchema)
-    def update_user(user_id: str, body: UpdateUserRequest, actor: str = Depends(require_admin)):
+    async def update_user(user_id: str, body: UpdateUserRequest, actor: str = Depends(require_admin)):
         """Update a user. ``disabled`` is the revocation kill-switch: a disabled user is
         denied at the enforcement point on their next request, even with a still-valid token."""
-        if user_store.get(user_id) is None:
+        if await user_store.aget(user_id) is None:
             # PATCH creates an unknown id, so a create needs the same check as POST. An existing
             # row is exempt: a person who was in the directory before a role took their name must
             # stay manageable, since disabling them is the revocation an admin reaches for.
-            _refuse_non_user_id(user_id)
-        user = user_store.upsert(user_id, email=body.email, name=body.name, actor=actor)
+            await _refuse_non_user_id(user_id)
+        user = await user_store.aupsert(user_id, email=body.email, name=body.name, actor=actor)
         if body.disabled is not None and body.disabled != user["disabled"]:
-            user = user_store.set_disabled(user_id, body.disabled, actor=actor)
-        return _user(user)
+            user = await user_store.aset_disabled(user_id, body.disabled, actor=actor)
+        return await _user(user)
 
     @router.delete("/{user_id}")
-    def delete_user(user_id: str, actor: str = Depends(require_admin)) -> dict:
+    async def delete_user(user_id: str, actor: str = Depends(require_admin)) -> dict:
         # Delete is a COMPLETE removal: revoke the user's role assignments in the same
         # operation. Otherwise deleting a (disabled) user would REVERSE their revocation --
         # the directory row is the kill-switch tombstone (absence reads as "not disabled", by
@@ -815,9 +851,14 @@ def get_users_router(
         # store, so their still-valid token regains its old access. Revoking the roles first
         # makes a deleted user access-less regardless of the tombstone.
         if role_store is not None:
-            for role in role_store.roles_of(user_id):
-                role_store.unassign(user_id, role, actor=actor)
-        deleted = user_store.remove(user_id, actor=actor)
+            for role in await role_store.aroles_of(user_id):
+                try:
+                    await role_store.aunassign(user_id, role, actor=actor)
+                except RoleChangeRefused as e:
+                    # Deleting the last admin would lock the directory and roles APIs; refuse
+                    # before the row goes, so nothing is half-deleted.
+                    raise HTTPException(status_code=409, detail=str(e))
+        deleted = await user_store.aremove(user_id, actor=actor)
         return {"id": user_id, "deleted": deleted}
 
     return router

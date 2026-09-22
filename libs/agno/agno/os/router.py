@@ -173,13 +173,23 @@ def get_base_router(
             }
         },
     )
-    async def config() -> ConfigResponse:
+    async def config(request: Request) -> ConfigResponse:
+        agents_in_scope = list(os.agents or [])
+        teams_in_scope = list(os.teams or [])
+        workflows_in_scope = list(os.workflows or [])
+        if getattr(request.state, "authorization_enabled", False):
+            # The roster is filtered by the same provider the list routes use: config:read
+            # admits the caller to the OS description, not to every component's name and
+            # description. A caller granted one agent sees that agent here, as on /agents.
+            from agno.os.auth import afilter_resources_by_access
+
+            agents_in_scope = await afilter_resources_by_access(request, agents_in_scope, "agents")
+            teams_in_scope = await afilter_resources_by_access(request, teams_in_scope, "teams")
+            workflows_in_scope = await afilter_resources_by_access(request, workflows_in_scope, "workflows")
         try:
-            agent_summaries = [AgentSummaryResponse.from_agent(a) for a in os.agents] if os.agents else []
-            team_summaries = [TeamSummaryResponse.from_team(t) for t in os.teams] if os.teams else []
-            workflow_summaries = (
-                [WorkflowSummaryResponse.from_workflow(w) for w in os.workflows] if os.workflows else []
-            )
+            agent_summaries = [AgentSummaryResponse.from_agent(a) for a in agents_in_scope]
+            team_summaries = [TeamSummaryResponse.from_team(t) for t in teams_in_scope]
+            workflow_summaries = [WorkflowSummaryResponse.from_workflow(w) for w in workflows_in_scope]
         except RemoteServerUnavailableError as e:
             raise HTTPException(
                 status_code=502,

@@ -73,11 +73,13 @@ async def test_per_resource_dependency_keeps_a_sync_provider_off_the_loop():
     )
 
 
-def test_authz_admin_handlers_are_sync():
-    """The /authz admin API is threadpooled only because its handlers are plain defs.
+def test_authz_admin_handlers_are_async_and_use_the_store_twins():
+    """Every /authz handler is a coroutine that awaits the store's async twins.
 
-    Every one of them calls the role/user store (DB round trips) with no await, so
-    making any of them ``async`` would move that I/O onto the loop.
+    The twins drive an async database natively and offload a sync one to a worker thread,
+    so the loop is never blocked either way. A plain-def handler was threadpooled by FastAPI
+    but called the SYNC store methods, which refuse an async database outright: the whole
+    admin API returned 500 on that shape after authenticating the caller.
     """
     pytest.importorskip("sqlalchemy")  # managed roles need SQLAlchemy
 
@@ -85,8 +87,7 @@ def test_authz_admin_handlers_are_sync():
     from agno.os.authz.admin_router import get_roles_router
 
     router = get_roles_router(Authorization(db_url="sqlite:///:memory:"))
-    coroutine_routes = [route.name for route in router.routes if iscoroutinefunction(getattr(route, "endpoint", None))]
-    assert coroutine_routes == [], (
-        f"/authz handlers must stay sync so FastAPI threadpools their DB access; "
-        f"these became coroutines: {coroutine_routes}"
+    sync_routes = [route.name for route in router.routes if not iscoroutinefunction(getattr(route, "endpoint", None))]
+    assert sync_routes == [], (
+        f"/authz handlers must be coroutines that await the store's async twins; these are sync: {sync_routes}"
     )

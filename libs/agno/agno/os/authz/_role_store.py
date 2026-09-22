@@ -40,6 +40,7 @@ import time
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple, Union
 
 from agno.os.authz._db import NO_DB_MESSAGE, is_async_authz_db, resolve_authz_db, supports_authz
+from agno.os.authz._scope_policy import ADMIN_SCOPE
 from agno.os.authz.audit import DEFAULT_AUDIT_SORT_FIELD, DEFAULT_AUDIT_SORT_ORDER
 from agno.os.authz.engine import EngineAuthorizationProvider, PolicyEngine, normalize_roles_claim
 
@@ -49,6 +50,45 @@ if TYPE_CHECKING:
 # A scope plus its effect. Inputs accept a bare string (= allow), a (scope, effect)
 # tuple, or a {"scope": ..., "effect"|"value": ...} dict.
 ScopeInput = Union[str, Tuple[str, str], Dict[str, str]]
+
+
+class RoleChangeRefused(ValueError):
+    """A role or assignment change the store refuses on safety grounds.
+
+    Raised for the changes that are valid input but must not happen: removing the last
+    stored admin (a lockout nothing but database surgery repairs), making an admin role
+    the default (every provisioned user becomes an admin), or naming a role after an
+    existing user (their assignments become inheritance edges). The admin API maps it to
+    409, not 422, since the request was well formed."""
+
+
+_LAST_ADMIN_MSG = (
+    "Refused: this change would leave no subject holding a role that confers 'agent_os:admin', "
+    "so nobody could administer authorization afterwards. Grant another subject an admin role first."
+)
+
+_ADMIN_DEFAULT_MSG = (
+    "Refused: role {role!r} confers 'agent_os:admin' and cannot be the default role. The default "
+    "is granted to every provisioned user, so this would make every valid token an administrator. "
+    "Flag a non-admin role as the default and assign admin explicitly."
+)
+
+_ROLE_NAMED_AFTER_USER_MSG = (
+    "Refused: {slug!r} is an existing user id, so it cannot also be a role. Subjects and roles share "
+    "one namespace: a role by that name would turn the user's assignments into role inheritance (every "
+    "holder of the new role would inherit that user's role) and the user would be denied on every "
+    "request. Pick another slug."
+)
+
+_USER_AS_ROLE_MSG = (
+    "Refused: {role!r} is a user, not a role, so it cannot be assigned as one. That would make the "
+    "subject inherit the user's role and deny the user on every request. Did you swap the arguments?"
+)
+
+
+def _confers_admin(entries: List[Tuple[str, str]]) -> bool:
+    """Whether a normalized scope set grants ``agent_os:admin`` directly (allow, no deny)."""
+    return any(scope == ADMIN_SCOPE and effect == "allow" for scope, effect in entries)
 
 
 def _check_removable(role: str, scope: str) -> None:
@@ -80,6 +120,15 @@ def _normalize_scope(entry: ScopeInput) -> Tuple[str, str]:
     effect = str(effect).lower()
     if effect not in ("allow", "deny"):
         raise ValueError(f"scope effect must be 'allow' or 'deny', got {effect!r}")
+    if scope == ADMIN_SCOPE and effect == "deny":
+        # Deny overrides, so a deny on the admin super-scope strips admin from every holder of
+        # the role at once, and a boot-time define_role() leaves it in place (an existing role's
+        # scopes are preserved). Nothing but database surgery recovers. There is no legitimate
+        # use: to take admin away, remove the allow.
+        raise ValueError(
+            f"A deny on {ADMIN_SCOPE!r} is refused: deny overrides, so it would lock every holder of the "
+            "role out of administration, and the lockout survives restarts. Remove the allow instead."
+        )
     return scope, effect
 
 
@@ -96,6 +145,7 @@ class RoleStore:
         decision_log: bool = False,
         db: Optional[Any] = None,
         engine: Optional[PolicyEngine] = None,
+        guard_last_admin: bool = True,
     ):
         """
         Args:
@@ -124,7 +174,12 @@ class RoleStore:
                 Defaults to the native engine built from ``db``/``db_url``. Supply
                 your own to swap the backend (OpenFGA/SpiceDB/...) without changing
                 anything else.
+            guard_last_admin: refuse a change that would leave no STORED admin assignment
+                (the default). Turn it off when admins come from somewhere the store cannot
+                see, i.e. a ``roles_claim`` or a token-scope plane alongside, where an empty
+                stored admin set is not a lockout.
         """
+        self._guard_last_admin = guard_last_admin
         if engine is not None:
             self._engine: PolicyEngine = engine
         else:
@@ -269,6 +324,77 @@ class RoleStore:
             return meta
         return {"slug": slug, "name": slug, "description": None, "is_default": False, "created_at": 0, "updated_at": 0}
 
+    # ------------------------------------------------------------------ guards
+    def _admin_subjects_excluding(
+        self, *, without_role: Optional[str] = None, without_subject: Optional[str] = None
+    ) -> List[str]:
+        """:meth:`admin_subjects` as it would read after dropping ``without_role`` (its policy
+        and every assignment to it) and ``without_subject``. Nested inheritance through the
+        dropped role is not followed, which can only under-refuse, never over-refuse."""
+        roles = self.list_roles()
+        holders: set = set()
+        for role in roles:
+            if role == without_role or not self._engine.check_scope(ADMIN_SCOPE, roles=[role]):
+                continue
+            holders.update(name for name in self._engine.subjects_of(role) if name not in roles)
+        holders.discard(without_subject)
+        return sorted(holders)
+
+    def _refuse_if_locks_out(
+        self, *, without_role: Optional[str] = None, without_subject: Optional[str] = None
+    ) -> None:
+        """Refuse a change that would leave nobody holding a stored admin role.
+
+        Only when someone holds one now: a store that is already locked out (or a fresh one)
+        must not block the bootstrap that repairs it. Skipped on an engine that cannot list a
+        role's holders, and when the operator declared that admins live elsewhere."""
+        if not self._guard_last_admin:
+            return
+        try:
+            if not self.admin_subjects():
+                return
+            remaining = self._admin_subjects_excluding(without_role=without_role, without_subject=without_subject)
+        except NotImplementedError:
+            return
+        if not remaining:
+            raise RoleChangeRefused(_LAST_ADMIN_MSG)
+
+    def _refuse_admin_default(self, role: str, entries: Optional[List[Tuple[str, str]]] = None) -> None:
+        """Refuse flagging an admin-conferring role as the default. ``entries`` are the scopes
+        about to be written (checked directly); without them the stored policy decides."""
+        if entries is not None:
+            confers = _confers_admin(entries)
+        else:
+            confers = self._engine.check_scope(ADMIN_SCOPE, roles=[role])
+        if confers:
+            raise RoleChangeRefused(_ADMIN_DEFAULT_MSG.format(role=role))
+
+    def _is_directory_user(self, name: str) -> bool:
+        getter = getattr(self._meta_db, "get_authz_user", None) if self._meta_db is not None else None
+        if not callable(getter):
+            return False
+        try:
+            return getter(name) is not None
+        except Exception:
+            return False
+
+    def _refuse_role_named_after_user(self, slug: str) -> None:
+        """Refuse a NEW role whose slug is an existing user: a directory user, or a subject that
+        holds an assignment. An existing role of that name is left alone (the collision guard
+        already refuses the user at decision time; deleting the role is the fix)."""
+        if slug in self.list_roles():
+            return
+        if self._is_directory_user(slug) or self._engine.roles_of(slug):
+            raise RoleChangeRefused(_ROLE_NAMED_AFTER_USER_MSG.format(slug=slug))
+
+    def _refuse_user_as_role(self, role: str) -> None:
+        """Refuse assigning a ROLE argument that is a user: a directory user, or a subject with
+        an assignment that is not itself a role."""
+        if role in self.list_roles():
+            return
+        if self._is_directory_user(role) or self._engine.roles_of(role):
+            raise RoleChangeRefused(_USER_AS_ROLE_MSG.format(role=role))
+
     # ------------------------------------------------------------------ roles
     def set_role_scopes(
         self,
@@ -287,8 +413,14 @@ class RoleStore:
         ``is_default``)."""
         # Audit the full entries (scope + effect) so an allow<->deny flip is visible
         # in the trail; plain scope strings would show no change.
+        entries = [_normalize_scope(e) for e in scopes]
+        self._refuse_role_named_after_user(role)
+        if is_default is True or (is_default is None and self.default_role() == role):
+            self._refuse_admin_default(role, entries)
+        if not _confers_admin(entries) and self._engine.check_scope(ADMIN_SCOPE, roles=[role]):
+            self._refuse_if_locks_out(without_role=role)
         before = self.get_role_scope_entries(role) if self._audit else None
-        self._engine.set_role_scopes(role, [_normalize_scope(e) for e in scopes])
+        self._engine.set_role_scopes(role, entries)
         self._meta_upsert(role, name=name, description=description, is_default=is_default)
         self._emit("role.set_scopes", role, before, self.get_role_scope_entries(role) if self._audit else None, actor)
 
@@ -313,6 +445,7 @@ class RoleStore:
         set_role_scopes / patch_role_scopes). Raises FileExistsError if it exists."""
         if self.get_role(role) is not None:
             raise FileExistsError(role)
+        self._refuse_role_named_after_user(role)
         rec = self._meta_upsert(role, name=name, description=description, is_default=is_default)
         self._emit("role.created", role, None, [self._meta_summary(rec)], actor)
         return rec
@@ -329,6 +462,8 @@ class RoleStore:
         leaving its scopes untouched. Raises KeyError if the role doesn't exist."""
         if self.get_role(role) is None:
             raise KeyError(role)
+        if is_default is True:
+            self._refuse_admin_default(role)
         before = self._meta_or_default(role)
         rec = self._meta_upsert(role, name=name, description=description, is_default=is_default)
         self._emit("role.updated", role, [self._meta_summary(before)], [self._meta_summary(rec)], actor)
@@ -366,6 +501,12 @@ class RoleStore:
         removals = [_normalize_scope(entry)[0] for entry in remove or []]
         for scope in removals:
             _check_removable(role, scope)  # raises on an unrecognised scope, with nothing written yet
+        self._refuse_role_named_after_user(role)
+        staged_entries = list(staged.values())
+        if _confers_admin(staged_entries) and self.default_role() == role:
+            self._refuse_admin_default(role, staged_entries)
+        if ADMIN_SCOPE in removals and not _confers_admin(staged_entries):
+            self._refuse_if_locks_out(without_role=role)
         for scope, effect in staged.values():
             self._engine.add_scope(role, scope, effect)
         for scope in removals:
@@ -393,6 +534,7 @@ class RoleStore:
         return {**self._meta_or_default(role), "scopes": scopes}
 
     def remove_role(self, role: str, actor: Optional[str] = None) -> None:
+        self._refuse_if_locks_out(without_role=role)
         before = self.get_role_scopes(role) if self._audit else None
         self._engine.remove_role(role)
         self._meta_delete(role)
@@ -468,9 +610,12 @@ class RoleStore:
         make the role ``viewer`` inherit ``admin`` and promote every viewer to admin.
         """
         self._refuse_role_as_subject(subject, self.list_roles())
+        self._refuse_user_as_role(role)
         before = self.roles_of(subject)
         if before == [role]:
             return  # already exactly this role; no change, no audit noise
+        if not self._engine.check_scope(ADMIN_SCOPE, roles=[role]):
+            self._refuse_if_locks_out(without_subject=subject)
         replace = getattr(self._engine, "replace_subject_roles", None)
         if callable(replace):
             # One transaction: no window where the subject holds nothing, and two
@@ -491,6 +636,7 @@ class RoleStore:
         )
 
     def unassign(self, subject: str, role: str, actor: Optional[str] = None) -> None:
+        self._refuse_if_locks_out(without_subject=subject)
         before = self.roles_of(subject) if self._audit else None
         self._engine.unassign(subject, role)
         self._emit("user.unassigned", subject, before, self.roles_of(subject) if self._audit else None, actor)
@@ -693,6 +839,68 @@ class RoleStore:
             return meta
         return {"slug": slug, "name": slug, "description": None, "is_default": False, "created_at": 0, "updated_at": 0}
 
+    # --- async guards ---
+    async def _aadmin_subjects_excluding(
+        self, *, without_role: Optional[str] = None, without_subject: Optional[str] = None
+    ) -> List[str]:
+        """Async twin of :meth:`_admin_subjects_excluding`."""
+        roles = await self.alist_roles()
+        holders: set = set()
+        for role in roles:
+            if role == without_role or not await self._engine.acheck_scope(ADMIN_SCOPE, roles=[role]):
+                continue
+            holders.update(name for name in await self._engine.asubjects_of(role) if name not in roles)
+        holders.discard(without_subject)
+        return sorted(holders)
+
+    async def _arefuse_if_locks_out(
+        self, *, without_role: Optional[str] = None, without_subject: Optional[str] = None
+    ) -> None:
+        """Async twin of :meth:`_refuse_if_locks_out`."""
+        if not self._guard_last_admin:
+            return
+        try:
+            if not await self.aadmin_subjects():
+                return
+            remaining = await self._aadmin_subjects_excluding(
+                without_role=without_role, without_subject=without_subject
+            )
+        except NotImplementedError:
+            return
+        if not remaining:
+            raise RoleChangeRefused(_LAST_ADMIN_MSG)
+
+    async def _arefuse_admin_default(self, role: str, entries: Optional[List[Tuple[str, str]]] = None) -> None:
+        """Async twin of :meth:`_refuse_admin_default`."""
+        if entries is not None:
+            confers = _confers_admin(entries)
+        else:
+            confers = await self._engine.acheck_scope(ADMIN_SCOPE, roles=[role])
+        if confers:
+            raise RoleChangeRefused(_ADMIN_DEFAULT_MSG.format(role=role))
+
+    async def _ais_directory_user(self, name: str) -> bool:
+        if self._meta_db is None or not hasattr(self._meta_db, "get_authz_user"):
+            return False
+        try:
+            return (await self._ameta_call("get_authz_user", name)) is not None
+        except Exception:
+            return False
+
+    async def _arefuse_role_named_after_user(self, slug: str) -> None:
+        """Async twin of :meth:`_refuse_role_named_after_user`."""
+        if slug in await self.alist_roles():
+            return
+        if await self._ais_directory_user(slug) or await self._engine.aroles_of(slug):
+            raise RoleChangeRefused(_ROLE_NAMED_AFTER_USER_MSG.format(slug=slug))
+
+    async def _arefuse_user_as_role(self, role: str) -> None:
+        """Async twin of :meth:`_refuse_user_as_role`."""
+        if role in await self.alist_roles():
+            return
+        if await self._ais_directory_user(role) or await self._engine.aroles_of(role):
+            raise RoleChangeRefused(_USER_AS_ROLE_MSG.format(role=role))
+
     # --- async roles ---
     async def aset_role_scopes(
         self,
@@ -704,8 +912,14 @@ class RoleStore:
         is_default: Optional[bool] = None,
     ) -> None:
         """Async twin of :meth:`set_role_scopes`."""
+        entries = [_normalize_scope(e) for e in scopes]
+        await self._arefuse_role_named_after_user(role)
+        if is_default is True or (is_default is None and await self.adefault_role() == role):
+            await self._arefuse_admin_default(role, entries)
+        if not _confers_admin(entries) and await self._engine.acheck_scope(ADMIN_SCOPE, roles=[role]):
+            await self._arefuse_if_locks_out(without_role=role)
         before = await self.aget_role_scope_entries(role) if self._audit else None
-        await self._engine.aset_role_scopes(role, [_normalize_scope(e) for e in scopes])
+        await self._engine.aset_role_scopes(role, entries)
         await self._ameta_upsert(role, name=name, description=description, is_default=is_default)
         after = await self.aget_role_scope_entries(role) if self._audit else None
         await self._aemit("role.set_scopes", role, before, after, actor)
@@ -730,6 +944,7 @@ class RoleStore:
         """Async twin of :meth:`create_role`."""
         if await self.aget_role(role) is not None:
             raise FileExistsError(role)
+        await self._arefuse_role_named_after_user(role)
         rec = await self._ameta_upsert(role, name=name, description=description, is_default=is_default)
         await self._aemit("role.created", role, None, [self._meta_summary(rec)], actor)
         return rec
@@ -745,6 +960,8 @@ class RoleStore:
         """Async twin of :meth:`set_role_meta`."""
         if await self.aget_role(role) is None:
             raise KeyError(role)
+        if is_default is True:
+            await self._arefuse_admin_default(role)
         before = await self._ameta_or_default(role)
         rec = await self._ameta_upsert(role, name=name, description=description, is_default=is_default)
         await self._aemit("role.updated", role, [self._meta_summary(before)], [self._meta_summary(rec)], actor)
@@ -774,6 +991,12 @@ class RoleStore:
         removals = [_normalize_scope(entry)[0] for entry in remove or []]
         for scope in removals:
             _check_removable(role, scope)  # validate before the first write (see the sync twin)
+        await self._arefuse_role_named_after_user(role)
+        staged_entries = list(staged.values())
+        if _confers_admin(staged_entries) and await self.adefault_role() == role:
+            await self._arefuse_admin_default(role, staged_entries)
+        if ADMIN_SCOPE in removals and not _confers_admin(staged_entries):
+            await self._arefuse_if_locks_out(without_role=role)
         for scope, effect in staged.values():
             await self._engine.aadd_scope(role, scope, effect)
         for scope in removals:
@@ -792,6 +1015,7 @@ class RoleStore:
 
     async def aremove_role(self, role: str, actor: Optional[str] = None) -> None:
         """Async twin of :meth:`remove_role`."""
+        await self._arefuse_if_locks_out(without_role=role)
         before = await self.aget_role_scopes(role) if self._audit else None
         await self._engine.aremove_role(role)
         await self._ameta_delete(role)
@@ -831,9 +1055,12 @@ class RoleStore:
     async def aassign(self, subject: str, role: str, actor: Optional[str] = None) -> None:
         """Async twin of :meth:`assign`."""
         self._refuse_role_as_subject(subject, await self.alist_roles())
+        await self._arefuse_user_as_role(role)
         before = await self.aroles_of(subject)
         if before == [role]:
             return
+        if not await self._engine.acheck_scope(ADMIN_SCOPE, roles=[role]):
+            await self._arefuse_if_locks_out(without_subject=subject)
         try:
             await self._engine.areplace_subject_roles(subject, role)
         except NotImplementedError:
@@ -845,6 +1072,7 @@ class RoleStore:
 
     async def aunassign(self, subject: str, role: str, actor: Optional[str] = None) -> None:
         """Async twin of :meth:`unassign`."""
+        await self._arefuse_if_locks_out(without_subject=subject)
         before = await self.aroles_of(subject) if self._audit else None
         await self._engine.aunassign(subject, role)
         after = await self.aroles_of(subject) if self._audit else None

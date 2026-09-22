@@ -246,10 +246,16 @@ def list_roles(engine: Engine, policy_table: Any, grouping_table: Any) -> List[s
 
 def delete_role(engine: Engine, policy_table: Any, grouping_table: Any, meta_table: Any, role: str) -> None:
     """Drop a role entirely -- policy, assignments, metadata -- in one transaction, so a
-    decision can never see a half-deleted role."""
+    decision can never see a half-deleted role.
+
+    Both sides of the grouping table go: the rows assigning subjects TO this role, and the
+    rows where this role is the subject (its own inheritance of other roles). A leftover
+    outgoing edge would make a later subject named like the deleted role inherit those
+    roles with no assignment ever made, since ``name_is_role`` no longer refuses the name."""
     with engine.begin() as conn:
         conn.execute(delete(policy_table).where(policy_table.c.role == role))
         conn.execute(delete(grouping_table).where(grouping_table.c.role == role))
+        conn.execute(delete(grouping_table).where(grouping_table.c.subject == role))
         conn.execute(delete(meta_table).where(meta_table.c.slug == role))
 
 
@@ -676,6 +682,7 @@ async def adelete_role(
     async with engine.begin() as conn:
         await conn.execute(delete(policy_table).where(policy_table.c.role == role))
         await conn.execute(delete(grouping_table).where(grouping_table.c.role == role))
+        await conn.execute(delete(grouping_table).where(grouping_table.c.subject == role))
         await conn.execute(delete(meta_table).where(meta_table.c.slug == role))
 
 

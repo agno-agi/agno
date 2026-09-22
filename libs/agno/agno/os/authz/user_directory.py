@@ -69,7 +69,7 @@ class UserDirectory:
 
         AgentOS(db=db, agents=[...], authorization=authz, user_directory=True)
         AgentOS(db=db, agents=[...], authorization=authz,
-                user_directory=UserDirectory(auto_provision=False, fail_closed=True))
+                user_directory=UserDirectory(auto_provision=False, fail_closed=False))
 
     ``True`` builds the roster on the OS db with JIT provisioning on. Build it yourself to set the
     knobs, or to persist it somewhere other than the OS db (``db=`` / ``db_url=``); one built with
@@ -91,7 +91,7 @@ class UserDirectory:
         auto_provision: bool = True,
         email_claim: str = "email",
         name_claim: str = "name",
-        fail_closed: bool = False,
+        fail_closed: bool = True,
     ):
         """
         Args:
@@ -104,9 +104,10 @@ class UserDirectory:
                 filled by hand before anyone can log in is rarely what a deployment wants.
             email_claim / name_claim: the token claims JIT provisioning reads the profile from.
             fail_closed: how to treat a directory read that errors while checking the off switch.
-                False (default) lets the request through -- availability over the kill switch.
-                True rejects with 503, so a directory outage cannot silently re-enable a
-                disabled account.
+                True (default) rejects with 503, so a directory outage cannot silently re-enable
+                a disabled account: the off switch is a revocation, and a revocation that lapses
+                whenever its store is unreachable is not one. False lets the request through,
+                availability over the kill switch, for a deployment that accepts that trade.
         """
         self.auto_provision = auto_provision
         self.email_claim = email_claim

@@ -56,6 +56,7 @@ from agno.os.middleware.user_scope import (
     get_scoped_user_id,
     run_matches_component,
     sync_directory_from_request,
+    verify_run_belongs_to_component,
     verify_run_in_session,
     verify_run_in_session_via_db,
 )
@@ -1142,6 +1143,16 @@ def get_team_router(
                     component_type="teams",
                     component_id=team_id,
                 )
+            else:
+                # RBAC without isolation: the run must still belong to the gated component.
+                await verify_run_belongs_to_component(
+                    request,
+                    getattr(factory, "db", None) or os.db,
+                    component_type="teams",
+                    component_id=team_id,
+                    run_id=run_id,
+                    session_id=session_id,
+                )
 
             # Tombstone a still-queued durable ticket first: intent alone
             # does not stop a job no task is executing yet
@@ -1183,6 +1194,16 @@ def get_team_router(
                 scoped_user_id,
                 component_type="teams",
                 component_id=team_id,
+            )
+        else:
+            # RBAC without isolation: the run must still belong to the gated component.
+            await verify_run_belongs_to_component(
+                request,
+                getattr(team, "db", None) or os.db,
+                component_type="teams",
+                component_id=team_id,
+                run_id=run_id,
+                session_id=session_id,
             )
 
         # cancel_run always stores cancellation intent (even for not-yet-registered runs
@@ -1248,6 +1269,16 @@ def get_team_router(
                     component_type="teams",
                     component_id=team_id,
                 )
+            else:
+                # RBAC without isolation: the run must still belong to the gated component.
+                await verify_run_belongs_to_component(
+                    request,
+                    getattr(factory, "db", None) or os.db,
+                    component_type="teams",
+                    component_id=team_id,
+                    run_id=run_id,
+                    session_id=session_id,
+                )
             raise HTTPException(
                 status_code=400,
                 detail="Stream resumption is not supported for factory teams",
@@ -1277,6 +1308,16 @@ def get_team_router(
                 scoped_user_id,
                 component_type="teams",
                 component_id=team_id,
+            )
+        else:
+            # RBAC without isolation: the run must still belong to the gated component.
+            await verify_run_belongs_to_component(
+                request,
+                getattr(team, "db", None) or os.db,
+                component_type="teams",
+                component_id=team_id,
+                run_id=run_id,
+                session_id=session_id,
             )
 
         return StreamingResponse(
@@ -1425,6 +1466,16 @@ def get_team_router(
                 scoped_user_id,
                 component_type="teams",
                 component_id=team_id,
+            )
+        elif not isinstance(team, RemoteTeam):
+            # RBAC without isolation: the run must still belong to the gated component.
+            await verify_run_belongs_to_component(
+                request,
+                getattr(team, "db", None) or os.db,
+                component_type="teams",
+                component_id=team_id,
+                run_id=run_id,
+                session_id=session_id,
             )
 
         # Version-stable continuation: a run started with an explicitly pinned
@@ -1747,6 +1798,16 @@ def get_team_router(
         # cross-user forking.
         scoped_user_id = get_scoped_user_id(request)
         effective_user_id = scoped_user_id or user_id
+
+        # The source session must belong to this team: the per-resource gate authorised
+        # team_id, not whichever session id the client named.
+        await verify_run_belongs_to_component(
+            request,
+            getattr(team, "db", None) or os.db,
+            component_type="teams",
+            component_id=team_id,
+            session_id=session_id,
+        )
 
         try:
             new_session_id = await team.afork_session(  # type: ignore[union-attr]

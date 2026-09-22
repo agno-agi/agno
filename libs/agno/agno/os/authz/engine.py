@@ -39,6 +39,15 @@ def normalize_roles_claim(claims: Optional[Dict[str, Any]], roles_claim: Optiona
     return None
 
 
+def _scope_family(scope: str) -> str:
+    """The resource family a scope string is about (``agents`` for ``agents:x:run``)."""
+    return scope.split(":", 1)[0] if ":" in scope else scope
+
+
+def _all_in_family(required_scopes: List[str], resource_type: str) -> bool:
+    return all(_scope_family(scope) == resource_type for scope in required_scopes)
+
+
 class PolicyEngine(ABC):
     """The backend that stores managed-role policy and answers access questions.
 
@@ -254,22 +263,26 @@ class EngineAuthorizationProvider(AuthorizationProvider):
 
     def authorize_route(self, ctx: AuthorizationContext, required_scopes: List[str]) -> bool:
         subject, roles = self._identity(ctx)
-        # A resource route with a concrete single action: decide on the extracted
-        # (type, id, action) — the per-resource gate.
-        if ctx.resource_type and ctx.action:
+        if not required_scopes:
+            return True
+        # A resource route with a concrete single action, every required scope being about
+        # the path's own family: decide on the extracted (type, id, action) -- the
+        # per-resource gate.
+        if ctx.resource_type and ctx.action and _all_in_family(required_scopes, ctx.resource_type):
             return self._engine.check_resource(
                 ctx.resource_type, ctx.resource_id, ctx.action, subject=subject, roles=roles
             )
-        # Otherwise — a non-resource route, or a resource route whose required scopes
-        # span more than one action (ctx.action is None) — require ALL of the route's
-        # scopes, matching the scope provider's AND semantics. Never fall through to a
-        # blanket allow: a multi-action resource route used to hit check_resource with
-        # action=None and be waved through. Evaluate each scope against the specific
-        # resource when one is known, else as a generic scope string.
-        if not required_scopes:
-            return True
+        # Otherwise -- a non-resource route, a resource route whose required scopes span
+        # more than one action (ctx.action is None), or one that requires a scope from
+        # another family -- require ALL of the route's scopes, matching the scope
+        # provider's AND semantics. Never fall through to a blanket allow: a multi-action
+        # resource route used to hit check_resource with action=None and be waved
+        # through. A scope about the path's own family is evaluated against the specific
+        # resource when one is known; a scope from another family (``sessions:read`` on
+        # ``/agents/{id}/...``) is checked as written, so a grant on the agent never stands
+        # in for a grant the caller does not hold on sessions.
         for scope in required_scopes:
-            if ctx.resource_type and ctx.resource_id:
+            if ctx.resource_type and ctx.resource_id and _scope_family(scope) == ctx.resource_type:
                 action = scope.rsplit(":", 1)[1] if ":" in scope else scope
                 ok = self._engine.check_resource(
                     ctx.resource_type, ctx.resource_id, action, subject=subject, roles=roles
@@ -317,14 +330,14 @@ class EngineAuthorizationProvider(AuthorizationProvider):
 
     async def aauthorize_route(self, ctx: AuthorizationContext, required_scopes: List[str]) -> bool:
         subject, roles = self._identity(ctx)
-        if ctx.resource_type and ctx.action:
+        if not required_scopes:
+            return True
+        if ctx.resource_type and ctx.action and _all_in_family(required_scopes, ctx.resource_type):
             return await self._engine.acheck_resource(
                 ctx.resource_type, ctx.resource_id, ctx.action, subject=subject, roles=roles
             )
-        if not required_scopes:
-            return True
         for scope in required_scopes:
-            if ctx.resource_type and ctx.resource_id:
+            if ctx.resource_type and ctx.resource_id and _scope_family(scope) == ctx.resource_type:
                 action = scope.rsplit(":", 1)[1] if ":" in scope else scope
                 ok = await self._engine.acheck_resource(
                     ctx.resource_type, ctx.resource_id, action, subject=subject, roles=roles

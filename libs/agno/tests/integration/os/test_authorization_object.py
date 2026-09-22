@@ -24,6 +24,7 @@ from agno.os.authz import (  # noqa: E402
     Authorization,
     UserDirectory,
 )
+from agno.os.authz._role_store import RoleChangeRefused  # noqa: E402
 from agno.os.authz.native_engine import NativePolicyEngine  # noqa: E402
 
 SECRET = "authz-object-secret-at-least-256-bits-xxxxxxxxxx"
@@ -469,8 +470,13 @@ def test_seed_admin_heals_a_lockout_but_respects_a_handover(tmp_path):
     assert a2.roles_of("root") == ["viewer"]
     assert a2.admin_subjects() == ["carol"]
 
-    # Lockout: carol demoted too, nobody is admin. A restart heals it.
-    a2.set_role("carol", "viewer")
+    # Demoting the last admin through the API is refused (it would be a lockout)...
+    with pytest.raises(RoleChangeRefused):
+        a2.set_role("carol", "viewer")
+    assert a2.admin_subjects() == ["carol"]
+    # ...but a lockout reached below the store (an older deploy, database surgery) still heals on
+    # the next boot.
+    a2._store()._engine.replace_subject_roles("carol", "viewer")
     assert a2.admin_subjects() == []
     a3 = boot()
     assert a3.roles_of("root") == ["admin"]
@@ -502,8 +508,12 @@ def test_seed_admin_respects_a_handover_that_removed_the_bootstrap_role(tmp_path
     assert a2.roles_of("root") == []
     assert a2.admin_subjects() == ["carol"]
 
-    # But a true lockout reached by removal (nobody holds admin) still heals on the next boot.
-    a2.unassign("carol", "admin")
+    # Revoking the last admin through the API is refused (it would be a lockout)...
+    with pytest.raises(RoleChangeRefused):
+        a2.unassign("carol", "admin")
+    assert a2.admin_subjects() == ["carol"]
+    # ...but a true lockout reached below the store still heals on the next boot.
+    a2._store()._engine.unassign("carol", "admin")
     assert a2.admin_subjects() == []
     a3 = boot()
     assert a3.roles_of("root") == ["admin"]
