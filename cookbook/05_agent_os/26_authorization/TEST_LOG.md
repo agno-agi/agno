@@ -1,6 +1,12 @@
 # Test Log: 26_authorization
 
-Last updated: 2026-09-21 (files renumbered so the folder reads in increasing complexity and
+Last updated: 2026-09-22 (import path: the examples import the two objects from the package root,
+`from agno.os import AgentOS, Authorization, UserDirectory`; the plumbing a custom integration
+names still comes from `agno.os.authz`. Re-ran 01 to 15 with the demo venv and `PYTHONPATH` on the
+branch's `libs/agno`: every file except 07 and 08 exits 0 end to end; 07 and 08 booted with `serve`
+stubbed.)
+
+Earlier (2026-09-21): files renumbered so the folder reads in increasing complexity and
 starts at 01 like every other cookbook folder: the built-in setup one piece at a time (01 to 05),
 the complete setup on one page (06) and the admin API for a frontend (07 to 09), then the escape
 hatches ordered by how much you write (10 to 15). Old -> new: 00 quickstart -> 06 complete_setup,
