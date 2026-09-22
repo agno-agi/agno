@@ -37,6 +37,60 @@ async def test_slow_consumer_is_bounded_and_final_result_never_dropped(asynchron
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("asynchronous", [False, True])
+async def test_completed_worker_results_survive_a_consumer_pause_past_the_deadline(asynchronous):
+    workers = BoundedWorkers(1, "progress-late-consumer")
+
+    def work(*, budget, on_progress):
+        on_progress("first")
+        on_progress("second")
+        return {"done": True}
+
+    # The worker finishes well inside its 0.2 s budget; the consumer resumes only after the budget has passed.
+    if asynchronous:
+        stream = workers.astream(work, seconds=0.2)
+        first = await stream.__anext__()
+        await asyncio.sleep(0.35)
+        rest = [event async for event in stream]
+    else:
+        stream = workers.stream(work, seconds=0.2)
+        first = next(stream)
+        await asyncio.sleep(0.35)
+        rest = list(stream)
+    assert first == "first" and rest == ["second", {"done": True}]
+    workers._executor.shutdown(wait=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("asynchronous", [False, True])
+async def test_unfinished_worker_still_hits_the_deadline(asynchronous):
+    workers = BoundedWorkers(1, "progress-deadline")
+    release, ended = Event(), Event()
+
+    def work(*, budget, on_progress):
+        try:
+            on_progress("started")
+            release.wait(5)
+        finally:
+            ended.set()
+
+    with pytest.raises(TimeoutError, match="operation_deadline"):
+        if asynchronous:
+            stream = workers.astream(work, seconds=0.2)
+            assert await stream.__anext__() == "started"
+            await asyncio.sleep(0.35)
+            await stream.__anext__()
+        else:
+            stream = workers.stream(work, seconds=0.2)
+            assert next(stream) == "started"
+            await asyncio.sleep(0.35)
+            next(stream)
+    release.set()
+    assert await asyncio.to_thread(ended.wait, 5)
+    workers._executor.shutdown(wait=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("asynchronous", [False, True])
 async def test_early_close_requests_cancellation_and_retains_capacity_until_cleanup(asynchronous):
     workers = BoundedWorkers(1, "progress-close")
     cancelled, release, ended = Event(), Event(), Event()

@@ -126,11 +126,15 @@ class BoundedWorkers:
         """
         future, budget, updates = self._stream_submission(fn, args, kwargs, seconds)
         try:
-            while not future.done() or not updates.empty():
+            while not future.done():
                 try:
                     yield updates.get(timeout=min(0.1, budget.remaining()))
                 except Empty:
                     pass
+            # The deadline bounds the work, not the consumer: a finished worker's buffered
+            # snapshots and result are delivered however late the consumer resumes.
+            while not updates.empty():
+                yield updates.get_nowait()
             yield future.result()
         finally:
             budget.cancelled.set()
@@ -139,12 +143,14 @@ class BoundedWorkers:
         """Async stream without blocking the event loop or adding bridge threads."""
         future, budget, updates = self._stream_submission(fn, args, kwargs, seconds)
         try:
-            while not future.done() or not updates.empty():
+            while not future.done():
                 budget.remaining()
                 try:
                     yield updates.get_nowait()
                 except Empty:
                     await asyncio.sleep(0.02)
+            while not updates.empty():
+                yield updates.get_nowait()
             yield future.result()
         finally:
             budget.cancelled.set()
