@@ -4682,7 +4682,10 @@ async def _acontinue_run_background_stream(
                     cancelled_run = cast(Optional[RunOutput], lookup_session.get_run(_run_id))
                 if cancelled_run is not None:
                     cancelled_run.status = RunStatus.cancelled
-                    cancelled_run.cancellation_stage = CancellationStage.pending
+                    # A continuation only ever resumes a run that paused for
+                    # HITL: it has output and requirements, so the stage is
+                    # the status it held, not "never started"
+                    cancelled_run.cancellation_stage = CancellationStage.paused
                     await apersist_run_transition(agent, "agent", session_id, cancelled_run, user_id=user_id)
             except Exception:
                 log_error(

@@ -887,11 +887,7 @@ class TeamRunOutput:
             _dict["status"] = self.status.value if isinstance(self.status, RunStatus) else self.status
 
         if self.cancellation_stage is not None:
-            _dict["cancellation_stage"] = (
-                self.cancellation_stage.value
-                if isinstance(self.cancellation_stage, CancellationStage)
-                else self.cancellation_stage
-            )
+            _dict["cancellation_stage"] = getattr(self.cancellation_stage, "value", self.cancellation_stage)
 
         if self.messages is not None:
             _dict["messages"] = [m.to_dict() for m in self.messages]
@@ -1051,11 +1047,8 @@ class TeamRunOutput:
         # Filter data to only include fields that are actually defined in the TeamRunOutput dataclass
         from dataclasses import fields
 
-        if isinstance(data.get("cancellation_stage"), str):
-            try:
-                data["cancellation_stage"] = CancellationStage(data["cancellation_stage"])
-            except ValueError:
-                pass  # an unknown future value survives the round trip unchanged
+        if "cancellation_stage" in data:
+            data["cancellation_stage"] = CancellationStage.coerce(data["cancellation_stage"])
 
         supported_fields = {f.name for f in fields(cls)}
         filtered_data = {k: v for k, v in data.items() if k in supported_fields}

@@ -842,12 +842,19 @@ class QueueWorker:
             return False
         from agno.run.base import CancellationStage
 
-        # A paused run has partially executed, so "before execution" would be
-        # wrong on it. The stage is the machine-readable twin of the reason:
-        # a UI hides never-started runs and shows paused ones.
-        paused = prior.get("status") == "paused"
-        reason = "cancelled while paused awaiting continuation" if paused else "cancelled before execution"
-        stage = CancellationStage.paused if paused else CancellationStage.pending
+        # The stage is the status the RUN held, which the ticket's own status
+        # only approximates: a continued ticket sits queued again with its
+        # continuation payload while the run is a paused one with history,
+        # and a ticket queued for a retry backoff belongs to a run an earlier
+        # attempt already executed. Only a never-claimed, never-continued
+        # ticket is a run that never started.
+        payload = prior.get("payload") or {}
+        if prior.get("status") == "paused" or payload.get("continue"):
+            reason, stage = "cancelled while paused awaiting continuation", CancellationStage.paused
+        elif (prior.get("attempt") or 0) > 0:
+            reason, stage = "cancelled while awaiting retry", CancellationStage.executing
+        else:
+            reason, stage = "cancelled before execution", CancellationStage.pending
         # Run row first (fenced): if this cannot land, do NOT tombstone - a
         # terminal ticket over a live-looking row is the one divergence
         # nothing heals. Exception: an UNRESOLVABLE component means nobody
@@ -1742,11 +1749,20 @@ class QueueWorker:
             # cancelled run) - but the divergence must be loud, not silent
             from agno.run.base import CancellationStage
 
+            # The stage is what the run was doing when cancelled. Before the
+            # slot: a fresh leg never started, a continuation leg is a paused
+            # run with history. After the slot the component's own handler
+            # has already stamped the stage, and a CANCELLED-over-CANCELLED
+            # patch passes the terminal guard, so no stage is written here
+            # rather than overwriting the component's
+            stage = None
+            if not slot_acquired:
+                stage = CancellationStage.paused if payload.get("continue") else CancellationStage.pending
             if not await self._persist_run_error(
                 job,
                 "cancelled while queued for a slot",
                 status="cancelled",
-                cancellation_stage=CancellationStage.pending,
+                cancellation_stage=stage,
             ):
                 log_error(f"Job queue: cancelled job {job_id} but its run row could not be terminalized")
             await self._terminate_stream_view(job, status="cancelled")

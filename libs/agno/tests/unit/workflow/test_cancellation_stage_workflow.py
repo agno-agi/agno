@@ -105,11 +105,13 @@ class TestCancelDuringContinuationIsExecuting:
         assert out.cancellation_stage is CancellationStage.executing
 
 
-class TestContinueCancelledWaitingForASlotIsPending:
+class TestContinueCancelledWaitingForASlotIsPaused:
     @pytest.mark.asyncio
-    async def test_ws_continue_slot_wait_cancel_marks_pending(self, monkeypatch):
+    async def test_ws_continue_slot_wait_cancel_marks_paused(self, monkeypatch):
         """The continuation never re-started: the slot acquisition itself
-        raised the cancellation, same shape as the agent and team twins."""
+        raised the cancellation, same shape as the agent and team twins. The
+        run it would have resumed is a paused one with history, so the stage
+        is PAUSED, never "never started"."""
         import agno.workflow.workflow as wf_module
 
         class _CancelledSlot:
@@ -140,7 +142,7 @@ class TestContinueCancelledWaitingForASlotIsPending:
 
         await asyncio.gather(*list(wf_module._workflow_background_tasks), return_exceptions=True)
         assert out.status == RunStatus.cancelled
-        assert out.cancellation_stage is CancellationStage.pending
+        assert out.cancellation_stage is CancellationStage.paused
         reloaded, _, _ = await wf._aload_or_create_session(session_id="s1", user_id=None, session_state=None)
         stored = reloaded.get_run(out.run_id)
-        assert stored is not None and stored.cancellation_stage is CancellationStage.pending
+        assert stored is not None and stored.cancellation_stage is CancellationStage.paused
