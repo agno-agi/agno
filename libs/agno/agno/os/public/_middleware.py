@@ -5,11 +5,10 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
-import re
 import zlib
 from ipaddress import IPv6Address, ip_address, ip_network
 from pathlib import PurePath
-from typing import Any
+from typing import Any, Optional
 from urllib.parse import parse_qsl
 from uuid import UUID, uuid4
 
@@ -21,11 +20,12 @@ from starlette.responses import JSONResponse
 
 from agno.os.auth import require_verified_public_workflow, verify_internal_service_request
 from agno.os.public import _client_id
+from agno.os.public._policy import RUN_ROUTE, PublicRoutePolicy
 from agno.utils.bounded import BoundedWorkers
 from agno.utils.log import log_warning
 
-ROUTE = re.compile(r"^/(agents|teams|workflows)/([^/]+)/runs(?:/([^/]+)(/cancel)?)?$")
 IDENTITY_WORKERS = BoundedWorkers(8, "public-identity")
+MAX_PENDING_WEBSOCKETS = 32
 
 
 class Rejected(Exception):
@@ -42,16 +42,16 @@ def _uuid(value: str) -> None:
 
 
 class PublicMiddleware:
-    def __init__(self, app: Any, *, surface: Any, agent_os: Any):
+    def __init__(self, app: Any, *, surface: Any, agent_os: Any, policy: Optional[PublicRoutePolicy] = None):
         self.app, self.surface, self.agent_os = app, surface, agent_os
+        self.policy = policy or PublicRoutePolicy(surface, agent_os)
         self.active_runs = self.active_mcp = 0
-        self.selected = {
-            kind: {component.id for component in getattr(surface, kind)} for kind in ("agents", "teams", "workflows")
-        }
+        self.pending_websockets = 0
+        self.selected = self.policy.selected
         self.registered = {
             kind: {component.id for component in getattr(agent_os, kind) or []} for kind in self.selected
         }
-        self.oauth_paths = agent_os.mcp_auth_exempt_paths() if surface.mcp else []
+        self.oauth_paths = self.policy.oauth_paths
         self.interface_routes = set(getattr(agent_os, "_public_interface_routes", []))
 
     async def _identity(self, request: Request) -> str:
@@ -162,11 +162,55 @@ class PublicMiddleware:
         except Exception as exc:
             raise Rejected(400, "invalid_request_body") from exc
 
+    async def _websocket(self, scope: Any, receive: Any, send: Any) -> None:
+        if self.pending_websockets >= MAX_PENDING_WEBSOCKETS:
+            await send({"type": "websocket.close", "code": 1008})
+            return
+        self.pending_websockets += 1
+        pending = True
+
+        def release():
+            nonlocal pending
+            if pending:
+                pending = False
+                self.pending_websockets -= 1
+
+        try:
+            try:
+                # Preserve the Request contract of application-owned identity callbacks
+                # while resolving the identity of the HTTP upgrade request.
+                request = Request({**scope, "type": "http", "method": "GET"})
+                identity = await asyncio.wait_for(self._identity(request), timeout=3)
+                decision = await self.surface.limiter.aconsume("socket", client_id=identity)
+            except Exception:
+                log_warning("Public WebSocket admission unavailable")
+                await send({"type": "websocket.close", "code": 1008})
+                return
+            if not decision.allowed:
+                await send({"type": "websocket.close", "code": 1008})
+                return
+            # Only the native authenticated handler receives this callback. Release
+            # pending capacity after verification, or on any disconnect/failure below.
+            scope["_agno_public_ws_authenticated"] = release
+            await self.app(scope, receive, send)
+        finally:
+            release()
+
     async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
         if scope["type"] == "lifespan":
             await self.app(scope, receive, send)
             return
         if scope["type"] != "http":
+            if (
+                scope["type"] == "websocket"
+                and self.policy.authenticated_api
+                and get_route_path(scope) == "/workflows/ws"
+                and self.policy.allows_authenticated_websocket(scope)
+            ):
+                # The native workflow socket authenticates its first message and
+                # enforces scopes before any execution or subscription.
+                await self._websocket(scope, receive, send)
+                return
             await send({"type": "websocket.close", "code": 1008})
             return
         path, method = get_route_path(scope), scope["method"]
@@ -299,7 +343,7 @@ class PublicMiddleware:
             if len(request.headers.getlist("authorization")) > 1:
                 raise Rejected(401, "ambiguous_authorization")
             internal = verify_internal_service_request(request)
-            match = ROUTE.fullmatch(path)
+            match = RUN_ROUTE.fullmatch(path)
             component_kind = component_id = run_id = cancellation = ""
             if match:
                 component_kind, component_id, run_id, cancellation = match.groups()
@@ -307,7 +351,30 @@ class PublicMiddleware:
                 # Verification, not bearer-header presence, grants scheduler schemas and quota bypass.
                 await self.app(scope, receive, send)
                 return
+            from agno.os.middleware.jwt import _VERIFIED_API_JWT
+
+            if (
+                self.policy.authenticated_api
+                and getattr(request.state, "_agno_verified_api_jwt", None) is _VERIFIED_API_JWT
+                and not self.policy.is_mcp(path)
+                and path not in ("/", "/health", "/readyz")
+            ):
+
+                async def private_send(message):
+                    if message["type"] == "http.response.start":
+                        headers = [
+                            (key, value) for key, value in message.get("headers", []) if key.lower() != b"cache-control"
+                        ]
+                        headers.append((b"cache-control", b"private, no-store"))
+                        message = {**message, "headers": headers}
+                    await send(message)
+
+                await self.app(scope, receive, private_send)
+                return
             if (method, path) in self.interface_routes:
+                await self.app(scope, receive, send)
+                return
+            if self.policy.authenticated_api and path == "/info" and method == "GET":
                 await self.app(scope, receive, send)
                 return
             if path in ("/", "/health") and method in ("GET", "HEAD"):
@@ -337,7 +404,8 @@ class PublicMiddleware:
                     [
                         {"id": item.id, "name": item.name, "description": (item.description or "")[:2048]}
                         for item in getattr(self.surface, path[1:])
-                    ]
+                    ],
+                    headers={"Vary": "Authorization"} if self.policy.authenticated_api else None,
                 )(scope, receive, send)
                 return
             mcp = self.surface.mcp and path in ("/mcp", "/mcp/server-card")

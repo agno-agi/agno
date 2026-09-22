@@ -44,7 +44,7 @@ from agno.fs.db import DbFileSystem
 from agno.fs.errors import QuotaExceededError
 from agno.knowledge.chunking.page import PageMarkdownChunking
 from agno.knowledge.document import Document
-from agno.knowledge.page._source import PageSource, SourcePage, page_path, page_prefix
+from agno.knowledge.page._source import PageSource, SourcePage, page_path, page_prefix, source_url
 from agno.knowledge.page.types import (
     GrepMatch,
     GrepResult,
@@ -55,6 +55,9 @@ from agno.knowledge.page.types import (
     PageNotFound,
     PageRead,
     PageSearchConfig,
+    PageSourceBinding,
+    PageSourceBusy,
+    PageSourceMigration,
     SearchHit,
     SearchResult,
     SearchUnavailable,
@@ -384,6 +387,59 @@ class PageCoordinator:
                 conn.execute(text("SET TRANSACTION SNAPSHOT " + str(quoted)))
             self._settings(conn, budget or WorkBudget(2))
             yield conn
+
+    def _source_binding(self, conn: Any, *, lock: bool = False) -> PageSourceBinding:
+        statement = select(self.binding).where(self.binding.c.namespace == self.namespace)
+        row = conn.execute(statement.with_for_update() if lock else statement).mappings().one_or_none()
+        if row is None:
+            raise ValueError("page namespace is not initialized")
+        if row["catalog"] != self.catalog.fullname or row["vectors"] != self.vector.table.fullname:
+            raise ValueError("filesystem namespace is bound to another knowledge catalog or vector table")
+        return PageSourceBinding(
+            namespace=self.namespace,
+            filesystem=self.backend.table.fullname,
+            catalog=row["catalog"],
+            vectors=row["vectors"],
+            source=row["source"],
+            revision=row["revision"],
+        )
+
+    def inspect_source(self, *, budget: WorkBudget) -> PageSourceBinding:
+        with self._snapshot(budget) as conn:
+            return self._source_binding(conn)
+
+    def migrate_source(
+        self, *, expected_source: str, target_source: str, dry_run: bool = True, budget: WorkBudget
+    ) -> PageSourceMigration:
+        from urllib.parse import urlsplit
+
+        from agno.db.postgres._bounded import primary_connection
+
+        expected, target = source_url(expected_source), source_url(target_source)
+        if urlsplit(expected).path != urlsplit(target).path:
+            raise ValueError("source relocation must preserve the discovery path")
+        if type(dry_run) is not bool:
+            raise ValueError("dry_run must be a boolean")
+        self._ready()
+        with primary_connection(budget), self.engine.begin() as conn:
+            self._settings(conn, budget)
+            if not conn.execute(text("SELECT pg_try_advisory_xact_lock(:key)"), {"key": self.lock_key}).scalar_one():
+                raise PageSourceBusy()
+            before = self._source_binding(conn, lock=True)
+            if before.source not in (expected, target):
+                raise ValueError("page source does not match the expected source or relocation target")
+            changed = not dry_run and before.source != target
+            if changed:
+                conn.execute(
+                    update(self.binding)
+                    .where(self.binding.c.namespace == self.namespace, self.binding.c.source == before.source)
+                    .values(source=target, revision=self.binding.c.revision + 1)
+                )
+            after = self._source_binding(conn)
+            budget.remaining()
+            return PageSourceMigration(
+                before=before, after=after, target_source=target, dry_run=dry_run, changed=changed
+            )
 
     def _predicate(self):
         return and_(
@@ -959,6 +1015,19 @@ class PageCoordinator:
                 else:
                     high = middle - 1
             return result(low)
+
+    def read_full(self, path: str, *, revision: Optional[str], max_chars: int, budget: WorkBudget) -> Optional[str]:
+        with self._snapshot(budget) as conn:
+            # Bound the text in SQL before transferring it. Reading one snapshot
+            # also avoids JSON clipping and continuation reads of the same page.
+            rows = self._rows(conn, prefix=page_path(path), limit=1, exact_path=True, read_range=(0, max_chars))
+            if not rows:
+                raise PageNotFound()
+            page, content = self._checked(rows[0])
+            if revision is not None and revision != page.revision:
+                raise PageChanged(current_revision=page.revision)
+            budget.remaining()
+            return content if rows[0].total_chars <= max_chars else None
 
     def list(
         self, *, prefix: str = "/", cursor: Optional[str] = None, limit: int = 100, budget: Optional[WorkBudget] = None

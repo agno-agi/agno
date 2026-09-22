@@ -1,3 +1,4 @@
+import asyncio
 import json
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
@@ -6,6 +7,7 @@ from fastapi import (
     Depends,
     HTTPException,
     Request,
+    Response,
     WebSocket,
 )
 
@@ -19,7 +21,7 @@ from agno.os.auth import (
     verify_websocket_service_account,
 )
 from agno.os.managers import websocket_manager
-from agno.os.middleware.jwt import JWTValidator, is_reserved_principal, resolve_expected_audience
+from agno.os.middleware.jwt import _VERIFIED_API_JWT, JWTValidator, is_reserved_principal, resolve_expected_audience
 from agno.os.middleware.user_scope import (
     INSUFFICIENT_PERMISSIONS_WS_RECONNECT,
     WORKFLOW_ID_REQUIRED_RECONNECT,
@@ -244,7 +246,16 @@ def get_info_router(os: "AgentOS") -> APIRouter:
         description="Return lightweight, unauthenticated metadata about this AgentOS instance.",
         response_model=InfoResponse,
     )
-    async def get_info(request: Request) -> InfoResponse:
+    async def get_info(request: Request, response: Response) -> InfoResponse:
+        policy = getattr(request.app.state, "public_route_policy", None)
+        public_selection = None
+        if (
+            policy is not None
+            and policy.authenticated_api
+            and getattr(request.state, "_agno_verified_api_jwt", None) is not _VERIFIED_API_JWT
+        ):
+            public_selection = policy.selected
+            response.headers["Vary"] = "Authorization"
         mcp_enabled = bool(os.mcp)
         mcp_oauth = None
         if mcp_enabled and getattr(os, "mcp_auth", None) is not None:
@@ -259,9 +270,9 @@ def get_info_router(os: "AgentOS") -> APIRouter:
             name=os.name,
             os_version=os.version or "1.0.0",
             agno_version=agno_version,
-            agent_count=len(os.agents or []),
-            team_count=len(os.teams or []),
-            workflow_count=len(os.workflows or []),
+            agent_count=len(public_selection["agents"] if public_selection is not None else os.agents or []),
+            team_count=len(public_selection["teams"] if public_selection is not None else os.teams or []),
+            workflow_count=len(public_selection["workflows"] if public_selection is not None else os.workflows or []),
             mcp=McpInfo(enabled=mcp_enabled, path="/mcp" if mcp_enabled else None, oauth=mcp_oauth),
             auth_mode=get_effective_auth_mode(
                 settings=os.settings,
@@ -271,6 +282,10 @@ def get_info_router(os: "AgentOS") -> APIRouter:
         )
 
     return router
+
+
+PUBLIC_WS_AUTH_TIMEOUT = 10.0
+PUBLIC_WS_MAX_AUTH_ATTEMPTS = 5
 
 
 def get_websocket_router(
@@ -321,6 +336,10 @@ def get_websocket_router(
 
         await websocket_manager.connect(websocket, requires_auth=requires_auth)
 
+        public_authenticated = websocket.scope.get("_agno_public_ws_authenticated")
+        auth_deadline = asyncio.get_running_loop().time() + PUBLIC_WS_AUTH_TIMEOUT
+        auth_attempts = 0
+
         # Store user context from the authenticated identity (JWT or service account)
         websocket_user_context: Dict[str, Any] = {}
 
@@ -333,12 +352,32 @@ def get_websocket_router(
 
         try:
             while True:
-                data = await websocket.receive_text()
+                if public_authenticated is not None and requires_auth:
+                    if websocket_manager.is_authenticated(websocket):
+                        public_authenticated()
+                        public_authenticated = None
+                        data = await websocket.receive_text()
+                    else:
+                        if auth_attempts >= PUBLIC_WS_MAX_AUTH_ATTEMPTS:
+                            await websocket.close(code=1008)
+                            return
+                        # A fixed deadline prevents ping/auth messages from extending
+                        # the lifetime of an unauthenticated public connection.
+                        remaining = auth_deadline - asyncio.get_running_loop().time()
+                        try:
+                            data = await asyncio.wait_for(websocket.receive_text(), timeout=remaining)
+                        except asyncio.TimeoutError:
+                            await websocket.close(code=1008)
+                            return
+                else:
+                    data = await websocket.receive_text()
                 message = json.loads(data)
                 action = message.get("action")
 
                 # Handle authentication first
                 if action == "authenticate":
+                    if public_authenticated is not None:
+                        auth_attempts += 1
                     token = message.get("token")
                     if not token:
                         await websocket.send_text(json.dumps({"event": "auth_error", "error": "Token is required"}))
@@ -632,4 +671,5 @@ def get_websocket_router(
             await cancel_subscription_pump(websocket)
             await websocket_manager.disconnect_websocket(websocket)
 
+    setattr(workflow_websocket_endpoint, "_agno_authenticated_workflow_socket", True)
     return ws_router
