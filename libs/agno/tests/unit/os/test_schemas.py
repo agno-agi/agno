@@ -203,8 +203,8 @@ def test_run_schemas_expose_the_cancellation_stage(schema_name, id_field):
 
     schema_cls = getattr(schema_module, schema_name)
     with_stage = schema_cls.from_dict(
-        {"run_id": "r1", id_field: "x", "status": "CANCELLED", "cancellation_stage": "BEFORE_EXECUTION"}
+        {"run_id": "r1", id_field: "x", "status": "CANCELLED", "cancellation_stage": "PENDING"}
     )
-    assert with_stage.cancellation_stage == "BEFORE_EXECUTION"
+    assert with_stage.cancellation_stage == "PENDING"
     without = schema_cls.from_dict({"run_id": "r2", id_field: "x", "status": "CANCELLED"})
     assert without.cancellation_stage is None

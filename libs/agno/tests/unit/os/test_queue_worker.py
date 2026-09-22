@@ -2402,7 +2402,7 @@ class TestCancellationStage:
         return job
 
     @pytest.mark.asyncio
-    async def test_cancel_of_a_queued_ticket_stamps_before_execution(self, monkeypatch):
+    async def test_cancel_of_a_queued_ticket_stamps_pending(self, monkeypatch):
         from agno.run.base import CancellationStage
         from agno.run.status_persist import RunPersistOutcome
 
@@ -2417,7 +2417,7 @@ class TestCancellationStage:
         worker = make_worker(store, agent, make_config())
         await store.enqueue_job(self._queued_job("cq-before"))
         assert await worker.acancel_queued("cq-before") is True
-        assert captured == [{"status": "CANCELLED", "cancellation_stage": CancellationStage.before_execution.value}]
+        assert captured == [{"status": "CANCELLED", "cancellation_stage": CancellationStage.pending.value}]
 
     @pytest.mark.asyncio
     async def test_cancel_of_a_paused_ticket_stamps_paused(self, monkeypatch):
@@ -2470,7 +2470,7 @@ class TestCancellationStage:
         await store.enqueue_job(self._queued_job("cq-fb"))
         assert await worker.acancel_queued("cq-fb") is True
         assert saved and saved[0].status == RunStatus.cancelled
-        assert saved[0].cancellation_stage is CancellationStage.before_execution
+        assert saved[0].cancellation_stage is CancellationStage.pending
         assert saved[0].content == "cancelled before execution", "the human reason still lands on content"
 
     @pytest.mark.asyncio

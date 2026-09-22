@@ -847,7 +847,7 @@ class QueueWorker:
         # a UI hides never-started runs and shows paused ones.
         paused = prior.get("status") == "paused"
         reason = "cancelled while paused awaiting continuation" if paused else "cancelled before execution"
-        stage = CancellationStage.paused if paused else CancellationStage.before_execution
+        stage = CancellationStage.paused if paused else CancellationStage.pending
         # Run row first (fenced): if this cannot land, do NOT tombstone - a
         # terminal ticket over a live-looking row is the one divergence
         # nothing heals. Exception: an UNRESOLVABLE component means nobody
@@ -1746,7 +1746,7 @@ class QueueWorker:
                 job,
                 "cancelled while queued for a slot",
                 status="cancelled",
-                cancellation_stage=CancellationStage.before_execution,
+                cancellation_stage=CancellationStage.pending,
             ):
                 log_error(f"Job queue: cancelled job {job_id} but its run row could not be terminalized")
             await self._terminate_stream_view(job, status="cancelled")
@@ -2396,7 +2396,7 @@ async def aticket_poll_fallback(
         # one reaching this fallback is by construction pre-execution.
         from agno.run.base import CancellationStage
 
-        body["cancellation_stage"] = CancellationStage.before_execution.value
+        body["cancellation_stage"] = CancellationStage.pending.value
     return body
 
 

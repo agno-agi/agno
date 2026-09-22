@@ -400,12 +400,12 @@ class CancellationStage(str, Enum):
     Absent (``None``) means unknown: runs written before the field existed,
     and task-level interrupts (an event-loop shutdown, a disconnected
     streaming task), carry no stage. Consumers must therefore hide
-    only on ``before_execution`` and never "show only on ``during_execution``".
+    only on ``pending`` and never "show only on ``executing``".
     Values are a wire contract: extend, never rename.
     """
 
-    before_execution = "BEFORE_EXECUTION"
-    during_execution = "DURING_EXECUTION"
+    pending = "PENDING"
+    executing = "EXECUTING"
     paused = "PAUSED"
 
 

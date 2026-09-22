@@ -472,7 +472,7 @@ class TestTicketPollCancellationStage:
     so; the ticket-only poll view carries the stage itself."""
 
     @pytest.mark.asyncio
-    async def test_unclaimed_cancelled_ticket_reports_before_execution(self):
+    async def test_unclaimed_cancelled_ticket_reports_pending(self):
         from agno.os.job_queue import aticket_poll_fallback
 
         store = InMemoryQueueStore()
@@ -482,7 +482,7 @@ class TestTicketPollCancellationStage:
         worker = SimpleNamespace(store=store)
         view = await aticket_poll_fallback(worker, "r1", "s1", "agent", "a1", None, user_scoped=False)
         assert view is not None and view["status"] == "CANCELLED"
-        assert view["cancellation_stage"] == "BEFORE_EXECUTION"
+        assert view["cancellation_stage"] == "PENDING"
 
     @pytest.mark.asyncio
     async def test_claimed_cancelled_ticket_reports_no_stage(self):

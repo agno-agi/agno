@@ -3523,7 +3523,7 @@ async def _arun_background(
             log_info(f"Background run {run_response.run_id} cancelled while waiting for a slot")
             try:
                 run_response.status = RunStatus.cancelled
-                run_response.cancellation_stage = CancellationStage.before_execution
+                run_response.cancellation_stage = CancellationStage.pending
                 await apersist_run_transition(team, "team", session_id, run_response, user_id=user_id)
             except Exception as e:
                 log_error(f"Failed to persist cancelled state for background run {run_response.run_id}: {str(e)}")
@@ -3705,7 +3705,7 @@ async def _arun_background_stream(
             log_info(f"Background stream run {run_id} cancelled while waiting for a slot")
             try:
                 run_response.status = RunStatus.cancelled
-                run_response.cancellation_stage = CancellationStage.before_execution
+                run_response.cancellation_stage = CancellationStage.pending
                 await apersist_run_transition(team, "team", session_id, run_response, user_id=user_id)
             except Exception:
                 log_error(f"Failed to persist cancelled state for background stream run {run_id}", exc_info=True)
@@ -4545,7 +4545,7 @@ def _handle_team_run_cancellation(
     # a KeyboardInterrupt; those are neither a user cancel nor a never-started
     # run and stay unknown.
     if isinstance(error, RunCancelledException):
-        run_response.cancellation_stage = CancellationStage.during_execution
+        run_response.cancellation_stage = CancellationStage.executing
     has_partial_content = bool(run_response.content)
     if not run_response.content:
         run_response.content = reason
@@ -9041,7 +9041,7 @@ async def _acontinue_run_background_stream(
                     cancelled_run = _get_session_run(lookup_session)
                 if cancelled_run is not None:
                     cancelled_run.status = RunStatus.cancelled
-                    cancelled_run.cancellation_stage = CancellationStage.before_execution
+                    cancelled_run.cancellation_stage = CancellationStage.pending
                     await apersist_run_transition(team, "team", session_id, cancelled_run, user_id=user_id)
             except Exception:
                 log_error(

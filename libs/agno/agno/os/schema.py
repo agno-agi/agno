@@ -583,8 +583,8 @@ class RunSchema(BaseModel):
     cancellation_stage: Optional[str] = Field(
         None,
         description=(
-            "For CANCELLED runs, where the run was when it was cancelled: BEFORE_EXECUTION (never started), "
-            "DURING_EXECUTION (partial output preserved) or PAUSED (awaiting a human-in-the-loop continuation). "
+            "For CANCELLED runs, where the run was when it was cancelled: PENDING (never started), "
+            "EXECUTING (partial output preserved) or PAUSED (awaiting a human-in-the-loop continuation). "
             "Absent means unknown."
         ),
     )
@@ -679,8 +679,8 @@ class TeamRunSchema(BaseModel):
     cancellation_stage: Optional[str] = Field(
         None,
         description=(
-            "For CANCELLED runs, where the run was when it was cancelled: BEFORE_EXECUTION (never started), "
-            "DURING_EXECUTION (partial output preserved) or PAUSED (awaiting a human-in-the-loop continuation). "
+            "For CANCELLED runs, where the run was when it was cancelled: PENDING (never started), "
+            "EXECUTING (partial output preserved) or PAUSED (awaiting a human-in-the-loop continuation). "
             "Absent means unknown."
         ),
     )
@@ -777,8 +777,8 @@ class WorkflowRunSchema(BaseModel):
     cancellation_stage: Optional[str] = Field(
         None,
         description=(
-            "For CANCELLED runs, where the run was when it was cancelled: BEFORE_EXECUTION (never started), "
-            "DURING_EXECUTION (partial output preserved) or PAUSED (awaiting a human-in-the-loop continuation). "
+            "For CANCELLED runs, where the run was when it was cancelled: PENDING (never started), "
+            "EXECUTING (partial output preserved) or PAUSED (awaiting a human-in-the-loop continuation). "
             "Absent means unknown."
         ),
     )

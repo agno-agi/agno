@@ -68,14 +68,14 @@ async def test_stage_lands_through_the_fenced_patch_and_loads_as_the_enum(db):
     outcome = await db.update_run_in_session(
         "s1",
         "r-before",
-        fields={"status": "CANCELLED", "cancellation_stage": CancellationStage.before_execution.value},
+        fields={"status": "CANCELLED", "cancellation_stage": CancellationStage.pending.value},
         content_if_absent="cancelled before execution",
     )
     assert outcome == RunPersistOutcome.UPDATED
     run = await db.get_run("r-before")
     assert isinstance(run, RunOutput)
     assert run.status == RunStatus.cancelled
-    assert run.cancellation_stage is CancellationStage.before_execution
+    assert run.cancellation_stage is CancellationStage.pending
     assert run.content == "cancelled before execution", "the human reason still lands on content"
 
 
@@ -124,12 +124,12 @@ async def test_transition_helper_persists_the_stage_on_postgres(db):
         session_id="s1",
         agent_id="a1",
         status=RunStatus.cancelled,
-        cancellation_stage=CancellationStage.before_execution,
+        cancellation_stage=CancellationStage.pending,
     )
     await apersist_run_transition(agent, "agent", "s1", run)
     stored = await db.get_run("r-transition")
     assert isinstance(stored, RunOutput) and stored.status == RunStatus.cancelled
-    assert stored.cancellation_stage is CancellationStage.before_execution
+    assert stored.cancellation_stage is CancellationStage.pending
 
     run.status = RunStatus.running
     await apersist_run_transition(agent, "agent", "s1", run)
@@ -140,4 +140,4 @@ async def test_transition_helper_persists_the_stage_on_postgres(db):
     assert refused == RunPersistOutcome.TERMINAL_REFUSED
     stored = await db.get_run("r-transition")
     assert isinstance(stored, RunOutput) and stored.status == RunStatus.cancelled
-    assert stored.cancellation_stage is CancellationStage.before_execution
+    assert stored.cancellation_stage is CancellationStage.pending

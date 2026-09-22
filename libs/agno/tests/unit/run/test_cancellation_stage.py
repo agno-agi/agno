@@ -16,9 +16,9 @@ from agno.run.workflow import WorkflowRunOutput
 
 
 def test_stage_values_are_a_wire_contract():
-    assert {s.value for s in CancellationStage} == {"BEFORE_EXECUTION", "DURING_EXECUTION", "PAUSED"}
+    assert {s.value for s in CancellationStage} == {"PENDING", "EXECUTING", "PAUSED"}
     assert CancellationStage("PAUSED") is CancellationStage.paused
-    assert CancellationStage.before_execution == "BEFORE_EXECUTION", "a str enum compares to its stored value"
+    assert CancellationStage.pending == "PENDING", "a str enum compares to its stored value"
 
 
 @pytest.mark.parametrize(
@@ -37,11 +37,11 @@ class TestRoundTrip:
         assert cls.from_dict(run.to_dict()).cancellation_stage is None
 
     def test_set_stage_serializes_as_its_value_and_loads_as_the_enum(self, cls, kwargs):
-        run = cls(status=RunStatus.cancelled, cancellation_stage=CancellationStage.before_execution, **kwargs)
+        run = cls(status=RunStatus.cancelled, cancellation_stage=CancellationStage.pending, **kwargs)
         wire = run.to_dict()
-        assert wire["cancellation_stage"] == "BEFORE_EXECUTION"
+        assert wire["cancellation_stage"] == "PENDING"
         loaded = cls.from_dict(wire)
-        assert loaded.cancellation_stage is CancellationStage.before_execution
+        assert loaded.cancellation_stage is CancellationStage.pending
 
     def test_unknown_future_value_survives_a_round_trip(self, cls, kwargs):
         """A newer server may write a stage this version does not know: it
@@ -53,22 +53,22 @@ class TestRoundTrip:
 
 
 class TestMidExecutionHandlers:
-    def test_agent_cancellation_handler_marks_during_execution_and_keeps_partial_output(self):
+    def test_agent_cancellation_handler_marks_executing_and_keeps_partial_output(self):
         from agno.agent._run import _handle_run_cancellation
 
         run = RunOutput(run_id="r1", agent_id="a1", content="partial answer", status=RunStatus.running)
         out = _handle_run_cancellation(run, RunCancelledException("stop"))
         assert out.status == RunStatus.cancelled
-        assert out.cancellation_stage is CancellationStage.during_execution
+        assert out.cancellation_stage is CancellationStage.executing
         assert out.content == "partial answer", "partial output is preserved, not replaced by the reason"
 
-    def test_team_cancellation_handler_marks_during_execution(self):
+    def test_team_cancellation_handler_marks_executing(self):
         from agno.team._run import _handle_team_run_cancellation
 
         run = TeamRunOutput(run_id="r1", team_id="t1", status=RunStatus.running)
         out = _handle_team_run_cancellation(run, RunCancelledException("stop"))
         assert out.status == RunStatus.cancelled
-        assert out.cancellation_stage is CancellationStage.during_execution
+        assert out.cancellation_stage is CancellationStage.executing
 
 
 class TestTaskLevelInterruptsStayUnknown:
@@ -128,9 +128,9 @@ class TestTransitionCarriesTheStage:
         from agno.run.status_persist import apersist_run_transition
 
         db = _CapturingDb()
-        run = cls(status=RunStatus.cancelled, cancellation_stage=CancellationStage.before_execution, **kwargs)
+        run = cls(status=RunStatus.cancelled, cancellation_stage=CancellationStage.pending, **kwargs)
         await apersist_run_transition(SimpleNamespace(db=db), component_type, "s1", run)
-        assert db.patches == [{"status": "CANCELLED", "cancellation_stage": "BEFORE_EXECUTION"}]
+        assert db.patches == [{"status": "CANCELLED", "cancellation_stage": "PENDING"}]
 
     @pytest.mark.asyncio
     async def test_cancelled_transition_without_a_stage_patches_no_key(self, component_type, cls, kwargs):
@@ -154,7 +154,7 @@ class TestTransitionCarriesTheStage:
         from agno.run.status_persist import apersist_run_transition
 
         db = _CapturingDb()
-        run = cls(status=RunStatus.running, cancellation_stage=CancellationStage.before_execution, **kwargs)
+        run = cls(status=RunStatus.running, cancellation_stage=CancellationStage.pending, **kwargs)
         await apersist_run_transition(SimpleNamespace(db=db), component_type, "s1", run)
         assert db.patches == [{"status": "RUNNING", "cancellation_stage": None}]
         assert run.cancellation_stage is None, "the object is cleared too, for the whole-run fallback"

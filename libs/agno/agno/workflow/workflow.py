@@ -2949,7 +2949,7 @@ class Workflow:
                 logger.info(f"Workflow run {workflow_run_response.run_id} was cancelled")
                 workflow_run_response.status = RunStatus.cancelled
                 workflow_run_response.cancellation_stage = (
-                    CancellationStage.during_execution if isinstance(e, RunCancelledException) else None
+                    CancellationStage.executing if isinstance(e, RunCancelledException) else None
                 )
                 workflow_run_response.content = _normalize_workflow_cancellation_reason(workflow_run_response, e)
             finally:
@@ -3198,7 +3198,7 @@ class Workflow:
                 logger.info(f"Workflow run {workflow_run_response.run_id} was cancelled")
                 workflow_run_response.status = RunStatus.cancelled
                 workflow_run_response.cancellation_stage = (
-                    CancellationStage.during_execution if isinstance(e, RunCancelledException) else None
+                    CancellationStage.executing if isinstance(e, RunCancelledException) else None
                 )
                 workflow_run_response.content = _normalize_workflow_cancellation_reason(workflow_run_response, e)
 
@@ -3313,7 +3313,7 @@ class Workflow:
                 logger.info(f"Workflow run {workflow_run_response.run_id} was cancelled during streaming")
                 workflow_run_response.status = RunStatus.cancelled
                 workflow_run_response.cancellation_stage = (
-                    CancellationStage.during_execution if isinstance(e, RunCancelledException) else None
+                    CancellationStage.executing if isinstance(e, RunCancelledException) else None
                 )
                 workflow_run_response.content = _normalize_workflow_cancellation_reason(workflow_run_response, e)
                 if workflow_run_response.metrics:
@@ -3735,7 +3735,7 @@ class Workflow:
                 logger.info(f"Workflow run {workflow_run_response.run_id} was cancelled during streaming")
                 workflow_run_response.status = RunStatus.cancelled
                 workflow_run_response.cancellation_stage = (
-                    CancellationStage.during_execution if isinstance(e, RunCancelledException) else None
+                    CancellationStage.executing if isinstance(e, RunCancelledException) else None
                 )
                 workflow_run_response.content = _normalize_workflow_cancellation_reason(workflow_run_response, e)
 
@@ -3990,7 +3990,7 @@ class Workflow:
                 logger.info(f"Workflow run {workflow_run_response.run_id} was cancelled")
                 workflow_run_response.status = RunStatus.cancelled
                 workflow_run_response.cancellation_stage = (
-                    CancellationStage.during_execution if isinstance(e, RunCancelledException) else None
+                    CancellationStage.executing if isinstance(e, RunCancelledException) else None
                 )
                 workflow_run_response.content = _normalize_workflow_cancellation_reason(workflow_run_response, e)
                 # Client disconnect: persist on a detached task, then re-raise.
@@ -4235,7 +4235,7 @@ class Workflow:
                 logger.info(f"Workflow run {workflow_run_response.run_id} was cancelled")
                 workflow_run_response.status = RunStatus.cancelled
                 workflow_run_response.cancellation_stage = (
-                    CancellationStage.during_execution if isinstance(e, RunCancelledException) else None
+                    CancellationStage.executing if isinstance(e, RunCancelledException) else None
                 )
                 workflow_run_response.content = _normalize_workflow_cancellation_reason(workflow_run_response, e)
 
@@ -4371,7 +4371,7 @@ class Workflow:
                 logger.info(f"Workflow run {workflow_run_response.run_id} was cancelled during streaming")
                 workflow_run_response.status = RunStatus.cancelled
                 workflow_run_response.cancellation_stage = (
-                    CancellationStage.during_execution if isinstance(e, RunCancelledException) else None
+                    CancellationStage.executing if isinstance(e, RunCancelledException) else None
                 )
                 workflow_run_response.content = _normalize_workflow_cancellation_reason(workflow_run_response, e)
                 if workflow_run_response.metrics:
@@ -4811,7 +4811,7 @@ class Workflow:
                 logger.info(f"Workflow run {workflow_run_response.run_id} was cancelled during streaming")
                 workflow_run_response.status = RunStatus.cancelled
                 workflow_run_response.cancellation_stage = (
-                    CancellationStage.during_execution if isinstance(e, RunCancelledException) else None
+                    CancellationStage.executing if isinstance(e, RunCancelledException) else None
                 )
                 workflow_run_response.content = _normalize_workflow_cancellation_reason(workflow_run_response, e)
 
@@ -5086,7 +5086,7 @@ class Workflow:
                 # so persist CANCELLED and deregister the run here.
                 log_info(f"Background run {workflow_run_response.run_id} cancelled while waiting for a slot")
                 workflow_run_response.status = RunStatus.cancelled
-                workflow_run_response.cancellation_stage = CancellationStage.before_execution
+                workflow_run_response.cancellation_stage = CancellationStage.pending
                 try:
                     await apersist_run_transition(self, "workflow", session_id, workflow_run_response, user_id=user_id)
                 except Exception:
@@ -5360,7 +5360,7 @@ class Workflow:
                 # persist CANCELLED and deregister the run here.
                 log_info(f"Background stream run {run_context.run_id} cancelled while waiting for a slot")
                 workflow_run_response.status = RunStatus.cancelled
-                workflow_run_response.cancellation_stage = CancellationStage.before_execution
+                workflow_run_response.cancellation_stage = CancellationStage.pending
                 try:
                     await apersist_run_transition(self, "workflow", session_id, workflow_run_response, user_id=user_id)
                 except Exception:
@@ -5611,7 +5611,7 @@ class Workflow:
                 log_info(f"Background stream workflow run {run_id} cancelled while waiting for a slot")
                 try:
                     workflow_run_response.status = RunStatus.cancelled
-                    workflow_run_response.cancellation_stage = CancellationStage.before_execution
+                    workflow_run_response.cancellation_stage = CancellationStage.pending
                     await apersist_run_transition(self, "workflow", session_id, workflow_run_response, user_id=user_id)
                 except Exception:
                     log_error(

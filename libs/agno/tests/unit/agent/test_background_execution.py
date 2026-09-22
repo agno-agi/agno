@@ -418,7 +418,7 @@ class TestBackgroundConcurrencyLimit:
             # Never started: the persisted row says so in a machine-readable way
             from agno.run.base import CancellationStage
 
-            assert persisted_stage["bg-cancel-queued"] is CancellationStage.before_execution
+            assert persisted_stage["bg-cancel-queued"] is CancellationStage.pending
             # The queued run never executed and never went RUNNING
             assert "bg-cancel-queued" not in executed_run_ids
             assert RunStatus.running not in persisted_by_run["bg-cancel-queued"]
