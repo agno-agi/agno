@@ -228,6 +228,59 @@ async def test_sync_docs_streams_page_progress_without_storing_it(monkeypatch):
         assert "StepCompleted" in stored and "WorkflowCompleted" in stored
 
 
+@pytest.mark.asyncio
+async def test_cancelling_sync_docs_stops_the_page_sync_worker(monkeypatch):
+    from types import SimpleNamespace
+
+    from agno.db.in_memory import InMemoryDb
+    from agno.knowledge.page import PageSyncProgress, SyncReport, _coordinator
+    from agno.run.base import RunStatus
+    from agno.run.workflow import StepProgressEvent
+
+    demo = _load_public_pages_cookbook("public_pages", monkeypatch)
+    workers = BoundedWorkers(1, "test-sync-cancel")
+    monkeypatch.setattr(_coordinator, "SYNC_WORKERS", workers)
+    observed, ended = threading.Event(), threading.Event()
+
+    def sync(*, budget, on_progress, **kwargs):
+        # A page worker learns of cancellation only through its budget, as the real coordinator does.
+        try:
+            on_progress(PageSyncProgress(stage="discovered", discovered=3))
+            if budget.cancelled.wait(5):
+                observed.set()
+            budget.remaining()
+            return SyncReport(status="completed", discovered=3)
+        finally:
+            ended.set()
+
+    monkeypatch.setattr(demo.knowledge, "_pages", lambda: SimpleNamespace(sync=sync))
+    monkeypatch.setattr(demo.sync, "db", InMemoryDb())
+    monkeypatch.setattr(demo.sync, "telemetry", False)
+
+    for _ in range(2):
+        observed.clear()
+        ended.clear()
+        events = []
+        stream = demo.sync.arun(input={}, session_id="s", stream=True, stream_events=True)
+        async for event in stream:
+            events.append(event)
+            if isinstance(event, StepProgressEvent):
+                demo.sync.cancel_run(event.run_id)
+                async for remaining in stream:
+                    events.append(remaining)
+                break
+
+        # Closing the workflow's stream cancelled the worker's budget before the stream ended.
+        assert observed.is_set()
+        assert await asyncio.to_thread(ended.wait, 5)
+        assert [event.event for event in events][-2:] == ["WorkflowCancelled", "WorkflowCompleted"]
+        saved = await demo.sync.aget_run_output(run_id=events[-1].run_id, session_id="s")
+        assert saved.status == RunStatus.cancelled
+        # The worker's capacity is back once it has ended.
+        workers.run_sync(lambda **kwargs: None, seconds=1)
+    workers._executor.shutdown(wait=True)
+
+
 def test_public_pages_serves_one_loopback_agentos():
     import ast
     from pathlib import Path

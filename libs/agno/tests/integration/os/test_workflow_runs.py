@@ -18,6 +18,8 @@ from agno.db.sqlite import SqliteDb
 from agno.os import AgentOS
 from agno.os.config import AuthorizationConfig
 from agno.os.routers.workflows.router import handle_workflow_via_websocket
+from agno.run import RunContext
+from agno.run.base import RunStatus
 from agno.run.workflow import StepProgressEvent, WorkflowCompletedEvent
 from agno.workflow.factory import WorkflowFactory
 from agno.workflow.step import Step
@@ -545,6 +547,50 @@ async def test_aget_workflow_nonexistent_version_returns_404(versioned_workflow_
     async with httpx.AsyncClient(transport=ASGITransport(app=versioned_workflow_app), base_url="http://test") as client:
         response = await client.get("/workflows/versioned-wf", params={"version": 999})
         assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_cancelling_through_the_route_stops_the_function_step(temp_storage_db_file, monkeypatch):
+    """A cancel sent through the real route stops a function step at its next yield: its cleanup runs,
+    no further page is worked on, nothing is delivered after the cancel, and the run is stored as
+    cancelled. Twice, so nothing carries over."""
+    worked, closed, cancelled = [], [], []
+
+    async def sync_pages(step_input: StepInput, run_context: RunContext):
+        try:
+            for page in range(1, 11):
+                worked.append(page)
+                if page == 2:
+                    # The client cancels through the real route while the step is between pages.
+                    await client.cancel_workflow_run("sync-docs", run_context.run_id)
+                    cancelled.append(run_context.run_id)
+                yield StepProgress(content=f"Processed {page} of 10 pages")
+        finally:
+            closed.append(True)
+        yield StepOutput(content={"status": "completed"})
+
+    workflow = Workflow(
+        id="sync-docs",
+        db=SqliteDb(db_file=temp_storage_db_file),
+        steps=[Step(name="reconcile", executor=sync_pages)],
+    )
+    app = AgentOS(workflows=[workflow], telemetry=False).get_app()
+    async with httpx.AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as http_client:
+        monkeypatch.setattr("agno.utils.http._global_async_client", http_client)
+        client = AgentOSClient(base_url="http://test")
+        for _ in range(2):
+            worked.clear()
+            closed.clear()
+            cancelled.clear()
+            events = [event async for event in client.run_workflow_stream("sync-docs", "go")]
+
+            names = [event.event for event in events]
+            assert cancelled == [events[-1].run_id]
+            assert closed == [True] and worked == [1, 2]
+            assert names.count("StepProgress") == 1 and names.count("WorkflowCancelled") == 1
+            assert names[-2:] == ["WorkflowCancelled", "WorkflowCompleted"]
+            stored = await workflow.aget_run_output(run_id=events[-1].run_id, session_id=events[-1].session_id)
+            assert stored.status == RunStatus.cancelled
 
 
 async def _sync_with_progress(step_input: StepInput):

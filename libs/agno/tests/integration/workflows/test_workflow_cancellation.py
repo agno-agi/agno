@@ -10,14 +10,15 @@ from agno.models.openai import OpenAIChat
 from agno.run.agent import RunContentEvent
 from agno.run.base import RunStatus
 from agno.run.cancel import cancel_run
-from agno.run.workflow import WorkflowCancelledEvent
+from agno.run import RunContext
+from agno.run.workflow import StepProgressEvent, WorkflowCancelledEvent
 from agno.workflow import HumanReview, Step, Workflow
 from agno.workflow.condition import Condition
 from agno.workflow.loop import Loop
 from agno.workflow.parallel import Parallel
 from agno.workflow.router import Router
 from agno.workflow.steps import Steps
-from agno.workflow.types import StepInput, StepOutput
+from agno.workflow.types import StepInput, StepOutput, StepProgress
 
 # ============================================================================
 # FIXTURES
@@ -547,6 +548,119 @@ class TestMultiStepFunctionCancellationStreaming:
         assert len(partial_results) >= 1, (
             f"Should have partial content saved, got step_results: {last_run.step_results}"
         )
+
+
+def _page_executors(worked, closed, cancel_inside=None):
+    """Function steps that record each page they work on and whether their cleanup ran.
+
+    cancel_inside(run_id), when given, cancels the run from inside the function before
+    its second page is yielded; that is the only way a non-streaming run can be cancelled
+    while the step is running."""
+
+    def sync_pages(step_input: StepInput, run_context: RunContext) -> Iterator[Any]:
+        try:
+            for page in range(1, 11):
+                worked.append(page)
+                if page == 2 and cancel_inside:
+                    cancel_inside(run_context.run_id)
+                yield StepProgress(content=f"page {page}")
+            yield StepOutput(content="all pages")
+        finally:
+            closed.append(True)
+
+    async def async_pages(step_input: StepInput, run_context: RunContext) -> AsyncIterator[Any]:
+        try:
+            for page in range(1, 11):
+                worked.append(page)
+                if page == 2 and cancel_inside:
+                    cancel_inside(run_context.run_id)
+                yield StepProgress(content=f"page {page}")
+        finally:
+            closed.append(True)
+        yield StepOutput(content="all pages")
+
+    return sync_pages, async_pages
+
+
+class TestFunctionStepCancellationStopsTheFunction:
+    """Cancelling a workflow stops its function step at the step's next yield and closes it."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("asynchronous", [False, True])
+    async def test_streaming_cancel_stops_the_function_at_its_next_yield(self, shared_db, asynchronous):
+        worked, closed = [], []
+        sync_pages, async_pages = _page_executors(worked, closed)
+        workflow = Workflow(
+            name="Function Cancel Test",
+            db=shared_db,
+            steps=[Step(name="reconcile", executor=async_pages if asynchronous else sync_pages)],
+            store_events=True,
+            telemetry=False,
+        )
+
+        for run in range(2):
+            worked.clear()
+            closed.clear()
+            session_id = f"function_cancel_{'async' if asynchronous else 'sync'}_{run}"
+            events = []
+            if asynchronous:
+                stream = workflow.arun(input="go", session_id=session_id, stream=True, stream_events=True)
+                async for event in stream:
+                    events.append(event)
+                    if isinstance(event, StepProgressEvent):
+                        await workflow.acancel_run(event.run_id)
+                        async for remaining in stream:
+                            events.append(remaining)
+                        break
+            else:
+                stream = workflow.run(input="go", session_id=session_id, stream=True, stream_events=True)
+                for event in stream:
+                    events.append(event)
+                    if isinstance(event, StepProgressEvent):
+                        workflow.cancel_run(event.run_id)
+                        for remaining in stream:
+                            events.append(remaining)
+                        break
+
+            names = [event.event for event in events]
+            # The function was closed before the stream ended and worked on no further page.
+            assert closed == [True] and worked == [1]
+            # Nothing was delivered after the cancel; the established terminal pair closes the stream.
+            assert names.count("StepProgress") == 1 and names.count("WorkflowCancelled") == 1
+            assert names[-2:] == ["WorkflowCancelled", "WorkflowCompleted"]
+
+            last_run = workflow.get_session(session_id=session_id).runs[-1]
+            assert last_run.status == RunStatus.cancelled
+            # The run is persisted before the terminal pair is emitted, so it stores what was streamed until then.
+            assert [event.event for event in last_run.events] == names[: names.index("WorkflowCancelled")]
+            # The step never produced its output; a drained function would have stored one.
+            assert not last_run.step_results
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("asynchronous", [False, True])
+    async def test_non_streaming_cancel_stops_the_function(self, shared_db, asynchronous):
+        worked, closed, cancel = [], [], []
+        sync_pages, async_pages = _page_executors(worked, closed, cancel_inside=lambda run_id: cancel[0](run_id))
+        workflow = Workflow(
+            name="Function Cancel Test",
+            db=shared_db,
+            steps=[Step(name="reconcile", executor=async_pages if asynchronous else sync_pages)],
+            telemetry=False,
+        )
+        cancel.append(workflow.cancel_run)
+
+        for run in range(2):
+            worked.clear()
+            closed.clear()
+            session_id = f"function_cancel_plain_{'async' if asynchronous else 'sync'}_{run}"
+            if asynchronous:
+                output = await workflow.arun(input="go", session_id=session_id)
+            else:
+                output = workflow.run(input="go", session_id=session_id)
+
+            assert output.status == RunStatus.cancelled
+            assert closed == [True] and worked == [1, 2]
+            assert workflow.get_session(session_id=session_id).runs[-1].status == RunStatus.cancelled
 
 
 # ============================================================================
