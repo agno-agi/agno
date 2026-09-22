@@ -19,8 +19,7 @@ import jwt
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
-from agno.os import AgentOS
-from agno.os.authz import Authorization
+from agno.os import AgentOS, Authorization
 from fastapi.testclient import TestClient
 
 # ---------------------------------------------------------------------------

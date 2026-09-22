@@ -38,8 +38,7 @@ import jwt
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
-from agno.os import AgentOS
-from agno.os.authz import Authorization
+from agno.os import AgentOS, Authorization
 
 # HS256 keeps this file self-contained. A real IdP signs with RS256 and publishes its keys;
 # swap in jwks_file=... and issuer=... exactly as 13_idp_workos_auth0.py does.

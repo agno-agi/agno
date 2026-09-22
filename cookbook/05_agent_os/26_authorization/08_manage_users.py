@@ -37,8 +37,7 @@ import os
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
-from agno.os import AgentOS, create_dev_token
-from agno.os.authz import Authorization, UserDirectory
+from agno.os import AgentOS, Authorization, UserDirectory, create_dev_token
 
 OS_ID = os.getenv("OS_ID", "manage-users-os")  # the token audience (your os_id)
 ADMIN_SUBJECT = os.getenv("ADMIN_SUBJECT", "admin@example.com")

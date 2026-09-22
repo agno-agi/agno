@@ -5,7 +5,7 @@ Standing up managed roles by hand would mean assembling an audit sink, a role st
 and an ``include_router`` call, and keeping them pointed at the same database.
 :class:`Authorization` owns all of that and wires itself into AgentOS:
 
-    from agno.os.authz import Authorization
+    from agno.os import Authorization
 
     authz = Authorization(db=db, audit=True, trust_token_scopes=True,
                           verification_keys=KEYS, audience=OS_ID)

@@ -37,8 +37,7 @@ import os
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
-from agno.os import AgentOS, create_dev_token
-from agno.os.authz import Authorization, UserDirectory
+from agno.os import AgentOS, Authorization, UserDirectory, create_dev_token
 
 JWT_SECRET = os.getenv("JWT_VERIFICATION_KEY", "your-secret-key-at-least-256-bits-long")
 OS_ID = "managed-users-os"
