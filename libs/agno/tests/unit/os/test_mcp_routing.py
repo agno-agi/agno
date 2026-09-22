@@ -253,3 +253,15 @@ async def test_bare_mcp_true_advertises_the_mount_prefix():
         browser = await http.get("/runtime/mcp", headers={"Accept": "text/html", "Authorization": "Bearer bad"})
         if browser.status_code == 302:
             assert browser.headers["location"] == "/runtime/mcp/server-card"
+
+
+async def test_host_check_is_scoped_to_mcp_routes_and_allows_underscores():
+    async with bare_client() as http:
+        # Docker Compose service names carry underscores; they must reach every route.
+        assert (await http.get("/health", headers={"host": "agent_os:8000"})).status_code == 200
+        card = await http.get("/mcp/server-card", headers={"host": "agent_os:8000"})
+        assert card.status_code == 200, card.text
+        assert card.json()["remotes"][0]["url"] == "http://agent_os:8000/mcp"
+        # A malformed Host is only the MCP routes' problem.
+        assert (await http.get("/health", headers={"host": "evil.example/x?y="})).status_code == 200
+        assert (await http.get("/mcp/server-card", headers={"host": "evil.example/x?y="})).status_code == 400
