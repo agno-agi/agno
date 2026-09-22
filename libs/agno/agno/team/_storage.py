@@ -313,7 +313,9 @@ async def _aupsert_run(
         log_warning(f"Error upserting run into db: {str(e)}")
 
 
-def _read_or_create_session(team: "Team", session_id: str, user_id: Optional[str] = None) -> TeamSession:
+def _read_or_create_session(
+    team: "Team", session_id: str, user_id: Optional[str] = None, *, persist_introduction: bool = True
+) -> TeamSession:
     """Load the TeamSession from storage
 
     Returns:
@@ -369,7 +371,12 @@ def _read_or_create_session(team: "Team", session_id: str, user_id: Optional[str
             # v3: session.runs is in-memory; persist the intro to the runs table
             # so a session reload picks it up (pre-3.0's save_session wrote the
             # entire runs blob, so this happened for free).
-            if team.db is not None and team.parent_team_id is None and team.workflow_id is None:
+            if (
+                persist_introduction
+                and team.db is not None
+                and team.parent_team_id is None
+                and team.workflow_id is None
+            ):
                 from agno.team._session import save_session
                 from agno.team._storage import _upsert_run
 
@@ -377,13 +384,15 @@ def _read_or_create_session(team: "Team", session_id: str, user_id: Optional[str
                 _upsert_run(team, run=introduction_run, session_id=session_id, user_id=user_id, run_index=0)
 
     # Cache the session if relevant
-    if team_session is not None and team.cache_session:
+    if persist_introduction and team_session is not None and team.cache_session:
         team._set_cached_session(team_session)
 
     return team_session
 
 
-async def _aread_or_create_session(team: "Team", session_id: str, user_id: Optional[str] = None) -> TeamSession:
+async def _aread_or_create_session(
+    team: "Team", session_id: str, user_id: Optional[str] = None, *, persist_introduction: bool = True
+) -> TeamSession:
     """Load the TeamSession from storage
 
     Returns:
@@ -443,7 +452,12 @@ async def _aread_or_create_session(team: "Team", session_id: str, user_id: Optio
             # v3: session.runs is in-memory; persist the intro to the runs table
             # so a session reload picks it up (pre-3.0's save_session wrote the
             # entire runs blob, so this happened for free).
-            if team.db is not None and team.parent_team_id is None and team.workflow_id is None:
+            if (
+                persist_introduction
+                and team.db is not None
+                and team.parent_team_id is None
+                and team.workflow_id is None
+            ):
                 from agno.team._init import _has_async_db
                 from agno.team._session import asave_session, save_session
                 from agno.team._storage import _aupsert_run, _upsert_run
@@ -456,7 +470,7 @@ async def _aread_or_create_session(team: "Team", session_id: str, user_id: Optio
                     _upsert_run(team, run=introduction_run, session_id=session_id, user_id=user_id, run_index=0)
 
     # Cache the session if relevant
-    if team_session is not None and team.cache_session:
+    if persist_introduction and team_session is not None and team.cache_session:
         team._set_cached_session(team_session)
 
     return team_session
