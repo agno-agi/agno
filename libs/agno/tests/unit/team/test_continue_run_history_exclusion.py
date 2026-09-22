@@ -105,3 +105,31 @@ def test_get_messages_exclude_run_ids_drops_run_by_identity(excluded_status: Run
 
     assert _assistant_turns_with_tool_call(messages, CONTINUED_TOOL_CALL_ID) == []
     assert len(_assistant_turns_with_tool_call(messages, PRIOR_TOOL_CALL_ID)) == 1
+
+
+@pytest.mark.parametrize("continued_status", list(RunStatus), ids=[s.value for s in RunStatus])
+def test_continued_run_does_not_consume_a_history_slot(continued_status: RunStatus):
+    """With ``num_history_runs=1`` the continued run must not occupy the only history slot.
+
+    Without identity exclusion the continued run is the newest run in the session, so it
+    is the one ``last_n_runs`` keeps: the genuinely prior turn is silently dropped and the
+    continued run still re-enters as a duplicate. Exclusion has to happen before the slice.
+    """
+    team = Team(members=[], add_history_to_context=True, num_history_runs=1)
+    older_run = _tool_call_run("team-run-older", "tc-older", RunStatus.completed)
+    prior_run = _tool_call_run(PRIOR_RUN_ID, PRIOR_TOOL_CALL_ID, RunStatus.completed)
+    continued_run = _tool_call_run(CONTINUED_RUN_ID, CONTINUED_TOOL_CALL_ID, continued_status)
+    session = TeamSession(session_id="session-1", team_id=team.id, runs=[older_run, prior_run, continued_run])
+
+    run_messages = _build_continue_run_messages(
+        team,
+        input=list(continued_run.messages or []),
+        session=session,
+        add_history_to_context=True,
+        current_run_id=CONTINUED_RUN_ID,
+    )
+    messages = run_messages.messages
+
+    assert len(_assistant_turns_with_tool_call(messages, PRIOR_TOOL_CALL_ID)) == 1, [m.role for m in messages]
+    assert len(_assistant_turns_with_tool_call(messages, CONTINUED_TOOL_CALL_ID)) == 1, [m.role for m in messages]
+    assert _assistant_turns_with_tool_call(messages, "tc-older") == []
