@@ -88,7 +88,7 @@ class PgVector(VectorDb):
         content_language: str = "english",
         schema_version: int = 1,
         reranker: Optional[Reranker] = None,
-        report_row_timestamp: bool = False,
+        return_updated_at: bool = False,
         create_schema: bool = True,
         similarity_threshold: Optional[float] = None,
         *,
@@ -194,7 +194,7 @@ class PgVector(VectorDb):
         self.reranker: Optional[Reranker] = reranker
         # Off by default: the timestamp lands in meta_data, which is serialized into the
         # model's prompt, so only stores whose caller wants recency ranking should pay for it.
-        self.report_row_timestamp: bool = report_row_timestamp
+        self.return_updated_at: bool = return_updated_at
 
         # Schema creation flag
         self.create_schema: bool = create_schema
@@ -934,13 +934,13 @@ class PgVector(VectorDb):
             raise
 
     def _with_recency(self, meta_data: Optional[Dict[str, Any]], result: Any) -> Dict[str, Any]:
-        """Report when the row last changed, under a key of our own.
+        """Report the stored last-modified time, under a key of our own.
 
         Reported only when asked for: it travels in meta_data, which reaches the model's
         prompt, and it is namespaced so it cannot mask a timestamp the user set themselves.
         """
         merged = dict(meta_data) if meta_data else {}
-        if not self.report_row_timestamp:
+        if not self.return_updated_at:
             return merged
         timestamp = getattr(result, STORE_RECENCY_METADATA_KEY, None)
         # A table without the columns selects NULL, so the value is not always a datetime.
@@ -957,7 +957,7 @@ class PgVector(VectorDb):
         return merged
 
     def _recency_column(self):
-        """When each row last changed, for rerankers that weight by recency.
+        """The stored last-modified time, for rerankers that weight by recency.
 
         updated_at is only set once a row has been re-ingested or had its metadata
         changed, so an untouched row falls back to when it was first stored.

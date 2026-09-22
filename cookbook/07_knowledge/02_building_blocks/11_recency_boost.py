@@ -15,7 +15,7 @@ half_life_days sets how fast the boost fades. This example uses a very short one
 few seconds of age separate the documents; a real corpus wants days or weeks.
 
 Set your own date under updated_at when adding content, and it is used first. Failing
-that, PgVector built with report_row_timestamp=True reports when each row was stored, so
+that, PgVector built with return_updated_at=True reports when each row was stored, so
 a document counts as fresh from when it entered the store and re-ingesting it under the
 same name makes it fresh again. Stores reporting no timestamp leave ordering untouched.
 
@@ -47,7 +47,7 @@ vector_db = PgVector(
     embedder=OpenAIEmbedder(id="text-embedding-3-small"),
     # Report when each row was stored, so documents with no timestamp of their own still
     # have one to decay on. Off by default: it travels in metadata the model can see.
-    report_row_timestamp=True,
+    return_updated_at=True,
 )
 
 # Start clean, so re-running does not stack copies from a previous run.

@@ -204,7 +204,7 @@ def test_a_row_without_a_timestamp_adds_no_key():
         meta_data = {"team": "ops"}
 
     store = pgvector.PgVector.__new__(pgvector.PgVector)
-    store.report_row_timestamp = True
+    store.return_updated_at = True
 
     assert pgvector.PgVector._with_recency(store, {"team": "ops"}, Row()) == {"team": "ops"}
 
@@ -280,7 +280,7 @@ def test_pgvector_keyword_search_reports_a_relevance_score():
     setattr(Row, STORE_RECENCY_METADATA_KEY, NOW)
 
     store = pgvector.PgVector.__new__(pgvector.PgVector)
-    store.report_row_timestamp = True
+    store.return_updated_at = True
     merged = pgvector.PgVector._with_scores(store, {}, Row())
 
     assert merged["similarity_score"] == pytest.approx(0.42)
@@ -349,7 +349,7 @@ def test_a_non_datetime_timestamp_column_does_not_raise():
     setattr(Row, STORE_RECENCY_METADATA_KEY, "not-a-datetime")
 
     store = pgvector.PgVector.__new__(pgvector.PgVector)
-    store.report_row_timestamp = True
+    store.return_updated_at = True
 
     assert pgvector.PgVector._with_recency(store, {"team": "ops"}, Row()) == {"team": "ops"}
 
@@ -476,10 +476,10 @@ def test_pgvector_does_not_report_the_row_timestamp_unless_asked():
     setattr(Row, STORE_RECENCY_METADATA_KEY, NOW)
 
     store = pgvector.PgVector.__new__(pgvector.PgVector)
-    store.report_row_timestamp = False
+    store.return_updated_at = False
     assert pgvector.PgVector._with_recency(store, {"team": "ops"}, Row()) == {"team": "ops"}
 
-    store.report_row_timestamp = True
+    store.return_updated_at = True
     reported = pgvector.PgVector._with_recency(store, {"team": "ops"}, Row())
     assert reported[STORE_RECENCY_METADATA_KEY].startswith(NOW.isoformat()[:19])
 
@@ -494,7 +494,7 @@ def test_the_reported_key_cannot_mask_a_user_timestamp():
     setattr(Row, STORE_RECENCY_METADATA_KEY, NOW)
 
     store = pgvector.PgVector.__new__(pgvector.PgVector)
-    store.report_row_timestamp = True
+    store.return_updated_at = True
 
     merged = pgvector.PgVector._with_recency(store, {"updated_at": "2019-01-01T00:00:00+00:00"}, Row())
 

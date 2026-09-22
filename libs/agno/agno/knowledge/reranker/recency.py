@@ -68,8 +68,8 @@ class RecencyReranker(Reranker):
 
     The timestamp is read from ``Document.meta_data[timestamp_key]``, set when adding
     content as an ISO-8601 string, a datetime, or epoch seconds or milliseconds. Failing
-    that, a store that reports when its row last changed is used: on PgVector, build it
-    with ``report_row_timestamp=True``.
+    that, a store's own last-modified time is used: on PgVector, build it with
+    ``return_updated_at=True``.
 
     Documents without a usable timestamp receive no recency term, so they rank purely on
     relevance against the same scale as everything else.
@@ -176,7 +176,7 @@ class RecencyReranker(Reranker):
             log_warning(
                 f"RecencyReranker found no usable {self.timestamp_key!r} on any search result, so "
                 "ordering is unchanged. Set it in metadata when adding content, or use "
-                "PgVector(report_row_timestamp=True) to rank on when rows were written."
+                "PgVector(return_updated_at=True) to rank on the stored last-modified time."
             )
 
         # The original position breaks ties, so equal scores keep the vector db order.
