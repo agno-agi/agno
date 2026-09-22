@@ -92,18 +92,19 @@ one agent run, one agent session, one user, and 42 total tokens.
 
 **Test mode:** LIVE
 
-**Description:** Started the checked-in metrics AgentOS server on port 7777,
-ran `metrics-researcher` (`gpt-5.5`) twice and `metrics-summarizer`
-(`gpt-5.6-luna`) once through `POST /agents/{agent_id}/runs`, called
-`POST /metrics/refresh`, and read `GET /os/metrics?starting_date=<6 days ago>`
-twice.
+**Description:** Started the checked-in metrics AgentOS server on a clean
+database, ran `metrics-researcher` (`gpt-5.5`) twice in session `s-a` and
+`metrics-summarizer` (`gpt-5.6-luna`) once in session `s-b` through
+`POST /agents/{agent_id}/runs`, called `POST /metrics/refresh`, then read
+`GET /os/metrics?starting_date=<6 days ago>` twice and
+`GET /os/metrics/sessions?starting_date=<6 days ago>` once.
 
-**Result:** The read reported `window_days` 7 and 6 runs that recorded a
-model across this and the previous test run of the same database, `gpt-5.5`
-at 66.7% run share over 4 runs and `gpt-5.6-luna` at 33.3% over 2. The second
-read returned the same `computed_at`, so it was served from the cache. The
-response carried only `models`, `total_model_runs`, `window_days` and
-`computed_at`.
+**Result:** `GET /os/metrics` reported `window_days` 7 and 3 runs that
+recorded a model: `gpt-5.5` at 66.7% run share over 2 runs and `gpt-5.6-luna`
+at 33.3% over 1. The second read returned the same `computed_at`, so it was
+served from the cache. `GET /os/metrics/sessions` reported 7 entries, one per
+day, every earlier day at 0 and 2 sessions today, `previous_total_sessions` 0
+and `change_percent` null, since the seven days before held no sessions.
 
 ---
 

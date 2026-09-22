@@ -8,7 +8,9 @@ returns the model usage breakdown that backs the homepage metrics card.
 Prerequisites: OPENAI_API_KEY
 Run: .venvs/demo/bin/python cookbook/05_agent_os/13_observability/os_metrics.py
 Try: Run both agents, then open http://localhost:7777/os/metrics for the last
-     30 days, or add ?starting_date=YYYY-MM-DD&ending_date=YYYY-MM-DD
+     30 days, or add ?starting_date=YYYY-MM-DD&ending_date=YYYY-MM-DD.
+     http://localhost:7777/os/metrics/sessions counts the sessions per day and
+     compares the window with the one before it.
 """
 
 from agno.agent import Agent

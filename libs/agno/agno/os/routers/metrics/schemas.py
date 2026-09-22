@@ -77,3 +77,26 @@ class OSMetricsResponse(BaseModel):
     total_model_runs: int = Field(..., description="Runs in the window that recorded a model", ge=0)
     window_days: int = Field(..., description="Number of days the metrics cover", ge=1)
     computed_at: datetime = Field(..., description="Timestamp when these metrics were computed")
+
+
+class DaySessionMetrics(BaseModel):
+    """The sessions created on one day"""
+
+    date: datetime = Field(..., description="Date the sessions were created")
+    sessions_count: int = Field(
+        ..., description="Sessions created on this date, across agents, teams and workflows", ge=0
+    )
+
+
+class OSSessionMetricsResponse(BaseModel):
+    metrics: List[DaySessionMetrics] = Field(..., description="Daily session counts across the window, oldest first")
+    total_sessions: int = Field(..., description="Sessions created in the window", ge=0)
+    previous_total_sessions: int = Field(
+        ..., description="Sessions created in the window of the same length that ends the day before this one", ge=0
+    )
+    change_percent: Optional[float] = Field(
+        ...,
+        description="Change of total_sessions against previous_total_sessions, in percent. None when the previous window had no sessions",
+    )
+    window_days: int = Field(..., description="Number of days the metrics cover", ge=1)
+    computed_at: datetime = Field(..., description="Timestamp when these metrics were computed")

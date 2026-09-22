@@ -52,6 +52,14 @@ class TestCheckRouteScopes:
         result = check_route_scopes(["metrics:read"], get_default_scope_mappings(), "GET", "/os/metrics")
         assert result.allowed is True
 
+    def test_os_session_metrics_needs_the_metrics_read_scope(self):
+        result = check_route_scopes(
+            ["agents:agent-openai:run"], get_default_scope_mappings(), "GET", "/os/metrics/sessions"
+        )
+        assert result.allowed is False
+        result = check_route_scopes(["metrics:read"], get_default_scope_mappings(), "GET", "/os/metrics/sessions")
+        assert result.allowed is True
+
 
 class TestParseScope:
     def test_parses_global_scope(self):
