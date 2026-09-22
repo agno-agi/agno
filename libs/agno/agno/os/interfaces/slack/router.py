@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from ssl import SSLContext
-from typing import Dict, List, Literal, Optional, Union
+from typing import Dict, List, Literal, Optional, Tuple, Union
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -37,16 +37,13 @@ class SlackChallengeResponse(BaseModel):
     challenge: str = Field(description="Challenge string to echo back to Slack")
 
 
-def attach_routes(
-    router: APIRouter,
+def build_handlers(
     agent: Optional[Union[Agent, RemoteAgent]] = None,
     team: Optional[Union[Team, RemoteTeam]] = None,
     workflow: Optional[Union[Workflow, RemoteWorkflow]] = None,
     reply_to_mentions_only: bool = True,
     token: Optional[str] = None,
     user_token: Optional[str] = None,
-    signing_secret: Optional[str] = None,
-    streaming: bool = True,
     loading_messages: Optional[List[str]] = None,
     task_display_mode: str = "plan",
     loading_text: str = "Thinking...",
@@ -59,8 +56,9 @@ def attach_routes(
     markdown: bool = True,
     unfurl_links: bool = True,
     unfurl_media: bool = True,
-) -> APIRouter:
-    # Inner functions capture config via closure to keep each instance isolated
+) -> Tuple[SlackEventHandler, HITLHandler, EventDeduplicator]:
+    # One construction path for both transports: the HTTP routes in attach_routes and
+    # Socket Mode (socket_mode.py) must dispatch to identically configured handlers.
     entity = agent or team or workflow
     # entity_type drives event dispatch (agent vs team vs workflow events)
     entity_type: Literal["agent", "team", "workflow"] = "agent" if agent else "team" if team else "workflow"
@@ -71,9 +69,6 @@ def attach_routes(
     raw_name = getattr(entity, "name", None)
     # entity_name labels task cards; entity_id namespaces session IDs
     entity_name = raw_name if isinstance(raw_name, str) else entity_type
-    # Multiple Slack instances can be mounted on one FastAPI app (e.g. /research
-    # and /analyst). op_suffix makes each operation_id unique to avoid collisions.
-    op_suffix = entity_name.lower().replace(" ", "_")
     entity_id = getattr(entity, "id", None) or entity_name
 
     slack_tools = SlackTools(token=token, user_token=user_token, ssl=ssl, max_file_size=max_file_size)
@@ -92,7 +87,7 @@ def attach_routes(
     # Per-process seen-set for Slack retries; see EventDeduplicator for the multi-replica caveat.
     event_dedupe = EventDeduplicator()
     if entity is None:
-        raise ValueError("attach_routes requires agent, team, or workflow")
+        raise ValueError("Slack handlers require agent, team, or workflow")
     hitl = HITLHandler(
         slack_tools=slack_tools,
         ssl=ssl,
@@ -128,7 +123,57 @@ def attach_routes(
         unfurl_media=unfurl_media,
         markdown=markdown,
     )
+    return event_handler, hitl, event_dedupe
 
+
+def attach_routes(
+    router: APIRouter,
+    agent: Optional[Union[Agent, RemoteAgent]] = None,
+    team: Optional[Union[Team, RemoteTeam]] = None,
+    workflow: Optional[Union[Workflow, RemoteWorkflow]] = None,
+    reply_to_mentions_only: bool = True,
+    token: Optional[str] = None,
+    user_token: Optional[str] = None,
+    signing_secret: Optional[str] = None,
+    streaming: bool = True,
+    loading_messages: Optional[List[str]] = None,
+    task_display_mode: str = "plan",
+    loading_text: str = "Thinking...",
+    suggested_prompts: Optional[List[Dict[str, str]]] = None,
+    ssl: Optional[SSLContext] = None,
+    buffer_size: int = 100,
+    max_file_size: int = 1_073_741_824,  # 1GB
+    resolve_user_identity: bool = False,
+    respond_to_other_apps: bool = False,
+    markdown: bool = True,
+    unfurl_links: bool = True,
+    unfurl_media: bool = True,
+) -> APIRouter:
+    event_handler, hitl, event_dedupe = build_handlers(
+        agent=agent,
+        team=team,
+        workflow=workflow,
+        reply_to_mentions_only=reply_to_mentions_only,
+        token=token,
+        user_token=user_token,
+        loading_messages=loading_messages,
+        task_display_mode=task_display_mode,
+        loading_text=loading_text,
+        suggested_prompts=suggested_prompts,
+        ssl=ssl,
+        buffer_size=buffer_size,
+        max_file_size=max_file_size,
+        resolve_user_identity=resolve_user_identity,
+        respond_to_other_apps=respond_to_other_apps,
+        markdown=markdown,
+        unfurl_links=unfurl_links,
+        unfurl_media=unfurl_media,
+    )
+    # Multiple Slack instances can be mounted on one FastAPI app (e.g. /research
+    # and /analyst). op_suffix makes each operation_id unique to avoid collisions.
+    op_suffix = event_handler.entity_name.lower().replace(" ", "_")
+
+    # Inner functions capture config via closure to keep each instance isolated
     @router.post(
         "/events",
         operation_id=f"slack_events_{op_suffix}",
