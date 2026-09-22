@@ -2224,6 +2224,55 @@ class Model(ABC):
             tool_call_error=True,
         )
 
+    def _create_deferred_function_call_result(
+        self,
+        function_call: FunctionCall,
+        *,
+        boundary_tool_name: str,
+    ) -> Message:
+        """Settle a later call without executing it across a turn boundary."""
+
+        return Message(
+            role=self.tool_message_role,
+            content=(
+                f"Tool call {function_call.function.name} was not executed because "
+                f"{boundary_tool_name} is a pause boundary. Reissue it "
+                "after that result only if it is still needed."
+            ),
+            tool_call_id=function_call.call_id,
+            tool_name=function_call.function.name,
+            tool_args=function_call.arguments,
+            tool_call_error=True,
+        )
+
+    def _function_call_requires_pause(
+        self,
+        function_call: FunctionCall,
+        *,
+        skip_pause_check: bool = False,
+    ) -> bool:
+        """Return whether this proposal pauses without executing its function."""
+
+        if skip_pause_check:
+            return False
+        if (
+            function_call.function.requires_confirmation
+            or function_call.function.requires_user_input
+            or function_call.function.external_execution
+        ):
+            return True
+        if (
+            function_call.function.name == "get_user_input"
+            and function_call.arguments
+            and function_call.arguments.get("user_input_fields")
+        ):
+            return True
+        return bool(
+            function_call.function.name == "ask_user"
+            and function_call.arguments
+            and function_call.arguments.get("questions")
+        )
+
     def run_function_call(
         self,
         function_call: FunctionCall,
@@ -2423,7 +2472,14 @@ class Model(ABC):
         if additional_input is None:
             additional_input = []
 
-        for fc in function_calls:
+        pause_boundary_name: Optional[str] = None
+        for index, fc in enumerate(function_calls):
+            if pause_boundary_name is not None and not self._function_call_requires_pause(fc):
+                function_call_results.extend(
+                    self._create_deferred_function_call_result(later_call, boundary_tool_name=pause_boundary_name)
+                    for later_call in function_calls[index:]
+                )
+                break
             # The read-back tools exist only because offloading replaced a result
             # the model was told to go and read. Counting them against the limit
             # can refuse the very read the run needs to answer.
@@ -2559,7 +2615,7 @@ class Model(ABC):
                     tool_executions=paused_tool_executions,
                     event=ModelResponseEvent.tool_call_paused.value,
                 )
-                # We don't execute the function calls here
+                pause_boundary_name = fc.function.name
                 continue
 
             yield from self.run_function_call(
@@ -2649,6 +2705,17 @@ class Model(ABC):
                     # Skip this function call
                     continue
             function_calls_to_run.append(fc)
+
+        deferred_function_calls: List[FunctionCall] = []
+        pause_boundary_name: Optional[str] = None
+        for index, fc in enumerate(function_calls_to_run):
+            requires_pause = self._function_call_requires_pause(fc, skip_pause_check=skip_pause_check)
+            if pause_boundary_name is not None and not requires_pause:
+                deferred_function_calls = function_calls_to_run[index:]
+                function_calls_to_run = function_calls_to_run[:index]
+                break
+            if requires_pause:
+                pause_boundary_name = fc.function.name
 
         # Yield tool_call_started events for all function calls or pause them
         for fc in function_calls_to_run:
@@ -3106,6 +3173,12 @@ class Model(ABC):
 
             # Add function call result to function call results
             function_call_results.append(function_call_result)
+
+        if deferred_function_calls and pause_boundary_name is not None:
+            function_call_results.extend(
+                self._create_deferred_function_call_result(fc, boundary_tool_name=pause_boundary_name)
+                for fc in deferred_function_calls
+            )
 
         # Add any additional messages at the end
         if additional_input:
