@@ -62,8 +62,11 @@ breakdown of the last 30 days, or narrow it with
 `?starting_date=YYYY-MM-DD&ending_date=YYYY-MM-DD`. `GET /os/metrics/sessions`
 counts the sessions created per day and compares the window with the one of
 the same length before it. Both are built from the daily metrics, so to include
-runs made after the first read, call `POST /metrics/refresh` and pass
-`refresh=true`.
+runs made after the first read, call `POST /os/metrics/refresh`: it rebuilds
+the daily metrics and drops every cached answer in one call, on the OS database,
+so it needs no `db_id` even when the OS registers several databases.
+`GET /os/metrics/refresh/status` reports when the daily metrics were last
+rebuilt and when each route's answer was computed.
 
 The other files generate and inspect their own data in one process:
 
