@@ -10,14 +10,12 @@ import asyncio
 from typing import Any, AsyncIterator, List, Optional, Tuple
 
 from agno.os.event_streams.base import BaseEventStream
-from agno.run.base import RunStatus
+from agno.run.base import TERMINAL_RUN_STATUSES, RunStatus
 
 # How long tail() waits on the live queue before re-checking run status. In a
 # single process a producer cannot die without the process dying, so this is a
 # safety net for contract parity with distributed implementations.
 _TAIL_IDLE_RECHECK_SECONDS = 15.0
-
-_TERMINAL_STATUSES = (RunStatus.completed, RunStatus.error, RunStatus.cancelled, RunStatus.paused)
 
 
 class InMemoryEventStream(BaseEventStream):
@@ -83,7 +81,7 @@ class InMemoryEventStream(BaseEventStream):
     async def complete_run(self, run_id: str, status: RunStatus, generation: Optional[int] = None) -> None:
         if self._generation_stale(run_id, generation):
             return  # a zombie's sentinel must not close the live attempt's tails
-        if status not in (RunStatus.completed, RunStatus.error, RunStatus.cancelled, RunStatus.paused):
+        if status not in TERMINAL_RUN_STATUSES:
             # Contract: this call MARKS TERMINAL. A non-terminal argument
             # (producer raced mid-transition) must still end tails - coerce
             status = RunStatus.completed
@@ -171,7 +169,7 @@ class InMemoryEventStream(BaseEventStream):
             # The run may have completed between replay and now; the completion
             # sentinel may have been published before our subscription existed.
             status = self._buffer.get_run_status(run_id)
-            if status is not None and status in _TERMINAL_STATUSES:
+            if status is not None and status in TERMINAL_RUN_STATUSES:
                 for event_index, event in self._buffer.get_events(run_id, last_event_index=last_yielded):
                     sse_data = format_sse_event_with_index(event, event_index=event_index, run_id=run_id)
                     yield event_index, sse_data
@@ -183,7 +181,7 @@ class InMemoryEventStream(BaseEventStream):
                     item = await asyncio.wait_for(queue.get(), timeout=_TAIL_IDLE_RECHECK_SECONDS)
                 except asyncio.TimeoutError:
                     status = self._buffer.get_run_status(run_id)
-                    if status is None or status in _TERMINAL_STATUSES:
+                    if status is None or status in TERMINAL_RUN_STATUSES:
                         return
                     continue
                 if item is None:

@@ -26,6 +26,7 @@ from agno.models.message import Message
 from agno.models.response import ModelResponse
 from agno.run import RunContext
 from agno.run.agent import RunEvent, RunInput, RunOutput, RunOutputEvent
+from agno.run.cancel import araise_if_cancelled, raise_if_cancelled
 from agno.run.team import RunOutputEvent as TeamRunOutputEvent
 from agno.run.team import TeamRunOutput
 from agno.session import AgentSession, TeamSession, WorkflowSession
@@ -43,6 +44,7 @@ if TYPE_CHECKING:
     from agno.agent.agent import Agent
     from agno.media.reference import MediaReference
     from agno.team.team import Team
+    from agno.verifiers._gate import VerificationGate
 
 
 def _has_async_db(entity: Union["Agent", "Team"]) -> bool:
@@ -207,6 +209,112 @@ def wait_for_thread_tasks_stream(
             learning_future.result()
         except Exception as e:
             log_warning(f"Error in learning extraction: {str(e)}")
+
+
+def verify_response(
+    entity: Union["Agent", "Team"],
+    verification_gate: Optional["VerificationGate"],
+    run_response: Union[RunOutput, TeamRunOutput],
+) -> bool:
+    """Run the verification gate on the parsed output; True when the model must re-enter (sync)."""
+    if verification_gate is None:
+        return False
+    started = verification_gate.open_attempt()
+    if started is None:
+        return False
+    handle_event(started, run_response, events_to_skip=entity.events_to_skip, store_events=entity.store_events)  # type: ignore
+    decision = verification_gate.settle_attempt()
+    handle_event(decision.event, run_response, events_to_skip=entity.events_to_skip, store_events=entity.store_events)  # type: ignore
+    if decision.reenter:
+        raise_if_cancelled(run_response.run_id)  # type: ignore
+    return decision.reenter
+
+
+async def averify_response(
+    entity: Union["Agent", "Team"],
+    verification_gate: Optional["VerificationGate"],
+    run_response: Union[RunOutput, TeamRunOutput],
+) -> bool:
+    """Run the verification gate on the parsed output; True when the model must re-enter (async)."""
+    if verification_gate is None:
+        return False
+    started = verification_gate.open_attempt()
+    if started is None:
+        return False
+    handle_event(started, run_response, events_to_skip=entity.events_to_skip, store_events=entity.store_events)  # type: ignore
+    decision = await verification_gate.asettle_attempt()
+    handle_event(decision.event, run_response, events_to_skip=entity.events_to_skip, store_events=entity.store_events)  # type: ignore
+    if decision.reenter:
+        await araise_if_cancelled(run_response.run_id)  # type: ignore
+    return decision.reenter
+
+
+def verify_response_stream(
+    entity: Union["Agent", "Team"],
+    verification_gate: Optional["VerificationGate"],
+    run_response: Union[RunOutput, TeamRunOutput],
+    stream_events: bool,
+) -> Iterator[Union[RunOutputEvent, TeamRunOutputEvent]]:
+    """Streaming version of verify_response: yields the two verification events; the caller reads
+    ``verification_gate.reenter`` afterwards.
+    """
+    if verification_gate is None:
+        return
+    started = verification_gate.open_attempt()
+    if started is None:
+        return
+    started_event = handle_event(
+        started,
+        run_response,
+        events_to_skip=entity.events_to_skip,  # type: ignore
+        store_events=entity.store_events,
+    )
+    if stream_events:
+        yield started_event  # type: ignore
+    decision = verification_gate.settle_attempt()
+    completed_event = handle_event(
+        decision.event,
+        run_response,
+        events_to_skip=entity.events_to_skip,  # type: ignore
+        store_events=entity.store_events,
+    )
+    if stream_events:
+        yield completed_event  # type: ignore
+    if decision.reenter:
+        raise_if_cancelled(run_response.run_id)  # type: ignore
+
+
+async def averify_response_stream(
+    entity: Union["Agent", "Team"],
+    verification_gate: Optional["VerificationGate"],
+    run_response: Union[RunOutput, TeamRunOutput],
+    stream_events: bool,
+) -> AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent]]:
+    """Async version of verify_response_stream."""
+    if verification_gate is None:
+        return
+    started = verification_gate.open_attempt()
+    if started is None:
+        return
+    started_event = handle_event(
+        started,
+        run_response,
+        events_to_skip=entity.events_to_skip,  # type: ignore
+        store_events=entity.store_events,
+    )
+    if stream_events:
+        yield started_event  # type: ignore
+    decision = await verification_gate.asettle_attempt()
+    completed_event = handle_event(
+        decision.event,
+        run_response,
+        events_to_skip=entity.events_to_skip,  # type: ignore
+        store_events=entity.store_events,
+    )
+    if stream_events:
+        yield completed_event  # type: ignore
+    if decision.reenter:
+        await araise_if_cancelled(run_response.run_id)  # type: ignore
 
 
 def collect_background_metrics(*futures_or_tasks: Any) -> List["RunMetrics"]:

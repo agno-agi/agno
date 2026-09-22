@@ -24,6 +24,7 @@ def _status_style(status: str) -> str:
         "ERROR": "bold red",
         "CANCELLED": "bold magenta",
         "PAUSED": "bold cyan",
+        "UNVERIFIED": "bold dark_orange",
     }
     return styles.get(status_upper, "white")
 

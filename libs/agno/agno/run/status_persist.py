@@ -35,7 +35,7 @@ class RunPersistOutcome(str, Enum):
     UPDATED = "updated"  # the atomic primitive wrote the fields
     MISSING = "missing"  # session or run row not found - the fallback may create it
     STALE_ATTEMPT = "stale_attempt"  # fence rejected: a newer attempt owns the row. FINAL
-    TERMINAL_REFUSED = "terminal_refused"  # a completed/cancelled row wins over this write. FINAL
+    TERMINAL_REFUSED = "terminal_refused"  # a settled row wins over this write. FINAL
     UNAVAILABLE = "unavailable"  # no atomic primitive - the unfenced fallback is the only write path
 
 
@@ -103,8 +103,8 @@ def fallback_allowed(result: RunPersistOutcome) -> bool:
     Only MISSING (the fallback creates the row) and UNAVAILABLE (no atomic
     primitive - the fallback is the only write path, fenced callers included)
     allow it. STALE_ATTEMPT and TERMINAL_REFUSED are FINAL: retrying a
-    fenced-out zombie or a write a completed/cancelled row refused through
-    the unfenced save is exactly the clobber those guards exist to stop.
+    fenced-out zombie or a write a settled row refused through the unfenced
+    save is exactly the clobber those guards exist to stop.
     """
     return result in (RunPersistOutcome.MISSING, RunPersistOutcome.UNAVAILABLE)
 

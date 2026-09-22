@@ -2839,11 +2839,11 @@ class RedisDb(BaseDb):
     def settle_paused_job(self, job_id: str, status: str, error: Optional[str] = None) -> bool:
         """Terminalize a PAUSED ticket whose continue ran INLINE, outside the
         queue (see InMemoryQueueStore.settle_paused_job). WATCH/MULTI CAS on
-        status='paused'; a queued/claimed continuation owns the ticket and is
-        never clobbered. (Paused jobs are in no queued/running zset.)"""
+        status='paused' or 'unverified'; a queued/claimed continuation owns the
+        ticket and is never clobbered. (Paused jobs are in no queued/running zset.)"""
         from redis.exceptions import WatchError
 
-        if status not in ("completed", "cancelled", "failed"):
+        if status not in ("completed", "unverified", "cancelled", "failed"):
             return False
         job_key = self._q_job_key(job_id)
         now = self._q_server_now()
@@ -2855,7 +2855,7 @@ class RedisDb(BaseDb):
                     pipe.unwatch()
                     return False
                 job = json.loads(raw if isinstance(raw, str) else raw.decode())
-                if job["status"] != "paused":
+                if job["status"] not in ("paused", "unverified"):
                     pipe.unwatch()
                     return False
                 job.update(status=status, error=error, locked_by=None, locked_at=None, completed_at=now, updated_at=now)
@@ -2968,10 +2968,10 @@ class RedisDb(BaseDb):
     def settle_swept_job(self, job_id: str, worker_id: str, status: str, error: Optional[str] = None) -> bool:
         """Ownership-keyed settle for the sweeper - see the in-memory store's
         docstring: the sweep reconciles the ticket with what the run row
-        says (completed/cancelled/paused/failed), never blind-fails it."""
+        says (completed/unverified/cancelled/paused/failed), never blind-fails it."""
         from redis.exceptions import WatchError
 
-        if status not in ("completed", "cancelled", "paused", "failed"):
+        if status not in ("completed", "unverified", "cancelled", "paused", "failed"):
             return False
         job_key = self._q_job_key(job_id)
         now = self._q_server_now()
@@ -3098,7 +3098,7 @@ class RedisDb(BaseDb):
                         pipe.unwatch()
                         return {"outcome": "conflict", "job": None}
                     job = json.loads(raw if isinstance(raw, str) else raw.decode())
-                    if job["status"] in ("completed", "failed", "cancelled"):
+                    if job["status"] in ("completed", "unverified", "failed", "cancelled"):
                         pipe.unwatch()
                         return {"outcome": "conflict", "job": job}
                     if job["status"] in ("queued", "running"):
@@ -3163,7 +3163,7 @@ class RedisDb(BaseDb):
                         continue
                     job = json.loads(raw if isinstance(raw, str) else raw.decode())
                     if not (
-                        job["status"] in ("completed", "failed", "cancelled")
+                        job["status"] in ("completed", "unverified", "failed", "cancelled")
                         and job.get("completed_at") is not None
                         and job["completed_at"] <= cutoff
                     ):

@@ -98,6 +98,7 @@ class BaseRunOutputEvent(_EventIndexCarrier):
         "tasks",
         "memories",
         "followups",
+        "verdicts",
     )
 
     def to_dict(self) -> Dict[str, Any]:
@@ -227,6 +228,9 @@ class BaseRunOutputEvent(_EventIndexCarrier):
         if hasattr(self, "tasks") and self.tasks is not None:
             _dict["tasks"] = [t.to_dict() for t in self.tasks]
 
+        if hasattr(self, "verdicts") and self.verdicts is not None:
+            _dict["verdicts"] = [v.to_dict() for v in self.verdicts]
+
         return _dict
 
     def to_json(self, separators=(", ", ": "), indent: Optional[int] = 2) -> str:
@@ -348,6 +352,13 @@ class BaseRunOutputEvent(_EventIndexCarrier):
 
             data["tasks"] = [TaskData.from_dict(t) if isinstance(t, dict) else t for t in tasks_data]
 
+        # Handle verdicts (Verdict objects in VerificationCompletedEvent)
+        verdicts_data = data.pop("verdicts", None)
+        if verdicts_data is not None:
+            from agno.verifiers.types import Verdict
+
+            data["verdicts"] = [Verdict.from_dict(v) if isinstance(v, dict) else v for v in verdicts_data]
+
         # Filter data to only include fields that are actually defined in the target class
         # CustomEvent accepts arbitrary fields, so skip filtering for it
         if cls.__name__ == "CustomEvent":
@@ -386,6 +397,9 @@ class RunStatus(str, Enum):
     # history-builders can skip it when rebuilding context. Pass replace_original=false
     # to keep the original COMPLETED and visible instead.
     regenerated = "REGENERATED"
+    # Terminal status for a run whose verifiers never passed within budget. The
+    # transcript is real work, so it is deliberately NOT in HISTORY_SKIP_STATUSES.
+    unverified = "UNVERIFIED"
 
 
 # Canonical set of run statuses excluded when rebuilding message history/context.
@@ -399,3 +413,16 @@ HISTORY_SKIP_STATUSES: list["RunStatus"] = [
     RunStatus.error,
     RunStatus.regenerated,
 ]
+
+# The statuses at which a run's event stream is settled: nothing is appended until a continue
+# reopens it. PAUSED and UNVERIFIED sit here because both wait for that continue.
+TERMINAL_RUN_STATUSES: tuple["RunStatus", ...] = (
+    RunStatus.completed,
+    RunStatus.error,
+    RunStatus.cancelled,
+    RunStatus.paused,
+    RunStatus.unverified,
+)
+
+# The statuses a continue may reopen on the same stream; ERROR only when the caller allows it.
+REOPENABLE_RUN_STATUSES: tuple["RunStatus", ...] = (RunStatus.paused, RunStatus.pending, RunStatus.unverified)

@@ -29,7 +29,7 @@ Contract notes for implementations:
 from abc import ABC, abstractmethod
 from typing import Any, AsyncIterator, List, Optional, Tuple
 
-from agno.run.base import RunStatus
+from agno.run.base import REOPENABLE_RUN_STATUSES, RunStatus
 
 
 class BaseEventStream(ABC):
@@ -98,6 +98,12 @@ class BaseEventStream(ABC):
         path depends on it: register_run re-creates PENDING before the
         reopen, and declining there would drop the counter seed below.
 
+        UNVERIFIED is reopenable too: it is terminal-for-the-stream but
+        continuable - continuing an unverified run restarts its verification
+        budget and appends to the SAME stream, so its sentinel must be
+        invalidated exactly like a pause's, or tails attached before the
+        continuation's first event close empty.
+
         ``floor``: durable index floor (max stored event_index from the run
         row). Implementations seed their index counter to at least floor+1 -
         without it, a reopen whose counter state expired (paused run
@@ -109,11 +115,7 @@ class BaseEventStream(ABC):
         a best-effort fallback for third-party streams only (it cannot seed
         a counter it does not know about).
         """
-        reopenable = (
-            (RunStatus.paused, RunStatus.error, RunStatus.pending)
-            if include_error
-            else (RunStatus.paused, RunStatus.pending)
-        )
+        reopenable = REOPENABLE_RUN_STATUSES + ((RunStatus.error,) if include_error else ())
         status = await self.get_run_status(run_id)
         if status is not None and status not in reopenable:
             return False

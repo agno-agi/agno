@@ -11,7 +11,20 @@ from typing import AsyncIterator, Union
 import pytest
 
 from agno.os.interfaces.a2a.utils import stream_a2a_response
-from agno.run.agent import RunCompletedEvent, RunContentEvent, RunStartedEvent
+from agno.run.agent import (
+    RunCompletedEvent,
+    RunContentEvent,
+    RunOutput,
+    RunStartedEvent,
+    VerificationCompletedEvent,
+    VerificationStartedEvent,
+)
+from agno.run.base import RunStatus
+from agno.run.team import RunCompletedEvent as TeamRunCompletedEvent
+from agno.run.team import RunStartedEvent as TeamRunStartedEvent
+from agno.run.team import VerificationCompletedEvent as TeamVerificationCompletedEvent
+from agno.run.workflow import WorkflowRunOutput
+from agno.verifiers.types import Verdict, Verification
 
 
 async def _agent_stream(
@@ -80,3 +93,107 @@ class TestStreamA2AResponseMetadata:
 
         final = _final_status_update(events)
         assert "metadata" not in final
+
+
+class TestBlockingTaskForUnverifiedRun:
+    """message:send maps an unverified run to a failed task that still carries its draft."""
+
+    def test_unverified_run_maps_to_failed_task(self):
+        from agno.os.interfaces.a2a.utils import map_run_output_to_a2a_task
+
+        run_output = RunOutput(
+            run_id="r-unv",
+            session_id="s-1",
+            content="draft answer",
+            status=RunStatus.unverified,
+            verification=Verification(status="unverified", stop_reason="exhausted"),
+        )
+        task = map_run_output_to_a2a_task(run_output)
+        assert task.status.state.value == "failed"
+        assert task.history[0].parts[0].root.text == "draft answer"
+
+
+async def _collect(*events) -> list:
+    chunks = [chunk async for chunk in stream_a2a_response(_agent_stream(*events), request_id="req-1")]
+    return _parse_sse_events("".join(chunks))
+
+
+def _tasks(events):
+    return [e["result"] for e in events if e["result"].get("kind") == "task"]
+
+
+def _working_updates(events):
+    return [
+        e["result"] for e in events if e["result"].get("kind") == "status-update" and e["result"].get("final") is False
+    ]
+
+
+class TestStreamA2AResponseVerification:
+    @pytest.mark.asyncio
+    async def test_verification_events_ride_as_working_updates(self):
+        events = await _collect(
+            RunStartedEvent(run_id="run-1", session_id="sess-1"),
+            VerificationStartedEvent(run_id="run-1", session_id="sess-1", attempt=1, max_attempts=3),
+            VerificationCompletedEvent(
+                run_id="run-1", session_id="sess-1", attempt=1, max_attempts=3, passed=True, stop_reason="passed"
+            ),
+            RunCompletedEvent(run_id="run-1", session_id="sess-1", content="done"),
+        )
+
+        by_type = {(w.get("metadata") or {}).get("agno_event_type"): w for w in _working_updates(events)}
+        assert "verification_started" in by_type
+        completed = by_type["verification_completed"]["metadata"]
+        assert (completed["passed"], completed["attempt"], completed["max_attempts"]) == (True, 1, 3)
+        assert _final_status_update(events)["status"]["state"] == "completed"
+
+    @pytest.mark.parametrize(
+        "started, verified, completed",
+        [
+            (RunStartedEvent, VerificationCompletedEvent, RunCompletedEvent),
+            (TeamRunStartedEvent, TeamVerificationCompletedEvent, TeamRunCompletedEvent),
+        ],
+        ids=["agent", "team"],
+    )
+    @pytest.mark.asyncio
+    async def test_unverified_run_ends_failed(self, started, verified, completed):
+        """The non-stream Task mapping reports UNVERIFIED as failed; the
+        streaming path must agree."""
+        events = await _collect(
+            started(run_id="run-1", session_id="sess-1"),
+            verified(
+                run_id="run-1",
+                session_id="sess-1",
+                attempt=3,
+                max_attempts=3,
+                passed=False,
+                stop_reason="exhausted",
+                verdicts=[Verdict(passed=False, name="check", report="still failing")],
+            ),
+            completed(run_id="run-1", session_id="sess-1", content="claimed done", status="UNVERIFIED"),
+        )
+
+        assert _final_status_update(events)["status"]["state"] == "failed"
+        (task,) = _tasks(events)
+        assert task["status"]["state"] == "failed"
+
+    @pytest.mark.asyncio
+    async def test_workflow_unverified_run_ends_failed(self):
+        """A workflow's gates are steps, so no verification event names the
+        terminal state; the completed event's run output does."""
+        from agno.run.workflow import WorkflowCompletedEvent, WorkflowStartedEvent
+
+        run_output = WorkflowRunOutput(
+            run_id="wf-1",
+            session_id="sess-1",
+            content="draft",
+            status=RunStatus.unverified,
+            verification=Verification(status="unverified", stop_reason="exhausted"),
+        )
+        events = await _collect(
+            WorkflowStartedEvent(run_id="wf-1", session_id="sess-1"),
+            WorkflowCompletedEvent(run_id="wf-1", session_id="sess-1", content="draft", run_output=run_output),
+        )
+
+        assert _final_status_update(events)["status"]["state"] == "failed"
+        (task,) = _tasks(events)
+        assert task["status"]["state"] == "failed"

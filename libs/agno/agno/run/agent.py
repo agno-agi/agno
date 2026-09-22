@@ -21,6 +21,7 @@ from agno.utils.media import (
     reconstruct_response_audio,
     reconstruct_videos,
 )
+from agno.verifiers.types import Verdict, Verification
 
 if TYPE_CHECKING:
     from agno.session.summary import SessionSummary
@@ -191,6 +192,9 @@ class RunEvent(str, Enum):
     followups_started = "FollowupsStarted"
     followups_completed = "FollowupsCompleted"
 
+    verification_started = "VerificationStarted"
+    verification_completed = "VerificationCompleted"
+
     custom_event = "CustomEvent"
 
 
@@ -292,6 +296,8 @@ class RunCompletedEvent(BaseAgentRunEvent):
     metadata: Optional[Dict[str, Any]] = None
     metrics: Optional[RunMetrics] = None
     session_state: Optional[Dict[str, Any]] = None
+    # Terminal RunStatus value: "COMPLETED", or "UNVERIFIED" when the verifiers never passed
+    status: Optional[str] = None
 
 
 @dataclass
@@ -511,6 +517,29 @@ class FollowupsCompletedEvent(BaseAgentRunEvent):
 
 
 @dataclass
+class VerificationStartedEvent(BaseAgentRunEvent):
+    """Event sent when a verification pass starts over one model attempt"""
+
+    event: str = RunEvent.verification_started.value
+    attempt: int = 0
+    max_attempts: int = 0
+
+
+@dataclass
+class VerificationCompletedEvent(BaseAgentRunEvent):
+    """Event sent when a verification pass over one model attempt has completed"""
+
+    event: str = RunEvent.verification_completed.value
+    attempt: int = 0
+    max_attempts: int = 0
+    passed: bool = False
+    # One verdict per verifier, in declared order
+    verdicts: Optional[List[Verdict]] = None
+    state_unchanged: bool = False
+    stop_reason: Optional[str] = None
+
+
+@dataclass
 class CustomEvent(BaseAgentRunEvent):
     event: str = RunEvent.custom_event.value
     # tool_call_id for ToolExecution
@@ -557,6 +586,8 @@ RunOutputEvent = Union[
     CompressionCompletedEvent,
     FollowupsStartedEvent,
     FollowupsCompletedEvent,
+    VerificationStartedEvent,
+    VerificationCompletedEvent,
     CustomEvent,
 ]
 
@@ -602,6 +633,8 @@ RUN_EVENT_TYPE_REGISTRY = {
     RunEvent.compression_completed.value: CompressionCompletedEvent,
     RunEvent.followups_started.value: FollowupsStartedEvent,
     RunEvent.followups_completed.value: FollowupsCompletedEvent,
+    RunEvent.verification_started.value: VerificationStartedEvent,
+    RunEvent.verification_completed.value: VerificationCompletedEvent,
     RunEvent.custom_event.value: CustomEvent,
 }
 
@@ -674,6 +707,9 @@ class RunOutput:
     # User control flow (HITL) requirements to continue a run when paused, in order of arrival
     requirements: Optional[list[RunRequirement]] = None
 
+    # Verification record for this run; set only when verifiers are configured
+    verification: Optional[Verification] = None
+
     # Checkpoint coordinate: index into messages at the most recent checkpoint write.
     # Set when checkpoint="tool-batch" (or any future non-default level) persists mid-run state.
     last_checkpoint_at_message_index: Optional[int] = None
@@ -743,6 +779,7 @@ class RunOutput:
         "references",
         "requirements",
         "followups",
+        "verification",
     )
 
     def to_dict(self) -> Dict[str, Any]:
@@ -846,6 +883,10 @@ class RunOutput:
         if self.requirements is not None:
             _dict["requirements"] = [req.to_dict() if hasattr(req, "to_dict") else req for req in self.requirements]
 
+        if self.verification is not None:
+            # Verification.to_dict applies the JSON-safety pass to Verdict.detail; asdict would skip it
+            _dict["verification"] = self.verification.to_dict()
+
         if self.input is not None:
             _dict["input"] = self.input.to_dict()
 
@@ -904,6 +945,15 @@ class RunOutput:
                     requirements_list.append(RunRequirement.from_dict(item))
             requirements = requirements_list if requirements_list else None
 
+        # Handle verification
+        verification_data = data.pop("verification", None)
+        verification: Optional[Verification] = None
+        if verification_data is not None:
+            if isinstance(verification_data, Verification):
+                verification = verification_data
+            elif isinstance(verification_data, dict):
+                verification = Verification.from_dict(verification_data)
+
         images = reconstruct_images(data.pop("images", []))
         videos = reconstruct_videos(data.pop("videos", []))
         audio = reconstruct_audio_list(data.pop("audio", []))
@@ -959,6 +1009,7 @@ class RunOutput:
             reasoning_messages=reasoning_messages,
             references=references,
             requirements=requirements,
+            verification=verification,
             **filtered_data,
         )
 

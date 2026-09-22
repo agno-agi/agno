@@ -238,3 +238,32 @@ class TestAsyncDbSupport:
         db.create_schedule_run.assert_called_once()
         db.update_schedule_run.assert_called_once()
         db.release_schedule.assert_called_once()
+
+
+class TestUnverifiedIsTerminal:
+    @pytest.mark.asyncio
+    async def test_unverified_run_is_not_retried(self, executor, mock_db, schedule):
+        """An unverified run is settled: retrying it would only re-burn its verification budget."""
+        call_count = 0
+
+        async def mock_call_endpoint(sched):
+            nonlocal call_count
+            call_count += 1
+            return {
+                "status": "unverified",
+                "status_code": 200,
+                "error": "Run ended unverified: its verifiers did not pass within budget",
+                "run_id": "run-1",
+                "session_id": "s-1",
+                "input": None,
+                "output": {"content": "draft"},
+                "requirements": None,
+            }
+
+        with patch.object(executor, "_call_endpoint", side_effect=mock_call_endpoint):
+            result = await executor.execute(schedule, mock_db)
+
+        assert result["status"] == "unverified"
+        assert call_count == 1
+        assert mock_db.create_schedule_run.call_count == 1
+        assert mock_db.update_schedule_run.call_args.kwargs["status"] == "unverified"

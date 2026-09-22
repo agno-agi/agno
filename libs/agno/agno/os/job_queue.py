@@ -195,6 +195,7 @@ _TICKET_STATUS_TO_API = {
     "completed": "COMPLETED",
     "failed": "ERROR",
     "cancelled": "CANCELLED",
+    "unverified": "UNVERIFIED",
 }
 
 
@@ -760,10 +761,11 @@ class QueueWorker:
         """Settle a swept ticket to MATCH an already-settled run row.
 
         Reads the run row's status; when the leg actually finished
-        (COMPLETED/CANCELLED) the ticket settles to the same status and the
-        stream carries the WINNING terminal (stamped with the swept attempt's
-        generation - a live zombie's own same-generation terminal still wins
-        later, finished-work-wins). When the leg PAUSED, the ticket parks
+        (COMPLETED/CANCELLED/UNVERIFIED) the ticket settles to the same
+        status and the stream carries the WINNING terminal (stamped
+        with the swept attempt's generation - a live zombie's own
+        same-generation terminal still wins later, finished-work-wins).
+        When the leg PAUSED, the ticket parks
         back to paused - the pause sentinel already stands on the stream, and
         the continue door then finds a paused ticket, so durable continuation
         works again. Returns False when the row is genuinely unsettled
@@ -780,23 +782,38 @@ class QueueWorker:
             return False
         raw_status = getattr(run_output, "status", None)
         status_value = str(getattr(raw_status, "value", raw_status) or "").upper()
-        if status_value in ("COMPLETED", "CANCELLED"):
+        if status_value in ("COMPLETED", "CANCELLED", "UNVERIFIED"):
             ticket_status = status_value.lower()
             if (job.get("payload") or {}).get("stream"):
-                terminal = RunStatus.completed if status_value == "COMPLETED" else RunStatus.cancelled
+                terminal = {
+                    "COMPLETED": RunStatus.completed,
+                    "CANCELLED": RunStatus.cancelled,
+                    "UNVERIFIED": RunStatus.unverified,
+                }[status_value]
                 with contextlib.suppress(Exception):
                     from agno.os.event_streams import get_event_stream
 
                     await asyncio.shield(
                         get_event_stream().complete_run(job["id"], terminal, generation=job.get("attempt"))
                     )
-            settled = await self.store.settle_swept_job(job["id"], self.worker_id, ticket_status)
+            settled = False
+            try:
+                settled = await self.store.settle_swept_job(job["id"], self.worker_id, ticket_status)
+            except Exception as e:
+                log_error(f"Job queue: settling swept job {job['id']} as {ticket_status} raised ({e})")
             if settled:
                 log_warning(
                     f"Job queue: reconciled swept job {job['id']} to {ticket_status} - the leg had "
                     "settled before the sweep (only the ticket write was lost)"
                 )
-            return settled
+            else:
+                # The run row is settled and only the ticket write failed; returning False
+                # would reconcile the row to ERROR, so leave the ticket for the next sweep.
+                log_warning(
+                    f"Job queue: swept job {job['id']} has a settled run row ({status_value}) but the "
+                    "ticket write did not land; leaving the ticket for the next sweep"
+                )
+            return True
         if status_value == "PAUSED":
             if (job.get("payload") or {}).get("stream"):
                 # The leg's own paused sentinel is written by the executor's
@@ -1120,7 +1137,7 @@ class QueueWorker:
         )
         if not fallback_allowed(result):
             # UPDATED, STALE_ATTEMPT (a newer attempt owns the row) or
-            # TERMINAL_REFUSED (completed/cancelled wins) - all final; the
+            # TERMINAL_REFUSED (a settled row wins) - all final; the
             # unfenced fallback below must not run. Returned AS-IS: the
             # sweeper dispatches on the distinction (TERMINAL_REFUSED means
             # the leg settled and the sweep must reconcile, not fail)
@@ -1134,7 +1151,11 @@ class QueueWorker:
 
             session = await aread_or_create_session(component, session_id=job["session_id"], user_id=job.get("user_id"))
             run = session.get_run(job["id"])
-            if isinstance(run, RunOutput) and run.status not in (RunStatus.completed, RunStatus.cancelled):
+            if isinstance(run, RunOutput) and run.status not in (
+                RunStatus.completed,
+                RunStatus.cancelled,
+                RunStatus.unverified,
+            ):
                 run.status = RunStatus.cancelled if status == "cancelled" else RunStatus.error
                 run.content = run.content or error
                 session.upsert_run(run=run)
@@ -1156,6 +1177,7 @@ class QueueWorker:
             if isinstance(team_run, TeamRunOutput) and team_run.status not in (
                 RunStatus.completed,
                 RunStatus.cancelled,
+                RunStatus.unverified,
             ):
                 team_run.status = RunStatus.cancelled if status == "cancelled" else RunStatus.error
                 team_run.content = team_run.content or error
@@ -1171,7 +1193,11 @@ class QueueWorker:
                 # No session row means no run row to orphan
                 return RunPersistOutcome.UPDATED
             workflow_run = workflow_session.get_run(job["id"])
-            if workflow_run is not None and workflow_run.status not in (RunStatus.completed, RunStatus.cancelled):
+            if workflow_run is not None and workflow_run.status not in (
+                RunStatus.completed,
+                RunStatus.cancelled,
+                RunStatus.unverified,
+            ):
                 workflow_run.status = RunStatus.cancelled if status == "cancelled" else RunStatus.error
                 workflow_run.content = workflow_run.content or error
                 workflow_session.upsert_run(run=workflow_run)
@@ -1381,28 +1407,33 @@ class QueueWorker:
             raw = getattr(run_output, "status", None)
             row_status = raw.value if isinstance(raw, RunStatus) else raw
         normalized = str(row_status).lower() if row_status is not None else None
-        if normalized not in ("completed", "cancelled"):
+        if normalized not in ("completed", "cancelled", "unverified"):
             log_error(
                 f"Job queue: claimed job {job_id} refused the RUNNING stamp as terminal but its run "
                 f"row could not be read back ({row_status!r}); leaving the claim to go stale for the "
                 "reconciling sweep instead of guessing a terminal status"
             )
             return
-        ticket_status = normalized
-        await self._asettle_ticket(job_id, job["attempt"], ticket_status)
+        terminal_status: str = str(normalized)
+        await self._asettle_ticket(job_id, job["attempt"], terminal_status)
+        stream_terminal = {
+            "completed": RunStatus.completed,
+            "cancelled": RunStatus.cancelled,
+            "unverified": RunStatus.unverified,
+        }[terminal_status]
         with contextlib.suppress(Exception):
             from agno.os.event_streams import get_event_stream
 
             await asyncio.shield(
                 get_event_stream().complete_run(
                     job_id,
-                    RunStatus.completed if ticket_status == "completed" else RunStatus.cancelled,
+                    stream_terminal,
                     generation=job.get("attempt"),
                 )
             )
         log_warning(
             f"Job queue: claimed job {job_id} has a terminal run row ({row_status}); "
-            f"skipped execution and settled the ticket {ticket_status}"
+            f"skipped execution and settled the ticket {terminal_status}"
         )
 
     async def _asettle_ticket(
@@ -1532,6 +1563,25 @@ class QueueWorker:
                     f"Job queue: could not ensure the run row for claimed job {job_id} ({e}); "
                     "leaving the claim to go stale so a later attempt can retry"
                 )
+                return
+        if (
+            job_type == "run"
+            and component_for_stamp is not None
+            and not payload.get("continue")
+            and job.get("attempt", 1) > 1
+        ):
+            # Retry guard: a crashed worker can leave a row already committed UNVERIFIED;
+            # honor it like COMPLETED instead of re-executing. The RUNNING re-stamp below
+            # cannot catch it because the fence allows RUNNING over an UNVERIFIED row.
+            preread_status: Optional[str] = None
+            with contextlib.suppress(Exception):
+                preread = await component_for_stamp.aget_run_output(
+                    job_id, job["session_id"], user_id=job.get("user_id")
+                )
+                raw_preread = getattr(preread, "status", None)
+                preread_status = str(getattr(raw_preread, "value", raw_preread) or "").upper()
+            if preread_status == "UNVERIFIED":
+                await self._ahonor_terminal_row(component_for_stamp, job)
                 return
         if component_for_stamp is not None:
             # Establish this attempt's generation on the run row BEFORE
@@ -1670,6 +1720,8 @@ class QueueWorker:
             elif status == RunStatus.error:
                 error_content = str(getattr(result, "content", "") or "run errored")
                 await self._aretry_or_fail_ticket(job_id, attempt, error_content, self._retry_delay(attempt))
+            elif status == RunStatus.unverified:
+                await self._asettle_ticket(job_id, attempt, "unverified")
             else:
                 await self._asettle_ticket(job_id, attempt, "completed")
         except asyncio.CancelledError:
@@ -1765,15 +1817,15 @@ class QueueWorker:
 
 
 async def asettle_paused_ticket(queue_worker: Any, run_id: str, final_status: Any) -> None:
-    """Settle a durable PAUSED ticket after an INLINE continue finished.
+    """Settle a durable PAUSED or UNVERIFIED ticket after an INLINE continue finished.
 
     The inline (background=false, default) continue paths never touch the
     job store, and paused tickets are retention-exempt: without this,
     /queue reported paused forever for completed runs and the rows
     accumulated unboundedly. Maps the run's final status onto the ticket
-    (completed/cancelled/failed); a re-paused or unknown status leaves the
+    (completed/unverified/cancelled/failed); a re-paused or unknown status leaves the
     ticket paused (still continuable). The store call is a CAS on
-    status='paused', so a queued/claimed continuation that owns the ticket
+    status='paused' or 'unverified', so a queued/claimed continuation that owns the ticket
     is never clobbered - and runs that never rode the queue simply have no
     row to settle. Best-effort: a store blip leaves the ticket paused, the
     documented pre-fix state."""
@@ -1786,6 +1838,7 @@ async def asettle_paused_ticket(queue_worker: Any, run_id: str, final_status: An
         RunStatus.completed.value: "completed",
         RunStatus.cancelled.value: "cancelled",
         RunStatus.error.value: "failed",
+        RunStatus.unverified.value: "unverified",
     }.get(value)
     if ticket_status is None:
         return
@@ -1811,7 +1864,7 @@ async def araise_if_ticket_owns_continue(
     The contract this enforces: a run that rode the queue is continued
     THROUGH the queue, always (background=true). Only ticketless runs - and
     fork/regenerate, which mint a NEW run - execute inline. Terminal tickets
-    (completed/failed/cancelled) allow inline: the queue is done with that
+    (completed/unverified/failed/cancelled) allow inline: the queue is done with that
     run, matching the durable seam's swept-leg philosophy. A ticket for a
     DIFFERENT component allows inline too - the caller's own run lookup
     reports not-found honestly (cross-component case).

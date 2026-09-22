@@ -7,6 +7,7 @@ from typing import Any, Literal, Optional
 from pydantic import BaseModel, Field
 
 from agno.agent import Agent
+from agno.metrics import RunMetrics, accumulate_eval_metrics
 from agno.models.base import Model
 from agno.scorer._fence import fence_untrusted
 from agno.scorer._model import model_identity_payload, model_prompt_payload
@@ -118,7 +119,9 @@ class JudgeScorer:
             output_text = run.get_content_as_string() if run.content is not None else ""
         except Exception:
             output_text = str(run.content)
-        input_text = run.input.input_content_string() if run.input is not None else None
+        # A Verify step judging a step with no stored executor run hands over its StepOutput, which has no input
+        run_input = getattr(run, "input", None)
+        input_text = run_input.input_content_string() if run_input is not None else None
         return _build_judge_prompt(self.criteria, self.mode, output_text, input_text, expected)
 
     def _to_score(self, content: Any) -> Score:
@@ -135,12 +138,18 @@ class JudgeScorer:
             raise ValueError(f"judge returned an invalid response: {content!r}")
         return Score(value=1.0 if content.passed else 0.0, passed=content.passed, reason=content.reason)
 
-    def score(self, run: AnyRunOutput, expected: Any = None) -> Score:
+    def score(self, run: AnyRunOutput, expected: Any = None, run_metrics: Optional[RunMetrics] = None) -> Score:
         response = self._evaluator.run(self._prompt_for(run, expected), stream=False)
+        # Accumulate judge model metrics into the parent run_metrics
+        if run_metrics is not None and response.metrics is not None:
+            accumulate_eval_metrics(response.metrics, run_metrics)
         return self._to_score(response.content)
 
-    async def ascore(self, run: AnyRunOutput, expected: Any = None) -> Score:
+    async def ascore(self, run: AnyRunOutput, expected: Any = None, run_metrics: Optional[RunMetrics] = None) -> Score:
         response = await self._evaluator.arun(self._prompt_for(run, expected), stream=False)
+        # Accumulate judge model metrics into the parent run_metrics
+        if run_metrics is not None and response.metrics is not None:
+            accumulate_eval_metrics(response.metrics, run_metrics)
         return self._to_score(response.content)
 
     def digest(self) -> str:

@@ -100,3 +100,32 @@ async def test_decorator_preserves_async_nature():
     from inspect import iscoroutinefunction
 
     assert iscoroutinefunction(async_function.entrypoint)
+
+
+def _verified_probe():
+    from agno.verifiers import verified_tool
+
+    @verified_tool(lambda result, expect: result == expect)
+    def probe(expect: str = None) -> str:
+        """Probe."""
+        return "42"
+
+    return probe
+
+
+def _hook(function_name, function_call, arguments):
+    return function_call(**arguments)
+
+
+def test_hooks_on_a_verified_tool_are_refused_at_decoration():
+    probe = _verified_probe()
+    tool(probe)  # no hooks: fine
+    for kwargs in (
+        {"tool_hooks": [_hook]},
+        {"pre_hook": _hook},
+        {"post_hook": _hook},
+        {"external_execution": True},
+        {"stop_after_tool_call": True},
+    ):
+        with pytest.raises(ValueError, match="verified_tool"):
+            tool(**kwargs)(probe)

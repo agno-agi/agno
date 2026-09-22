@@ -9,7 +9,9 @@ import pytest
 from agno.db.schemas.jobs import QueuedJob
 from agno.job_queue.config import QueueConfig
 from agno.job_queue.store import InMemoryQueueStore
-from agno.os.job_queue import QueueWorker
+from agno.os.event_streams.in_memory import InMemoryEventStream
+from agno.os.job_queue import QueueWorker, ticket_status_to_api
+from agno.os.managers import EventsBuffer, SSESubscriberManager
 from agno.run.base import RunStatus
 
 
@@ -2387,3 +2389,106 @@ class TestTerminalRowClaim:
             f"an unreadable row must leave the claim stale for the sweep, got {job['status']!r} - "
             "never a manufactured terminal status"
         )
+
+
+class TestUnverifiedTicket:
+    """UNVERIFIED is a settled run: the ticket records it as its own status,
+    and neither the sweep nor a reclaim may turn it into an error or a re-run."""
+
+    @pytest.fixture
+    def stream(self, monkeypatch: pytest.MonkeyPatch) -> InMemoryEventStream:
+        import agno.os.event_streams as es_mod
+
+        stream = InMemoryEventStream(events_buffer=EventsBuffer(), subscriber_manager=SSESubscriberManager())
+        monkeypatch.setattr(es_mod, "_event_stream", stream)
+        return stream
+
+    def test_ticket_status_maps_to_the_run_status(self):
+        assert ticket_status_to_api("unverified") == "UNVERIFIED"
+
+    @staticmethod
+    async def _stale_unverified_job(store: InMemoryQueueStore, agent: FakeAgent, stream: InMemoryEventStream) -> None:
+        """A streamed job whose worker died after the row committed UNVERIFIED
+        but before the ticket write."""
+
+        async def unverified_row(run_id, session_id, user_id=None):
+            return SimpleNamespace(status=RunStatus.unverified)
+
+        agent.aget_run_output = unverified_row  # type: ignore[attr-defined]
+        job = make_job("r1")
+        job["payload"]["stream"] = True
+        await store.enqueue_job(job)
+        await store.claim_job("dead-worker")
+        store._jobs["r1"]["locked_at"] -= 1000
+        await stream.register_run("r1", RunStatus.running)
+
+    @pytest.mark.parametrize(
+        "settle, ticket_status", [("ok", "unverified"), ("declined", "running"), ("raised", "running")]
+    )
+    @pytest.mark.asyncio
+    async def test_sweep_settles_an_unverified_row_without_failing_it(self, stream, settle, ticket_status):
+        """The sweep reconciles the ticket to the settled row; when the ticket write fails
+        the ticket stays open for the next sweep and the row never falls through to the
+        error write."""
+        store, agent = InMemoryQueueStore(), FakeAgent()
+        worker = make_worker(store, agent, make_config())
+        await self._stale_unverified_job(store, agent, stream)
+        row_writes: list = []
+
+        async def spy_persist(job, error, status="error"):
+            row_writes.append((job["id"], status))
+
+        async def failing_settle(job_id, worker_id, status, error=None):
+            if settle == "raised":
+                raise RuntimeError("ticket store write failed")
+            return False
+
+        worker._persist_run_error_outcome = spy_persist  # type: ignore[method-assign]
+        if settle != "ok":
+            store.settle_swept_job = failing_settle  # type: ignore[method-assign]
+        await worker._sweep_exhausted()
+
+        assert row_writes == []
+        assert (await store.get_job("r1"))["status"] == ticket_status
+        assert await stream.get_run_status("r1") == RunStatus.unverified
+
+    @pytest.mark.asyncio
+    async def test_reclaim_over_unverified_row_does_not_reexecute(self):
+        """Attempt 2 of a job whose first attempt committed UNVERIFIED and
+        crashed before settling: re-executing would repeat the run's side effects."""
+        store, agent = InMemoryQueueStore(), FakeAgent()
+
+        async def unverified_row(run_id, session_id, user_id=None):
+            return SimpleNamespace(status=RunStatus.unverified)
+
+        agent.aget_run_output = unverified_row  # type: ignore[attr-defined]
+        worker = make_worker(store, agent, make_config())
+        await store.enqueue_job(make_job("r1", max_attempts=3))
+        await store.claim_job("dead-worker")
+        store._jobs["r1"]["locked_at"] -= 1000
+        reclaimed = await store.claim_job(worker.worker_id)
+        assert reclaimed["attempt"] == 2
+
+        await worker._execute_claimed(reclaimed)
+
+        assert agent.calls == []
+        assert (await store.get_job("r1"))["status"] == "unverified"
+
+    @pytest.mark.asyncio
+    async def test_continuation_over_unverified_row_still_executes(self):
+        """A queued continue of an unverified run is continue-in-place, not a reclaim."""
+        store, agent = InMemoryQueueStore(), ContinuableFakeAgent()
+
+        async def unverified_row(run_id, session_id, user_id=None):
+            return SimpleNamespace(status=RunStatus.unverified)
+
+        agent.aget_run_output = unverified_row  # type: ignore[attr-defined]
+        await _park_paused(store)
+        assert (await store.continue_job("r1", {"updated_tools": []}))["outcome"] == "queued"
+        worker = make_worker(store, agent, make_config())
+        claimed = await store.claim_job(worker.worker_id)
+
+        await worker._execute_claimed(claimed)
+
+        assert len(agent.continue_calls) == 1
+        assert (await store.get_job("r1"))["status"] == "completed"

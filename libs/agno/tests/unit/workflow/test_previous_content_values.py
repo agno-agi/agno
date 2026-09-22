@@ -6,12 +6,8 @@ Content that is None or blank text is still skipped.
 import pytest
 
 from agno.workflow.parallel import Parallel
-from agno.workflow.step import Step
+from agno.workflow.step import get_deepest_content_from_step_output
 from agno.workflow.types import StepInput, StepOutput, StepType
-
-
-def summarize(step_input: StepInput) -> StepOutput:
-    return StepOutput(content="")
 
 
 @pytest.mark.parametrize("content", [0, 0.0, False, [], {}])
@@ -87,7 +83,6 @@ def test_parallel_aggregated_content_preserves_falsy_values():
 
 def test_next_step_input_after_parallel_preserves_falsy_values():
     """The input built for the step after a Parallel keeps falsy sub-step content and skips blank text."""
-    step = Step(name="summary", executor=summarize)
     parallel_output = StepOutput(
         step_name="parallel",
         step_type=StepType.PARALLEL,
@@ -99,4 +94,4 @@ def test_next_step_input_after_parallel_preserves_falsy_values():
         ],
     )
 
-    assert step._get_deepest_content_from_step_output(parallel_output) == "=== count ===\n0\n\n=== approved ===\nFalse"
+    assert get_deepest_content_from_step_output(parallel_output) == "=== count ===\n0\n\n=== approved ===\nFalse"

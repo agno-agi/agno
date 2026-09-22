@@ -89,7 +89,7 @@ from agno.os.utils import (
     stamped_component_version,
     stored_event_replay_dicts,
 )
-from agno.run.base import RunStatus
+from agno.run.base import TERMINAL_RUN_STATUSES, RunStatus
 from agno.run.workflow import WorkflowErrorEvent, WorkflowRunOutput
 from agno.utils.log import log_debug, log_error, log_warning, logger
 from agno.utils.serialize import json_serializer
@@ -623,7 +623,7 @@ async def handle_workflow_subscription(
         # PAUSED belongs here too: a paused run's stream is settled until the
         # continue-run, so subscribers get the replay (ending in the paused
         # snapshot) rather than an open live tail claiming RUNNING.
-        if buffer_status in [RunStatus.completed, RunStatus.error, RunStatus.cancelled, RunStatus.paused]:
+        if buffer_status in TERMINAL_RUN_STATUSES:
             # Run finished - replay everything still buffered
             all_events = await event_stream.replay(run_id, last_event_index=None)
 
@@ -1354,7 +1354,7 @@ async def _resume_stream_generator(
         yield f"event: error\ndata: {json.dumps(error)}\n\n"
         return
 
-    if buffer_status in (RunStatus.completed, RunStatus.error, RunStatus.cancelled, RunStatus.paused):
+    if buffer_status in TERMINAL_RUN_STATUSES:
         # PATH 2: Run finished -- replay missed events from the event stream
         total_buffered = await event_stream.get_event_count(run_id)
         missed_events = await event_stream.replay(run_id, last_event_index=last_event_index)
@@ -2158,6 +2158,7 @@ def get_workflow_router(
                 RunStatus.pending: "run is already pending",
                 RunStatus.running: "run is already running",
                 RunStatus.completed: "run is already completed",
+                RunStatus.unverified: "run ended unverified",
                 RunStatus.error: "run has errored",
                 RunStatus.cancelled: "run is already cancelled",
             }
@@ -2692,7 +2693,7 @@ def get_workflow_router(
         request: Request,
         session_id: str = Query(..., description="Session ID to list runs for"),
         status: Optional[str] = Query(
-            None, description="Filter by run status (PENDING, RUNNING, COMPLETED, ERROR, PAUSED)"
+            None, description="Filter by run status (PENDING, RUNNING, COMPLETED, UNVERIFIED, ERROR, PAUSED)"
         ),
         factory_input: Optional[str] = Query(
             None,

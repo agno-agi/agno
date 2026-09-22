@@ -33,7 +33,7 @@ class QueueWriteOutcome(str, Enum):
     CONTENDED = "contended"  # optimistic-concurrency retries exhausted (the write did NOT land)
 
 
-# Lifecycle: queued -> running -> completed | failed | cancelled | paused
+# Lifecycle: queued -> running -> completed | unverified | failed | cancelled | paused
 # running with a stale lock is claimable again while attempt < max_attempts;
 # otherwise the sweep moves it to failed without executing.
 # paused: the execution leg ended awaiting HITL input. NOT terminal: a
@@ -41,7 +41,7 @@ class QueueWriteOutcome(str, Enum):
 # continuation inputs merged into the payload - one row per run, ever
 # (id == run_id is load-bearing across poll/resume/cancel/idempotency).
 # cancel reaches paused tickets too (paused -> cancelled).
-JOB_STATUSES = ("queued", "running", "completed", "failed", "cancelled", "paused")
+JOB_STATUSES = ("queued", "running", "completed", "unverified", "failed", "cancelled", "paused")
 
 
 @dataclass

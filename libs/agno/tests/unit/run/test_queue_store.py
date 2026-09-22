@@ -421,6 +421,15 @@ class TestSettlePausedJob:
         assert job["completed_at"] is not None
 
     @pytest.mark.asyncio
+    async def test_settle_resettles_an_unverified_ticket(self, store):
+        """An unverified run is continued in place: the inline continue's outcome replaces the ticket's."""
+        await store.enqueue_job(make_job("r1"))
+        claimed = await store.claim_job("w1")
+        assert await store.complete_job("r1", "w1", claimed["attempt"], "unverified")
+        assert await store.settle_paused_job("r1", "completed") is True
+        assert (await store.get_job("r1"))["status"] == "completed"
+
+    @pytest.mark.asyncio
     async def test_settle_failed_carries_reason(self, store):
         await _pause_job(store)
         assert await store.settle_paused_job("r1", "failed", "inline continue errored") is True
