@@ -14,10 +14,10 @@ It is a tilt, not a sort by date:
 half_life_days sets how fast the boost fades. This example uses a very short one so a
 few seconds of age separate the documents; a real corpus wants days or weeks.
 
-PgVector reports when each row was stored, so nothing needs configuring: a document
-counts as fresh from when it entered the store, and re-ingesting it under the same name
-replaces the row and makes it fresh again. Stores that report no timestamp leave
-relevance ordering untouched.
+Set your own date under updated_at when adding content, and it is used first. Failing
+that, PgVector built with report_row_timestamp=True reports when each row was stored, so
+a document counts as fresh from when it entered the store and re-ingesting it under the
+same name makes it fresh again. Stores reporting no timestamp leave ordering untouched.
 
 Setup:
     ./cookbook/scripts/run_pgvector.sh
@@ -31,6 +31,7 @@ from agno.agent import Agent
 from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.reranker.recency import RecencyReranker
+from agno.knowledge.utils import STORE_RECENCY_METADATA_KEY
 from agno.models.openai import OpenAIResponses
 from agno.vectordb.pgvector import PgVector
 
@@ -44,6 +45,9 @@ vector_db = PgVector(
     table_name="recency_demo",
     db_url=db_url,
     embedder=OpenAIEmbedder(id="text-embedding-3-small"),
+    # Report when each row was stored, so documents with no timestamp of their own still
+    # have one to decay on. Off by default: it travels in metadata the model can see.
+    report_row_timestamp=True,
 )
 
 # Start clean, so re-running does not stack copies from a previous run.
@@ -90,7 +94,11 @@ QUERY = "What is the daily expense limit?"
 def show(label: str, results) -> None:
     print(label)
     for document in results:
-        stored = str((document.meta_data or {}).get("updated_at", "unknown"))[11:19]
+        meta = document.meta_data or {}
+        # The user's own date if it has one, else the row timestamp PgVector reports.
+        stored = str(
+            meta.get("updated_at") or meta.get(STORE_RECENCY_METADATA_KEY, "unknown")
+        )[11:19]
         snippet = " ".join(document.content.split())[:58]
         print(f"  [{stored}] {document.name}: {snippet}...")
     print()

@@ -33,7 +33,7 @@ from agno.filters import FilterExpr
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.knowledge.reranker.base import Reranker
-from agno.knowledge.utils import RECENCY_METADATA_KEY
+from agno.knowledge.utils import STORE_RECENCY_METADATA_KEY
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.vectordb.base import (
     VectorDb,
@@ -88,6 +88,7 @@ class PgVector(VectorDb):
         content_language: str = "english",
         schema_version: int = 1,
         reranker: Optional[Reranker] = None,
+        report_row_timestamp: bool = False,
         create_schema: bool = True,
         similarity_threshold: Optional[float] = None,
         *,
@@ -191,6 +192,9 @@ class PgVector(VectorDb):
 
         # Reranker instance
         self.reranker: Optional[Reranker] = reranker
+        # Off by default: the timestamp lands in meta_data, which is serialized into the
+        # model's prompt, so only stores whose caller wants recency ranking should pay for it.
+        self.report_row_timestamp: bool = report_row_timestamp
 
         # Schema creation flag
         self.create_schema: bool = create_schema
@@ -929,24 +933,24 @@ class PgVector(VectorDb):
             log_error(f"Error updating metadata for document {content_id}: {str(e)}")
             raise
 
-    @staticmethod
-    def _with_recency(meta_data: Optional[Dict[str, Any]], result: Any) -> Dict[str, Any]:
-        """Report when the row last changed, as the single source of this timestamp.
+    def _with_recency(self, meta_data: Optional[Dict[str, Any]], result: Any) -> Dict[str, Any]:
+        """Report when the row last changed, under a key of our own.
 
-        The store's own value wins over anything under the same key in metadata, so a
-        stale copy left there cannot outrank what the table actually records.
+        Reported only when asked for: it travels in meta_data, which reaches the model's
+        prompt, and it is namespaced so it cannot mask a timestamp the user set themselves.
         """
         merged = dict(meta_data) if meta_data else {}
-        timestamp = getattr(result, RECENCY_METADATA_KEY, None)
+        if not self.report_row_timestamp:
+            return merged
+        timestamp = getattr(result, STORE_RECENCY_METADATA_KEY, None)
         # A table without the columns selects NULL, so the value is not always a datetime.
         if isinstance(timestamp, datetime):
-            merged[RECENCY_METADATA_KEY] = timestamp.isoformat()
+            merged[STORE_RECENCY_METADATA_KEY] = timestamp.isoformat()
         return merged
 
-    @classmethod
-    def _with_scores(cls, meta_data: Optional[Dict[str, Any]], result: Any) -> Dict[str, Any]:
+    def _with_scores(self, meta_data: Optional[Dict[str, Any]], result: Any) -> Dict[str, Any]:
         """Recency plus the row's own relevance score, where the query computes one."""
-        merged = cls._with_recency(meta_data, result)
+        merged = self._with_recency(meta_data, result)
         score = getattr(result, "similarity_score", None)
         if score is not None:
             merged["similarity_score"] = float(score)
@@ -961,10 +965,10 @@ class PgVector(VectorDb):
         columns = self.table.c
         # A table created before these columns existed still has to be searchable.
         if "updated_at" in columns and "created_at" in columns:
-            return func.coalesce(columns.updated_at, columns.created_at).label(RECENCY_METADATA_KEY)
+            return func.coalesce(columns.updated_at, columns.created_at).label(STORE_RECENCY_METADATA_KEY)
         if "created_at" in columns:
-            return columns.created_at.label(RECENCY_METADATA_KEY)
-        return null().label(RECENCY_METADATA_KEY)
+            return columns.created_at.label(STORE_RECENCY_METADATA_KEY)
+        return null().label(STORE_RECENCY_METADATA_KEY)
 
     def search(
         self,

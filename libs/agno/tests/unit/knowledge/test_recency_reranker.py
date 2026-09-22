@@ -197,29 +197,16 @@ def test_booleans_are_rejected_as_numeric_config(kwargs):
         RecencyReranker(**kwargs)
 
 
-def test_pgvector_reports_the_row_timestamp_as_the_single_source():
-    pgvector = pytest.importorskip("agno.vectordb.pgvector")
-
-    class Row:
-        meta_data = {}
-        updated_at = NOW
-
-    filled = pgvector.PgVector._with_recency({}, Row())
-    assert filled["updated_at"].startswith(NOW.isoformat()[:19])
-
-    # A stale copy under the same key must not outrank what the table records.
-    replaced = pgvector.PgVector._with_recency({"updated_at": "2019-01-01T00:00:00+00:00"}, Row())
-    assert replaced["updated_at"].startswith(NOW.isoformat()[:19])
-
-
 def test_a_row_without_a_timestamp_adds_no_key():
     pgvector = pytest.importorskip("agno.vectordb.pgvector")
 
     class Row:
         meta_data = {"team": "ops"}
-        updated_at = None
 
-    assert pgvector.PgVector._with_recency({"team": "ops"}, Row()) == {"team": "ops"}
+    store = pgvector.PgVector.__new__(pgvector.PgVector)
+    store.report_row_timestamp = True
+
+    assert pgvector.PgVector._with_recency(store, {"team": "ops"}, Row()) == {"team": "ops"}
 
 
 def test_a_table_without_timestamp_columns_is_still_searchable():
@@ -284,15 +271,20 @@ def test_pgvector_keyword_search_reports_a_relevance_score():
     # Without this the reranker sees relevance 0 for every row and ranks on age alone.
     pgvector = pytest.importorskip("agno.vectordb.pgvector")
 
+    from agno.knowledge.utils import STORE_RECENCY_METADATA_KEY
+
     class Row:
         meta_data = {}
-        updated_at = NOW
         similarity_score = 0.42
 
-    merged = pgvector.PgVector._with_scores({}, Row())
+    setattr(Row, STORE_RECENCY_METADATA_KEY, NOW)
+
+    store = pgvector.PgVector.__new__(pgvector.PgVector)
+    store.report_row_timestamp = True
+    merged = pgvector.PgVector._with_scores(store, {}, Row())
 
     assert merged["similarity_score"] == pytest.approx(0.42)
-    assert "updated_at" in merged
+    assert STORE_RECENCY_METADATA_KEY in merged
 
 
 def test_a_store_that_reports_no_score_ranks_by_position_not_by_date_alone():
@@ -349,11 +341,17 @@ def test_a_wider_pool_promotes_a_fresh_document_from_below_the_cutoff():
 def test_a_non_datetime_timestamp_column_does_not_raise():
     pgvector = pytest.importorskip("agno.vectordb.pgvector")
 
+    from agno.knowledge.utils import STORE_RECENCY_METADATA_KEY
+
     class Row:
         meta_data = {"team": "ops"}
-        updated_at = "not-a-datetime"
 
-    assert pgvector.PgVector._with_recency({"team": "ops"}, Row()) == {"team": "ops"}
+    setattr(Row, STORE_RECENCY_METADATA_KEY, "not-a-datetime")
+
+    store = pgvector.PgVector.__new__(pgvector.PgVector)
+    store.report_row_timestamp = True
+
+    assert pgvector.PgVector._with_recency(store, {"team": "ops"}, Row()) == {"team": "ops"}
 
 
 def test_keyword_relevance_is_reported_on_the_same_scale_as_other_search_types():
@@ -416,3 +414,131 @@ def test_identical_scores_do_not_collapse_ordering():
     results = RecencyReranker().rerank("q", documents)
 
     assert [doc.id for doc in results] == ["first", "second"]
+
+
+def test_the_user_timestamp_wins_over_the_store_row_timestamp():
+    # The store's row timestamp records when it was written, which is not the same as
+    # when the document was, so a date the user set has to take precedence.
+    from agno.knowledge.utils import STORE_RECENCY_METADATA_KEY
+
+    documents = [
+        Document(
+            id="user_dated_old",
+            content="a",
+            meta_data={
+                "similarity_score": 0.5,
+                "updated_at": (NOW - timedelta(days=3650)).isoformat(),
+                STORE_RECENCY_METADATA_KEY: NOW.isoformat(),
+            },
+        ),
+        Document(
+            id="store_dated_fresh",
+            content="b",
+            meta_data={"similarity_score": 0.5, STORE_RECENCY_METADATA_KEY: (NOW - timedelta(days=1)).isoformat()},
+        ),
+    ]
+
+    results = RecencyReranker(weight=1.0).rerank("q", documents)
+
+    assert [doc.id for doc in results] == ["store_dated_fresh", "user_dated_old"]
+
+
+def test_the_store_row_timestamp_is_used_when_the_user_set_none():
+    from agno.knowledge.utils import STORE_RECENCY_METADATA_KEY
+
+    documents = [
+        Document(
+            id="stale",
+            content="a",
+            meta_data={"similarity_score": 0.9, STORE_RECENCY_METADATA_KEY: (NOW - timedelta(days=300)).isoformat()},
+        ),
+        Document(
+            id="fresh",
+            content="b",
+            meta_data={"similarity_score": 0.7, STORE_RECENCY_METADATA_KEY: NOW.isoformat()},
+        ),
+    ]
+
+    results = RecencyReranker().rerank("q", documents)
+
+    assert [doc.id for doc in results] == ["fresh", "stale"]
+
+
+def test_pgvector_does_not_report_the_row_timestamp_unless_asked():
+    # It travels in meta_data, which reaches the model's prompt, so users who never
+    # configured recency should see no change in their search results.
+    pgvector = pytest.importorskip("agno.vectordb.pgvector")
+    from agno.knowledge.utils import STORE_RECENCY_METADATA_KEY
+
+    class Row:
+        meta_data = {"team": "ops"}
+
+    setattr(Row, STORE_RECENCY_METADATA_KEY, NOW)
+
+    store = pgvector.PgVector.__new__(pgvector.PgVector)
+    store.report_row_timestamp = False
+    assert pgvector.PgVector._with_recency(store, {"team": "ops"}, Row()) == {"team": "ops"}
+
+    store.report_row_timestamp = True
+    reported = pgvector.PgVector._with_recency(store, {"team": "ops"}, Row())
+    assert reported[STORE_RECENCY_METADATA_KEY].startswith(NOW.isoformat()[:19])
+
+
+def test_the_reported_key_cannot_mask_a_user_timestamp():
+    pgvector = pytest.importorskip("agno.vectordb.pgvector")
+    from agno.knowledge.utils import STORE_RECENCY_METADATA_KEY
+
+    class Row:
+        meta_data = {"updated_at": "2019-01-01T00:00:00+00:00"}
+
+    setattr(Row, STORE_RECENCY_METADATA_KEY, NOW)
+
+    store = pgvector.PgVector.__new__(pgvector.PgVector)
+    store.report_row_timestamp = True
+
+    merged = pgvector.PgVector._with_recency(store, {"updated_at": "2019-01-01T00:00:00+00:00"}, Row())
+
+    assert merged["updated_at"] == "2019-01-01T00:00:00+00:00"
+    assert STORE_RECENCY_METADATA_KEY in merged
+
+
+def test_recency_refuses_a_store_that_cannot_report_row_timestamps():
+    # Only PgVector reports when its rows were written. Elsewhere the reranker would rank
+    # on relevance alone while looking like recency had run.
+    class Qdrant:
+        pass
+
+    with pytest.raises(NotImplementedError, match="not implemented for Qdrant yet"):
+        RecencyReranker().validate_vector_db(Qdrant())
+
+
+def test_recency_accepts_pgvector():
+    pgvector = pytest.importorskip("agno.vectordb.pgvector")
+
+    store = pgvector.PgVector.__new__(pgvector.PgVector)
+
+    assert RecencyReranker().validate_vector_db(store) is None
+
+
+def test_other_rerankers_accept_any_store():
+    # The base hook is permissive: only a reranker with a store requirement overrides it.
+    from agno.knowledge.reranker.mmr import MMRReranker
+
+    class Qdrant:
+        pass
+
+    assert MMRReranker().validate_vector_db(Qdrant()) is None
+
+
+def test_knowledge_refuses_the_pairing_at_construction():
+    # Setup is where this should fail, not part way through a search.
+    from agno.knowledge.knowledge import Knowledge
+
+    class Qdrant:
+        reranker = None
+
+        def exists(self) -> bool:
+            return True
+
+    with pytest.raises(NotImplementedError, match="not implemented for Qdrant yet"):
+        Knowledge(vector_db=Qdrant(), reranker=RecencyReranker())

@@ -7,7 +7,7 @@ from pydantic import Field, field_validator
 
 from agno.knowledge.document import Document
 from agno.knowledge.reranker.base import Reranker
-from agno.knowledge.utils import RECENCY_METADATA_KEY
+from agno.knowledge.utils import RECENCY_METADATA_KEY, STORE_RECENCY_METADATA_KEY
 
 _SECONDS_PER_DAY = 86400.0
 _LN_2 = log(2.0)
@@ -65,31 +65,39 @@ class RecencyReranker(Reranker):
     a timestamp, so an older document has to be clearly more relevant to outrank a newer
     one. It is a tilt, not a sort by date.
 
-    The timestamp is read from ``Document.meta_data[timestamp_key]``. Nothing populates
-    it automatically: set it when adding content, as an ISO-8601 string, a datetime, or
-    epoch seconds or milliseconds.
+    The timestamp is read from ``Document.meta_data[timestamp_key]``, set when adding
+    content as an ISO-8601 string, a datetime, or epoch seconds or milliseconds. Failing
+    that, a store that reports when its row last changed is used: on PgVector, build it
+    with ``report_row_timestamp=True``.
 
     Documents without a usable timestamp receive no recency term, so they rank purely on
-    relevance against the same scale as everything else. A corpus with no timestamps at
-    all therefore keeps its original relevance order.
+    relevance against the same scale as everything else.
     """
 
-    # A fresh document just below the cutoff is exactly what this is meant to surface,
-    # and it can only be promoted if it was retrieved, so the pool is widened like any
-    # other reranker's.
+    # A fresh document below the cutoff can only be promoted if it was retrieved.
     candidate_multiplier: int = Field(default=3, ge=1)
 
-    # Metadata key holding the document's timestamp. pgvector reports when each row last
-    # changed under this key; set it when adding content to use your own document dates.
+    # Metadata key holding the document's own timestamp.
     timestamp_key: str = RECENCY_METADATA_KEY
-    # Age at which the recency term has decayed to half. Lower favours fresh documents
-    # more sharply.
+    # Age at which the recency term has decayed to half.
     half_life_days: float = Field(default=30.0, gt=0.0)
-    # Weight of recency against relevance: 0.0 ranks by relevance alone, 1.0 by age alone.
+    # 0.0 ranks by relevance alone, 1.0 by age alone.
     weight: float = Field(default=0.3, ge=0.0, le=1.0)
-    # Metadata keys holding the search score, in the order they are tried. Adapters name
-    # this differently, and a document without any of them scores 0.0 for relevance.
+    # Search score keys, in the order they are tried: adapters name this differently.
     score_keys: Tuple[str, ...] = ("similarity_score", "search_score", "score")
+
+    def validate_vector_db(self, vector_db: Any) -> None:
+        """Only PgVector reports when its rows were written.
+
+        Elsewhere a document is dated only if the caller set ``timestamp_key`` themselves,
+        and a store that reports nothing would rank on relevance alone while looking like
+        recency had run.
+        """
+        from agno.vectordb.pgvector import PgVector
+
+        if isinstance(vector_db, PgVector):
+            return None
+        raise NotImplementedError(f"RecencyReranker is not implemented for {type(vector_db).__name__} yet.")
 
     @field_validator("half_life_days", mode="before")
     @classmethod
@@ -130,7 +138,11 @@ class RecencyReranker(Reranker):
 
     def _recency(self, document: Document, now: float) -> Optional[float]:
         """Decay from 1.0 at ``now`` towards 0.0, halving every ``half_life_days``."""
-        timestamp = _as_timestamp((document.meta_data or {}).get(self.timestamp_key))
+        meta_data = document.meta_data or {}
+        # The user's own document date wins; the store's row timestamp is the fallback.
+        timestamp = _as_timestamp(meta_data.get(self.timestamp_key))
+        if timestamp is None:
+            timestamp = _as_timestamp(meta_data.get(STORE_RECENCY_METADATA_KEY))
         if timestamp is None:
             return None
         age_days = max((now - timestamp) / _SECONDS_PER_DAY, 0.0)
