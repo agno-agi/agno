@@ -204,6 +204,39 @@ row10,39,City10"""
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("page_size", [0, -1])
+@pytest.mark.parametrize("row_count", [0, 3, 12])
+@pytest.mark.parametrize("source_type", ["path", "stream"])
+async def test_async_read_rejects_nonpositive_page_size(tmp_path, page_size, row_count, source_type):
+    content = "name,age\n" + "\n".join(f"row{i},{i}" for i in range(row_count))
+    if source_type == "path":
+        source = tmp_path / "input.csv"
+        source.write_text(content, encoding="utf-8")
+    else:
+        source = io.BytesIO(content.encode("utf-8"))
+        source.seek(3)
+
+    with pytest.raises(ValueError, match="page_size must be greater than 0"):
+        await CSVReader().async_read(source, page_size=page_size)
+
+    if source_type == "stream":
+        assert source.tell() == 3
+        assert not source.closed
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("page_size", [1, 5, 1000])
+async def test_async_read_positive_page_size_preserves_stream_rows(page_size):
+    content = "name,age\n" + "\n".join(f"row{i},{i}" for i in range(12))
+    source = io.BytesIO(content.encode("utf-8"))
+
+    documents = await CSVReader().async_read(source, page_size=page_size)
+
+    assert [document.content for document in documents] == ["name, age"] + [f"row{i}, {i}" for i in range(12)]
+    assert [document.meta_data["row_number"] for document in documents] == list(range(1, 14))
+
+
+@pytest.mark.asyncio
 async def test_async_read_multi_page_csv(csv_reader, multi_page_csv_file):
     documents = await csv_reader.async_read(multi_page_csv_file, page_size=5)
 
