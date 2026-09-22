@@ -875,3 +875,113 @@ def test_seed_alone_puts_roles_in_play(tmp_path):
     # /authz is mounted (roles are in play). alice is refused there only because nothing defined what
     # "admin" grants; that is the seeded-admin-without-admin-scope warning case, not an unmounted API.
     assert client.get("/authz/roles", headers=_auth("alice")).status_code == 403
+
+
+def test_draft_preview_ignores_a_raw_token_admin_scope_under_managed_roles(tmp_path):
+    """Under a managed-roles plane a token's agent_os:admin is inert at every gate. The draft-preview
+    gate read it raw, so a viewer whose token carried that scope could read another owner's draft
+    component configs (isolation off, where components stay visible but drafts are owner-only)."""
+    db = SqliteDb(db_file=str(tmp_path / "drafts.db"))
+    authz = Authorization(db=db, verification_keys=[SECRET], algorithm="HS256", verify_audience=True, audience=OS_ID)
+    authz.define_role("builder", ["components:write", "components:read", "agents:*:read"])
+    authz.define_role("viewer", ["components:read", "agents:*:read"])
+    authz.assign("alice", "builder")
+    authz.assign("dave", "viewer")
+    client = TestClient(AgentOS(id=OS_ID, db=db, agents=_agents(), authorization=authz).get_app())
+    body = {
+        "name": "Alice draft",
+        "component_type": "agent",
+        "stage": "draft",
+        "config": {"model": {"provider": "openai", "id": "gpt-5.6-luna"}},
+    }
+    created = client.post("/components", headers=_auth("alice"), json=body)
+    assert created.status_code == 201, created.text
+    cid = created.json().get("component_id") or created.json()["id"]
+
+    def stages(headers):
+        r = client.get(f"/components/{cid}/configs", headers=headers)
+        assert r.status_code == 200, r.text
+        return sorted({c.get("stage") for c in r.json()})
+
+    assert stages(_auth("alice")) == ["draft"]  # the owner sees her draft
+    assert stages(_auth("dave")) == []  # a viewer sees the published stage only (nothing yet)
+    assert stages(_auth("dave", scopes=["agent_os:admin"])) == []  # a raw admin scope changes nothing here
+    assert client.get("/authz/roles", headers=_auth("dave", scopes=["agent_os:admin"])).status_code == 403
+
+
+def test_provider_outage_is_a_denial_with_an_audit_row_and_no_backend_text(tmp_path):
+    """A standalone provider that raises (an FGA outage, say) used to escape into the token-decode
+    handler: 401, the backend's error text in the body, and no decision row. The gate now fails
+    closed with a 403, keeps the message server side, and records the denial as provider_error."""
+    from agno.os.authz.audit import AuditEvent, AuditSink
+    from agno.os.authz.provider import AuthorizationContext, AuthorizationProvider
+
+    class Down(AuthorizationProvider):
+        def check(self, ctx: AuthorizationContext) -> bool:
+            raise ConnectionError("openfga unreachable at 10.0.0.5:8080")
+
+        def accessible_resource_ids(self, ctx: AuthorizationContext):
+            raise ConnectionError("openfga unreachable at 10.0.0.5:8080")
+
+    class Capture(AuditSink):
+        def __init__(self):
+            self.events: list = []
+
+        def record(self, event: AuditEvent) -> None:
+            self.events.append(event)
+
+        async def arecord(self, event: AuditEvent) -> None:
+            self.events.append(event)
+
+    sink = Capture()
+    authz = Authorization(
+        verification_keys=[SECRET],
+        algorithm="HS256",
+        verify_audience=True,
+        audience=OS_ID,
+        authorization_provider=Down(),
+        audit=sink,
+    )
+    client = TestClient(
+        AgentOS(
+            id=OS_ID, db=SqliteDb(db_file=str(tmp_path / "down.db")), agents=_agents(), authorization=authz
+        ).get_app()
+    )
+    for path in ("/agents/research", "/agents"):
+        r = client.get(path, headers=_auth("u", scopes=["agents:read"]))
+        assert r.status_code == 403, (path, r.status_code, r.text)
+        assert "10.0.0.5" not in r.text and "openfga" not in r.text
+    denied = [e for e in sink.events if e.action == "access.denied"]
+    assert denied and all(e.metadata.get("reason") == "provider_error" for e in denied)
+
+
+def test_draft_preview_recognises_a_managed_role_admin(tmp_path):
+    """The other half of the draft-preview rule: under managed roles a token's admin scope is inert,
+    but an admin ROLE is not. An admin-role holder previews any owner's drafts; a viewer does not,
+    whatever their token says."""
+    db = SqliteDb(db_file=str(tmp_path / "drafts-admin.db"))
+    authz = Authorization(db=db, verification_keys=[SECRET], algorithm="HS256", verify_audience=True, audience=OS_ID)
+    authz.define_role("admin", ["agent_os:admin"])
+    authz.define_role("builder", ["components:write", "components:read", "agents:*:read"])
+    authz.define_role("viewer", ["components:read", "agents:*:read"])
+    authz.assign("root", "admin")
+    authz.assign("alice", "builder")
+    authz.assign("dave", "viewer")
+    client = TestClient(AgentOS(id=OS_ID, db=db, agents=_agents(), authorization=authz).get_app())
+    body = {
+        "name": "Alice draft",
+        "component_type": "agent",
+        "stage": "draft",
+        "config": {"model": {"provider": "openai", "id": "gpt-5.6-luna"}},
+    }
+    created = client.post("/components", headers=_auth("alice"), json=body)
+    assert created.status_code == 201, created.text
+    cid = created.json().get("component_id") or created.json()["id"]
+
+    def stages(headers):
+        r = client.get(f"/components/{cid}/configs", headers=headers)
+        assert r.status_code == 200, r.text
+        return sorted({c.get("stage") for c in r.json()})
+
+    assert stages(_auth("root")) == ["draft"]  # admin by ROLE, no scope on the token
+    assert stages(_auth("dave", scopes=["agent_os:admin"])) == []  # a raw scope still changes nothing

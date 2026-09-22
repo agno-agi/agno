@@ -110,6 +110,29 @@ def _store_default_role(role_store: Any) -> Optional[str]:
         return None
 
 
+def _is_role_slug(role_store: Any, subject: str) -> bool:
+    """Whether ``subject`` names a role in the store (a defined role, or one that exists only as
+    an assignment). False when there is no store or it cannot list roles."""
+    fn = getattr(role_store, "list_roles", None) if role_store is not None else None
+    if not callable(fn):
+        return False
+    try:
+        return subject in fn()
+    except Exception:
+        return False
+
+
+async def _ais_role_slug(role_store: Any, subject: str) -> bool:
+    """Async twin of :func:`_is_role_slug`."""
+    afn = getattr(role_store, "alist_roles", None) if role_store is not None else None
+    if callable(afn):
+        try:
+            return subject in await afn()
+        except Exception:
+            return False
+    return await asyncio.to_thread(_is_role_slug, role_store, subject)
+
+
 def provision_user_with_default_role(
     user_store: Any,
     role_store: Any,
@@ -134,6 +157,20 @@ def provision_user_with_default_role(
     Returns the provisioned user row (so the caller can read ``disabled`` off it without a
     second query).
     """
+    existing = user_store.get(subject)
+    if existing is not None:
+        # Already in the directory: the row (and its disabled flag) is the answer. Nothing below
+        # applies to an existing person, and this runs on every authenticated request, so it must
+        # not pay for the checks that only guard a create.
+        return existing
+    if _is_role_slug(role_store, subject):
+        # Subjects and roles share one namespace. A token whose ``sub`` is a role slug is already
+        # refused by the engine's collision guard; provisioning it would still create a directory
+        # row named after the role, and (before the store refused it) hand the role the default
+        # role as an inheritance edge -- every holder of that role gained the default's grants.
+        # No row, no grant: the request stays denied and the roster stays a roster of people.
+        log_warning(f"not provisioning {subject!r}: it is a role slug, not a user")
+        return None
     user, created = user_store.provision_from_claims(subject, claims, email_claim=email_claim, name_claim=name_claim)
     # is_default is a floor for the role-less, never an override: a subject new to the DIRECTORY may
     # already hold a role (an admin granted via seed(admin=)/role_store.assign but never added to the
@@ -187,6 +224,12 @@ async def aprovision_user_with_default_role(
 
     Same single-role, grant-on-first-creation behaviour; awaits the store's async methods so
     JIT provisioning against an async database never blocks the event loop."""
+    existing = await user_store.aget(subject)
+    if existing is not None:
+        return existing  # see the sync twin
+    if await _ais_role_slug(role_store, subject):
+        log_warning(f"not provisioning {subject!r}: it is a role slug, not a user")  # see the sync twin
+        return None
     user, created = await user_store.aprovision_from_claims(
         subject, claims, email_claim=email_claim, name_claim=name_claim
     )

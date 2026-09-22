@@ -15,7 +15,7 @@ import pytest
 
 pytest.importorskip("sqlalchemy")  # managed roles persist/enforce via the native engine + SQLAlchemy
 
-from agno.os.auth import provision_user_with_default_role  # noqa: E402
+from agno.os.auth import aprovision_user_with_default_role, provision_user_with_default_role  # noqa: E402
 from agno.os.authz import Authorization  # noqa: E402
 from agno.os.authz.user_directory import UserDirectory  # noqa: E402
 
@@ -158,3 +158,61 @@ def test_an_explicit_role_wins_over_the_default_fallback():
     engine = roles._store()._engine
     assert engine.check_scope("agents:x:write", subject="bob") is True  # editor grants write
     assert engine.check_scope("agents:x:read", subject="bob") is False  # editor is not the default viewer
+
+
+def test_a_role_slug_is_never_provisioned_as_a_user():
+    """Subjects and roles share one namespace. Provisioning a token whose sub is a role slug created a
+    directory row named after the role and, before the store refused it, granted the role the default
+    role as an inheritance edge. Now: no row, no grant, None returned (the caller falls back to the
+    directory read, and the request stays denied by the collision guard)."""
+    import asyncio
+
+    roles, users = _roles(), _users()
+    roles.set_role_scopes("viewer", ["agents:*:read"])
+    roles.set_role_scopes("member", ["agents:*:run"], is_default=True)
+    roles.assign("vic", "viewer")
+
+    assert provision_user_with_default_role(users, roles, "viewer", {"email": "v@co"}) is None
+    assert users.get("viewer") is None
+    assert roles.roles_of("viewer") == []
+    assert roles._store()._engine.check_scope("agents:run", subject="vic") is False  # no inheritance edge
+
+    assert asyncio.run(aprovision_user_with_default_role(users, roles, "member", {})) is None
+    assert users.get("member") is None
+
+    assert provision_user_with_default_role(users, roles, "newbie", {}) is not None  # people still provision
+
+
+def test_an_existing_directory_user_keeps_its_row_when_a_role_later_takes_its_name():
+    """The role-slug refusal is for rows about to be CREATED. A person who was in the directory
+    before an admin defined a role with the same slug must still get their row back on every
+    request, or the middleware reads None as 'not disabled' and a disabled user slips past the
+    revocation check."""
+    roles, users = _roles(), _users()
+    users.upsert("ops", email="ops@co")
+    users.set_disabled("ops", True, actor="admin")
+    roles.set_role_scopes("ops", ["agents:*:read"])  # a role now shares the name
+
+    row = provision_user_with_default_role(users, roles, "ops", {})
+    assert row is not None and row["disabled"] is True
+    assert roles.roles_of("ops") == []  # and nothing was granted
+
+
+def test_provisioning_an_existing_user_does_not_read_the_role_list(monkeypatch):
+    """Provisioning runs on every authenticated request; the role-slug check only matters when a
+    row is about to be created, so an existing user must not pay a role-store read for it."""
+    roles, users = _roles(), _users()
+    roles.set_role_scopes("viewer", ["agents:*:read"])
+    users.upsert("bob", email="bob@co")
+    calls = {"n": 0}
+    real = roles.list_roles
+
+    def counting():
+        calls["n"] += 1
+        return real()
+
+    monkeypatch.setattr(roles, "list_roles", counting)
+    assert provision_user_with_default_role(users, roles, "bob", {}) is not None
+    assert calls["n"] == 0
+    assert provision_user_with_default_role(users, roles, "newbie", {}) is not None  # a create still checks
+    assert calls["n"] == 1

@@ -73,7 +73,7 @@ from agno.os.utils import (
     allow_draft_preview,
     amark_continue_stream_running,
     classify_upload_file,
-    draft_preview_identity,
+    adraft_preview_identity,
     find_factory_by_id,
     format_sse_event,
     get_request_kwargs,
@@ -1441,7 +1441,7 @@ def get_team_router(
                 # must not resolve (defense against a forged/leaked stamp).
                 # Same 404 the run-start route raises, so a denial is
                 # indistinguishable from the component being absent.
-                if not allow_draft_preview(os.db, team_id, stamped_version, *draft_preview_identity(request)):
+                if not allow_draft_preview(os.db, team_id, stamped_version, *await adraft_preview_identity(request)):
                     raise HTTPException(status_code=404, detail="Team not found")
                 try:
                     stamped_team = get_team_by_id(

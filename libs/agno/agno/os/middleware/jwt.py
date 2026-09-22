@@ -835,6 +835,18 @@ class AuthMiddleware(BaseHTTPMiddleware):
         """
         return get_required_scopes_for_route(self.scope_mappings, method, path)
 
+    @staticmethod
+    def _provider_error_check(required_scopes: List[str], error: Exception) -> "RouteScopeCheck":
+        """A provider that raised (an FGA outage, an unreachable role database) is a denial.
+
+        Fail closed rather than open, and keep the decision on the trail. Before this the
+        exception escaped into the token-decode handler, which answered 401 "Error decoding
+        token: <backend message>" -- the wrong status, the backend's error text in the body,
+        and no decision row, so an outage was invisible to the audit. The message is logged
+        here, server side only."""
+        log_warning(f"authorization provider raised during route authorization; denying: {error}")
+        return RouteScopeCheck(allowed=False, required_scopes=required_scopes, reason="provider_error")
+
     def _authorize_route(
         self,
         request: Request,
@@ -877,7 +889,10 @@ class AuthMiddleware(BaseHTTPMiddleware):
             action=_route_action(required_scopes),
             admin_scope=self.admin_scope,
         )
-        allowed = provider.authorize_route(ctx, required_scopes)
+        try:
+            allowed = provider.authorize_route(ctx, required_scopes)
+        except Exception as e:
+            return self._provider_error_check(required_scopes, e)
 
         accessible_resource_ids: Optional[Set[str]] = None
         first_required = required_scopes[0]
@@ -900,7 +915,10 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 action=required_action,
                 admin_scope=self.admin_scope,
             )
-            accessible_resource_ids = provider.accessible_resource_ids(listing_ctx)
+            try:
+                accessible_resource_ids = provider.accessible_resource_ids(listing_ctx)
+            except Exception as e:
+                return self._provider_error_check(required_scopes, e)
             allowed = True
 
         return RouteScopeCheck(
@@ -939,7 +957,10 @@ class AuthMiddleware(BaseHTTPMiddleware):
             action=_route_action(required_scopes),
             admin_scope=self.admin_scope,
         )
-        allowed = await provider.aauthorize_route(ctx, required_scopes)
+        try:
+            allowed = await provider.aauthorize_route(ctx, required_scopes)
+        except Exception as e:
+            return self._provider_error_check(required_scopes, e)
 
         accessible_resource_ids: Optional[Set[str]] = None
         first_required = required_scopes[0]
@@ -957,7 +978,10 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 action=required_action,
                 admin_scope=self.admin_scope,
             )
-            accessible_resource_ids = await provider.aaccessible_resource_ids(listing_ctx)
+            try:
+                accessible_resource_ids = await provider.aaccessible_resource_ids(listing_ctx)
+            except Exception as e:
+                return self._provider_error_check(required_scopes, e)
             allowed = True
 
         return RouteScopeCheck(
@@ -1091,7 +1115,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
             principal=getattr(request.state, "user_id", None),
             required_scopes=result.required_scopes,
             scopes=scopes,
-            reason=None if result.required_scopes else "no_scopes_required",
+            reason=result.reason or (None if result.required_scopes else "no_scopes_required"),
         )
 
         if not result.allowed:
@@ -1280,7 +1304,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
             principal=getattr(request.state, "user_id", None),
             required_scopes=result.required_scopes,
             scopes=scopes,
-            reason=None if result.required_scopes else "no_scopes_required",
+            reason=result.reason or (None if result.required_scopes else "no_scopes_required"),
         )
 
         if not result.allowed:
@@ -1548,6 +1572,10 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 return await call_next(request)
             if hmac.compare_digest(token, self.security_key):
                 request.state.authenticated = True
+                # The key is the OS's unscoped root: no subject, no scopes. Gates that need an
+                # administrator (the /users directory API) read this rather than inferring root
+                # from the absence of claims.
+                request.state.security_key_verified = True
                 setattr(request.state, _AUTH_COMPLETE_ATTR, True)
                 return await call_next(request)
             return self._create_error_response(401, "Invalid authentication token", origin, cors_allowed_origins)

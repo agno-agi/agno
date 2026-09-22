@@ -51,6 +51,21 @@ if TYPE_CHECKING:
 ScopeInput = Union[str, Tuple[str, str], Dict[str, str]]
 
 
+def _check_removable(role: str, scope: str) -> None:
+    """Validate a PATCH ``remove`` entry, and when the parser refuses it say how to clean the row:
+    a legacy entry that the parser no longer accepts (an ``agent_os/*`` row reads back as
+    ``agent_os:*:admin``) cannot be named here, but PUT of the role's scopes without it drops it."""
+    from agno.os.authz._scope_policy import scope_to_resource_action
+
+    try:
+        scope_to_resource_action(scope)
+    except ValueError as exc:
+        raise ValueError(
+            f"{exc} A stored entry that the parser no longer accepts cannot be removed by name; replace "
+            f"the role's scopes without it via PUT /authz/roles/{role}/scopes."
+        ) from None
+
+
 def _normalize_scope(entry: ScopeInput) -> Tuple[str, str]:
     """Coerce a scope input into ``(scope, effect)`` with effect in {allow, deny}."""
     if isinstance(entry, str):
@@ -345,10 +360,15 @@ class RoleStore:
                 staged[key] = (scope, "deny") if eff == "deny" else prev
             else:
                 staged[key] = (scope, eff)
+        # Validate the removes BEFORE the first write. Each add_scope commits on its own, so a bad
+        # remove entry that only failed inside remove_scope left every upsert persisted, the
+        # caller with a 422, and no audit event for the grants that did land.
+        removals = [_normalize_scope(entry)[0] for entry in remove or []]
+        for scope in removals:
+            _check_removable(role, scope)  # raises on an unrecognised scope, with nothing written yet
         for scope, effect in staged.values():
             self._engine.add_scope(role, scope, effect)
-        for entry in remove or []:
-            scope, _ = _normalize_scope(entry)
+        for scope in removals:
             self._engine.remove_scope(role, scope)
         self._meta_upsert(role)  # touch updated_at / ensure metadata row exists
         self._emit("role.set_scopes", role, before, self.get_role_scope_entries(role) if self._audit else None, actor)
@@ -751,10 +771,12 @@ class RoleStore:
                 staged[key] = (scope, "deny") if eff == "deny" else prev
             else:
                 staged[key] = (scope, eff)
+        removals = [_normalize_scope(entry)[0] for entry in remove or []]
+        for scope in removals:
+            _check_removable(role, scope)  # validate before the first write (see the sync twin)
         for scope, effect in staged.values():
             await self._engine.aadd_scope(role, scope, effect)
-        for entry in remove or []:
-            scope, _ = _normalize_scope(entry)
+        for scope in removals:
             await self._engine.aremove_scope(role, scope)
         await self._ameta_upsert(role)
         after = await self.aget_role_scope_entries(role) if self._audit else None

@@ -77,7 +77,7 @@ from agno.os.utils import (
     afinalize_continue_stream,
     allow_draft_preview,
     amark_continue_stream_running,
-    draft_preview_identity,
+    adraft_preview_identity,
     find_factory_by_id,
     format_sse_event,
     get_request_kwargs,
@@ -1612,7 +1612,7 @@ def get_workflow_router(
         # so without this gate any actor who can see it could pin - and read -
         # the owner's unpublished drafts. Same 404 the run routes raise, so a
         # denial is indistinguishable from the component being absent.
-        if not allow_draft_preview(os.db, workflow_id, version, *draft_preview_identity(request)):
+        if not allow_draft_preview(os.db, workflow_id, version, *await adraft_preview_identity(request)):
             raise HTTPException(status_code=404, detail="Workflow not found")
 
         try:
@@ -2195,7 +2195,7 @@ def get_workflow_router(
             # resolve (defense against a forged/leaked stamp). Same 404 the
             # run-start route raises, so a denial is indistinguishable from the
             # component being absent.
-            if not allow_draft_preview(os.db, workflow_id, stamped_version, *draft_preview_identity(request)):
+            if not allow_draft_preview(os.db, workflow_id, stamped_version, *await adraft_preview_identity(request)):
                 raise HTTPException(status_code=404, detail="Workflow not found")
             try:
                 stamped_workflow = get_workflow_by_id(
