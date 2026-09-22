@@ -398,7 +398,8 @@ class CancellationStage(str, Enum):
     reason stays on ``content``.
 
     Absent (``None``) means unknown: runs written before the field existed,
-    and shutdown interrupts, carry no stage. Consumers must therefore hide
+    and task-level interrupts (an event-loop shutdown, a disconnected
+    streaming task), carry no stage. Consumers must therefore hide
     only on ``before_execution`` and never "show only on ``during_execution``".
     Values are a wire contract: extend, never rename.
     """

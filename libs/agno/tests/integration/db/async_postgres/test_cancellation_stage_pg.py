@@ -105,3 +105,39 @@ async def test_terminal_guard_still_refuses_with_the_extra_field(db):
     run = await db.get_run("r-done")
     assert isinstance(run, RunOutput) and run.status == RunStatus.completed
     assert run.cancellation_stage is None
+
+
+@pytest.mark.asyncio
+async def test_transition_helper_persists_the_stage_on_postgres(db):
+    """End to end through apersist_run_transition, the helper every
+    non-durable cancel path uses: on Postgres the atomic patch wins and the
+    whole-run fallback never runs, so the stage must ride the patch. A later
+    non-cancelled transition is refused by the terminal-row guard, so the
+    stored stage stays with its CANCELLED status."""
+    from agno.agent import Agent
+    from agno.run.status_persist import apersist_run_transition
+
+    await _seed_pending_run(db, "r-transition")
+    agent = Agent(id="a1", db=db)
+    run = RunOutput(
+        run_id="r-transition",
+        session_id="s1",
+        agent_id="a1",
+        status=RunStatus.cancelled,
+        cancellation_stage=CancellationStage.before_execution,
+    )
+    await apersist_run_transition(agent, "agent", "s1", run)
+    stored = await db.get_run("r-transition")
+    assert isinstance(stored, RunOutput) and stored.status == RunStatus.cancelled
+    assert stored.cancellation_stage is CancellationStage.before_execution
+
+    run.status = RunStatus.running
+    await apersist_run_transition(agent, "agent", "s1", run)
+    assert run.cancellation_stage is None, "the helper clears the object's stale stage"
+    refused = await db.update_run_in_session(
+        "s1", "r-transition", fields={"status": "RUNNING", "cancellation_stage": None}
+    )
+    assert refused == RunPersistOutcome.TERMINAL_REFUSED
+    stored = await db.get_run("r-transition")
+    assert isinstance(stored, RunOutput) and stored.status == RunStatus.cancelled
+    assert stored.cancellation_stage is CancellationStage.before_execution

@@ -4540,7 +4540,12 @@ def _handle_team_run_cancellation(
     reason = _normalize_team_cancellation_reason(run_response, error)
     log_debug(f"Team run {run_response.run_id} was cancelled")
     run_response.status = RunStatus.cancelled
-    run_response.cancellation_stage = CancellationStage.during_execution
+    # Only a run cancellation is a stage. Callers also route task-level
+    # interrupts here (event-loop shutdown, a disconnected streaming task) as
+    # a KeyboardInterrupt; those are neither a user cancel nor a never-started
+    # run and stay unknown.
+    if isinstance(error, RunCancelledException):
+        run_response.cancellation_stage = CancellationStage.during_execution
     has_partial_content = bool(run_response.content)
     if not run_response.content:
         run_response.content = reason
