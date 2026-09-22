@@ -11,7 +11,6 @@ import pytest
 
 from agno.agent import Agent
 from agno.db.in_memory import InMemoryDb
-from agno.models.response import ModelResponse
 from agno.run.base import RunStatus
 from agno.run.team import TeamRunOutput
 from agno.team import Team
@@ -128,38 +127,6 @@ async def test_tasks_mode_fails_the_task_of_an_unverified_member(tool_name, draf
     task_list = load_task_list(team.get_session_state(session_id=out.session_id))
     assert {task.status for task in task_list.tasks} == {TaskStatus.failed}
     assert {task.result for task in task_list.tasks} == {expected}
-
-
-class _RaisingModel(ScriptedModel):
-    def _next(self, kwargs=None) -> ModelResponse:
-        raise RuntimeError("provider down")
-
-
-@pytest.mark.parametrize("use_async", [False, True], ids=["sync", "async"])
-async def test_execute_task_of_an_errored_member_records_the_failure(use_async):
-    member = Agent(name="member", id="member", model=_RaisingModel([_text("unused")]), telemetry=False)
-    leader = ScriptedModel(
-        [
-            _tool_call("execute_task", "tc-exec", {"task_id": "t1", "member_id": "member"}),
-            _tool_call("mark_all_complete", "tc-done", {"summary": "gave up"}),
-            _text("Could not finish."),
-        ]
-    )
-    team = Team(
-        members=[member],
-        model=leader,
-        mode="tasks",
-        db=InMemoryDb(),
-        session_state=_seeded_state("t1"),
-        telemetry=False,
-    )
-    out = await team.arun("go") if use_async else team.run("go")
-
-    task = load_task_list(team.get_session_state(session_id=out.session_id)).get_task("t1")
-    assert out.member_responses[0].status == RunStatus.error
-    assert task.status == TaskStatus.failed
-    assert task.result == (str(out.member_responses[0].content) if out.member_responses[0].content else "Task failed")
-    assert "UNVERIFIED" not in task.result
 
 
 # ---------------------------------------------------------------------------

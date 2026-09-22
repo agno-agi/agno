@@ -217,7 +217,8 @@ def _scorer_digest(scorer: Scorer) -> str:
 def _verification_component(agent: Agent) -> Optional[Dict[str, Any]]:
     """The verifier names and the loop config: two envs that differ only in their checks are
     different environments, and an env whose runs are not verified carries none. The fingerprint
-    object is hashed by type, its captures are world state."""
+    object is hashed by type, its captures are world state.
+    """
     config = resolve_verification(agent)
     if config is None:
         return None

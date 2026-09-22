@@ -238,7 +238,8 @@ def _unverified_gate(output: Any) -> bool:
 
 def final_run_content(last_output: StepOutput) -> Any:
     """The run's answer from its last step output: the deepest nested content of a container.
-    A Verify gate is descended like any container, so an unverified run answers with its judged draft."""
+    A Verify gate is descended like any container, so an unverified run answers with its judged draft.
+    """
     current: Any = last_output
     while getattr(current, "steps", None):
         current = current.steps[-1]
@@ -250,7 +251,8 @@ def stamp_terminal_status(run: WorkflowRunOutput, outputs: list) -> None:
 
     A run ends unverified when a Verify gate concluded unverified and either halted the
     run (stop_on_unverified) or is the run's last word; every other run ends completed.
-    The record is the deciding gate's, else the last gate's.
+    The record is the deciding gate's, else the last gate's. Only this workflow's own gates
+    decide: a nested workflow's gates stay on its step output, as an agent step's verifiers do.
     """
     gates: List[Any] = []
 
@@ -262,7 +264,7 @@ def stamp_terminal_status(run: WorkflowRunOutput, outputs: list) -> None:
             if getattr(item, "verification", None) is not None:
                 gates.append(item)
             nested = getattr(item, "steps", None)
-            if nested:
+            if nested and item.step_type != StepType.WORKFLOW:
                 collect(nested)
 
     collect(outputs)
@@ -274,7 +276,9 @@ def stamp_terminal_status(run: WorkflowRunOutput, outputs: list) -> None:
                 deciding = current
                 break
             nested = getattr(current, "steps", None)
-            current = nested[-1] if nested else None
+            # Parallel branches have no last word (the stream paths order them by completion);
+            # a nested workflow's gates are its own
+            current = nested[-1] if nested and current.step_type not in (StepType.PARALLEL, StepType.WORKFLOW) else None
     if deciding is not None:
         run.status = RunStatus.unverified
         run.verification = deciding.verification
@@ -340,14 +344,11 @@ def _prepare_container_steps(steps: Any) -> None:
                 stack.extend(children)
 
 
-def _adopt_nested_verify_owners(steps: Any, workflow: Any) -> None:
-    """Pin the owning workflow on every Verify nested inside container steps.
-
-    Containers prepare their own inner steps at execute time with no workflow reference,
-    so a nested Verify's checks would receive workflow=None. Walked here, from the one
-    place that knows the owner; a Verify already bound keeps its binding (the resolver
-    guards on `_workflow is None`).
+def _collect_verify_steps(steps: Any) -> List[Verify]:
+    """Every Verify inside ``steps``, at any container depth. A nested workflow owns its own
+    Verifies, so the walk does not enter one.
     """
+    found: List[Verify] = []
     stack = list(steps or [])
     visited: set = set()
     while stack:
@@ -356,11 +357,9 @@ def _adopt_nested_verify_owners(steps: Any, workflow: Any) -> None:
             continue
         visited.add(id(node))
         if isinstance(node, Workflow):
-            # A nested workflow owns its own Verifies; pinning the outer owner here
-            # would misroute their checks' workflow argument.
             continue
-        if isinstance(node, Verify) and node._workflow is None:
-            node._workflow = workflow
+        if isinstance(node, Verify):
+            found.append(node)
         for attr in ("steps", "else_steps"):
             children = getattr(node, attr, None)
             if isinstance(children, list):
@@ -380,6 +379,20 @@ def _adopt_nested_verify_owners(steps: Any, workflow: Any) -> None:
                     stack.extend(child)
                 else:
                     stack.append(child)
+    return found
+
+
+def _adopt_nested_verify_owners(steps: Any, workflow: Any) -> None:
+    """Pin the owning workflow on every Verify nested inside container steps.
+
+    Containers prepare their own inner steps at execute time with no workflow reference,
+    so a nested Verify's checks would receive workflow=None. Walked here, from the one
+    place that knows the owner; a Verify already bound keeps its binding (the resolver
+    guards on `_workflow is None`).
+    """
+    for verify in _collect_verify_steps(steps):
+        if verify._workflow is None:
+            verify._workflow = workflow
 
 
 def find_inner_step_by_executor(
@@ -447,7 +460,8 @@ def find_inner_step_by_executor(
 def _restore_nested_step_ids(step: Any, output: Any) -> None:
     """Re-apply the step_ids a persisted output carries onto the inner steps of ``step``, matched by
     name level by level. Repeated outputs of one inner step (a Loop's iterations) map onto that step;
-    a name shared by several inner steps, or no name, is ambiguous and keeps its fresh id."""
+    a name shared by several inner steps, or no name, is ambiguous and keeps its fresh id.
+    """
     children = _step_link_children(step)
     if isinstance(step, Router) and getattr(step, "steps", None):
         # A prepared Router holds its choices on `steps`, a list choice wrapped in Steps
@@ -508,17 +522,11 @@ def _find_resumable_composite(step: Any, step_req: Any, workflow_run_response: A
     """The deepest composite inside ``step`` (or ``step`` itself) that must finish its own
     job after its paused executor resumes.
 
-    The resume seam continues only the paused executor; any hook-bearing composite (the
-    Verify gate) between that executor and the top level must regain control afterwards or
-    its remaining work — the checks themselves — is silently skipped. Deepest match wins so
-    a gate nested inside a container is found through the container.
-
-    Ownership is judged step_id-first: when the pause names a step_id, only a composite
-    holding that exact step owns the pause. Executor identity alone is not ownership —
-    one agent may serve both a gate's segment and a step outside it, and handing the
-    outside step's continued output to the gate would re-run checks on an output the gate
-    was never mounted on. Executor-identity matching remains the fallback for a step_id
-    that names no live step (older rows, a rebuilt workflow with re-minted ids).
+    The resume seam continues only the paused executor, so a Verify gate above it must regain
+    control or its checks are skipped. The deepest match wins, so a gate nested in a container
+    is found. Ownership is judged by step_id first: one agent may serve both a gate's segment
+    and a step outside it, and only the composite holding the paused step owns the pause.
+    Executor identity is the fallback when the step_id names no live step.
     """
     executor_id = getattr(step_req, "executor_id", None)
     executor_name = getattr(step_req, "executor_name", None)
@@ -11481,7 +11489,6 @@ class Workflow:
                         "but no database is configured in the Workflow. "
                         "History won't be persisted. Add a database to persist runs across executions."
                     )
-                    prepared_steps.append(step)
                 elif isinstance(step, (Step, Steps, Loop, Parallel, Condition, Router, Verify)):
                     step_type = type(step).__name__
                     step_name = getattr(step, "name", f"unnamed_{step_type.lower()}")
@@ -11938,7 +11945,7 @@ class Workflow:
             "workflow_id": self.id,
             "db_type": self.db.__class__.__name__ if self.db else None,
             "has_input_schema": self.input_schema is not None,
-            "has_verifiers": isinstance(self.steps, list) and any(isinstance(step, Verify) for step in self.steps),
+            "has_verifiers": isinstance(self.steps, list) and bool(_collect_verify_steps(self.steps)),
         }
 
     def _log_workflow_telemetry(self, session_id: str, run_id: Optional[str] = None) -> None:

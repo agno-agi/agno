@@ -2233,21 +2233,11 @@ def collect_mcp_tools_from_workflow_step(step: Any, mcp_tools: List[Any]) -> Non
             for step in steps:
                 collect_mcp_tools_from_workflow_step(step, mcp_tools)
 
-    elif isinstance(step, Router):
-        # A Router holds its routes on .choices until it is prepared; a list route is a
-        # raw list of steps.
-        for choice in step.choices or []:
-            for sub_step in choice if isinstance(choice, list) else [choice]:
-                collect_mcp_tools_from_workflow_step(sub_step, mcp_tools)
-
-    elif isinstance(step, (Parallel, Loop, Condition, Verify)):
+    elif isinstance(step, (Parallel, Loop, Condition, Router, Verify)):
         # These contain other steps - recursively check them (a resolved
         # Verify holds its absorbed loop-back segment on .steps)
         if hasattr(step, "steps") and step.steps:
             for sub_step in step.steps:
-                collect_mcp_tools_from_workflow_step(sub_step, mcp_tools)
-        if isinstance(step, Condition) and step.else_steps:
-            for sub_step in step.else_steps:
                 collect_mcp_tools_from_workflow_step(sub_step, mcp_tools)
 
     elif isinstance(step, Agent):

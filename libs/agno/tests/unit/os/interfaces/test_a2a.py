@@ -128,29 +128,6 @@ def _working_updates(events):
     ]
 
 
-def _task_id_of(result):
-    # The a2a models serialize with field names by default but may carry
-    # camelCase aliases; accept either so the assertion pins the value.
-    return result.get("taskId", result.get("task_id"))
-
-
-def _team_with_failed_member_events():
-    return [
-        TeamRunStartedEvent(run_id="team-1", session_id="sess-1"),
-        RunStartedEvent(run_id="member-1", parent_run_id="team-1", session_id="sess-1"),
-        VerificationCompletedEvent(
-            run_id="member-1",
-            parent_run_id="team-1",
-            session_id="sess-1",
-            attempt=2,
-            max_attempts=2,
-            passed=False,
-            stop_reason="exhausted",
-        ),
-        TeamRunCompletedEvent(run_id="team-1", session_id="sess-1", content="team answer"),
-    ]
-
-
 class TestStreamA2AResponseVerification:
     @pytest.mark.asyncio
     async def test_verification_events_ride_as_working_updates(self):
@@ -220,28 +197,3 @@ class TestStreamA2AResponseVerification:
         assert _final_status_update(events)["status"]["state"] == "failed"
         (task,) = _tasks(events)
         assert task["status"]["state"] == "failed"
-
-    @pytest.mark.asyncio
-    async def test_failed_member_does_not_fail_completed_team_run(self):
-        """The task's lifecycle is scoped to the root run: a member's failed
-        verification must not mark the completed team run failed, and the
-        member's RunStarted must not replace the task identity. The member's
-        verification outcome still flows as a working update marked with its origin."""
-        events = await _collect(*_team_with_failed_member_events())
-
-        final = _final_status_update(events)
-        assert final["status"]["state"] == "completed"
-        assert _task_id_of(final) == "team-1"
-        (task,) = _tasks(events)
-        assert (task["status"]["state"], task["id"]) == ("completed", "team-1")
-        updates = [e["result"] for e in events if e["result"].get("kind") == "status-update"]
-        assert all(_task_id_of(u) == "team-1" for u in updates)
-
-        nested = [
-            w
-            for w in _working_updates(events)
-            if (w.get("metadata") or {}).get("agno_event_type") == "verification_completed"
-        ]
-        assert len(nested) == 1
-        assert nested[0]["metadata"]["passed"] is False
-        assert nested[0]["metadata"]["origin_run_id"] == "member-1"

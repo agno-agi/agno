@@ -3555,7 +3555,8 @@ class Step:
 
 def _unverified_step_error(run_output: Any) -> Optional[str]:
     """The step error for an executor run that ended unverified, naming the stop reason; None otherwise.
-    The draft stays the step's content."""
+    The draft stays the step's content.
+    """
     if getattr(run_output, "status", None) != RunStatus.unverified:
         return None
     record = run_output.verification
@@ -3564,7 +3565,9 @@ def _unverified_step_error(run_output: Any) -> Optional[str]:
     return f"Run ended unverified ({record.stop_reason.value})"
 
 
-def get_deepest_content_from_step_output(step_output: "StepOutput") -> Optional[str]:
+def get_deepest_content_from_step_output(
+    step_output: "StepOutput",
+) -> Optional[Union[str, Dict[str, Any], List[Any], BaseModel]]:
     """
     Extract the deepest content from a step output, handling nested structures like Steps, Router, Loop, etc.
 
@@ -3580,16 +3583,16 @@ def get_deepest_content_from_step_output(step_output: "StepOutput") -> Optional[
             aggregated_parts = []
             for i, inner_step in enumerate(step_output.steps):
                 inner_content = get_deepest_content_from_step_output(inner_step)
-                if inner_content:
+                if inner_content is not None and str(inner_content).strip():
                     step_name = inner_step.step_name or f"Step {i + 1}"
                     aggregated_parts.append(f"=== {step_name} ===\n{inner_content}")
-            return "\n\n".join(aggregated_parts) if aggregated_parts else step_output.content  # type: ignore
+            return "\n\n".join(aggregated_parts) if aggregated_parts else step_output.content
 
         # For other nested step types, recursively get content from the last nested step
         return get_deepest_content_from_step_output(step_output.steps[-1])
 
     # For regular steps, return their content
-    return step_output.content  # type: ignore
+    return step_output.content
 
 
 def _is_async_callable(obj: Any) -> TypeGuard[Callable[..., Any]]:

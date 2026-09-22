@@ -399,6 +399,18 @@ def test_tool_batch_checkpoint_keeps_earlier_attempts_tools():
     assert [t.tool_call_id for t in stored.tools] == ["c1", "c2"]
 
 
+@KINDS
+async def test_owner_chat_history_drops_the_verification_report(kind):
+    owner = _gated(kind, ScriptedModel([_text("claimed"), _text("done")]), db=InMemoryDb(), verifiers=[fail_once()])
+    out = owner.run("go")
+    assert len(_reports(out)) == 1
+    for history in (
+        owner.get_chat_history(session_id=out.session_id),
+        await owner.aget_chat_history(session_id=out.session_id),
+    ):
+        assert [message.content for message in history] == ["go", "claimed", "done"]
+
+
 def test_message_index_ignores_replayed_history():
     agent = Agent(
         model=ScriptedModel([_text("first"), _text("second")]),

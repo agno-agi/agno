@@ -34,7 +34,8 @@ class StateFingerprint(Protocol):
     """A stable digest of world state, cheap enough to run once per attempt, from a ``capture``
     method, an ``acapture`` method, or both. ``run()`` calls ``capture``; ``arun()`` awaits
     ``acapture``, or runs ``capture`` on a worker thread. None means unknown; unknown never
-    compares equal to anything, so it can never flag an unchanged state."""
+    compares equal to anything, so it can never flag an unchanged state.
+    """
 
 
 def coerce_fingerprint(obj: Any) -> StateFingerprint:
@@ -61,7 +62,8 @@ def _normalize(value: Any) -> Optional[str]:
 
 def safe_capture(fp: Any) -> Optional[str]:
     """capture() with the failure rule applied: an exception, None or "" is unknown (None) and
-    never ends a run; the attempt records the unknown state."""
+    never ends a run; the attempt records the unknown state.
+    """
     try:
         return _normalize(fp.capture())
     except Exception as exc:
@@ -161,7 +163,8 @@ class GitWorktreeFingerprint:
 
     def _toplevel(self) -> Optional[str]:
         """The repository root, or None when `path` is not inside a repository. Raises when
-        git itself is unavailable or fails for another reason."""
+        git itself is unavailable or fails for another reason.
+        """
         result = self._git("rev-parse", "--show-toplevel", cwd=self.path)
         if result.returncode == 0:
             return result.stdout.decode("utf-8", errors="replace").strip()

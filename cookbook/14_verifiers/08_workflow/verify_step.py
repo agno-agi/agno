@@ -5,7 +5,7 @@ Run agents, then a verification step, then continue - conditional continue with 
 
 The Verify step checks the previous step's work against executable evidence. On failure it
 loops back to the on_fail step with the evidence report attached to that step's input, up
-to max_attempts times; on success the workflow continues. Rounds exhausted, the step ends
+to max_attempts times; on success the workflow continues. Attempts exhausted, the step ends
 with success=False and the verification record on its StepOutput, where the workflow's
 ordinary conditional machinery can route it.
 

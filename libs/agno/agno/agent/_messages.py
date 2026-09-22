@@ -44,6 +44,8 @@ from agno.utils.message import copy_history_message, filter_tool_calls, get_text
 from agno.utils.prompts import get_json_output_prompt, get_response_model_format_prompt
 from agno.utils.timer import Timer
 from agno.utils.verifiers import resolve_verification
+from agno.verifiers.base import verifier_names
+from agno.verifiers.report import build_verification_context
 
 
 def _get_resolved_knowledge(agent: "Agent", run_context: Optional[RunContext] = None) -> Any:
@@ -287,9 +289,6 @@ def get_system_message(
     # Tell the model completion is checked when verifiers are configured
     verification = resolve_verification(agent)
     if verification is not None and verification.add_verification_to_context:
-        from agno.verifiers.base import verifier_names
-        from agno.verifiers.report import build_verification_context
-
         system_message_content += build_verification_context(verifier_names(agent.verifiers)) + "\n\n"
     # 3.3.4 Add additional information
     if len(additional_information) > 0:
@@ -591,9 +590,6 @@ async def aget_system_message(
     # Tell the model completion is checked when verifiers are configured
     verification = resolve_verification(agent)
     if verification is not None and verification.add_verification_to_context:
-        from agno.verifiers.base import verifier_names
-        from agno.verifiers.report import build_verification_context
-
         system_message_content += build_verification_context(verifier_names(agent.verifiers)) + "\n\n"
     # 3.3.4 Add additional information
     if len(additional_information) > 0:

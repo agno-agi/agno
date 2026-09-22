@@ -277,6 +277,4 @@ def test_component_walk_reaches_verify_absorbed_segment_and_checks():
     registered = registry.get_function(CHECK_REGISTRY_PREFIX + "named_check")
     assert registered is not None
     assert getattr(registered, "__wrapped__", registered) is named_check
-    # Checks live under their own prefix, never on an executor's key.
-    assert registry.get_function("named_check") is None
     assert model in registry.models

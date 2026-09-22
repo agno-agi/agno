@@ -119,7 +119,9 @@ class JudgeScorer:
             output_text = run.get_content_as_string() if run.content is not None else ""
         except Exception:
             output_text = str(run.content)
-        input_text = run.input.input_content_string() if run.input is not None else None
+        # A Verify step judging a step with no stored executor run hands over its StepOutput, which has no input
+        run_input = getattr(run, "input", None)
+        input_text = run_input.input_content_string() if run_input is not None else None
         return _build_judge_prompt(self.criteria, self.mode, output_text, input_text, expected)
 
     def _to_score(self, content: Any) -> Score:

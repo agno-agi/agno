@@ -16,6 +16,9 @@ MAX_BLOCK_BYTES = 4 * MAX_REPORT_BYTES
 
 REPORT_OPEN = "<verification "
 
+# The header build_report writes; a person's message that only starts with the tag does not match
+REPORT_HEADER = re.compile(r'<verification attempt="\d+/\d+" nonce="[0-9a-f]{16}">')
+
 VERIFICATION_DIRECTIVE = (
     "The checks above ran when you ended your turn. They, not your summary, define done.\n"
     "Fix every [FAIL] item and keep the [PASS] items passing, then end your turn again so the checks re-run.\n"
@@ -55,7 +58,9 @@ def _label(name: str) -> str:
 
 def is_verification_report(message: Message) -> bool:
     """Whether `message` is the re-entry report the gate appended, not something a person typed."""
-    return message.role == "user" and isinstance(message.content, str) and message.content.startswith(REPORT_OPEN)
+    return (
+        message.role == "user" and isinstance(message.content, str) and REPORT_HEADER.match(message.content) is not None
+    )
 
 
 def first_line(report: str) -> str:

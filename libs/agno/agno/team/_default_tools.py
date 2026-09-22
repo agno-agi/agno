@@ -161,7 +161,8 @@ def delegate_unverified_note(
 ) -> Optional[str]:
     """The member note for a delegate result. Under respond_directly the result is the user's answer
     and no leader reads it, so there is none: the member's status stays on member_responses and the
-    team's own verifiers remain the team's gate."""
+    team's own verifiers remain the team's gate.
+    """
     if team.respond_directly:
         return None
     return member_unverified_note(member_agent, member_run_response)

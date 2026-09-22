@@ -632,8 +632,9 @@ class StepOutput:
         if self.parent_step_id is not None:
             result["parent_step_id"] = self.parent_step_id
         if self.previous_attempts:
+            # One object per attempt: Firestore refuses a list stored directly inside a list
             result["previous_attempts"] = [
-                [step.to_dict() if hasattr(step, "to_dict") else step for step in attempt_steps]
+                {"steps": [step.to_dict() if hasattr(step, "to_dict") else step for step in attempt_steps]}
                 for attempt_steps in self.previous_attempts
             ]
 
@@ -672,7 +673,8 @@ class StepOutput:
         previous_attempts = None
         if previous_attempts_data:
             previous_attempts = [
-                [cls.from_dict(step_data) for step_data in attempt_steps] for attempt_steps in previous_attempts_data
+                [cls.from_dict(step_data) for step_data in attempt.get("steps") or []]
+                for attempt in previous_attempts_data
             ]
 
         step_index = data.get("step_index")

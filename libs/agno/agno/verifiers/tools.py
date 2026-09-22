@@ -31,7 +31,8 @@ DIVERGENCE_DIRECTIVE = (
 
 def divergence_report(expected: str, actual: str, context: str = "") -> str:
     """The standard block: expected, actual, optional context, and the directive. Capped. The
-    tool's own output cannot close the block."""
+    tool's own output cannot close the block.
+    """
     lines = [
         "<divergence>",
         f"expected: {escape_closing_tag(expected, 'divergence')}",

@@ -42,7 +42,8 @@ class VerificationStopReason(str, Enum):
 
 def _json_safe(value: Any) -> Any:
     """Verifier-supplied data as plain JSON, or None when it cannot be. The record is persisted with
-    the run row, so a NaN, a lone surrogate or a circular reference must not lose the row."""
+    the run row, so a NaN, a lone surrogate or a circular reference must not lose the row.
+    """
 
     def scrub(item: Any) -> Any:
         if isinstance(item, str):
@@ -143,14 +144,16 @@ class Verdict:
 
     def named(self, name: str) -> "Verdict":
         """A copy carrying `name` when this verdict has none. Never mutates in place: a
-        verifier may return the same Verdict instance on every attempt."""
+        verifier may return the same Verdict instance on every attempt.
+        """
         if self.name:
             return self
         return replace(self, name=name)
 
     def stamped(self, required: bool, skipped: bool) -> "Verdict":
         """A copy carrying the loop's stamp: the check's `required` policy and the loop's
-        own knowledge of whether the check ran. Never mutates in place."""
+        own knowledge of whether the check ran. Never mutates in place.
+        """
         if self.required == required and self.skipped == skipped:
             return self
         return replace(self, required=required, skipped=skipped)
@@ -228,7 +231,8 @@ class VerificationAttempt:
     def passed(self) -> bool:
         """Every required, non-skipped check passed. Advisory failures and skipped checks
         never gate; an attempt whose checks are all advisory passes with warnings on record.
-        An attempt on which no check ran at all cannot pass: it verified nothing."""
+        An attempt on which no check ran at all cannot pass: it verified nothing.
+        """
         ran = [v for v in self.verdicts if not v.skipped]
         return bool(ran) and all(v.passed is True for v in ran if v.required)
 
@@ -259,17 +263,14 @@ class VerificationAttempt:
 class Verification:
     """The verification record of one run, carried on `RunOutput.verification`.
 
-    `status` is "pending" while the loop is open (and on a run that left it paused, errored
-    or cancelled before concluding); a concluded record is "verified" or "unverified". The
-    record describes the run's last gated attempt window, not a mirror of RunStatus: a later
-    continuation by an owner without verifiers can complete the run while the record still
-    reads "unverified" - genuine audit history, healed by the next gated continuation.
-    `stop_reason` is "passed" iff verified. `budget_baseline` is the number of attempts made
-    before the current continuation window: continuing a run that ended unverified restarts
-    the attempt budget for the new user instruction while keeping the full attempt history,
-    so the budget check is `len(attempts) - budget_baseline >= max_attempts`.
-    `baseline_fingerprint` is the baseline the open attempt compares against; it rides a HITL
-    pause so the resumed attempt is compared against the state from before the pause.
+    `status` is "pending" while the loop is open or the run left it paused, errored or
+    cancelled; a concluded record is "verified" (`stop_reason` "passed") or "unverified". It
+    records the last gated attempt window, not RunStatus: a later continuation by an owner
+    without verifiers can complete the run while the record still reads "unverified".
+    `budget_baseline` counts the attempts before the current continuation window, so the
+    budget check is `len(attempts) - budget_baseline >= max_attempts`.
+    `baseline_fingerprint` rides a HITL pause, so the resumed attempt compares against the
+    state from before the pause.
     """
 
     status: VerificationStatus = VerificationStatus.pending

@@ -127,7 +127,8 @@ class Router:
 
     def _choice_to_dict(self, index: int, choice: Any) -> Optional[Dict[str, Any]]:
         """One route's serialized form. A list route serializes as the Steps wrapper its
-        preparation builds, flagged so it comes back as a list."""
+        preparation builds, flagged so it comes back as a list.
+        """
         if isinstance(choice, list):
             return {
                 "type": "Steps",

@@ -106,15 +106,13 @@ class ShellVerifier:
     """Run a shell command; exit code 0 passes and the merged output is the evidence.
 
     .. warning::
-        The command runs under the shell on the host with no sandboxing. Anything the agent can
-        write it can use to pass the check (a test file, a ``conftest.py``, a ``pytest.ini``),
-        so run the command from a directory the agent cannot write.
+        The command runs on the host with no sandboxing: anything the agent can write (a test
+        file, a ``conftest.py``) can pass the check, so run it from a directory the agent cannot write.
 
-    The command runs in its own process group, which is killed and reaped on success, timeout
-    and cancellation; the verdict follows the leader's exit code. Exit codes 126 and 127 are
-    harness errors that end the run instead of spending attempts. ``env`` is merged over the
-    current environment unless ``inherit_env=False``. The default name is the command's tail
-    with URL userinfo, bearer headers and password/secret/token/api-key values masked.
+    The command's process group is killed and reaped on every exit path. Exit codes 126 and 127
+    are harness errors that end the run for a required check. ``env`` is merged over the current
+    environment unless ``inherit_env=False``. The default name is the command's tail with
+    credentials masked.
     """
 
     def __init__(

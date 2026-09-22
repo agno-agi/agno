@@ -20,7 +20,8 @@ CHECK_REGISTRY_PREFIX = "verify:"
 
 def verifier_to_dict(verifier: Any) -> Dict[str, Any]:
     """One check's serialized form: name and policy, plus the data a ShellVerifier rebuilds
-    from; a ScorerVerifier or protocol object carries only its kind."""
+    from; a ScorerVerifier or protocol object carries only its kind.
+    """
     data: Dict[str, Any] = {
         "name": getattr(verifier, "name", "") or "verifier",
         "required": bool(getattr(verifier, "required", True)),
@@ -112,7 +113,7 @@ def verifiers_from_dict(
                 from agno.exceptions import ComponentRehydrationError
 
                 raise ComponentRehydrationError(message)
-            log_warning(message)
+            log_warning(f"{message}; loading a placeholder that fails the check.")
             fn = unresolvable_callable_placeholder(label, verifier_name)
             fn.__name__ = verifier_name  # type: ignore
             placeholders.append(len(raw))
@@ -229,7 +230,8 @@ def validate_verifiers(
     owner: str,
 ) -> Tuple[Optional[List[Union["Verifier", Callable[..., Any]]]], Optional[Union[bool, VerificationConfig]]]:
     """Validate the verification settings at construction, so a bad entry fails at build and
-    not mid-run, and return the normalized pair: ``verification=True`` becomes the default config."""
+    not mid-run, and return the normalized pair: ``verification=True`` becomes the default config.
+    """
     if verifiers is not None and not isinstance(verifiers, (list, tuple)):
         raise TypeError(f"{owner}: verifiers must be a list of callables or Verifiers, got {type(verifiers).__name__}")
     if verification is not None and not isinstance(verification, (bool, VerificationConfig)):
@@ -247,7 +249,8 @@ def validate_verifiers(
 
 def resolve_verification(owner: Any) -> Optional[VerificationConfig]:
     """The config an owner's runs are verified under, or None when they are not: no verifiers,
-    or ``verification=False``. ``True`` and None both mean the default config."""
+    or ``verification=False``. ``True`` and None both mean the default config.
+    """
     verification = getattr(owner, "verification", None)
     if not getattr(owner, "verifiers", None) or verification is False:
         return None
@@ -256,7 +259,8 @@ def resolve_verification(owner: Any) -> Optional[VerificationConfig]:
 
 def require_sync_verifiers(verifiers: Any, fingerprint: Any = None) -> None:
     """Refuse on `run()` what only `arun()` can drive - an async verifier, an async run_condition
-    or an async-only fingerprint - before the run starts, as `run()` refuses an async hook."""
+    or an async-only fingerprint - before the run starts, as `run()` refuses an async hook.
+    """
     for entry in verifiers or []:
         coerce_verifier(entry).require_sync()
     if fingerprint is not None:

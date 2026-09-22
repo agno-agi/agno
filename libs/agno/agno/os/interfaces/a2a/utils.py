@@ -332,31 +332,15 @@ async def stream_a2a_response(
     accumulated_content = ""
     completion_event = None
     cancelled_event = None
-    root_run_id: Optional[str] = None
-
-    def _is_root_event(candidate: Any) -> bool:
-        # Only the root run decides the task identity and terminal state; member and
-        # nested-step events share the stream and always carry parent_run_id.
-        candidate_run_id = getattr(candidate, "run_id", None)
-        if root_run_id is not None and candidate_run_id is not None:
-            return candidate_run_id == root_run_id
-        return not getattr(candidate, "parent_run_id", None)
 
     # Stream events
     async for event in event_stream:
         # 1. Send initial event
         if isinstance(event, (RunStartedEvent, TeamRunStartedEvent, WorkflowStartedEvent)):
-            # Only the first top-level started event names the task; nested
-            # started events still flow as working updates below but must not
-            # replace the requested task identity.
-            if root_run_id is None and _is_root_event(event):
-                event_run_id = getattr(event, "run_id", None)
-                if event_run_id:
-                    root_run_id = event_run_id
-                    task_id = event_run_id
-                event_session_id = getattr(event, "session_id", None)
-                if event_session_id:
-                    context_id = event_session_id
+            if hasattr(event, "run_id") and event.run_id:
+                task_id = event.run_id
+            if hasattr(event, "session_id") and event.session_id:
+                context_id = event.session_id
 
             status_event = TaskStatusUpdateEvent(
                 task_id=task_id,
@@ -775,8 +759,6 @@ async def stream_a2a_response(
                 "attempt": event.attempt,
                 "max_attempts": event.max_attempts,
             }
-            if not _is_root_event(event) and getattr(event, "run_id", None):
-                metadata["origin_run_id"] = event.run_id
             status_event = TaskStatusUpdateEvent(
                 task_id=task_id,
                 context_id=context_id,
@@ -794,8 +776,6 @@ async def stream_a2a_response(
                 "max_attempts": event.max_attempts,
                 "passed": event.passed,
             }
-            if not _is_root_event(event) and getattr(event, "run_id", None):
-                metadata["origin_run_id"] = event.run_id
             if event.stop_reason:
                 metadata["stop_reason"] = event.stop_reason
             if event.verdicts:
@@ -810,16 +790,13 @@ async def stream_a2a_response(
             response = SendStreamingMessageSuccessResponse(id=request_id, result=status_event)
             yield f"event: TaskStatusUpdateEvent\ndata: {json.dumps(response.model_dump(exclude_none=True))}\n\n"
 
-        # Capture completion event for final task construction - root only: a
-        # member/nested completion must not supply the task's final payload
+        # Capture completion event for final task construction
         elif isinstance(event, (RunCompletedEvent, TeamRunCompletedEvent, WorkflowCompletedEvent)):
-            if _is_root_event(event):
-                completion_event = event
+            completion_event = event
 
-        # Capture cancelled event for final task construction - root only
+        # Capture cancelled event for final task construction
         elif isinstance(event, (RunCancelledEvent, TeamRunCancelledEvent, WorkflowCancelledEvent)):
-            if _is_root_event(event):
-                cancelled_event = event
+            cancelled_event = event
 
     # Caller-stamped metadata rides the terminal status-update for out-of-band
     # delivery. Metrics are excluded - they already flow via .metrics / the history

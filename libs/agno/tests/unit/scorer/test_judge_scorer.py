@@ -12,6 +12,7 @@ from agno.run.agent import RunOutput
 from agno.scorer import JudgeScorer
 from agno.scorer.judge import BinaryJudgeResponse, NumericJudgeResponse
 from agno.verifiers.scorer import ScorerVerifier
+from agno.workflow.types import StepOutput
 
 _FENCE_OPEN = re.compile(r'<output nonce="([0-9a-f]{32})">\n')
 
@@ -64,6 +65,13 @@ def test_judge_binary_mode_maps_to_endpoints():
 
     scorer._evaluator = _StubEvaluator(BinaryJudgeResponse(passed=False, reason="wrong"))
     assert scorer.score(RunOutput(content="x")).value == 0.0
+
+
+def test_judge_scores_a_step_output_without_an_input():
+    scorer = JudgeScorer(_JUDGE_MODEL, "Is it right?")
+    scorer._evaluator = _StubEvaluator(BinaryJudgeResponse(passed=True, reason="fine"))
+    assert scorer.score(StepOutput(content="a function step's draft")).passed is True
+    assert "a function step's draft" in scorer._evaluator.prompts[0]
 
 
 async def test_judge_scorer_async_matches_sync():

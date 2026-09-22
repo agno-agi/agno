@@ -76,6 +76,7 @@ class Verify:
             False: the workflow's ordinary routing decides what an unverified result
             means.
         name: Step name; defaults to "verify".
+        description: Step description.
     """
 
     name: str = "verify"
@@ -97,6 +98,7 @@ class Verify:
         fingerprint: Optional[Any] = None,
         stop_on_unverified: bool = False,
         name: Optional[str] = None,
+        description: Optional[str] = None,
     ):
         if not isinstance(checks, (list, tuple)):
             raise TypeError(f"Verify checks must be a list of callables or Verifiers, got {type(checks).__name__}")
@@ -112,7 +114,7 @@ class Verify:
         self.fingerprint = coerce_fingerprint(fingerprint) if fingerprint is not None else None
         self.stop_on_unverified = bool(stop_on_unverified)
         self.name: str = name or "verify"
-        self.description: Optional[str] = None
+        self.description = description
         self.on_fail = on_fail
         # The absorbed loop-back segment, filled by resolve_verify_steps. A pure gate has
         # no segment and needs no resolution.
@@ -220,10 +222,10 @@ class Verify:
             fingerprint=None,
             stop_on_unverified=bool(data.get("stop_on_unverified", False)),
             name=data.get("name"),
+            description=data.get("description"),
         )
         if data.get("stop_on_unchanged_state"):
             warn_stop_on_unchanged_state_not_restored("Verify", repr(verify.name))
-        verify.description = data.get("description")
         if data.get("resolved"):
             verify.steps = [deserialize_step(step_data) for step_data in data.get("steps") or []]
             verify._resolved = True
@@ -311,7 +313,8 @@ class Verify:
         workflow_run_response: Optional[WorkflowRunOutput],
     ) -> Any:
         """The object the checks judge: the checked step's executor RunOutput/TeamRunOutput
-        when the workflow stored it, else the most content-bearing StepOutput available."""
+        when the workflow stored it, else the most content-bearing StepOutput available.
+        """
         last: Optional[StepOutput] = None
         if attempt_results:
             last = attempt_results[-1]
@@ -375,7 +378,8 @@ class Verify:
         workflow_session: Optional[WorkflowSession],
     ) -> bool:
         """Run the checks over this attempt's output and settle the record. Returns True
-        when the segment re-runs."""
+        when the segment re-runs.
+        """
         target = self._target_run_output(attempt_results, step_input, workflow_run_response)
         check_run = run_checks(
             self._verifiers,
@@ -423,7 +427,8 @@ class Verify:
     def _reentry_input(self, step_input: StepInput, attempt_results: List[StepOutput], report: str) -> StepInput:
         """The re-entered segment's input: the original task, the failed attempt's output
         and the evidence report, injected as the newest previous-step output so the
-        re-entered step's message carries all three."""
+        re-entered step's message carries all three.
+        """
         last = attempt_results[-1] if attempt_results else None
         prior = None
         if last is not None and isinstance(last.content, str) and last.content.strip():
@@ -463,7 +468,8 @@ class Verify:
 
     def _failed_segment_output(self, step: Any, index: int, error: Exception) -> StepOutput:
         """A failed StepOutput for a segment step that raised, so the gate judges the failure
-        instead of the workflow surfacing a crash (segment steps carry on_error=skip)."""
+        instead of the workflow surfacing a crash (segment steps carry on_error=skip).
+        """
         step_name = getattr(step, "name", None) or f"step_{index + 1}"
         return StepOutput(
             step_name=step_name,
@@ -756,7 +762,8 @@ class Verify:
         _resume_step_id: Optional[str] = None,
     ) -> Iterator[Union[WorkflowRunOutputEvent, StepOutput]]:
         """Streaming version of `execute`: inner step events pass through; only the composite
-        StepOutput is yielded as this step's result."""
+        StepOutput is yielded as this step's result.
+        """
         log_debug(f"Verify Start: {self.name}", center=True, symbol="=")
         self._require_resolved()
         require_sync_verifiers(self._verifiers, self.fingerprint)
@@ -1128,7 +1135,8 @@ class Verify:
         nested in a container (Steps, Condition, Loop iterations) pauses inside the
         container's wrapper output, so the search walks nested step results, newest first.
         When none is found the resume starts a fresh record - the checks still run, which is
-        the fail-closed direction."""
+        the fail-closed direction.
+        """
         results = getattr(workflow_run_response, "step_results", None) or []
         self_id = getattr(self, "step_id", None)
 
@@ -1163,7 +1171,8 @@ class Verify:
 
     def _segment_index_for(self, step_req: Any, continued_output: StepOutput) -> int:
         """Which absorbed segment step the resumed executor belongs to. Exact step identity
-        outranks executor identity: one agent may be reused across several segment steps."""
+        outranks executor identity: one agent may be reused across several segment steps.
+        """
         if step_req is not None:
             from agno.workflow.workflow import find_inner_step_by_executor
 
@@ -1189,7 +1198,8 @@ class Verify:
         state: Dict[str, Any], step_index: Optional[Union[int, tuple]], parent_step_id: Optional[str]
     ) -> Tuple[str, Optional[Union[int, tuple]], Optional[str]]:
         """The gate's step_id and stream placement for a resume: the paused placeholder's own,
-        so events after the pause sit where the ones before it did; the seam's values otherwise."""
+        so events after the pause sit where the ones before it did; the seam's values otherwise.
+        """
         paused = state.get("paused")
         if paused is None:
             return str(uuid4()), step_index, parent_step_id
@@ -1208,7 +1218,8 @@ class Verify:
         run_context: Optional[RunContext],
     ) -> Dict[str, Any]:
         """Everything a resume leg needs from the persisted pause: the record, the earlier
-        attempts' outputs, the paused attempt's outputs up to the resumed step, and the index to continue from."""
+        attempts' outputs, the paused attempt's outputs up to the resumed step, and the index to continue from.
+        """
         paused = self._find_paused_self(workflow_run_response)
         paused_record = getattr(paused, "verification", None) if paused is not None else None
         record: Verification = paused_record if isinstance(paused_record, Verification) else Verification()
@@ -1471,7 +1482,8 @@ class Verify:
         parent_step_id: Optional[str] = None,
     ) -> Iterator[Union[WorkflowRunOutputEvent, StepOutput]]:
         """Streaming version of `continue_from_paused`: inner step events pass through and the
-        attempt's Verify events are emitted, so a resumed stream reads like a fresh one."""
+        attempt's Verify events are emitted, so a resumed stream reads like a fresh one.
+        """
         self._require_resolved()
         require_sync_verifiers(self._verifiers, self.fingerprint)
         step_input = step_input if step_input is not None else StepInput(input=None)
@@ -1782,7 +1794,8 @@ def resolve_verify_steps(steps: List[Any], owner: Any = None) -> List[Any]:
 
 def _reject_verify_in_segment(entry: "Verify", absorbed: Any) -> None:
     """Refuse a loop-back segment that contains another Verify: the later gate would absorb
-    the earlier one and re-run it, so one failing draft is judged by both gates per attempt."""
+    the earlier one and re-run it, so one failing draft is judged by both gates per attempt.
+    """
     if isinstance(absorbed, Verify):
         raise ValueError(
             f"Verify {entry.name!r} cannot re-run another gate, Verify {absorbed.name!r}; point on_fail after it or use on_fail=None."

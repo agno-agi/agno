@@ -36,7 +36,8 @@ class Verifier(Protocol):
     """Anything that can judge one attempt: an object with a ``name`` and a ``verify`` method,
     an ``averify`` method, or both. Either may declare any of ``run_output``, ``run_context``,
     ``agent``, ``team``, ``workflow`` and ``session`` by name and returns a Verdict. ``run()``
-    calls ``verify``; ``arun()`` calls ``averify``, or ``verify`` on a worker thread."""
+    calls ``verify``; ``arun()`` calls ``averify``, or ``verify`` on a worker thread.
+    """
 
     name: str
 
@@ -54,7 +55,8 @@ _GUARDED = (Exception, SystemExit)
 
 def exception_verdict(name: str, exc: BaseException) -> Verdict:
     """A failing Verdict carrying the exception and the tail of its traceback. Used wherever a
-    broken verifier must not crash or silently pass a run."""
+    broken verifier must not crash or silently pass a run.
+    """
     tail = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__, limit=-5)).rstrip()
     report = f"{type(exc).__name__}: {exc}\n{tail}"
     return Verdict(passed=False, report=report, name=name, detail={"exception": type(exc).__name__})
@@ -62,7 +64,8 @@ def exception_verdict(name: str, exc: BaseException) -> Verdict:
 
 def _map_return(result: Any, name: str) -> Verdict:
     """The adapter's return mapping. Only True and a passing Verdict pass; everything else,
-    including None from a forgotten return, fails loudly."""
+    including None from a forgotten return, fails loudly.
+    """
     if isinstance(result, Verdict):
         return result.named(name)
     if result is True:
@@ -105,7 +108,8 @@ def _owner_key(owner: Any) -> str:
 
 def validate_verifier_params(fn: Callable[..., Any], label: str, extra_allowed: Tuple[str, ...] = ()) -> None:
     """Raise TypeError when `fn` declares a parameter without a default that it is never called with.
-    An uninspectable callable is not validated."""
+    An uninspectable callable is not validated.
+    """
     allowed = _ALLOWED_PARAMS + extra_allowed
     try:
         parameters = inspect.signature(fn).parameters
@@ -125,7 +129,8 @@ def verifier_args(
     fn: Callable[..., Any], run_output: Any, run_context: Any, owner: Any, session: Any, **extras: Any
 ) -> Dict[str, Any]:
     """The keyword arguments `fn` declares, out of run_output, run_context, session, `extras` and the
-    owner under the name matching its kind. An owner name `fn` declares for another kind gets None."""
+    owner under the name matching its kind. An owner name `fn` declares for another kind gets None.
+    """
     from agno.utils.hooks import filter_hook_args
 
     all_args: Dict[str, Any] = {
@@ -163,7 +168,8 @@ def validate_required_stop_on_failure(required: bool, stop_on_failure: bool, lab
 
 def _adopt_policy(target: "CoercedVerifier", source: Any) -> None:
     """Carry the per-check policy attributes onto a wrapper, defaulting where the source
-    declares none. The loop reads policy off the coerced wrapper only."""
+    declares none. The loop reads policy off the coerced wrapper only.
+    """
     target.required = bool(getattr(source, "required", True))
     target.max_retries = int(getattr(source, "max_retries", 0) or 0)
     target.run_condition = getattr(source, "run_condition", None)
@@ -175,7 +181,8 @@ def _adopt_policy(target: "CoercedVerifier", source: Any) -> None:
 
 def validate_policy(max_retries: int, run_condition: Any, label: str) -> None:
     """The per-check policy checks shared by `check()` and the shipped verifiers. Raises at
-    construction: a bad policy must not surface as a mid-run surprise."""
+    construction: a bad policy must not surface as a mid-run surprise.
+    """
     if max_retries < 0:
         raise ValueError(f"{label}: max_retries must be a non-negative int, got {max_retries!r}")
     if run_condition is not None:
@@ -326,21 +333,16 @@ def check(
 ) -> "CoercedVerifier":
     """Adapt a callable (or any Verifier) into a check with its per-check policy.
 
-    A callable may declare any of `run_output`, `run_context`, `agent`, `team`, `workflow`,
-    `session` (or a `**kwargs` catch-all) and receives only what it declared; any other
-    parameter without a default raises TypeError here, at adaptation. Return mapping: True
-    passes. False fails with a generic report; a str fails with that str as the report; a
-    Verdict is used as-is. None and any other type fail with a report naming the problem, so a
-    forgotten return never greens a run. Coroutine functions are awaited on the async path and
-    refused by `run()`; sync callables run in a thread on the async path. An exception inside
-    the callable becomes a failing Verdict.
+    A callable receives by name only what it declares of `run_output`, `run_context`, `agent`,
+    `team`, `workflow` and `session` (or a `**kwargs` catch-all); any other parameter without a
+    default raises TypeError. True passes; False, a str (the report), None or any other type fails;
+    a Verdict is used as-is. `run()` refuses a coroutine function, `arun()` awaits it, and a sync
+    callable runs in a thread on the async path. An exception fails the check.
 
-    ``required=False`` makes the check advisory (reports, never gates); ``max_retries=N``
-    re-runs the check up to N extra times before trusting a failure; ``run_condition`` is a
-    predicate over the same by-name arguments plus ``verdicts`` (this attempt's so far)
-    deciding whether the check runs; ``stop_on_failure=True`` ends the run on a failure that
-    retrying cannot fix. A knob left as None keeps whatever policy the target already declares.
-    Returns a fresh wrapper.
+    ``required=False`` reports without gating; ``max_retries=N`` re-runs a failing check up to N
+    times; ``run_condition`` is a predicate over the same arguments plus ``verdicts`` deciding
+    whether the check runs; ``stop_on_failure=True`` ends the run on a failure. A knob left as
+    None keeps the target's own policy. Returns a fresh wrapper.
     """
     label = name or str(getattr(target, "name", None) or getattr(target, "__name__", type(target).__name__))
     validate_policy(
@@ -371,7 +373,8 @@ def check(
 
 def verifier_names(entries: Any) -> list:
     """The display names of a mount's checks, coerced fresh so a mutated verifiers list
-    never yields stale names (the verification context in the system message reads these before the gate runs)."""
+    never yields stale names (the verification context in the system message reads these before the gate runs).
+    """
     names = []
     for index, entry in enumerate(entries or []):
         try:

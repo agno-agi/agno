@@ -54,6 +54,22 @@ def test_all_advisory_verifies_with_warnings_on_record():
     assert verdict.required is False
 
 
+@RUN_MODES
+async def test_advisory_harness_error_does_not_end_the_run(mode):
+    model = ScriptedModel([_text("done")])
+    agent = Agent(
+        model=model,
+        verifiers=[
+            lambda run_output: True,
+            ShellVerifier("definitely-not-a-command-9818", required=False, name="lint"),
+        ],
+    )
+    out = await _run_variant(agent, mode)
+    assert out.status == RunStatus.completed
+    assert out.verification.stop_reason == "passed"
+    assert out.verification.attempts[0].verdicts[1].fatal is True
+
+
 # ---------------------------------------------------------------------------
 # max_retries: the check itself retries before a failure counts
 # ---------------------------------------------------------------------------
@@ -61,7 +77,7 @@ def test_all_advisory_verifies_with_warnings_on_record():
 
 @pytest.mark.parametrize("passes", [True, False], ids=["passes-on-retry", "exhausted"])
 @RUN_MODES
-async def test_rerun_retries_a_flaky_check_within_one_attempt(mode, passes):
+async def test_max_retries_retries_a_flaky_check_within_one_attempt(mode, passes):
     calls = {"n": 0}
 
     def flaky(run_output):
@@ -91,7 +107,7 @@ async def test_rerun_retries_a_flaky_check_within_one_attempt(mode, passes):
 
 @pytest.mark.parametrize("cheap_passes", [False, True], ids=["predicate-false", "predicate-true"])
 @RUN_MODES
-async def test_run_when_skips_and_records_without_gating(mode, cheap_passes):
+async def test_run_condition_skips_and_records_without_gating(mode, cheap_passes):
     judge_calls = {"n": 0}
 
     def cheap(run_output):
@@ -124,7 +140,7 @@ async def test_run_when_skips_and_records_without_gating(mode, cheap_passes):
         assert verdict.passed is True
 
 
-def test_broken_run_when_runs_the_check():
+def test_broken_run_condition_runs_the_check():
     ran = {"n": 0}
 
     def boom(verdicts):

@@ -96,6 +96,8 @@ from agno.tools.function import Function
 from agno.utils.agent import (
     abuild_full_run_storage_copy,
     abuild_offloaded_storage_copy,
+    averify_response,
+    averify_response_stream,
     await_for_open_threads,
     await_for_thread_tasks_stream,
     build_offloaded_storage_copy,
@@ -103,6 +105,8 @@ from agno.utils.agent import (
     store_media_util,
     validate_input,
     validate_media_object_id,
+    verify_response,
+    verify_response_stream,
     wait_for_open_threads,
     wait_for_thread_tasks_stream,
 )
@@ -267,7 +271,6 @@ def _run_tasks(
         _convert_response_to_structured_format,
         _update_run_response,
         handle_reasoning,
-        verify_response,
     )
     from agno.team._telemetry import log_team_telemetry
     from agno.team._tools import _determine_tools_for_model
@@ -635,7 +638,6 @@ def _run_tasks_stream(
         _handle_model_response_stream,
         generate_response_with_output_model_stream,
         handle_reasoning_stream,
-        verify_response_stream,
     )
     from agno.team._telemetry import log_team_telemetry
     from agno.team._tools import _determine_tools_for_model
@@ -1177,7 +1179,6 @@ def _run(
         handle_reasoning,
         parse_response_with_output_model,
         parse_response_with_parser_model,
-        verify_response,
     )
     from agno.team._telemetry import log_team_telemetry
     from agno.team._tools import _determine_tools_for_model
@@ -1556,7 +1557,6 @@ def _run_stream(
         generate_response_with_output_model_stream,
         handle_reasoning_stream,
         parse_response_with_parser_model_stream,
-        verify_response_stream,
     )
     from agno.team._telemetry import log_team_telemetry
     from agno.team._tools import _determine_tools_for_model
@@ -2244,7 +2244,6 @@ async def _arun_tasks(
         _convert_response_to_structured_format,
         _update_run_response,
         ahandle_reasoning,
-        averify_response,
     )
     from agno.team._telemetry import alog_team_telemetry
     from agno.team._tools import _aget_learning_tools, _check_and_refresh_mcp_tools, _determine_tools_for_model
@@ -2646,7 +2645,6 @@ async def _arun_tasks_stream(
         _convert_response_to_structured_format,
         agenerate_response_with_output_model_stream,
         ahandle_reasoning_stream,
-        averify_response_stream,
     )
     from agno.team._telemetry import alog_team_telemetry
     from agno.team._tools import _aget_learning_tools, _check_and_refresh_mcp_tools, _determine_tools_for_model
@@ -3240,7 +3238,6 @@ async def _arun(
         agenerate_response_with_output_model,
         ahandle_reasoning,
         aparse_response_with_parser_model,
-        averify_response,
     )
     from agno.team._telemetry import alog_team_telemetry
     from agno.team._tools import _aget_learning_tools, _check_and_refresh_mcp_tools, _determine_tools_for_model
@@ -3972,7 +3969,6 @@ async def _arun_stream(
         agenerate_response_with_output_model_stream,
         ahandle_reasoning_stream,
         aparse_response_with_parser_model_stream,
-        averify_response_stream,
     )
     from agno.team._telemetry import alog_team_telemetry
     from agno.team._tools import _aget_learning_tools, _check_and_refresh_mcp_tools, _determine_tools_for_model
@@ -8577,7 +8573,6 @@ def _continue_run(
         _update_run_response,
         parse_response_with_output_model,
         parse_response_with_parser_model,
-        verify_response,
     )
     from agno.team._telemetry import log_team_telemetry
     from agno.utils.events import create_team_run_continued_event
@@ -8787,7 +8782,6 @@ def _continue_run_stream(
         _handle_model_response_stream,
         generate_response_with_output_model_stream,
         parse_response_with_parser_model_stream,
-        verify_response_stream,
     )
     from agno.team._telemetry import log_team_telemetry
     from agno.utils.events import create_team_run_continued_event
@@ -9766,7 +9760,6 @@ async def _acontinue_run(
     """Continue a paused team run (async, non-streaming)."""
     from agno.team._hooks import _aexecute_post_hooks
     from agno.team._init import _disconnect_connectable_tools, _disconnect_mcp_tools
-    from agno.team._response import averify_response
     from agno.team._telemetry import alog_team_telemetry
     from agno.team._tools import _aget_learning_tools, _check_and_refresh_mcp_tools, _determine_tools_for_model
 
@@ -10317,7 +10310,6 @@ async def _acontinue_run_stream(
         _ahandle_model_response_stream,
         agenerate_response_with_output_model_stream,
         aparse_response_with_parser_model_stream,
-        averify_response_stream,
     )
     from agno.team._telemetry import alog_team_telemetry
     from agno.team._tools import _aget_learning_tools, _check_and_refresh_mcp_tools, _determine_tools_for_model

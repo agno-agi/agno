@@ -59,7 +59,8 @@ def _should_run(
     v: Any, verdicts_so_far: List[Verdict], run_output: Any, run_context: Any, owner: Any, session: Any
 ) -> bool:
     """Evaluate a check's run_condition predicate. A broken predicate runs the check: skipping a
-    gate on an exception would fail open."""
+    gate on an exception would fail open.
+    """
     run_condition = v.run_condition
     if run_condition is None:
         return True
@@ -108,8 +109,9 @@ def _check_names(verifiers: List[Any]) -> List[str]:
 
 
 def _fatal(v: Any, verdict: Verdict) -> bool:
-    # A verdict marks itself fatal for a harness error (the check's own command missing)
-    return v.stop_on_failure or verdict.fatal
+    # A verdict marks itself fatal for a harness error (the check's own command missing).
+    # An advisory check never gates the outcome, so it never ends the run either.
+    return v.required and (v.stop_on_failure or verdict.fatal)
 
 
 def run_checks(
@@ -122,7 +124,8 @@ def run_checks(
     """Run coerced checks in declared order, no short-circuit, honoring per-check policy:
     `run_condition` skips (recorded, non-gating), `max_retries` retries the check itself before
     trusting a failure, `required=False` reports without gating, `stop_on_failure` flags the run as
-    not worth re-entering."""
+    not worth re-entering.
+    """
     result = VerifierResults()
     for name, v in zip(_check_names(verifiers), verifiers):
         required = v.required
@@ -183,7 +186,8 @@ class GateDecision:
 
 def _filtered_len(messages: List[Any]) -> int:
     """Index the attempt starts at, in the view that is persisted as ``RunOutput.messages``:
-    add_to_agent_memory messages that are not replayed history."""
+    add_to_agent_memory messages that are not replayed history.
+    """
     return sum(1 for m in messages if getattr(m, "add_to_agent_memory", True) and not getattr(m, "from_history", False))
 
 
@@ -234,13 +238,10 @@ class VerificationGate:
     ) -> Optional["VerificationGate"]:
         """The gate for this run, or None when the owner's runs are not verified.
 
-        The verifier list is coerced fresh on every run (about 25 microseconds for five
-        checks): a cached list goes stale the moment the owner's ``verifiers`` is mutated,
-        and a stale gate fails open. The constructor's eager coercion remains purely as
-        fail-fast validation. ``resume`` says whether a record already on the run_response
-        is continued (the continue paths: HITL resumes, continue-in-place) or reset (the
-        run paths: a model-level retry must start a fresh window, not resurrect attempts
-        whose message indices point into the discarded transcript).
+        The verifiers are coerced on every run, so a mutated ``verifiers`` list is never stale.
+        ``resume`` continues a record already on the run_response (HITL resumes,
+        continue-in-place); the run paths reset it, so a model-level retry never resurrects
+        attempts whose message indices point into the discarded transcript.
         """
         config = resolve_verification(owner)
         if config is None:
@@ -293,7 +294,8 @@ class VerificationGate:
         """Once, before the first model call: open the window, start the clock, capture the
         comparison baseline. A new window captures it from the world as it stands; a resumed HITL
         pause keeps the baseline stored before the pause, since the confirmed tools already ran
-        and their changes belong to the paused attempt."""
+        and their changes belong to the paused attempt.
+        """
         record = self._open_window()
         if self.config.fingerprint is not None:
             if record.baseline_fingerprint is None:
@@ -332,7 +334,8 @@ class VerificationGate:
 
     def open_attempt(self) -> Optional[Any]:
         """Build this attempt and hand back the started event — or None when the gate must
-        not run (the model paused for HITL; the pause leg persists the pending record)."""
+        not run (the model paused for HITL; the pause leg persists the pending record).
+        """
         # The stream legs read `reenter` after this call: a paused attempt must not inherit
         # the previous attempt's re-entry and call the model over an unanswered tool call.
         self.reenter = False

@@ -89,7 +89,9 @@ def test_team_get_messages_skips_regenerated():
 
 # --- unverified runs: kept in history, their re-entry report kept out of chat history ---
 
-REPORT = '<verification attempt="1/3" nonce="abc">\n[FAIL] report_exists: report.md is missing\n</verification>'
+REPORT = (
+    '<verification attempt="1/3" nonce="0123456789abcdef">\n[FAIL] report_exists: report.md is missing\n</verification>'
+)
 
 
 def _run(kind: str, run_id: str, status: RunStatus, prompt: str, answer: str, report: bool = False):
@@ -137,5 +139,9 @@ def test_chat_history_drops_the_verification_report(kind):
     session.upsert_run(_run(kind, "r1", RunStatus.unverified, "q1", "a1", report=True))
 
     assert [m.content for m in session.get_chat_history()] == ["q1", "draft", "a1"]
+    # A person's message that only starts with the tag stays in chat history
+    typed = '<verification attempt="1/3"> is this tag valid XML?'
+    session.upsert_run(_run(kind, "r2", RunStatus.completed, typed, "yes"))
+    assert typed in [m.content for m in session.get_chat_history()]
     # Model history keeps the report: it is real transcript the model re-reads.
     assert any(str(m.content).startswith("<verification ") for m in session.get_messages())

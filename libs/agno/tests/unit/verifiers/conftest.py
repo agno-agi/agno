@@ -117,7 +117,8 @@ async def _run_path(workflow: Any, use_async: bool, stream: bool, **kwargs: Any)
         events = [event async for event in workflow.arun(stream=True, **kwargs)]
     else:
         events = list(workflow.run(stream=True, **kwargs))
-    completed = [e for e in events if isinstance(e, WorkflowCompletedEvent)]
+    # A nested workflow streams its own completed event; the run's is the top-level one
+    completed = [e for e in events if isinstance(e, WorkflowCompletedEvent) and e.nested_depth == 0]
     assert len(completed) == 1
     return completed[0].run_output
 

@@ -29,7 +29,6 @@ from agno.models.response import ModelResponse, ModelResponseEvent
 from agno.reasoning.step import NextAction, ReasoningStep, ReasoningSteps
 from agno.run import RunContext
 from agno.run.agent import RUN_OUTPUT_EVENT_TYPES, RunOutput, RunOutputEvent
-from agno.run.cancel import araise_if_cancelled, raise_if_cancelled
 from agno.run.messages import RunMessages
 from agno.run.requirement import RunRequirement
 from agno.run.team import (
@@ -1916,82 +1915,3 @@ async def agenerate_team_followups_stream(
             events_to_skip=team.events_to_skip,  # type: ignore
             store_events=team.store_events,
         )
-
-
-def verify_response(entity: Any, verification_gate: Any, run_response: Any) -> bool:
-    """Run the verification gate on the parsed output; True when the model must re-enter (sync)."""
-    if verification_gate is None:
-        return False
-    started = verification_gate.open_attempt()
-    if started is None:
-        return False
-    handle_event(started, run_response, events_to_skip=entity.events_to_skip, store_events=entity.store_events)
-    decision = verification_gate.settle_attempt()
-    handle_event(decision.event, run_response, events_to_skip=entity.events_to_skip, store_events=entity.store_events)
-    if decision.reenter:
-        raise_if_cancelled(run_response.run_id)
-    return decision.reenter
-
-
-async def averify_response(entity: Any, verification_gate: Any, run_response: Any) -> bool:
-    """Run the verification gate on the parsed output; True when the model must re-enter (async)."""
-    if verification_gate is None:
-        return False
-    started = verification_gate.open_attempt()
-    if started is None:
-        return False
-    handle_event(started, run_response, events_to_skip=entity.events_to_skip, store_events=entity.store_events)
-    decision = await verification_gate.asettle_attempt()
-    handle_event(decision.event, run_response, events_to_skip=entity.events_to_skip, store_events=entity.store_events)
-    if decision.reenter:
-        await araise_if_cancelled(run_response.run_id)
-    return decision.reenter
-
-
-def verify_response_stream(
-    entity: Any, verification_gate: Any, run_response: Any, stream_events: bool
-) -> Iterator[Any]:
-    """Streaming version of verify_response: yields the two verification events; the leg reads
-    ``verification_gate.reenter`` afterwards."""
-    if verification_gate is None:
-        return
-    started = verification_gate.open_attempt()
-    if started is None:
-        return
-    started_event = handle_event(
-        started, run_response, events_to_skip=entity.events_to_skip, store_events=entity.store_events
-    )
-    if stream_events:
-        yield started_event
-    decision = verification_gate.settle_attempt()
-    completed_event = handle_event(
-        decision.event, run_response, events_to_skip=entity.events_to_skip, store_events=entity.store_events
-    )
-    if stream_events:
-        yield completed_event
-    if decision.reenter:
-        raise_if_cancelled(run_response.run_id)
-
-
-async def averify_response_stream(
-    entity: Any, verification_gate: Any, run_response: Any, stream_events: bool
-) -> AsyncIterator[Any]:
-    """Async version of verify_response_stream."""
-    if verification_gate is None:
-        return
-    started = verification_gate.open_attempt()
-    if started is None:
-        return
-    started_event = handle_event(
-        started, run_response, events_to_skip=entity.events_to_skip, store_events=entity.store_events
-    )
-    if stream_events:
-        yield started_event
-    decision = await verification_gate.asettle_attempt()
-    completed_event = handle_event(
-        decision.event, run_response, events_to_skip=entity.events_to_skip, store_events=entity.store_events
-    )
-    if stream_events:
-        yield completed_event
-    if decision.reenter:
-        await araise_if_cancelled(run_response.run_id)

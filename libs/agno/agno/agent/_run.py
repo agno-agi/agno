@@ -83,6 +83,8 @@ from agno.tools.function import Function
 from agno.utils.agent import (
     abuild_full_run_storage_copy,
     abuild_offloaded_storage_copy,
+    averify_response,
+    averify_response_stream,
     await_for_open_threads,
     await_for_thread_tasks_stream,
     build_offloaded_storage_copy,
@@ -94,6 +96,8 @@ from agno.utils.agent import (
     store_media_util,
     validate_input,
     validate_media_object_id,
+    verify_response,
+    verify_response_stream,
     wait_for_open_threads,
     wait_for_thread_tasks_stream,
 )
@@ -412,7 +416,6 @@ def _run(
         handle_reasoning,
         parse_response_with_parser_model,
         update_run_response,
-        verify_response,
     )
     from agno.agent._storage import load_session_state, read_or_create_session, update_metadata
     from agno.agent._telemetry import log_agent_telemetry
@@ -837,7 +840,6 @@ def _run_stream(
         handle_model_response_stream,
         handle_reasoning_stream,
         parse_response_with_parser_model_stream,
-        verify_response_stream,
     )
     from agno.agent._storage import load_session_state, read_or_create_session, update_metadata
     from agno.agent._telemetry import log_agent_telemetry
@@ -1585,7 +1587,6 @@ async def _arun(
         agenerate_response_with_output_model,
         ahandle_reasoning,
         aparse_response_with_parser_model,
-        averify_response,
         convert_response_to_structured_format,
         update_run_response,
     )
@@ -1814,7 +1815,7 @@ async def _arun(
                             user_id=user_id,
                         )
 
-                    # 11. Store media in run output for the caller (a gate re-entry resets it per attempt)
+                    # 11. Store media in run output for the caller
                     store_media_util(run_response, model_response)
 
                     # 12. Convert the response to the structured format if needed
@@ -2358,7 +2359,6 @@ async def _arun_stream(
         ahandle_model_response_stream,
         ahandle_reasoning_stream,
         aparse_response_with_parser_model_stream,
-        averify_response_stream,
     )
     from agno.agent._storage import aread_or_create_session, load_session_state, update_metadata
     from agno.agent._telemetry import alog_agent_telemetry
@@ -3913,7 +3913,6 @@ def _continue_run(
         generate_response_with_output_model,
         parse_response_with_parser_model,
         update_run_response,
-        verify_response,
     )
     from agno.agent._telemetry import log_agent_telemetry
     from agno.agent._tools import handle_tool_call_updates
@@ -3994,7 +3993,7 @@ def _continue_run(
                             agent, run_response=run_response, session=session, run_context=run_context, user_id=user_id
                         )
 
-                    # 4. Store media in run output for the caller (a gate re-entry resets it per attempt)
+                    # 4. Store media in run output for the caller
                     store_media_util(run_response, model_response)
 
                     # 5. Convert the response to the structured format if needed
@@ -4153,7 +4152,6 @@ def _continue_run_stream(
         generate_followups_stream,
         handle_model_response_stream,
         parse_response_with_parser_model_stream,
-        verify_response_stream,
     )
     from agno.agent._telemetry import log_agent_telemetry
     from agno.agent._tools import handle_tool_call_updates_stream
@@ -5025,7 +5023,6 @@ async def _acontinue_run(
         agenerate_followups,
         agenerate_response_with_output_model,
         aparse_response_with_parser_model,
-        averify_response,
         convert_response_to_structured_format,
         update_run_response,
     )
@@ -5359,7 +5356,7 @@ async def _acontinue_run(
                             user_id=user_id,
                         )
 
-                    # 10. Store media in run output for the caller (a gate re-entry resets it per attempt)
+                    # 10. Store media in run output for the caller
                     store_media_util(run_response, model_response)
 
                     # 11. Convert the response to the structured format if needed
@@ -5593,7 +5590,6 @@ async def _acontinue_run_stream(
         agenerate_response_with_output_model_stream,
         ahandle_model_response_stream,
         aparse_response_with_parser_model_stream,
-        averify_response_stream,
     )
     from agno.agent._storage import aread_or_create_session, load_session_state, update_metadata
     from agno.agent._telemetry import alog_agent_telemetry

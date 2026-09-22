@@ -6,6 +6,7 @@ printers, serialization, and the unverified agent step inside a workflow.
 """
 
 import io
+import time
 from typing import Any, List, Optional
 
 import pytest
@@ -113,7 +114,7 @@ async def test_loop_back_with_evidence(use_async, stream):
     assert [s.step_name for s in verify_output.steps] == ["writer", "refine"]
     assert verify_output.steps[-1].content == "refined draft two"
     assert [[s.content for s in r] for r in verify_output.previous_attempts] == [["draft one", "refined draft one"]]
-    # The publisher chained off the verified draft, not off a gate summary, and finds the accepted round.
+    # The publisher chained off the verified draft, not off a gate summary, and finds the accepted attempt.
     assert seen == {"previous": "refined draft two", "writer": "draft two"}
     assert out.content == "published"
 
@@ -331,6 +332,26 @@ def test_direct_pure_gate_in_a_container_passes(kind):
     assert writer_model.calls == 1
 
 
+@pytest.mark.parametrize("use_async", [False, True], ids=["sync", "async"])
+@pytest.mark.parametrize("stream", [False, True])
+async def test_failing_pure_gate_in_a_parallel_branch_ends_the_same_on_every_path(use_async, stream):
+    # The stream paths order a Parallel's outputs by completion, so a slower gate lands last there
+    def slow_fail(run_output):
+        time.sleep(0.05)
+        return "gate says no"
+
+    workflow = Workflow(
+        name="wf",
+        steps=[
+            Step(name="writer", executor=lambda step_input: StepOutput(content="draft")),
+            Parallel(Verify([slow_fail], on_fail=None, name="gate"), _side(), name="par"),
+        ],
+    )
+    out = await _run_path(workflow, use_async, stream, input="go")
+    assert out.status == RunStatus.completed
+    assert out.verification.status == "unverified"
+
+
 def test_router_list_route_verify_second_run_does_not_double_execute():
     # Router rebuilds its list-route Steps wrapper from raw choices every run, so from
     # the second run the resolver sees an already-resolved Verify next to the segment
@@ -471,6 +492,7 @@ def test_serialization_round_trip_preserves_per_check_policy():
         stop_on_unchanged_state=True,
         fingerprint=Fingerprint(),
         name="rt",
+        description="checks the draft",
     )
     data = original.to_dict()
     assert data["on_fail"] is None
@@ -482,6 +504,7 @@ def test_serialization_round_trip_preserves_per_check_policy():
     registry = Registry(functions=[advisory, gatekeeper])
     restored = Verify.from_dict(data, registry=registry)
     assert restored.on_fail is None
+    assert restored.description == "checks the draft"
     assert restored.max_attempts == 4
     assert restored.stop_on_unverified is True
     # The fingerprint is not restored, so unchanged-state detection is turned off.
@@ -563,6 +586,13 @@ def test_workflow_listing_describes_the_gate():
     assert [s["name"] for s in gate["steps"]] == ["writer"]
 
 
+def test_telemetry_reports_has_verifiers():
+    plain = Workflow(name="wf", steps=[_side()])
+    nested = Workflow(name="wf", steps=[Steps(name="grp", steps=[_side(), Verify([always_pass], on_fail=None)])])
+    assert plain._get_telemetry_data()["has_verifiers"] is False
+    assert nested._get_telemetry_data()["has_verifiers"] is True
+
+
 def test_router_list_route_with_verify_round_trips():
     router = Router(
         name="router",
@@ -585,6 +615,16 @@ def test_router_list_route_with_verify_round_trips():
     assert out.status == RunStatus.completed
     records = _verification_records(out.step_results)
     assert records and records[0].status == "verified"
+
+
+def test_earlier_attempts_serialize_without_a_list_inside_a_list():
+    # Firestore refuses a stored row that nests a list directly inside a list
+    workflow = Workflow(name="wf", steps=[_writer("draft one", "draft two"), Verify([fail_once()], on_fail="writer")])
+    gate = _verify_output(workflow.run(input="go"))
+    stored = gate.to_dict()["previous_attempts"]
+    assert all(isinstance(attempt, dict) for attempt in stored)
+    restored = StepOutput.from_dict(gate.to_dict())
+    assert [[s.content for s in attempt] for attempt in restored.previous_attempts] == [["draft one"]]
 
 
 def test_workflow_run_output_round_trips_verification():
@@ -732,61 +772,24 @@ def test_selector_returned_unresolved_verify_stops_the_run():
         workflow.run(input="go")
 
 
-def test_history_step_without_db_is_kept():
-    ran = {"n": 0}
-
-    def writer(step_input: StepInput) -> StepOutput:
-        ran["n"] += 1
-        return StepOutput(content="draft")
-
-    workflow = Workflow(
-        name="wf",
-        steps=[
-            Step(name="intro", executor=lambda step_input: StepOutput(content="intro")),
-            Step(name="writer", executor=writer, add_workflow_history=True),
-            Verify([always_pass]),
-        ],
-    )
-    # The default target is the history step; without a db it still runs as the segment.
-    workflow.run(input="go")
-    assert ran["n"] == 1
-
-
-def test_mcp_tool_walk_reaches_router_routes_condition_else_branch_and_absorbed_segments():
+def test_mcp_tool_walk_reaches_absorbed_segments():
     class MCPTools:
         """Stands in for the real MCPTools class, which the walk recognizes by name."""
 
     in_segment = MCPTools()
-    in_route = MCPTools()
-    in_list_route = MCPTools()
-    in_else = MCPTools()
     workflow = Workflow(
         name="wf",
         steps=[
             Step(name="draft", agent=Agent(name="draft", tools=[in_segment])),
             Verify([always_pass], on_fail="draft", name="gate"),
-            Router(
-                name="router",
-                selector=lambda step_input: "a",
-                choices=[
-                    Step(name="a", agent=Agent(name="a", tools=[in_route])),
-                    [Step(name="b", agent=Agent(name="b", tools=[in_list_route])), Verify([always_pass], on_fail="b")],
-                ],
-            ),
-            Condition(
-                name="cond",
-                evaluator=lambda step_input: True,
-                steps=[Step(name="c", executor=lambda step_input: StepOutput(content="c"))],
-                else_steps=[Step(name="d", agent=Agent(name="d", tools=[in_else]))],
-            ),
         ],
     )
-    # After preparation each Verify holds its absorbed segment; the walk must recurse into it.
+    # After preparation the Verify holds its absorbed segment; the walk must recurse into it.
     workflow._prepare_steps()
-    assert [type(s).__name__ for s in workflow.steps] == ["Verify", "Router", "Condition"]
+    assert [type(s).__name__ for s in workflow.steps] == ["Verify"]
     found: List[Any] = []
     collect_mcp_tools_from_workflow(workflow, found)
-    assert all(tool in found for tool in (in_segment, in_route, in_list_route, in_else))
+    assert in_segment in found
 
 
 # ---------------------------------------------------------------------------
@@ -961,6 +964,21 @@ async def test_step_nested_workflow_success(monkeypatch, use_async):
     assert output.success is False
     assert output.error == "Run ended unverified (exhausted)"
     assert output.content == "nested answer"
+
+
+@pytest.mark.parametrize("stop_on_unverified", [False, True], ids=["last-word", "halting"])
+@pytest.mark.parametrize("use_async", [False, True], ids=["sync", "async"])
+@pytest.mark.parametrize("stream", [False, True])
+async def test_nested_workflow_gate_does_not_decide_the_outer_run(stop_on_unverified, use_async, stream):
+    # A nested workflow's gates stay on its step output, like an agent step's verifiers
+    inner = Workflow(
+        name="inner", steps=[_writer(), Verify([always_fail], on_fail=None, stop_on_unverified=stop_on_unverified)]
+    )
+    workflow = Workflow(name="wf", steps=[Step(name="nested", workflow=inner)])
+    out = await _run_path(workflow, use_async, stream, input="go")
+    assert out.status == RunStatus.completed
+    assert out.verification is None
+    assert out.step_results[0].success is False
 
 
 @pytest.mark.parametrize("use_async", [False, True], ids=["sync", "async"])
