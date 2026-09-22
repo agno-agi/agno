@@ -32,6 +32,10 @@ except ImportError:
     AIOBOTO3_AVAILABLE = False
 
 
+def _client_error_status_code(e: ClientError) -> int:
+    return e.response.get("ResponseMetadata", {}).get("HTTPStatusCode") or 502
+
+
 BEDROCK_SUPPORTED_IMAGE_FORMATS = ["png", "jpeg", "webp", "gif"]
 BEDROCK_SUPPORTED_VIDEO_FORMATS = ["mp4", "mov", "mkv", "webm", "flv", "mpeg", "mpg", "wmv", "three_gp"]
 BEDROCK_SUPPORTED_FILE_FORMATS = ["pdf", "csv", "doc", "docx", "xls", "xlsx", "html", "txt", "md"]
@@ -589,7 +593,12 @@ class AwsBedrock(Model):
 
         except ClientError as e:
             log_error(f"Unexpected error calling Bedrock API: {str(e)}")
-            raise ModelProviderError(message=str(e.response), model_name=self.name, model_id=self.id) from e
+            raise ModelProviderError(
+                message=str(e.response),
+                status_code=_client_error_status_code(e),
+                model_name=self.name,
+                model_id=self.id,
+            ) from e
         except Exception as e:
             log_error(f"Unexpected error calling Bedrock API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
@@ -639,7 +648,12 @@ class AwsBedrock(Model):
 
         except ClientError as e:
             log_error(f"Unexpected error calling Bedrock API: {str(e)}")
-            raise ModelProviderError(message=str(e.response), model_name=self.name, model_id=self.id) from e
+            raise ModelProviderError(
+                message=str(e.response),
+                status_code=_client_error_status_code(e),
+                model_name=self.name,
+                model_id=self.id,
+            ) from e
         except Exception as e:
             log_error(f"Unexpected error calling Bedrock API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
@@ -688,7 +702,12 @@ class AwsBedrock(Model):
 
         except ClientError as e:
             log_error(f"Unexpected error calling Bedrock API: {str(e)}")
-            raise ModelProviderError(message=str(e.response), model_name=self.name, model_id=self.id) from e
+            raise ModelProviderError(
+                message=str(e.response),
+                status_code=_client_error_status_code(e),
+                model_name=self.name,
+                model_id=self.id,
+            ) from e
         except Exception as e:
             log_error(f"Unexpected error calling Bedrock API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
@@ -738,7 +757,12 @@ class AwsBedrock(Model):
 
         except ClientError as e:
             log_error(f"Unexpected error calling Bedrock API: {str(e)}")
-            raise ModelProviderError(message=str(e.response), model_name=self.name, model_id=self.id) from e
+            raise ModelProviderError(
+                message=str(e.response),
+                status_code=_client_error_status_code(e),
+                model_name=self.name,
+                model_id=self.id,
+            ) from e
         except Exception as e:
             log_error(f"Unexpected error calling Bedrock API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e

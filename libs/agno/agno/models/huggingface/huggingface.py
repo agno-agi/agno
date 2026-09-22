@@ -26,7 +26,7 @@ try:
         ChatCompletionStreamOutputDeltaToolCall,
         InferenceClient,
     )
-    from huggingface_hub.errors import InferenceTimeoutError
+    from huggingface_hub.errors import HfHubHTTPError, InferenceTimeoutError
 except ImportError:
     raise ImportError("`huggingface_hub` not installed. Please install using `pip install huggingface_hub`")
 
@@ -262,6 +262,11 @@ class HuggingFace(Model):
         except InferenceTimeoutError as e:
             log_error(f"Error invoking HuggingFace model: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+        except HfHubHTTPError as e:
+            log_error(f"HTTP error invoking HuggingFace model: {str(e)}")
+            raise ModelProviderError(
+                message=str(e), status_code=e.response.status_code, model_name=self.name, model_id=self.id
+            ) from e
         except Exception as e:
             log_error(f"Unexpected error invoking HuggingFace model: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
@@ -293,6 +298,11 @@ class HuggingFace(Model):
         except InferenceTimeoutError as e:
             log_error(f"Error invoking HuggingFace model: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+        except HfHubHTTPError as e:
+            log_error(f"HTTP error invoking HuggingFace model: {str(e)}")
+            raise ModelProviderError(
+                message=str(e), status_code=e.response.status_code, model_name=self.name, model_id=self.id
+            ) from e
         except Exception as e:
             log_error(f"Unexpected error invoking HuggingFace model: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
@@ -329,6 +339,11 @@ class HuggingFace(Model):
         except InferenceTimeoutError as e:
             log_error(f"Error invoking HuggingFace model: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+        except HfHubHTTPError as e:
+            log_error(f"HTTP error invoking HuggingFace model: {str(e)}")
+            raise ModelProviderError(
+                message=str(e), status_code=e.response.status_code, model_name=self.name, model_id=self.id
+            ) from e
         except Exception as e:
             log_error(f"Unexpected error invoking HuggingFace model: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
@@ -364,6 +379,11 @@ class HuggingFace(Model):
         except InferenceTimeoutError as e:
             log_error(f"Error invoking HuggingFace model: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+        except HfHubHTTPError as e:
+            log_error(f"HTTP error invoking HuggingFace model: {str(e)}")
+            raise ModelProviderError(
+                message=str(e), status_code=e.response.status_code, model_name=self.name, model_id=self.id
+            ) from e
         except Exception as e:
             log_error(f"Unexpected error invoking HuggingFace model: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
