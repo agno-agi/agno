@@ -57,10 +57,11 @@ Serve two agents on different models to read model usage:
 .venvs/demo/bin/python cookbook/05_agent_os/13_observability/os_metrics.py
 ```
 
-After running both agents, open `GET /os/metrics?days=7` for the model
-usage breakdown. Insights are built from the daily metrics, so to include runs
-made after the first read, call `POST /metrics/refresh` and pass
-`refresh=true`.
+After running both agents, open `GET /os/metrics` for the model usage
+breakdown of the last 30 days, or narrow it with
+`?starting_date=YYYY-MM-DD&ending_date=YYYY-MM-DD`. Insights are built from
+the daily metrics, so to include runs made after the first read, call
+`POST /metrics/refresh` and pass `refresh=true`.
 
 The other files generate and inspect their own data in one process:
 

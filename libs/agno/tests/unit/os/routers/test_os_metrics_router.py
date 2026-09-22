@@ -1,6 +1,7 @@
 """Tests for GET /os/metrics on the metrics router."""
 
 import time
+from datetime import timedelta
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -41,7 +42,15 @@ def _make_metric(user_id, *, date="2026-01-01", runs=2, models=None, period="dai
 
 
 def _today():
-    return time.strftime("%Y-%m-%d", time.gmtime())
+    from datetime import datetime, timezone
+
+    return datetime.now(timezone.utc).date()
+
+
+def _last(days):
+    """Query string for the window of the last ``days`` days, ending today."""
+    start = _today() - timedelta(days=days - 1)
+    return f"starting_date={start.isoformat()}"
 
 
 @pytest.fixture
@@ -52,7 +61,10 @@ def settings():
 @pytest.fixture
 def mock_db():
     """Today's metrics for two owners."""
-    rows = [_make_metric("alice", date=_today(), runs=2), _make_metric("bob", date=_today(), runs=4)]
+    rows = [
+        _make_metric("alice", date=_today().isoformat(), runs=2),
+        _make_metric("bob", date=_today().isoformat(), runs=4),
+    ]
     db = MagicMock()
     db.id = "db-1"
     db.get_metrics = MagicMock(return_value=(rows, int(time.time())))
@@ -92,7 +104,10 @@ class TestModelUsage:
             {"model_id": "claude-haiku-4-5", "model_provider": "Anthropic", "count": 1},
             {"model_id": "gpt-5.5", "model_provider": "OpenAI", "count": 3},
         ]
-        mock_db.get_metrics.return_value = ([_make_metric("alice", date=_today(), runs=4, models=models)], 0)
+        mock_db.get_metrics.return_value = (
+            [_make_metric("alice", date=_today().isoformat(), runs=4, models=models)],
+            0,
+        )
         with _scope(None):
             usage = client.get("/os/metrics").json()
 
@@ -110,14 +125,11 @@ class TestModelUsage:
         assert usage["models"] == []
 
     def test_window_ends_today_and_spans_the_requested_days(self, client, mock_db):
-        from datetime import datetime, timedelta, timezone
-
         with _scope(None):
-            client.get("/os/metrics?days=5")
+            client.get(f"/os/metrics?{_last(5)}")
 
-        today = datetime.now(timezone.utc).date()
-        assert mock_db.get_metrics.call_args.kwargs["ending_date"] == today
-        assert mock_db.get_metrics.call_args.kwargs["starting_date"] == today - timedelta(days=4)
+        assert mock_db.get_metrics.call_args.kwargs["ending_date"] == _today()
+        assert mock_db.get_metrics.call_args.kwargs["starting_date"] == _today() - timedelta(days=4)
 
     def test_only_the_daily_metrics_are_read(self, client, mock_db):
         with _scope(None):
@@ -128,27 +140,96 @@ class TestModelUsage:
 
 
 # =============================================================================
+# GET /os/metrics -- the window
+# =============================================================================
+
+
+class TestWindow:
+    """The bounds are the ones GET /metrics takes; both days are inclusive."""
+
+    def test_no_bounds_means_the_last_thirty_days(self, client, mock_db):
+        with _scope(None):
+            body = client.get("/os/metrics").json()
+
+        kwargs = mock_db.get_metrics.call_args.kwargs
+        assert kwargs["ending_date"] == _today()
+        assert kwargs["starting_date"] == _today() - timedelta(days=29)
+        assert body["window_days"] == 30
+
+    def test_both_days_are_inside_the_window(self, client, mock_db):
+        from datetime import date
+
+        with _scope(None):
+            body = client.get("/os/metrics?starting_date=2026-09-01&ending_date=2026-09-03").json()
+
+        kwargs = mock_db.get_metrics.call_args.kwargs
+        assert kwargs["starting_date"] == date(2026, 9, 1)
+        assert kwargs["ending_date"] == date(2026, 9, 3)
+        assert body["window_days"] == 3
+
+    def test_one_day_is_a_window_of_one(self, client, mock_db):
+        with _scope(None):
+            body = client.get("/os/metrics?starting_date=2026-09-02&ending_date=2026-09-02").json()
+
+        assert body["window_days"] == 1
+
+    def test_only_an_end_gives_the_thirty_days_before_it(self, client, mock_db):
+        from datetime import date
+
+        with _scope(None):
+            client.get("/os/metrics?ending_date=2026-09-10")
+
+        assert mock_db.get_metrics.call_args.kwargs["starting_date"] == date(2026, 8, 12)
+
+    def test_a_start_after_the_end_is_rejected(self, client):
+        with _scope(None):
+            response = client.get("/os/metrics?starting_date=2026-09-05&ending_date=2026-09-01")
+
+        assert response.status_code == 400
+
+    def test_a_window_over_a_year_is_rejected(self, client):
+        with _scope(None):
+            response = client.get("/os/metrics?starting_date=2025-01-01&ending_date=2026-01-01")
+
+        assert response.status_code == 400
+
+    def test_a_bound_that_is_not_a_date_is_rejected(self, client):
+        with _scope(None):
+            response = client.get("/os/metrics?starting_date=yesterday")
+
+        assert response.status_code == 422
+
+    def test_each_window_is_cached_apart_from_the_next(self, client, mock_db):
+        with _scope(None):
+            client.get(f"/os/metrics?{_last(7)}")
+            client.get(f"/os/metrics?{_last(7)}&ending_date={_today().isoformat()}")
+            client.get(f"/os/metrics?{_last(8)}")
+
+        assert mock_db.get_metrics.call_count == 2
+
+
+# =============================================================================
 # GET /os/metrics -- scoping and caching
 # =============================================================================
 
 
 class TestScopingAndCaching:
     def test_scoped_caller_reads_only_its_own_rows(self, client, mock_db):
-        mock_db.get_metrics.return_value = ([_make_metric("alice", date=_today(), runs=2)], 0)
+        mock_db.get_metrics.return_value = ([_make_metric("alice", date=_today().isoformat(), runs=2)], 0)
         with _scope("alice"):
-            usage = client.get("/os/metrics?days=1").json()
+            usage = client.get(f"/os/metrics?{_last(1)}").json()
 
         assert mock_db.get_metrics.call_args.kwargs["user_id"] == "alice"
         assert usage["total_model_runs"] == 2
 
     def test_unowned_bucket_drops_the_record_that_holds_every_users_traffic(self, client, mock_db):
         """Same rule GET /metrics applies to the empty-string owner."""
-        unowned = _make_metric("", date=_today(), runs=1)
-        legacy = _make_metric("", date=_today(), runs=5)
+        unowned = _make_metric("", date=_today().isoformat(), runs=1)
+        legacy = _make_metric("", date=_today().isoformat(), runs=5)
         legacy["users_count"] = 2
         mock_db.get_metrics.return_value = ([unowned, legacy], 0)
         with _scope(""):
-            usage = client.get("/os/metrics?days=1").json()
+            usage = client.get(f"/os/metrics?{_last(1)}").json()
 
         assert usage["total_model_runs"] == 1
 
@@ -169,8 +250,8 @@ class TestScopingAndCaching:
 
     def test_each_window_is_cached_separately(self, client, mock_db):
         with _scope(None):
-            client.get("/os/metrics?days=7")
-            client.get("/os/metrics?days=30")
+            client.get(f"/os/metrics?{_last(7)}")
+            client.get(f"/os/metrics?{_last(30)}")
 
         assert mock_db.get_metrics.call_count == 2
 
@@ -226,27 +307,27 @@ class TestScopingAndCaching:
         from agno.os.routers.metrics import metrics as metrics_module
 
         with _scope(None):
-            client.get("/os/metrics?days=1")
+            client.get(f"/os/metrics?{_last(1)}")
         for index in range(metrics_module.CACHE_MAX_ENTRIES + 5):
             with _scope(f"user-{index}"):
-                client.get("/os/metrics?days=1")
+                client.get(f"/os/metrics?{_last(1)}")
 
         calls_before = mock_db.get_metrics.call_count
         with _scope(None):
-            client.get("/os/metrics?days=1")
+            client.get(f"/os/metrics?{_last(1)}")
 
         assert mock_db.get_metrics.call_count > calls_before
 
     def test_entry_well_inside_the_cap_survives(self, client, mock_db):
         with _scope(None):
-            client.get("/os/metrics?days=1")
+            client.get(f"/os/metrics?{_last(1)}")
         for index in range(10):
             with _scope(f"user-{index}"):
-                client.get("/os/metrics?days=1")
+                client.get(f"/os/metrics?{_last(1)}")
 
         calls_before = mock_db.get_metrics.call_count
         with _scope(None):
-            client.get("/os/metrics?days=1")
+            client.get(f"/os/metrics?{_last(1)}")
 
         assert mock_db.get_metrics.call_count == calls_before
 
@@ -266,7 +347,7 @@ class TestAgentOSDatabase:
                 [
                     _make_metric(
                         "alice",
-                        date=_today(),
+                        date=_today().isoformat(),
                         runs=2,
                         models=[{"model_id": "gpt-5.5", "model_provider": "OpenAI", "count": 2}],
                     )
@@ -284,7 +365,7 @@ class TestAgentOSDatabase:
                 get_metrics_router(dbs={"os-db": [os_db], "agent-db": [agent_db]}, settings=settings, os_db=os_db)
             )
         with _scope(None):
-            usage = TestClient(app).get("/os/metrics?days=1").json()
+            usage = TestClient(app).get(f"/os/metrics?{_last(1)}").json()
 
         assert agent_db.get_metrics.call_count == 0
         assert usage["total_model_runs"] == 2
@@ -309,9 +390,9 @@ class TestRefreshingTheDailyMetrics:
         """POST /metrics/refresh is the one action that makes the metrics current."""
         mock_db.calculate_metrics = MagicMock(return_value=None)
         with _scope(None):
-            first = client.get("/os/metrics?days=1").json()
+            first = client.get(f"/os/metrics?{_last(1)}").json()
             client.post("/metrics/refresh")
-            second = client.get("/os/metrics?days=1").json()
+            second = client.get(f"/os/metrics?{_last(1)}").json()
 
         assert mock_db.get_metrics.call_count == 2
         assert second["computed_at"] != first["computed_at"]
@@ -319,9 +400,9 @@ class TestRefreshingTheDailyMetrics:
     def test_a_background_rebuild_drops_the_cached_answer(self, client, mock_db):
         mock_db.calculate_metrics = MagicMock(return_value=None)
         with _scope(None):
-            client.get("/os/metrics?days=1")
+            client.get(f"/os/metrics?{_last(1)}")
             client.post("/metrics/refresh?background=true")
-            client.get("/os/metrics?days=1")
+            client.get(f"/os/metrics?{_last(1)}")
 
         assert mock_db.get_metrics.call_count == 2
 
@@ -338,8 +419,8 @@ class TestRefreshingTheDailyMetrics:
             )
         client = TestClient(app)
         with _scope(None):
-            client.get("/os/metrics?days=1")
+            client.get(f"/os/metrics?{_last(1)}")
             client.post("/metrics/refresh?db_id=other-db")
-            client.get("/os/metrics?days=1")
+            client.get(f"/os/metrics?{_last(1)}")
 
         assert mock_db.get_metrics.call_count == 1

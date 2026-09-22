@@ -40,9 +40,32 @@ logger = logging.getLogger(__name__)
 # in the background.
 CACHE_TTL_SECONDS = 300
 
-# The window is caller-supplied, so a multi-tenant OS can be walked across owners and day
-# counts. Entries are evicted least-recently-read beyond this.
+# The window is caller-supplied, so a multi-tenant OS can be walked across owners and
+# windows. The key holds whole days, so every open of one window lands on one entry, and
+# entries are evicted least-recently-read beyond this.
 CACHE_MAX_ENTRIES = 512
+
+# Without bounds a route covers the last 30 days. Both days are inclusive, so a starting_date
+# equal to the ending_date covers that one day.
+DEFAULT_WINDOW_DAYS = 30
+MAX_WINDOW_DAYS = 365
+
+
+def _window(starting_date: Optional[date], ending_date: Optional[date]) -> Tuple[date, date]:
+    """The UTC days a route covers, with the same bounds GET /metrics takes.
+
+    Without an end the window ends today, without a start it covers the last
+    DEFAULT_WINDOW_DAYS days.
+    """
+    if ending_date is None:
+        ending_date = datetime.now(timezone.utc).date()
+    if starting_date is None:
+        starting_date = ending_date - timedelta(days=DEFAULT_WINDOW_DAYS - 1)
+    if starting_date > ending_date:
+        raise HTTPException(status_code=400, detail="starting_date must not be after ending_date")
+    if (ending_date - starting_date).days >= MAX_WINDOW_DAYS:
+        raise HTTPException(status_code=400, detail=f"The window must not cover more than {MAX_WINDOW_DAYS} days")
+    return starting_date, ending_date
 
 
 def get_metrics_router(
@@ -185,11 +208,11 @@ def attach_routes(
     # Most recent computation per owner and window. Only mutated on the event loop (the sync
     # database reads themselves run in the threadpool), so no lock is needed. Per-process:
     # each worker warms its own entries.
-    cache: "OrderedDict[Tuple[Optional[str], int], Tuple[OSMetricsResponse, float]]" = OrderedDict()
+    cache: "OrderedDict[Tuple[Optional[str], date, date], Tuple[OSMetricsResponse, float]]" = OrderedDict()
 
     # Keys with a background recompute in flight, so concurrent opens of a stale entry start
     # one recompute between them rather than one each.
-    recomputing: Set[Tuple[Optional[str], int]] = set()
+    recomputing: Set[Tuple[Optional[str], date, date]] = set()
 
     def _drop_os_metrics_cache(db: Union[BaseDb, AsyncBaseDb, RemoteDb]) -> None:
         """Forget the OS metrics once the daily metrics they are built from have been rebuilt."""
@@ -200,7 +223,7 @@ def attach_routes(
         # dropped rather than written back over the entry this just cleared
         recomputing.clear()
 
-    def _cache_get(key: Tuple[Optional[str], int]) -> Optional[Tuple[OSMetricsResponse, bool]]:
+    def _cache_get(key: Tuple[Optional[str], date, date]) -> Optional[Tuple[OSMetricsResponse, bool]]:
         entry = cache.get(key)
         if entry is None:
             return None
@@ -208,7 +231,7 @@ def attach_routes(
         cache.move_to_end(key)
         return metrics, time.monotonic() - cached_at <= CACHE_TTL_SECONDS
 
-    def _cache_put(key: Tuple[Optional[str], int], metrics: OSMetricsResponse) -> None:
+    def _cache_put(key: Tuple[Optional[str], date, date], metrics: OSMetricsResponse) -> None:
         cache[key] = (metrics, time.monotonic())
         cache.move_to_end(key)
         while len(cache) > CACHE_MAX_ENTRIES:
@@ -482,10 +505,9 @@ def attach_routes(
     async def _compute_os_metrics(
         db: Union[BaseDb, AsyncBaseDb],
         effective_user_id: Optional[str],
-        days: int,
+        starting_date: date,
+        ending_date: date,
     ) -> OSMetricsResponse:
-        ending_date = datetime.now(timezone.utc).date()
-        starting_date = ending_date - timedelta(days=days - 1)
         metrics = await _daily_metrics(db, effective_user_id, starting_date, ending_date)
 
         run_counts: Dict[Tuple[str, Optional[str]], int] = {}
@@ -511,18 +533,19 @@ def attach_routes(
         return OSMetricsResponse(
             models=models,
             total_model_runs=total_model_runs,
-            window_days=days,
+            window_days=(ending_date - starting_date).days + 1,
             computed_at=datetime.now(timezone.utc),
         )
 
     async def _do_recompute(
         db: Union[BaseDb, AsyncBaseDb],
-        key: Tuple[Optional[str], int],
+        key: Tuple[Optional[str], date, date],
         effective_user_id: Optional[str],
-        days: int,
+        starting_date: date,
+        ending_date: date,
     ) -> None:
         try:
-            metrics = await _compute_os_metrics(db, effective_user_id, days)
+            metrics = await _compute_os_metrics(db, effective_user_id, starting_date, ending_date)
             # A rebuild of the daily metrics forgets this key while the read above was in
             # flight, so these numbers predate it and must not be written back over it
             if key in recomputing:
@@ -579,7 +602,13 @@ def attach_routes(
     async def get_os_metrics(
         request: Request,
         background_tasks: BackgroundTasks,
-        days: int = Query(default=30, description="Number of days the metrics cover", ge=1, le=365),
+        starting_date: Optional[date] = Query(
+            default=None,
+            description="Starting date for the window (YYYY-MM-DD format). Defaults to 29 days before ending_date",
+        ),
+        ending_date: Optional[date] = Query(
+            default=None, description="Ending date for the window (YYYY-MM-DD format). Defaults to today"
+        ),
         user_id: Optional[str] = Query(
             default=None, description="Return only this user's metrics. Ignored for non-admin callers"
         ),
@@ -592,10 +621,11 @@ def attach_routes(
                     detail="Metrics not available: pass a `db` to AgentOS to enable this feature.",
                 )
 
+            starting_date, ending_date = _window(starting_date, ending_date)
             scoped_user_id = get_scoped_user_id(request)
             effective_user_id = scoped_user_id if scoped_user_id is not None else user_id
 
-            cache_key = (effective_user_id, days)
+            cache_key = (effective_user_id, starting_date, ending_date)
             if not refresh:
                 cached = _cache_get(cache_key)
                 if cached is not None:
@@ -604,10 +634,12 @@ def attach_routes(
                     # a recompute once one has completed for this owner and window
                     if not fresh and cache_key not in recomputing:
                         recomputing.add(cache_key)
-                        background_tasks.add_task(_do_recompute, os_db, cache_key, effective_user_id, days)
+                        background_tasks.add_task(
+                            _do_recompute, os_db, cache_key, effective_user_id, starting_date, ending_date
+                        )
                     return metrics
 
-            metrics = await _compute_os_metrics(os_db, effective_user_id, days)
+            metrics = await _compute_os_metrics(os_db, effective_user_id, starting_date, ending_date)
             _cache_put(cache_key, metrics)
             return metrics
 
