@@ -144,18 +144,18 @@ class CSVReader(Reader):
             file: Path to CSV file, file path string, or file-like object.
             delimiter: CSV field delimiter. Default is comma.
             quotechar: CSV quote character. Default is double quote.
-            page_size: Positive number of rows per page for large files.
+            page_size: Number of rows per page for large files.
             name: Optional name override for the document.
 
         Returns:
             List of Document objects.
 
         Raises:
-            ValueError: If page_size is less than or equal to zero.
+            ValueError: If page_size is less than zero.
             FileNotFoundError: If the file path doesn't exist.
         """
-        if page_size <= 0:
-            raise ValueError("page_size must be greater than 0")
+        if page_size < 0:
+            raise ValueError("page_size cannot be a negative value.")
 
         try:
             if isinstance(file, (Path, str)):
