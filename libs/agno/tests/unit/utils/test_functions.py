@@ -5,6 +5,7 @@ import pytest
 
 from agno.tools.function import Function, FunctionCall
 from agno.utils.functions import get_function_call
+from agno.utils.tools import get_function_call_for_tool_call
 
 
 @pytest.fixture
@@ -53,6 +54,61 @@ def test_get_function_call_basic(sample_functions):
     assert result.error is None
 
 
+def test_provider_tool_dispatch_preserves_string_literals(sample_functions):
+    """Provider JSON strings must reach the executable function unchanged."""
+    received: dict[str, object] = {}
+
+    def bash(command: str, user_facing_message: str) -> str:
+        received.update(
+            command=command,
+            user_facing_message=user_facing_message,
+        )
+        return "ok"
+
+    bash_function = Function(
+        name="bash",
+        description="Run a command",
+        entrypoint=bash,
+        parameters={
+            "type": "object",
+            "properties": {
+                "command": {"type": "string"},
+                "user_facing_message": {"type": "string"},
+            },
+            "required": ["command", "user_facing_message"],
+        },
+    )
+    tool_call = {
+        "id": "call-bash-1",
+        "type": "function",
+        "function": {
+            "name": "bash",
+            "arguments": json.dumps(
+                {
+                    "command": "true",
+                    "user_facing_message": "Read the bounded evidence file",
+                }
+            ),
+        },
+    }
+
+    result = get_function_call_for_tool_call(tool_call, {"bash": bash_function})
+
+    assert result is not None
+    assert result.error is None
+    assert result.call_id == "call-bash-1"
+    assert result.arguments == {
+        "command": "true",
+        "user_facing_message": "Read the bounded evidence file",
+    }
+    execution = result.execute()
+    assert execution.status == "success"
+    assert received == {
+        "command": "true",
+        "user_facing_message": "Read the bounded evidence file",
+    }
+
+
 def test_get_function_call_invalid_name(sample_functions):
     """Test function call with non-existent function name."""
     result = get_function_call(
@@ -98,7 +154,7 @@ def test_get_function_call_non_dict_arguments(sample_functions):
 
 
 def test_get_function_call_argument(sample_functions):
-    """Test boolean and null coercion and whitespace preservation for other strings."""
+    """Test preservation of JSON string values and their whitespace."""
     arguments = json.dumps(
         {
             "param1": "None",
@@ -115,9 +171,9 @@ def test_get_function_call_argument(sample_functions):
     )
     assert result is not None
     assert result.arguments == {
-        "param1": None,
-        "param2": True,
-        "param3": False,
+        "param1": "None",
+        "param2": "True",
+        "param3": "False",
         "param4": "  test  ",
     }
 
@@ -152,7 +208,7 @@ def test_get_function_call_preserves_newline_only_string_arguments(sample_functi
 
 
 def test_get_function_call_coercion_with_surrounding_whitespace(sample_functions):
-    """Test boolean and null coercion with surrounding whitespace."""
+    """Test preservation of string values with surrounding whitespace."""
     arguments = json.dumps({"param1": "  None  ", "param2": " true ", "param3": "  FALSE  "})
     result = get_function_call(
         name="test_function",
@@ -161,7 +217,11 @@ def test_get_function_call_coercion_with_surrounding_whitespace(sample_functions
     )
     assert result is not None
     assert result.error is None
-    assert result.arguments == {"param1": None, "param2": True, "param3": False}
+    assert result.arguments == {
+        "param1": "  None  ",
+        "param2": " true ",
+        "param3": "  FALSE  ",
+    }
 
 
 def test_get_function_call_argument_advanced(sample_functions):

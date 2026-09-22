@@ -1,5 +1,5 @@
 import json
-from typing import Any, Callable, Dict, Optional, TypeVar
+from typing import Callable, Dict, Optional, TypeVar
 
 from agno.tools.function import Function, FunctionCall
 from agno.utils.log import log_debug, log_error
@@ -51,27 +51,12 @@ def get_function_call(
             function_call.error = "Function arguments are not a valid JSON object.\n\n Please fix and retry."
             return function_call
 
-        try:
-            clean_arguments: Dict[str, Any] = {}
-            for k, v in _arguments.items():
-                if isinstance(v, str):
-                    _v = v.strip().lower()
-                    if _v in ("none", "null"):
-                        clean_arguments[k] = None
-                    elif _v == "true":
-                        clean_arguments[k] = True
-                    elif _v == "false":
-                        clean_arguments[k] = False
-                    else:
-                        clean_arguments[k] = v
-                else:
-                    clean_arguments[k] = v
-
-            function_call.arguments = clean_arguments
-        except Exception as e:
-            log_error(f"Unable to parsing function arguments:\n{arguments}\nError: {str(e)}")
-            function_call.error = f"Error while parsing function arguments: {e}\n\n Please fix and retry."
-            return function_call
+        # Preserve the types represented by the provider payload.  A JSON
+        # string such as "true" is a valid string argument and must not be
+        # rewritten as the boolean True before the function's typed boundary
+        # sees it.  The Python-literal fallback above still preserves native
+        # literals such as True, False, and None.
+        function_call.arguments = _arguments
     return function_call
 
 
