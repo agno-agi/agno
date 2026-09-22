@@ -2220,18 +2220,20 @@ async def _arun_background_stream(
             if slot_held:
                 await slot_cm.__aexit__(None, None, None)
 
-            # Signal primary queue FIRST — unblocks the original client
-            try:
-                await sse_queue.put(None)
-            except Exception:
-                log_warning(f"Failed to signal primary queue for run {run_id} completion")
-
             # Mark run terminal in the event stream and wake all tails
             # (shielded to survive task cancellation)
             try:
                 await asyncio.shield(event_stream.complete_run(run_id, run_response.status or RunStatus.completed))
             except (Exception, asyncio.CancelledError):
                 log_warning(f"Failed to mark run {run_id} as completed in event stream")
+
+            # End the client stream only after the producer-owned terminal
+            # bookkeeping has settled: the caller may act on end-of-stream
+            # immediately (for example by continuing this same run).
+            try:
+                await sse_queue.put(None)
+            except Exception:
+                log_warning(f"Failed to signal primary queue for run {run_id} completion")
 
     task = asyncio.create_task(_background_producer())
     _background_tasks.add(task)
@@ -4713,12 +4715,6 @@ async def _acontinue_run_background_stream(
             if slot_held:
                 await slot_cm.__aexit__(None, None, None)
 
-            # Signal primary queue FIRST — unblocks the original client
-            try:
-                await sse_queue.put(None)
-            except Exception:
-                log_warning(f"Failed to signal primary queue for continue-run {_run_id} completion")
-
             # Mark run terminal in the event stream and wake all tails
             # (shielded to survive task cancellation)
             try:
@@ -4744,6 +4740,14 @@ async def _acontinue_run_background_stream(
                 await asyncio.shield(event_stream.complete_run(_run_id, final_status))
             except (Exception, asyncio.CancelledError):
                 log_warning(f"Failed to mark continue-run {_run_id} as completed in event stream")
+
+            # End the client stream only after the producer-owned terminal
+            # bookkeeping has settled: the caller may act on end-of-stream
+            # immediately (for example by continuing this same run again).
+            try:
+                await sse_queue.put(None)
+            except Exception:
+                log_warning(f"Failed to signal primary queue for continue-run {_run_id} completion")
 
     task = asyncio.create_task(_background_producer())
     _background_tasks.add(task)
