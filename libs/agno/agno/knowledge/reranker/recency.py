@@ -8,6 +8,7 @@ from pydantic import Field, field_validator
 from agno.knowledge.document import Document
 from agno.knowledge.reranker.base import Reranker
 from agno.knowledge.utils import RECENCY_METADATA_KEY, STORE_RECENCY_METADATA_KEY
+from agno.utils.log import log_warning
 
 _SECONDS_PER_DAY = 86400.0
 _LN_2 = log(2.0)
@@ -86,19 +87,6 @@ class RecencyReranker(Reranker):
     # Search score keys, in the order they are tried: adapters name this differently.
     score_keys: Tuple[str, ...] = ("similarity_score", "search_score", "score")
 
-    def validate_vector_db(self, vector_db: Any) -> None:
-        """Only PgVector reports when its rows were written.
-
-        Elsewhere a document is dated only if the caller set ``timestamp_key`` themselves,
-        and a store that reports nothing would rank on relevance alone while looking like
-        recency had run.
-        """
-        from agno.vectordb.pgvector import PgVector
-
-        if isinstance(vector_db, PgVector):
-            return None
-        raise NotImplementedError(f"RecencyReranker is not implemented for {type(vector_db).__name__} yet.")
-
     @field_validator("half_life_days", mode="before")
     @classmethod
     def _reject_bool_half_life(cls, value: Any) -> Any:
@@ -164,6 +152,7 @@ class RecencyReranker(Reranker):
             # the documented relevance/recency split whatever the store reported.
             scores = _rescaled(scores)
 
+        dated = 0
         scored: List[Tuple[float, int, Document]] = []
         for position, document in enumerate(documents):
             reported = scores[position]
@@ -172,6 +161,8 @@ class RecencyReranker(Reranker):
             else:
                 relevance = reported if reported is not None else 0.0
             recency = self._recency(document, now)
+            if recency is not None:
+                dated += 1
             # Relevance is scaled the same way for every document. An undated one simply
             # contributes no recency, rather than keeping an unscaled score that would
             # let it outrank a dated document it is less relevant than.
@@ -179,6 +170,14 @@ class RecencyReranker(Reranker):
             if recency is not None:
                 score += self.weight * recency
             scored.append((score, position, document))
+
+        if not dated:
+            # Ranking would fall through to relevance alone and look like recency ran.
+            log_warning(
+                f"RecencyReranker found no usable {self.timestamp_key!r} on any search result, so "
+                "ordering is unchanged. Set it in metadata when adding content, or use "
+                "PgVector(report_row_timestamp=True) to rank on when rows were written."
+            )
 
         # The original position breaks ties, so equal scores keep the vector db order.
         scored.sort(key=lambda entry: (-entry[0], entry[1]))

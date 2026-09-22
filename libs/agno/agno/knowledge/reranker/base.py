@@ -1,6 +1,6 @@
 import asyncio
 from inspect import signature
-from typing import Any, List, Optional
+from typing import List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -19,16 +19,6 @@ class Reranker(BaseModel):
     # Ceiling on the widened fetch, so a large request cannot turn one search into an
     # unbounded scan.
     max_candidates: int = Field(default=100, ge=1)
-
-    def validate_vector_db(self, vector_db: Any) -> None:
-        """Refuse a store this reranker cannot rank against.
-
-        Called once when Knowledge is built, so an unsupported store fails at setup
-        rather than returning plausible but unranked results at search time. The default
-        accepts every store: only a reranker that needs something a store may not provide
-        overrides this.
-        """
-        return None
 
     def search_limit(self, max_results: int) -> int:
         """The number of candidates the vector db should return for this reranker."""

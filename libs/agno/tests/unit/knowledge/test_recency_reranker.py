@@ -2,7 +2,7 @@
 
 import inspect
 from datetime import datetime, timedelta, timezone
-from typing import Any, Optional
+from typing import Any, List, Optional
 
 import pytest
 
@@ -502,36 +502,49 @@ def test_the_reported_key_cannot_mask_a_user_timestamp():
     assert STORE_RECENCY_METADATA_KEY in merged
 
 
-def test_recency_refuses_a_store_that_cannot_report_row_timestamps():
-    # Only PgVector reports when its rows were written. Elsewhere the reranker would rank
-    # on relevance alone while looking like recency had run.
-    class Qdrant:
-        pass
+def _captured_warnings(monkeypatch) -> List[str]:
+    """Agno's logger sets propagate=False, so caplog never sees these."""
+    import agno.knowledge.reranker.recency as recency_module
 
-    with pytest.raises(NotImplementedError, match="not implemented for Qdrant yet"):
-        RecencyReranker().validate_vector_db(Qdrant())
-
-
-def test_recency_accepts_pgvector():
-    pgvector = pytest.importorskip("agno.vectordb.pgvector")
-
-    store = pgvector.PgVector.__new__(pgvector.PgVector)
-
-    assert RecencyReranker().validate_vector_db(store) is None
+    messages: List[str] = []
+    monkeypatch.setattr(recency_module, "log_warning", lambda message, *a, **k: messages.append(str(message)))
+    return messages
 
 
-def test_other_rerankers_accept_any_store():
-    # The base hook is permissive: only a reranker with a store requirement overrides it.
-    from agno.knowledge.reranker.mmr import MMRReranker
+def test_a_pool_with_no_timestamps_warns(monkeypatch):
+    # Ordering falls through to relevance alone, which looks like recency ran.
+    messages = _captured_warnings(monkeypatch)
+    documents = [Document(id=str(i), content="c", meta_data={}) for i in range(3)]
 
-    class Qdrant:
-        pass
+    results = RecencyReranker().rerank("q", documents)
 
-    assert MMRReranker().validate_vector_db(Qdrant()) is None
+    assert [doc.id for doc in results] == ["0", "1", "2"]
+    assert any("no usable 'updated_at'" in message for message in messages)
 
 
-def test_knowledge_refuses_the_pairing_at_construction():
-    # Setup is where this should fail, not part way through a search.
+def test_one_dated_document_is_enough_to_stay_quiet(monkeypatch):
+    messages = _captured_warnings(monkeypatch)
+    documents = [
+        _document("dated", score=0.5, age_days=0),
+        Document(id="undated", content="b", meta_data={"similarity_score": 0.9}),
+    ]
+
+    RecencyReranker().rerank("q", documents)
+
+    assert not messages
+
+
+def test_the_warning_names_the_configured_timestamp_key(monkeypatch):
+    messages = _captured_warnings(monkeypatch)
+
+    RecencyReranker(timestamp_key="published").rerank("q", [Document(id="a", content="a", meta_data={})])
+
+    assert any("'published'" in message for message in messages)
+
+
+def test_a_store_reporting_no_timestamp_is_not_refused():
+    # A user on any store who sets the date themselves must keep working: the reranker
+    # reads their key first, so there is nothing to refuse.
     from agno.knowledge.knowledge import Knowledge
 
     class Qdrant:
@@ -540,5 +553,9 @@ def test_knowledge_refuses_the_pairing_at_construction():
         def exists(self) -> bool:
             return True
 
-    with pytest.raises(NotImplementedError, match="not implemented for Qdrant yet"):
-        Knowledge(vector_db=Qdrant(), reranker=RecencyReranker())
+        def search(self, query: str, limit: int = 5, filters=None):
+            return [Document(id=str(i), content="c", meta_data={"updated_at": NOW.isoformat()}) for i in range(3)]
+
+    knowledge = Knowledge(vector_db=Qdrant(), reranker=RecencyReranker())
+
+    assert len(knowledge.search("q", max_results=3)) == 3

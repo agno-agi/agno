@@ -139,9 +139,6 @@ class Knowledge(RemoteKnowledge):
         self.page_store = page_store
         self.page_search = page_search
         self.reranker = reranker
-        if reranker is not None and vector_db is not None:
-            # Fail at setup, not mid-search, when the store cannot support the reranker.
-            reranker.validate_vector_db(vector_db)
         if reranker is not None and getattr(vector_db, "reranker", None) is not None:
             log_warning(
                 "A reranker is set on both Knowledge and the vector db. Only the one on "
