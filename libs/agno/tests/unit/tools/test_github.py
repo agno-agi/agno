@@ -59,6 +59,8 @@ def mock_paginated_list(mock_search_repos):
     mock_list.totalCount = len(mock_search_repos)
     mock_list.__iter__.return_value = mock_search_repos
     mock_list.get_page.return_value = mock_search_repos
+    # PyGithub's search list is indexed with a slice to read a result window.
+    mock_list.__getitem__.side_effect = mock_search_repos.__getitem__
     return mock_list
 
 
@@ -361,78 +363,48 @@ def test_search_repositories_pagination(mock_github):
     mock_client, _ = mock_github
     github_tools = GithubTools()
 
-    # Create mock repos for different pages
-    mock_repos_page1 = [
-        MagicMock(
-            full_name="test-org/repo1",
-            description="First repo",
-            html_url="https://github.com/test-org/repo1",
-            stargazers_count=1000,
-            forks_count=100,
-            language="Python",
-        ),
-        MagicMock(
-            full_name="test-org/repo2",
-            description="Second repo",
-            html_url="https://github.com/test-org/repo2",
-            stargazers_count=900,
-            forks_count=90,
-            language="Python",
-        ),
-    ]
-
-    mock_repos_page2 = [
-        MagicMock(
-            full_name="test-org/repo3",
-            description="Third repo",
-            html_url="https://github.com/test-org/repo3",
-            stargazers_count=800,
-            forks_count=80,
+    def make_repo(index: int):
+        return MagicMock(
+            full_name=f"test-org/repo{index}",
+            description=f"Repo {index}",
+            html_url=f"https://github.com/test-org/repo{index}",
+            stargazers_count=1000 - index,
+            forks_count=100 - index,
             language="Python",
         )
-    ]
 
-    # Mock paginated list
+    # The result set, indexed the way PyGithub's search list indexes it.
+    corpus = [make_repo(index) for index in range(1, 121)]
     mock_paginated = MagicMock()
-    mock_paginated.totalCount = 3
-
-    # Test first page
-    mock_paginated.get_page.return_value = mock_repos_page1
+    mock_paginated.totalCount = len(corpus)
+    mock_paginated.__getitem__.side_effect = corpus.__getitem__
     mock_client.search_repositories.return_value = mock_paginated
 
+    # First page of two
     result = github_tools.search_repositories("python", page=1, per_page=2)
     result_data = json.loads(result)
+    assert [repo["full_name"] for repo in result_data] == ["test-org/repo1", "test-org/repo2"]
 
-    mock_paginated.get_page.assert_called_with(0)  # GitHub API uses 0-based indexing
-    assert len(result_data) == 2
-    assert result_data[0]["full_name"] == "test-org/repo1"
-    assert result_data[1]["full_name"] == "test-org/repo2"
-
-    # Test second page
-    mock_paginated.get_page.return_value = mock_repos_page2
-    mock_client.search_repositories.return_value = mock_paginated
-
+    # Second page of two continues where the first ended
     result = github_tools.search_repositories("python", page=2, per_page=2)
     result_data = json.loads(result)
+    assert [repo["full_name"] for repo in result_data] == ["test-org/repo3", "test-org/repo4"]
 
-    mock_paginated.get_page.assert_called_with(1)  # GitHub API uses 0-based indexing
-    assert len(result_data) == 1
-    assert result_data[0]["full_name"] == "test-org/repo3"
-
-    # Test with custom per_page
-    mock_paginated.get_page.return_value = mock_repos_page1[:1]
-    result = github_tools.search_repositories("python", page=1, per_page=1)
+    # A page size that is not GitHub's default of 30 still lines up: page 2 of ten
+    # is results 11-20, not results 31-40
+    result = github_tools.search_repositories("python", page=2, per_page=10)
     result_data = json.loads(result)
+    assert [repo["full_name"] for repo in result_data] == [f"test-org/repo{index}" for index in range(11, 21)]
 
-    assert len(result_data) == 1
-    assert result_data[0]["full_name"] == "test-org/repo1"
-
-    # Test with per_page exceeding GitHub's max (100)
+    # per_page above GitHub's max of 100 is clamped
     result = github_tools.search_repositories("python", per_page=150)
     result_data = json.loads(result)
-
-    # Should be limited to 100
+    assert len(result_data) == 100
     mock_client.search_repositories.assert_called_with(query="python", sort="stars", order="desc")
+
+    # A page past the end of the result set is empty rather than an error
+    result = github_tools.search_repositories("python", page=99, per_page=10)
+    assert json.loads(result) == []
 
 
 def test_get_pull_request_count(mock_github):
@@ -1644,3 +1616,37 @@ def test_get_pull_requests_limit_respected(mock_github):
     assert len(result_data) == 3
     assert result_data[0]["number"] == 1
     assert result_data[2]["number"] == 3
+
+
+def test_search_issues_and_prs_applies_the_page_window(mock_github):
+    """The issues search reads the requested window, not a truncated default page."""
+    mock_client, _ = mock_github
+    github_tools = GithubTools()
+
+    def make_issue(number: int):
+        issue = MagicMock(spec=Issue)
+        issue.number = number
+        issue.title = f"Issue {number}"
+        issue.repository.full_name = "test-org/test-repo"
+        issue.state = "open"
+        issue.created_at = datetime(2024, 1, 1)
+        issue.updated_at = datetime(2024, 1, 1)
+        issue.html_url = f"https://github.com/test-org/test-repo/issues/{number}"
+        issue.user.login = "octocat"
+        issue.pull_request = None
+        issue.comments = 0
+        issue.labels = []
+        return issue
+
+    corpus = [make_issue(number) for number in range(1, 121)]
+    mock_paginated = MagicMock()
+    mock_paginated.totalCount = len(corpus)
+    mock_paginated.__getitem__.side_effect = corpus.__getitem__
+    mock_client.search_issues.return_value = mock_paginated
+
+    payload = json.loads(github_tools.search_issues_and_prs("repo:test-org/test-repo is:issue", page=2, per_page=10))
+
+    assert payload["page"] == 2
+    assert payload["per_page"] == 10
+    assert payload["results_count"] == 10
+    assert [item["number"] for item in payload["results"]] == list(range(11, 21))

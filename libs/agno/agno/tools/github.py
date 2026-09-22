@@ -108,11 +108,16 @@ class GithubTools(Toolkit):
             # Ensure per_page doesn't exceed GitHub's max of 100
             per_page = min(per_page, 100)
 
+            # Ask for the requested window of the result set. A PyGithub search list
+            # only takes a page size when the client is built, so the window has to
+            # come from slicing it: reading one default-sized page and truncating it
+            # locally skips every result between two pages.
+            start = (page - 1) * per_page
             repositories = self.g.search_repositories(query=query, sort=sort, order=order)
 
             # Get the specified page of results
             repo_list = []
-            for repo in repositories.get_page(page - 1):
+            for repo in repositories[start : start + per_page]:
                 repo_info = {
                     "full_name": repo.full_name,
                     "description": repo.description,
@@ -122,9 +127,6 @@ class GithubTools(Toolkit):
                     "language": repo.language,
                 }
                 repo_list.append(repo_info)
-
-                if len(repo_list) >= per_page:
-                    break
 
             return json.dumps(repo_list, indent=2)
 
@@ -1712,19 +1714,22 @@ class GithubTools(Toolkit):
             if label:
                 search_query += f" label:{label}"
 
+            # Ensure per_page doesn't exceed GitHub's max of 100
+            per_page = min(per_page, 100)
+
             # Perform the search
             log_debug(f"Final search query: {search_query}")
             issue_results = self.g.search_issues(search_query, sort=sort, order=order)
 
             # Process results
-            per_page = min(per_page, 100)  # Ensure per_page doesn't exceed 100
             results = []
 
             try:
-                # Get the specific page of results
-                page_items = issue_results.get_page(page - 1)
+                # Ask for the requested window; see search_repositories for why the
+                # page size is applied here rather than passed to the search call.
+                start = (page - 1) * per_page
 
-                for issue in page_items:
+                for issue in issue_results[start : start + per_page]:
                     issue_info = {
                         "number": issue.number,
                         "title": issue.title,
