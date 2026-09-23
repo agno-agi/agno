@@ -28,7 +28,8 @@ def create_token(user_id: str, scopes: list[str] | None = None) -> str:
     payload = {
         "sub": user_id,
         "aud": TEST_OS_ID,
-        "scopes": scopes or ["evals:read", "evals:write", "evals:delete"],
+        # Running an eval executes the target agent, so the default token also holds run on it.
+        "scopes": scopes or ["evals:read", "evals:write", "evals:delete", "agents:assistant:run"],
         "exp": datetime.now(UTC) + timedelta(hours=1),
         "iat": datetime.now(UTC),
     }
