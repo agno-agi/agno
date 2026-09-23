@@ -2,7 +2,13 @@
 
 Last updated: 2026-09-24
 
-After the low-severity authorization fixes, re-ran `asymmetric_keys.py`, `basic_scopes.py`,
+Second pass on `feat/agentos-authz` after #10502 merged. The eight authorization files ran twice in
+a row, and the seven that serve were also served for real on :7777: each returned 200 from
+`/health` and 401 from an unauthenticated `/config`. `user_isolation.py` reported
+`admin_visible: 4` on the second run because its SQLite file kept the first run's sessions. It now
+deletes that file at start, and every run reports `admin_visible: 2`.
+
+Earlier (2026-09-24): after the low-severity authorization fixes, re-ran `asymmetric_keys.py`, `basic_scopes.py`,
 `excluded_routes.py`, `per_resource_scopes.py`, `service_accounts.py`, `test_scopes.py`,
 `user_isolation.py` and `user_isolation_knowledge.py` with `.venvs/demo` against the branch's
 `libs/agno`, with `AgentOS.serve()` stubbed so each file builds its app and returns. All exit 0.

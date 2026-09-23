@@ -31,6 +31,11 @@ JWT_SECRET = os.getenv(
     "JWT_VERIFICATION_KEY", "development-secret-at-least-256-bits-long"
 )
 
+# Start from an empty database so the admin count below covers only this run's sessions.
+os.makedirs("tmp", exist_ok=True)
+if os.path.exists("tmp/security_user_isolation.db"):
+    os.remove("tmp/security_user_isolation.db")
+
 db = SqliteDb(db_file="tmp/security_user_isolation.db")
 isolation_agent = Agent(
     id="isolation-agent",

@@ -1,6 +1,16 @@
 # Test Log: 26_authorization
 
-Last updated: 2026-09-24 (after the low-severity authorization fixes: scope and slug validation,
+Last updated: 2026-09-24, second pass on `feat/agentos-authz` after #10502 merged. Ran 01 to 15
+twice in a row, first from an empty `tmp/` and then over the first run's files. The first run's
+output matches what each file explains. On the second run, 02, 03 and 05 printed leftovers from the
+first: dave, the "never seen" user, was already in the directory (02); the "before anyone runs"
+roster was not empty and chegizkhan started disabled (03); and both audit trails doubled (05).
+Those three files now delete their throwaway SQLite database at start, as 09, 10, 11 and 14 already
+did, and two back-to-back runs print the same thing. 07 and 08 were served for real on :7777:
+`/health` 200, `/config` and `/users` 401 without a token, and `/users`, `/users/metrics` (and
+`/authz/roles` on 07) 200 with the printed admin token.
+
+Earlier (2026-09-24): (after the low-severity authorization fixes: scope and slug validation,
 reserved principals, the approval gate failing closed and the WebSocket PAT decision. Re-ran 01 to
 15 with the demo venv against the branch's `libs/agno`: every file exits 0 end to end, and every
 ALLOWED and BLOCKED line matches the outcome the file explains. 07 and 08 booted with `serve`

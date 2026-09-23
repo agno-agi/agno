@@ -43,6 +43,9 @@ JWT_SECRET = os.getenv("JWT_VERIFICATION_KEY", "your-secret-key-at-least-256-bit
 OS_ID = "managed-users-os"
 
 os.makedirs("tmp", exist_ok=True)
+# Start from an empty database so every run tells the same story (dave is new each time).
+if os.path.exists("tmp/managed_users.db"):
+    os.remove("tmp/managed_users.db")
 
 # One database for everything: the directory, roles, and audit all live in the OS db.
 db = SqliteDb(db_file="tmp/managed_users.db")
