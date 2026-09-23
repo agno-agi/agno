@@ -188,6 +188,10 @@ def _determine_tools_for_model(
                     continue
             _tools.append(tool)
 
+    # Tools appended after this point are framework-owned and must not be shadowed by a
+    # user-provided tool that happens to reuse one of their names (see #9871).
+    n_user_tools = len(_tools)
+
     if team.read_chat_history:
         _tools.append(_get_chat_history_function(team, session=session, async_mode=async_mode))
 
@@ -383,10 +387,17 @@ def _determine_tools_for_model(
     ):
         strict = True
 
+    # Names owned by framework tools (everything appended after the user tools). A
+    # user tool must never replace one of these; the Team depends on them (see #9871).
+    reserved_tool_names: Set[str] = {
+        framework_tool.name for framework_tool in _tools[n_user_tools:] if isinstance(framework_tool, Function)
+    }
+
     for tool_index, tool in enumerate(_tools):
         # ComponentTool markers are rejected at the API boundary (Team __init__ /
         # set_tools / add_tool), so anything reaching here is already a real tool -- no
         # per-run guard, which would tax every run to catch a case the entry points own.
+        is_user_tool = tool_index < n_user_tools
         if isinstance(tool, Dict):
             # If a dict is passed, it is a builtin tool
             # that is run by the model provider and not the Agent
@@ -397,6 +408,12 @@ def _determine_tools_for_model(
             # For each function in the toolkit and process entrypoint
             toolkit_functions = tool.get_async_functions() if async_mode else tool.get_functions()
             for name, _func in toolkit_functions.items():
+                if is_user_tool and name in reserved_tool_names:
+                    log_warning(
+                        f"Tool name '{name}' from toolkit '{tool.name}' is reserved by the "
+                        f"team framework; skipping the user-provided tool."
+                    )
+                    continue
                 if name in _function_names:
                     log_warning(
                         f"Duplicate tool name '{name}' from toolkit '{tool.name}' "
@@ -431,6 +448,13 @@ def _determine_tools_for_model(
             emit_toolkit_instructions = source_toolkit is not None and emits_toolkit_instructions(
                 source_toolkit, tool_index
             )
+            if is_user_tool and tool.name in reserved_tool_names:
+                log_warning(
+                    f"Tool name '{tool.name}' is reserved by the team framework; skipping the user-provided tool."
+                )
+                if emit_toolkit_instructions and source_toolkit is not None:
+                    add_toolkit_instructions(source_toolkit)
+                continue
             if tool.name in _function_names:
                 log_warning(f"Duplicate tool name '{tool.name}' already registered on team; skipping the duplicate.")
                 if emit_toolkit_instructions and source_toolkit is not None:
@@ -468,6 +492,11 @@ def _determine_tools_for_model(
                 # from_callable caches the derivation and returns an isolated
                 # per-run copy, so no further copy is needed before mutating it.
                 _func = Function.from_callable(tool, strict=strict)
+                if is_user_tool and _func.name in reserved_tool_names:
+                    log_warning(
+                        f"Tool name '{_func.name}' is reserved by the team framework; skipping the user-provided tool."
+                    )
+                    continue
                 if _func.name in _function_names:
                     log_warning(
                         f"Duplicate tool name '{_func.name}' already registered on team; skipping the duplicate."
