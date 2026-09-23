@@ -90,25 +90,25 @@ class TestRefreshStatus:
         assert body["status"] == "idle"
         assert body["started_at"] is None
         assert body["updated_at"] == "2027-01-15T08:00:00Z"
-        assert body["computed_at"] == {"metrics": None, "session_metrics": None, "token_metrics": None}
+        assert body["computed_at"] == {"model_metrics": None, "session_metrics": None, "token_metrics": None}
 
     def test_a_route_reports_when_its_answer_was_computed(self, client):
         with _scope(None):
-            models = client.get(f"/os/metrics?{_last(1)}").json()
+            models = client.get(f"/os/metrics/models?{_last(1)}").json()
             body = client.get(f"/os/metrics/refresh/status?{_last(1)}").json()
 
-        assert body["computed_at"]["metrics"] == models["computed_at"]
+        assert body["computed_at"]["model_metrics"] == models["computed_at"]
         assert body["computed_at"]["session_metrics"] is None
 
     def test_computed_at_times_are_per_owner_and_window(self, client):
         with _scope(None):
-            client.get(f"/os/metrics?{_last(1)}")
+            client.get(f"/os/metrics/models?{_last(1)}")
             other_window = client.get(f"/os/metrics/refresh/status?{_last(7)}").json()
         with _scope("alice"):
             other_owner = client.get(f"/os/metrics/refresh/status?{_last(1)}").json()
 
-        assert other_window["computed_at"]["metrics"] is None
-        assert other_owner["computed_at"]["metrics"] is None
+        assert other_window["computed_at"]["model_metrics"] is None
+        assert other_owner["computed_at"]["model_metrics"] is None
 
     def test_no_daily_metrics_yet_means_no_stamp(self, client, mock_db):
         mock_db.get_metrics.return_value = ([], None)
@@ -158,14 +158,14 @@ class TestRefresh:
     def test_every_cached_answer_is_forgotten(self, client, mock_db):
         """One call makes the next read of any OS metrics route recompute."""
         with _scope(None):
-            models = client.get(f"/os/metrics?{_last(1)}").json()
+            models = client.get(f"/os/metrics/models?{_last(1)}").json()
             sessions = client.get(f"/os/metrics/sessions?{_last(1)}").json()
             client.post("/os/metrics/refresh")
             body = client.get(f"/os/metrics/refresh/status?{_last(1)}").json()
-            models_after = client.get(f"/os/metrics?{_last(1)}").json()
+            models_after = client.get(f"/os/metrics/models?{_last(1)}").json()
             sessions_after = client.get(f"/os/metrics/sessions?{_last(1)}").json()
 
-        assert body["computed_at"] == {"metrics": None, "session_metrics": None, "token_metrics": None}
+        assert body["computed_at"] == {"model_metrics": None, "session_metrics": None, "token_metrics": None}
         assert models_after["computed_at"] != models["computed_at"]
         assert sessions_after["computed_at"] != sessions["computed_at"]
 
@@ -242,11 +242,11 @@ class TestRefresh:
         mock_db.get_metrics.side_effect = lambda **kwargs: (time.sleep(0.3), ([_row(_today())], 1_800_000_000))[1]
         racing = {}
         with _scope(None):
-            reader = threading.Thread(target=lambda: racing.update(client.get("/os/metrics").json()))
+            reader = threading.Thread(target=lambda: racing.update(client.get("/os/metrics/models").json()))
             reader.start()
             time.sleep(0.1)
             client.post("/os/metrics/refresh")
             reader.join()
-            after = client.get("/os/metrics").json()
+            after = client.get("/os/metrics/models").json()
 
         assert after["computed_at"] != racing["computed_at"]

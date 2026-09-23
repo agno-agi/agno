@@ -14,7 +14,7 @@ through the same routes used by monitoring clients.
 | `filtering.py` | Build a `FilterExpr`, inspect the filter schema, and execute an advanced trace search. |
 | `traces_to_clickhouse.py` | Split transactional sessions from a batched ClickHouse trace store and select it with `db_id`. |
 | `metrics.py` | Refresh daily metrics from persisted sessions and read the aggregate back. |
-| `os_metrics.py` | Serve agents on two models and read their model usage from `GET /os/metrics`. |
+| `os_metrics.py` | Serve agents on two models and read their model usage from `GET /os/metrics/models`. |
 
 ## Prerequisites
 
@@ -57,7 +57,7 @@ Serve two agents on different models to read model usage:
 .venvs/demo/bin/python cookbook/05_agent_os/13_observability/os_metrics.py
 ```
 
-After running both agents, open `GET /os/metrics` for the model usage
+After running both agents, open `GET /os/metrics/models` for the model usage
 breakdown of the last 30 days, or narrow it with
 `?starting_date=YYYY-MM-DD&ending_date=YYYY-MM-DD`. `GET /os/metrics/sessions`
 counts the sessions created per day and compares the window with the one of

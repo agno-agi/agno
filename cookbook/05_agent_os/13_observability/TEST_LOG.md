@@ -96,13 +96,13 @@ one agent run, one agent session, one user, and 42 total tokens.
 database, ran `metrics-researcher` (`gpt-5.5`) twice in session `s-a` and
 `metrics-summarizer` (`gpt-5.6-luna`) once in session `s-b` through
 `POST /agents/{agent_id}/runs`, called `POST /os/metrics/refresh`, then read
-`GET /os/metrics?starting_date=<6 days ago>` twice,
+`GET /os/metrics/models?starting_date=<6 days ago>` twice,
 `GET /os/metrics/sessions?starting_date=<6 days ago>` once and
 `GET /os/metrics/tokens?starting_date=<6 days ago>` twice, with
 `GET /os/metrics/refresh/status` before the refresh, after the reads and
 after a second `POST /os/metrics/refresh`.
 
-**Result:** `GET /os/metrics` reported `window_days` 7 and 3 runs that
+**Result:** `GET /os/metrics/models` reported `window_days` 7 and 3 runs that
 recorded a model: `gpt-5.5` at 66.7% run share over 2 runs and `gpt-5.6-luna`
 at 33.3% over 1. The second read returned the same `computed_at`, so it was
 served from the cache. `GET /os/metrics/sessions` reported 7 entries, one per
