@@ -66,19 +66,49 @@ def hash_string_sha256(input_string):
     return hex_digest
 
 
+def _scan_brace_spans(text: str, quotes_in_prose: bool) -> list[tuple[int, int]]:
+    """Return (start, end) spans of top-level balanced braces, ignoring unmatched '}'."""
+    spans: list[tuple[int, int]] = []
+    depth = 0
+    start = -1
+    in_string = False
+    escape = False
+    for idx, ch in enumerate(text):
+        if in_string:
+            if escape:
+                escape = False
+            elif ch == "\\":
+                escape = True
+            elif ch == '"':
+                in_string = False
+        elif ch == '"':
+            in_string = quotes_in_prose or depth > 0
+        elif ch == "{":
+            if depth == 0:
+                start = idx
+            depth += 1
+        elif ch == "}" and depth > 0:
+            depth -= 1
+            if depth == 0:
+                spans.append((start, idx + 1))
+    return spans
+
+
 def _extract_json_objects(text: str) -> list[str]:
-    # Decode from each '{' so stray braces or quotes in surrounding prose cannot hide an object
-    decoder = json.JSONDecoder()
+    # A quote in prose may open a quoted phrase or be a stray, so scan both ways and keep spans that decode
+    spans = set(_scan_brace_spans(text, quotes_in_prose=True)) | set(_scan_brace_spans(text, quotes_in_prose=False))
     objs: list[str] = []
-    idx = text.find("{")
-    while idx != -1:
-        try:
-            _, end = decoder.raw_decode(text, idx)
-        except json.JSONDecodeError:
-            idx = text.find("{", idx + 1)
+    last_end = -1
+    for start, end in sorted(spans):
+        if start < last_end:
             continue
-        objs.append(text[idx:end])
-        idx = text.find("{", end)
+        candidate = text[start:end]
+        try:
+            json.loads(candidate)
+        except (json.JSONDecodeError, RecursionError):
+            continue
+        objs.append(candidate)
+        last_end = end
     return objs
 
 

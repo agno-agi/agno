@@ -482,3 +482,8 @@ def test_extract_json_objects_ignores_quoted_open_brace_in_prose():
 def test_extract_json_objects_skips_non_json_brace_spans():
     assert _extract_json_objects('Use "{name}" placeholders: {"a": 1}') == ['{"a": 1}']
     assert _extract_json_objects('{"a": 1}{"b": 2}') == ['{"a": 1}', '{"b": 2}']
+
+
+def test_extract_json_objects_handles_malformed_deep_nesting():
+    assert _extract_json_objects('{"x": ' * 40000) == []
+    assert _extract_json_objects("{ a " * 60000) == []
