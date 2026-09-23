@@ -177,11 +177,21 @@ OFFICE_MIME_TYPES = {DOCX_MIME_TYPE, XLSX_MIME_TYPE, PPTX_MIME_TYPE}
 
 def _extract_docx_text(content_bytes: bytes) -> str:
     import docx
+    from docx.table import Table
 
     buffer = io.BytesIO(content_bytes)
     document = docx.Document(buffer)
-    paragraphs = [p.text for p in document.paragraphs]
-    return "\n".join(paragraphs)
+    lines = []
+    # document.paragraphs skips tables; iter_inner_content yields both in document order
+    for block in document.iter_inner_content():
+        if isinstance(block, Table):
+            for row in block.rows:
+                cells = [cell.text for cell in row.cells]
+                if any(cells):
+                    lines.append("\t".join(cells))
+        else:
+            lines.append(block.text)
+    return "\n".join(lines)
 
 
 def _extract_xlsx_text(content_bytes: bytes) -> str:
