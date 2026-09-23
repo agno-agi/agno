@@ -1779,6 +1779,9 @@ class AuthMiddleware(BaseHTTPMiddleware):
         - the route decision under a provider that decides from stored grants (managed
           roles, ReBAC). A token-scope plane cannot be re-asked here, since the owner's
           grants live in tokens this OS never sees; there the create-time check stands.
+          The same holds for managed roles read from a ``roles_claim``: the owner's role
+          is on their IdP token, the executor has no such token, and stored assignments
+          are empty for an IdP user, so re-asking would refuse every owned schedule.
 
         An unowned (system) schedule forwards no owner and is not affected. A denial is
         written to the decision trail and answered 403, so the executor records a failed
@@ -1826,6 +1829,11 @@ class AuthMiddleware(BaseHTTPMiddleware):
         from agno.os.authz.provider import AuthorizationContext
 
         if token_scopes_are_authoritative(request):
+            return None
+        # Roles read from a token claim are grants this OS never stores; the executor's
+        # request carries no such claim, so a stored-assignment decision for the owner
+        # would be a false denial. The create-time check stands, as for token scopes.
+        if getattr(getattr(request.app.state, "role_store", None), "roles_claim", None):
             return None
         required_scopes = self._get_required_scopes(method, path)
         if not required_scopes:

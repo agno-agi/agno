@@ -7,6 +7,9 @@ internal-token branch now re-checks the owner's directory off switch and, under 
 provider that decides from stored grants, the owner's route decision.
 """
 
+import time
+
+import jwt
 import pytest
 
 pytest.importorskip("sqlalchemy")
@@ -84,3 +87,46 @@ def test_an_unowned_schedule_is_unaffected(harness):
         "/agents/research/runs", data={"message": "tick"}, headers={"Authorization": f"Bearer {INTERNAL_TOKEN}"}
     )
     assert resp.status_code != 403
+
+
+@pytest.fixture
+def claim_harness(tmp_path):
+    """Roles come from the IdP token: the owner has no stored assignment, only a claim."""
+    db = SqliteDb(db_file=str(tmp_path / "sched-claim.db"))
+    authz = Authorization(db=db, verification_keys=[SECRET], audience=OS_ID, algorithm="HS256", roles_claim="roles")
+    authz.define_role("member", ["agents:*:read", "agents:*:run"])
+    directory = UserDirectory(auto_provision=False)
+    agent_os = AgentOS(
+        id=OS_ID,
+        db=db,
+        agents=[Agent(id="research", name="R", db=InMemoryDb())],
+        internal_service_token=INTERNAL_TOKEN,
+        authorization=authz,
+        user_directory=directory,
+    )
+    client = TestClient(agent_os.get_app())
+    directory.upsert("alice")
+    return client, directory
+
+
+def _idp_token(sub: str, roles) -> str:
+    payload = {"sub": sub, "aud": OS_ID, "roles": roles, "exp": int(time.time()) + 3600}
+    return jwt.encode(payload, SECRET, algorithm="HS256")
+
+
+def test_an_owner_whose_role_lives_on_the_token_still_fires(claim_harness):
+    client, _ = claim_harness
+    direct = client.post(
+        "/agents/research/runs",
+        data={"message": "hi"},
+        headers={"Authorization": f"Bearer {_idp_token('alice', ['member'])}"},
+    )
+    assert direct.status_code != 403, direct.text
+    # The executor holds no IdP token for alice. Her stored assignments (none) must not decide.
+    assert _fire(client) != 403
+
+
+def test_a_disabled_owner_is_still_refused_under_a_roles_claim(claim_harness):
+    client, directory = claim_harness
+    directory.set_disabled("alice", True)
+    assert _fire(client) == 403
