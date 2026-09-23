@@ -190,3 +190,21 @@ def test_team_run_schema_lineage_defaults_to_none_when_absent():
     assert schema.forked_from_session_id is None
     assert schema.regenerated_from is None
     assert schema.last_checkpoint_at_message_index is None
+
+
+@pytest.mark.parametrize(
+    "schema_name, id_field",
+    [("RunSchema", "agent_id"), ("TeamRunSchema", "team_id"), ("WorkflowRunSchema", "workflow_id")],
+)
+def test_run_schemas_expose_the_cancellation_stage(schema_name, id_field):
+    """The stage is what a UI reads to hide never-started cancelled runs; it
+    must survive every run schema, and default to None when absent."""
+    import agno.os.schema as schema_module
+
+    schema_cls = getattr(schema_module, schema_name)
+    with_stage = schema_cls.from_dict(
+        {"run_id": "r1", id_field: "x", "status": "CANCELLED", "cancellation_stage": "PENDING"}
+    )
+    assert with_stage.cancellation_stage == "PENDING"
+    without = schema_cls.from_dict({"run_id": "r2", id_field: "x", "status": "CANCELLED"})
+    assert without.cancellation_stage is None
