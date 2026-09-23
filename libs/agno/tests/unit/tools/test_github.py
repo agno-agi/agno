@@ -1423,6 +1423,7 @@ def test_create_branch(mock_github):
 
     # Mock repository default branch
     mock_repo.default_branch = "main"
+    mock_repo.html_url = "https://github.com/test-org/test-repo"
 
     # Mock source branch reference
     mock_source_ref = MagicMock()
@@ -1465,6 +1466,23 @@ def test_create_branch(mock_github):
 
     assert "error" in result_data
     assert "Reference not found" in result_data["error"]
+
+
+def test_create_branch_uses_enterprise_repository_url(mock_github):
+    """Branch links should use the repository's web URL, not its API URL."""
+    _, mock_repo = mock_github
+    github_tools = GithubTools(base_url="https://github.example.com/api/v3")
+    mock_repo.default_branch = "main"
+    mock_repo.html_url = "https://github.example.com/test-org/test-repo"
+    mock_repo.get_git_ref.return_value.object.sha = "source-commit-sha"
+    mock_repo.create_git_ref.return_value.object.sha = "source-commit-sha"
+    mock_repo.create_git_ref.return_value.url = (
+        "https://github.example.com/api/v3/repos/test-org/test-repo/git/refs/heads/feature/agent"
+    )
+
+    result = github_tools.create_branch(repo_name="test-org/test-repo", branch_name="feature/agent")
+
+    assert json.loads(result)["url"] == "https://github.example.com/test-org/test-repo/tree/feature/agent"
 
 
 def test_set_default_branch(mock_github):

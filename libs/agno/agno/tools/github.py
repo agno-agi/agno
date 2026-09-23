@@ -1539,7 +1539,7 @@ class GithubTools(Toolkit):
             branch_info = {
                 "name": branch_name,
                 "sha": new_branch.object.sha,
-                "url": new_branch.url.replace("api.github.com/repos", "github.com").replace("git/refs/heads", "tree"),
+                "url": f"{repo.html_url.rstrip('/')}/tree/{branch_name}",
             }
 
             return json.dumps(branch_info, indent=2)
