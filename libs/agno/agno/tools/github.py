@@ -1326,9 +1326,12 @@ class GithubTools(Toolkit):
                 log_debug(f"Error decoding file content: {e}")
                 decoded_content = "Binary file (content not displayed)"
 
-            # Make sure we don't try to display binary content
+            # Make sure we don't try to display binary content. Only NUL and control
+            # characters that never occur in normal text are treated as a binary
+            # signal, so valid non-ASCII UTF-8 text (e.g. Chinese) is preserved.
             if isinstance(decoded_content, str) and (
-                "\x00" in decoded_content or sum(1 for c in decoded_content[:1000] if not (32 <= ord(c) <= 126)) > 200
+                "\x00" in decoded_content
+                or sum(1 for c in decoded_content[:1000] if ord(c) < 32 and c not in "\t\n\r\x0b\x0c") > 200
             ):
                 decoded_content = "Binary file (content not displayed)"
 
