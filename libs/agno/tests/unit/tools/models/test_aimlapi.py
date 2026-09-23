@@ -22,6 +22,7 @@ class Gateway:
         self.poll_failures: List[int] = []  # HTTP statuses to answer polls with, before the real one
         self.asset_content_type = "image/png"
         self.transcript: Any = "hello from agno"
+        self.stt_error: Any = {"name": "ProviderError", "message": "transcription failed"}
         self.error_shape: Any = {"message": "content policy"}
 
     def handle(self, request: httpx.Request) -> httpx.Response:
@@ -55,6 +56,8 @@ class Gateway:
         if path == "/v1/stt/stt-1":
             status = self.stt_statuses.pop(0)
             body = {"generation_id": "stt-1", "status": status}
+            if status in ("error", "failed"):
+                body["error"] = self.stt_error
             if status == "completed":
                 body["result"] = {"results": {"channels": [{"alternatives": [{"transcript": self.transcript}]}]}}
             return httpx.Response(200, json=body)
@@ -262,6 +265,22 @@ def test_generate_video_reports_a_string_error(gateway):
     gateway.video_statuses = ["queued", "error"]
     gateway.error_shape = "quota exhausted"
     assert tools().generate_video("a boat").content == "Failed to generate video: quota exhausted"
+
+
+def test_a_failed_transcription_reports_the_providers_message(gateway):
+    """AssemblyAI-backed jobs end as "failed", not "error"; the message must survive."""
+    gateway.stt_statuses = ["queued", "failed"]
+    gateway.stt_error = {"name": "ProviderError", "message": "Internal server error. Please retry."}
+    assert tools().transcribe_audio("https://files.example/clip.mp3") == (
+        "Failed to transcribe audio: Internal server error. Please retry."
+    )
+
+
+def test_a_waiting_job_keeps_polling(gateway):
+    """The Nova-3 docs example still tests for "waiting", so it counts as in-progress."""
+    gateway.stt_statuses = ["queued", "waiting", "completed"]
+    assert tools().transcribe_audio("https://files.example/clip.mp3") == "hello from agno"
+    assert paths(gateway).count(("GET", "/v1/stt/stt-1")) == 2
 
 
 def test_generate_video_stops_on_an_unknown_status(gateway):

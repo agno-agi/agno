@@ -23,10 +23,18 @@ AIMLAPI_HOST = "api.aimlapi.com"
 
 SPEECH_FORMATS = ("mp3", "opus", "aac", "flac", "wav", "pcm")
 
-# Statuses a job reports while it is still running. Anything else is terminal:
-# "completed" carries the result, "error" carries a message, and an unknown
-# status stops the loop instead of spinning until the timeout.
-_IN_PROGRESS = frozenset({"queued", "generating", "processing", "pending", "running", "in_progress", "active"})
+# Statuses a job reports while it is still running. Anything outside this set is
+# terminal: "completed" carries the result, "error"/"failed" carry a message, and
+# an unknown status stops the loop instead of spinning until the timeout.
+# Measured on the gateway 2026-09-23 across six transcription models: only
+# queued, generating, completed and failed appear. "waiting" is kept because the
+# Nova-3 docs example still tests for it, and treating it as in-progress can only
+# ever mean one more poll.
+_IN_PROGRESS = frozenset(
+    {"queued", "generating", "processing", "pending", "running", "in_progress", "active", "waiting"}
+)
+# Deepgram-backed jobs report "error"; AssemblyAI-backed ones report "failed".
+_FAILED = frozenset({"error", "failed"})
 _TRANSIENT_STATUSES = frozenset({408, 425, 429, 500, 502, 503, 504})
 _MAX_TRANSIENT_RETRIES = 3
 
@@ -364,7 +372,7 @@ class AIMLAPITools(Toolkit):
         status = job.get("status")
         if status == "completed":
             return None
-        if status == "error":
+        if status in _FAILED:
             return f"Failed to {what}: {_error_text(job.get('error')) or 'generation failed'}"
         return f"Failed to {what}: job ended with status {status!r}"
 
