@@ -527,6 +527,33 @@ def test_declines_name_the_tail_setting_actually_in_force(caplog):
     assert "keep_last_runs" not in message
 
 
+def test_an_explicit_default_value_still_collides():
+    """keep_last_runs=5 written by hand is a choice, even though 5 is also the default.
+
+    Comparing against the value alone cannot tell the two apart, so an explicit 5 alongside
+    keep_last_tokens was silently discarded - the exact surprise the mutual exclusion exists
+    to prevent.
+    """
+    with pytest.raises(ValueError, match="cannot both be set"):
+        Compaction(keep_last_runs=5, keep_last_tokens=20_000)
+
+    # The untouched default still does not collide.
+    assert Compaction(keep_last_tokens=20_000).keep_last_runs is None
+
+
+def test_the_archive_is_searchable_by_default():
+    """An archive the agent cannot reach only helps a developer reading a row.
+
+    The tool is still withheld until something has actually been archived, so it costs nothing
+    on a conversation that never folds.
+    """
+    c = Compaction()
+
+    assert c.archive is True
+    assert c.searchable is True
+    assert c.tools_for("s1", None) is None  # nothing archived yet
+
+
 def test_keep_last_tokens_rejects_non_positive_values():
     with pytest.raises(ValueError, match="keep_last_tokens"):
         Compaction(keep_last_tokens=0)
@@ -691,7 +718,7 @@ def test_summary_points_at_the_archive_only_when_the_agent_can_read_it():
     archived = _record(messages, 3, summary="s", archived=True)
 
     searchable = Compaction(searchable=True).apply_record(messages, archived)[0]
-    not_searchable = Compaction().apply_record(messages, archived)[0]
+    not_searchable = Compaction(searchable=False).apply_record(messages, archived)[0]
     no_archive = Compaction(searchable=True).apply_record(messages, _record(messages, 3, summary="s"))[0]
 
     assert "searchable" in searchable.content
@@ -1103,7 +1130,7 @@ def test_lookup_is_promised_only_when_the_agent_can_act_on_it():
 
     assert Compaction(searchable=True)._archive_instruction(archived)
     assert Compaction(searchable=True)._archive_instruction(unarchived) is None
-    assert Compaction()._archive_instruction(archived) is None
+    assert Compaction(searchable=False)._archive_instruction(archived) is None
 
 
 # --- async parity -----------------------------------------------------------

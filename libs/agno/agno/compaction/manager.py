@@ -28,9 +28,18 @@ if TYPE_CHECKING:
 # overflow. Trim what the summarizer reads, oldest first, to this budget.
 DEFAULT_SUMMARIZE_CHAR_BUDGET = 100_000
 
-# The default kept tail. Named so keep_last_tokens can tell "the user chose 5" from "nobody
-# chose anything" - a dataclass field cannot otherwise distinguish the two.
+# The default kept tail, and a sentinel standing in for "nobody set this". Comparing against
+# the value alone cannot tell keep_last_runs=5 written by hand from the default, so an explicit
+# 5 alongside keep_last_tokens would be silently discarded - the exact surprise the mutual
+# exclusion exists to prevent.
 _KEEP_LAST_RUNS_DEFAULT = 5
+
+
+class _Unset(int):
+    """The default keep_last_runs, indistinguishable from 5 in use but not by identity."""
+
+
+_KEEP_LAST_RUNS_UNSET = _Unset(_KEEP_LAST_RUNS_DEFAULT)
 
 
 @dataclass
@@ -40,7 +49,8 @@ class Compaction:
     When the conversation crosses a threshold, the older messages are archived
     verbatim and replaced in context by a generated summary. Nothing is lost:
     the summary stands in for the originals, and the originals stay readable -
-    by a developer, or by the agent itself when ``searchable=True``.
+    by a developer reading the row, and by the agent itself, which gets a
+    read-only search over them unless ``searchable`` is turned off.
 
     Only the message list sent to the model is rewritten. What the session
     persists is untouched, so compaction can never corrupt the record of what
@@ -79,7 +89,7 @@ class Compaction:
     #
     # Runs rather than messages: a run is one turn, so a tail measured in runs never cuts
     # through the middle of one, which is what the pair-safe boundary walk wants anyway.
-    keep_last_runs: Optional[int] = _KEEP_LAST_RUNS_DEFAULT
+    keep_last_runs: Optional[int] = _KEEP_LAST_RUNS_UNSET
 
     # Recent history kept verbatim, measured in tokens instead of runs.
     #
@@ -97,7 +107,13 @@ class Compaction:
     # Write replaced messages to the filesystem so they stay recoverable.
     archive: bool = True
     # Give the agent read-only search over the archive.
-    searchable: bool = False
+    #
+    # On by default because an archive the agent cannot reach only helps a developer reading a
+    # row. A summary is a guess about what mattered; with the originals searchable it becomes an
+    # index over ground truth, and a detail it dropped is still answerable. The tool is scoped to
+    # one session by construction and is not registered until something has actually been
+    # archived, so it costs nothing on a conversation that never folds.
+    searchable: bool = True
 
     # Render tool results older than the cut as a short placeholder in the view. A cheap,
     # no-inference tier: on a tool-heavy transcript this reclaims more than the summary does,
@@ -130,7 +146,7 @@ class Compaction:
             raise ValueError(f"keep_last_tokens must be a positive integer, got {self.keep_last_tokens}")
         # Raise rather than pick a winner: silently honouring one of two settings the user
         # deliberately set is the kind of surprise that costs an afternoon to track down.
-        if self.keep_last_tokens is not None and self.keep_last_runs != _KEEP_LAST_RUNS_DEFAULT:
+        if self.keep_last_tokens is not None and not isinstance(self.keep_last_runs, _Unset):
             raise ValueError(
                 "keep_last_runs and keep_last_tokens cannot both be set - they describe the same "
                 "kept tail in different units. Use keep_last_runs to keep whole turns, or "
