@@ -28,6 +28,10 @@ if TYPE_CHECKING:
 # overflow. Trim what the summarizer reads, oldest first, to this budget.
 DEFAULT_SUMMARIZE_CHAR_BUDGET = 100_000
 
+# The default kept tail. Named so keep_last_tokens can tell "the user chose 5" from "nobody
+# chose anything" - a dataclass field cannot otherwise distinguish the two.
+_KEEP_LAST_RUNS_DEFAULT = 5
+
 
 @dataclass
 class Compaction:
@@ -75,7 +79,19 @@ class Compaction:
     #
     # Runs rather than messages: a run is one turn, so a tail measured in runs never cuts
     # through the middle of one, which is what the pair-safe boundary walk wants anyway.
-    keep_last_runs: Optional[int] = 5
+    keep_last_runs: Optional[int] = _KEEP_LAST_RUNS_DEFAULT
+
+    # Recent history kept verbatim, measured in tokens instead of runs.
+    #
+    # A run count says how many turns survive, not how large they are, so a handful of verbose
+    # turns produces a tail that grows without bound - and compaction only folds what sits in
+    # FRONT of the tail, so it cannot bring that back down. A token budget bounds the tail
+    # itself. The cut is still pair-safe: the walk snaps to a turn boundary, so the tail may
+    # come out somewhat larger than asked rather than severing a tool call from its result.
+    #
+    # Mutually exclusive with keep_last_runs: two settings claiming the same tail is a
+    # configuration nobody can reason about.
+    keep_last_tokens: Optional[int] = None
 
     # -- archive --------------------------------------------------------
     # Write replaced messages to the filesystem so they stay recoverable.
@@ -110,6 +126,20 @@ class Compaction:
             raise ValueError(f"compact_at_tokens must be a positive integer, got {self.compact_at_tokens}")
         if self.keep_last_runs is not None and self.keep_last_runs < 0:
             raise ValueError(f"keep_last_runs must be zero or a positive integer, got {self.keep_last_runs}")
+        if self.keep_last_tokens is not None and self.keep_last_tokens <= 0:
+            raise ValueError(f"keep_last_tokens must be a positive integer, got {self.keep_last_tokens}")
+        # Raise rather than pick a winner: silently honouring one of two settings the user
+        # deliberately set is the kind of surprise that costs an afternoon to track down.
+        if self.keep_last_tokens is not None and self.keep_last_runs != _KEEP_LAST_RUNS_DEFAULT:
+            raise ValueError(
+                "keep_last_runs and keep_last_tokens cannot both be set - they describe the same "
+                "kept tail in different units. Use keep_last_runs to keep whole turns, or "
+                "keep_last_tokens to bound the tail's size."
+            )
+        if self.keep_last_tokens is not None:
+            # The token budget is authoritative from here on; the run count would otherwise be
+            # consulted by every helper that reads it.
+            self.keep_last_runs = None
         # compact_at_tokens=None is legal: it disables the automatic trigger and leaves
         # agent.compact() as the only way to fold, which is a coherent way to run this.
 
@@ -161,6 +191,29 @@ class Compaction:
 
     # -- boundary -------------------------------------------------------
 
+    def _tail_advice_for(self, kept: List[Message]) -> str:
+        """The tail setting, suggested only when changing it could still move the boundary.
+
+        The cut is pair-safe, so it never lands inside a turn. Once the tail holds a single
+        turn no smaller budget can shrink it further, and naming the setting sends the reader
+        to a knob that cannot help.
+        """
+        turns = sum(1 for m in kept if m.role == "user")
+        if turns <= 1:
+            return ""
+        return f" or {self._tail_setting}"
+
+    @property
+    def _tail_setting(self) -> str:
+        """The tail setting actually in force, named for a message the user has to act on.
+
+        Telling someone to lower keep_last_runs when they configured keep_last_tokens sends
+        them to a setting that is None.
+        """
+        if self.keep_last_tokens is not None:
+            return f"keep_last_tokens={self.keep_last_tokens}"
+        return f"keep_last_runs={self.keep_last_runs}"
+
     def _keep_from_index(self, messages: List[Message]) -> Optional[int]:
         """Index the kept tail starts at, for a request expressed in turns.
 
@@ -191,6 +244,11 @@ class Compaction:
         the cut moves into the tail whole) and *durable* - it never anchors on a message that
         will not survive in storage, since the anchor has to resolve again on the next run.
         """
+        if self.keep_last_tokens is not None:
+            # A size budget names no position, so the walk finds one: it accumulates backward
+            # from the newest message and stops once the budget is spent, then snaps to a
+            # pair-safe turn boundary like any other cut.
+            return choose_boundary(messages, keep_tokens=self.keep_last_tokens, min_index=min_index)
         keep_from = self._keep_from_index(messages)
         if keep_from is None:
             return None
@@ -442,11 +500,18 @@ class Compaction:
         if ratio < self.min_fold_ratio:
             # log_info, not debug: a threshold was crossed and the user was told so. Going
             # quiet after that reads as a bug. Say what was declined and why.
+            #
+            # Continuing is named first because it is usually the real answer: the fold grows
+            # with every turn while the tail stays roughly fixed, so the ratio climbs on its
+            # own. Shrinking the tail only helps while it still holds more than one turn - the
+            # cut is pair-safe, so no setting can cut inside a turn, and advice to lower it is
+            # a dead end once the tail is already a single turn.
             log_info(
                 f"Compaction: threshold reached but skipping this fold - it would replace "
                 f"{fold_tokens} tokens with a summary while keeping a {keep_tokens}-token tail "
                 f"(ratio {ratio:.2f} < min_fold_ratio {self.min_fold_ratio}), which would not "
-                f"shrink the context. Lower min_fold_ratio or keep_last_runs to fold sooner."
+                f"shrink the context. Continue the conversation - the fold grows while the tail "
+                f"does not - or lower min_fold_ratio{self._tail_advice_for(kept)} to fold sooner."
             )
             return False
         return True
@@ -478,7 +543,7 @@ class Compaction:
         if boundary is None or boundary <= already:
             if previous is None:
                 reason = (
-                    f"Nothing to fold yet - keep_last_runs={self.keep_last_runs} covers the whole "
+                    f"Nothing to fold yet - {self._tail_setting} covers the whole "
                     f"conversation, so there is no history before the kept tail. Lower it to fold sooner."
                 )
                 log_info(f"Compaction: threshold reached but {reason[0].lower()}{reason[1:]}")
@@ -498,7 +563,7 @@ class Compaction:
                 f"This fold would replace {fold_tokens} tokens against a {keep_tokens}-token tail "
                 f"(ratio {fold_tokens / keep_tokens:.2f}, needs {self.min_fold_ratio}), so the "
                 f"context would not shrink. Continue the conversation, or lower "
-                f"keep_last_runs={self.keep_last_runs} or "
+                f"{self._tail_setting} or "
                 f"min_fold_ratio to fold sooner.",
             )
         return boundary, CompactionStatus.COMPACTED, "Ready to compact."

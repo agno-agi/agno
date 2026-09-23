@@ -413,6 +413,125 @@ def test_compaction_not_enabled_is_a_status_not_a_crash():
     assert not result.compacted
 
 
+def test_keep_last_tokens_bounds_a_tail_that_runs_cannot():
+    """A run count says how many turns survive, not how large they are.
+
+    Compaction only folds what sits in FRONT of the tail, so a handful of verbose turns
+    produces a tail it can never bring back down. A token budget bounds the tail itself.
+    """
+    from agno.compaction._tokens import estimate_tokens
+
+    messages = []
+    for i in range(8):
+        messages.append(Message(role="user", content=f"q{i} " * 20, id=f"u{i}"))
+        messages.append(Message(role="assistant", content=("f " * 15000 if i >= 5 else f"a{i} " * 200), id=f"a{i}"))
+    total = estimate_tokens(messages)
+
+    by_runs = Compaction(keep_last_runs=3).boundary_for(messages)
+    by_tokens = Compaction(keep_last_tokens=5_000).boundary_for(messages)
+
+    assert estimate_tokens(messages[by_runs:]) > total * 0.9  # runs cannot help here
+    assert estimate_tokens(messages[by_tokens:]) < total * 0.5
+
+
+def test_the_kept_tail_tracks_the_token_budget():
+    """A larger budget keeps more, a smaller one keeps less."""
+    from agno.compaction._tokens import estimate_tokens
+
+    messages = [
+        m
+        for i in range(10)
+        for m in (
+            Message(role="user", content=f"q{i} " * 20, id=f"u{i}"),
+            Message(role="assistant", content=f"a{i} " * 500, id=f"a{i}"),
+        )
+    ]
+
+    tails = []
+    for budget in (2_000, 5_000, 10_000):
+        boundary = Compaction(keep_last_tokens=budget).boundary_for(messages)
+        tails.append(estimate_tokens(messages[boundary:]))
+
+    assert tails == sorted(tails)
+
+
+def test_keep_last_runs_and_keep_last_tokens_are_mutually_exclusive():
+    """Two settings claiming the same tail is a configuration nobody can reason about.
+
+    Raised rather than resolved silently: honouring one of two values the user deliberately
+    set is the kind of surprise that costs an afternoon to track down.
+    """
+    with pytest.raises(ValueError, match="cannot both be set"):
+        Compaction(keep_last_runs=3, keep_last_tokens=40_000)
+
+    # The default run count is not a choice, so it does not collide.
+    c = Compaction(keep_last_tokens=40_000)
+    assert c.keep_last_tokens == 40_000
+    assert c.keep_last_runs is None
+
+
+def test_a_decline_does_not_suggest_a_knob_that_cannot_help(caplog):
+    """Shrinking the tail only moves the boundary while the tail holds more than one turn.
+
+    The cut is pair-safe, so it never lands inside a turn. Once the tail is a single turn no
+    smaller budget can shrink it - observed lowering keep_last_tokens from 4,000 to 100 with
+    the ratio unchanged at 1.01. Advice to lower it there sends the reader nowhere.
+    """
+    head = [Message(role="user", content="q " * 12), Message(role="assistant", content="w " * 4540)]
+    one_turn = [Message(role="user", content="q " * 12), Message(role="assistant", content="w " * 4936)]
+    two_turns = [
+        m
+        for _ in range(2)
+        for m in (Message(role="user", content="q " * 12), Message(role="assistant", content="w " * 2468))
+    ]
+    c = Compaction(keep_last_tokens=2_000)
+
+    with caplog.at_level(logging.INFO, logger="agno"):
+        c._worth_compacting(head, one_turn)
+    assert "keep_last_tokens" not in " ".join(r.message for r in caplog.records)
+
+    caplog.clear()
+    with caplog.at_level(logging.INFO, logger="agno"):
+        c._worth_compacting(head, two_turns)
+    assert "keep_last_tokens" in " ".join(r.message for r in caplog.records)
+
+
+def test_a_decline_names_continuing_first(caplog):
+    """The fold grows with every turn while the tail stays roughly fixed.
+
+    So waiting is usually the real answer, and it should be named before the config knobs.
+    """
+    head = [Message(role="user", content="q " * 12), Message(role="assistant", content="w " * 4540)]
+    tail = [Message(role="user", content="q " * 12), Message(role="assistant", content="w " * 4936)]
+
+    with caplog.at_level(logging.INFO, logger="agno"):
+        Compaction(keep_last_tokens=2_000)._worth_compacting(head, tail)
+
+    message = " ".join(r.message for r in caplog.records)
+    assert message.index("Continue the conversation") < message.index("min_fold_ratio to fold sooner")
+
+
+def test_declines_name_the_tail_setting_actually_in_force(caplog):
+    """Telling someone to lower keep_last_runs when they set keep_last_tokens is a dead end.
+
+    The run count is None once a token budget is configured, so a message naming it sends the
+    reader to a setting that does not exist.
+    """
+    tiny = [Message(role="user", content="hi", id="u0"), Message(role="assistant", content="hello", id="a0")]
+
+    with caplog.at_level(logging.INFO, logger="agno"):
+        Compaction(keep_last_tokens=40_000).plan(tiny)
+
+    message = " ".join(r.message for r in caplog.records)
+    assert "keep_last_tokens=40000" in message
+    assert "keep_last_runs" not in message
+
+
+def test_keep_last_tokens_rejects_non_positive_values():
+    with pytest.raises(ValueError, match="keep_last_tokens"):
+        Compaction(keep_last_tokens=0)
+
+
 # --- boundary safety -----------------------------------------------------
 
 

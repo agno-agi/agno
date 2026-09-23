@@ -83,9 +83,7 @@ agent = Agent(
 # Run Agent
 # ---------------------------------------------------------------------------
 def main() -> None:
-    knowledge_cohere.insert(
-        name="Agno Docs", url="https://docs.agno.com/introduction"
-    )
+    knowledge_cohere.insert(name="Agno Docs", url="https://docs.agno.com/introduction")
     _ = knowledge_convenience
     _ = knowledge_amazon
     agent.print_response("What are the key features?")

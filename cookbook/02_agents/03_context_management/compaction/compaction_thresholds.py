@@ -13,6 +13,18 @@ to fold and stays quiet on ones that overflow.
 Set `compact_at_tokens=None` to turn the automatic trigger off entirely and fold only
 when you call `agent.compact()`.
 
+The kept tail is set one of two ways, and they cannot both be used:
+
+- `keep_last_runs` keeps whole turns. Simple, but a run count says how many turns
+  survive, not how large they are - a few verbose turns produce a tail compaction
+  cannot bring back down, because it only folds what sits in FRONT of the tail.
+- `keep_last_tokens` bounds the tail's size instead. The cut still snaps to a turn
+  boundary rather than severing a tool call from its result, so the tail can come out
+  somewhat larger than asked - it is a budget, not a hard cap.
+
+Reach for `keep_last_tokens` when turns vary a lot in length, which is most
+tool-calling agents.
+
 A cheaper model can do the summarizing, which is usually the right call: the
 work is mechanical and the main model never sees the transcript being condensed.
 """
