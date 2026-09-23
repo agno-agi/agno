@@ -16,6 +16,7 @@ from agno.os.middleware.user_scope import get_scoped_user_id, resolve_db_and_sco
 from agno.os.routers.metrics.schemas import (
     DayAggregatedMetrics,
     DaySessionMetrics,
+    DayTokenMetrics,
     MetricsRefreshResponse,
     MetricsRefreshStatusResponse,
     MetricsResponse,
@@ -23,6 +24,7 @@ from agno.os.routers.metrics.schemas import (
     OSMetricsRefreshStatusResponse,
     OSMetricsResponse,
     OSSessionMetricsResponse,
+    OSTokenMetricsResponse,
 )
 from agno.os.schema import (
     BadRequestResponse,
@@ -575,16 +577,8 @@ def attach_routes(
         operation_id="get_os_metrics",
         summary="Get OS Metrics",
         description=(
-            "Retrieve metrics about this AgentOS built from its daily metrics: how many runs each "
-            "model served over a window of days.\n\n"
-            "Reads the AgentOS database. A component keeping a database of its own is not included.\n\n"
-            "These are the same daily metrics GET /metrics returns, so they are only as current as "
-            "those. POST /metrics/refresh rebuilds the daily metrics; SQLite and Postgres also "
-            "rebuild them at most once a minute when they are read.\n\n"
-            "The result is cached per owner and window. Once an entry is older than its TTL it is "
-            "still returned immediately, and a recompute starts in the background. Pass refresh=true "
-            "to recompute from the daily metrics and wait for the result; it does not rebuild the "
-            "daily metrics themselves."
+            "Retrieve how many runs each model served over a date range. "
+            "If no date range is specified, covers the last 30 days."
         ),
         responses={
             200: {
@@ -728,17 +722,9 @@ def attach_routes(
         operation_id="get_os_session_metrics",
         summary="Get OS Session Metrics",
         description=(
-            "Retrieve how many sessions were created on each day of a window, the total, and how "
-            "that total compares with the window of the same length before it.\n\n"
-            "Reads the AgentOS database. A component keeping a database of its own is not included.\n\n"
-            "These are the same daily metrics GET /metrics returns, so they are only as current as "
-            "those. POST /metrics/refresh rebuilds the daily metrics; SQLite and Postgres also "
-            "rebuild them at most once a minute when they are read.\n\n"
-            "Every day of the window is returned, including days without sessions. The result is "
-            "cached per owner and window. Once an entry is older than its TTL it is still returned "
-            "immediately, and a recompute starts in the background. Pass refresh=true to recompute "
-            "from the daily metrics and wait for the result; it does not rebuild the daily metrics "
-            "themselves."
+            "Retrieve the sessions created on each day of a date range, their total, and how that total "
+            "compares with the date range of the same length before it. "
+            "If no date range is specified, covers the last 30 days."
         ),
         responses={
             200: {
@@ -822,8 +808,150 @@ def attach_routes(
             log_exception("GET /os/metrics/sessions failed")
             raise HTTPException(status_code=500, detail=f"Error getting OS session metrics: {str(e)}")
 
+    async def _compute_os_token_metrics(
+        db: Union[BaseDb, AsyncBaseDb],
+        effective_user_id: Optional[str],
+        starting_date: date,
+        ending_date: date,
+    ) -> OSTokenMetricsResponse:
+        days = (ending_date - starting_date).days + 1
+        # The change is measured against the window of the same length that ends the day
+        # before this one starts, so both windows come from one read of the daily metrics
+        previous_starting_date = starting_date - timedelta(days=days)
+        metrics = await _daily_metrics(db, effective_user_id, previous_starting_date, ending_date)
+
+        def _tokens(metric: Dict[str, Any]) -> int:
+            return (metric.get("token_metrics") or {}).get("total_tokens") or 0
+
+        # Every day of the window is returned, so a chart never has to guess at a missing day
+        buckets: Dict[date, int] = {starting_date + timedelta(days=offset): 0 for offset in range(days)}
+        previous_total_tokens = 0
+        for metric in metrics:
+            row_date = to_utc_datetime(metric.get("date"))
+            day = row_date.date() if row_date is not None else None
+            if day in buckets:
+                buckets[day] += _tokens(metric)
+            elif day is not None and previous_starting_date <= day < starting_date:
+                previous_total_tokens += _tokens(metric)
+
+        total_tokens = sum(buckets.values())
+
+        return OSTokenMetricsResponse(
+            metrics=[
+                DayTokenMetrics(
+                    date=datetime.combine(day, datetime.min.time(), tzinfo=timezone.utc), tokens_count=count
+                )
+                for day, count in sorted(buckets.items())
+            ],
+            total_tokens=total_tokens,
+            previous_total_tokens=previous_total_tokens,
+            # No tokens before means no rate to compare against, rather than an infinite rise
+            change_percent=round((total_tokens - previous_total_tokens) / previous_total_tokens * 100, 1)
+            if previous_total_tokens
+            else None,
+            window_days=days,
+            computed_at=datetime.now(timezone.utc),
+        )
+
+    @router.get(
+        "/os/metrics/tokens",
+        response_model=OSTokenMetricsResponse,
+        status_code=200,
+        operation_id="get_os_token_metrics",
+        summary="Get OS Token Metrics",
+        description=(
+            "Retrieve the tokens used on each day of a date range, their total, and how that total "
+            "compares with the date range of the same length before it. "
+            "If no date range is specified, covers the last 30 days."
+        ),
+        responses={
+            200: {
+                "description": "OS token metrics computed successfully",
+                "content": {
+                    "application/json": {
+                        "example": {
+                            "metrics": [{"date": "2025-07-31T00:00:00Z", "tokens_count": 5962}],
+                            "total_tokens": 184500,
+                            "previous_total_tokens": 150000,
+                            "change_percent": 23.0,
+                            "window_days": 30,
+                            "computed_at": "2025-07-31T12:49:01Z",
+                        }
+                    }
+                },
+            },
+            500: {"description": "Failed to compute OS token metrics", "model": InternalServerErrorResponse},
+            503: {"description": "No AgentOS database configured", "model": InternalServerErrorResponse},
+        },
+    )
+    async def get_os_token_metrics(
+        request: Request,
+        background_tasks: BackgroundTasks,
+        starting_date: Optional[date] = Query(
+            default=None,
+            description="Starting date for the window (YYYY-MM-DD format). Defaults to 29 days before ending_date",
+        ),
+        ending_date: Optional[date] = Query(
+            default=None, description="Ending date for the window (YYYY-MM-DD format). Defaults to today"
+        ),
+        user_id: Optional[str] = Query(
+            default=None, description="Return only this user's tokens. Ignored for non-admin callers"
+        ),
+        refresh: bool = Query(default=False, description="Recompute now instead of serving the cached result"),
+    ) -> OSTokenMetricsResponse:
+        try:
+            if os_db is None:
+                raise HTTPException(
+                    status_code=503,
+                    detail="Metrics not available: pass a `db` to AgentOS to enable this feature.",
+                )
+
+            starting_date, ending_date = _window(starting_date, ending_date)
+            scoped_user_id = get_scoped_user_id(request)
+            effective_user_id = scoped_user_id if scoped_user_id is not None else user_id
+
+            cache_key = ("os_token_metrics", effective_user_id, starting_date, ending_date)
+            if not refresh:
+                cached = _cache_get(cache_key)
+                if cached is not None:
+                    metrics, fresh = cached
+                    # A stale entry is still served straight away; opening the page never waits on
+                    # a recompute once one has completed for this owner and window
+                    if not fresh and cache_key not in recomputing:
+                        recomputing.add(cache_key)
+                        background_tasks.add_task(
+                            _recompute_in_background,
+                            "OS token metrics",
+                            _compute_os_token_metrics,
+                            os_db,
+                            cache_key,
+                            effective_user_id,
+                            starting_date,
+                            ending_date,
+                        )
+                    return metrics
+
+            generation_before = generation
+            metrics = await _compute_os_token_metrics(os_db, effective_user_id, starting_date, ending_date)
+            # A rebuild since this read started makes these numbers stale, so they are returned but not kept
+            if generation_before == generation:
+                _cache_put(cache_key, metrics)
+            return metrics
+
+        except HTTPException:
+            raise
+        except AgnoError as e:
+            raise AgnoHTTPException(e)
+        except Exception as e:
+            log_exception("GET /os/metrics/tokens failed")
+            raise HTTPException(status_code=500, detail=f"Error getting OS token metrics: {str(e)}")
+
     # The OS metrics routes, by the name each keeps its cache entries under
-    os_metrics_routes = {"os_metrics": "metrics", "os_session_metrics": "session_metrics"}
+    os_metrics_routes = {
+        "os_metrics": "metrics",
+        "os_session_metrics": "session_metrics",
+        "os_token_metrics": "token_metrics",
+    }
 
     async def _daily_metrics_updated_at(
         db: Union[BaseDb, AsyncBaseDb], effective_user_id: Optional[str], starting_date: date, ending_date: date

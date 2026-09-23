@@ -96,8 +96,9 @@ one agent run, one agent session, one user, and 42 total tokens.
 database, ran `metrics-researcher` (`gpt-5.5`) twice in session `s-a` and
 `metrics-summarizer` (`gpt-5.6-luna`) once in session `s-b` through
 `POST /agents/{agent_id}/runs`, called `POST /os/metrics/refresh`, then read
-`GET /os/metrics?starting_date=<6 days ago>` twice and
-`GET /os/metrics/sessions?starting_date=<6 days ago>` once, with
+`GET /os/metrics?starting_date=<6 days ago>` twice,
+`GET /os/metrics/sessions?starting_date=<6 days ago>` once and
+`GET /os/metrics/tokens?starting_date=<6 days ago>` twice, with
 `GET /os/metrics/refresh/status` before the refresh, after the reads and
 after a second `POST /os/metrics/refresh`.
 
@@ -107,10 +108,14 @@ at 33.3% over 1. The second read returned the same `computed_at`, so it was
 served from the cache. `GET /os/metrics/sessions` reported 7 entries, one per
 day, every earlier day at 0 and 2 sessions today, `previous_total_sessions` 0
 and `change_percent` null, since the seven days before held no sessions.
+In a later live run, the three runs reported 63, 66 and 79 tokens, and
+`GET /os/metrics/tokens` reported 7 entries, every earlier day at 0 and 208
+tokens today, `total_tokens` 208, `previous_total_tokens` 0 and
+`change_percent` null; the second read returned the same `computed_at`.
 `GET /os/metrics/refresh/status` reported `idle` with `updated_at` null and
-both `computed_at` entries null on the clean database, `completed` with `updated_at` set once
-the refresh ran, both entries carrying each route's `computed_at` after the reads,
-and both null again after the second refresh. `?background=true` returned
+every `computed_at` entry null on the clean database, `completed` with `updated_at` set once
+the refresh ran, each entry carrying its route's `computed_at` after the reads,
+including `token_metrics`, and every entry null again after the second refresh. `?background=true` returned
 202 `started`, and `GET /metrics/refresh/status` showed the same state.
 
 ---
