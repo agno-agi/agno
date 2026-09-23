@@ -117,3 +117,24 @@ class OSSessionMetricsResponse(BaseModel):
     )
     window_days: int = Field(..., description="Number of days the metrics cover", ge=1)
     computed_at: datetime = Field(..., description="Timestamp when these metrics were computed")
+
+
+class DayTokenMetrics(BaseModel):
+    """The tokens used on one day"""
+
+    date: datetime = Field(..., description="Date the tokens were used on")
+    tokens_count: int = Field(..., description="Tokens used on this date, across agents, teams and workflows", ge=0)
+
+
+class OSTokenMetricsResponse(BaseModel):
+    metrics: List[DayTokenMetrics] = Field(..., description="Daily token counts across the window, oldest first")
+    total_tokens: int = Field(..., description="Tokens used in the window", ge=0)
+    previous_total_tokens: int = Field(
+        ..., description="Tokens used in the window of the same length that ends the day before this one", ge=0
+    )
+    change_percent: Optional[float] = Field(
+        ...,
+        description="Change of total_tokens against previous_total_tokens, in percent. None when the previous window used no tokens",
+    )
+    window_days: int = Field(..., description="Number of days the metrics cover", ge=1)
+    computed_at: datetime = Field(..., description="Timestamp when these metrics were computed")

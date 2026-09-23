@@ -90,7 +90,7 @@ class TestRefreshStatus:
         assert body["status"] == "idle"
         assert body["started_at"] is None
         assert body["updated_at"] == "2027-01-15T08:00:00Z"
-        assert body["computed_at"] == {"metrics": None, "session_metrics": None}
+        assert body["computed_at"] == {"metrics": None, "session_metrics": None, "token_metrics": None}
 
     def test_a_route_reports_when_its_answer_was_computed(self, client):
         with _scope(None):
@@ -165,7 +165,7 @@ class TestRefresh:
             models_after = client.get(f"/os/metrics?{_last(1)}").json()
             sessions_after = client.get(f"/os/metrics/sessions?{_last(1)}").json()
 
-        assert body["computed_at"] == {"metrics": None, "session_metrics": None}
+        assert body["computed_at"] == {"metrics": None, "session_metrics": None, "token_metrics": None}
         assert models_after["computed_at"] != models["computed_at"]
         assert sessions_after["computed_at"] != sessions["computed_at"]
 
