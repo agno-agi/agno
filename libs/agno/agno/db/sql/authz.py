@@ -68,14 +68,21 @@ def _upsert(conn: Any, table: Any, values: Dict[str, Any], conflict_cols: List[s
 
 
 def get_policies(engine: Engine, table: Any, roles: List[str]) -> List[Tuple[str, str, str, str]]:
-    """All (role, resource, action, effect) rows whose role is in ``roles``."""
+    """All (role, resource, action, effect) rows whose role is in ``roles``. Chunked like the
+    other bulk IN-lists: a token can carry any number of roles, and SQLite refuses a statement
+    with too many bound parameters."""
     if not roles:
         return []
+    out: List[Tuple[str, str, str, str]] = []
     with engine.connect() as conn:
-        rows = conn.execute(
-            select(table.c.role, table.c.resource, table.c.action, table.c.effect).where(table.c.role.in_(roles))
-        )
-        return [(r[0], r[1], r[2], r[3]) for r in rows]
+        for start in range(0, len(roles), _IN_CHUNK):
+            rows = conn.execute(
+                select(table.c.role, table.c.resource, table.c.action, table.c.effect).where(
+                    table.c.role.in_(roles[start : start + _IN_CHUNK])
+                )
+            )
+            out.extend((r[0], r[1], r[2], r[3]) for r in rows)
+    return out
 
 
 def get_role_policies(engine: Engine, table: Any, role: str) -> List[Tuple[str, str, str]]:
@@ -144,6 +151,20 @@ def get_direct_roles(engine: Engine, table: Any, subject: str) -> List[str]:
 # SQLite caps bound parameters per statement (999 on older builds), so bulk IN-lists are
 # chunked well under that. Postgres has no such limit; chunking is harmless there.
 _IN_CHUNK = 500
+
+# Free-text search is a substring match. The caller's text is data, never pattern: the
+# LIKE metacharacters are escaped so "50%" finds "50%" and "_" does not match any character,
+# and the text is capped so a huge needle cannot be sent to the database. Matching is
+# case-insensitive on every backend (ILIKE), so audit and user search behave the same.
+_LIKE_ESCAPE = "\\"
+_SEARCH_MAX_LENGTH = 200
+
+
+def _like_pattern(search: str) -> str:
+    text = search[:_SEARCH_MAX_LENGTH]
+    for char in (_LIKE_ESCAPE, "%", "_"):
+        text = text.replace(char, _LIKE_ESCAPE + char)
+    return f"%{text}%"
 
 
 def _direct_roles_many_stmts(table: Any, subjects: List[str]) -> List[Any]:
@@ -300,8 +321,8 @@ def _user_filters(table: Any, include_disabled: bool, search: Optional[str]) -> 
     if not include_disabled:
         clauses.append(table.c.disabled.is_(False))
     if search:
-        pattern = f"%{search}%"
-        clauses.append(or_(*(table.c[c].ilike(pattern) for c in USER_SEARCH_COLUMNS)))
+        pattern = _like_pattern(search)
+        clauses.append(or_(*(table.c[c].ilike(pattern, escape=_LIKE_ESCAPE) for c in USER_SEARCH_COLUMNS)))
     return clauses
 
 
@@ -486,10 +507,10 @@ def read_events(
 ) -> List[Dict[str, Any]]:
     stmt = select(table)
     if search:
-        needle = f"%{search}%"
+        needle = _like_pattern(search)
         columns = [table.c[name] for name in (search_columns or []) if name in table.c]
         if columns:
-            stmt = stmt.where(or_(*[c.like(needle) for c in columns]))
+            stmt = stmt.where(or_(*[c.ilike(needle, escape=_LIKE_ESCAPE) for c in columns]))
     column = table.c[sort_by] if sort_by in table.c else table.c.created_at
     stmt = stmt.order_by(column.desc() if order.lower() == "desc" else column.asc()).limit(limit).offset(offset)
     with engine.connect() as conn:
@@ -501,10 +522,10 @@ def count_events(
 ) -> int:
     stmt = select(func.count()).select_from(table)
     if search:
-        needle = f"%{search}%"
+        needle = _like_pattern(search)
         columns = [table.c[name] for name in (search_columns or []) if name in table.c]
         if columns:
-            stmt = stmt.where(or_(*[c.like(needle) for c in columns]))
+            stmt = stmt.where(or_(*[c.ilike(needle, escape=_LIKE_ESCAPE) for c in columns]))
     with engine.connect() as conn:
         return int(conn.execute(stmt).scalar() or 0)
 
@@ -563,11 +584,16 @@ async def _aserialize_on(conn: Any, key: str) -> None:
 async def aget_policies(engine: "AsyncEngine", table: Any, roles: List[str]) -> List[Tuple[str, str, str, str]]:
     if not roles:
         return []
+    out: List[Tuple[str, str, str, str]] = []
     async with engine.connect() as conn:
-        rows = await conn.execute(
-            select(table.c.role, table.c.resource, table.c.action, table.c.effect).where(table.c.role.in_(roles))
-        )
-        return [(r[0], r[1], r[2], r[3]) for r in rows]
+        for start in range(0, len(roles), _IN_CHUNK):
+            rows = await conn.execute(
+                select(table.c.role, table.c.resource, table.c.action, table.c.effect).where(
+                    table.c.role.in_(roles[start : start + _IN_CHUNK])
+                )
+            )
+            out.extend((r[0], r[1], r[2], r[3]) for r in rows)
+    return out
 
 
 async def aget_role_policies(engine: "AsyncEngine", table: Any, role: str) -> List[Tuple[str, str, str]]:
@@ -843,10 +869,10 @@ async def aread_events(
 ) -> List[Dict[str, Any]]:
     stmt = select(table)
     if search:
-        needle = f"%{search}%"
+        needle = _like_pattern(search)
         columns = [table.c[name] for name in (search_columns or []) if name in table.c]
         if columns:
-            stmt = stmt.where(or_(*[c.like(needle) for c in columns]))
+            stmt = stmt.where(or_(*[c.ilike(needle, escape=_LIKE_ESCAPE) for c in columns]))
     column = table.c[sort_by] if sort_by in table.c else table.c.created_at
     stmt = stmt.order_by(column.desc() if order.lower() == "desc" else column.asc()).limit(limit).offset(offset)
     async with engine.connect() as conn:
@@ -859,10 +885,10 @@ async def acount_events(
 ) -> int:
     stmt = select(func.count()).select_from(table)
     if search:
-        needle = f"%{search}%"
+        needle = _like_pattern(search)
         columns = [table.c[name] for name in (search_columns or []) if name in table.c]
         if columns:
-            stmt = stmt.where(or_(*[c.like(needle) for c in columns]))
+            stmt = stmt.where(or_(*[c.ilike(needle, escape=_LIKE_ESCAPE) for c in columns]))
     async with engine.connect() as conn:
         result = await conn.execute(stmt)
         return int(result.scalar() or 0)

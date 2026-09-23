@@ -106,6 +106,27 @@ def _check_removable(role: str, scope: str) -> None:
         ) from None
 
 
+def _validate_role_slug(slug: str) -> None:
+    """A role slug is an identifier that names a REST route (``/authz/roles/{slug}``) and a
+    grouping-table subject. Whitespace makes ``"admin"`` and ``"admin "`` two roles that look
+    the same in every view, and ``/`` makes the role unaddressable by the admin API, so both
+    are refused on save. Case is kept as written."""
+    if not isinstance(slug, str) or not slug:
+        raise ValueError("A role slug must be a non-empty string.")
+    if any(char.isspace() for char in slug):
+        raise ValueError(f"Role slug {slug!r} contains whitespace; use '-' or '_' between words.")
+    if "/" in slug:
+        raise ValueError(f"Role slug {slug!r} contains '/', which cannot be addressed by /authz/roles/{{slug}}.")
+
+
+def _validate_subject(subject: str) -> None:
+    """A subject is a token ``sub`` or a directory user id, so its spelling is the IdP's; only
+    the empty string and surrounding whitespace are refused, since ``" alice"`` would be a
+    second, invisible alice."""
+    if not isinstance(subject, str) or not subject or subject != subject.strip():
+        raise ValueError(f"Subject {subject!r} must be a non-empty string with no surrounding whitespace.")
+
+
 def _normalize_scope(entry: ScopeInput) -> Tuple[str, str]:
     """Coerce a scope input into ``(scope, effect)`` with effect in {allow, deny}."""
     if isinstance(entry, str):
@@ -382,6 +403,7 @@ class RoleStore:
         """Refuse a NEW role whose slug is an existing user: a directory user, or a subject that
         holds an assignment. An existing role of that name is left alone (the collision guard
         already refuses the user at decision time; deleting the role is the fix)."""
+        _validate_role_slug(slug)
         if slug in self.list_roles():
             return
         if self._is_directory_user(slug) or self._engine.roles_of(slug):
@@ -590,6 +612,17 @@ class RoleStore:
         assignment is not a user grant but role inheritance: every holder of that role gains the
         assigned role's permissions. Refuse it at the one write path every caller goes through
         (the admin API, ``Authorization.assign``/``seed``, and the store itself)."""
+        from agno.os.middleware.jwt import is_reserved_principal
+
+        _validate_subject(subject)
+        if is_reserved_principal(subject):
+            # The scheduler principal, service accounts and MCP OAuth clients are identities the
+            # server assigns; a role on one would turn a leaked internal token or a PAT into a
+            # managed-role holder that no directory entry or token claim explains.
+            raise ValueError(
+                f"{subject!r} is a reserved server principal and cannot hold a role. Service accounts "
+                "carry their scopes on the token; the scheduler runs as the schedule's owner."
+            )
         if subject in roles:
             raise ValueError(
                 f"{subject!r} is a role, not a user, so it cannot be assigned a role: that would make every "
@@ -889,6 +922,7 @@ class RoleStore:
 
     async def _arefuse_role_named_after_user(self, slug: str) -> None:
         """Async twin of :meth:`_refuse_role_named_after_user`."""
+        _validate_role_slug(slug)
         if slug in await self.alist_roles():
             return
         if await self._ais_directory_user(slug) or await self._engine.aroles_of(slug):

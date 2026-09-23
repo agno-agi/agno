@@ -381,16 +381,16 @@ def test_custom_cookie_name_in_message():
     assert "custom_auth_token" in message
 
 
-def test_allows_all_when_no_origins_configured(middleware):
-    """Test that all origins are allowed when cors_allowed_origins is None."""
-    assert middleware._is_origin_allowed("http://localhost:3000", None) is True
-    assert middleware._is_origin_allowed("https://example.com", None) is True
+def test_reflects_nothing_when_no_origins_configured(middleware):
+    """With no allow-list, an error response reflects no Origin: echoing any origin with
+    Allow-Credentials would let any site read an authenticated failure's body."""
+    assert middleware._is_origin_allowed("http://localhost:3000", None) is False
+    assert middleware._is_origin_allowed("https://example.com", None) is False
 
 
-def test_allows_all_when_empty_origins_list(middleware):
-    """Test that all origins are allowed when cors_allowed_origins is empty."""
-    assert middleware._is_origin_allowed("http://localhost:3000", []) is True
-    assert middleware._is_origin_allowed("https://example.com", []) is True
+def test_reflects_nothing_when_empty_origins_list(middleware):
+    assert middleware._is_origin_allowed("http://localhost:3000", []) is False
+    assert middleware._is_origin_allowed("https://example.com", []) is False
 
 
 def test_allows_configured_origin(middleware):

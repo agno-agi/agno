@@ -126,7 +126,10 @@ class Authorization:
             roles_claim: the external-IdP case -- read the caller's role(s) from this token claim
                 (e.g. WorkOS/Auth0 send a ``role`` claim) instead of from stored assignments. You
                 still ``define_role`` what each role may do; the token asserts which role the caller
-                has, so no per-user ``assign``. Turns managed roles on by itself.
+                has, so no per-user ``assign``. Turns managed roles on by itself. A token without
+                the claim (or with an empty one) is decided on its stored assignments and the
+                default role, so a directory user with no claim is not locked out; make the IdP
+                always send the claim if the token must be the only source of roles.
             authorization_provider: full override -- your provider decides alone, no store is built
                 and ``/authz`` is not mounted. Cannot be combined with ``engine``; to keep the admin
                 API on top of your own backend, pass ``engine=`` instead.
@@ -365,7 +368,12 @@ class Authorization:
         """Grant the bootstrap admin role. A role concern only; the directory is separate."""
         self._require_sync_setup()
         role_store = self._ensure_role_store()
-        self._restore_bootstrap_admin(role_store, admin, admin_role)
+        self._restore_bootstrap_admin(
+            role_store,
+            admin,
+            admin_role,
+            admins_on_tokens=self._roles_claim is not None or self._trust_token_scopes,
+        )
         # Checked once at finalize (authorization_config), so the warning never depends on whether
         # define_role ran before or after this seed.
         self._seeded_admins.append((admin, admin_role))
@@ -378,7 +386,9 @@ class Authorization:
             role_store.assign(subject, role, actor=actor)
 
     @staticmethod
-    def _restore_bootstrap_admin(role_store: "RoleStore", admin: str, admin_role: str) -> None:
+    def _restore_bootstrap_admin(
+        role_store: "RoleStore", admin: str, admin_role: str, *, admins_on_tokens: bool = False
+    ) -> None:
         """Make the bootstrap subject admin only when nobody else can reach the admin API.
 
         Any weaker rule undoes an operator's decision. If another subject already holds admin, then a
@@ -390,12 +400,21 @@ class Authorization:
 
         On an engine that cannot enumerate a role's holders, fall back to create-if-absent (grant only
         when the subject has no role at all): a fresh deploy still bootstraps, and a handover we cannot
-        see is not guessed at."""
+        see is not guessed at. The same fallback applies when admins live on tokens (``roles_claim``
+        or ``trust_token_scopes``): the stored set cannot see them, so an empty stored set is not a
+        lockout, and re-granting a demoted bootstrap subject on every restart would undo a handover
+        to a token-based admin.
+
+        A disabled directory user still counts as a stored holder here: the role store knows roles,
+        not the directory's off switch. Re-enable the user, or grant admin to another subject, to
+        recover from that state."""
         current_roles = role_store.roles_of(admin)
         try:
-            holders = role_store.admin_subjects()
+            holders = None if admins_on_tokens else role_store.admin_subjects()
         except NotImplementedError:
             log_debug("seed(admin=): the policy engine cannot list a role's holders; using create-if-absent")
+            holders = None
+        if holders is None:
             if not current_roles:
                 role_store.assign(admin, admin_role)
             return

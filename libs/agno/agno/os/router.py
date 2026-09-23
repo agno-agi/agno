@@ -349,7 +349,15 @@ def get_websocket_router(
                 action="run",
                 admin_scope=ws_admin_scope,
             )
-            allowed = await ws_authorization_provider.aauthorize_route(ctx, ws_workflow_run_scopes)
+            # A service-account PAT's scopes are its ACL; it has no subject in a managed store,
+            # so the configured provider would deny every PAT. REST evaluates PATs with the
+            # scope provider (auth._provider_for); the WebSocket does the same.
+            provider = ws_authorization_provider
+            if websocket_user_context.get("service_account"):
+                from agno.os.auth import _default_authorization_provider
+
+                provider = _default_authorization_provider()
+            allowed = await provider.aauthorize_route(ctx, ws_workflow_run_scopes)
             # Same access trail the REST gate writes to: the equivalent
             # POST /workflows/{id}/runs decision is recorded, so the streaming
             # transport must not be a blind spot in the audit.
@@ -482,6 +490,7 @@ def get_websocket_router(
                             # attribution gates that police JWTs apply to PATs.
                             websocket_user_context["user_id"] = account.principal
                             websocket_user_context["scopes"] = list(account.scopes)
+                            websocket_user_context["service_account"] = True
                             await websocket_manager.authenticate_websocket(websocket)
                             await websocket.send_text(
                                 json.dumps(

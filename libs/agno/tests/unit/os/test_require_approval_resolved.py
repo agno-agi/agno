@@ -90,14 +90,17 @@ class TestRequireApprovalResolved:
         assert exc_info.value.status_code == 403
 
     @pytest.mark.asyncio
-    async def test_logs_warning_on_db_error(self):
+    async def test_refuses_and_logs_on_db_error(self):
+        """A db that supports approvals but cannot be read fails closed: letting the run
+        continue would let an outage resolve an admin-required approval."""
         db = MagicMock()
         db.get_approvals = MagicMock(side_effect=RuntimeError("connection lost"))
         dep = require_approval_resolved(db)
         request = _make_request(path_params={"run_id": "r1"})
         with patch("agno.utils.log.log_warning") as mock_log:
-            # Should not raise — gate is bypassed on error
-            assert await dep(request) is None
+            with pytest.raises(HTTPException) as exc_info:
+                await dep(request)
+            assert exc_info.value.status_code == 403
             mock_log.assert_called_once()
             assert "connection lost" in mock_log.call_args[0][0]
 
@@ -157,9 +160,16 @@ class TestRunContinuationBlockedReason:
         assert reason is None
 
     @pytest.mark.asyncio
-    async def test_fails_open_only_for_approval_feature_on_db_error(self):
+    async def test_fails_closed_when_the_approval_state_cannot_be_read(self):
         db = MagicMock()
         db.get_approvals = MagicMock(side_effect=RuntimeError("boom"))
+        reason = await run_continuation_blocked_reason(db, "r1", authorization_enabled=True, user_scopes=["agents:run"])
+        assert reason is not None and "could not be verified" in reason
+
+    @pytest.mark.asyncio
+    async def test_skips_a_db_without_approvals_support(self):
+        db = MagicMock()
+        db.get_approvals = MagicMock(side_effect=NotImplementedError)
         reason = await run_continuation_blocked_reason(db, "r1", authorization_enabled=True, user_scopes=["agents:run"])
         assert reason is None
 

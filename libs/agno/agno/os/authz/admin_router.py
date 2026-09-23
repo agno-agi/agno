@@ -413,6 +413,9 @@ def get_roles_router(
             raise HTTPException(status_code=409, detail=f"Role {body.slug!r} already exists")
         except RoleChangeRefused as e:
             raise _refused(e)
+        except ValueError as e:
+            # A slug the store refuses (whitespace, "/"): the caller's input, not a server fault.
+            raise HTTPException(status_code=400, detail=str(e))
         return RoleSchema.from_record(await _role_or_404(body.slug))
 
     @router.get("/roles/{slug}", response_model=RoleSchema)

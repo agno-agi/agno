@@ -28,6 +28,28 @@ def scope_to_resource_action(scope: str) -> Tuple[str, str]:
     parts = scope.split(":")
     if any(part == "" for part in parts):
         raise ValueError(f"Unrecognised scope (empty component): {scope!r}")
+    # A scope with whitespace in it ("agents:*:read ", "agents: read") is stored as written,
+    # matches nothing at the gate, and is invisible in the role view. Refuse it so the typo is
+    # caught on save rather than discovered as a denial.
+    if any(char.isspace() for char in scope):
+        raise ValueError(f"Unrecognised scope {scope!r}: scopes cannot contain whitespace.")
+    # The resource type is what the gate matches on; "*" is not a type, so "*:read" would be
+    # stored under a "*/..." resource that grants nothing. The one all-resources grant is admin.
+    if parts[0] == "*":
+        raise ValueError(
+            f"Unrecognised scope {scope!r}: '*' is not a resource type. Name the type ('agents:read'), "
+            f"or grant {ADMIN_SCOPE!r} for everything."
+        )
+    # Resources are stored as "type/id", so a "/" in the type would split into a different
+    # type on read-back.
+    if "/" in parts[0]:
+        raise ValueError(f"Unrecognised scope {scope!r}: the resource type cannot contain '/'.")
+    # Legacy spelling: the scope provider reads "system:read" as "config:read" (see
+    # agno.os.scopes.LEGACY_RESOURCE_ALIASES); store the same spelling so a managed role
+    # written with the old name satisfies the route.
+    from agno.os.scopes import LEGACY_RESOURCE_ALIASES
+
+    parts[0] = LEGACY_RESOURCE_ALIASES.get(parts[0], parts[0])
     if parts[0] == ADMIN_NAMESPACE:
         # ``agent_os`` is not a resource type; the only scope in that namespace is the admin
         # super-scope. Anything else here (``agent_os:*:admin``, ``agent_os:x:read``) would be

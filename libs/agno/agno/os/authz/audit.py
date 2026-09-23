@@ -33,7 +33,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
-from agno.utils.log import log_debug
+from agno.utils.log import log_debug, log_warning
 
 # The audit-trail read contract (shared by both trails — change and decision):
 # which fields a page can be sorted by / searched over, and the defaults. The
@@ -291,6 +291,15 @@ class DbAuditSink(AuditSink):
         self._db: Any = resolve_authz_db(db, db_url)
         require_authz_db(self._db)
         self._db_is_async: bool = is_async_authz_db(self._db)
+        self._pending_writes: set = set()
+        # Rows are written through the agno database contract, which owns its table names and
+        # creates them itself, so these arguments have no effect. Say so rather than accept a
+        # name the operator will then look for.
+        if table_name != "authz_audit" or decision_table_name != "authz_decisions" or not create_table:
+            log_warning(
+                "DbAuditSink ignores table_name, decision_table_name and create_table: audit rows are "
+                "written through the agno database, which names and creates its own tables."
+            )
 
     async def _adb(self, name: str, *args: Any, **kwargs: Any) -> Any:
         """Call an audit DB method from the async path -- await an async backend, thread a
@@ -300,12 +309,34 @@ class DbAuditSink(AuditSink):
             return await fn(*args, **kwargs)
         return await asyncio.to_thread(fn, *args, **kwargs)
 
+    def _run_async_write(self, event: AuditEvent) -> None:
+        """Write ``event`` through :meth:`arecord` from the sync path on an async backend.
+
+        Inside a running loop the write is scheduled as a task (the sink keeps a reference
+        until it completes, so it cannot be collected mid-write); outside one it runs to
+        completion on a private loop, so a setup-time role change is on disk before the
+        call returns."""
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            asyncio.run(self.arecord(event))
+            return
+        task = loop.create_task(self.arecord(event))
+        self._pending_writes.add(task)
+        task.add_done_callback(self._pending_writes.discard)
+
     def record(self, event: AuditEvent) -> None:
         # The AuditSink contract is that record() must NOT raise into the caller's
         # path: a role change (or a request) must still succeed even if its audit row
         # can't be written. Log and swallow DB errors rather than turning a
         # successful mutation into a 500 with no audit row.
         try:
+            if self._db_is_async:
+                # An async backend's write is a coroutine; calling it from the sync path
+                # used to create it and drop it, so the row was never written and nothing
+                # said so. Run it on the loop when one is running here, else to completion.
+                self._run_async_write(event)
+                return
             if _is_decision(event.action):
                 self._record_decision(event)
             else:
