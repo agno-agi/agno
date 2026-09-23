@@ -651,8 +651,9 @@ def get_authentication_dependency(settings: AgnoAPISettings):
             request.state.is_internal_service = True
             return True
 
-        # Verify the token against security key
-        if token != settings.os_security_key:
+        # Verify the token against the security key in constant time, like the internal token
+        # above and the middleware path, so a mismatch position cannot be timed.
+        if not _constant_time_equal(token, settings.os_security_key):
             raise HTTPException(status_code=401, detail="Invalid authentication token")
 
         # A valid security key is a trusted, unscoped root. Mark it authenticated like the
@@ -691,8 +692,15 @@ def validate_websocket_token(token: str, settings: AgnoAPISettings) -> bool:
     if not settings or not settings.os_security_key:
         return True
 
-    # Verify the token matches the configured security key
-    return token == settings.os_security_key
+    # Verify the token matches the configured security key, in constant time
+    return _constant_time_equal(token, settings.os_security_key)
+
+
+def _constant_time_equal(presented: str, expected: str) -> bool:
+    """Constant-time equality for a presented credential. Compared as UTF-8 bytes: the str
+    form of ``compare_digest`` raises on non-ASCII input, which would turn a garbage header
+    into a 500 instead of a 401."""
+    return hmac.compare_digest(str(presented).encode("utf-8"), str(expected).encode("utf-8"))
 
 
 async def verify_websocket_service_account(
@@ -1068,9 +1076,10 @@ async def run_continuation_blocked_reason(
     decision shared by the REST ``/continue`` routes (via ``require_approval_resolved``) and
     the MCP ``continue_run`` tool, so the gate cannot drift between transports.
 
-    Fails open only for the approval feature itself: if the db has no approvals support the
-    check is skipped, so non-approval deployments are unaffected. It never fails open on the
-    authorization decision — that is the caller's ``authorization_enabled`` gate.
+    Skips the check only when the db has no approvals support, so non-approval deployments
+    are unaffected. A db that supports approvals but cannot be read fails closed: the run is
+    refused until the state can be verified. It never fails open on the authorization
+    decision either; that is the caller's ``authorization_enabled`` gate.
     """
     # Mirror require_resource_access: skip entirely when authorization is disabled.
     if not authorization_enabled or db is None or not run_id:
@@ -1096,11 +1105,17 @@ async def run_continuation_blocked_reason(
         approvals = result[0] if isinstance(result, tuple) else result
         if approvals:
             return "This run requires admin approval before it can be continued"
+    except NotImplementedError:
+        # The db declares the method but does not implement approvals: not an approval
+        # deployment, so there is nothing to gate.
+        return None
     except Exception as exc:
-        # DB doesn't support approvals or another transient error — let the run continue
-        # so non-approval setups are unaffected.
+        # The db supports approvals and the read failed. Letting the run continue here would
+        # let a database outage resolve an admin-required approval, so refuse until the
+        # state can be read; the caller may retry.
         from agno.utils.log import log_warning
 
-        log_warning(f"Approval resolution check skipped due to error: {exc}")
+        log_warning(f"Approval state could not be read for run {run_id!r}; refusing to continue: {exc}")
+        return "This run's approval state could not be verified; try again"
 
     return None

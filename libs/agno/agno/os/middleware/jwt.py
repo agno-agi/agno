@@ -1431,12 +1431,16 @@ class AuthMiddleware(BaseHTTPMiddleware):
         return response
 
     def _is_origin_allowed(self, origin: str, cors_allowed_origins: Optional[List[str]] = None) -> bool:
-        """Check if the origin is in the allowed origins list."""
-        if not cors_allowed_origins:
-            # If no allowed origins configured, allow all (fallback to default behavior)
-            return True
+        """Check if the origin is in the allowed origins list.
 
-        # Check if origin is in the allowed list
+        With no list configured (a hand-mounted middleware on an app that set no
+        ``cors_allowed_origins`` state) nothing is reflected: an error response that
+        echoed any Origin with ``Allow-Credentials: true`` would let any site read
+        the body of an authenticated failure. AgentOS always resolves a list, so
+        its error responses keep their CORS headers.
+        """
+        if not cors_allowed_origins:
+            return False
         return origin in cors_allowed_origins
 
     async def dispatch(self, request: Request, call_next) -> Response:

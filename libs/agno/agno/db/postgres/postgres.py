@@ -8061,8 +8061,11 @@ class PostgresDb(BaseDb):
                 results = sess.execute(stmt).fetchall()
                 return [dict(row._mapping) for row in results], total
         except Exception as e:
-            log_debug(f"Error listing approvals: {e}")
-            return [], 0
+            # Raise rather than return an empty page: the continue-run approval gate reads
+            # "no pending approval" as permission to continue, so a failed read must not
+            # look like one.
+            log_error(f"Error listing approvals: {e}")
+            raise e
 
     def update_approval(
         self, approval_id: str, expected_status: Optional[str] = None, **kwargs: Any
