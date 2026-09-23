@@ -25,7 +25,7 @@ class StringWebAccessTools(Toolkit):
         enable_fetch (bool): Enable URL fetching. Default is True.
         enable_extract (bool): Enable schema-guided extraction from a page. Default is False.
         all (bool): Enable all tools. Overrides the individual flags when True. Default is False.
-        engine (str): Search engine — google, duckduckgo, brave, mojeek or bing. Default is google.
+        engine (str): Search engine — google, duckduckgo, brave or mojeek. Default is google.
         country (str): ISO 3166-1 alpha-2 country used to localize search results. Default is US.
         markdown_mode (str): Markdown preservation level, "full" or "readable". Default is "full".
         main_content_only (bool): Strip page chrome from fetched Markdown. Default is False.
