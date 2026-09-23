@@ -1117,7 +1117,11 @@ def attach_routes(
                             "finished_at": "2025-08-12T08:01:49Z",
                             "error": None,
                             "updated_at": "2025-08-12T08:01:49Z",
-                            "computed_at": {"metrics": "2025-08-12T08:03:10Z", "session_metrics": None},
+                            "computed_at": {
+                                "model_metrics": "2025-08-12T08:03:10Z",
+                                "session_metrics": None,
+                                "token_metrics": None,
+                            },
                         }
                     }
                 },
