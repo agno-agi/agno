@@ -2,7 +2,7 @@
 
 > Note: Fork and clone this repository if needed.
 
-[Cheaper Inference](https://cheaperinference.com) is an OpenAI-compatible LLM gateway. Model ids are bare (no vendor prefix), e.g. `gpt-5.4`, `gpt-5.4-mini`, `claude-sonnet-5`, `gemini-3.1-pro`, `deepseek-v4-pro`, `glm-5.3`, `kimi-k3`.
+[Cheaper Inference](https://cheaperinference.com) is an OpenAI-compatible LLM gateway. Each model costs 15–60% less than the list price of its lab. Model ids are bare (no vendor prefix), e.g. `gpt-5.4`, `gpt-5.4-mini`, `claude-sonnet-5`, `gemini-3.1-pro`, `deepseek-v4-pro`, `glm-5.3`, `kimi-k3`.
 
 ### 1. Create and activate a virtual environment
 
