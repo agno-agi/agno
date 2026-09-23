@@ -20,7 +20,8 @@ class FileSystemUsage(BaseModel):
 
 
 class FileSystemListResponse(BaseModel):
-    agent_id: str
+    namespace: str
+    agent_ids: List[str]
     directory: str
     entries: List[FileSystemEntry]
     usage: FileSystemUsage
@@ -28,7 +29,8 @@ class FileSystemListResponse(BaseModel):
 
 
 class FileSystemContentResponse(BaseModel):
-    agent_id: str
+    namespace: str
+    agent_ids: List[str]
     path: str
     content: str
     size_bytes: int
@@ -50,7 +52,8 @@ class FileSystemSearchEntry(BaseModel):
 
 
 class FileSystemSearchResponse(BaseModel):
-    agent_id: str
+    namespace: str
+    agent_ids: List[str]
     query: str
     directory: str
     entries: List[FileSystemSearchEntry]

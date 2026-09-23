@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, Generic, List, Literal, Optional, TypeVar, Union
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, SerializerFunctionWrapHandler, field_validator, model_serializer
 
 from agno.agent import Agent
 from agno.agent.factory import AgentFactory
@@ -203,23 +203,35 @@ class FileSystemSummary(BaseModel):
     max_namespace_bytes: int = Field(..., description="Maximum bytes across the namespace")
 
 
-class FileSystemInstance(FileSystemSummary):
-    agents: List[str] = Field(..., description="IDs of agents using this filesystem instance")
+class FileSystemAgent(BaseModel):
+    id: str = Field(..., description="ID of an agent using this filesystem namespace")
+    access: Literal["full", "read_only"] = Field(
+        default="full",
+        description="Agent access to this namespace. Omitted for full access; tool-specific restrictions still apply.",
+    )
+
+    @model_serializer(mode="wrap")
+    def _serialize_access(self, handler: SerializerFunctionWrapHandler):  # type: ignore[no-untyped-def]
+        # Leave the return type unspecified so OpenAPI retains this model's fields.
+        data = handler(self)
+        if self.access == "full":
+            data.pop("access", None)
+        return data
+
+
+class FileSystemNamespace(FileSystemSummary):
+    agents: List[FileSystemAgent] = Field(..., description="Agents using this filesystem namespace and their access")
 
 
 class FileSystemConfig(BaseModel):
-    instances: List[FileSystemInstance] = Field(
+    namespaces: List[FileSystemNamespace] = Field(
         default_factory=list,
-        description="Filesystem instances discovered from configured agents",
+        description="Filesystem namespaces with their backend details, limits, and linked agents",
     )
 
 
-def _extract_filesystem(agent: Any, user_id: Optional[str] = None) -> Optional[FileSystemSummary]:
-    if not getattr(agent, "filesystem", False):
-        return None
-    filesystem = getattr(agent, "filesystem_instance", None)
-    if filesystem is None:
-        return None
+def _extract_filesystem(filesystem: Any, agent: Any, user_id: Optional[str] = None) -> FileSystemSummary:
+    """Describe one of the agent's filesystems, with its namespace resolved for the caller."""
     user_isolation = "user_id" in filesystem._placeholders
     filesystem = filesystem.resolve(user_id=user_id, agent_id=agent.id)
     backend = filesystem.backend

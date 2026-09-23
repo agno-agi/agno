@@ -8,15 +8,18 @@ from typing import (
     Any,
     Callable,
     Dict,
+    List,
     Literal,
     Optional,
     Sequence,
+    Tuple,
     Union,
     cast,
 )
 
 if TYPE_CHECKING:
     from agno.agent.agent import Agent
+    from agno.fs import FileSystem
 
 from agno.compression.manager import CompressionManager
 from agno.db.base import AsyncBaseDb
@@ -233,7 +236,11 @@ def set_result_store(agent: Agent) -> None:
 
 def set_filesystem(agent: Agent) -> None:
     """Resolve the filesystem shorthand or attach an explicitly provided instance."""
-    if agent.filesystem is None or agent.filesystem is False:
+    if (
+        agent.filesystem is None
+        or agent.filesystem is False
+        or (isinstance(agent.filesystem, list) and not agent.filesystem)
+    ):
         agent._filesystem = None
         return
     if agent._filesystem is not None:
@@ -242,21 +249,23 @@ def set_filesystem(agent: Agent) -> None:
     from agno.fs import FileSystem
     from agno.fs.toolkit import FileSystemTools
 
-    existing_filesystem = (
-        next(
-            (tool for tool in agent.tools if isinstance(tool, FileSystemTools)),
-            None,
-        )
-        if isinstance(agent.tools, list)
-        else None
-    )
-    if existing_filesystem is not None:
+    if _manual_filesystem_tools(agent):
+        # Every FileSystemTools registers the same tool names, and the resolver keeps
+        # only the first registration per name, so a second toolkit would be dropped.
         raise ValueError(
             "filesystem manages its own FileSystemTools. Remove the manually configured "
             "FileSystemTools or disable the filesystem setting."
         )
 
-    if isinstance(agent.filesystem, FileSystem):
+    if isinstance(agent.filesystem, list):
+        if any(not isinstance(store, (FileSystem, FileSystemTools)) for store in agent.filesystem):
+            raise TypeError("filesystem lists must contain only FileSystem or FileSystemTools instances")
+        first = agent.filesystem[0]
+        agent._filesystem = first.fs if isinstance(first, FileSystemTools) else first
+    elif isinstance(agent.filesystem, FileSystemTools):
+        # A toolkit carries its own permissions (read_only, allow_delete, include_tools).
+        agent._filesystem = agent.filesystem.fs
+    elif isinstance(agent.filesystem, FileSystem):
         agent._filesystem = agent.filesystem
     elif agent.filesystem is True:
         if agent.db is None:
@@ -268,7 +277,45 @@ def set_filesystem(agent: Agent) -> None:
         namespace = "users/{user_id}/{agent_id}" if agent._filesystem_user_isolation else "{agent_id}"
         agent._filesystem = FileSystem(agent.db, namespace=namespace).resolve(agent_id=agent.id)
     else:
-        raise TypeError("filesystem must be True, False, None, or a FileSystem instance")
+        raise TypeError("filesystem must be a bool, FileSystem, FileSystemTools, or a list of stores/toolkits")
+
+
+def _manual_filesystem_tools(agent: Agent) -> List[Any]:
+    """FileSystemTools the developer attached through ``tools=[...]``."""
+    if not isinstance(agent.tools, list):
+        return []
+
+    from agno.fs.toolkit import FileSystemTools
+
+    return [tool for tool in agent.tools if isinstance(tool, FileSystemTools)]
+
+
+def has_filesystem(agent: Agent) -> bool:
+    """Whether the agent holds any filesystem, through the setting or its tools. Never builds one."""
+    return bool(agent.filesystem) or bool(_manual_filesystem_tools(agent))
+
+
+def get_filesystems(agent: Agent) -> List[Tuple["FileSystem", bool]]:
+    """Every filesystem this agent holds, as ``(filesystem, read_only)`` pairs.
+
+    Covers the ``filesystem`` setting and any FileSystemTools attached through
+    ``tools=[...]``, so an agent that only reads another agent's namespace is
+    still discoverable. The setting comes first. Namespace templates are left
+    unresolved for the caller to bind.
+    """
+    from agno.fs.toolkit import FileSystemTools
+
+    filesystems: List[Tuple["FileSystem", bool]] = []
+    managed = agent.filesystem_instance
+    if isinstance(agent.filesystem, list):
+        for store in agent.filesystem:
+            filesystems.append((store.fs, store.read_only) if isinstance(store, FileSystemTools) else (store, False))
+    elif managed is not None:
+        read_only = agent.filesystem.read_only if isinstance(agent.filesystem, FileSystemTools) else False
+        filesystems.append((managed, read_only))
+    for toolkit in _manual_filesystem_tools(agent):
+        filesystems.append((toolkit.fs, toolkit.read_only))
+    return filesystems
 
 
 def set_filesystem_user_isolation(agent: Agent, enabled: bool) -> None:
@@ -277,7 +324,7 @@ def set_filesystem_user_isolation(agent: Agent, enabled: bool) -> None:
     if agent._filesystem_user_isolation == enabled:
         return
     if agent.filesystem is not True:
-        # An explicitly supplied FileSystem owns its namespace policy. AgentOS must
+        # An explicitly supplied FileSystem or toolkit owns its namespace policy. AgentOS must
         # not replace or rewrite it when its managed isolation setting changes.
         agent._filesystem_user_isolation = enabled
         return
