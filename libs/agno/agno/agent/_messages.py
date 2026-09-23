@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import re
-import string
 from collections import ChainMap
 from typing import (
     TYPE_CHECKING,
@@ -66,10 +65,8 @@ def format_message_with_state_variables(
     if not isinstance(message, str):
         return message
 
-    # A message without "{" cannot contain a {var} placeholder, and without "$"
-    # Template.safe_substitute is an identity transform - skip the regex and
-    # template machinery entirely for the common plain-text case.
-    if "{" not in message and "$" not in message:
+    # Only brace-delimited placeholders need formatting; dollar signs are literal.
+    if "{" not in message:
         return message
 
     # Extract values from run_context
@@ -86,18 +83,16 @@ def format_message_with_state_variables(
         {"user_id": user_id} if user_id is not None else {},
     )
 
-    converted_msg = message
-    for var_name in format_variables.keys():
-        # Only convert standalone {var_name} patterns, not nested ones
-        pattern = r"\{" + re.escape(var_name) + r"\}"
-        replacement = "${" + var_name + "}"
-        converted_msg = re.sub(pattern, replacement, converted_msg)
+    def replace_variable(match: re.Match[str]) -> str:
+        var_name = match.group(1)
+        if var_name in format_variables:
+            return str(format_variables[var_name])
+        return match.group(0)
 
-    # Use Template to safely substitute variables
-    template = string.Template(converted_msg)
     try:
-        result = template.safe_substitute(format_variables)
-        return result
+        # Preserve ${...} literals and substitute in one pass so inserted values
+        # are not interpreted as additional placeholders or regex replacement text.
+        return re.sub(r"(?<!\$)\{([^{}]+)\}", replace_variable, message)
     except Exception as e:
         log_warning(f"Template substitution failed: {str(e)}")
         return message
