@@ -68,7 +68,14 @@ async def poll_run(
         response.raise_for_status()
         run = response.json()
         if run["status"] != last_status:
-            print(f"Polled status: {run['status']}")
+            # A CANCELLED run also says where it was when cancelled:
+            # PENDING (never started), EXECUTING or PAUSED. Absent means
+            # unknown, so hide only on PENDING.
+            stage = run.get("cancellation_stage")
+            print(
+                f"Polled status: {run['status']}"
+                + (f" (cancellation_stage={stage})" if stage else "")
+            )
             last_status = run["status"]
         if run["status"] in TERMINAL_STATUSES:
             return run
