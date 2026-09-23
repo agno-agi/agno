@@ -23,6 +23,7 @@ if TYPE_CHECKING:
     from agno.agent.agent import Agent
 
 from agno.agent._tools import result_store_kwargs
+from agno.agent.followup import FollowupConfig
 from agno.exceptions import RunCancelledException
 from agno.media import Audio
 from agno.models.base import Model
@@ -1826,9 +1827,10 @@ def generate_followups(
     if not agent.followups or run_response.content is None:
         return
 
-    followup_instructions = agent.followup_config.instructions if agent.followup_config else None
-    # followup_config.model is resolved to a Model at construction (see get_models).
-    config_model = cast(Optional[Model], agent.followup_config.model) if agent.followup_config else None
+    followup_config = agent.followups if isinstance(agent.followups, FollowupConfig) else None
+    followup_instructions = followup_config.instructions if followup_config else None
+    # A config model is resolved to a Model at construction (see get_models).
+    config_model = cast(Optional[Model], followup_config.model) if followup_config else None
     model = config_model or agent.followup_model or agent.model
     if model is None:
         return
@@ -1866,9 +1868,10 @@ async def agenerate_followups(
     if not agent.followups or run_response.content is None:
         return
 
-    followup_instructions = agent.followup_config.instructions if agent.followup_config else None
-    # followup_config.model is resolved to a Model at construction (see get_models).
-    config_model = cast(Optional[Model], agent.followup_config.model) if agent.followup_config else None
+    followup_config = agent.followups if isinstance(agent.followups, FollowupConfig) else None
+    followup_instructions = followup_config.instructions if followup_config else None
+    # A config model is resolved to a Model at construction (see get_models).
+    config_model = cast(Optional[Model], followup_config.model) if followup_config else None
     model = config_model or agent.followup_model or agent.model
     if model is None:
         return
@@ -1907,9 +1910,10 @@ def generate_followups_stream(
     if not agent.followups or run_response.content is None:
         return
 
-    followup_instructions = agent.followup_config.instructions if agent.followup_config else None
-    # followup_config.model is resolved to a Model at construction (see get_models).
-    config_model = cast(Optional[Model], agent.followup_config.model) if agent.followup_config else None
+    followup_config = agent.followups if isinstance(agent.followups, FollowupConfig) else None
+    followup_instructions = followup_config.instructions if followup_config else None
+    # A config model is resolved to a Model at construction (see get_models).
+    config_model = cast(Optional[Model], followup_config.model) if followup_config else None
     model = config_model or agent.followup_model or agent.model
     if model is None:
         return
@@ -1964,9 +1968,10 @@ async def agenerate_followups_stream(
     if not agent.followups or run_response.content is None:
         return
 
-    followup_instructions = agent.followup_config.instructions if agent.followup_config else None
-    # followup_config.model is resolved to a Model at construction (see get_models).
-    config_model = cast(Optional[Model], agent.followup_config.model) if agent.followup_config else None
+    followup_config = agent.followups if isinstance(agent.followups, FollowupConfig) else None
+    followup_instructions = followup_config.instructions if followup_config else None
+    # A config model is resolved to a Model at construction (see get_models).
+    config_model = cast(Optional[Model], followup_config.model) if followup_config else None
     model = config_model or agent.followup_model or agent.model
     if model is None:
         return

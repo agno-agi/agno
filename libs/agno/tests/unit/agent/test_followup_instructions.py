@@ -3,9 +3,9 @@
 Validates that:
 - FollowupConfig stores model and instructions correctly
 - _build_followup_messages appends custom instructions to the system prompt
-- Agent and Team correctly store and resolve followup_config
+- Agent and Team keep a FollowupConfig passed through followups
 - Backward compatibility is maintained with existing followup_model parameter
-- followup_config.model takes precedence over followup_model
+- FollowupConfig.model takes precedence over followup_model
 """
 
 from agno.agent._response import _build_followup_messages
@@ -93,22 +93,22 @@ def test_followup_config_stores_instructions():
 
 
 # ---------------------------------------------------------------------------
-# Agent followup_config field tests
+# Agent followups field tests
 # ---------------------------------------------------------------------------
 
 
-def test_agent_followup_config_default_none():
-    """followup_config should default to None on Agent."""
+def test_agent_followups_true_stays_a_bool():
+    """followups=True is kept as the bool; there is no config to read."""
     agent = Agent(followups=True)
-    assert agent.followup_config is None
+    assert agent.followups is True
 
 
 def test_agent_followup_config_stored():
-    """followup_config should be stored correctly on Agent."""
+    """A FollowupConfig passed as followups is kept on followups."""
     config = FollowupConfig(instructions="Suggest follow-ups in a Socratic style.")
-    agent = Agent(followups=True, followup_config=config)
-    assert agent.followup_config is config
-    assert agent.followup_config.instructions == "Suggest follow-ups in a Socratic style."
+    agent = Agent(followups=config)
+    assert agent.followups is config
+    assert agent.followups.instructions == "Suggest follow-ups in a Socratic style."
 
 
 def test_agent_followup_model_backward_compat():
@@ -117,37 +117,34 @@ def test_agent_followup_model_backward_compat():
     assert agent.followup_model is None  # defaults to None
 
 
-def test_agent_followup_config_model_takes_precedence():
-    """followup_config.model should take precedence in resolution logic."""
+def test_agent_config_model_and_legacy_model_both_kept():
+    """Both model slots stay on the component; which one generates is covered by the runtime tests."""
     from unittest.mock import MagicMock
 
     from agno.models.base import Model
 
     config_model = MagicMock(spec=Model)
     legacy_model = MagicMock(spec=Model)
-    config = FollowupConfig(model=config_model)
 
-    agent = Agent(followups=True, followup_config=config)
-    agent.followup_model = legacy_model  # type: ignore[assignment]
-
-    resolved_model = (agent.followup_config.model if agent.followup_config else None) or agent.followup_model
-    assert resolved_model is config_model
+    agent = Agent(followups=FollowupConfig(model=config_model), followup_model=legacy_model)
+    assert agent.followups.model is config_model
+    assert agent.followup_model is legacy_model
 
 
 # ---------------------------------------------------------------------------
-# Team followup_config field tests
+# Team followups field tests
 # ---------------------------------------------------------------------------
 
 
-def test_team_followup_config_default_none():
-    """followup_config should default to None on Team."""
+def test_team_followups_true_stays_a_bool():
+    """followups=True is kept as the bool on Team too."""
     team = Team(members=[], followups=True)
-    assert team.followup_config is None
+    assert team.followups is True
 
 
 def test_team_followup_config_stored():
-    """followup_config should be stored correctly on Team."""
+    """A FollowupConfig passed as followups is kept on followups."""
     config = FollowupConfig(instructions="Suggest follow-ups in the style of a Socratic dialogue.")
-    team = Team(members=[], followups=True, followup_config=config)
-    assert team.followup_config is config
-    assert team.followup_config.instructions == "Suggest follow-ups in the style of a Socratic dialogue."
+    team = Team(members=[], followups=config)
+    assert team.followups is config
+    assert team.followups.instructions == "Suggest follow-ups in the style of a Socratic dialogue."

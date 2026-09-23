@@ -19,6 +19,7 @@ from typing import (
 if TYPE_CHECKING:
     from agno.agent.agent import Agent
 
+from agno.agent.followup import FollowupConfig
 from agno.compression.manager import CompressionManager
 from agno.db.base import AsyncBaseDb
 from agno.memory import MemoryManager
@@ -283,9 +284,9 @@ def get_models(agent: Agent) -> None:
     # the same instance may also serve as the main model.
     if agent.followup_model is not None:
         agent.followup_model = get_model(agent.followup_model)
-    if agent.followup_config is not None and isinstance(agent.followup_config.model, str):
+    if isinstance(agent.followups, FollowupConfig) and isinstance(agent.followups.model, str):
         # Resolve on a copy: one config object may be shared across components.
-        agent.followup_config = replace(agent.followup_config, model=get_model(agent.followup_config.model))
+        agent.followups = replace(agent.followups, model=get_model(agent.followups.model))
 
     if agent.fallback_config is not None:
         agent.fallback_config.resolve_models()

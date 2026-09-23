@@ -1107,7 +1107,7 @@ async def test_hermetic_real_agent_full_override_set(tmp_path):
         db=caller_db,
         reasoning_model=reasoning_model,
         followup_model=followup_model,
-        followup_config=FollowupConfig(model=followup_config_model, instructions="Suggest documentation questions."),
+        followups=FollowupConfig(model=followup_config_model, instructions="Suggest documentation questions."),
         fallback_models=[fallback_model],
         session_summary_manager=summary_manager,
         compression_manager=compression_manager,
@@ -1130,10 +1130,10 @@ async def test_hermetic_real_agent_full_override_set(tmp_path):
         assert attempt_agent.reasoning_model.cache_response is False
         assert attempt_agent.followup_model is not followup_model
         assert attempt_agent.followup_model.cache_response is False
-        assert attempt_agent.followup_config is not caller.followup_config
-        assert attempt_agent.followup_config.model is not followup_config_model
-        assert attempt_agent.followup_config.model.cache_response is False
-        assert attempt_agent.followup_config.instructions == "Suggest documentation questions."
+        assert attempt_agent.followups is not caller.followups
+        assert attempt_agent.followups.model is not followup_config_model
+        assert attempt_agent.followups.model.cache_response is False
+        assert attempt_agent.followups.instructions == "Suggest documentation questions."
         assert followup_config_model.cache_response is True
         assert attempt_agent.fallback_config is not caller.fallback_config
         assert all(entry.cache_response is False for entry in attempt_agent.fallback_config.on_error)
@@ -1516,17 +1516,19 @@ def test_every_shared_field_has_a_hermetic_action():
     assert not missing, f"unmapped shared-by-reference fields: {sorted(missing)}"
 
 
-@pytest.mark.parametrize("argument", ["followup_config", "followups"])
-async def test_followup_config_model_gets_fresh_provider_calls_per_attempt(tmp_path, argument):
+@pytest.mark.parametrize("slot", ["followups", "followup_model"])
+async def test_followup_model_gets_fresh_provider_calls_per_attempt(tmp_path, slot):
     # Two sequential attempts must each hit the provider on a cache-off copy: with the
     # caller's cache-on instance shared, the second attempt would replay the first.
+    # The model on a FollowupConfig and the legacy followup_model slot get the same treatment.
     calls = []
-    followup_config_model = RecordingFakeModel("followup-config", calls=calls)
-    followup_config_model.cache_response = True
-    followup_config_model.cache_dir = str(tmp_path / "followup-config-cache")
-    config = FollowupConfig(model=followup_config_model)
-    # The config reaches the same isolated slot whether it arrives as followups= or followup_config=.
-    kwargs = {"followups": config} if argument == "followups" else {"followups": True, "followup_config": config}
+    followup_model = RecordingFakeModel("followup", calls=calls)
+    followup_model.cache_response = True
+    followup_model.cache_dir = str(tmp_path / "followup-cache")
+    if slot == "followups":
+        kwargs = {"followups": FollowupConfig(model=followup_model)}
+    else:
+        kwargs = {"followups": True, "followup_model": followup_model}
     caller = Agent(model=RecordingFakeModel("main"), db=InMemoryDb(), telemetry=False, **kwargs)
 
     result = await arun_rollouts(_real_env(caller), k=2, concurrency=1)
@@ -1534,29 +1536,27 @@ async def test_followup_config_model_gets_fresh_provider_calls_per_attempt(tmp_p
     assert result.pass_rate == 1.0
     assert len(calls) == 2
     assert all(cache_response is False for _, _, _, cache_response in calls)
-    assert all(instance_id != id(followup_config_model) for _, _, instance_id, _ in calls)
-    assert followup_config_model.cache_response is True
+    assert all(instance_id != id(followup_model) for _, _, instance_id, _ in calls)
+    assert followup_model.cache_response is True
 
 
-@pytest.mark.parametrize("argument", ["followup_config", "followups"])
-def test_string_followup_config_model_is_resolved_before_isolation(tmp_path, argument):
+def test_string_followup_config_model_is_resolved_before_isolation(tmp_path):
     # A "provider:model_id" string resolves at construction, so deep_copy hands the
     # attempt a Model instance and the isolation pass can give it a cache-off copy.
     config = FollowupConfig(model="openai:gpt-5.5")
-    kwargs = {"followups": config} if argument == "followups" else {"followups": True, "followup_config": config}
-    caller = Agent(model=RecordingFakeModel("main"), db=InMemoryDb(), telemetry=False, **kwargs)
+    caller = Agent(model=RecordingFakeModel("main"), db=InMemoryDb(), followups=config, telemetry=False)
     assert config.model == "openai:gpt-5.5"  # the caller's object is left unresolved
-    assert isinstance(caller.followup_config.model, Model)
-    caller.followup_config.model.cache_response = True
-    caller.followup_config.model.cache_dir = str(tmp_path / "cache")
+    assert isinstance(caller.followups.model, Model)
+    caller.followups.model.cache_response = True
+    caller.followups.model.cache_dir = str(tmp_path / "cache")
 
     attempt = caller.deep_copy()
     _isolate_attempt(attempt)
 
-    assert isinstance(attempt.followup_config.model, Model)
-    assert attempt.followup_config.model is not caller.followup_config.model
-    assert attempt.followup_config.model.cache_response is False
-    assert caller.followup_config.model.cache_response is True
+    assert isinstance(attempt.followups.model, Model)
+    assert attempt.followups.model is not caller.followups.model
+    assert attempt.followups.model.cache_response is False
+    assert caller.followups.model.cache_response is True
 
 
 # ---------------------------------------------------------------------------

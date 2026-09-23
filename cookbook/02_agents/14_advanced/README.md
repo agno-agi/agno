@@ -36,13 +36,11 @@ Advanced examples covering caching, compression, concurrency, events, retries, d
 Python documentation questions. The same configuration works on `Team`.
 `followups` takes `False`, `True` for the defaults, or a `FollowupConfig` that enables
 follow-ups and carries the count, custom instructions and an optional separate model:
-`followups=FollowupConfig(num_followups=5, model=..., instructions="...")`. After
-construction `followups` reads back as a bool and the config is on `followup_config`.
-The earlier arguments still work: `followups=True` with `num_followups`,
-`followup_model` or `followup_config`. A count set on the config wins over
+`followups=FollowupConfig(num_followups=5, model=..., instructions="...")`. The
+component keeps what you pass, so `agent.followups` reads back as the bool or the
+config. The earlier arguments still work alongside it: `followups=True` with
+`num_followups` or `followup_model`. A count set on the config wins over
 `num_followups`; left unset (`None`) it falls back to `num_followups`, default 3.
-Passing two different config objects as `followups` and `followup_config` raises
-`ValueError`, even when their contents are equal.
 `FollowupConfig.model` takes precedence over `followup_model`, then the main model;
 either slot accepts a `Model` object or a `provider:model_id` string, resolved when
 the component is built. Only the question, answer and follow-up instructions are
@@ -58,7 +56,8 @@ with or without a `FollowupConfig`. Failed, cancelled or malformed generation pr
 `None`. Streaming completion events and persisted run output preserve the list,
 including `[]`. Consumers should hide suggestion controls for an empty list.
 
-`to_dict()` and `from_dict()` on `Agent` and `Team` keep `followups`, `num_followups`,
-`followup_model` and `followup_config`. A model is stored by identity only (`id`,
-`name`, `provider`), never with credentials; register the live model in a `Registry`
-to keep custom endpoints or connection settings when the component is recreated.
+`to_dict()` and `from_dict()` on `Agent` and `Team` keep `followups` (stored as `True`,
+`False` or the config's fields), `num_followups` and `followup_model`. A follow-up model
+is stored by identity only (`id`, `name`, `provider`), never with credentials or request
+headers; register the live model in a `Registry` to keep custom endpoints or connection
+settings when the component is recreated.

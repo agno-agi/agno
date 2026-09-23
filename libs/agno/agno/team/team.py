@@ -369,15 +369,13 @@ class Team:
     reasoning_agent: Optional[Agent] = None
 
     # --- Team Followups ---
-    # If True, generate followup prompts after the main response. The constructor also takes a
-    # FollowupConfig here: it enables followups and is kept on followup_config, so this stays a bool.
-    followups: bool = False
+    # False, True for the defaults, or a FollowupConfig that enables followups and carries their
+    # model, instructions and count. Kept as given; a string model is resolved on a copy of it.
+    followups: Union[bool, FollowupConfig] = False
     # Maximum number of followup prompts to generate (default 3); FollowupConfig.num_followups wins when set
     num_followups: int = 3
     # Optional model to use for generating followups (defaults to team's model)
     followup_model: Optional[Model] = None
-    # Follow-up model, instructions and count; set by followups=FollowupConfig(...) or passed here directly
-    followup_config: Optional[FollowupConfig] = None
 
     # --- Team Streaming ---
     # Stream the response from the Team
@@ -565,7 +563,6 @@ class Team:
         followups: Union[bool, FollowupConfig] = False,
         num_followups: int = 3,
         followup_model: Optional[Union[Model, str]] = None,
-        followup_config: Optional[FollowupConfig] = None,
         stream: Optional[bool] = None,
         stream_events: Optional[bool] = None,
         store_events: bool = False,
@@ -685,7 +682,6 @@ class Team:
             followups=followups,
             num_followups=num_followups,
             followup_model=followup_model,
-            followup_config=followup_config,
             stream=stream,
             stream_events=stream_events,
             store_events=store_events,

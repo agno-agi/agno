@@ -21,7 +21,7 @@ if TYPE_CHECKING:
     from agno.agent.agent import Agent
     from agno.offload.store import ResultStore
 
-from agno.agent.followup import FollowupConfig
+from agno.agent.followup import FollowupConfig, _model_identity
 from agno.db.base import BaseDb, ComponentType, SessionType
 from agno.db.schemas.scheduler import strip_reserved_run_metadata
 from agno.db.utils import resolve_db_from_config
@@ -265,6 +265,20 @@ def _offload_from_config(value: Any) -> Optional[Union[bool, "ResultStore"]]:
         from agno.offload.store import ResultStore
 
         return ResultStore.from_dict(value)
+    return bool(value)
+
+
+def _followups_to_config(value: Union[bool, FollowupConfig]) -> Union[bool, Dict[str, Any]]:
+    """The followups setting as it is stored: True, False, or the FollowupConfig fields."""
+    if isinstance(value, FollowupConfig):
+        return value.to_dict()
+    return bool(value)
+
+
+def _followups_from_config(value: Any, registry: Optional[Registry] = None) -> Union[bool, FollowupConfig]:
+    """The followups setting from a stored config: False when unset, True, False, or a FollowupConfig."""
+    if isinstance(value, dict):
+        return FollowupConfig.from_dict(value, registry)
     return bool(value)
 
 
@@ -1023,16 +1037,14 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
 
     # --- Followup settings ---
     if agent.followups:
-        config["followups"] = agent.followups
+        config["followups"] = _followups_to_config(agent.followups)
     if agent.num_followups != 3:
         config["num_followups"] = agent.num_followups
     if agent.followup_model is not None:
         if isinstance(agent.followup_model, Model):
-            config["followup_model"] = agent.followup_model.to_dict()
+            config["followup_model"] = _model_identity(agent.followup_model)
         else:
             config["followup_model"] = str(agent.followup_model)
-    if agent.followup_config is not None:
-        config["followup_config"] = agent.followup_config.to_dict()
 
     # --- Default tools settings ---
     if agent.read_chat_history:
@@ -1231,8 +1243,6 @@ def from_dict(
     # --- Handle followup model reconstruction ---
     if config.get("followup_model") is not None:
         config["followup_model"] = resolve_model(config["followup_model"], registry)
-    if isinstance(config.get("followup_config"), dict):
-        config["followup_config"] = FollowupConfig.from_dict(config["followup_config"], registry)
 
     # --- Handle parser_model reconstruction ---
     # TODO: implement parser model deserialization
@@ -1437,10 +1447,9 @@ def from_dict(
         # --- Reasoning settings ---
         reasoning_model=config.get("reasoning_model"),
         # --- Followup settings ---
-        followups=config.get("followups", False),
+        followups=_followups_from_config(config.get("followups"), registry),
         num_followups=config.get("num_followups", 3),
         followup_model=config.get("followup_model"),
-        followup_config=config.get("followup_config"),
         # --- Default tools settings ---
         read_chat_history=config.get("read_chat_history", False),
         search_knowledge=config.get("search_knowledge", True),

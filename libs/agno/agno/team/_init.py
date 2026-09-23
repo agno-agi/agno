@@ -29,7 +29,7 @@ from uuid import uuid4
 from pydantic import BaseModel
 
 from agno.agent import Agent
-from agno.agent.followup import FollowupConfig, _resolve_followups
+from agno.agent.followup import FollowupConfig, _effective_num_followups
 from agno.compression.manager import CompressionManager
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.eval.base import BaseEval
@@ -166,7 +166,6 @@ def __init__(
     followups: Union[bool, FollowupConfig] = False,
     num_followups: int = 3,
     followup_model: Optional[Union[Model, str]] = None,
-    followup_config: Optional[FollowupConfig] = None,
     stream: Optional[bool] = None,
     stream_events: Optional[bool] = None,
     store_events: bool = False,
@@ -362,9 +361,8 @@ def __init__(
     team.reasoning_model = reasoning_model  # type: ignore[assignment]
     team.reasoning_agent = reasoning_agent
 
-    team.followups, team.num_followups, team.followup_config = _resolve_followups(
-        followups, num_followups, followup_config
-    )
+    team.followups = followups
+    team.num_followups = _effective_num_followups(followups, num_followups)
     team.followup_model = followup_model  # type: ignore[assignment]
 
     team.stream = stream
@@ -826,9 +824,9 @@ def _resolve_models(team: "Team") -> None:
     # the same instance may also serve as the main model.
     if team.followup_model is not None:
         team.followup_model = get_model(team.followup_model)
-    if team.followup_config is not None and isinstance(team.followup_config.model, str):
+    if isinstance(team.followups, FollowupConfig) and isinstance(team.followups.model, str):
         # Resolve on a copy: one config object may be shared across components.
-        team.followup_config = replace(team.followup_config, model=get_model(team.followup_config.model))
+        team.followups = replace(team.followups, model=get_model(team.followups.model))
 
     if team.fallback_config is not None:
         team.fallback_config.resolve_models()

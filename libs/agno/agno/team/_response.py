@@ -20,6 +20,7 @@ from uuid import uuid4
 from pydantic import BaseModel
 
 from agno.agent._tools import result_store_kwargs
+from agno.agent.followup import FollowupConfig
 from agno.exceptions import RunCancelledException
 from agno.media import Audio
 from agno.models.base import Model
@@ -1758,9 +1759,10 @@ def generate_team_followups(
     if not team.followups or run_response.content is None:
         return
 
-    followup_instructions = team.followup_config.instructions if team.followup_config else None
-    # followup_config.model is resolved to a Model at construction (see _resolve_models).
-    config_model = cast(Optional[Model], team.followup_config.model) if team.followup_config else None
+    followup_config = team.followups if isinstance(team.followups, FollowupConfig) else None
+    followup_instructions = followup_config.instructions if followup_config else None
+    # A config model is resolved to a Model at construction (see _resolve_models).
+    config_model = cast(Optional[Model], followup_config.model) if followup_config else None
     model = config_model or team.followup_model or team.model
     if model is None:
         return
@@ -1801,9 +1803,10 @@ async def agenerate_team_followups(
     if not team.followups or run_response.content is None:
         return
 
-    followup_instructions = team.followup_config.instructions if team.followup_config else None
-    # followup_config.model is resolved to a Model at construction (see _resolve_models).
-    config_model = cast(Optional[Model], team.followup_config.model) if team.followup_config else None
+    followup_config = team.followups if isinstance(team.followups, FollowupConfig) else None
+    followup_instructions = followup_config.instructions if followup_config else None
+    # A config model is resolved to a Model at construction (see _resolve_models).
+    config_model = cast(Optional[Model], followup_config.model) if followup_config else None
     model = config_model or team.followup_model or team.model
     if model is None:
         return
@@ -1845,9 +1848,10 @@ def generate_team_followups_stream(
     if not team.followups or run_response.content is None:
         return
 
-    followup_instructions = team.followup_config.instructions if team.followup_config else None
-    # followup_config.model is resolved to a Model at construction (see _resolve_models).
-    config_model = cast(Optional[Model], team.followup_config.model) if team.followup_config else None
+    followup_config = team.followups if isinstance(team.followups, FollowupConfig) else None
+    followup_instructions = followup_config.instructions if followup_config else None
+    # A config model is resolved to a Model at construction (see _resolve_models).
+    config_model = cast(Optional[Model], followup_config.model) if followup_config else None
     model = config_model or team.followup_model or team.model
     if model is None:
         return
@@ -1905,9 +1909,10 @@ async def agenerate_team_followups_stream(
     if not team.followups or run_response.content is None:
         return
 
-    followup_instructions = team.followup_config.instructions if team.followup_config else None
-    # followup_config.model is resolved to a Model at construction (see _resolve_models).
-    config_model = cast(Optional[Model], team.followup_config.model) if team.followup_config else None
+    followup_config = team.followups if isinstance(team.followups, FollowupConfig) else None
+    followup_instructions = followup_config.instructions if followup_config else None
+    # A config model is resolved to a Model at construction (see _resolve_models).
+    config_model = cast(Optional[Model], followup_config.model) if followup_config else None
     model = config_model or team.followup_model or team.model
     if model is None:
         return
