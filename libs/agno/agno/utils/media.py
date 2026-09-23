@@ -302,6 +302,7 @@ def reconstruct_image_from_dict(img_data):
                     original_prompt=img_data.get("original_prompt"),
                     revised_prompt=img_data.get("revised_prompt"),
                     alt_text=img_data.get("alt_text"),
+                    metadata=img_data.get("metadata"),
                 )
             else:
                 # Regular image (filepath/url)
@@ -351,6 +352,14 @@ def reconstruct_video_from_dict(vid_data):
                     id=vid_data.get("id"),
                     mime_type=vid_data.get("mime_type"),
                     format=vid_data.get("format"),
+                    duration=vid_data.get("duration"),
+                    width=vid_data.get("width"),
+                    height=vid_data.get("height"),
+                    fps=vid_data.get("fps"),
+                    eta=vid_data.get("eta"),
+                    original_prompt=vid_data.get("original_prompt"),
+                    revised_prompt=vid_data.get("revised_prompt"),
+                    metadata=vid_data.get("metadata"),
                 )
             else:
                 # Regular video (filepath/url)
@@ -401,6 +410,8 @@ def reconstruct_audio_from_dict(aud_data):
                     expires_at=aud_data.get("expires_at"),
                     sample_rate=aud_data.get("sample_rate", 24000),
                     channels=aud_data.get("channels", 1),
+                    duration=aud_data.get("duration"),
+                    metadata=aud_data.get("metadata"),
                 )
             else:
                 # Regular audio (filepath/url)
@@ -459,6 +470,8 @@ def reconstruct_file_from_dict(file_data):
                     file_obj.filepath = file_data.get("filepath")
                 if file_data.get("url") is not None:
                     file_obj.url = file_data.get("url")
+                if file_data.get("metadata") is not None:
+                    file_obj.metadata = file_data.get("metadata")
                 return file_obj
             else:
                 # Regular file (filepath/url)

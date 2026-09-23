@@ -494,3 +494,48 @@ def test_message_round_trip_keeps_the_persisted_url():
 
         assert rebuilt.images[0].url == "https://origin.example.com/c.png"
         assert rebuilt.images[0].media_reference is not None
+
+
+def test_base64_branch_restores_every_field_to_dict_writes():
+    """The base64 reconstruction branch must not drop fields that to_dict() writes.
+
+    A database row without an external reference takes this branch, so any field it omits is
+    lost on every session read-back.
+    """
+    import base64
+
+    from agno.media import Audio, File, Image, Video
+    from agno.utils.media import (
+        reconstruct_audio_from_dict,
+        reconstruct_file_from_dict,
+        reconstruct_image_from_dict,
+        reconstruct_video_from_dict,
+    )
+
+    encoded = base64.b64encode(b"x").decode()
+    cases = [
+        (Image, reconstruct_image_from_dict, {"metadata": {"k": "v"}}),
+        (Audio, reconstruct_audio_from_dict, {"duration": 12.5, "metadata": {"k": "v"}}),
+        (
+            Video,
+            reconstruct_video_from_dict,
+            {
+                "duration": 1.5,
+                "width": 640,
+                "height": 480,
+                "fps": 30,
+                "eta": "2s",
+                "original_prompt": "p1",
+                "revised_prompt": "p2",
+                "metadata": {"k": "v"},
+            },
+        ),
+        (File, reconstruct_file_from_dict, {"metadata": {"k": "v"}}),
+    ]
+
+    for media_cls, reconstruct, extra in cases:
+        original = media_cls(content=base64.b64decode(encoded), id="i1", **extra)
+        restored = reconstruct(original.to_dict())
+        assert restored is not None
+        for field, value in extra.items():
+            assert getattr(restored, field) == value, f"{media_cls.__name__}.{field} lost"
