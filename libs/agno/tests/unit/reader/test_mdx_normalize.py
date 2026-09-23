@@ -122,6 +122,46 @@ def test_cards_accordions_fields_and_tooltips():
     assert normalize_mdx(badge) == "*Introduced in v2.2.1*\n"
 
 
+@pytest.mark.parametrize("location", ["query", "path", "body", "header"])
+@pytest.mark.parametrize("form", ["block", "inline", "self-closing"])
+def test_param_fields_use_documented_location_names(location, form):
+    field_name = f"field_{location}"
+    attrs = f'{location}="{field_name}" type="string" required default="none"'
+    if form == "block":
+        raw = f"<ParamField {attrs}>\n  Description.\n</ParamField>\n"
+        expected = f"- `{field_name}` (string, required, default none): Description.\n"
+    elif form == "inline":
+        raw = f"<ParamField {attrs}>Description.</ParamField>\n"
+        expected = f"- `{field_name}` (string, required, default none): Description.\n"
+    else:
+        raw = f"<ParamField {attrs} />\n"
+        expected = f"- `{field_name}` (string, required, default none)\n"
+
+    assert normalize_mdx(raw) == expected
+
+
+def test_param_field_name_has_priority_and_response_fields_remain_name_only():
+    raw = (
+        '<ParamField name="legacy" query="query_name" path="path_name" body="body_name" header="header_name" '
+        'type="str">\n  Legacy field.\n</ParamField>\n'
+        '<ResponseField query="ignored" type="str">\n  Response field.\n</ResponseField>\n'
+    )
+
+    assert normalize_mdx(raw) == "- `legacy` (str): Legacy field.\nResponse field.\n"
+
+
+def test_param_field_location_priority_is_deterministic():
+    raw = '<ParamField header="header_name" body="body_name" path="path_name" query="query_name" type="str" />\n'
+
+    assert normalize_mdx(raw) == "- `query_name` (str)\n"
+
+
+def test_param_field_inside_code_fence_is_untouched():
+    raw = '```mdx\n<ParamField query="limit" type="int" />\n```\n'
+
+    assert normalize_mdx(raw) == raw
+
+
 def test_media_html_and_unknown_components():
     frame = (
         '<Frame caption="AgentOS API">\n'
