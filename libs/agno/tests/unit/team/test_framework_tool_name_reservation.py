@@ -66,6 +66,31 @@ def test_user_function_cannot_shadow_delegate_task_to_member():
     assert "member_id" in props and "task" in props
 
 
+def test_user_function_cannot_shadow_framework_callable():
+    """Reservation also covers framework tools appended as raw callables, not just Function instances.
+
+    ``Team.get_member_information`` is a bound method appended directly (not a ``Function``).
+    Its ``run_context`` argument is framework-injected, so the real tool exposes no user
+    parameters; a shadowing user tool would leak its own parameter (``x``).
+    """
+
+    def shadow(x: str) -> str:
+        """user shadow tool"""
+        return x
+
+    team = Team(
+        members=[Agent(id="member", telemetry=False)],
+        tools=[Function(name="get_member_information", entrypoint=shadow)],
+        get_member_information_tool=True,
+        telemetry=False,
+    )
+
+    matches = _by_name(_resolve(team), "get_member_information")
+
+    assert len(matches) == 1
+    assert "x" not in matches[0].parameters.get("properties", {})
+
+
 def test_regular_user_tool_still_resolved():
     """A user tool that does not collide with a framework name is unaffected."""
 

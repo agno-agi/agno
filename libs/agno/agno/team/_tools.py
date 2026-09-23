@@ -387,11 +387,17 @@ def _determine_tools_for_model(
     ):
         strict = True
 
-    # Names owned by framework tools (everything appended after the user tools). A
-    # user tool must never replace one of these; the Team depends on them (see #9871).
-    reserved_tool_names: Set[str] = {
-        framework_tool.name for framework_tool in _tools[n_user_tools:] if isinstance(framework_tool, Function)
-    }
+    # Names owned by framework tools (everything appended after the user tools). A user
+    # tool must never replace one of these; the Team depends on them (see #9871). Framework
+    # tools reach the model either as Function instances or as raw callables -- the latter
+    # are named via ``__name__`` in the ``callable`` branch (Function.from_callable), so their
+    # names are reserved too (e.g. the bound ``Team.get_member_information`` method).
+    reserved_tool_names: Set[str] = set()
+    for framework_tool in _tools[n_user_tools:]:
+        if isinstance(framework_tool, Function):
+            reserved_tool_names.add(framework_tool.name)
+        elif callable(framework_tool) and getattr(framework_tool, "__name__", None):
+            reserved_tool_names.add(framework_tool.__name__)
 
     for tool_index, tool in enumerate(_tools):
         # ComponentTool markers are rejected at the API boundary (Team __init__ /
