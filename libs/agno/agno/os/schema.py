@@ -204,10 +204,10 @@ class FileSystemSummary(BaseModel):
 
 
 class FileSystemAgent(BaseModel):
-    id: str = Field(..., description="ID of an agent using this filesystem instance")
+    id: str = Field(..., description="ID of an agent using this filesystem namespace")
     access: Literal["full", "read_only"] = Field(
         default="full",
-        description="Agent access to this instance. Omitted for full access; tool-specific restrictions still apply.",
+        description="Agent access to this namespace. Omitted for full access; tool-specific restrictions still apply.",
     )
 
     @model_serializer(mode="wrap")
@@ -219,14 +219,14 @@ class FileSystemAgent(BaseModel):
         return data
 
 
-class FileSystemInstance(FileSystemSummary):
-    agents: List[FileSystemAgent] = Field(..., description="Agents using this filesystem instance and their access")
+class FileSystemNamespace(FileSystemSummary):
+    agents: List[FileSystemAgent] = Field(..., description="Agents using this filesystem namespace and their access")
 
 
 class FileSystemConfig(BaseModel):
-    instances: List[FileSystemInstance] = Field(
+    namespaces: List[FileSystemNamespace] = Field(
         default_factory=list,
-        description="Filesystem instances discovered from configured agents",
+        description="Filesystem namespaces with their backend details, limits, and linked agents",
     )
 
 

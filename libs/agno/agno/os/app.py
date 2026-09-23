@@ -2304,9 +2304,9 @@ class AgentOS:
 
     def _get_filesystem_config(self, user_id: Optional[str] = None) -> "FileSystemConfig":
         from agno.os.routers.filesystem.utils import _filesystem_backend_key
-        from agno.os.schema import FileSystemAgent, FileSystemConfig, FileSystemInstance, _extract_filesystem
+        from agno.os.schema import FileSystemAgent, FileSystemConfig, FileSystemNamespace, _extract_filesystem
 
-        instances: Dict[tuple, FileSystemInstance] = {}
+        namespaces: Dict[tuple, FileSystemNamespace] = {}
         for entry in self.agents or []:
             if not isinstance(entry, Agent) or not entry.id:
                 continue
@@ -2319,27 +2319,29 @@ class AgentOS:
                     summary.max_file_bytes,
                     summary.max_namespace_bytes,
                 )
-                instance = instances.get(key)
-                if instance is None:
-                    instance = instances[key] = FileSystemInstance(**summary.model_dump(), agents=[])
-                linked_agent = next((agent for agent in instance.agents if agent.id == entry.id), None)
+                namespace_config = namespaces.get(key)
+                if namespace_config is None:
+                    namespace_config = namespaces[key] = FileSystemNamespace(**summary.model_dump(), agents=[])
+                linked_agent = next((agent for agent in namespace_config.agents if agent.id == entry.id), None)
                 if linked_agent is None:
-                    instance.agents.append(FileSystemAgent(id=entry.id, access="read_only" if read_only else "full"))
+                    namespace_config.agents.append(
+                        FileSystemAgent(id=entry.id, access="read_only" if read_only else "full")
+                    )
                 elif not read_only:
                     # A writable attachment takes precedence over a read-only one on the same store.
                     linked_agent.access = "full"
 
-        for instance in instances.values():
-            instance.agents.sort(key=lambda agent: agent.id)
+        for namespace_config in namespaces.values():
+            namespace_config.agents.sort(key=lambda agent: agent.id)
 
         return FileSystemConfig(
-            instances=sorted(
-                instances.values(),
-                key=lambda instance: (
-                    instance.backend_type,
-                    instance.db_id or "",
-                    instance.namespace,
-                    [agent.id for agent in instance.agents],
+            namespaces=sorted(
+                namespaces.values(),
+                key=lambda namespace_config: (
+                    namespace_config.backend_type,
+                    namespace_config.db_id or "",
+                    namespace_config.namespace,
+                    [agent.id for agent in namespace_config.agents],
                 ),
             )
         )

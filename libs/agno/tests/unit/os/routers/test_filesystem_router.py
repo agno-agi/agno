@@ -161,7 +161,7 @@ def test_global_files_merges_agents_sharing_the_same_filesystem(db, monkeypatch,
         }
     ]
     assert config.status_code == 200
-    assert config.json()["filesystem"]["instances"][0]["agents"] == [{"id": "one"}, {"id": "two"}]
+    assert config.json()["filesystem"]["namespaces"][0]["agents"] == [{"id": "one"}, {"id": "two"}]
 
     restricted = client.get("/filesystem/files", headers=_headers("alice", ["agents:one:read"]))
     assert restricted.status_code == 200
@@ -203,7 +203,7 @@ def test_config_namespace_filters_global_files_for_the_caller(db, namespace, cli
 
     config = client.get("/config", headers=_headers("Alice", ["config:read"]))
     assert config.status_code == 200
-    resolved_namespace = config.json()["filesystem"]["instances"][0]["namespace"]
+    resolved_namespace = config.json()["filesystem"]["namespaces"][0]["namespace"]
     listed = client.get("/filesystem/files", params={"namespace": resolved_namespace}, headers=_headers("Alice"))
 
     assert listed.status_code == 200
@@ -366,7 +366,7 @@ def test_config_describes_filesystem_at_os_level(db, client_factory):
     assert response.status_code == 200
     agents = {entry["id"]: entry for entry in response.json()["agents"]}
     assert response.json()["filesystem"] == {
-        "instances": [
+        "namespaces": [
             {
                 "backend_type": "db",
                 "db_id": "filesystem-db",
@@ -391,7 +391,7 @@ def test_manual_read_only_toolkit_is_discovered_and_browsable(db, client_factory
     shared.write("decisions.md", "vector db: pgvector\n")
 
     config = client.get("/config", headers=_headers("alice", ["config:read"])).json()
-    assert [(i["namespace"], i["agents"]) for i in config["filesystem"]["instances"]] == [
+    assert [(i["namespace"], i["agents"]) for i in config["filesystem"]["namespaces"]] == [
         ("research/decisions", [{"id": "answerer", "access": "read_only"}, {"id": "recorder"}])
     ]
     agents = client.get("/agents", headers=_headers("alice")).json()
@@ -410,7 +410,7 @@ def test_read_only_toolkit_setting_is_reported_read_only(db, client_factory):
     client = client_factory(agent)
 
     config = client.get("/config", headers=_headers("alice", ["config:read"])).json()
-    instance = config["filesystem"]["instances"][0]
+    instance = config["filesystem"]["namespaces"][0]
     assert instance["agents"] == [{"id": "answerer", "access": "read_only"}]
     assert "read_only_agents" not in instance
 
@@ -424,8 +424,8 @@ def test_config_full_access_takes_precedence_on_shared_store(db, read_only_first
 
     config = client.get("/config", headers=_headers("alice", ["config:read"])).json()
 
-    assert len(config["filesystem"]["instances"]) == 1
-    assert config["filesystem"]["instances"][0]["agents"] == [{"id": "analyst"}]
+    assert len(config["filesystem"]["namespaces"]) == 1
+    assert config["filesystem"]["namespaces"][0]["agents"] == [{"id": "analyst"}]
 
 
 def test_namespace_selects_among_an_agents_filesystems(db, client_factory):

@@ -51,7 +51,8 @@ The setting holds one store. An agent that needs several attaches them through
 `FileSystemTools` cannot be combined on one agent.
 
 AgentOS discovers filesystems from both the setting and `tools`. `/config` lists
-each instance's `agents` and the subset in `read_only_agents`. To browse one of an
+each namespace's linked `agents`, with `access: "read_only"` on read-only agents
+and omitted `access` defaulting to `"full"`. To browse one of an
 agent's several stores, pass its `namespace` to the `/filesystem` routes.
 
 ## Namespaces and isolation
@@ -100,9 +101,9 @@ cannot widen access beyond the caller's agents and user scope. Shared files are
 returned once with their accessible `agent_ids`. Remote agents are skipped in a
 global listing; selecting one explicitly returns an unsupported response.
 
-`GET /config` exposes `filesystem.instances` discovered from concrete local
-agents. Each instance includes backend metadata, limits, agent IDs in `agents`, and the
-canonical namespace resolved for the caller. Use that namespace directly as a
+`GET /config` exposes `filesystem.namespaces` discovered from concrete local
+agents. Each entry includes backend metadata, limits, linked agents with access
+in `agents`, and the canonical namespace resolved for the caller. Use that namespace directly as a
 `/filesystem` filter. When identity is unavailable, placeholders remain in config;
 browsing requires the missing identity. Factory and stored agents are resolved
 when browsing but are not included in config discovery.
