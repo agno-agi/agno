@@ -271,6 +271,56 @@ class TestFormatMessagesEmptyParts:
         assert roles == ["user", "model", "user"]
 
 
+def _tool_call(call_id: str, name: str, arguments: str = "{}") -> dict:
+    return {"id": call_id, "type": "function", "function": {"name": name, "arguments": arguments}}
+
+
+def test_format_messages_keeps_user_text_out_of_function_response_turn():
+    """A user message after a tool result (e.g. stop_after_tool_call) must not be merged into it (#10455)."""
+    model = Gemini(api_key="test-key")
+    messages = [
+        Message(role="user", content="call mark with X"),
+        Message(role="assistant", tool_calls=[_tool_call("call-1", "mark", '{"emoji": "X"}')]),
+        Message(role="tool", content="marked X", tool_call_id="call-1", tool_name="mark"),
+        Message(role="user", content="say hello"),
+    ]
+
+    formatted, _ = model._format_messages(messages)
+
+    assert [content.role for content in formatted] == ["user", "model", "user", "user"]
+    function_response_turn = formatted[2]
+    assert len(function_response_turn.parts) == 1
+    assert function_response_turn.parts[0].function_response is not None
+    assert function_response_turn.parts[0].function_response.name == "mark"
+    assert len(formatted[3].parts) == 1
+    assert formatted[3].parts[0].text == "say hello"
+
+
+def test_format_messages_merges_parallel_function_responses():
+    model = Gemini(api_key="test-key")
+    messages = [
+        Message(role="user", content="weather in Paris and Rome"),
+        Message(
+            role="assistant",
+            tool_calls=[
+                _tool_call("call-1", "get_weather", '{"city": "Paris"}'),
+                _tool_call("call-2", "get_weather", '{"city": "Rome"}'),
+            ],
+        ),
+        Message(role="tool", content="sunny", tool_call_id="call-1", tool_name="get_weather"),
+        Message(role="tool", content="rainy", tool_call_id="call-2", tool_name="get_weather"),
+        Message(role="user", content="thanks"),
+    ]
+
+    formatted, _ = model._format_messages(messages)
+
+    assert [content.role for content in formatted] == ["user", "model", "user", "user"]
+    responses = [part.function_response for part in formatted[2].parts]
+    assert all(response is not None for response in responses)
+    assert [response.response for response in responses] == [{"result": "sunny"}, {"result": "rainy"}]
+    assert formatted[3].parts[0].text == "thanks"
+
+
 def test_format_messages_nests_tool_result_media_in_function_response():
     model = Gemini(api_key="test-key")
     messages = [
