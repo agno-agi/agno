@@ -334,6 +334,16 @@ def get_websocket_router(
 
         ws_authorization_provider = resolve_authorization_provider(websocket.app)
 
+        def ws_is_service_account() -> bool:
+            # Decided from the authenticated principal, not a flag set at PAT login: a socket
+            # can re-authenticate, and a flag left over from a PAT would let a later JWT be
+            # decided on its raw token scopes under a managed-roles plane. A JWT cannot carry
+            # an ``sa:`` subject (reserved principals are refused at login).
+            from agno.db.schemas.service_accounts import SERVICE_ACCOUNT_PRINCIPAL_PREFIX
+
+            uid = websocket_user_context.get("user_id")
+            return isinstance(uid, str) and uid.startswith(SERVICE_ACCOUNT_PRINCIPAL_PREFIX)
+
         async def ws_authorize_workflow(workflow_id: Optional[str]) -> bool:
             """Route-gate a workflow WS action through the provider, mirroring the REST
             POST /workflows/{id}/runs gate (same required scopes, same resource ctx).
@@ -353,7 +363,7 @@ def get_websocket_router(
             # so the configured provider would deny every PAT. REST evaluates PATs with the
             # scope provider (auth._provider_for); the WebSocket does the same.
             provider = ws_authorization_provider
-            if websocket_user_context.get("service_account"):
+            if ws_is_service_account():
                 from agno.os.auth import _default_authorization_provider
 
                 provider = _default_authorization_provider()
@@ -396,7 +406,6 @@ def get_websocket_router(
             # attaches no scopes and retains full access.
             return jwt_auth_enabled or "scopes" in websocket_user_context
 
-        from agno.db.schemas.service_accounts import SERVICE_ACCOUNT_PRINCIPAL_PREFIX
         from agno.os.auth import token_scopes_are_authoritative
 
         # Resolved once per connection: does a token's `scopes` claim carry authorization
@@ -411,9 +420,7 @@ def get_websocket_router(
             scopes = websocket_user_context.get("scopes", []) or []
             if ws_admin_scope not in scopes:
                 return False
-            uid = websocket_user_context.get("user_id")
-            is_sa = isinstance(uid, str) and uid.startswith(SERVICE_ACCOUNT_PRINCIPAL_PREFIX)
-            return is_sa or ws_token_scopes_authoritative
+            return ws_is_service_account() or ws_token_scopes_authoritative
 
         async def ws_user_disabled_now() -> bool:
             # Re-check the directory kill-switch for THIS action. The connect-time check is
@@ -490,7 +497,9 @@ def get_websocket_router(
                             # attribution gates that police JWTs apply to PATs.
                             websocket_user_context["user_id"] = account.principal
                             websocket_user_context["scopes"] = list(account.scopes)
-                            websocket_user_context["service_account"] = True
+                            # Drop the claims of any JWT this socket authenticated with before,
+                            # so no gate reads another identity's claims for the PAT.
+                            websocket_user_context.pop("payload", None)
                             await websocket_manager.authenticate_websocket(websocket)
                             await websocket.send_text(
                                 json.dumps(

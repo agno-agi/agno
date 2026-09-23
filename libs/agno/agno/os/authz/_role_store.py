@@ -402,18 +402,21 @@ class RoleStore:
     def _refuse_role_named_after_user(self, slug: str) -> None:
         """Refuse a NEW role whose slug is an existing user: a directory user, or a subject that
         holds an assignment. An existing role of that name is left alone (the collision guard
-        already refuses the user at decision time; deleting the role is the fix)."""
-        _validate_role_slug(slug)
+        already refuses the user at decision time; deleting the role is the fix). The slug rules
+        apply to a new role only, so a role stored before them can still be edited or deleted."""
         if slug in self.list_roles():
             return
+        _validate_role_slug(slug)
         if self._is_directory_user(slug) or self._engine.roles_of(slug):
             raise RoleChangeRefused(_ROLE_NAMED_AFTER_USER_MSG.format(slug=slug))
 
     def _refuse_user_as_role(self, role: str) -> None:
         """Refuse assigning a ROLE argument that is a user: a directory user, or a subject with
-        an assignment that is not itself a role."""
+        an assignment that is not itself a role. Assigning a role that does not exist yet
+        creates it, so its slug is held to the same rules as a created role."""
         if role in self.list_roles():
             return
+        _validate_role_slug(role)
         if self._is_directory_user(role) or self._engine.roles_of(role):
             raise RoleChangeRefused(_USER_AS_ROLE_MSG.format(role=role))
 
@@ -922,9 +925,9 @@ class RoleStore:
 
     async def _arefuse_role_named_after_user(self, slug: str) -> None:
         """Async twin of :meth:`_refuse_role_named_after_user`."""
-        _validate_role_slug(slug)
         if slug in await self.alist_roles():
             return
+        _validate_role_slug(slug)
         if await self._ais_directory_user(slug) or await self._engine.aroles_of(slug):
             raise RoleChangeRefused(_ROLE_NAMED_AFTER_USER_MSG.format(slug=slug))
 
@@ -932,6 +935,7 @@ class RoleStore:
         """Async twin of :meth:`_refuse_user_as_role`."""
         if role in await self.alist_roles():
             return
+        _validate_role_slug(role)
         if await self._ais_directory_user(role) or await self._engine.aroles_of(role):
             raise RoleChangeRefused(_USER_AS_ROLE_MSG.format(role=role))
 

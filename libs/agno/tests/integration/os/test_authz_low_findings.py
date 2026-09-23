@@ -121,6 +121,26 @@ def test_the_runtime_api_refuses_a_reserved_subject_too(tmp_path):
         authz.set_role("__scheduler__", "viewer")
 
 
+def test_assigning_a_new_role_with_a_padded_slug_is_refused(tmp_path):
+    # Assigning a role that does not exist creates it, so the runtime API must not be a way
+    # around the slug rules the create route enforces.
+    authz = _managed(tmp_path, "assign-slug")
+    authz.define_role("viewer", ["agents:read"])
+    _app(authz)
+    with pytest.raises(ValueError, match="whitespace"):
+        authz.set_role("alice", "viewer ")
+    assert "viewer " not in authz.list_roles()
+
+
+def test_a_role_stored_before_the_slug_rules_can_still_be_edited(tmp_path):
+    authz = _managed(tmp_path, "legacy-slug")
+    _app(authz)
+    store = authz._ensure_role_store()
+    store._engine.set_role_scopes("old role", [("agents:read", "allow")])  # written before the rules
+    store.set_role_scopes("old role", ["agents:read", "sessions:read"])
+    assert store.get_role_scopes("old role") == ["agents:read", "sessions:read"]
+
+
 # ---------------------------------------------------------------- seed under token-based admins
 
 
@@ -243,6 +263,27 @@ def test_the_approval_gate_skips_a_db_without_approvals():
     reason = asyncio.run(
         run_continuation_blocked_reason(_NoApprovalsDb(), "run-1", authorization_enabled=True, user_scopes=[])
     )
+    assert reason is None
+
+
+def test_the_approval_gate_fails_closed_on_a_real_database_error(tmp_path, monkeypatch):
+    # The built-in databases used to swallow a failed approvals read and return an empty page,
+    # which the gate read as "nothing pending". The error must reach the gate.
+    from sqlalchemy.exc import OperationalError
+
+    db = SqliteDb(db_file=str(tmp_path / "approvals.db"))
+
+    def unreachable(*args, **kwargs):
+        raise OperationalError("SELECT", {}, Exception("database is locked"))
+
+    monkeypatch.setattr(db, "_get_table", unreachable)
+    reason = asyncio.run(run_continuation_blocked_reason(db, "run-1", authorization_enabled=True, user_scopes=[]))
+    assert reason is not None and "could not be verified" in reason
+
+
+def test_the_approval_gate_lets_a_run_continue_on_a_database_with_no_approvals_table(tmp_path):
+    db = SqliteDb(db_file=str(tmp_path / "no-approvals.db"))
+    reason = asyncio.run(run_continuation_blocked_reason(db, "run-1", authorization_enabled=True, user_scopes=[]))
     assert reason is None
 
 

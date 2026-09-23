@@ -7,9 +7,11 @@ The WebSocket gate now evaluates a PAT with the scope provider, like ``auth._pro
 """
 
 import json
+import time
 from types import SimpleNamespace
 from typing import Any, Dict, List
 
+import jwt
 import pytest
 
 pytest.importorskip("sqlalchemy")
@@ -78,4 +80,26 @@ def test_a_pat_with_the_run_scope_is_admitted_under_managed_roles(tmp_path, monk
 
 def test_a_pat_without_the_run_scope_is_still_refused(tmp_path, monkeypatch):
     event = _start_workflow_as_pat(_managed_roles_app(tmp_path), monkeypatch, scopes=["agents:read"])
+    assert event["event"] != "captured", event
+
+
+def test_a_jwt_after_a_pat_on_the_same_socket_is_decided_by_the_managed_roles(tmp_path, monkeypatch):
+    # The socket can re-authenticate. A JWT that follows a PAT must not inherit the PAT's
+    # scope-provider decision: under managed roles its raw `workflows:run` scope grants nothing.
+    app = _managed_roles_app(tmp_path)
+    _capture_start_workflow(monkeypatch)
+    _patch_pat_identity(monkeypatch, principal="sa:runner", scopes=["agents:read"])
+    token = jwt.encode(
+        {"sub": "mallory", "aud": OS_ID, "exp": int(time.time()) + 3600, "scopes": ["workflows:run"]},
+        SECRET,
+        algorithm="HS256",
+    )
+    with TestClient(app).websocket_connect("/workflows/ws") as ws:
+        for credential in ("agno_pat_fake", token):
+            ws.send_text(json.dumps({"action": "authenticate", "token": credential}))
+            for _ in range(10):
+                if json.loads(ws.receive_text()).get("event") == "authenticated":
+                    break
+        ws.send_text(json.dumps({"action": "start-workflow", "workflow_id": "wf-1", "message": "hi"}))
+        event = _first_non_handshake_event(ws)
     assert event["event"] != "captured", event
