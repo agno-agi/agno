@@ -489,7 +489,7 @@ def get_default_scope_mappings() -> Dict[str, List[str]]:
         "GET /metrics": ["metrics:read"],
         "POST /metrics/refresh": ["metrics:write"],
         "GET /metrics/refresh/status": ["metrics:read"],
-        "GET /os/metrics": ["metrics:read"],
+        "GET /os/metrics/models": ["metrics:read"],
         "GET /os/metrics/sessions": ["metrics:read"],
         "GET /os/metrics/tokens": ["metrics:read"],
         "POST /os/metrics/refresh": ["metrics:write"],

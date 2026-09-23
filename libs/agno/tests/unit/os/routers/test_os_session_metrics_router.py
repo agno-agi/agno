@@ -232,7 +232,7 @@ class TestScopingAndCaching:
     def test_model_usage_and_session_counts_are_cached_apart(self, client, mock_db):
         """One cache serves both routes, so the key has to carry the route."""
         with _scope(None):
-            client.get(f"/os/metrics?{_last(1)}")
+            client.get(f"/os/metrics/models?{_last(1)}")
             client.get(f"/os/metrics/sessions?{_last(1)}")
 
         assert mock_db.get_metrics.call_count == 2

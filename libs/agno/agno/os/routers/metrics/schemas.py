@@ -89,7 +89,7 @@ class ModelUsage(BaseModel):
     run_share: float = Field(..., description="Percentage of the window's runs the model served", ge=0)
 
 
-class OSMetricsResponse(BaseModel):
+class OSModelMetricsResponse(BaseModel):
     models: List[ModelUsage] = Field(..., description="Model usage across the window, most-run first")
     total_model_runs: int = Field(..., description="Runs in the window that recorded a model", ge=0)
     window_days: int = Field(..., description="Number of days the metrics cover", ge=1)

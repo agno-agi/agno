@@ -22,7 +22,7 @@ from agno.os.routers.metrics.schemas import (
     MetricsResponse,
     ModelUsage,
     OSMetricsRefreshStatusResponse,
-    OSMetricsResponse,
+    OSModelMetricsResponse,
     OSSessionMetricsResponse,
     OSTokenMetricsResponse,
 )
@@ -513,12 +513,12 @@ def attach_routes(
             metrics = [metric for metric in metrics if not is_legacy_metric(metric)]
         return list(metrics)
 
-    async def _compute_os_metrics(
+    async def _compute_os_model_metrics(
         db: Union[BaseDb, AsyncBaseDb],
         effective_user_id: Optional[str],
         starting_date: date,
         ending_date: date,
-    ) -> OSMetricsResponse:
+    ) -> OSModelMetricsResponse:
         metrics = await _daily_metrics(db, effective_user_id, starting_date, ending_date)
 
         run_counts: Dict[Tuple[str, Optional[str]], int] = {}
@@ -541,7 +541,7 @@ def attach_routes(
             for (model_id, model_provider), count in sorted(run_counts.items(), key=lambda item: (-item[1], item[0][0]))
         ]
 
-        return OSMetricsResponse(
+        return OSModelMetricsResponse(
             models=models,
             total_model_runs=total_model_runs,
             window_days=(ending_date - starting_date).days + 1,
@@ -571,18 +571,18 @@ def attach_routes(
             recomputing.discard(key)
 
     @router.get(
-        "/os/metrics",
-        response_model=OSMetricsResponse,
+        "/os/metrics/models",
+        response_model=OSModelMetricsResponse,
         status_code=200,
-        operation_id="get_os_metrics",
-        summary="Get OS Metrics",
+        operation_id="get_os_model_metrics",
+        summary="Get OS Model Metrics",
         description=(
             "Retrieve how many runs each model served over a date range. "
             "If no date range is specified, covers the last 30 days."
         ),
         responses={
             200: {
-                "description": "OS metrics computed successfully",
+                "description": "OS model metrics computed successfully",
                 "content": {
                     "application/json": {
                         "example": {
@@ -601,11 +601,11 @@ def attach_routes(
                     }
                 },
             },
-            500: {"description": "Failed to compute OS metrics", "model": InternalServerErrorResponse},
+            500: {"description": "Failed to compute OS model metrics", "model": InternalServerErrorResponse},
             503: {"description": "No AgentOS database configured", "model": InternalServerErrorResponse},
         },
     )
-    async def get_os_metrics(
+    async def get_os_model_metrics(
         request: Request,
         background_tasks: BackgroundTasks,
         starting_date: Optional[date] = Query(
@@ -619,7 +619,7 @@ def attach_routes(
             default=None, description="Return only this user's metrics. Ignored for non-admin callers"
         ),
         refresh: bool = Query(default=False, description="Recompute now instead of serving the cached result"),
-    ) -> OSMetricsResponse:
+    ) -> OSModelMetricsResponse:
         try:
             if os_db is None:
                 raise HTTPException(
@@ -631,7 +631,7 @@ def attach_routes(
             scoped_user_id = get_scoped_user_id(request)
             effective_user_id = scoped_user_id if scoped_user_id is not None else user_id
 
-            cache_key = ("os_metrics", effective_user_id, starting_date, ending_date)
+            cache_key = ("os_model_metrics", effective_user_id, starting_date, ending_date)
             if not refresh:
                 cached = _cache_get(cache_key)
                 if cached is not None:
@@ -642,8 +642,8 @@ def attach_routes(
                         recomputing.add(cache_key)
                         background_tasks.add_task(
                             _recompute_in_background,
-                            "OS metrics",
-                            _compute_os_metrics,
+                            "OS model metrics",
+                            _compute_os_model_metrics,
                             os_db,
                             cache_key,
                             effective_user_id,
@@ -653,7 +653,7 @@ def attach_routes(
                     return metrics
 
             generation_before = generation
-            metrics = await _compute_os_metrics(os_db, effective_user_id, starting_date, ending_date)
+            metrics = await _compute_os_model_metrics(os_db, effective_user_id, starting_date, ending_date)
             # A rebuild since this read started makes these numbers stale, so they are returned but not kept
             if generation_before == generation:
                 _cache_put(cache_key, metrics)
@@ -664,8 +664,8 @@ def attach_routes(
         except AgnoError as e:
             raise AgnoHTTPException(e)
         except Exception as e:
-            log_exception("GET /os/metrics failed")
-            raise HTTPException(status_code=500, detail=f"Error getting OS metrics: {str(e)}")
+            log_exception("GET /os/metrics/models failed")
+            raise HTTPException(status_code=500, detail=f"Error getting OS model metrics: {str(e)}")
 
     # The three session counts on a daily metrics row, one per kind of component
     session_count_fields = ("agent_sessions_count", "team_sessions_count", "workflow_sessions_count")
@@ -948,7 +948,7 @@ def attach_routes(
 
     # The OS metrics routes, by the name each keeps its cache entries under
     os_metrics_routes = {
-        "os_metrics": "metrics",
+        "os_model_metrics": "model_metrics",
         "os_session_metrics": "session_metrics",
         "os_token_metrics": "token_metrics",
     }
