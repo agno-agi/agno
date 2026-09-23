@@ -47,7 +47,7 @@ from agno.models.base import Model
 from agno.models.fallback import acall_model_with_fallback, call_model_with_fallback
 from agno.models.message import Message
 from agno.models.response import ModelResponse
-from agno.run import RunContext, RunStatus
+from agno.run import CancellationStage, RunContext, RunStatus
 from agno.run.agent import (
     RunCancelledEvent,
     RunCompletedEvent,
@@ -2013,6 +2013,7 @@ async def _arun_background(
             log_info(f"Background run {run_response.run_id} cancelled while waiting for a slot")
             try:
                 run_response.status = RunStatus.cancelled
+                run_response.cancellation_stage = CancellationStage.pending
                 await apersist_run_transition(agent, "agent", session_id, run_response, user_id=user_id)
             except Exception as e:
                 log_error(f"Failed to persist cancelled state for background run {run_response.run_id}: {str(e)}")
@@ -2200,6 +2201,7 @@ async def _arun_background_stream(
             log_info(f"Background stream run {run_id} cancelled while waiting for a slot")
             try:
                 run_response.status = RunStatus.cancelled
+                run_response.cancellation_stage = CancellationStage.pending
                 await apersist_run_transition(agent, "agent", session_id, run_response, user_id=user_id)
             except Exception:
                 log_error(f"Failed to persist cancelled state for background stream run {run_id}", exc_info=True)
@@ -4680,6 +4682,10 @@ async def _acontinue_run_background_stream(
                     cancelled_run = cast(Optional[RunOutput], lookup_session.get_run(_run_id))
                 if cancelled_run is not None:
                     cancelled_run.status = RunStatus.cancelled
+                    # A continuation only ever resumes a run that paused for
+                    # HITL: it has output and requirements, so the stage is
+                    # the status it held, not "never started"
+                    cancelled_run.cancellation_stage = CancellationStage.paused
                     await apersist_run_transition(agent, "agent", session_id, cancelled_run, user_id=user_id)
             except Exception:
                 log_error(
@@ -6004,6 +6010,12 @@ def _handle_run_cancellation(
     reason = _normalize_cancellation_reason(run_response, error)
     log_debug(f"Run {run_response.run_id} was cancelled")
     run_response.status = RunStatus.cancelled
+    # Only a run cancellation is a stage. Callers also route task-level
+    # interrupts here (event-loop shutdown, a disconnected streaming task) as
+    # a KeyboardInterrupt; those are neither a user cancel nor a never-started
+    # run and stay unknown.
+    if isinstance(error, RunCancelledException):
+        run_response.cancellation_stage = CancellationStage.executing
     has_partial_content = bool(run_response.content)
     if not run_response.content:
         run_response.content = reason
