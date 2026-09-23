@@ -9,6 +9,7 @@ on:
       - "release/*" # Run on release/1.2.3 branch format
       - "feat/v3.0"
       - "perf/tool-schema-cache"
+      - "ci/split-docling-knowledge-job"
   workflow_dispatch: # Allows manual triggering
     inputs:
       branch:
@@ -983,7 +984,7 @@ jobs:
 
   test-knowledge-1:
     runs-on: ubuntu-latest
-    timeout-minutes: 30 # Green runs reach ~15 min; slow embedding API days reach ~25 min
+    timeout-minutes: 30 # Green runs regularly reach ~21 min
     strategy:
       matrix:
         python-version: ["3.12"]
