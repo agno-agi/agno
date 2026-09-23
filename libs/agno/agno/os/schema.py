@@ -23,6 +23,7 @@ from agno.os.config import (
 )
 from agno.os.scopes import split_scope
 from agno.os.utils import extract_input_media, get_run_input, get_session_name, to_utc_datetime
+from agno.run.base import CancellationStage
 from agno.session import AgentSession, TeamSession, WorkflowSession
 from agno.team.factory import TeamFactory
 from agno.team.remote import RemoteTeam
@@ -574,12 +575,22 @@ class WorkflowSessionDetailSchema(BaseModel):
         )
 
 
+# One text for the three run schemas, built from the enum so it cannot drift
+# from the members a client may receive
+CANCELLATION_STAGE_DESCRIPTION = (
+    "For CANCELLED runs, where the run was when it was cancelled: "
+    + ", ".join(member.value for member in CancellationStage)
+    + ". Absent means unknown."
+)
+
+
 class RunSchema(BaseModel):
     run_id: str = Field(..., description="Unique identifier for the run")
     parent_run_id: Optional[str] = Field(None, description="Parent run ID if this is a nested run")
     agent_id: Optional[str] = Field(None, description="Agent ID that executed this run")
     user_id: Optional[str] = Field(None, description="User ID associated with the run")
     status: Optional[str] = Field(None, description="Run status (PENDING, RUNNING, COMPLETED, ERROR, etc.)")
+    cancellation_stage: Optional[str] = Field(None, description=CANCELLATION_STAGE_DESCRIPTION)
     run_input: Optional[str] = Field(None, description="Input provided to the run")
     content: Optional[Union[str, dict]] = Field(None, description="Output content from the run")
     run_response_format: Optional[str] = Field(None, description="Format of the response (text/json)")
@@ -633,6 +644,7 @@ class RunSchema(BaseModel):
             agent_id=run_dict.get("agent_id", ""),
             user_id=run_dict.get("user_id", ""),
             status=run_dict.get("status"),
+            cancellation_stage=run_dict.get("cancellation_stage"),
             run_input=run_input,
             content=run_dict.get("content", ""),
             run_response_format=run_response_format,
@@ -667,6 +679,7 @@ class TeamRunSchema(BaseModel):
     parent_run_id: Optional[str] = Field(None, description="Parent run ID if this is a nested run")
     team_id: Optional[str] = Field(None, description="Team ID that executed this run")
     status: Optional[str] = Field(None, description="Run status (PENDING, RUNNING, COMPLETED, ERROR, etc.)")
+    cancellation_stage: Optional[str] = Field(None, description=CANCELLATION_STAGE_DESCRIPTION)
     content: Optional[Union[str, dict]] = Field(None, description="Output content from the team run")
     reasoning_content: Optional[str] = Field(None, description="Reasoning content if reasoning was enabled")
     reasoning_steps: Optional[List[dict]] = Field(None, description="List of reasoning steps")
@@ -718,6 +731,7 @@ class TeamRunSchema(BaseModel):
             parent_run_id=run_dict.get("parent_run_id", ""),
             team_id=run_dict.get("team_id", ""),
             status=run_dict.get("status"),
+            cancellation_stage=run_dict.get("cancellation_stage"),
             run_input=run_input,
             content=run_dict.get("content", ""),
             run_response_format=run_response_format,
@@ -756,6 +770,7 @@ class WorkflowRunSchema(BaseModel):
     content: Optional[Union[str, dict]] = Field(None, description="Output content from the workflow")
     content_type: Optional[str] = Field(None, description="Type of content returned")
     status: Optional[str] = Field(None, description="Status of the workflow run")
+    cancellation_stage: Optional[str] = Field(None, description=CANCELLATION_STAGE_DESCRIPTION)
     step_results: Optional[list[dict]] = Field(None, description="Results from each workflow step")
     step_executor_runs: Optional[list[dict]] = Field(None, description="Executor runs for each step")
     step_requirements: Optional[list[dict]] = Field(
@@ -791,6 +806,7 @@ class WorkflowRunSchema(BaseModel):
             content=run_response.get("content", ""),
             content_type=run_response.get("content_type", ""),
             status=run_response.get("status", ""),
+            cancellation_stage=run_response.get("cancellation_stage"),
             metrics=run_response.get("metrics", {}),
             step_results=run_response.get("step_results", []),
             step_executor_runs=run_response.get("step_executor_runs", []),

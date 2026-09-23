@@ -1599,17 +1599,18 @@ class AgentOS:
 
         fastapi_app.add_middleware(TrailingSlashMiddleware)
 
-        if self.mcp and self.mcp_config is not None:
+        if self.mcp:
             from agno.os.middleware.mcp_routing import MCPRoutingMiddleware, validate_mcp_routes
 
+            routing_config = self.mcp_config if self.mcp_config is not None else MCPConfig()
             if self.mcp_auth is not None and (
-                self.mcp_config.path != "/mcp" or self.mcp_config.path_aliases or self.mcp_config.root_host
+                routing_config.path != "/mcp" or routing_config.path_aliases or routing_config.root_host
             ):
                 raise ValueError(
                     "Custom MCP routing does not yet support OAuth resource discovery; use the native /mcp path"
                 )
-            validate_mcp_routes(fastapi_app, self.mcp_config, self._mcp_app)
-            fastapi_app.add_middleware(MCPRoutingMiddleware, config=self.mcp_config)
+            validate_mcp_routes(fastapi_app, routing_config, self._mcp_app)
+            fastapi_app.add_middleware(MCPRoutingMiddleware, config=routing_config)
 
         if self.public is not None:
             from starlette.middleware.cors import CORSMiddleware
