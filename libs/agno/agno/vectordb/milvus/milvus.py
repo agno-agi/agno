@@ -71,7 +71,7 @@ class Milvus(VectorDb):
                   in Zilliz Cloud.
             token (Optional[str]): Token for authentication with the Milvus server.
             search_type (SearchType): Type of search to perform (vector, keyword, or hybrid)
-            reranker (Optional[Reranker]): Reranker to use for hybrid search results
+            reranker (Optional[Reranker]): Reranker to use for hybrid search results. Deprecated: pass the reranker to Knowledge instead.
             **kwargs: Additional keyword arguments to pass to the MilvusClient.
         """
         # Validate required parameters

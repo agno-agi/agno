@@ -5,6 +5,7 @@ from pydantic import BaseModel
 from agno.utils.string import (
     _extract_json_objects,
     generate_id_from_name,
+    parse_response_dict_str,
     parse_response_model_str,
     sanitize_postgres_string,
     url_safe_string,
@@ -439,3 +440,57 @@ def test_sanitize_postgres_string_other_illegal_chars():
     assert sanitize_postgres_string("hello\x0e\x1fworld") == "helloworld"
     # Unicode replacement characters
     assert sanitize_postgres_string("hello\ufffe\uffffworld") == "helloworld"
+
+
+def test_extract_json_objects_ignores_unmatched_closing_brace():
+    """A stray closing brace in prose must not hide the objects that follow.
+
+    Regression test: the depth counter went negative on an unmatched '}', so
+    every later '{' failed the start-of-object check and extraction returned
+    nothing.
+    """
+    assert _extract_json_objects('Some prose } then {"a": 1}') == ['{"a": 1}']
+    assert _extract_json_objects('{"a": 1}} {"b": 2}') == ['{"a": 1}', '{"b": 2}']
+    assert _extract_json_objects("}") == []
+
+
+def test_parse_response_dict_str_ignores_unmatched_closing_brace():
+    content = 'Here is the payload } {"name": "agno", "value": "1"}'
+    result = parse_response_dict_str(content)
+    assert result == {"name": "agno", "value": "1"}
+
+
+def test_extract_json_objects_ignores_unmatched_quote_in_prose():
+    """A stray quote in prose must not swallow the object that follows.
+
+    Regression test: the scanner entered a string literal on any '"', including one
+    in the surrounding text, and then treated the object and its closing brace as
+    string content.
+    """
+    text = 'The user asked "what is the config: {"theme": "dark"}'
+    assert _extract_json_objects(text) == ['{"theme": "dark"}']
+    assert parse_response_dict_str(text) == {"theme": "dark"}
+
+
+def test_extract_json_objects_ignores_quoted_open_brace_in_prose():
+    """A quoted '{' in prose must not swallow the object that follows."""
+    for text in ['He said "use {" then {"a": 1}', 'The "{" character opens objects: {"a": 1}']:
+        assert _extract_json_objects(text) == ['{"a": 1}']
+        assert parse_response_dict_str(text) == {"a": 1}
+
+
+def test_extract_json_objects_skips_non_json_brace_spans():
+    assert _extract_json_objects('Use "{name}" placeholders: {"a": 1}') == ['{"a": 1}']
+    assert _extract_json_objects('{"a": 1}{"b": 2}') == ['{"a": 1}', '{"b": 2}']
+
+
+def test_extract_json_objects_handles_malformed_deep_nesting():
+    assert _extract_json_objects('{"x": ' * 40000) == []
+    assert _extract_json_objects("{ a " * 60000) == []
+
+
+def test_extract_json_objects_ignores_unmatched_opening_brace():
+    text = 'Use { as a marker, then {"a": 1}'
+    assert _extract_json_objects(text) == ['{"a": 1}']
+    assert parse_response_dict_str(text) == {"a": 1}
+    assert _extract_json_objects('Open { here and { there, then {"a": 1} and {"b": 2}') == ['{"a": 1}', '{"b": 2}']

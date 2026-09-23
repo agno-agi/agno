@@ -86,6 +86,7 @@ class Cassandra(VectorDb):
             id=row["row_id"],
             content=row["body_blob"],
             meta_data=metadata,
+            embedder=self.embedder,
             embedding=row["vector"],
             name=row["document_name"],
             content_id=metadata.get("content_id"),
