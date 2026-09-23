@@ -1667,7 +1667,9 @@ class SqliteDb(BaseDb):
                 if end_timestamp is not None:
                     stmt = stmt.where(table.c.created_at <= end_timestamp)
                 if session_name is not None:
-                    stmt = stmt.where(table.c.session_data.like(f"%{session_name}%"))
+                    # Decode legacy double-encoded JSON before extracting the name.
+                    name = func.json_extract(func.json_extract(table.c.session_data, "$"), "$.session_name")
+                    stmt = stmt.where(func.coalesce(name, "").like(f"%{session_name}%"))
                 if session_type is not None:
                     stmt = stmt.where(table.c.session_type == session_type.value)
 
