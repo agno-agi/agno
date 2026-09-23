@@ -67,40 +67,18 @@ def hash_string_sha256(input_string):
 
 
 def _extract_json_objects(text: str) -> list[str]:
+    # Decode from each '{' so stray braces or quotes in surrounding prose cannot hide an object
+    decoder = json.JSONDecoder()
     objs: list[str] = []
-    brace_depth = 0
-    start_idx: Optional[int] = None
-    in_string = False
-    escape = False
-    for idx, ch in enumerate(text):
-        if in_string:
-            if escape:
-                escape = False
-            elif ch == "\\":
-                escape = True
-            elif ch == '"':
-                in_string = False
+    idx = text.find("{")
+    while idx != -1:
+        try:
+            _, end = decoder.raw_decode(text, idx)
+        except json.JSONDecodeError:
+            idx = text.find("{", idx + 1)
             continue
-        if ch == '"':
-            if start_idx is None:
-                # A quote in prose must not open a string literal: the scanner would
-                # then consume the object that follows as string content.
-                continue
-            in_string = True
-            continue
-        if ch == "{" and brace_depth == 0:
-            start_idx = idx
-        if ch == "{":
-            brace_depth += 1
-        elif ch == "}":
-            # An unmatched closing brace is prose, not structure. Ignoring it
-            # keeps a stray brace from hiding every object that follows.
-            if brace_depth == 0:
-                continue
-            brace_depth -= 1
-            if brace_depth == 0 and start_idx is not None:
-                objs.append(text[start_idx : idx + 1])
-                start_idx = None
+        objs.append(text[idx:end])
+        idx = text.find("{", end)
     return objs
 
 
