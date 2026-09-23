@@ -67,10 +67,9 @@ def hash_string_sha256(input_string):
 
 
 def _scan_brace_spans(text: str, quotes_in_prose: bool) -> list[tuple[int, int]]:
-    """Return (start, end) spans of top-level balanced braces, ignoring unmatched '}'."""
-    spans: list[tuple[int, int]] = []
-    depth = 0
-    start = -1
+    """Return (start, end) spans of outermost balanced braces; unmatched braces are skipped."""
+    closed: list[tuple[int, int]] = []
+    stack: list[int] = []
     in_string = False
     escape = False
     for idx, ch in enumerate(text):
@@ -82,15 +81,18 @@ def _scan_brace_spans(text: str, quotes_in_prose: bool) -> list[tuple[int, int]]
             elif ch == '"':
                 in_string = False
         elif ch == '"':
-            in_string = quotes_in_prose or depth > 0
+            in_string = quotes_in_prose or bool(stack)
         elif ch == "{":
-            if depth == 0:
-                start = idx
-            depth += 1
-        elif ch == "}" and depth > 0:
-            depth -= 1
-            if depth == 0:
-                spans.append((start, idx + 1))
+            stack.append(idx)
+        elif ch == "}" and stack:
+            closed.append((stack.pop(), idx + 1))
+    # Spans nest, so keep the outermost; an unclosed '{' then no longer hides the spans inside it
+    spans: list[tuple[int, int]] = []
+    last_end = -1
+    for start, end in sorted(closed):
+        if start >= last_end:
+            spans.append((start, end))
+            last_end = end
     return spans
 
 

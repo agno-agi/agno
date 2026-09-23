@@ -487,3 +487,10 @@ def test_extract_json_objects_skips_non_json_brace_spans():
 def test_extract_json_objects_handles_malformed_deep_nesting():
     assert _extract_json_objects('{"x": ' * 40000) == []
     assert _extract_json_objects("{ a " * 60000) == []
+
+
+def test_extract_json_objects_ignores_unmatched_opening_brace():
+    text = 'Use { as a marker, then {"a": 1}'
+    assert _extract_json_objects(text) == ['{"a": 1}']
+    assert parse_response_dict_str(text) == {"a": 1}
+    assert _extract_json_objects('Open { here and { there, then {"a": 1} and {"b": 2}') == ['{"a": 1}', '{"b": 2}']
