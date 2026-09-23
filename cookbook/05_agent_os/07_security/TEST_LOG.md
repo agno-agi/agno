@@ -1,6 +1,16 @@
 # Test Log: 07_security
 
-Last updated: 2026-08-07
+Last updated: 2026-09-24
+
+After the low-severity authorization fixes, re-ran `asymmetric_keys.py`, `basic_scopes.py`,
+`excluded_routes.py`, `per_resource_scopes.py`, `service_accounts.py`, `test_scopes.py`,
+`user_isolation.py` and `user_isolation_knowledge.py` with `.venvs/demo` against the branch's
+`libs/agno`, with `AgentOS.serve()` stubbed so each file builds its app and returns. All exit 0.
+`test_scopes.py` prints "RBAC enforcement smoke passed" and `user_isolation_knowledge.py` prints
+"Per-user knowledge ownership smoke passed"; the 403 and 404 lines in the second are the refusals
+it checks for.
+
+Earlier (2026-08-07):
 
 Server verification used `.venvs/demo` with the pinned worktree library on
 `PYTHONPATH`. The ten local server examples (`basic_scopes.py`,

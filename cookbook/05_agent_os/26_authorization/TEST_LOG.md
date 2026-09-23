@@ -1,6 +1,13 @@
 # Test Log: 26_authorization
 
-Last updated: 2026-09-22 (import path: the examples import the two objects from the package root,
+Last updated: 2026-09-24 (after the low-severity authorization fixes: scope and slug validation,
+reserved principals, the approval gate failing closed and the WebSocket PAT decision. Re-ran 01 to
+15 with the demo venv against the branch's `libs/agno`: every file exits 0 end to end, and every
+ALLOWED and BLOCKED line matches the outcome the file explains. 07 and 08 booted with `serve`
+stubbed and mount `/authz` and `/users` with `/users/metrics`. The 403 lines in the 06 and 09 logs
+are the non-admin bob being refused the admin API, which both files expect.)
+
+Earlier (2026-09-22): (import path: the examples import the two objects from the package root,
 `from agno.os import AgentOS, Authorization, UserDirectory`; the plumbing a custom integration
 names still comes from `agno.os.authz`. Re-ran 01 to 15 with the demo venv and `PYTHONPATH` on the
 branch's `libs/agno`: every file except 07 and 08 exits 0 end to end; 07 and 08 booted with `serve`
