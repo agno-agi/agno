@@ -983,7 +983,7 @@ jobs:
 
   test-knowledge-1:
     runs-on: ubuntu-latest
-    timeout-minutes: 30 # Green runs regularly reach ~21 min
+    timeout-minutes: 30 # Green runs reach ~15 min; slow embedding API days reach ~25 min
     strategy:
       matrix:
         python-version: ["3.12"]
@@ -1013,7 +1013,6 @@ jobs:
           source .venv/bin/activate
           export SSL_CERT_FILE="$(python -m certifi)"
           python -m pytest ./libs/agno/tests/integration/knowledge/test_csv_knowledge.py \
-          ./libs/agno/tests/integration/knowledge/test_docling_knowledge.py \
           ./libs/agno/tests/integration/knowledge/test_docx_knowledge.py \
           ./libs/agno/tests/integration/knowledge/test_embedding_failure_handling.py \
           ./libs/agno/tests/integration/knowledge/test_json_knowledge.py \
@@ -1022,6 +1021,40 @@ jobs:
           ./libs/agno/tests/integration/knowledge/test_pptx_knowledge.py \
           ./libs/agno/tests/integration/knowledge/test_text_knowledge.py \
           ./libs/agno/tests/integration/knowledge/test_async_knowledge_retriever.py
+
+  # Docling runs local layout and OCR models, so it gets its own job and budget
+  test-knowledge-docling:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      matrix:
+        python-version: ["3.12"]
+      fail-fast: true # Stop all matrix jobs if one fails
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install uv
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+      - name: Run dev setup
+        working-directory: .
+        run: |
+          ./scripts/test_setup.sh
+      - name: Run Docling knowledge integration tests
+        working-directory: .
+        env:
+          AGNO_TELEMETRY: false
+        run: |
+          source .venv/bin/activate
+          export SSL_CERT_FILE="$(python -m certifi)"
+          python -m pytest ./libs/agno/tests/integration/knowledge/test_docling_knowledge.py
 
   test-knowledge-2:
     runs-on: ubuntu-latest
