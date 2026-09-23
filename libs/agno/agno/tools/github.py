@@ -1327,11 +1327,17 @@ class GithubTools(Toolkit):
                 decoded_content = "Binary file (content not displayed)"
 
             # Make sure we don't try to display binary content. Only NUL and control
-            # characters that never occur in normal text are treated as a binary
-            # signal, so valid non-ASCII UTF-8 text (e.g. Chinese) is preserved.
+            # characters that never occur in normal text (C0 excluding common
+            # whitespace, DEL and the C1 range) are treated as a binary signal, so
+            # valid non-ASCII UTF-8 text (e.g. Chinese) is preserved.
             if isinstance(decoded_content, str) and (
                 "\x00" in decoded_content
-                or sum(1 for c in decoded_content[:1000] if ord(c) < 32 and c not in "\t\n\r\x0b\x0c") > 200
+                or sum(
+                    1
+                    for c in decoded_content[:1000]
+                    if c not in "\t\n\r\x0b\x0c" and (ord(c) < 32 or 0x7F <= ord(c) <= 0x9F)
+                )
+                > 200
             ):
                 decoded_content = "Binary file (content not displayed)"
 
