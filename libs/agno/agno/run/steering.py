@@ -3,7 +3,9 @@
 A caller steers a run with ``Agent.steer(run_id, input)``. The input is queued
 and the run's model loop appends it to the conversation as a user message
 before its next model request: after the tool batch in flight finishes, or
-instead of finishing when the model has just produced its final answer.
+instead of finishing when the model has just produced its final answer. Text
+input is framed as a message the user sent mid-run (STEERING_MESSAGE_TEMPLATE);
+a Message is used verbatim.
 """
 
 from typing import List, Optional, Union
@@ -14,6 +16,11 @@ from agno.run.steering_management.in_memory_steering_manager import InMemoryRunS
 from agno.utils.log import logger
 
 SteeringInput = Union[str, Message]
+
+# How text steered into a run reads to the model. A bare user message placed mid-run only tells
+# the model who is speaking; the framing also says the user wrote it while the model was working
+# (possibly before seeing its latest output) and that the work in progress continues.
+STEERING_MESSAGE_TEMPLATE = "The user sent this message while you were working. Address it as you continue:\n\n{input}"
 
 # Global steering manager instance
 _steering_manager: BaseRunSteeringManager = InMemoryRunSteeringManager()
@@ -31,13 +38,22 @@ def get_steering_manager() -> BaseRunSteeringManager:
     return _steering_manager
 
 
+def steering_message(text: str) -> Message:
+    """Build the user message that text steered into a run becomes, framed as mid-run input.
+
+    ``steer(run_id, text)`` sends exactly this. Build it yourself to keep its ``id``, which the
+    run's ``RunSteered`` event reports. Pass any other ``Message`` to steer() to use it verbatim.
+    """
+    if not text.strip():
+        raise ValueError("Steering input must not be empty")
+    return Message(role="user", content=STEERING_MESSAGE_TEMPLATE.format(input=text))
+
+
 def _to_messages(input: SteeringInput) -> List[Message]:
     if isinstance(input, Message):
         return [input]
     if isinstance(input, str):
-        if not input.strip():
-            raise ValueError("Steering input must not be empty")
-        return [Message(role="user", content=input)]
+        return [steering_message(input)]
     raise TypeError(f"Steering input must be a str or Message, got {type(input).__name__}")
 
 

@@ -13,6 +13,7 @@ from agno.models.message import Message
 from agno.models.response import ModelResponse
 from agno.run import RunContext
 from agno.run.base import RunStatus
+from agno.run.steering import STEERING_MESSAGE_TEMPLATE
 from agno.run.team import RunSteeredEvent as TeamRunSteeredEvent
 from agno.run.team import TeamRunOutput
 from agno.team import Team
@@ -120,9 +121,10 @@ async def test_steer_during_a_leader_tool_call_reaches_the_leaders_next_request(
 
     assert output.status == RunStatus.completed
     assert model.requests[1][-1].role == "user"
-    assert model.requests[1][-1].content == "Keep it to one line."
+    framed = STEERING_MESSAGE_TEMPLATE.format(input="Keep it to one line.")
+    assert model.requests[1][-1].content == framed
     if mode in ("stream", "astream"):
-        assert [e.content for e in events if isinstance(e, TeamRunSteeredEvent)] == ["Keep it to one line."]
+        assert [e.content for e in events if isinstance(e, TeamRunSteeredEvent)] == [framed]
 
 
 @pytest.mark.asyncio

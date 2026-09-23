@@ -5,7 +5,7 @@ import threading
 import pytest
 
 from agno.models.message import Message
-from agno.run.steering import RunSteering, _to_messages, steer_run
+from agno.run.steering import STEERING_MESSAGE_TEMPLATE, RunSteering, _to_messages, steer_run
 from agno.run.steering_management import InMemoryRunSteeringManager
 
 
@@ -133,6 +133,7 @@ async def test_async_methods_share_state_with_sync_methods():
 
 def test_steering_input_normalization():
     assert _to_messages("hi")[0].role == "user"
+    assert _to_messages("hi")[0].content == STEERING_MESSAGE_TEMPLATE.format(input="hi")
     message = Message(role="user", content="as-is")
     assert _to_messages(message) == [message]
     with pytest.raises(ValueError):

@@ -19,6 +19,7 @@ from agno.models.response import ModelResponse
 from agno.run import RunContext
 from agno.run.agent import RunOutput, RunSteeredEvent
 from agno.run.base import RunStatus
+from agno.run.steering import STEERING_MESSAGE_TEMPLATE, steering_message
 from agno.tools import tool
 
 MODES = ["sync", "async", "stream", "astream"]
@@ -100,6 +101,11 @@ def _user_texts(messages: List[Message]) -> List[str]:
     return [m.content for m in messages if m.role == "user"]  # type: ignore[misc]
 
 
+def _framed(text: str) -> str:
+    """What steered text reads like to the model."""
+    return STEERING_MESSAGE_TEMPLATE.format(input=text)
+
+
 def _agent(model: _ScriptedModel, tools: Optional[list] = None, db: Optional[InMemoryDb] = None) -> Agent:
     return Agent(model=model, tools=tools or [], db=db or InMemoryDb(), telemetry=False)
 
@@ -125,12 +131,12 @@ async def test_steer_during_a_tool_call_reaches_the_next_request(mode):
     # The second request saw the tool result and then the steered message
     second = model.requests[1]
     assert second[-2].role == "tool"
-    assert second[-1].role == "user" and second[-1].content == "Also tell me its population."
+    assert second[-1].role == "user" and second[-1].content == _framed("Also tell me its population.")
     # The steered message is part of the run's transcript
-    assert _user_texts(output.messages or [])[-1] == "Also tell me its population."
+    assert _user_texts(output.messages or [])[-1] == _framed("Also tell me its population.")
     if mode in ("stream", "astream"):
         steered = [e for e in events if isinstance(e, RunSteeredEvent)]
-        assert [e.content for e in steered] == ["Also tell me its population."]
+        assert [e.content for e in steered] == [_framed("Also tell me its population.")]
         assert steered[0].message_id == second[-1].id
 
 
@@ -151,7 +157,7 @@ async def test_steer_during_the_final_answer_makes_the_model_answer_it(mode):
 
     assert model.steer_results == [True]
     assert len(model.requests) == 2
-    assert model.requests[1][-1].content == "Actually, what about Spain?"
+    assert model.requests[1][-1].content == _framed("Actually, what about Spain?")
     assert "Madrid" in (output.content or "")
 
 
@@ -184,7 +190,7 @@ async def test_steering_overrides_stop_after_tool_call(mode):
     output, _ = await _run(_agent(model, [send_report]), mode)
 
     assert len(model.requests) == 2
-    assert model.requests[1][-1].content == "Wait, also cc the finance team."
+    assert model.requests[1][-1].content == _framed("Wait, also cc the finance team.")
     assert Agent.steer(output.run_id, "late") is False  # type: ignore[arg-type]
 
 
@@ -251,4 +257,27 @@ async def test_input_accepted_before_a_pause_is_delivered_when_the_run_continues
     assert done.status == RunStatus.completed
     resumed = model.requests[-1]
     assert [m.role for m in resumed[-3:]] == ["tool", "tool", "user"]
-    assert resumed[-1].content == "Make it shorter."
+    assert resumed[-1].content == _framed("Make it shorter.")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["stream", "astream"])
+async def test_a_message_is_used_verbatim_and_its_id_reported(mode):
+    own = Message(role="user", content="<note>Switch to metric units.</note>")
+    framed = steering_message("Also add humidity.")
+
+    @tool
+    def get_weather(run_context: RunContext) -> str:
+        """Get the weather."""
+        assert Agent.steer(run_context.run_id, own) is True
+        assert Agent.steer(run_context.run_id, framed) is True
+        return "64F, sunny"
+
+    model = _ScriptedModel([("tools", [("get_weather", {})]), ("answer", "18C, sunny.")])
+    _, events = await _run(_agent(model, [get_weather]), mode)
+
+    injected = model.requests[1][-2:]
+    assert injected[0].content == "<note>Switch to metric units.</note>"
+    assert injected[1].content == _framed("Also add humidity.")
+    steered = [e for e in events if isinstance(e, RunSteeredEvent)]
+    assert [e.message_id for e in steered] == [own.id, framed.id]

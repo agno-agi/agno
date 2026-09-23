@@ -30,6 +30,22 @@ run takes the pending input and makes another request, or it closes its inbox,
 so a message sent a moment too late gets `False` rather than being accepted and
 never read.
 
+## How the model sees it
+
+Text passed to `steer()` becomes a user message framed as mid-run input:
+
+```
+The user sent this message while you were working. Address it as you continue:
+
+Also check London and compare the two.
+```
+
+A bare user message would only tell the model who is speaking. The framing
+also tells it the user wrote this while it was working, possibly before seeing
+its latest output, and that the work in progress continues. Pass a `Message`
+instead to use your own wording verbatim, or build the framed message with
+`agno.run.steering.steering_message(text)` to keep its `id`.
+
 A steered message stays in the run's transcript (`run_output.messages`) in the
 position the model saw it. With `stream_events=True` each one also emits a
 `RunSteered` (`TeamRunSteered`) event carrying the message id and content, so a

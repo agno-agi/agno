@@ -877,7 +877,8 @@ class Agent:
 
         Args:
             run_id: The run to steer.
-            input: Text, or a user-role Message.
+            input: Text, framed for the model as a message the user sent mid-run (see
+                agno.run.steering.steering_message), or a Message, used verbatim.
 
         Returns:
             bool: True if the run accepted the input. False if the run is not accepting input:
