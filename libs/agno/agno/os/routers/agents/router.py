@@ -60,6 +60,7 @@ from agno.os.middleware.user_scope import (
     get_scoped_user_id,
     run_matches_component,
     sync_directory_from_request,
+    verify_run_belongs_to_component,
     verify_run_in_session,
     verify_run_in_session_via_db,
 )
@@ -1190,6 +1191,16 @@ def get_agent_router(
                     component_type="agents",
                     component_id=agent_id,
                 )
+            else:
+                # RBAC without isolation: the run must still belong to the gated component.
+                await verify_run_belongs_to_component(
+                    request,
+                    getattr(factory, "db", None) or os.db,
+                    component_type="agents",
+                    component_id=agent_id,
+                    run_id=run_id,
+                    session_id=session_id,
+                )
 
             # Tombstone a still-queued durable ticket first: intent alone
             # does not stop a job no task is executing yet
@@ -1233,6 +1244,16 @@ def get_agent_router(
                 scoped_user_id,
                 component_type="agents",
                 component_id=agent_id,
+            )
+        else:
+            # RBAC without isolation: the run must still belong to the gated component.
+            await verify_run_belongs_to_component(
+                request,
+                getattr(agent, "db", None) or os.db,
+                component_type="agents",
+                component_id=agent_id,
+                run_id=run_id,
+                session_id=session_id,
             )
 
         # Tombstone a still-queued durable ticket first: intent alone does not
@@ -1431,6 +1452,16 @@ def get_agent_router(
                 scoped_user_id,
                 component_type="agents",
                 component_id=agent_id,
+            )
+        elif not isinstance(agent, RemoteAgent):
+            # RBAC without isolation: the run must still belong to the gated component.
+            await verify_run_belongs_to_component(
+                request,
+                getattr(agent, "db", None) or os.db,
+                component_type="agents",
+                component_id=agent_id,
+                run_id=run_id,
+                session_id=session_id,
             )
 
         # Version-stable continuation: a run started with an explicitly pinned
@@ -1777,6 +1808,16 @@ def get_agent_router(
         # cross-user forking.
         scoped_user_id = get_scoped_user_id(request)
         effective_user_id = scoped_user_id or user_id
+
+        # The source session must belong to this agent: the per-resource gate authorised
+        # agent_id, not whichever session id the client named.
+        await verify_run_belongs_to_component(
+            request,
+            getattr(agent, "db", None) or os.db,
+            component_type="agents",
+            component_id=agent_id,
+            session_id=session_id,
+        )
 
         try:
             new_session_id = await agent.afork_session(  # type: ignore[union-attr]
@@ -2282,6 +2323,16 @@ def get_agent_router(
                     component_type="agents",
                     component_id=agent_id,
                 )
+            else:
+                # RBAC without isolation: the run must still belong to the gated component.
+                await verify_run_belongs_to_component(
+                    request,
+                    getattr(factory, "db", None) or os.db,
+                    component_type="agents",
+                    component_id=agent_id,
+                    run_id=run_id,
+                    session_id=session_id,
+                )
             # Without a concrete agent, we can only serve buffer events for
             # this run; the DB fallback path inside the generator requires an
             # entity, so signal early if the buffer doesn't have it.
@@ -2314,6 +2365,16 @@ def get_agent_router(
                 scoped_user_id,
                 component_type="agents",
                 component_id=agent_id,
+            )
+        else:
+            # RBAC without isolation: the run must still belong to the gated component.
+            await verify_run_belongs_to_component(
+                request,
+                getattr(agent, "db", None) or os.db,
+                component_type="agents",
+                component_id=agent_id,
+                run_id=run_id,
+                session_id=session_id,
             )
 
         return StreamingResponse(

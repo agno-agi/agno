@@ -320,7 +320,15 @@ class Authorization:
         if self._role_store is None:
             from agno.os.authz._role_store import RoleStore
 
-            self._role_store = RoleStore(db=self._db, engine=self._engine, roles_claim=self._roles_claim)
+            # The last-admin guard only makes sense when the store is the only place admins
+            # live: with a roles_claim or a token-scope plane alongside, an empty stored admin
+            # set is not a lockout, so the store must not refuse those changes.
+            self._role_store = RoleStore(
+                db=self._db,
+                engine=self._engine,
+                roles_claim=self._roles_claim,
+                guard_last_admin=self._roles_claim is None and not self._trust_token_scopes,
+            )
         else:
             self._role_store.attach_db(self._db)
         if self._audit_sink is not None:

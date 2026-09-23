@@ -7,6 +7,7 @@ import re
 from enum import Enum
 from os import getenv
 from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Optional, Set, Tuple, Union
+from urllib.parse import unquote
 
 from fastapi import Request, Response
 from fastapi.responses import JSONResponse
@@ -1563,6 +1564,10 @@ class AuthMiddleware(BaseHTTPMiddleware):
                         required_scopes=required_scopes,
                     )
 
+            owner_denial = await self._deny_for_schedule_owner(request, method, path, origin, cors_allowed_origins)
+            if owner_denial is not None:
+                return owner_denial
+
             return await call_next(request)
 
         # No JWT source configured: security-key mode (static comparison, mirroring
@@ -1753,6 +1758,118 @@ class AuthMiddleware(BaseHTTPMiddleware):
                     return error_response
 
         return await call_next(request)
+
+    async def _deny_for_schedule_owner(
+        self,
+        request: Request,
+        method: str,
+        path: str,
+        origin: Optional[str],
+        cors_allowed_origins: Optional[List[str]],
+    ) -> Optional[Response]:
+        """Re-decide an OWNED schedule's firing as its owner, every time it fires.
+
+        The executor authenticates with the internal token and forwards the schedule's owner
+        in a header; the run is then attributed to that owner. The owner's permission was
+        checked when the schedule was created, but nothing re-checked it afterwards, so a
+        user who was disabled, or whose grant on the target was revoked, kept running it on
+        a timer. Two checks, both on the owner rather than the scheduler principal:
+
+        - the directory off switch, honouring the configured fail-closed policy, and
+        - the route decision under a provider that decides from stored grants (managed
+          roles, ReBAC). A token-scope plane cannot be re-asked here, since the owner's
+          grants live in tokens this OS never sees; there the create-time check stands.
+          The same holds for managed roles read from a ``roles_claim``: the owner's role
+          is on their IdP token, the executor has no such token, and stored assignments
+          are empty for an IdP user, so re-asking would refuse every owned schedule.
+
+        An unowned (system) schedule forwards no owner and is not affected. A denial is
+        written to the decision trail and answered 403, so the executor records a failed
+        run rather than silently skipping.
+        """
+        from agno.db.schemas.scheduler import SCHEDULE_OWNER_HEADER
+
+        raw = request.headers.get(SCHEDULE_OWNER_HEADER)
+        if raw is None:
+            return None
+        owner = unquote(raw)
+        if not owner.strip() or owner == INTERNAL_SCHEDULER_USER_ID:
+            return None  # refused downstream as an unusable identity (get_scoped_user_id)
+
+        user_store = getattr(getattr(request.app, "state", None), "user_store", None)
+        if user_store is not None:
+            try:
+                disabled = bool(await user_store.ais_disabled(owner))
+            except Exception as e:
+                fail_closed = bool(getattr(request.app.state, "user_directory_fail_closed", False))
+                log_warning(
+                    f"user directory check failed for schedule owner {owner!r}: {e} "
+                    f"(failing {'closed' if fail_closed else 'open'})"
+                )
+                if fail_closed:
+                    return self._create_error_response(503, "User directory unavailable", origin, cors_allowed_origins)
+                disabled = False
+            if disabled:
+                log_warning(f"Schedule owner is disabled; run refused: {owner} for {method} {path}")
+                await self._arecord_decision(
+                    request,
+                    allowed=False,
+                    method=method,
+                    path=path,
+                    principal=owner,
+                    required_scopes=[],
+                    scopes=[],
+                    reason="schedule_owner_disabled",
+                )
+                return self._create_error_response(403, "Schedule owner is disabled", origin, cors_allowed_origins)
+
+        if not self.authorization:
+            return None
+        from agno.os.auth import resolve_authorization_provider, token_scopes_are_authoritative
+        from agno.os.authz.provider import AuthorizationContext
+
+        if token_scopes_are_authoritative(request):
+            return None
+        # Roles read from a token claim are grants this OS never stores; the executor's
+        # request carries no such claim, so a stored-assignment decision for the owner
+        # would be a false denial. The create-time check stands, as for token scopes.
+        if getattr(getattr(request.app.state, "role_store", None), "roles_claim", None):
+            return None
+        required_scopes = self._get_required_scopes(method, path)
+        if not required_scopes:
+            return None
+        resource_type, resource_id = get_resource_context_from_path(path)
+        ctx = AuthorizationContext(
+            principal_id=owner,
+            scopes=[],
+            claims={},
+            resource_type=resource_type,
+            resource_id=resource_id,
+            action=_route_action(required_scopes),
+            admin_scope=self.admin_scope,
+        )
+        try:
+            allowed = await resolve_authorization_provider(request).aauthorize_route(ctx, required_scopes)
+            reason = "schedule_owner_denied"
+        except Exception as e:
+            log_warning(f"authorization provider raised while re-checking schedule owner {owner!r}; denying: {e}")
+            allowed, reason = False, "provider_error"
+        if allowed:
+            return None
+        log_warning(f"Schedule owner {owner!r} no longer authorized for {method} {path}; run refused")
+        await self._arecord_decision(
+            request,
+            allowed=False,
+            method=method,
+            path=path,
+            principal=owner,
+            required_scopes=required_scopes,
+            scopes=[],
+            reason=reason,
+        )
+        return self._create_error_response(
+            403, "Schedule owner is not authorized to run this target", origin, cors_allowed_origins
+        )
 
     async def _dispatch_service_account(
         self,

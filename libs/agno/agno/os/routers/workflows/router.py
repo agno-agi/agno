@@ -60,6 +60,7 @@ from agno.os.middleware.user_scope import (
     get_scoped_user_id_for_ws,
     run_matches_component,
     sync_directory_from_request,
+    verify_run_belongs_to_component,
     verify_run_in_session,
     verify_run_in_session_via_db,
 )
@@ -2160,6 +2161,16 @@ def get_workflow_router(
                 component_type="workflows",
                 component_id=workflow_id,
             )
+        else:
+            # RBAC without isolation: the run must still belong to the gated component.
+            await verify_run_belongs_to_component(
+                request,
+                getattr(workflow, "db", None) or os.db,
+                component_type="workflows",
+                component_id=workflow_id,
+                run_id=run_id,
+                session_id=session_id,
+            )
 
         # Load existing run and validate it's paused
         existing_run = await workflow.aget_run_output(
@@ -2433,6 +2444,16 @@ def get_workflow_router(
                     component_type="workflows",
                     component_id=workflow_id,
                 )
+            else:
+                # RBAC without isolation: the run must still belong to the gated component.
+                await verify_run_belongs_to_component(
+                    request,
+                    getattr(factory, "db", None) or os.db,
+                    component_type="workflows",
+                    component_id=workflow_id,
+                    run_id=run_id,
+                    session_id=session_id,
+                )
 
             # Tombstone a still-queued durable ticket first: intent alone
             # does not stop a job no task is executing yet
@@ -2474,6 +2495,16 @@ def get_workflow_router(
                 scoped_user_id,
                 component_type="workflows",
                 component_id=workflow_id,
+            )
+        else:
+            # RBAC without isolation: the run must still belong to the gated component.
+            await verify_run_belongs_to_component(
+                request,
+                getattr(workflow, "db", None) or os.db,
+                component_type="workflows",
+                component_id=workflow_id,
+                run_id=run_id,
+                session_id=session_id,
             )
 
         # cancel_run always stores cancellation intent (even for not-yet-registered runs
@@ -2539,6 +2570,16 @@ def get_workflow_router(
                     component_type="workflows",
                     component_id=workflow_id,
                 )
+            else:
+                # RBAC without isolation: the run must still belong to the gated component.
+                await verify_run_belongs_to_component(
+                    request,
+                    getattr(factory, "db", None) or os.db,
+                    component_type="workflows",
+                    component_id=workflow_id,
+                    run_id=run_id,
+                    session_id=session_id,
+                )
             raise HTTPException(
                 status_code=400,
                 detail="Stream resumption is not supported for factory workflows",
@@ -2568,6 +2609,16 @@ def get_workflow_router(
                 scoped_user_id,
                 component_type="workflows",
                 component_id=workflow_id,
+            )
+        else:
+            # RBAC without isolation: the run must still belong to the gated component.
+            await verify_run_belongs_to_component(
+                request,
+                getattr(workflow, "db", None) or os.db,
+                component_type="workflows",
+                component_id=workflow_id,
+                run_id=run_id,
+                session_id=session_id,
             )
 
         return StreamingResponse(

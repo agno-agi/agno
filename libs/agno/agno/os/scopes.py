@@ -317,8 +317,12 @@ def has_required_scopes(
         parts = required_scope_str.split(":")
         if len(parts) == 2:
             resource, action = parts
-            # Build the required scope based on context
-            if resource_id and resource_type:
+            # Build the required scope based on context. The per-resource rewrite applies only
+            # when the required scope is about the path's own family: a route under
+            # /agents/{id} that requires a scope from another family (say ``sessions:read``)
+            # must be checked as written, or a caller holding ``agents:<id>:read`` would
+            # satisfy a ``sessions:read`` requirement they never held.
+            if resource_id and resource_type and LEGACY_RESOURCE_ALIASES.get(resource, resource) == resource_type:
                 # Per-resource scope required
                 full_required_scope = f"{resource_type}:<resource-id>:{action}"
             else:
