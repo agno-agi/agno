@@ -139,6 +139,27 @@ async def apersist_run_transition(
         fields = {"status": getattr(status, "value", status)}
     if extra_fields:
         fields.update(extra_fields)
+    # The cancellation stage rides the same patch as the status. Without this
+    # the stage set on the run object reached only the whole-run fallback, and
+    # adapters with the atomic primitive persisted CANCELLED with no stage. A
+    # non-cancelled transition clears a stage the run object still carries
+    # (a cancelled run being re-driven), so the stored row cannot keep a
+    # stage that contradicts its status.
+    from agno.run.base import RunStatus
+
+    stage = getattr(run_response, "cancellation_stage", None)
+    # Typed check, not a truthiness check: this helper also receives partial
+    # run doubles, and an attribute that merely exists is not a stage
+    # (CancellationStage is a str enum, so str covers both forms)
+    if isinstance(stage, str):
+        if fields.get("status") == RunStatus.cancelled.value:
+            fields["cancellation_stage"] = getattr(stage, "value", stage)
+        else:
+            # Clear it on the object too: the whole-run fallback serializes
+            # the object, and a stage beside a non-cancelled status is a
+            # contradiction whichever path lands it
+            fields["cancellation_stage"] = None
+            run_response.cancellation_stage = None
 
     run_id = getattr(run_response, "run_id", None)
     if run_id:
