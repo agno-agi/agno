@@ -77,6 +77,7 @@ from agno.run.cancel import (
 from agno.run.concurrency import SSE_KEEPALIVE_INTERVAL_SECONDS, background_run_slot
 from agno.run.messages import RunMessages
 from agno.run.status_persist import apersist_run_transition
+from agno.run.steering import steering_for
 from agno.run.team import (
     RunCancelledEvent as TeamRunCancelledEvent,
 )
@@ -398,6 +399,7 @@ def _run_tasks(
                 after_tool_results=build_team_after_tool_results_callback(
                     team, run_response, session, run_messages, run_context
                 ),
+                steering=steering_for(run_response.run_id),
             )
 
             raise_if_cancelled(run_response.run_id)  # type: ignore
@@ -1266,6 +1268,7 @@ def _run(
                     after_tool_results=build_team_after_tool_results_callback(
                         team, run_response, session, run_messages, run_context
                     ),
+                    steering=steering_for(run_response.run_id),
                 )
 
                 # Check for cancellation after model call
@@ -2295,6 +2298,7 @@ async def _arun_tasks(
                 after_tool_results=abuild_team_after_tool_results_callback(
                     team, run_response, team_session, run_messages, run_context
                 ),
+                steering=steering_for(run_response.run_id),
             )  # type: ignore
 
             await araise_if_cancelled(run_response.run_id)  # type: ignore
@@ -3253,6 +3257,7 @@ async def _arun(
                     after_tool_results=abuild_team_after_tool_results_callback(
                         team, run_response, team_session, run_messages, run_context
                     ),
+                    steering=steering_for(run_response.run_id),
                 )  # type: ignore
 
                 # Check for cancellation after model call
@@ -6999,6 +7004,7 @@ async def _ahandle_model_response_for_continue(
         after_tool_results=abuild_team_after_tool_results_callback(
             team, run_response, team_session, run_messages, run_context
         ),
+        steering=steering_for(run_response.run_id),
     )
 
     await araise_if_cancelled(run_response.run_id)  # type: ignore
@@ -8360,6 +8366,7 @@ def _continue_run(
                     after_tool_results=build_team_after_tool_results_callback(
                         team, run_response, session, run_messages, run_context
                     ),
+                    steering=steering_for(run_response.run_id),
                 )
 
                 raise_if_cancelled(run_response.run_id)  # type: ignore

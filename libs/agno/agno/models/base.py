@@ -27,6 +27,7 @@ from typing import (
 if TYPE_CHECKING:
     from agno.compression.manager import CompressionManager
     from agno.offload.store import ResultStore
+    from agno.run.steering import RunSteering
 from uuid import uuid4
 
 from pydantic import BaseModel
@@ -655,6 +656,7 @@ class Model(ABC):
         compression_manager: Optional["CompressionManager"] = None,
         result_store: Optional["ResultStore"] = None,
         after_tool_results: Optional[Callable[["ModelResponse"], None]] = None,
+        steering: Optional["RunSteering"] = None,
     ) -> ModelResponse:
         """
         Generate a response from the model.
@@ -673,6 +675,10 @@ class Model(ABC):
                 as its single argument. Used by Agent-level checkpointing
                 (``checkpoint="tool-batch"``) to persist mid-run state. Exceptions are caught and
                 logged — a failed callback must not kill the run.
+            steering: Optional handle on the run's steering inbox. Input queued there is appended
+                to ``messages`` as user messages before each model request. When the model would
+                finish (a final answer, or a ``stop_after_tool_call`` tool) pending input makes it
+                continue and answer; otherwise the inbox closes. The caller opens and releases it.
         """
         # Check cache if enabled
         if self.cache_response:
@@ -698,6 +704,10 @@ class Model(ABC):
         _compression_manager = compression_manager if _compress_tool_results else None
 
         while True:
+            # Steering input queued since the last request joins the conversation before the next one
+            if steering is not None:
+                self._append_steered_messages(messages, steering.take())
+
             # Compress tool results if compression is enabled and threshold is met
             if _compression_manager is not None and _compression_manager.should_compress(
                 messages, tools, model=self, response_format=response_format
@@ -830,8 +840,15 @@ class Model(ABC):
                 for function_call_result in function_call_results:
                     function_call_result.log(metrics=True, use_compressed_content=_compress_tool_results)
 
-                # Check if we should stop after tool calls
+                # Check if we should stop after tool calls. Steering input overrides the stop: the user
+                # asked for more, so the model answers it, unless the run is pausing for a human.
                 if any(m.stop_after_tool_call for m in function_call_results):
+                    if (
+                        steering is not None
+                        and not self._awaits_human(model_response, function_calls_to_run, run_response)
+                        and self._append_steered_messages(messages, steering.take_or_close())
+                    ):
+                        continue
                     break
 
                 # Per-turn checkpoint hook: post-gather barrier. Tool results have been
@@ -865,7 +882,11 @@ class Model(ABC):
                 # Continue loop to get next response
                 continue
 
-            # No tool calls or finished processing them
+            # No tool calls or finished processing them. Steering input that arrived during the final
+            # request gets another request; otherwise the inbox closes as the loop ends, so input
+            # sent from here on is refused rather than accepted and never read.
+            if steering is not None and self._append_steered_messages(messages, steering.take_or_close()):
+                continue
             break
 
         log_debug(f"{self.get_provider()} Response End", center=True, symbol="-")
@@ -888,6 +909,7 @@ class Model(ABC):
         compression_manager: Optional["CompressionManager"] = None,
         result_store: Optional["ResultStore"] = None,
         after_tool_results: Optional[Callable[["ModelResponse"], Awaitable[None]]] = None,
+        steering: Optional["RunSteering"] = None,
     ) -> ModelResponse:
         """
         Generate an asynchronous response from the model.
@@ -897,6 +919,11 @@ class Model(ABC):
         Receives the current ``ModelResponse`` (with accumulated ``tool_executions``) as its
         single argument. Used by Agent-level checkpointing (``checkpoint="tool-batch"``) to persist
         mid-run state. Exceptions are caught and logged — a failed callback must not kill the run.
+
+        ``steering``: optional handle on the run's steering inbox. Input queued there is appended
+        to ``messages`` as user messages before each model request. When the model would finish
+        (a final answer, or a ``stop_after_tool_call`` tool) pending input makes it continue and
+        answer; otherwise the inbox closes. The caller opens and releases the inbox.
         """
 
         # Check cache if enabled
@@ -922,6 +949,10 @@ class Model(ABC):
         function_call_count = 0
 
         while True:
+            # Steering input queued since the last request joins the conversation before the next one
+            if steering is not None:
+                self._append_steered_messages(messages, await steering.atake())
+
             # Compress existing tool results BEFORE making API call to avoid context overflow
             if _compression_manager is not None and await _compression_manager.ashould_compress(
                 messages, tools, model=self, response_format=response_format
@@ -1053,8 +1084,15 @@ class Model(ABC):
                 for function_call_result in function_call_results:
                     function_call_result.log(metrics=True, use_compressed_content=_compress_tool_results)
 
-                # Check if we should stop after tool calls
+                # Check if we should stop after tool calls. Steering input overrides the stop: the user
+                # asked for more, so the model answers it, unless the run is pausing for a human.
                 if any(m.stop_after_tool_call for m in function_call_results):
+                    if (
+                        steering is not None
+                        and not self._awaits_human(model_response, function_calls_to_run, run_response)
+                        and self._append_steered_messages(messages, await steering.atake_or_close())
+                    ):
+                        continue
                     break
 
                 # Per-turn checkpoint hook: post-gather barrier. Tool results have been
@@ -1088,7 +1126,11 @@ class Model(ABC):
                 # Continue loop to get next response
                 continue
 
-            # No tool calls or finished processing them
+            # No tool calls or finished processing them. Steering input that arrived during the final
+            # request gets another request; otherwise the inbox closes as the loop ends, so input
+            # sent from here on is refused rather than accepted and never read.
+            if steering is not None and self._append_steered_messages(messages, await steering.atake_or_close()):
+                continue
             break
 
         log_debug(f"{self.get_provider()} Async Response End", center=True, symbol="-")
@@ -1372,6 +1414,7 @@ class Model(ABC):
         compression_manager: Optional["CompressionManager"] = None,
         result_store: Optional["ResultStore"] = None,
         after_tool_results: Optional[Callable[["ModelResponse"], None]] = None,
+        steering: Optional["RunSteering"] = None,
     ) -> Iterator[Union[ModelResponse, RunOutputEvent, TeamRunOutputEvent]]:
         """
         Generate a streaming response from the model.
@@ -1381,6 +1424,11 @@ class Model(ABC):
         the current ``ModelResponse`` (with accumulated ``tool_executions``) as its single
         argument. Used by Agent-level checkpointing (``checkpoint="tool-batch"``) to persist mid-run
         state. Exceptions are caught and logged — a failed callback must not kill the run.
+
+        ``steering``: optional handle on the run's steering inbox. Input queued there is appended
+        to ``messages`` as user messages before each model request. When the model would finish
+        (a final answer, or a ``stop_after_tool_call`` tool) pending input makes it continue and
+        answer; otherwise the inbox closes. The caller opens and releases the inbox.
         """
         # Check cache if enabled - capture key BEFORE streaming to avoid mismatch
         cache_key = None
@@ -1413,6 +1461,12 @@ class Model(ABC):
         function_call_count = 0
 
         while True:
+            # Steering input queued since the last request joins the conversation before the next one
+            if steering is not None:
+                steered = self._append_steered_messages(messages, steering.take())
+                if steered:
+                    yield ModelResponse(event=ModelResponseEvent.run_steered.value, steered_messages=steered)
+
             # Compress existing tool results BEFORE invoke
             if _compression_manager is not None and _compression_manager.should_compress(
                 messages, tools, model=self, response_format=response_format
@@ -1561,8 +1615,16 @@ class Model(ABC):
                 for function_call_result in function_call_results:
                     function_call_result.log(metrics=True, use_compressed_content=_compress_tool_results)
 
-                # Check if we should stop after tool calls
+                # Check if we should stop after tool calls. Steering input overrides the stop: the user
+                # asked for more, so the model answers it, unless the run is pausing for a human.
                 if any(m.stop_after_tool_call for m in function_call_results):
+                    if steering is not None and not self._awaits_human(
+                        model_response, function_calls_to_run, run_response
+                    ):
+                        steered = self._append_steered_messages(messages, steering.take_or_close())
+                        if steered:
+                            yield ModelResponse(event=ModelResponseEvent.run_steered.value, steered_messages=steered)
+                            continue
                     break
 
                 # Per-turn checkpoint hook: post-gather barrier. Tool results have been
@@ -1596,7 +1658,14 @@ class Model(ABC):
                 # Continue loop to get next response
                 continue
 
-            # No tool calls or finished processing them
+            # No tool calls or finished processing them. Steering input that arrived during the final
+            # request gets another request; otherwise the inbox closes as the loop ends, so input
+            # sent from here on is refused rather than accepted and never read.
+            if steering is not None:
+                steered = self._append_steered_messages(messages, steering.take_or_close())
+                if steered:
+                    yield ModelResponse(event=ModelResponseEvent.run_steered.value, steered_messages=steered)
+                    continue
             break
 
         log_debug(f"{self.get_provider()} Response Stream End", center=True, symbol="-")
@@ -1653,6 +1722,7 @@ class Model(ABC):
         compression_manager: Optional["CompressionManager"] = None,
         result_store: Optional["ResultStore"] = None,
         after_tool_results: Optional[Callable[["ModelResponse"], Awaitable[None]]] = None,
+        steering: Optional["RunSteering"] = None,
     ) -> AsyncIterator[Union[ModelResponse, RunOutputEvent, TeamRunOutputEvent]]:
         """
         Generate an asynchronous streaming response from the model.
@@ -1662,6 +1732,11 @@ class Model(ABC):
         Receives the current ``ModelResponse`` (with accumulated ``tool_executions``) as its
         single argument. Used by Agent-level checkpointing (``checkpoint="tool-batch"``) to persist
         mid-run state. Exceptions are caught and logged — a failed callback must not kill the run.
+
+        ``steering``: optional handle on the run's steering inbox. Input queued there is appended
+        to ``messages`` as user messages before each model request. When the model would finish
+        (a final answer, or a ``stop_after_tool_call`` tool) pending input makes it continue and
+        answer; otherwise the inbox closes. The caller opens and releases the inbox.
         """
         # Check cache if enabled - capture key BEFORE streaming to avoid mismatch
         cache_key = None
@@ -1694,6 +1769,12 @@ class Model(ABC):
         function_call_count = 0
 
         while True:
+            # Steering input queued since the last request joins the conversation before the next one
+            if steering is not None:
+                steered = self._append_steered_messages(messages, await steering.atake())
+                if steered:
+                    yield ModelResponse(event=ModelResponseEvent.run_steered.value, steered_messages=steered)
+
             # Compress existing tool results BEFORE making API call to avoid context overflow
             if _compression_manager is not None and await _compression_manager.ashould_compress(
                 messages, tools, model=self, response_format=response_format
@@ -1842,8 +1923,16 @@ class Model(ABC):
                 for function_call_result in function_call_results:
                     function_call_result.log(metrics=True, use_compressed_content=_compress_tool_results)
 
-                # Check if we should stop after tool calls
+                # Check if we should stop after tool calls. Steering input overrides the stop: the user
+                # asked for more, so the model answers it, unless the run is pausing for a human.
                 if any(m.stop_after_tool_call for m in function_call_results):
+                    if steering is not None and not self._awaits_human(
+                        model_response, function_calls_to_run, run_response
+                    ):
+                        steered = self._append_steered_messages(messages, await steering.atake_or_close())
+                        if steered:
+                            yield ModelResponse(event=ModelResponseEvent.run_steered.value, steered_messages=steered)
+                            continue
                     break
 
                 # Per-turn checkpoint hook: post-gather barrier. Tool results have been
@@ -1877,7 +1966,14 @@ class Model(ABC):
                 # Continue loop to get next response
                 continue
 
-            # No tool calls or finished processing them
+            # No tool calls or finished processing them. Steering input that arrived during the final
+            # request gets another request; otherwise the inbox closes as the loop ends, so input
+            # sent from here on is refused rather than accepted and never read.
+            if steering is not None:
+                steered = self._append_steered_messages(messages, await steering.atake_or_close())
+                if steered:
+                    yield ModelResponse(event=ModelResponseEvent.run_steered.value, steered_messages=steered)
+                    continue
             break
 
         log_debug(f"{self.get_provider()} Async Response Stream End", center=True, symbol="-")
@@ -3143,6 +3239,30 @@ class Model(ABC):
         """
         if len(function_call_results) > 0:
             messages.extend(function_call_results)
+
+    @staticmethod
+    def _append_steered_messages(messages: List[Message], steered: List[Message]) -> List[Message]:
+        """Append steering input to the conversation. Returns it; empty when none was pending."""
+        for message in steered:
+            log_debug(f"Steering input: {message.get_content_string()}")
+            messages.append(message)
+        return steered
+
+    @staticmethod
+    def _awaits_human(
+        model_response: ModelResponse,
+        function_calls_to_run: List[FunctionCall],
+        run_response: Optional[Union[RunOutput, TeamRunOutput]],
+    ) -> bool:
+        """Whether this tool batch pauses the run for a human: a confirmation, external execution,
+        user input, or an unresolved requirement propagated from a team member."""
+        for tc in model_response.tool_executions or []:
+            if tc.requires_confirmation or tc.external_execution_required or tc.requires_user_input:
+                return True
+        for fc in function_calls_to_run:
+            if fc.function.requires_confirmation or fc.function.external_execution or fc.function.requires_user_input:
+                return True
+        return run_response is not None and any(not req.is_resolved() for req in run_response.requirements or [])
 
     def _handle_function_call_media(
         self, messages: List[Message], function_call_results: List[Message], send_media_to_model: bool = True
