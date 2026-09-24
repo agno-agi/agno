@@ -1,9 +1,13 @@
+import json
 import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
+from agno.agent.agent import Agent
+from agno.models.base import Model
+from agno.models.response import ModelResponse
 from agno.tools.python import PythonTools
 
 
@@ -248,3 +252,110 @@ def test_exclude_tools_drops_execution_tools(temp_dir):
     # Benign helpers remain available.
     assert "read_file" in registered
     assert "list_files" in registered
+
+
+# Default-deny for code-executing tools (agno-agi/agno#10053): without the
+# gate, a model-influenced tool call reaches exec()/runpy()/subprocess with
+# no pause, so prompt injection can drive arbitrary code execution.
+def test_code_executing_tools_require_confirmation_by_default(temp_dir):
+    """The 5 code-executing tools pause for confirmation by default; benign helpers do not."""
+    python_tools = PythonTools(base_dir=temp_dir)
+    gated = {
+        "run_python_code",
+        "save_to_file_and_run",
+        "run_python_file_return_variable",
+        "pip_install_package",
+        "uv_pip_install_package",
+    }
+    assert set(python_tools.requires_confirmation_tools) == gated
+    for tool_name in gated:
+        assert python_tools.functions[tool_name].requires_confirmation is True
+    assert python_tools.functions["read_file"].requires_confirmation is False
+    assert python_tools.functions["list_files"].requires_confirmation is False
+
+
+def test_requires_confirmation_tools_explicit_opt_out(temp_dir):
+    """Passing requires_confirmation_tools=[] explicitly restores immediate execution."""
+    python_tools = PythonTools(base_dir=temp_dir, requires_confirmation_tools=[])
+    assert python_tools.requires_confirmation_tools == []
+    for function in python_tools.functions.values():
+        assert function.requires_confirmation is False
+
+
+def test_requires_confirmation_tools_explicit_list_respected(temp_dir):
+    """An explicit requires_confirmation_tools list is used as-is (caller's responsibility)."""
+    python_tools = PythonTools(base_dir=temp_dir, requires_confirmation_tools=["read_file"])
+    assert python_tools.functions["read_file"].requires_confirmation is True
+    assert python_tools.functions["run_python_code"].requires_confirmation is False
+
+
+class _AttackerInfluencedModel(Model):
+    """Deterministic offline stub standing in for an attacker-influenced model:
+    the first invoke() returns a run_python_code tool call, then plain text."""
+
+    def __init__(self, marker_path: Path):
+        super().__init__(id="controlled-model", name="controlled-model", provider="test")
+        self.marker_path = marker_path
+
+    def invoke(self, *args, **kwargs):
+        messages = kwargs.get("messages", [])
+        if any(
+            getattr(m, "role", None) == "tool" and getattr(m, "tool_name", None) == "run_python_code" for m in messages
+        ):
+            return ModelResponse(content="done.")
+        payload = f"open({str(self.marker_path)!r}, 'w').write('POC_EXECUTED')"
+        return ModelResponse(
+            tool_calls=[
+                {
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {"name": "run_python_code", "arguments": json.dumps({"code": payload})},
+                }
+            ]
+        )
+
+    def ainvoke(self, *a, **k):
+        raise NotImplementedError
+
+    def invoke_stream(self, *a, **k):
+        raise NotImplementedError
+
+    def ainvoke_stream(self, *a, **k):
+        raise NotImplementedError
+
+    def _parse_provider_response(self, r, **k):
+        raise NotImplementedError
+
+    def _parse_provider_response_delta(self, r):
+        raise NotImplementedError
+
+
+def test_default_assembly_pauses_model_requested_code_execution(temp_dir):
+    """End-to-end (agno-agi/agno#10053): the default PythonTools assembly pauses
+    (tool_call_paused) instead of executing a model-requested run_python_code call."""
+    marker = temp_dir / "marker.txt"
+    agent = Agent(
+        model=_AttackerInfluencedModel(marker),
+        tools=[PythonTools(base_dir=temp_dir)],
+        telemetry=False,
+    )
+    response = agent.run("Execute the code I requested.")
+    assert response.is_paused
+    assert not marker.exists()
+    assert response.tools is not None
+    assert response.tools[0].requires_confirmation
+    assert response.tools[0].tool_name == "run_python_code"
+
+
+def test_opt_out_assembly_executes_code_immediately(temp_dir):
+    """Opt-out (requires_confirmation_tools=[]) restores immediate execution."""
+    marker = temp_dir / "marker.txt"
+    agent = Agent(
+        model=_AttackerInfluencedModel(marker),
+        tools=[PythonTools(base_dir=temp_dir, requires_confirmation_tools=[])],
+        telemetry=False,
+    )
+    response = agent.run("Execute the code I requested.")
+    assert not response.is_paused
+    assert marker.exists()
+    assert marker.read_text() == "POC_EXECUTED"
