@@ -644,8 +644,14 @@ class OpenAIResponses(Model):
 
         for message in messages_to_format:
             # Without chaining, replay reasoning before the assistant's text or function calls.
+            #
+            # The chain can be absent for two different reasons. The model may be configured
+            # not to use it, or it may have been severed at request time - compaction drops
+            # response_id from the assistant copies it sends, so a fold leaves a reasoning
+            # model's function_call with no server-held reasoning item. Either way the item
+            # has to travel with the call, or the API rejects the pair outright.
             if (
-                (self.store is False or not self.use_previous_response_id)
+                (self.store is False or not self.use_previous_response_id or previous_response_id is None)
                 and message.role == "assistant"
                 and message.provider_data is not None
                 and message.provider_data.get("reasoning_output") is not None
@@ -709,16 +715,6 @@ class OpenAIResponses(Model):
                 # so the API can associate the subsequent function_call_output by call_id.
                 if self._using_reasoning_model() and previous_response_id is not None:
                     continue
-
-                # A reasoning model's function_call is only valid alongside the reasoning item
-                # it was produced with. The server holds that item when the request chains on
-                # previous_response_id; without chaining - a fresh session, or a caller that
-                # severed the chain - it has to travel with the call or the API rejects the
-                # pair outright.
-                if self._using_reasoning_model():
-                    reasoning_output = (message.provider_data or {}).get("reasoning_output")
-                    if reasoning_output is not None:
-                        formatted_messages.append(ResponseReasoningItem.model_validate(reasoning_output))
 
                 for tool_call in message.tool_calls:
                     formatted_messages.append(
