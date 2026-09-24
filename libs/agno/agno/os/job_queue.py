@@ -14,6 +14,7 @@ from agno.job_queue.config import QueueConfig, RedisCoordination
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 
 if TYPE_CHECKING:
+    from agno.run.base import CancellationStage
     from agno.run.status_persist import RunPersistOutcome
 
 
@@ -839,13 +840,21 @@ class QueueWorker:
             prior = await self.store.get_job(run_id)
         if prior is None or prior.get("job_type", "run") != "run" or prior.get("status") not in ("queued", "paused"):
             return False
-        # A paused run has partially executed, so "before execution" would be
-        # wrong on it
-        reason = (
-            "cancelled while paused awaiting continuation"
-            if prior.get("status") == "paused"
-            else "cancelled before execution"
-        )
+        from agno.run.base import CancellationStage
+
+        # The stage is the status the RUN held, which the ticket's own status
+        # only approximates: a continued ticket sits queued again with its
+        # continuation payload while the run is a paused one with history,
+        # and a ticket queued for a retry backoff belongs to a run an earlier
+        # attempt already executed. Only a never-claimed, never-continued
+        # ticket is a run that never started.
+        payload = prior.get("payload") or {}
+        if prior.get("status") == "paused" or payload.get("continue"):
+            reason, stage = "cancelled while paused awaiting continuation", CancellationStage.paused
+        elif (prior.get("attempt") or 0) > 0:
+            reason, stage = "cancelled while awaiting retry", CancellationStage.executing
+        else:
+            reason, stage = "cancelled before execution", CancellationStage.pending
         # Run row first (fenced): if this cannot land, do NOT tombstone - a
         # terminal ticket over a live-looking row is the one divergence
         # nothing heals. Exception: an UNRESOLVABLE component means nobody
@@ -854,7 +863,9 @@ class QueueWorker:
         # instead of honouring the user's cancel; keep the old loud tombstone
         # for exactly that case.
         component_reachable = self.resolve_component(prior.get("component_type"), prior.get("component_id")) is not None
-        if component_reachable and not await self._persist_run_error(prior, reason, status="cancelled"):
+        if component_reachable and not await self._persist_run_error(
+            prior, reason, status="cancelled", cancellation_stage=stage
+        ):
             log_error(
                 f"Job queue: could not persist the cancelled run row for waiting job {run_id}; "
                 "ticket left as-is (the caller's cancellation intent covers any later execution)"
@@ -1058,7 +1069,13 @@ class QueueWorker:
         with contextlib.suppress(Exception):
             await asyncio.shield(get_event_stream().complete_run(job["id"], terminal, generation=job.get("attempt")))
 
-    async def _persist_run_error(self, job: Dict[str, Any], error: str, status: str = "error") -> bool:
+    async def _persist_run_error(
+        self,
+        job: Dict[str, Any],
+        error: str,
+        status: str = "error",
+        cancellation_stage: Optional["CancellationStage"] = None,
+    ) -> bool:
         """Persist a terminal status on the run row so pollers see it, never a
         stuck RUNNING/PENDING. Atomic-first with attempt fencing: a later
         attempt's write owns the row; this (possibly stale) writer is fenced
@@ -1075,23 +1092,31 @@ class QueueWorker:
         RUNNING/PENDING forever with nothing left to revisit it. The sweeper
         uses _persist_run_error_outcome instead: it needs the typed outcome
         (TERMINAL_REFUSED = the leg settled, reconcile rather than fail)."""
-        return await self._persist_run_error_outcome(job, error, status) is not None
+        return await self._persist_run_error_outcome(job, error, status, cancellation_stage) is not None
 
     async def _persist_run_error_outcome(
-        self, job: Dict[str, Any], error: str, status: str = "error"
+        self,
+        job: Dict[str, Any],
+        error: str,
+        status: str = "error",
+        cancellation_stage: Optional["CancellationStage"] = None,
     ) -> Optional["RunPersistOutcome"]:
         """Typed twin of _persist_run_error (never raises): the outcome from
         the fenced persist, UPDATED when the legacy fallback persisted, or
         None when nothing could be written (component unresolvable, store
         failure) - the keep-the-ticket-alive case."""
         try:
-            return await self._persist_run_error_inner(job, error, status)
+            return await self._persist_run_error_inner(job, error, status, cancellation_stage)
         except Exception as e:
             log_warning(f"Job queue: run-row error persist failed for job {job.get('id')}: {e}")
             return None
 
     async def _persist_run_error_inner(
-        self, job: Dict[str, Any], error: str, status: str
+        self,
+        job: Dict[str, Any],
+        error: str,
+        status: str,
+        cancellation_stage: Optional["CancellationStage"] = None,
     ) -> Optional["RunPersistOutcome"]:
         component = self.resolve_component(job["component_type"], job["component_id"])
         if component is None:
@@ -1106,14 +1131,19 @@ class QueueWorker:
         from agno.run.base import RunStatus
         from agno.run.status_persist import RunPersistOutcome, apersist_run_status, fallback_allowed
 
+        fields: Dict[str, Any] = {
+            "status": RunStatus.cancelled.value if status == "cancelled" else RunStatus.error.value,
+        }
+        if cancellation_stage is not None:
+            # Rides the same fenced patch as the status: the adapters apply
+            # fields onto the stored run, so no adapter knows the key
+            fields["cancellation_stage"] = cancellation_stage.value
         result = await apersist_run_status(
             component,
             job["component_type"],
             session_id=job["session_id"],
             run_id=job["id"],
-            fields={
-                "status": RunStatus.cancelled.value if status == "cancelled" else RunStatus.error.value,
-            },
+            fields=fields,
             content_if_absent=error,
             user_id=job.get("user_id"),
             expected_attempt=job.get("attempt"),
@@ -1137,6 +1167,8 @@ class QueueWorker:
             if isinstance(run, RunOutput) and run.status not in (RunStatus.completed, RunStatus.cancelled):
                 run.status = RunStatus.cancelled if status == "cancelled" else RunStatus.error
                 run.content = run.content or error
+                if cancellation_stage is not None:
+                    run.cancellation_stage = cancellation_stage
                 session.upsert_run(run=run)
                 # v3 substrate: the run persists via the O(1) per-run save;
                 # asave_session writes only the session row
@@ -1159,6 +1191,8 @@ class QueueWorker:
             ):
                 team_run.status = RunStatus.cancelled if status == "cancelled" else RunStatus.error
                 team_run.content = team_run.content or error
+                if cancellation_stage is not None:
+                    team_run.cancellation_stage = cancellation_stage
                 team_session.upsert_run(run_response=team_run)
                 await team_asave_run(component, run=team_run, session_id=job["session_id"], user_id=job.get("user_id"))
                 await team_asave_session(component, session=team_session)
@@ -1174,6 +1208,8 @@ class QueueWorker:
             if workflow_run is not None and workflow_run.status not in (RunStatus.completed, RunStatus.cancelled):
                 workflow_run.status = RunStatus.cancelled if status == "cancelled" else RunStatus.error
                 workflow_run.content = workflow_run.content or error
+                if cancellation_stage is not None:
+                    workflow_run.cancellation_stage = cancellation_stage
                 workflow_session.upsert_run(run=workflow_run)
                 # asave_* absorbs a sync DB; branching would take the sync media path, which raises on an async backend.
                 await component.asave_run(run=workflow_run, session_id=job["session_id"], user_id=job.get("user_id"))
@@ -1711,7 +1747,23 @@ class QueueWorker:
             # Not gated: honouring the user's cancel on the ticket beats
             # run-row terminality (leaving the job stale would re-execute a
             # cancelled run) - but the divergence must be loud, not silent
-            if not await self._persist_run_error(job, "cancelled while queued for a slot", status="cancelled"):
+            from agno.run.base import CancellationStage
+
+            # The stage is what the run was doing when cancelled. Before the
+            # slot: a fresh leg never started, a continuation leg is a paused
+            # run with history. After the slot the component's own handler
+            # has already stamped the stage, and a CANCELLED-over-CANCELLED
+            # patch passes the terminal guard, so no stage is written here
+            # rather than overwriting the component's
+            stage = None
+            if not slot_acquired:
+                stage = CancellationStage.paused if payload.get("continue") else CancellationStage.pending
+            if not await self._persist_run_error(
+                job,
+                "cancelled while queued for a slot",
+                status="cancelled",
+                cancellation_stage=stage,
+            ):
                 log_error(f"Job queue: cancelled job {job_id} but its run row could not be terminalized")
             await self._terminate_stream_view(job, status="cancelled")
         except asyncio.TimeoutError:
@@ -2354,6 +2406,13 @@ async def aticket_poll_fallback(
     body: Dict[str, Any] = {"run_id": run_id, "session_id": session_id, "status": status}
     if status == "ERROR" and job.get("error"):
         body["content"] = job["error"]
+    if status == "CANCELLED" and not job.get("attempt"):
+        # A cancelled ticket that no worker ever claimed: the run never
+        # started. Claimed tickets always carry a run row, so a cancelled
+        # one reaching this fallback is by construction pre-execution.
+        from agno.run.base import CancellationStage
+
+        body["cancellation_stage"] = CancellationStage.pending.value
     return body
 
 
