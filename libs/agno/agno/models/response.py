@@ -1,12 +1,26 @@
+from base64 import b64decode
 from dataclasses import asdict, dataclass, field
 from enum import Enum
 from time import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Type, TypeVar
 
 from agno.media import Audio, File, Image, Video
 from agno.metrics import MessageMetrics, ToolCallMetrics
 from agno.models.message import Citations
 from agno.tools.function import UserFeedbackQuestion, UserInputField
+
+_Media = TypeVar("_Media", Image, Audio, Video)
+
+
+def _media_from_dict(media_type: Type[_Media], data: Dict[str, Any]) -> _Media:
+    content = data.get("content")
+    if isinstance(content, str):
+        try:
+            decoded = b64decode(content)
+        except ValueError:
+            decoded = content.encode("utf-8")
+        data = {**data, "content": decoded}
+    return media_type(**data)
 
 
 class ModelResponseEvent(str, Enum):
@@ -202,14 +216,14 @@ class ModelResponse:
         """Reconstruct ModelResponse from cached dictionary."""
         # Reconstruct media objects
         if data.get("audio"):
-            data["audio"] = Audio(**data["audio"])
+            data["audio"] = _media_from_dict(Audio, data["audio"])
 
         if data.get("images"):
-            data["images"] = [Image(**img) for img in data["images"]]
+            data["images"] = [_media_from_dict(Image, img) for img in data["images"]]
         if data.get("videos"):
-            data["videos"] = [Video(**vid) for vid in data["videos"]]
+            data["videos"] = [_media_from_dict(Video, vid) for vid in data["videos"]]
         if data.get("audios"):
-            data["audios"] = [Audio(**aud) for aud in data["audios"]]
+            data["audios"] = [_media_from_dict(Audio, aud) for aud in data["audios"]]
         if data.get("files"):
             data["files"] = [File(**f) for f in data["files"]]
 
