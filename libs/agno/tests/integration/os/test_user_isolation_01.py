@@ -526,7 +526,7 @@ class TestListingEndpointRbacByAction:
         token = create_token("per-resource-reader", scopes=["agents:test-agent:read"])
         resp = client.get("/agents", headers=auth_header(token))
         assert resp.status_code == 200, resp.text
-        ids = [a.get("id") for a in resp.json()]
+        ids = [a.get("id") for a in resp.json()["data"]]
         assert "test-agent" in ids
 
 
