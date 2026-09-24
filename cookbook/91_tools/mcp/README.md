@@ -57,6 +57,52 @@ This example shows how to choose which MCP protocol era `MCPTools` negotiates. T
 
 This example connects to Magic Hour's hosted MCP server to create images and videos. It shows bearer authentication, long-running render handling, reuse of project IDs after timeouts, and exact output URL retrieval.
 
+14. ParlayAPI Read-Only Discovery (`parlayapi.py`)
+
+This example launches the published ParlayAPI MCP server with an explicit tool
+allowlist. The default only discovers four public metadata tools locally. It
+does not call an API endpoint or model, and ignores both ParlayAPI key environment
+variables. Account creation, login email, checkout, preference changes and betting
+verdict tools are excluded.
+
+```bash
+uv pip install "agno[mcp]==3.0.9" "parlayapi-mcp==0.3.7"
+python cookbook/91_tools/mcp/parlayapi.py
+```
+
+To ask a model about public metadata, install `openai`, supply your own
+`OPENAI_API_KEY` through your runtime's secret manager, and explicitly run:
+
+```bash
+python cookbook/91_tools/mcp/parlayapi.py --question "Which sports currently have live event counts? Summarize counts only."
+```
+
+For private data research, additionally supply your own `PARLAYAPI_KEY` (or
+`PARLAY_API_KEY`) and add `--private`. This adds only sport catalog, odds and
+props tools. `--private` alone still performs discovery without data or model
+calls. Keys remain in the server environment, not tool arguments or prompts.
+The fixed server origin is `https://parlay-api.com`; origin overrides are ignored.
+
+An explicit `--question` run may call up to two tools and incurs your model's
+charges; private data calls also consume the API account's applicable allowance.
+Raw tool results can go to the configured OpenAI model. Use only a private
+runtime and account permitted for that processing. No database or telemetry is
+configured, but this does not disable your model provider's own retention.
+Keep terminal output and research private. API access grants no public data
+redisplay or redistribution rights. This example does not place bets.
+
+This is a transport example, not a complete-data validator. Missing outcomes,
+unknown source ages and scoped results must not be read as complete coverage.
+The allowlist narrows tools exposed to this agent; it is not server-side access
+control against a program that bypasses the toolkit. Review the allowlist when
+upgrading the pinned server package.
+
+References: [MCP server](https://pypi.org/project/parlayapi-mcp/),
+[API documentation](https://parlay-api.com/docs),
+[account signup](https://parlay-api.com/signup),
+[current pricing](https://parlay-api.com/pricing),
+[data-use terms](https://parlay-api.com/terms).
+
 ## Getting Started
 
 ### Prerequisites
