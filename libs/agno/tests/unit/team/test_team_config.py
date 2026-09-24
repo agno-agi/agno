@@ -1966,10 +1966,11 @@ class TestTeamFollowupConfigRoundtrip:
     def test_to_dict_serializes_followup_settings(self):
         from agno.agent import FollowupConfig
 
-        team = Team(members=[], followups=FollowupConfig(instructions="Only docs."), num_followups=2)
+        team = Team(members=[], followups=FollowupConfig(instructions="Only docs.", num_followups=2))
         config = team.to_dict()
-        assert config["followups"] == {"instructions": "Only docs."}
-        assert config["num_followups"] == 2
+        assert config["followups"] == {"instructions": "Only docs.", "num_followups": 2}
+        # The config carries the count and model; the top-level keys are only for the top-level form.
+        assert "num_followups" not in config
         assert "followup_model" not in config
         assert "followup_config" not in config
 
@@ -1982,7 +1983,7 @@ class TestTeamFollowupConfigRoundtrip:
     def test_from_dict_roundtrip_preserves_followup_settings(self):
         from agno.agent import FollowupConfig
 
-        team = Team(members=[], followups=FollowupConfig(instructions="Only docs."), num_followups=2)
+        team = Team(members=[], followups=FollowupConfig(instructions="Only docs.", num_followups=2))
         reconstructed = Team.from_dict(team.to_dict())
         assert isinstance(reconstructed.followups, FollowupConfig)
         assert reconstructed.num_followups == 2
@@ -2064,7 +2065,7 @@ class TestTeamFollowupConfigRoundtrip:
 
         config = Team(members=[], followups=FollowupConfig(num_followups=5)).to_dict()
         assert config["followups"] == {"num_followups": 5}
-        assert config["num_followups"] == 5  # the effective count, as the component holds it
+        assert "num_followups" not in config  # carried by the config
         reconstructed = Team.from_dict(config)
         assert reconstructed.followups.num_followups == 5
         assert reconstructed.num_followups == 5
@@ -2090,14 +2091,13 @@ class TestTeamFollowupConfigRoundtrip:
         from agno.agent import FollowupConfig
         from agno.models.base import Model
 
-        team = Team(members=[], followups=FollowupConfig(model="openai:gpt-5.5"), followup_model="openai:gpt-5.5")
-        config = team.to_dict()
-        # Resolved at construction, so both slots serialize as model dicts.
-        assert config["followup_model"]["id"] == "gpt-5.5"
+        # Resolved at construction, so either slot serializes as a model dict.
+        config = Team(members=[], followups=FollowupConfig(model="openai:gpt-5.5")).to_dict()
         assert config["followups"]["model"]["id"] == "gpt-5.5"
-        reconstructed = Team.from_dict(config)
-        assert isinstance(reconstructed.followup_model, Model)
-        assert isinstance(reconstructed.followups.model, Model)
+        assert isinstance(Team.from_dict(config).followups.model, Model)
+        config = Team(members=[], followups=True, followup_model="openai:gpt-5.5").to_dict()
+        assert config["followup_model"]["id"] == "gpt-5.5"
+        assert isinstance(Team.from_dict(config).followup_model, Model)
 
     def test_raw_string_references_in_serialized_dict_resolve(self):
         from agno.models.openai import OpenAIResponses
@@ -2105,23 +2105,28 @@ class TestTeamFollowupConfigRoundtrip:
         config = {
             "id": "string-team",
             "followups": {"model": "openai:gpt-5.5", "instructions": "Only docs."},
-            "followup_model": "openai:gpt-5.5",
         }
         reconstructed = Team.from_dict(config)
-        assert isinstance(reconstructed.followup_model, OpenAIResponses)
         assert isinstance(reconstructed.followups.model, OpenAIResponses)
         assert reconstructed.followups.instructions == "Only docs."
+        legacy = Team.from_dict({"id": "legacy", "followups": True, "followup_model": "openai:gpt-5.5"})
+        assert isinstance(legacy.followup_model, OpenAIResponses)
+
+    def test_stored_dict_with_both_forms_is_rejected(self):
+        with pytest.raises(ValueError, match="not both"):
+            Team.from_dict({"id": "both", "followups": {"instructions": "Only docs."}, "num_followups": 2})
 
     def test_registry_model_is_reused_with_its_connection_settings(self):
         from agno.agent import FollowupConfig
         from agno.models.openai import OpenAIResponses
 
         live = OpenAIResponses(id="gpt-5.5", base_url="http://localhost:1/v1")
-        team = Team(members=[], followups=FollowupConfig(model=live), followup_model=live)
-        reconstructed = Team.from_dict(team.to_dict(), registry=Registry(models=[live]))
-        assert reconstructed.followup_model is live
-        assert reconstructed.followups.model is live
-        assert reconstructed.followups.model.base_url == "http://localhost:1/v1"
+        registry = Registry(models=[live])
+        configured = Team.from_dict(Team(members=[], followups=FollowupConfig(model=live)).to_dict(), registry=registry)
+        assert configured.followups.model is live
+        assert configured.followups.model.base_url == "http://localhost:1/v1"
+        top_level = Team.from_dict(Team(members=[], followups=True, followup_model=live).to_dict(), registry=registry)
+        assert top_level.followup_model is live
 
     def test_no_credentials_or_clients_serialized(self):
         from agno.agent import FollowupConfig
@@ -2129,8 +2134,11 @@ class TestTeamFollowupConfigRoundtrip:
 
         secret = "sk-review-not-a-real-key"
         live = OpenAIResponses(id="gpt-5.5", api_key=secret, base_url="http://localhost:1/v1")
-        team = Team(members=[], followups=FollowupConfig(model=live, instructions="x"), followup_model=live)
-        serialized = repr(team.to_dict())
-        assert secret not in serialized
-        for forbidden in ("api_key", "base_url", "client", "http://"):
-            assert forbidden not in serialized
+        for team in (
+            Team(members=[], followups=FollowupConfig(model=live, instructions="x")),
+            Team(members=[], followups=True, followup_model=live),
+        ):
+            serialized = repr(team.to_dict())
+            assert secret not in serialized
+            for forbidden in ("api_key", "base_url", "client", "http://"):
+                assert forbidden not in serialized

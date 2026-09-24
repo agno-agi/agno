@@ -27,16 +27,15 @@ async def test_generation_paths(kind, asynchronous, stream, source, suggestions)
     model.response.return_value = result
     model.aresponse = AsyncMock(return_value=result)
     unused = MagicMock(spec=Model)
-    config = FollowupConfig(instructions="Suggest only documentation questions.")
     if source == "config":
-        config.model = model
-    options = dict(
-        followups=config,
-        num_followups=2,
-        followup_model=model if source == "legacy" else None,
-        model=model if source == "component" else unused,
-        telemetry=False,
-    )
+        followup_options = dict(
+            followups=FollowupConfig(model=model, instructions="Suggest only documentation questions.", num_followups=2)
+        )
+    elif source == "legacy":
+        followup_options = dict(followups=True, num_followups=2, followup_model=model)
+    else:
+        followup_options = dict(followups=True, num_followups=2)
+    options = dict(model=model if source == "component" else unused, telemetry=False, **followup_options)
     if kind == "agent":
         component = Agent(**options)
         output = RunOutput(run_id="run", content="I can help with documentation.", input=RunInput(input_content="Hi"))
@@ -65,7 +64,7 @@ async def test_generation_paths(kind, asynchronous, stream, source, suggestions)
     call = model.aresponse.call_args if asynchronous else model.response.call_args
     assert call.kwargs["response_format"] == {"type": "json_object"}
     messages = call.kwargs["messages"]
-    assert "Suggest only documentation questions." in messages[0].content
+    assert ("Suggest only documentation questions." in messages[0].content) is (source == "config")
     assert "json" in messages[0].content.lower()
     assert "Never suggest repeating or fulfilling a request the assistant declined" in messages[0].content
     assert "Generate at most 2" in messages[1].content

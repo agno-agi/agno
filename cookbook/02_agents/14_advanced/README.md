@@ -37,13 +37,12 @@ Python documentation questions. The same configuration works on `Team`.
 follow-ups and carries the count, custom instructions and an optional separate model:
 `followups=FollowupConfig(num_followups=5, model=..., instructions="...")`. The
 component keeps what you pass, so `agent.followups` reads back as the bool or the
-config. The earlier arguments still work: `followups=True` with `num_followups` or
-`followup_model`. Set the count and the model in one place: passing both
-`FollowupConfig.num_followups` and a different `num_followups` (or both
-`FollowupConfig.model` and a different `followup_model`) raises `ValueError`. A value
-left unset on the config falls back to the argument, then to the defaults (3, and the
-main model). Either model slot accepts a `Model` object or a `provider:model_id`
-string, resolved when the component is built. Only the question, answer and follow-up instructions are
+config. The top-level arguments still work on their own: `followups=True` with
+`num_followups` or `followup_model`. Use one form or the other: passing a
+`FollowupConfig` together with `num_followups` or `followup_model` raises `ValueError`.
+Unset values use the defaults (3 suggestions, the main model). Either model slot
+accepts a `Model` object or a `provider:model_id` string, resolved when the component
+is built. Only the question, answer and follow-up instructions are
 sent to this call; the main instructions, retrieved evidence and history are not
 copied as separate context, but anything already in the user input or the answer
 still reaches the follow-up model.

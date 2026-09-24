@@ -1038,13 +1038,15 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
     # --- Followup settings ---
     if agent.followups:
         config["followups"] = _followups_to_config(agent.followups)
-    if agent.num_followups != 3:
-        config["num_followups"] = agent.num_followups
-    if agent.followup_model is not None:
-        if isinstance(agent.followup_model, Model):
-            config["followup_model"] = model_identity(agent.followup_model)
-        else:
-            config["followup_model"] = str(agent.followup_model)
+    # A FollowupConfig carries the count and model; the top-level fields are stored only without one.
+    if not isinstance(agent.followups, FollowupConfig):
+        if agent.num_followups != 3:
+            config["num_followups"] = agent.num_followups
+        if agent.followup_model is not None:
+            if isinstance(agent.followup_model, Model):
+                config["followup_model"] = model_identity(agent.followup_model)
+            else:
+                config["followup_model"] = str(agent.followup_model)
 
     # --- Default tools settings ---
     if agent.read_chat_history:

@@ -17,7 +17,7 @@ from typing import (
 if TYPE_CHECKING:
     from agno.team.team import Team
 
-from agno.agent.followup import reconcile_copied_followup_fields
+from agno.agent.followup import drop_derived_followup_fields
 from agno.filters import FilterExpr
 from agno.utils.log import log_debug, log_error, log_warning
 
@@ -147,7 +147,7 @@ def deep_copy(team: Team, *, update: Optional[Dict[str, Any]] = None) -> Team:
     # Update fields if provided
     if update:
         fields_for_new_team.update(update)
-    reconcile_copied_followup_fields(fields_for_new_team, update)
+    drop_derived_followup_fields(fields_for_new_team, update)
 
     # Create a new Team
     try:

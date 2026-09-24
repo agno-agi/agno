@@ -28,7 +28,7 @@ from agno.agent._storage import (
     resolve_learning_reference,
     resolve_memory_manager_reference,
 )
-from agno.agent.followup import model_identity
+from agno.agent.followup import FollowupConfig, model_identity
 from agno.db.base import AsyncBaseDb, BaseDb, ComponentType, SessionType
 from agno.db.schemas.scheduler import strip_reserved_run_metadata
 from agno.db.utils import resolve_db_from_config
@@ -830,13 +830,15 @@ def to_dict(team: "Team") -> Dict[str, Any]:
     # --- Followup settings ---
     if team.followups:
         config["followups"] = _followups_to_config(team.followups)
-    if team.num_followups != 3:
-        config["num_followups"] = team.num_followups
-    if team.followup_model is not None:
-        if isinstance(team.followup_model, Model):
-            config["followup_model"] = model_identity(team.followup_model)
-        else:
-            config["followup_model"] = str(team.followup_model)
+    # A FollowupConfig carries the count and model; the top-level fields are stored only without one.
+    if not isinstance(team.followups, FollowupConfig):
+        if team.num_followups != 3:
+            config["num_followups"] = team.num_followups
+        if team.followup_model is not None:
+            if isinstance(team.followup_model, Model):
+                config["followup_model"] = model_identity(team.followup_model)
+            else:
+                config["followup_model"] = str(team.followup_model)
 
     # --- Streaming settings ---
     if team.stream is not None:

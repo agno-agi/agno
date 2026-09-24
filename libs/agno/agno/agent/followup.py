@@ -25,17 +25,16 @@ def model_identity(model: Model) -> Dict[str, Any]:
 class FollowupConfig:
     """Follow-up generation options; pass it as ``followups=FollowupConfig(...)`` on an Agent or Team.
 
-    ``model`` generates the suggestions; None falls back to ``followup_model``, then the
-    component model. A ``provider:model_id`` string is resolved when the component is
-    constructed, on a copy of this object; an unknown reference raises ValueError there.
+    An alternative to the top-level ``num_followups`` and ``followup_model`` arguments;
+    passing it together with either of them raises ValueError.
+
+    ``model`` generates the suggestions; None uses the component model. A
+    ``provider:model_id`` string is resolved when the component is constructed, on a
+    copy of this object; an unknown reference raises ValueError there.
     ``instructions`` adds domain or style constraints to the default system prompt.
     The main instructions and retrieved context are not copied into this call.
-    ``num_followups`` is a maximum; fewer or no suggestions may be returned when the
-    answer does not support a useful continuation. None falls back to the component's
-    ``num_followups`` (default 3).
-
-    Setting the count or model both here and on the component raises ValueError
-    unless the two values agree, so neither is silently ignored.
+    ``num_followups`` is a maximum (default 3); fewer or no suggestions may be returned
+    when the answer does not support a useful continuation.
     """
 
     model: Optional[Union[Model, str]] = None
@@ -67,48 +66,34 @@ class FollowupConfig:
         )
 
 
+DEFAULT_NUM_FOLLOWUPS = 3
+
+
 def resolve_followup_settings(
     followups: Union[bool, FollowupConfig],
     num_followups: Optional[int],
     followup_model: Optional[Union[Model, str]] = None,
 ) -> int:
-    """Check that the config and the component agree on count and model; return the effective count."""
+    """Reject a FollowupConfig combined with the top-level arguments; return the effective count."""
     if isinstance(followups, FollowupConfig):
-        if followups.num_followups is not None:
-            if num_followups is not None and num_followups != followups.num_followups:
-                raise ValueError(
-                    f"num_followups={num_followups} conflicts with FollowupConfig.num_followups="
-                    f"{followups.num_followups}; set the count in one place"
-                )
-            num_followups = followups.num_followups
-        if (
-            followups.model is not None
-            and followup_model is not None
-            and followups.model is not followup_model
-            and followups.model != followup_model
-        ):
-            raise ValueError("followup_model conflicts with FollowupConfig.model; set the model in one place")
+        if num_followups is not None or followup_model is not None:
+            raise ValueError(
+                "Pass num_followups and followup_model either inside FollowupConfig or as top-level arguments, not both"
+            )
+        num_followups = followups.num_followups
     if num_followups is None:
-        num_followups = 3
+        num_followups = DEFAULT_NUM_FOLLOWUPS
     if num_followups < 1:
         raise ValueError("num_followups must be at least 1")
     return num_followups
 
 
-def reconcile_copied_followup_fields(fields: Dict[str, Any], update: Optional[Dict[str, Any]]) -> None:
-    """Let a copy's config own the count and model it sets, unless the update names those fields.
-
-    deep_copy re-passes num_followups and followup_model as the source component held them; without
-    this, replacing the config through update would collide with the source's values.
-    """
-    update = update or {}
-    config = fields.get("followups")
-    if not isinstance(config, FollowupConfig):
-        return
-    if config.num_followups is not None and "num_followups" not in update:
-        fields.pop("num_followups", None)
-    if config.model is not None and "followup_model" not in update:
-        fields.pop("followup_model", None)
+def drop_derived_followup_fields(fields: Dict[str, Any], update: Optional[Dict[str, Any]]) -> None:
+    """With a FollowupConfig, num_followups and followup_model are derived from it; deep_copy must not re-pass them."""
+    if isinstance(fields.get("followups"), FollowupConfig):
+        for name in ("num_followups", "followup_model"):
+            if name not in (update or {}):
+                fields.pop(name, None)
 
 
 class FollowupCall(NamedTuple):
@@ -125,7 +110,12 @@ def prepare_followup_call(component: Any, run_response: Any) -> Optional[Followu
         return None
 
     config = component.followups if isinstance(component.followups, FollowupConfig) else None
-    selected = (config.model if config else None) or component.followup_model or component.model
+    if config is not None:
+        selected = config.model or component.model
+        count = config.num_followups if config.num_followups is not None else DEFAULT_NUM_FOLLOWUPS
+    else:
+        selected = component.followup_model or component.model
+        count = component.num_followups
     if selected is None:
         return None
     try:
@@ -138,6 +128,4 @@ def prepare_followup_call(component: Any, run_response: Any) -> Optional[Followu
         return None
     if model is None:
         return None
-    return FollowupCall(
-        model=model, instructions=config.instructions if config else None, num_followups=component.num_followups
-    )
+    return FollowupCall(model=model, instructions=config.instructions if config else None, num_followups=count)

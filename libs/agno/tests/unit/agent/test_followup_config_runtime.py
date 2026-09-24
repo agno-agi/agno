@@ -108,10 +108,7 @@ def _component_factory(kind: str):
 # case -> (model that must generate the follow-ups, whether INSTRUCTIONS must reach its system prompt)
 PRECEDENCE = {
     "config-model": ("config", True),
-    "config-model-same-as-legacy": ("config", True),
-    "config-instructions-only": ("legacy", True),
-    "config-instructions-no-legacy": ("main", True),
-    "config-empty": ("legacy", False),
+    "config-instructions-only": ("main", True),
     "legacy-only": ("legacy", False),
     "component-only": ("main", False),
 }
@@ -119,27 +116,17 @@ PRECEDENCE = {
 
 def _followup_kwargs(case: str, models: dict) -> dict:
     if case == "config-model":
-        return {"followups": FollowupConfig(model=models["config"], instructions=INSTRUCTIONS)}
-    if case == "config-model-same-as-legacy":
-        return {
-            "followups": FollowupConfig(model=models["config"], instructions=INSTRUCTIONS),
-            "followup_model": models["config"],
-        }
+        return {"followups": FollowupConfig(model=models["config"], instructions=INSTRUCTIONS, num_followups=2)}
     if case == "config-instructions-only":
-        return {"followups": FollowupConfig(instructions=INSTRUCTIONS), "followup_model": models["legacy"]}
-    if case == "config-instructions-no-legacy":
-        return {"followups": FollowupConfig(instructions=INSTRUCTIONS)}
-    if case == "config-empty":
-        return {"followups": FollowupConfig(), "followup_model": models["legacy"]}
+        return {"followups": FollowupConfig(instructions=INSTRUCTIONS, num_followups=2)}
     if case == "legacy-only":
-        return {"followup_model": models["legacy"]}
-    return {}
+        return {"followups": True, "num_followups": 2, "followup_model": models["legacy"]}
+    return {"followups": True, "num_followups": 2}
 
 
 def _build(kind: str, case: str):
     models = {name: RecordingModel(name) for name in ("main", "legacy", "config")}
-    kwargs = {"followups": True, "num_followups": 2, "telemetry": False}
-    kwargs.update(_followup_kwargs(case, models))
+    kwargs = {"telemetry": False, **_followup_kwargs(case, models)}
     if kind == "agent":
         component = Agent(model=models["main"], **kwargs)
     else:
@@ -242,8 +229,7 @@ def test_reconstructed_component_keeps_followup_routing(kind):
 
     models = {name: RecordingModel(name) for name in ("main", "legacy", "config")}
     kwargs = dict(
-        followups=FollowupConfig(model=models["config"], instructions=INSTRUCTIONS),
-        num_followups=2,
+        followups=FollowupConfig(model=models["config"], instructions=INSTRUCTIONS, num_followups=2),
         telemetry=False,
     )
     registry = Registry(models=list(models.values()))
@@ -344,8 +330,7 @@ def _continuation_agent():
     agent = Agent(
         model=models["main"],
         db=InMemoryDb(),
-        followups=FollowupConfig(model=models["config"], instructions=INSTRUCTIONS),
-        num_followups=2,
+        followups=FollowupConfig(model=models["config"], instructions=INSTRUCTIONS, num_followups=2),
         telemetry=False,
     )
     return agent, models
@@ -427,8 +412,7 @@ def _tasks_team(suggestions):
         model=models["main"],
         members=[member],
         mode="tasks",
-        followups=FollowupConfig(model=models["config"], instructions=INSTRUCTIONS),
-        num_followups=2,
+        followups=FollowupConfig(model=models["config"], instructions=INSTRUCTIONS, num_followups=2),
         telemetry=False,
     )
     return team, models
@@ -509,23 +493,21 @@ NORMALIZATION = {
     "empty-config": (lambda: {"followups": FollowupConfig()}, True, 3),
     "config-count": (lambda: {"followups": FollowupConfig(num_followups=5)}, True, 5),
     "legacy-count": (lambda: {"followups": True, "num_followups": 5}, True, 5),
-    "matching-counts-agree": (lambda: {"followups": FollowupConfig(num_followups=5), "num_followups": 5}, True, 5),
-    "unset-config-count-falls-back": (lambda: {"followups": FollowupConfig(), "num_followups": 5}, True, 5),
 }
 
-# case -> constructor arguments that set the count or model in two places with different values
+# case -> a FollowupConfig combined with a top-level argument: rejected even when the values agree
 CONFLICTS = {
     "counts-differ": lambda: {"followups": FollowupConfig(num_followups=5), "num_followups": 2},
-    "explicit-three-is-not-unset": lambda: {"followups": FollowupConfig(num_followups=3), "num_followups": 5},
-    "explicit-default-count-is-not-unset": lambda: {"followups": FollowupConfig(num_followups=5), "num_followups": 3},
-    "invalid-legacy-count": lambda: {"followups": FollowupConfig(num_followups=2), "num_followups": 0},
+    "counts-agree": lambda: {"followups": FollowupConfig(num_followups=5), "num_followups": 5},
+    "config-without-count": lambda: {"followups": FollowupConfig(instructions=INSTRUCTIONS), "num_followups": 5},
+    "invalid-top-level-count": lambda: {"followups": FollowupConfig(num_followups=2), "num_followups": 0},
     "models-differ": lambda: {
         "followups": FollowupConfig(model=RecordingModel("config")),
         "followup_model": RecordingModel("legacy"),
     },
-    "model-strings-differ": lambda: {
-        "followups": FollowupConfig(model=MODEL_STRING),
-        "followup_model": "openai:gpt-5.6-luna",
+    "config-without-model": lambda: {
+        "followups": FollowupConfig(instructions=INSTRUCTIONS),
+        "followup_model": MODEL_STRING,
     },
 }
 
@@ -545,7 +527,7 @@ def test_followups_argument_normalization(kind, case):
 @pytest.mark.parametrize("case", list(CONFLICTS))
 @pytest.mark.parametrize("kind", ["agent", "team"])
 def test_conflicting_count_or_model_is_rejected_at_construction(kind, case):
-    with pytest.raises(ValueError, match="conflicts with FollowupConfig"):
+    with pytest.raises(ValueError, match="not both"):
         _construct(kind, **CONFLICTS[case]())
 
 
@@ -567,24 +549,6 @@ def test_effective_count_below_one_is_rejected_at_construction(kind, source, cou
     )
     with pytest.raises(ValueError, match="num_followups must be at least 1"):
         _construct(kind, **kwargs)
-
-
-@pytest.mark.parametrize("config_has_model", [True, False])
-@pytest.mark.parametrize("kind", ["agent", "team"])
-def test_model_precedence_with_the_config_passed_as_followups(kind, config_has_model):
-    models = {name: RecordingModel(name) for name in ("config", "legacy")}
-    config = FollowupConfig(model=models["config"] if config_has_model else None, instructions=INSTRUCTIONS)
-    component = _construct(kind, followups=config, followup_model=None if config_has_model else models["legacy"])
-    winner = "config" if config_has_model else "legacy"
-
-    output = component.run("Hi")
-
-    assert output.followups == ["S1", "S2", "S3"]
-    assert {name: model.followup_calls for name, model in models.items()} == {
-        name: int(name == winner) for name in models
-    }
-    assert component.model.followup_calls == 0
-    assert INSTRUCTIONS in models[winner].followup_system_prompts[0]
 
 
 @pytest.mark.parametrize("form", ["config", "legacy-model"])
@@ -679,8 +643,8 @@ def test_config_through_followups_survives_repeated_deep_copy(kind):
         assert candidate.followups.num_followups == 5
         assert candidate.followups.instructions == INSTRUCTIONS
         assert candidate.followups.model is configured
-    # Updating the legacy count against a count the config sets explicitly is refused, not ignored.
-    with pytest.raises(ValueError, match="conflicts with FollowupConfig.num_followups"):
+    # A top-level count next to the copied config is refused, not ignored.
+    with pytest.raises(ValueError, match="not both"):
         component.deep_copy(update={"num_followups": 4})
     assert component.deep_copy(update={"followups": FollowupConfig(num_followups=4)}).num_followups == 4
     assert config.num_followups == 5
@@ -740,7 +704,7 @@ def test_stored_config_without_a_count_still_loads(kind):
     from agno.registry import Registry
 
     main = RecordingModel("main")
-    kwargs = dict(followups=FollowupConfig(instructions=INSTRUCTIONS), num_followups=4, telemetry=False)
+    kwargs = dict(followups=FollowupConfig(instructions=INSTRUCTIONS), telemetry=False)
     if kind == "agent":
         stored = Agent(id="fu-agent", model=main, **kwargs).to_dict()
     else:
@@ -751,7 +715,7 @@ def test_stored_config_without_a_count_still_loads(kind):
     cls = Agent if kind == "agent" else Team
     reconstructed = cls.from_dict(json.loads(json.dumps(stored)), registry=Registry(models=[main]))
     assert isinstance(reconstructed.followups, FollowupConfig)
-    assert reconstructed.num_followups == 4
+    assert reconstructed.num_followups == 3
     assert reconstructed.followups.instructions == INSTRUCTIONS
     assert reconstructed.followups.num_followups is None
 
@@ -804,9 +768,10 @@ def test_followups_setting_is_stored_as_bool_or_dict(kind):
 # --- follow-up models are stored by identity only: no request options, no credentials ---------------
 
 
+@pytest.mark.parametrize("form", ["config", "top-level"])
 @pytest.mark.parametrize("model_class", ["chat", "responses"])
 @pytest.mark.parametrize("kind", ["agent", "team"])
-def test_followup_models_are_stored_by_identity_only(kind, model_class):
+def test_followup_models_are_stored_by_identity_only(kind, model_class, form):
     from agno.models.openai import OpenAIChat, OpenAIResponses
     from agno.registry import Registry
 
@@ -815,7 +780,10 @@ def test_followup_models_are_stored_by_identity_only(kind, model_class):
     body = {"session_token": "synthetic-body-secret"}
     live = cls(id="gpt-5.5", api_key="sk-synthetic-not-real", extra_headers=headers, extra_body=body)
     main = RecordingModel("main")
-    kwargs = dict(followups=FollowupConfig(model=live, instructions=INSTRUCTIONS), followup_model=live)
+    if form == "config":
+        kwargs = dict(followups=FollowupConfig(model=live, instructions=INSTRUCTIONS))
+    else:
+        kwargs = dict(followups=True, followup_model=live)
     if kind == "agent":
         stored = Agent(id="fu-agent", model=main, telemetry=False, **kwargs).to_dict()
     else:
@@ -823,8 +791,7 @@ def test_followup_models_are_stored_by_identity_only(kind, model_class):
     serialized = json.dumps(stored)
 
     identity = {"id": "gpt-5.5", "name": live.name, "provider": live.provider}
-    assert stored["followups"]["model"] == identity
-    assert stored["followup_model"] == identity
+    assert (stored["followups"]["model"] if form == "config" else stored["followup_model"]) == identity
     for marker in (
         "synthetic-not-a-real-token",
         "synthetic-tenant",
@@ -842,13 +809,13 @@ def test_followup_models_are_stored_by_identity_only(kind, model_class):
 
     component_cls = Agent if kind == "agent" else Team
     registered = component_cls.from_dict(json.loads(serialized), registry=Registry(models=[live, main]))
-    assert registered.followups.model is live
-    assert registered.followup_model is live
+    assert (registered.followups.model if form == "config" else registered.followup_model) is live
     # Without the registry the identity rebuilds a plain model: no headers can come back from storage.
     rebuilt = component_cls.from_dict(json.loads(serialized), registry=Registry(models=[main]))
-    assert isinstance(rebuilt.followups.model, cls)
-    assert rebuilt.followups.model.id == "gpt-5.5"
-    assert rebuilt.followups.model.extra_headers is None
+    rebuilt_model = rebuilt.followups.model if form == "config" else rebuilt.followup_model
+    assert isinstance(rebuilt_model, cls)
+    assert rebuilt_model.id == "gpt-5.5"
+    assert rebuilt_model.extra_headers is None
 
 
 # --- config assigned after construction, stale suggestions on skipped generation -------------------

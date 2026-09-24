@@ -5,7 +5,7 @@ Validates that:
 - _build_followup_messages appends custom instructions to the system prompt
 - Agent and Team keep a FollowupConfig passed through followups
 - Backward compatibility is maintained with existing followup_model parameter
-- FollowupConfig.model and a different followup_model conflict at construction
+- FollowupConfig combined with a top-level followup_model is rejected at construction
 """
 
 import pytest
@@ -119,8 +119,8 @@ def test_agent_followup_model_backward_compat():
     assert agent.followup_model is None  # defaults to None
 
 
-def test_agent_config_model_and_a_different_legacy_model_conflict():
-    """A second model would be silently ignored, so construction refuses it."""
+def test_agent_config_with_a_top_level_model_is_rejected():
+    """The model goes in one place: FollowupConfig or followup_model, not both."""
     from unittest.mock import MagicMock
 
     from agno.models.base import Model
@@ -128,10 +128,9 @@ def test_agent_config_model_and_a_different_legacy_model_conflict():
     config_model = MagicMock(spec=Model)
     legacy_model = MagicMock(spec=Model)
 
-    with pytest.raises(ValueError, match="followup_model conflicts with FollowupConfig.model"):
-        Agent(followups=FollowupConfig(model=config_model), followup_model=legacy_model)
-    agent = Agent(followups=FollowupConfig(model=config_model), followup_model=config_model)
-    assert agent.followups.model is config_model
+    for top_level in (legacy_model, config_model):
+        with pytest.raises(ValueError, match="not both"):
+            Agent(followups=FollowupConfig(model=config_model), followup_model=top_level)
 
 
 # ---------------------------------------------------------------------------
