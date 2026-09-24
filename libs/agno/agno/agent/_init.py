@@ -274,10 +274,28 @@ def set_filesystem(agent: Agent) -> None:
             raise ValueError("filesystem=True currently requires a synchronous database")
         if not agent.id:
             raise ValueError("filesystem=True requires the agent to have a stable id")
-        namespace = "users/{user_id}/{agent_id}" if agent._filesystem_user_isolation else "{agent_id}"
-        agent._filesystem = FileSystem(agent.db, namespace=namespace).resolve(agent_id=agent.id)
+        # One namespace per agent; each run acts in its user's partition of it.
+        agent._filesystem = FileSystem(agent.db, namespace="{agent_id}").resolve(agent_id=agent.id)
     else:
         raise TypeError("filesystem must be a bool, FileSystem, FileSystemTools, or a list of stores/toolkits")
+
+
+def apply_filesystem_user_isolation(agent: Agent, enabled: bool) -> None:
+    """Set ``user_scoped`` from the AgentOS ``user_isolation`` setting on stores that left it unset.
+
+    Isolation on the OS then partitions every agent filesystem by the run's user;
+    off, the stores stay shared. A store that chose ``user_scoped`` itself keeps
+    its choice. The stores are resolved to apply it, and a store that cannot be
+    built is reported here and left for the run to fail on.
+    """
+    try:
+        filesystems = get_filesystems(agent)
+    except Exception as e:
+        log_warning(f"Agent {agent.id or agent.name!r}: filesystem could not be resolved ({e})")
+        return
+    for filesystem, _ in filesystems:
+        if filesystem.user_scoped is None:
+            filesystem.user_scoped = bool(enabled)
 
 
 def _manual_filesystem_tools(agent: Agent) -> List[Any]:
@@ -316,21 +334,6 @@ def get_filesystems(agent: Agent) -> List[Tuple["FileSystem", bool]]:
     for toolkit in _manual_filesystem_tools(agent):
         filesystems.append((toolkit.fs, toolkit.read_only))
     return filesystems
-
-
-def set_filesystem_user_isolation(agent: Agent, enabled: bool) -> None:
-    """Apply AgentOS isolation policy and rebuild the managed filesystem if it changed."""
-    enabled = bool(enabled)
-    if agent._filesystem_user_isolation == enabled:
-        return
-    if agent.filesystem is not True:
-        # An explicitly supplied FileSystem or toolkit owns its namespace policy. AgentOS must
-        # not replace or rewrite it when its managed isolation setting changes.
-        agent._filesystem_user_isolation = enabled
-        return
-
-    agent._filesystem = None
-    agent._filesystem_user_isolation = enabled
 
 
 def _initialize_session_state(

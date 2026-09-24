@@ -1368,7 +1368,7 @@ class PostgresDb(BaseDb):
                 return
             with self.Session() as sess:
                 rows = sess.execute(
-                    select(table.c.result_id, table.c.namespace, table.c.path).where(
+                    select(table.c.result_id, table.c.namespace, table.c.path, table.c.user_id).where(
                         table.c.session_id.in_(session_ids)
                     )
                 ).fetchall()
@@ -1385,16 +1385,19 @@ class PostgresDb(BaseDb):
             if filesystems:
                 from agno.fs import FileSystem
 
-                for _, namespace, path in rows:
+                for _, namespace, path, user_id in rows:
                     for fs in filesystems:
                         try:
-                            if FileSystem(backend=fs.backend, namespace=str(namespace)).delete(str(path)):
+                            payload_fs = FileSystem(backend=fs.backend, namespace=str(namespace))
+                            if user_id:
+                                payload_fs = payload_fs.resolve(user_id=str(user_id))
+                            if payload_fs.delete(str(path)):
                                 removed.add((str(namespace), str(path)))
                         except Exception as e:
                             log_warning(f"Tool-result payload delete failed for {namespace}/{path}: {e}")
             with self.Session() as sess, sess.begin():
                 if self._default_payload_table_exists(sess):
-                    for _, namespace, path in rows:
+                    for _, namespace, path, _user in rows:
                         if (str(namespace), str(path)) in removed:
                             continue
                         result = sess.execute(

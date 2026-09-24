@@ -143,7 +143,6 @@ def test_filesystem_namespace_isolated_by_user_id(db):
         db=db,
         filesystem=True,
     )
-    agent._filesystem_user_isolation = True
     agent.initialize_agent()
     filesystem = agent.filesystem_instance
     assert filesystem is not None
@@ -216,7 +215,6 @@ def test_deep_copy_rebuilds_managed_filesystem_toolkit(db):
         db=db,
         filesystem=True,
     )
-    agent._filesystem_user_isolation = True
     agent.initialize_agent()
 
     copied = agent.deep_copy()
@@ -225,7 +223,7 @@ def test_deep_copy_rebuilds_managed_filesystem_toolkit(db):
     copied_filesystem = copied.filesystem_instance
     assert copied_filesystem is not None
     assert copied_filesystem is not agent.filesystem_instance
-    assert copied_filesystem.namespace == "users/{user_id}/research-agent"
+    assert copied_filesystem.namespace == "research-agent"
     assert len(_filesystem_tools(copied)) == 1
 
 
@@ -396,3 +394,75 @@ def test_filesystem_list_deep_copy_owns_list_and_shares_stores(db):
     assert copied.filesystem is not agent.filesystem
     assert copied.filesystem == [first, second]
     assert copied.filesystem_instance is first
+
+
+def test_tool_calls_land_in_the_run_users_partition_under_isolation(db):
+    from agno.agent._init import apply_filesystem_user_isolation
+
+    agent = Agent(id="research-agent", db=db, filesystem=True)
+    agent.initialize_agent()
+    apply_filesystem_user_isolation(agent, True)
+    toolkit = _filesystem_tools(agent)[0]
+    alice = RunContext(run_id="run", session_id="s", user_id="alice")
+    bob = RunContext(run_id="run", session_id="s", user_id="bob")
+
+    toolkit.write_file("notes/a.md", "hello", run_context=alice, agent=agent)
+    toolkit.append_file("notes/log.md", "entry", run_context=alice, agent=agent)
+
+    filesystem = agent.filesystem_instance
+    assert filesystem is not None
+    assert filesystem.namespace == "research-agent"
+    assert {m.path: m.user_id for m in filesystem.resolve(user_id="alice").list()} == {
+        "notes/a.md": "alice",
+        "notes/log.md": "alice",
+    }
+    assert toolkit.read_file("notes/a.md", run_context=bob, agent=agent) == "Error: file not found: notes/a.md"
+    # Under isolation a run with no user is refused, never dropped into the shared partition.
+    anonymous = RunContext(run_id="run", session_id="s")
+    assert "no user_id" in toolkit.read_file("notes/a.md", run_context=anonymous, agent=agent)
+    assert filesystem.partition(None).list() == []
+    assert filesystem.partitions() == ["alice"]
+
+
+def test_tool_calls_share_the_store_without_isolation(db):
+    from agno.agent._init import apply_filesystem_user_isolation
+
+    agent = Agent(id="research-agent", db=db, filesystem=True)
+    agent.initialize_agent()
+    apply_filesystem_user_isolation(agent, False)
+    toolkit = _filesystem_tools(agent)[0]
+    alice = RunContext(run_id="run", session_id="s", user_id="alice")
+    bob = RunContext(run_id="run", session_id="s", user_id="bob")
+    anonymous = RunContext(run_id="run", session_id="s")
+
+    toolkit.write_file("notes/a.md", "hello", run_context=alice, agent=agent)
+
+    assert "hello" in toolkit.read_file("notes/a.md", run_context=bob, agent=agent)
+    assert "hello" in toolkit.read_file("notes/a.md", run_context=anonymous, agent=agent)
+    assert [m.user_id for m in agent.filesystem_instance.list()] == [None]  # type: ignore[union-attr]
+
+
+def test_explicit_user_scoped_setting_survives_the_os_policy(db):
+    from agno.agent._init import apply_filesystem_user_isolation
+
+    shared = Agent(id="shared", db=db, filesystem=FileSystem(db, namespace="handbook", user_scoped=False))
+    private = Agent(id="private", db=db, filesystem=FileSystem(db, namespace="diary", user_scoped=True))
+    for agent in (shared, private):
+        agent.initialize_agent()
+    apply_filesystem_user_isolation(shared, True)
+    apply_filesystem_user_isolation(private, False)
+    assert shared.filesystem_instance.user_scoped is False  # type: ignore[union-attr]
+    assert private.filesystem_instance.user_scoped is True  # type: ignore[union-attr]
+    alice = RunContext(run_id="run", session_id="s", user_id="alice")
+    bob = RunContext(run_id="run", session_id="s", user_id="bob")
+
+    _filesystem_tools(shared)[0].write_file("a.md", "for everyone", run_context=alice, agent=shared)
+    assert "for everyone" in _filesystem_tools(shared)[0].read_file("a.md", run_context=bob, agent=shared)
+
+    _filesystem_tools(private)[0].write_file("a.md", "mine", run_context=alice, agent=private)
+    assert _filesystem_tools(private)[0].read_file("a.md", run_context=bob, agent=private).startswith("Error")
+    anonymous = RunContext(run_id="run", session_id="s")
+    assert "no user_id" in _filesystem_tools(private)[0].read_file("a.md", run_context=anonymous, agent=private)
+
+    restored = Agent.from_dict(private.to_dict())
+    assert restored.filesystem_instance.user_scoped is True  # type: ignore[union-attr]

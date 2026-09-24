@@ -11,6 +11,7 @@ class FileSystemEntry(BaseModel):
     size_bytes: Optional[int] = None
     version: Optional[int] = None
     updated_at: Optional[int] = None
+    user_id: Optional[str] = None
 
 
 class FileSystemUsage(BaseModel):
@@ -36,6 +37,7 @@ class FileSystemContentResponse(BaseModel):
     size_bytes: int
     version: Optional[int] = None
     updated_at: Optional[int] = None
+    user_id: Optional[str] = None
     line_count: int
     truncated: bool
     offset: int
@@ -49,6 +51,7 @@ class FileSystemSearchEntry(BaseModel):
     snippet: str
     line: Optional[int] = None
     match_count: int
+    user_id: Optional[str] = None
 
 
 class FileSystemSearchResponse(BaseModel):
@@ -67,6 +70,7 @@ class FileSystemTableEntry(BaseModel):
     size_bytes: int
     version: Optional[int] = None
     updated_at: Optional[int] = None
+    user_id: Optional[str] = None
     snippet: Optional[str] = None
     line: Optional[int] = None
     match_count: Optional[int] = None

@@ -57,23 +57,36 @@ agent's several stores, pass its `namespace` to the `/filesystem` routes.
 
 ## Namespaces and isolation
 
-The agent receives its filesystem tools automatically. With the default
-`user_isolation=False`, the namespace is shared by users of that agent:
+The agent receives its filesystem tools automatically. The managed namespace is
+always `{agent_id}`. Files are keyed by `(namespace, user_id, path)`: `user_id` is
+the user partition, and `""` is the shared partition.
 
-```text
-{agent_id}
+With the default `user_isolation=False`, every user of the agent works in the
+shared partition of that namespace. When `AuthorizationConfig(user_isolation=True)`
+is enabled, AgentOS marks every agent filesystem user-scoped: each run acts in the
+partition of its verified user, a run with no user is refused, and two users of one
+agent never see each other's files. The namespace stays the same either way.
+
+An explicit `FileSystem` can decide for itself with `user_scoped`, which AgentOS
+leaves alone:
+
+```python
+FileSystem(db, namespace="handbook", user_scoped=False)  # one store for every user, even under isolation
+FileSystem(db, namespace="diary", user_scoped=True)      # per user even without it; refuses a run with no user
 ```
 
-When `AuthorizationConfig(user_isolation=True)` is enabled, it becomes:
+The browser routes follow the same rule for the requesting user. An admin (the
+`agent_os:admin` scope) sees every partition of a user-scoped store, with each
+file's `user_id`, and may pass `user_id` to browse or open one user's files; other
+callers may name only their own.
 
-```text
-users/{user_id}/{agent_id}
-```
+A namespace that names `{user_id}` isolates by name instead; its files stay in
+the shared partition, so data written before partitions existed is still found.
 
 Agent component versions with the same stable `agent.id` share this namespace;
 versioning the component does not fork or snapshot its files. Bound user and agent
-IDs preserve case through percent encoding, so `Alice` and `alice` stay distinct.
-Literal namespace text is normalized to lowercase and percent-encoded.
+IDs preserve case, so `Alice` and `alice` stay distinct. Literal namespace text is
+normalized to lowercase and percent-encoded.
 
 In isolated mode the user id comes from trusted run/request context and missing
 identity fails closed. AgentOS exposes read-only browser routes:
@@ -117,19 +130,20 @@ Listing reads each distinct filesystem once, with bounded concurrency. Page
 counts are computed after collecting results; pagination does not yet limit
 backend reads.
 
-## Existing development data
+## Existing data
 
-Earlier versions of this feature used `agents/{agent_id}` and
-`users/{user_id}/agents/{agent_id}` for managed files. The shorter defaults do not
-move existing data. To keep reading those files, configure the old namespace
-explicitly:
+A filesystem table created by an earlier release is refused with
+`SchemaOutdatedError` until it is upgraded: the change to the table's key is a
+deliberate step. Run `libs/agno/migrations/migrate_filesystem_postgres.py` or
+`migrate_filesystem_sqlite.py` once, or call
+`DbFileSystem(db=db).upgrade_schema()`. Existing rows keep their namespace and land
+in the shared partition, so a custom `users/{user_id}/...` template still finds
+its files.
+
+Development builds before that used `agents/{agent_id}`; those files are not
+moved. Configure the old namespace explicitly to keep reading them:
 
 ```python
 fs = FileSystem(db, namespace="agents/{agent_id}")
 agent = Agent(id="research-agent", db=db, filesystem=fs)
 ```
-
-For isolated files, use `namespace="users/{user_id}/agents/{agent_id}"` instead.
-Existing files written with the earlier case-folding bug need a deliberate
-migration if IDs contained uppercase characters; case-collided data cannot be
-assigned to distinct identities automatically.

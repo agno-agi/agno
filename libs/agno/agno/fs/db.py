@@ -1,21 +1,23 @@
 """DbFileSystem: the database backend for FileSystem (Postgres + SQLite)."""
 
+import asyncio
 import threading
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING, List, Optional, Sequence, Set
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Set, Tuple
 
 from agno.fs._paths import build_chunk, path_sort_key
 from agno.fs.base import BaseFS, _build_match
-from agno.fs.errors import QuotaExceededError, VersionConflictError
+from agno.fs.errors import QuotaExceededError, SchemaOutdatedError, VersionConflictError
 from agno.fs.types import FileData, FileMeta, NamespaceUsage, SearchMatch
-from agno.utils.log import log_debug, log_warning
+from agno.utils.log import log_debug, log_info, log_warning
 
 try:
     from sqlalchemy import (
         BigInteger,
         Column,
         MetaData,
+        PrimaryKeyConstraint,
         String,
         Table,
         Text,
@@ -32,6 +34,7 @@ try:
     from sqlalchemy import text as sql_text
     from sqlalchemy.engine import Engine, create_engine, make_url
     from sqlalchemy.exc import IntegrityError, OperationalError, ProgrammingError
+    from sqlalchemy.schema import CreateTable
     from sqlalchemy.sql import select
 except ImportError:
     raise ImportError("`sqlalchemy` not installed. Please install it using `pip install 'agno[sql]'`")
@@ -55,7 +58,11 @@ with `db_schema=`. Backends that have no schemas ignore it, as SQLite does.
 
 
 class DbFileSystem(BaseFS):
-    """Database-backed file storage: one row per ``(namespace, path)``.
+    """Database-backed file storage: one row per ``(namespace, user_id, path)``.
+
+    ``user_id`` is the user partition: ``""`` for the shared partition, a user's
+    id for their own. Every statement filters on it, so a partition is invisible
+    from any other.
 
     Safe for multi-worker deployments, since all coordination happens in the
     database: writes are atomic upserts (last-writer-wins, or CAS via
@@ -133,13 +140,17 @@ class DbFileSystem(BaseFS):
         self.table = Table(
             self.table_name,
             self.metadata,
-            Column("namespace", String, primary_key=True),
-            Column("path", String, primary_key=True),
+            Column("namespace", String, nullable=False),
+            Column("path", String, nullable=False),
             Column("content", Text, nullable=False),
             Column("size_bytes", BigInteger, nullable=False),
             Column("version", BigInteger, nullable=False),
             Column("created_at", BigInteger, nullable=False),
             Column("updated_at", BigInteger, nullable=True),
+            # The user partition. "" is the shared partition; a bound user's files
+            # carry their id. Part of the key, so two users can hold the same path.
+            Column("user_id", String, nullable=False, server_default=""),
+            PrimaryKeyConstraint("namespace", "user_id", "path", name=f"pk_{self.table_name}"),
         )
         self._table_ready = False
         self._table_lock = threading.Lock()
@@ -175,8 +186,122 @@ class DbFileSystem(BaseFS):
             except (IntegrityError, ProgrammingError, OperationalError):
                 if not sa_inspect(self.db_engine).has_table(self.table_name, schema=self.db_schema):
                     raise
+            self._require_current_schema()
             log_debug(f"DbFileSystem table ready: {self.table.fullname}")
             self._table_ready = True
+
+    # ------------------------------------------------------------------
+    # Upgrade of tables created before the user partition
+    # ------------------------------------------------------------------
+
+    _KEY_COLUMNS = ("namespace", "user_id", "path")
+
+    def _qualified_name(self, name: Optional[str] = None) -> str:
+        name = name or self.table_name
+        return f'"{self.db_schema}"."{name}"' if self.db_schema else f'"{name}"'
+
+    def _schema_state(self) -> Tuple[Dict[str, Any], Tuple[str, ...]]:
+        """The table's columns and key as they are in the database."""
+        inspector = sa_inspect(self.db_engine)
+        columns = {column["name"]: column for column in inspector.get_columns(self.table_name, schema=self.db_schema)}
+        key = tuple(
+            inspector.get_pk_constraint(self.table_name, schema=self.db_schema).get("constrained_columns") or ()
+        )
+        return columns, key
+
+    def _is_current(self, columns: Dict[str, Any], key: Tuple[str, ...]) -> bool:
+        return "user_id" in columns and not columns["user_id"]["nullable"] and set(key) == set(self._KEY_COLUMNS)
+
+    def _require_current_schema(self) -> None:
+        """Refuse a table that predates the user partition.
+
+        The upgrade changes the table's key, so it is an operator's decision and
+        never runs on its own: an old table is reported, with the way to upgrade
+        it, before any statement can run against it.
+        """
+        columns, key = self._schema_state()
+        if self._is_current(columns, key):
+            return
+        raise SchemaOutdatedError(
+            f"filesystem table {self.table.fullname} predates the user partition (key {list(key)}, "
+            f"current key {list(self._KEY_COLUMNS)}). Upgrade it once with DbFileSystem.upgrade_schema() "
+            "or the migration script for your database in libs/agno/migrations "
+            "(migrate_filesystem_postgres.py or migrate_filesystem_sqlite.py), then start again."
+        )
+
+    def upgrade_schema(self) -> bool:
+        """Bring a table created before ``user_id`` onto the ``(namespace, user_id, path)`` key.
+
+        Returns ``True`` when the table was changed and ``False`` when it was
+        already current. Older tables keyed on ``(namespace, path)`` gain the
+        column with the shared partition as default, then the key. Rows keep
+        their namespace and land in the shared partition, so nothing is lost.
+        On PostgreSQL this is an ``ALTER TABLE``; SQLite cannot change a key in
+        place, so there the table is rebuilt and swapped in one transaction.
+        Idempotent: run it again and it finds the table current.
+        """
+        with self._table_lock:
+            if not sa_inspect(self.db_engine).has_table(self.table_name, schema=self.db_schema):
+                return False
+            columns, key = self._schema_state()
+            if self._is_current(columns, key):
+                return False
+            if self.dialect == "sqlite":
+                self._rebuild_sqlite_table("user_id" in columns)
+            else:
+                with self.db_engine.begin() as conn:
+                    if "user_id" not in columns:
+                        conn.execute(
+                            sql_text(
+                                f"ALTER TABLE {self._qualified_name()} ADD COLUMN user_id VARCHAR NOT NULL DEFAULT ''"
+                            )
+                        )
+                    elif columns["user_id"]["nullable"]:
+                        conn.execute(update(self.table).where(self.table.c.user_id.is_(None)).values(user_id=""))
+                        conn.execute(
+                            sql_text(
+                                f"ALTER TABLE {self._qualified_name()} ALTER COLUMN user_id SET NOT NULL, "
+                                "ALTER COLUMN user_id SET DEFAULT ''"
+                            )
+                        )
+                    if set(key) != set(self._KEY_COLUMNS):
+                        old_name = (
+                            sa_inspect(self.db_engine)
+                            .get_pk_constraint(self.table_name, schema=self.db_schema)
+                            .get("name")
+                        )
+                        if old_name:
+                            conn.execute(sql_text(f'ALTER TABLE {self._qualified_name()} DROP CONSTRAINT "{old_name}"'))
+                        conn.execute(
+                            sql_text(
+                                f'ALTER TABLE {self._qualified_name()} ADD CONSTRAINT "pk_{self.table_name}" '
+                                "PRIMARY KEY (namespace, user_id, path)"
+                            )
+                        )
+            log_info(f"DbFileSystem upgraded {self.table.fullname} to the user partition key")
+            return True
+
+    async def aupgrade_schema(self) -> bool:
+        """Async variant of ``upgrade_schema``."""
+        return await asyncio.to_thread(self.upgrade_schema)
+
+    def _rebuild_sqlite_table(self, has_user_id: bool) -> None:
+        """Copy the table into one with the current schema and swap it in, in one transaction."""
+        new_name = f"{self.table_name}__partitioned"
+        replacement = self.table.to_metadata(MetaData(), name=new_name)
+        columns = "namespace, path, content, size_bytes, version, created_at, updated_at"
+        source_user = "COALESCE(user_id, '')" if has_user_id else "''"
+        with self.db_engine.begin() as conn:
+            conn.execute(sql_text(f'DROP TABLE IF EXISTS "{new_name}"'))
+            conn.execute(CreateTable(replacement))
+            conn.execute(
+                sql_text(
+                    f'INSERT INTO "{new_name}" ({columns}, user_id) '
+                    f'SELECT {columns}, {source_user} FROM "{self.table_name}"'
+                )
+            )
+            conn.execute(sql_text(f'DROP TABLE "{self.table_name}"'))
+            conn.execute(sql_text(f'ALTER TABLE "{new_name}" RENAME TO "{self.table_name}"'))
 
     def _insert(self):
         if self.dialect == "postgresql":
@@ -186,6 +311,10 @@ class DbFileSystem(BaseFS):
         from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
         return sqlite_insert
+
+    def _key(self, namespace: str, user_id: str):
+        t = self.table
+        return and_(t.c.namespace == namespace, t.c.user_id == user_id)
 
     def _directory_predicate(self, directory: str):
         t = self.table
@@ -209,12 +338,13 @@ class DbFileSystem(BaseFS):
     # Required core
     # ------------------------------------------------------------------
 
-    def _write_on(self, conn, namespace: str, path: str, content: str) -> FileMeta:
+    def _write_on(self, conn, namespace: str, path: str, content: str, *, user_id: str = "") -> FileMeta:
         """Write through a caller-owned transaction after trusted table setup."""
         t = self.table
         now = int(time.time())
         stmt = self._insert()(t).values(
             namespace=namespace,
+            user_id=user_id,
             path=path,
             content=content,
             size_bytes=len(content.encode("utf-8")),
@@ -223,7 +353,7 @@ class DbFileSystem(BaseFS):
             updated_at=now,
         )
         stmt = stmt.on_conflict_do_update(
-            index_elements=[t.c.namespace, t.c.path],
+            index_elements=[t.c.namespace, t.c.user_id, t.c.path],
             set_={
                 "content": stmt.excluded.content,
                 "size_bytes": stmt.excluded.size_bytes,
@@ -232,20 +362,28 @@ class DbFileSystem(BaseFS):
             },
         ).returning(t.c.version, t.c.size_bytes)
         row = conn.execute(stmt).one()
-        return FileMeta(path=path, version=row[0], size_bytes=row[1], updated_at=now)
+        return FileMeta(path=path, version=row[0], size_bytes=row[1], updated_at=now, user_id=user_id or None)
 
-    def _delete_on(self, conn, namespace: str, path: str) -> None:
+    def _delete_on(self, conn, namespace: str, path: str, *, user_id: str = "") -> None:
         """Delete through a caller-owned transaction without committing it."""
-        conn.execute(delete(self.table).where(self.table.c.namespace == namespace, self.table.c.path == path))
+        conn.execute(delete(self.table).where(self._key(namespace, user_id), self.table.c.path == path))
 
-    def read(self, namespace: str, path: str) -> Optional[str]:
+    def read(self, namespace: str, path: str, *, user_id: str = "") -> Optional[str]:
         self._ensure_table()
         t = self.table
         with self.db_engine.begin() as conn:
-            row = conn.execute(select(t.c.content).where(and_(t.c.namespace == namespace, t.c.path == path))).first()
+            row = conn.execute(select(t.c.content).where(and_(self._key(namespace, user_id), t.c.path == path))).first()
         return None if row is None else row[0]
 
-    def write(self, namespace: str, path: str, content: str, *, expected_version: Optional[int] = None) -> FileMeta:
+    def write(
+        self,
+        namespace: str,
+        path: str,
+        content: str,
+        *,
+        expected_version: Optional[int] = None,
+        user_id: str = "",
+    ) -> FileMeta:
         self._ensure_table()
         t = self.table
         now = int(time.time())
@@ -253,7 +391,7 @@ class DbFileSystem(BaseFS):
         if expected_version is not None:
             stmt = (
                 update(t)
-                .where(and_(t.c.namespace == namespace, t.c.path == path, t.c.version == expected_version))
+                .where(and_(self._key(namespace, user_id), t.c.path == path, t.c.version == expected_version))
                 .values(content=content, size_bytes=size_bytes, version=t.c.version + 1, updated_at=now)
                 .returning(t.c.version, t.c.size_bytes)
             )
@@ -261,88 +399,78 @@ class DbFileSystem(BaseFS):
                 row = conn.execute(stmt).first()
                 if row is None:
                     actual = conn.execute(
-                        select(t.c.version).where(and_(t.c.namespace == namespace, t.c.path == path))
+                        select(t.c.version).where(and_(self._key(namespace, user_id), t.c.path == path))
                     ).scalar()
                     raise VersionConflictError(
                         f"version conflict on {path}: expected {expected_version}, actual {actual}",
                         expected=expected_version,
                         actual=actual,
                     )
-            return FileMeta(path=path, size_bytes=row[1], version=row[0], updated_at=now)
-        insert = self._insert()
-        stmt = insert(t).values(
-            namespace=namespace,
-            path=path,
-            content=content,
-            size_bytes=size_bytes,
-            version=1,
-            created_at=now,
-            updated_at=now,
-        )
-        stmt = stmt.on_conflict_do_update(
-            index_elements=[t.c.namespace, t.c.path],
-            set_={
-                "content": stmt.excluded.content,
-                "size_bytes": stmt.excluded.size_bytes,
-                "version": t.c.version + 1,
-                "updated_at": now,
-            },
-        ).returning(t.c.version, t.c.size_bytes)
+            return FileMeta(path=path, size_bytes=row[1], version=row[0], updated_at=now, user_id=user_id or None)
         with self.db_engine.begin() as conn:
-            row = conn.execute(stmt).first()
-        return FileMeta(path=path, size_bytes=row[1], version=row[0], updated_at=now)  # type: ignore[index]
+            return self._write_on(conn, namespace, path, content, user_id=user_id)
 
-    def list(self, namespace: str, directory: str = "") -> List[FileMeta]:
+    def list(self, namespace: str, directory: str = "", *, user_id: str = "") -> List[FileMeta]:
         self._ensure_table()
         t = self.table
         stmt = select(t.c.path, t.c.size_bytes, t.c.version, t.c.updated_at).where(
-            and_(t.c.namespace == namespace, self._directory_predicate(directory))
+            and_(self._key(namespace, user_id), self._directory_predicate(directory))
         )
         with self.db_engine.begin() as conn:
             rows = conn.execute(stmt).all()
-        return [FileMeta(path=r[0], size_bytes=r[1], version=r[2], updated_at=r[3]) for r in rows]
+        return [
+            FileMeta(path=r[0], size_bytes=r[1], version=r[2], updated_at=r[3], user_id=user_id or None) for r in rows
+        ]
 
-    def delete(self, namespace: str, path: str) -> bool:
+    def delete(self, namespace: str, path: str, *, user_id: str = "") -> bool:
         self._ensure_table()
         t = self.table
         with self.db_engine.begin() as conn:
-            result = conn.execute(delete(t).where(and_(t.c.namespace == namespace, t.c.path == path)))
+            result = conn.execute(delete(t).where(and_(self._key(namespace, user_id), t.c.path == path)))
         return result.rowcount > 0
 
     # ------------------------------------------------------------------
     # Native implementations
     # ------------------------------------------------------------------
 
-    def read_with_meta(self, namespace: str, path: str) -> Optional[FileData]:
+    def read_with_meta(self, namespace: str, path: str, *, user_id: str = "") -> Optional[FileData]:
         self._ensure_table()
         t = self.table
         with self.db_engine.begin() as conn:
             row = conn.execute(
                 select(t.c.content, t.c.size_bytes, t.c.version, t.c.updated_at).where(
-                    and_(t.c.namespace == namespace, t.c.path == path)
+                    and_(self._key(namespace, user_id), t.c.path == path)
                 )
             ).first()
         if row is None:
             return None
         return FileData(
             content=row[0],
-            meta=FileMeta(path=path, size_bytes=row[1], version=row[2], updated_at=row[3]),
+            meta=FileMeta(path=path, size_bytes=row[1], version=row[2], updated_at=row[3], user_id=user_id or None),
         )
 
-    def _stat(self, namespace: str, path: str) -> Optional[FileMeta]:
+    def _stat(self, namespace: str, path: str, *, user_id: str = "") -> Optional[FileMeta]:
         self._ensure_table()
         t = self.table
         with self.db_engine.begin() as conn:
             row = conn.execute(
                 select(t.c.size_bytes, t.c.version, t.c.updated_at).where(
-                    and_(t.c.namespace == namespace, t.c.path == path)
+                    and_(self._key(namespace, user_id), t.c.path == path)
                 )
             ).first()
         if row is None:
             return None
-        return FileMeta(path=path, size_bytes=row[0], version=row[1], updated_at=row[2])
+        return FileMeta(path=path, size_bytes=row[0], version=row[1], updated_at=row[2], user_id=user_id or None)
 
-    def append(self, namespace: str, path: str, content: str, *, max_file_bytes: Optional[int] = None) -> FileMeta:
+    def append(
+        self,
+        namespace: str,
+        path: str,
+        content: str,
+        *,
+        max_file_bytes: Optional[int] = None,
+        user_id: str = "",
+    ) -> FileMeta:
         """Guarded atomic append: one upsert enforces the per-file cap and appends.
 
         Concurrent appends serialize on the row lock; all land; none lost. The
@@ -352,10 +480,10 @@ class DbFileSystem(BaseFS):
         self._ensure_table()
         chunk = build_chunk(content)
         if not chunk:
-            existing = self._stat(namespace, path)
+            existing = self._stat(namespace, path, user_id=user_id)
             if existing is not None:
                 return existing
-            return FileMeta(path=path, size_bytes=0, version=None, updated_at=None)
+            return FileMeta(path=path, size_bytes=0, version=None, updated_at=None, user_id=user_id or None)
         chunk_bytes = len(chunk.encode("utf-8"))
         # New-file inserts take the VALUES arm, which the WHERE guard does not cover,
         # so pre-check the chunk client-side (exact: content is fully known). This must
@@ -365,7 +493,7 @@ class DbFileSystem(BaseFS):
         # would create an oversized file, and the update arm would be larger still, so
         # refuse unconditionally. _stat only enriches the reported size.
         if max_file_bytes is not None and chunk_bytes > max_file_bytes:
-            existing = self._stat(namespace, path)
+            existing = self._stat(namespace, path, user_id=user_id)
             would_be = chunk_bytes if existing is None else existing.size_bytes + 1 + chunk_bytes
             raise QuotaExceededError(
                 f"{path} would be {would_be} bytes (limit {max_file_bytes} per file)",
@@ -385,6 +513,7 @@ class DbFileSystem(BaseFS):
         insert = self._insert()
         stmt = insert(t).values(
             namespace=namespace,
+            user_id=user_id,
             path=path,
             content=chunk,
             size_bytes=chunk_bytes,
@@ -399,12 +528,11 @@ class DbFileSystem(BaseFS):
             "version": t.c.version + 1,
             "updated_at": now,
         }
+        key_columns = [t.c.namespace, t.c.user_id, t.c.path]
         if max_file_bytes is not None:
-            stmt = stmt.on_conflict_do_update(
-                index_elements=[t.c.namespace, t.c.path], set_=set_, where=(new_size <= max_file_bytes)
-            )
+            stmt = stmt.on_conflict_do_update(index_elements=key_columns, set_=set_, where=(new_size <= max_file_bytes))
         else:
-            stmt = stmt.on_conflict_do_update(index_elements=[t.c.namespace, t.c.path], set_=set_)
+            stmt = stmt.on_conflict_do_update(index_elements=key_columns, set_=set_)
         stmt = stmt.returning(t.c.version, t.c.size_bytes)
 
         with self.db_engine.begin() as conn:
@@ -413,7 +541,7 @@ class DbFileSystem(BaseFS):
                 # Guard blocked the update. Fetch the current tail to report the
                 # exact size the file would have reached.
                 blocked = conn.execute(
-                    select(t.c.size_bytes, tail).where(and_(t.c.namespace == namespace, t.c.path == path))
+                    select(t.c.size_bytes, tail).where(and_(self._key(namespace, user_id), t.c.path == path))
                 ).first()
                 if blocked is not None:
                     separator_len = 1 if blocked[0] > 0 and blocked[1] != "\n" else 0
@@ -426,9 +554,9 @@ class DbFileSystem(BaseFS):
                     current=would_be,
                     limit=max_file_bytes if max_file_bytes is not None else 0,
                 )
-        return FileMeta(path=path, size_bytes=row[1], version=row[0], updated_at=now)
+        return FileMeta(path=path, size_bytes=row[1], version=row[0], updated_at=now, user_id=user_id or None)
 
-    def move(self, namespace: str, src: str, dst: str, *, overwrite: bool = False) -> FileMeta:
+    def move(self, namespace: str, src: str, dst: str, *, overwrite: bool = False, user_id: str = "") -> FileMeta:
         """Atomic move: a single UPDATE of ``path``. A destination collision
         surfaces as ``IntegrityError`` inside a SAVEPOINT (so the transaction is
         not poisoned on Postgres) and re-raises as ``FileExistsError``."""
@@ -437,7 +565,7 @@ class DbFileSystem(BaseFS):
         now = int(time.time())
         stmt = (
             update(t)
-            .where(and_(t.c.namespace == namespace, t.c.path == src))
+            .where(and_(self._key(namespace, user_id), t.c.path == src))
             .values(path=dst, version=t.c.version + 1, updated_at=now)
             .returning(t.c.version, t.c.size_bytes)
         )
@@ -455,18 +583,18 @@ class DbFileSystem(BaseFS):
                             for locked_path in sorted((src, dst)):
                                 conn.execute(
                                     select(t.c.path)
-                                    .where(and_(t.c.namespace == namespace, t.c.path == locked_path))
+                                    .where(and_(self._key(namespace, user_id), t.c.path == locked_path))
                                     .with_for_update()
                                 )
-                        conn.execute(delete(t).where(and_(t.c.namespace == namespace, t.c.path == dst)))
+                        conn.execute(delete(t).where(and_(self._key(namespace, user_id), t.c.path == dst)))
                     row = conn.execute(stmt).first()
                     if row is None:
                         raise FileNotFoundError(f"file not found: {src}")
             except IntegrityError:
                 raise FileExistsError(f"file exists: {dst}") from None
-        return FileMeta(path=dst, size_bytes=row[1], version=row[0], updated_at=now)
+        return FileMeta(path=dst, size_bytes=row[1], version=row[0], updated_at=now, user_id=user_id or None)
 
-    def contains(self, namespace: str, lines: Sequence[str], directory: str = "") -> Set[str]:
+    def contains(self, namespace: str, lines: Sequence[str], directory: str = "", *, user_id: str = "") -> Set[str]:
         """Exact-line membership via the padded LIKE predicate as a row prefilter,
         with Python owning the final per-line attribution (byte-exact, and always
         in agreement with the base emulation)."""
@@ -479,7 +607,7 @@ class DbFileSystem(BaseFS):
         padded = literal("\n") + t.c.content + literal("\n")
         line_predicates = [padded.contains("\n" + line + "\n", autoescape=True) for line in lines]
         stmt = select(t.c.content).where(
-            and_(t.c.namespace == namespace, self._directory_predicate(directory), or_(*line_predicates))
+            and_(self._key(namespace, user_id), self._directory_predicate(directory), or_(*line_predicates))
         )
         with self.db_engine.begin() as conn:
             rows = conn.execute(stmt)
@@ -491,7 +619,9 @@ class DbFileSystem(BaseFS):
                     break
         return found
 
-    def search(self, namespace: str, query: str, directory: str = "", limit: int = 10) -> List[SearchMatch]:
+    def search(
+        self, namespace: str, query: str, directory: str = "", limit: int = 10, *, user_id: str = ""
+    ) -> List[SearchMatch]:
         """Case-insensitive substring search. Correctness is owned by Python; the
         SQL predicate only prefilters candidate rows. On Postgres ILIKE folds
         every query; on SQLite, LIKE folds ASCII only, so the prefilter applies
@@ -503,7 +633,7 @@ class DbFileSystem(BaseFS):
         if not query:
             return []
         t = self.table
-        conditions = [t.c.namespace == namespace, self._directory_predicate(directory)]
+        conditions = [self._key(namespace, user_id), self._directory_predicate(directory)]
         if self.dialect == "postgresql":
             conditions.append(t.c.content.icontains(query, autoescape=True))
         elif query.isascii():
@@ -520,10 +650,17 @@ class DbFileSystem(BaseFS):
                 matches.append(match)
         return matches
 
-    def usage(self, namespace: str) -> NamespaceUsage:
+    def partitions(self, namespace: str) -> List[str]:
         self._ensure_table()
         t = self.table
-        stmt = select(func.count(), func.coalesce(func.sum(t.c.size_bytes), 0)).where(t.c.namespace == namespace)
+        stmt = select(t.c.user_id).distinct().where(and_(t.c.namespace == namespace, t.c.user_id != ""))
+        with self.db_engine.begin() as conn:
+            return [str(row[0]) for row in conn.execute(stmt).all()]
+
+    def usage(self, namespace: str, *, user_id: str = "") -> NamespaceUsage:
+        self._ensure_table()
+        t = self.table
+        stmt = select(func.count(), func.coalesce(func.sum(t.c.size_bytes), 0)).where(self._key(namespace, user_id))
         with self.db_engine.begin() as conn:
             row = conn.execute(stmt).one()
         # Postgres sum(bigint) returns Decimal; coerce so callers (and json.dumps in

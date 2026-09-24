@@ -2862,13 +2862,11 @@ async def resolve_agent(
 
     if agent is None:
         raise HTTPException(status_code=404, detail="Agent not found")
-    if isinstance(agent, Agent) and request is not None:
+    if isinstance(agent, Agent) and request is not None and (agent.filesystem or agent.tools):
+        # An agent rebuilt from the database gets the OS isolation policy like a configured one.
         from agno.agent import _init as agent_init
 
-        agent_init.set_filesystem_user_isolation(
-            agent,
-            bool(getattr(request.state, "user_isolation_enabled", False)),
-        )
+        agent_init.apply_filesystem_user_isolation(agent, bool(getattr(request.state, "user_isolation_enabled", False)))
     return agent
 
 

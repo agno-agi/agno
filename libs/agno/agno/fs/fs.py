@@ -32,7 +32,7 @@ from agno.fs._paths import (
     path_sort_key,
     validate_normalized_namespace,
 )
-from agno.fs.base import BaseFS
+from agno.fs.base import BaseFS, partition_kwargs
 from agno.fs.errors import InvalidPathError, QuotaExceededError
 from agno.fs.types import ContainsResult, FileData, FileMeta, NamespaceUsage, SearchMatch
 
@@ -127,6 +127,15 @@ class FileSystem:
     arguments. A placeholder whose value is missing at call time fails closed.
     Programmatic use of a templated instance goes through ``resolve()``.
 
+    Files are further keyed by a user partition. On a user-scoped store
+    (``user_scoped=True``) a run acts in the partition of its user, so two users
+    of one namespace never see each other's files, and a run with no user is
+    refused. ``user_scoped=False`` keeps the whole namespace shared whoever runs
+    it. The default, ``None``, means shared, except that AgentOS sets it to its
+    ``user_isolation`` setting on every store an agent holds, so isolation on
+    the OS partitions the files. A user passed to ``resolve()`` selects that
+    partition regardless.
+
     Use ``db=SqliteDb(...)`` or ``db=PostgresDb(...)`` to borrow a synchronous
     database, or ``backend=`` for an explicit backend. Supply exactly one source.
 
@@ -142,6 +151,7 @@ class FileSystem:
         db: Optional["BaseDb"] = None,
         max_file_bytes: int = 1_000_000,
         max_namespace_bytes: int = 20_000_000,
+        user_scoped: Optional[bool] = None,
     ) -> None:
         if (backend is None) == (db is None):
             raise ValueError("Provide exactly one of backend or db")
@@ -156,6 +166,13 @@ class FileSystem:
         self.max_file_bytes = max_file_bytes
         self.max_namespace_bytes = max_namespace_bytes
         self._placeholders: Tuple[str, ...] = parse_namespace_template(self.namespace)
+        self.user_scoped = user_scoped
+        # The user partition this instance acts in, bound by resolve(). None is the shared partition.
+        self._user_id: Optional[str] = None
+        # A namespace naming {user_id} isolates by name, so its files stay in the
+        # shared partition: the user is in the key already, and data written
+        # before partitions exist under exactly that key.
+        self._namespace_carries_user = "user_id" in self._placeholders
 
     @classmethod
     def _from_normalized(
@@ -165,6 +182,8 @@ class FileSystem:
         namespace: str,
         max_file_bytes: int,
         max_namespace_bytes: int,
+        user_scoped: Optional[bool] = None,
+        user_id: Optional[str] = None,
     ) -> "FileSystem":
         """Build a derived instance whose namespace is already canonical."""
         instance = cls.__new__(cls)
@@ -175,7 +194,64 @@ class FileSystem:
         instance.max_file_bytes = max_file_bytes
         instance.max_namespace_bytes = max_namespace_bytes
         instance._placeholders = parse_namespace_template(namespace)
+        instance.user_scoped = user_scoped
+        instance._user_id = user_id
+        instance._namespace_carries_user = "user_id" in instance._placeholders
         return instance
+
+    @property
+    def user_id(self) -> Optional[str]:
+        """The user partition bound by ``resolve()``; ``None`` is the shared partition."""
+        return self._user_id
+
+    def _partition(self) -> str:
+        """The backend partition every operation of this instance acts in.
+
+        A user-scoped instance with no bound user fails closed: an anonymous run
+        must never fall into the shared partition, nor into another user's.
+        """
+        if self._namespace_carries_user:
+            return ""
+        if self._user_id is not None:
+            return self._user_id
+        if self.user_scoped:
+            raise InvalidPathError(
+                "this filesystem is partitioned by user and no user is bound; resolve it with a user_id first"
+            )
+        return ""
+
+    def partition(self, user_id: Optional[str]) -> "FileSystem":
+        """This store bound to one partition: a user's, or the shared one for ``None``.
+
+        Unlike ``resolve()``, ``None`` is explicit: the copy acts in the shared
+        partition even on a user-scoped store, which is how an operator inspects
+        it. Template placeholders must already be bound.
+        """
+        self._require_resolved()
+        bound = FileSystem._from_normalized(
+            backend=self.backend,
+            namespace=self.namespace,
+            max_file_bytes=self.max_file_bytes,
+            max_namespace_bytes=self.max_namespace_bytes,
+            user_scoped=self.user_scoped if user_id is not None else False,
+            user_id=None if user_id is None else str(user_id),
+        )
+        bound._namespace_carries_user = self._namespace_carries_user
+        return bound
+
+    def partitions(self) -> List[str]:
+        """The users holding files in this namespace, on backends that keep partitions; else empty."""
+        namespace = self._require_resolved()
+        return sorted(self.backend.partitions(namespace))
+
+    async def apartitions(self) -> List[str]:
+        """Async variant of ``partitions``."""
+        namespace = self._require_resolved()
+        return sorted(await self.backend.apartitions(namespace))
+
+    def _pk(self, method: Any) -> dict:
+        """Keyword arguments selecting this instance's partition for one backend call."""
+        return partition_kwargs(method, self._partition())
 
     def to_dict(self) -> dict:
         """Serialize built-in backend settings without serializing live connections."""
@@ -212,6 +288,8 @@ class FileSystem:
         }
         if self._namespace_is_normalized:
             config["namespace_is_normalized"] = True
+        if self.user_scoped is not None:
+            config["user_scoped"] = self.user_scoped
         return config
 
     @classmethod
@@ -244,18 +322,21 @@ class FileSystem:
         namespace = data.get("namespace", DEFAULT_NAMESPACE)
         max_file_bytes = data.get("max_file_bytes", 1_000_000)
         max_namespace_bytes = data.get("max_namespace_bytes", 20_000_000)
+        user_scoped = data.get("user_scoped")
         if data.get("namespace_is_normalized") is True:
             return cls._from_normalized(
                 backend=backend,
                 namespace=namespace,
                 max_file_bytes=max_file_bytes,
                 max_namespace_bytes=max_namespace_bytes,
+                user_scoped=user_scoped,
             )
         return cls(
             backend=backend,
             namespace=namespace,
             max_file_bytes=max_file_bytes,
             max_namespace_bytes=max_namespace_bytes,
+            user_scoped=user_scoped,
         )
 
     # ------------------------------------------------------------------
@@ -285,10 +366,14 @@ class FileSystem:
 
         Values are validated as single path segments. Placeholders without a
         value stay unresolved, and calling any file operation on an instance
-        with unresolved placeholders raises ``InvalidPathError``. Untemplated
-        instances are returned unchanged.
+        with unresolved placeholders raises ``InvalidPathError``. A ``user_id``
+        also selects that user's partition on the bound instance, whether or
+        not the namespace names the user; so a literal namespace resolved with
+        a user returns a bound copy, and an untemplated instance resolved with
+        no user is returned unchanged.
         """
-        if not self._placeholders:
+        bound_user = self._user_id if user_id is None else str(user_id)
+        if not self._placeholders and bound_user == self._user_id:
             return self
         values = {"user_id": user_id, "agent_id": agent_id, "team_id": team_id}
         name = self.namespace
@@ -297,12 +382,16 @@ class FileSystem:
             if value is None:
                 continue
             name = name.replace("{" + placeholder + "}", normalize_template_value(placeholder, value))
-        return FileSystem._from_normalized(
+        resolved = FileSystem._from_normalized(
             backend=self.backend,
             namespace=name,
             max_file_bytes=self.max_file_bytes,
             max_namespace_bytes=self.max_namespace_bytes,
+            user_scoped=self.user_scoped,
+            user_id=bound_user,
         )
+        resolved._namespace_carries_user = self._namespace_carries_user
+        return resolved
 
     def _resolve_from_context(
         self,
@@ -320,11 +409,19 @@ class FileSystem:
         injected agent's ``id``; ``{team_id}`` reads the injected team's ``id``.
         A missing value raises ``InvalidPathError``, so anonymous runs never
         silently collapse into a shared namespace.
+
+        On a user-scoped store the run's user selects their partition and a
+        run with no user is refused. Otherwise the store is shared, and the
+        user is read only to fill a ``{user_id}`` placeholder.
         """
-        if not self._placeholders:
-            return self
+        context_user = user_id if user_id is not None else getattr(run_context, "user_id", None)
+        if context_user is not None and not str(context_user).strip():
+            context_user = None
+        if self.user_scoped and context_user is None:
+            raise InvalidPathError("this filesystem is partitioned by user and the run has no user_id")
+        bind_user = self.user_scoped is True or "user_id" in self._placeholders
         resolved = self.resolve(
-            user_id=user_id if user_id is not None else getattr(run_context, "user_id", None),
+            user_id=context_user if bind_user else None,
             agent_id=agent_id if agent_id is not None else getattr(agent, "id", None),
             team_id=team_id if team_id is not None else getattr(team, "id", None),
         )
@@ -338,12 +435,12 @@ class FileSystem:
     def read(self, path: str) -> Optional[str]:
         """Return the file's content, or ``None`` if it does not exist."""
         namespace = self._require_resolved()
-        return self.backend.read(namespace, normalize_path(path))
+        return self.backend.read(namespace, normalize_path(path), **self._pk(self.backend.read))
 
     def read_with_meta(self, path: str) -> Optional[FileData]:
         """Return content and metadata from one consistent backend read."""
         namespace = self._require_resolved()
-        return self.backend.read_with_meta(namespace, normalize_path(path))
+        return self.backend.read_with_meta(namespace, normalize_path(path), **self._pk(self.backend.read_with_meta))
 
     def write(
         self,
@@ -371,12 +468,12 @@ class FileSystem:
             )
         # _stat, not list(): DbFileSystem overrides it as an indexed point select,
         # where listing the parent scans every row in the namespace to find one file.
-        existing = self.backend._stat(namespace, normalized)
+        existing = self.backend._stat(namespace, normalized, **self._pk(self.backend._stat))
         if existing is not None and not overwrite:
             raise FileExistsError(f"file exists: {normalized}")
         delta = size_bytes - (existing.size_bytes if existing is not None else 0)
         if delta > 0:
-            current_usage = self.backend.usage(namespace)
+            current_usage = self.backend.usage(namespace, **self._pk(self.backend.usage))
             if current_usage.total_bytes + delta > self.max_namespace_bytes:
                 raise QuotaExceededError(
                     f"storage is full ({current_usage.total_bytes} of {self.max_namespace_bytes} bytes)",
@@ -384,7 +481,13 @@ class FileSystem:
                     current=current_usage.total_bytes,
                     limit=self.max_namespace_bytes,
                 )
-        return self.backend.write(namespace, normalized, content, expected_version=expected_version)
+        return self.backend.write(
+            namespace,
+            normalized,
+            content,
+            expected_version=expected_version,
+            **self._pk(self.backend.write),
+        )
 
     def append(self, path: str, content: str, *, unique: bool = False) -> FileMeta:
         """Append line-oriented content, creating the file if missing.
@@ -404,12 +507,12 @@ class FileSystem:
         if chunk and unique:
             chunk = self._drop_present_lines(namespace, normalized, chunk)
         if not chunk:
-            existing = self.backend._stat(namespace, normalized)
+            existing = self.backend._stat(namespace, normalized, **self._pk(self.backend._stat))
             if existing is not None:
                 return existing
             return FileMeta(path=normalized, size_bytes=0, version=None, updated_at=None)
         chunk_bytes = len(chunk.encode("utf-8"))
-        current_usage = self.backend.usage(namespace)
+        current_usage = self.backend.usage(namespace, **self._pk(self.backend.usage))
         # The separator is unknown client-side, so estimate it at 1 byte: over, never under.
         if current_usage.total_bytes + chunk_bytes + 1 > self.max_namespace_bytes:
             raise QuotaExceededError(
@@ -418,12 +521,18 @@ class FileSystem:
                 current=current_usage.total_bytes,
                 limit=self.max_namespace_bytes,
             )
-        return self.backend.append(namespace, normalized, chunk, max_file_bytes=self.max_file_bytes)
+        return self.backend.append(
+            namespace,
+            normalized,
+            chunk,
+            max_file_bytes=self.max_file_bytes,
+            **self._pk(self.backend.append),
+        )
 
     def _drop_present_lines(self, namespace: str, normalized: str, chunk: str) -> str:
         """Return ``chunk`` without lines the file already holds, and without
         lines repeated inside the chunk itself. Order is preserved."""
-        existing = self.backend.read(namespace, normalized) or ""
+        existing = self.backend.read(namespace, normalized, **self._pk(self.backend.read)) or ""
         seen = set(existing.split("\n"))
         kept: List[str] = []
         for line in chunk.split("\n"):
@@ -442,7 +551,7 @@ class FileSystem:
         """
         namespace = self._require_resolved()
         normalized = normalize_path(path)
-        existing = self.backend.read(namespace, normalized)
+        existing = self.backend.read(namespace, normalized, **self._pk(self.backend.read))
         if existing is None:
             raise FileNotFoundError(f"file not found: {normalized}")
         if start_line < 1:
@@ -468,17 +577,19 @@ class FileSystem:
         """Move or rename a file. Raises ``FileNotFoundError`` if ``src`` is missing,
         ``FileExistsError`` if ``dst`` exists and ``overwrite`` is False."""
         namespace = self._require_resolved()
-        return self.backend.move(namespace, normalize_path(src), normalize_path(dst), overwrite=overwrite)
+        return self.backend.move(
+            namespace, normalize_path(src), normalize_path(dst), overwrite=overwrite, **self._pk(self.backend.move)
+        )
 
     def delete(self, path: str) -> bool:
         """Delete a file. Returns ``True`` if it existed."""
         namespace = self._require_resolved()
-        return self.backend.delete(namespace, normalize_path(path))
+        return self.backend.delete(namespace, normalize_path(path), **self._pk(self.backend.delete))
 
     def list(self, directory: str = "") -> List[FileMeta]:
         """List files under ``directory`` (``""`` or ``"."`` = namespace root), sorted by path segments."""
         namespace = self._require_resolved()
-        metas = self.backend.list(namespace, normalize_directory(directory))
+        metas = self.backend.list(namespace, normalize_directory(directory), **self._pk(self.backend.list))
         return sorted(metas, key=lambda m: path_sort_key(m.path))
 
     def search(self, query: str, directory: str = "", limit: int = 10) -> List[SearchMatch]:
@@ -486,7 +597,9 @@ class FileSystem:
         namespace = self._require_resolved()
         if not query or not query.strip():
             return []
-        return self.backend.search(namespace, query, normalize_directory(directory), limit)
+        return self.backend.search(
+            namespace, query, normalize_directory(directory), limit, **self._pk(self.backend.search)
+        )
 
     def contains(self, lines: Sequence[str], directory: str = "") -> ContainsResult:
         """Batch exact-line membership check, input order preserved.
@@ -501,7 +614,9 @@ class FileSystem:
         normalized_lines = normalize_check_lines(lines)
         if not normalized_lines:
             return ContainsResult(found=[], missing=[])
-        found_set = self.backend.contains(namespace, normalized_lines, normalized_directory)
+        found_set = self.backend.contains(
+            namespace, normalized_lines, normalized_directory, **self._pk(self.backend.contains)
+        )
         return ContainsResult(
             found=[line for line in normalized_lines if line in found_set],
             missing=[line for line in normalized_lines if line not in found_set],
@@ -510,7 +625,7 @@ class FileSystem:
     def usage(self) -> NamespaceUsage:
         """Aggregate file count and total bytes for this namespace."""
         namespace = self._require_resolved()
-        return self.backend.usage(namespace)
+        return self.backend.usage(namespace, **self._pk(self.backend.usage))
 
     # ------------------------------------------------------------------
     # Programmatic API (async twins)
@@ -523,7 +638,9 @@ class FileSystem:
     async def aread_with_meta(self, path: str) -> Optional[FileData]:
         """Async variant of ``read_with_meta``."""
         namespace = self._require_resolved()
-        return await self.backend.aread_with_meta(namespace, normalize_path(path))
+        return await self.backend.aread_with_meta(
+            namespace, normalize_path(path), **self._pk(self.backend.aread_with_meta)
+        )
 
     async def awrite(
         self,

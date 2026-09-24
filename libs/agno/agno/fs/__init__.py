@@ -3,6 +3,7 @@ from agno.fs.errors import (
     FileSystemError,
     InvalidPathError,
     QuotaExceededError,
+    SchemaOutdatedError,
     UnsupportedOperationError,
     VersionConflictError,
 )
@@ -20,6 +21,7 @@ __all__ = [
     "InvalidPathError",
     "NamespaceUsage",
     "QuotaExceededError",
+    "SchemaOutdatedError",
     "SearchMatch",
     "UnsupportedOperationError",
     "VersionConflictError",
