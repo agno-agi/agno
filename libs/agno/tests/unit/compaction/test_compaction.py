@@ -541,6 +541,30 @@ def test_an_explicit_default_value_still_collides():
     assert Compaction(keep_last_tokens=20_000).keep_last_runs is None
 
 
+def test_reactive_recovery_is_opt_in_on_a_configured_compaction():
+    """A configured Compaction already has a threshold, so a rejection means it was wrong.
+
+    That is worth surfacing rather than absorbing, so recovery is off unless asked for.
+    compaction=True is the exception: with no threshold to rely on, the rejection is the
+    only thing that can fold, so it is turned on there.
+    """
+    from agno.agent import Agent, _init
+
+    bare = Agent(compaction=True)
+    _init.set_compaction(bare)
+    assert bare.compaction.compact_at_tokens is None
+    assert bare.compaction.on_context_overflow is True
+
+    configured = Agent(compaction=Compaction())
+    _init.set_compaction(configured)
+    assert configured.compaction.compact_at_tokens == 150_000
+    assert configured.compaction.on_context_overflow is False
+
+    opted_in = Agent(compaction=Compaction(on_context_overflow=True))
+    _init.set_compaction(opted_in)
+    assert opted_in.compaction.on_context_overflow is True
+
+
 def test_compaction_true_is_reactive_only():
     """A proactive threshold is a guess about a number nobody can look up.
 
