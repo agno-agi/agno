@@ -73,7 +73,7 @@ def test_list_read_and_search_run_behind_auth_middleware(db, client_factory):
     agent = Agent(id="notes", db=db, filesystem=True)
     client = client_factory(agent)
     assert agent.filesystem_instance is not None
-    agent.filesystem_instance.resolve(user_id="alice").write("notes/state.md", "alpha needle\nbeta\n")
+    agent.filesystem_instance.write("notes/state.md", "alpha needle\nbeta\n")
 
     assert client.get("/filesystem/files").status_code == 401
     assert client.get("/filesystem/entries", params={"agent_id": "notes"}).status_code == 401
@@ -104,9 +104,9 @@ def test_global_files_lists_and_searches_configured_agent_filesystems(db, client
     reports = Agent(id="reports", db=db, filesystem=True)
     client = client_factory(notes, reports)
     assert notes.filesystem_instance is not None
-    notes.filesystem_instance.resolve(user_id="alice").write("notes/state.md", "alpha needle")
+    notes.filesystem_instance.write("notes/state.md", "alpha needle")
     assert reports.filesystem_instance is not None
-    reports.filesystem_instance.resolve(user_id="alice").write("reports/summary.md", "beta")
+    reports.filesystem_instance.write("reports/summary.md", "beta")
 
     listed = client.get("/filesystem/files", headers=_headers("alice"))
     searched = client.get("/filesystem/files", params={"query": "needle"}, headers=_headers("alice"))
@@ -127,7 +127,7 @@ def test_global_files_lists_and_searches_configured_agent_filesystems(db, client
 
 def test_global_files_merges_agents_sharing_the_same_filesystem(db, monkeypatch, client_factory):
     filesystem = FileSystem(db, namespace="shared")
-    metadata = filesystem.resolve(user_id="alice").write("state.md", "shared")
+    metadata = filesystem.write("state.md", "shared")
     client = client_factory(
         Agent(id="one", db=db, filesystem=filesystem),
         Agent(id="two", db=db, filesystem=filesystem),
@@ -157,7 +157,7 @@ def test_global_files_merges_agents_sharing_the_same_filesystem(db, monkeypatch,
             "size_bytes": 6,
             "version": 1,
             "updated_at": metadata.updated_at,
-            "user_id": "alice",
+            "user_id": None,
             "snippet": None,
             "line": None,
             "match_count": None,
@@ -173,7 +173,7 @@ def test_global_files_merges_agents_sharing_the_same_filesystem(db, monkeypatch,
 
 def test_global_files_skips_remote_agents_but_explicit_requests_fail(db, client_factory):
     filesystem = FileSystem(db, namespace="notes")
-    filesystem.resolve(user_id="alice").write("state.md", "local")
+    filesystem.write("state.md", "local")
     agent = Agent(id="notes", db=db, filesystem=filesystem)
     remote = RemoteAgent(base_url="http://localhost:9999", agent_id="remote")
     client = client_factory(agent, remote)
@@ -223,9 +223,9 @@ def test_global_files_only_lists_agents_visible_to_the_caller(db, client_factory
     reports = Agent(id="reports", db=db, filesystem=True)
     client = client_factory(notes, reports)
     assert notes.filesystem_instance is not None
-    notes.filesystem_instance.resolve(user_id="alice").write("notes.md", "notes")
+    notes.filesystem_instance.write("notes.md", "notes")
     assert reports.filesystem_instance is not None
-    reports.filesystem_instance.resolve(user_id="alice").write("reports.md", "reports")
+    reports.filesystem_instance.write("reports.md", "reports")
 
     response = client.get(
         "/filesystem/files",
@@ -291,7 +291,7 @@ def test_unresolved_explicit_template_returns_400(db, client_factory):
 
 def test_factory_agent_filesystem_is_browsable(db, client_factory):
     filesystem = FileSystem(db, namespace="factories/{agent_id}")
-    filesystem.resolve(user_id="alice", agent_id="factory-notes").write("state.md", "factory")
+    filesystem.resolve(agent_id="factory-notes").write("state.md", "factory")
     factory = AgentFactory(
         id="factory-notes",
         db=db,
@@ -313,7 +313,7 @@ def test_stored_agent_route_preserves_encoded_namespace_and_separate_db(tmp_path
     catalog_db = SqliteDb(id="catalog-db", db_file=str(tmp_path / "catalog.db"))
     files_db = SqliteDb(id="files-db", db_file=str(tmp_path / "files.db"))
     filesystem = FileSystem(files_db, namespace="My Namespace")
-    filesystem.resolve(user_id="alice").write("state.md", "separate")
+    filesystem.write("state.md", "separate")
     Agent(id="stored-notes", db=catalog_db, filesystem=filesystem).save()
     client = client_factory(db=catalog_db, registry=Registry(dbs=[files_db]))
 
@@ -331,7 +331,7 @@ def test_content_preview_has_a_continuation_offset(db, client_factory):
     agent = Agent(id="notes", db=db, filesystem=True)
     client = client_factory(agent)
     assert agent.filesystem_instance is not None
-    agent.filesystem_instance.resolve(user_id="alice").write("large.md", "abcdefghij")
+    agent.filesystem_instance.write("large.md", "abcdefghij")
 
     first = client.get(
         "/filesystem/content",
@@ -388,7 +388,7 @@ def test_manual_read_only_toolkit_is_discovered_and_browsable(db, client_factory
     recorder = Agent(id="recorder", db=db, filesystem=shared)
     answerer = Agent(id="answerer", db=db, tools=[FileSystem(db, namespace="research/decisions").tools(read_only=True)])
     client = client_factory(recorder, answerer)
-    shared.resolve(user_id="alice").write("decisions.md", "vector db: pgvector\n")
+    shared.write("decisions.md", "vector db: pgvector\n")
 
     config = client.get("/config", headers=_headers("alice", ["config:read"])).json()
     assert [(i["namespace"], i["agents"]) for i in config["filesystem"]["namespaces"]] == [
@@ -440,8 +440,8 @@ def test_namespace_selects_among_an_agents_filesystems(db, client_factory):
         ],
     )
     client = client_factory(agent)
-    own.resolve(user_id="alice").write("draft.md", "mine\n")
-    reference.resolve(user_id="alice").write("handbook.md", "shared\n")
+    own.write("draft.md", "mine\n")
+    reference.write("handbook.md", "shared\n")
 
     default = client.get("/filesystem/entries", params={"agent_id": "analyst"}, headers=_headers("alice")).json()
     assert [entry["path"] for entry in default["entries"]] == ["draft.md"]
@@ -474,8 +474,8 @@ def test_namespace_alone_addresses_a_filesystem_within_caller_access(db, client_
     answerer = Agent(id="answerer", db=db, filesystem=shared.tools(read_only=True))
     keeper = Agent(id="keeper", db=db, filesystem=private)
     client = client_factory(recorder, answerer, keeper)
-    shared.resolve(user_id="alice").write("decisions.md", "vector db: pgvector\n")
-    private.resolve(user_id="alice").write("secret.md", "hidden\n")  # same user: reachable only through access
+    shared.write("decisions.md", "vector db: pgvector\n")
+    private.write("secret.md", "hidden\n")
 
     listed = client.get("/filesystem/entries", params={"namespace": "research/decisions"}, headers=_headers("alice"))
     assert listed.status_code == 200
@@ -507,8 +507,8 @@ def test_same_namespace_on_two_backends_needs_an_agent(tmp_path, db, client_fact
     client = client_factory(
         Agent(id="db-agent", db=db, filesystem=in_db), Agent(id="disk-agent", db=db, filesystem=on_disk)
     )
-    in_db.resolve(user_id="alice").write("a.md", "db\n")
-    on_disk.resolve(user_id="alice").write("b.md", "disk\n")
+    in_db.write("a.md", "db\n")
+    on_disk.write("b.md", "disk\n")
 
     ambiguous = client.get("/filesystem/entries", params={"namespace": "notes"}, headers=_headers("alice"))
     assert ambiguous.status_code == 409
@@ -557,15 +557,95 @@ def test_explicit_user_scoped_false_stays_shared_under_isolation(db, client_fact
     assert config["filesystem"]["namespaces"][0]["user_isolation"] is False
 
 
-def test_a_user_browses_their_own_partition_and_anonymous_runs_share(db, client_factory):
+def test_without_isolation_every_user_browses_the_shared_store(db, client_factory):
     agent = Agent(id="notes", db=db, filesystem=True)
     client = client_factory(agent)
     store = agent.filesystem_instance
     assert store is not None
+    assert store.user_scoped is False
     store.write("shared.md", "everyone\n")
-    store.resolve(user_id="alice").write("mine.md", "alice\n")
 
+    for user in ("alice", "bob"):
+        listed = client.get("/filesystem/entries", params={"agent_id": "notes"}, headers=_headers(user))
+        assert [(e["path"], e["user_id"]) for e in listed.json()["entries"]] == [("shared.md", None)]
+
+
+def _admin_headers(user_id: str = "root") -> dict[str, str]:
+    return _headers(user_id, ["agent_os:admin", "agents:read", "config:read"])
+
+
+def test_admin_sees_every_partition_and_may_open_any(db, client_factory):
+    agent = Agent(id="notes", db=db, filesystem=True)
+    client = client_factory(agent, user_isolation=True)
+    store = agent.filesystem_instance
+    assert store is not None and store.user_scoped is True
+    store.partition(None).write("shared.md", "everyone\n")
+    store.resolve(user_id="alice").write("notes/a.md", "alice\n")
+    store.resolve(user_id="bob").write("notes/a.md", "bob\n")
+
+    listed = client.get("/filesystem/entries", params={"agent_id": "notes"}, headers=_admin_headers())
+    assert listed.status_code == 200
+    assert [(e["path"], e["type"], e["user_id"]) for e in listed.json()["entries"]] == [
+        ("notes", "directory", None),
+        ("shared.md", "file", None),
+    ]
+    assert listed.json()["usage"]["file_count"] == 3
+    nested = client.get(
+        "/filesystem/entries", params={"agent_id": "notes", "directory": "notes"}, headers=_admin_headers()
+    )
+    assert [(e["path"], e["user_id"]) for e in nested.json()["entries"]] == [
+        ("notes/a.md", "alice"),
+        ("notes/a.md", "bob"),
+    ]
+
+    only_bob = client.get(
+        "/filesystem/entries",
+        params={"agent_id": "notes", "directory": "notes", "user_id": "bob"},
+        headers=_admin_headers(),
+    )
+    assert [(e["path"], e["user_id"]) for e in only_bob.json()["entries"]] == [("notes/a.md", "bob")]
+
+    content = client.get(
+        "/filesystem/content",
+        params={"agent_id": "notes", "path": "notes/a.md", "user_id": "bob"},
+        headers=_admin_headers(),
+    )
+    assert content.json()["content"] == "bob\n"
+    shared = client.get(
+        "/filesystem/content", params={"agent_id": "notes", "path": "shared.md"}, headers=_admin_headers()
+    )
+    assert shared.json()["content"] == "everyone\n"
+
+    searched = client.get("/filesystem/search", params={"agent_id": "notes", "query": "bob"}, headers=_admin_headers())
+    assert [(e["path"], e["user_id"]) for e in searched.json()["entries"]] == [("notes/a.md", "bob")]
+
+    rows = client.get("/filesystem/files", headers=_admin_headers()).json()["entries"]
+    assert [(r["path"], r["user_id"]) for r in rows] == [
+        ("notes/a.md", "alice"),
+        ("notes/a.md", "bob"),
+        ("shared.md", None),
+    ]
+    rows = client.get("/filesystem/files", params={"user_id": "alice"}, headers=_admin_headers()).json()["entries"]
+    assert [(r["path"], r["user_id"]) for r in rows] == [("notes/a.md", "alice")]
+
+
+def test_a_user_may_name_only_their_own_partition(db, client_factory):
+    agent = Agent(id="notes", db=db, filesystem=True)
+    client = client_factory(agent, user_isolation=True)
+    store = agent.filesystem_instance
+    assert store is not None
+    store.resolve(user_id="alice").write("a.md", "alice\n")
+    store.resolve(user_id="bob").write("a.md", "bob\n")
+
+    own = client.get(
+        "/filesystem/content",
+        params={"agent_id": "notes", "path": "a.md", "user_id": "alice"},
+        headers=_headers("alice"),
+    )
+    assert own.json()["content"] == "alice\n"
+    other = client.get(
+        "/filesystem/content", params={"agent_id": "notes", "path": "a.md", "user_id": "bob"}, headers=_headers("alice")
+    )
+    assert other.status_code == 403
     listed = client.get("/filesystem/entries", params={"agent_id": "notes"}, headers=_headers("alice"))
-    assert [(e["path"], e["user_id"]) for e in listed.json()["entries"]] == [("mine.md", "alice")]
-    bob = client.get("/filesystem/entries", params={"agent_id": "notes"}, headers=_headers("bob"))
-    assert bob.json()["entries"] == []
+    assert [(e["path"], e["user_id"]) for e in listed.json()["entries"]] == [("a.md", "alice")]

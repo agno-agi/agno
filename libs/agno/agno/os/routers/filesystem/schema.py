@@ -51,6 +51,7 @@ class FileSystemSearchEntry(BaseModel):
     snippet: str
     line: Optional[int] = None
     match_count: int
+    user_id: Optional[str] = None
 
 
 class FileSystemSearchResponse(BaseModel):

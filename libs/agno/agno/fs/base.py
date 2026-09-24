@@ -240,6 +240,15 @@ class BaseFS(ABC):
         metas = self.list(namespace, "", **partition_kwargs(self.list, user_id))
         return NamespaceUsage(file_count=len(metas), total_bytes=sum(m.size_bytes for m in metas))
 
+    def partitions(self, namespace: str) -> List[str]:
+        """The user partitions holding files in ``namespace``, excluding the shared one.
+
+        Base implementation: none. A backend that keeps partitions overrides it
+        so an operator can see every user's files; one that does not has only
+        the shared partition to show.
+        """
+        return []
+
     # ---- helpers ----
 
     def _stat(self, namespace: str, path: str, *, user_id: str = "") -> Optional[FileMeta]:
@@ -335,3 +344,7 @@ class BaseFS(ABC):
     async def ausage(self, namespace: str, *, user_id: str = "") -> NamespaceUsage:
         """Async variant of ``usage``."""
         return await asyncio.to_thread(self.usage, namespace, **partition_kwargs(self.usage, user_id))
+
+    async def apartitions(self, namespace: str) -> List[str]:
+        """Async variant of ``partitions``."""
+        return await asyncio.to_thread(self.partitions, namespace)

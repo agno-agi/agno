@@ -1,5 +1,5 @@
 import asyncio
-from typing import TYPE_CHECKING, Dict, Optional
+from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
@@ -12,7 +12,7 @@ from agno.os.auth import (
     get_accessible_resources,
     get_authentication_dependency,
 )
-from agno.os.middleware.user_scope import get_scoped_user_id
+from agno.os.middleware.user_scope import caller_is_admin, get_scoped_user_id
 from agno.os.routers.filesystem.schema import (
     FileSystemContentResponse,
     FileSystemEntry,
@@ -143,6 +143,60 @@ async def _resolve_filesystem(
     return filesystem, sorted(holders)
 
 
+def _partition_views(filesystem: FileSystem, request: Request, user_id: Optional[str]) -> list[FileSystem]:
+    """The partitions a browse request reads.
+
+    A caller may name their own partition; an admin may name any user's, and
+    with none named sees every partition of a user-scoped store: the shared one
+    first, then each user's. Everyone else reads the store as their runs do.
+    """
+    if user_id is not None:
+        own = get_scoped_user_id(request) or getattr(request.state, "user_id", None)
+        if not caller_is_admin(request) and user_id != own:
+            raise HTTPException(status_code=403, detail="Only an admin may browse another user's files")
+        return [filesystem.partition(user_id)]
+    if caller_is_admin(request) and filesystem.user_scoped:
+        return [filesystem.partition(None)] + [filesystem.partition(user) for user in filesystem.partitions()]
+    return [filesystem]
+
+
+async def _apartition_views(filesystem: FileSystem, request: Request, user_id: Optional[str]) -> list[FileSystem]:
+    """Async variant of ``_partition_views``."""
+    if user_id is None and caller_is_admin(request) and filesystem.user_scoped:
+        users = await filesystem.apartitions()
+        return [filesystem.partition(None)] + [filesystem.partition(user) for user in users]
+    return _partition_views(filesystem, request, user_id)
+
+
+def _merge_entries(listings: list[list[FileSystemEntry]]) -> list[FileSystemEntry]:
+    """Combine directory listings from several partitions: one row per directory, files kept per partition."""
+    if len(listings) == 1:
+        return listings[0]
+    directories: Dict[str, FileSystemEntry] = {}
+    files: list[FileSystemEntry] = []
+    for listing in listings:
+        for entry in listing:
+            if entry.type == "file":
+                files.append(entry)
+                continue
+            existing = directories.get(entry.path)
+            if existing is None:
+                directories[entry.path] = entry
+            else:
+                existing.size_bytes = (existing.size_bytes or 0) + (entry.size_bytes or 0)
+                if entry.updated_at is not None:
+                    existing.updated_at = max(existing.updated_at or entry.updated_at, entry.updated_at)
+    return sorted(directories.values(), key=lambda entry: path_sort_key(entry.path)) + sorted(
+        files, key=lambda entry: (path_sort_key(entry.path), entry.user_id or "")
+    )
+
+
+_USER_ID_QUERY = Query(
+    None,
+    description="User partition to browse: your own, or any user's for an admin. An admin who names none sees every partition",
+)
+
+
 def _list_entries(filesystem: FileSystem, directory: str) -> list[FileSystemEntry]:
     normalized_directory = normalize_directory(directory)
     prefix = f"{normalized_directory}/" if normalized_directory else ""
@@ -232,6 +286,7 @@ async def _get_global_files(
     namespace: Optional[str],
     query: Optional[str],
     strict: bool,
+    user_id: Optional[str] = None,
 ) -> list[FileSystemTableEntry]:
     filesystems: dict[tuple, tuple[FileSystem, list[str]]] = {}
     for agent_id in agent_ids:
@@ -253,7 +308,14 @@ async def _get_global_files(
             else:
                 existing[1].append(agent_id)
 
-    async def _read_files(filesystem: FileSystem, linked_agent_ids: list[str]) -> list[FileSystemTableEntry]:
+    async def _read_files(store: FileSystem, linked_agent_ids: list[str]) -> list[FileSystemTableEntry]:
+        views = await _apartition_views(store, request, user_id)
+        rows: list[FileSystemTableEntry] = []
+        for view in views:
+            rows.extend(await _read_view(view, linked_agent_ids))
+        return rows
+
+    async def _read_view(filesystem: FileSystem, linked_agent_ids: list[str]) -> list[FileSystemTableEntry]:
         metadata = await filesystem.alist()
         if not query:
             return [
@@ -302,7 +364,7 @@ async def _get_global_files(
 
     return sorted(
         entries,
-        key=lambda entry: (entry.namespace.casefold(), path_sort_key(entry.path), entry.agent_ids),
+        key=lambda entry: (entry.namespace.casefold(), path_sort_key(entry.path), entry.user_id or "", entry.agent_ids),
     )
 
 
@@ -337,6 +399,7 @@ def get_filesystem_router(
         agent_id: Optional[str] = Query(None, description="Filter by agent ID"),
         namespace: Optional[str] = Query(None, description="Filter by resolved namespace"),
         query: Optional[str] = Query(None, min_length=1, max_length=200, description="Search file contents"),
+        user_id: Optional[str] = _USER_ID_QUERY,
         page: int = Query(1, ge=1, description="1-indexed page number"),
         limit: int = Query(50, ge=1, le=100, description="Page size"),
     ) -> FileSystemTableResponse:
@@ -348,6 +411,7 @@ def get_filesystem_router(
             namespace=namespace,
             query=query.strip() if query else None,
             strict=agent_id is not None,
+            user_id=user_id,
         )
         total_count = len(entries)
         total_pages = (total_count + limit - 1) // limit if total_count else 0
@@ -377,16 +441,21 @@ def get_filesystem_router(
             None, description="Agent holding the filesystem; alone, selects that agent's first filesystem"
         ),
         directory: str = Query("", description="Relative directory inside the filesystem"),
+        user_id: Optional[str] = _USER_ID_QUERY,
         page: int = Query(1, ge=1, description="1-indexed page number"),
         limit: int = Query(50, ge=1, le=100, description="Page size"),
     ) -> FileSystemListResponse:
         filesystem, holder_ids = await _resolve_filesystem(os, request, agent_id, namespace)
+        views = await _apartition_views(filesystem, request, user_id)
         try:
             normalized_directory = normalize_directory(directory)
-            entries = await asyncio.to_thread(_list_entries, filesystem, normalized_directory)
-            usage = await filesystem.ausage()
+            listings = [await asyncio.to_thread(_list_entries, view, normalized_directory) for view in views]
+            entries = _merge_entries(listings)
+            usages = [await view.ausage() for view in views]
         except InvalidPathError as e:
             raise HTTPException(status_code=400, detail=str(e))
+        file_count = sum(usage.file_count for usage in usages)
+        total_bytes = sum(usage.total_bytes for usage in usages)
 
         total_count = len(entries)
         total_pages = (total_count + limit - 1) // limit if total_count else 0
@@ -397,8 +466,8 @@ def get_filesystem_router(
             directory=normalized_directory,
             entries=entries[start : start + limit],
             usage=FileSystemUsage(
-                file_count=usage.file_count,
-                total_bytes=usage.total_bytes,
+                file_count=file_count,
+                total_bytes=total_bytes,
                 bytes_limit=filesystem.max_namespace_bytes,
             ),
             meta=PaginationInfo(
@@ -424,10 +493,13 @@ def get_filesystem_router(
             None, description="Agent holding the filesystem; alone, selects that agent's first filesystem"
         ),
         path: str = Query(..., description="Relative file path inside the filesystem"),
+        user_id: Optional[str] = _USER_ID_QUERY,
         offset: int = Query(0, ge=0, description="Character offset into the file"),
         limit: int = Query(_MAX_PREVIEW_CHARS, ge=1, le=_MAX_PREVIEW_CHARS, description="Characters to return"),
     ) -> FileSystemContentResponse:
         filesystem, holder_ids = await _resolve_filesystem(os, request, agent_id, namespace)
+        # One file lives in one partition: an admin who names none reads the shared partition.
+        filesystem = _partition_views(filesystem, request, user_id)[0]
         try:
             normalized_path = normalize_path(path)
             file_data = await filesystem.aread_with_meta(normalized_path)
@@ -471,18 +543,19 @@ def get_filesystem_router(
         ),
         query: str = Query(..., min_length=1, max_length=200),
         directory: str = Query(""),
+        user_id: Optional[str] = _USER_ID_QUERY,
         page: int = Query(1, ge=1, description="1-indexed page number"),
         limit: int = Query(50, ge=1, le=100, description="Page size"),
     ) -> FileSystemSearchResponse:
         filesystem, holder_ids = await _resolve_filesystem(os, request, agent_id, namespace)
+        views = await _apartition_views(filesystem, request, user_id)
         try:
             normalized_directory = normalize_directory(directory)
-            files = await filesystem.alist(normalized_directory)
-            matches = await filesystem.asearch(
-                query,
-                directory=normalized_directory,
-                limit=max(len(files), 1),
-            )
+            matches: list[tuple[Any, Optional[str]]] = []
+            for view in views:
+                files = await view.alist(normalized_directory)
+                found = await view.asearch(query, directory=normalized_directory, limit=max(len(files), 1))
+                matches.extend((match, view.user_id) for match in found)
         except InvalidPathError as e:
             raise HTTPException(status_code=400, detail=str(e))
 
@@ -501,8 +574,9 @@ def get_filesystem_router(
                     snippet=match.snippet,
                     line=match.line,
                     match_count=match.match_count,
+                    user_id=view_user,
                 )
-                for match in matches[start : start + limit]
+                for match, view_user in matches[start : start + limit]
             ],
             meta=PaginationInfo(
                 page=page,

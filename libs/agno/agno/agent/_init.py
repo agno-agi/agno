@@ -280,6 +280,24 @@ def set_filesystem(agent: Agent) -> None:
         raise TypeError("filesystem must be a bool, FileSystem, FileSystemTools, or a list of stores/toolkits")
 
 
+def apply_filesystem_user_isolation(agent: Agent, enabled: bool) -> None:
+    """Set ``user_scoped`` from the AgentOS ``user_isolation`` setting on stores that left it unset.
+
+    Isolation on the OS then partitions every agent filesystem by the run's user;
+    off, the stores stay shared. A store that chose ``user_scoped`` itself keeps
+    its choice. The stores are resolved to apply it, and a store that cannot be
+    built is reported here and left for the run to fail on.
+    """
+    try:
+        filesystems = get_filesystems(agent)
+    except Exception as e:
+        log_warning(f"Agent {agent.id or agent.name!r}: filesystem could not be resolved ({e})")
+        return
+    for filesystem, _ in filesystems:
+        if filesystem.user_scoped is None:
+            filesystem.user_scoped = bool(enabled)
+
+
 def _manual_filesystem_tools(agent: Agent) -> List[Any]:
     """FileSystemTools the developer attached through ``tools=[...]``."""
     if not isinstance(agent.tools, list):

@@ -127,12 +127,14 @@ class FileSystem:
     arguments. A placeholder whose value is missing at call time fails closed.
     Programmatic use of a templated instance goes through ``resolve()``.
 
-    Files are further keyed by a user partition, and a run acts in the partition
-    of its user: two users of one namespace never see each other's files, the
-    same way memories are kept per user. A run with no user uses the shared
-    partition. ``user_scoped=True`` refuses to run without a user, and
-    ``user_scoped=False`` keeps the whole namespace shared whoever runs it.
-    A user passed to ``resolve()`` selects that partition regardless.
+    Files are further keyed by a user partition. On a user-scoped store
+    (``user_scoped=True``) a run acts in the partition of its user, so two users
+    of one namespace never see each other's files, and a run with no user is
+    refused. ``user_scoped=False`` keeps the whole namespace shared whoever runs
+    it. The default, ``None``, means shared, except that AgentOS sets it to its
+    ``user_isolation`` setting on every store an agent holds, so isolation on
+    the OS partitions the files. A user passed to ``resolve()`` selects that
+    partition regardless.
 
     Use ``db=SqliteDb(...)`` or ``db=PostgresDb(...)`` to borrow a synchronous
     database, or ``backend=`` for an explicit backend. Supply exactly one source.
@@ -217,6 +219,35 @@ class FileSystem:
                 "this filesystem is partitioned by user and no user is bound; resolve it with a user_id first"
             )
         return ""
+
+    def partition(self, user_id: Optional[str]) -> "FileSystem":
+        """This store bound to one partition: a user's, or the shared one for ``None``.
+
+        Unlike ``resolve()``, ``None`` is explicit: the copy acts in the shared
+        partition even on a user-scoped store, which is how an operator inspects
+        it. Template placeholders must already be bound.
+        """
+        self._require_resolved()
+        bound = FileSystem._from_normalized(
+            backend=self.backend,
+            namespace=self.namespace,
+            max_file_bytes=self.max_file_bytes,
+            max_namespace_bytes=self.max_namespace_bytes,
+            user_scoped=self.user_scoped if user_id is not None else False,
+            user_id=None if user_id is None else str(user_id),
+        )
+        bound._namespace_carries_user = self._namespace_carries_user
+        return bound
+
+    def partitions(self) -> List[str]:
+        """The users holding files in this namespace, on backends that keep partitions; else empty."""
+        namespace = self._require_resolved()
+        return sorted(self.backend.partitions(namespace))
+
+    async def apartitions(self) -> List[str]:
+        """Async variant of ``partitions``."""
+        namespace = self._require_resolved()
+        return sorted(await self.backend.apartitions(namespace))
 
     def _pk(self, method: Any) -> dict:
         """Keyword arguments selecting this instance's partition for one backend call."""
@@ -379,16 +410,16 @@ class FileSystem:
         A missing value raises ``InvalidPathError``, so anonymous runs never
         silently collapse into a shared namespace.
 
-        The run's user selects their partition, unless ``user_scoped=False``
-        keeps the namespace shared. ``user_scoped=True`` refuses a run with no
-        user; otherwise such a run uses the shared partition.
+        On a user-scoped store the run's user selects their partition and a
+        run with no user is refused. Otherwise the store is shared, and the
+        user is read only to fill a ``{user_id}`` placeholder.
         """
         context_user = user_id if user_id is not None else getattr(run_context, "user_id", None)
         if context_user is not None and not str(context_user).strip():
             context_user = None
         if self.user_scoped and context_user is None:
             raise InvalidPathError("this filesystem is partitioned by user and the run has no user_id")
-        bind_user = self.user_scoped is not False or "user_id" in self._placeholders
+        bind_user = self.user_scoped is True or "user_id" in self._placeholders
         resolved = self.resolve(
             user_id=context_user if bind_user else None,
             agent_id=agent_id if agent_id is not None else getattr(agent, "id", None),

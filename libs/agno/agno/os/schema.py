@@ -233,8 +233,8 @@ class FileSystemConfig(BaseModel):
 
 def _extract_filesystem(filesystem: Any, agent: Any, user_id: Optional[str] = None) -> FileSystemSummary:
     """Describe one of the agent's filesystems, with its namespace resolved for the caller."""
-    # Partitioned by the run's user unless the store opted out; a namespace naming the user isolates by name.
-    user_isolation = filesystem.user_scoped is not False or "user_id" in filesystem._placeholders
+    # Partitioned by the run's user, or isolated by a namespace naming the user.
+    user_isolation = bool(filesystem.user_scoped) or "user_id" in filesystem._placeholders
     filesystem = filesystem.resolve(user_id=user_id, agent_id=agent.id)
     backend = filesystem.backend
     backend_db = getattr(backend, "db", None)

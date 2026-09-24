@@ -163,3 +163,24 @@ def test_custom_backend_without_partitions_serves_the_shared_one_and_refuses_use
         assert "does not partition" in str(e)
     else:
         raise AssertionError("a backend without partitions must not silently share a user's write")
+
+
+def test_partitions_and_partition_views(tmp_path):
+    from agno.fs.local import LocalFileSystem
+
+    for fs in (
+        FileSystem(_db(tmp_path), namespace="notes", user_scoped=True),
+        FileSystem(backend=LocalFileSystem(root=tmp_path / "files"), namespace="notes", user_scoped=True),
+    ):
+        assert fs.partitions() == []
+        fs.partition(None).write("shared.md", "s\n")
+        fs.resolve(user_id="bob").write("a.md", "b\n")
+        fs.resolve(user_id="alice@x.io").write("a.md", "a\n")
+
+        assert fs.partitions() == ["alice@x.io", "bob"]
+        # partition(None) is the explicit shared view, allowed even on a user-scoped store.
+        assert [m.path for m in fs.partition(None).list()] == ["shared.md"]
+        assert fs.partition("bob").read("a.md") == "b\n"
+        assert fs.partition("bob").user_id == "bob"
+        with pytest.raises(InvalidPathError):
+            fs.list()

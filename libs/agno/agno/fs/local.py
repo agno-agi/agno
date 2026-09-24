@@ -1,7 +1,7 @@
 """LocalFileSystem: the disk-based backend for FileSystem."""
 
 import os
-from urllib.parse import quote
+from urllib.parse import quote, unquote
 import tempfile
 from pathlib import Path
 from typing import List, Optional, Union
@@ -93,6 +93,16 @@ class LocalFileSystem(BaseFS):
         )
 
     # ---- required core ----
+
+    def partitions(self, namespace: str) -> List[str]:
+        prefix = f"{self._encode_namespace(namespace)}%%"
+        if not self.root.is_dir():
+            return []
+        return [
+            unquote(entry.name[len(prefix) :])
+            for entry in self.root.iterdir()
+            if entry.is_dir() and entry.name.startswith(prefix) and len(entry.name) > len(prefix)
+        ]
 
     def read(self, namespace: str, path: str, *, user_id: str = "") -> Optional[str]:
         target = self._target(namespace, path, user_id)

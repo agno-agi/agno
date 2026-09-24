@@ -649,6 +649,13 @@ class DbFileSystem(BaseFS):
                 matches.append(match)
         return matches
 
+    def partitions(self, namespace: str) -> List[str]:
+        self._ensure_table()
+        t = self.table
+        stmt = select(t.c.user_id).distinct().where(and_(t.c.namespace == namespace, t.c.user_id != ""))
+        with self.db_engine.begin() as conn:
+            return [str(row[0]) for row in conn.execute(stmt).all()]
+
     def usage(self, namespace: str, *, user_id: str = "") -> NamespaceUsage:
         self._ensure_table()
         t = self.table

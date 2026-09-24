@@ -61,21 +61,24 @@ The agent receives its filesystem tools automatically. The managed namespace is
 always `{agent_id}`. Files are keyed by `(namespace, user_id, path)`: `user_id` is
 the user partition, and `""` is the shared partition.
 
-A run acts in the partition of its user, the same way memories are kept per user:
-two users of one agent never see each other's files, and the namespace stays the
-same. A run with no user identity acts in the shared partition. The browser
-routes follow the same rule for the requesting user.
+With the default `user_isolation=False`, every user of the agent works in the
+shared partition of that namespace. When `AuthorizationConfig(user_isolation=True)`
+is enabled, AgentOS marks every agent filesystem user-scoped: each run acts in the
+partition of its verified user, a run with no user is refused, and two users of one
+agent never see each other's files. The namespace stays the same either way.
 
-`AuthorizationConfig(user_isolation=True)` adds the API-level guarantees it adds
-everywhere else: every request must carry a verified identity, and a request
-without one is refused rather than served from the shared partition.
-
-An explicit `FileSystem` can override the default with `user_scoped`:
+An explicit `FileSystem` can decide for itself with `user_scoped`, which AgentOS
+leaves alone:
 
 ```python
-FileSystem(db, namespace="handbook", user_scoped=False)  # one store for every user
-FileSystem(db, namespace="diary", user_scoped=True)      # refuses a run with no user
+FileSystem(db, namespace="handbook", user_scoped=False)  # one store for every user, even under isolation
+FileSystem(db, namespace="diary", user_scoped=True)      # per user even without it; refuses a run with no user
 ```
+
+The browser routes follow the same rule for the requesting user. An admin (the
+`agent_os:admin` scope) sees every partition of a user-scoped store, with each
+file's `user_id`, and may pass `user_id` to browse or open one user's files; other
+callers may name only their own.
 
 A namespace that names `{user_id}` isolates by name instead; its files stay in
 the shared partition, so data written before partitions existed is still found.
