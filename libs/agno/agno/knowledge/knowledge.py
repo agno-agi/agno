@@ -82,6 +82,8 @@ class Knowledge(RemoteKnowledge):
     # Requires re-indexing existing data to add linked_to metadata.
     # Default is False for backwards compatibility with existing data.
     isolate_vector_search: bool = False
+    # Propagate vector search failures instead of logging and returning no matches.
+    raise_on_search_error: bool = False
     # Extra attempts when embedding fails during ingestion. Off by default: a retry
     # re-embeds the whole document, so a late failure in a large file re-bills every
     # chunk, and concurrent workers retry into the same rate limit they are waiting on.
@@ -111,6 +113,7 @@ class Knowledge(RemoteKnowledge):
         content_sources: Optional[List[BaseStorageConfig]] = None,
         max_results: int = 10,
         isolate_vector_search: bool = False,
+        raise_on_search_error: bool = False,
         page_search: Optional[PageSearchConfig] = None,
         max_embedding_retries: int = 0,
         embedding_retry_backoff: float = 1.0,
@@ -134,6 +137,7 @@ class Knowledge(RemoteKnowledge):
         self.readers = readers
         self.content_sources = content_sources
         self.isolate_vector_search = isolate_vector_search
+        self.raise_on_search_error = raise_on_search_error
         self.max_embedding_retries = max_embedding_retries
         self.embedding_retry_backoff = embedding_retry_backoff
         self.page_store = page_store
@@ -1086,6 +1090,12 @@ class Knowledge(RemoteKnowledge):
     ) -> List[Document]:
         """Returns relevant documents matching a query.
 
+        Set ``raise_on_search_error=True`` on Knowledge to propagate vector database
+        and embedding exceptions. By default these errors are logged and return an
+        empty list. Validation errors always propagate; a successful search with no
+        matches (or no configured vector database) still returns an empty list.
+        This setting does not change ingestion or managed page search behavior.
+
         Args:
             user_id: Owner scope forwarded to ``vector_db.search()``. ``None`` searches everything.
         """
@@ -1127,10 +1137,14 @@ class Knowledge(RemoteKnowledge):
             # The adapters raise these outside their own catch-alls on purpose.
             raise
         except EmbeddingError as e:
+            if self.raise_on_search_error:
+                raise
             # The provider's raw text can echo the credential; log the redacted form.
             log_error(f"Error searching for documents: {e.safe_message}")
             return []
         except Exception as e:
+            if self.raise_on_search_error:
+                raise
             log_error(f"Error searching for documents: {str(e)}")
             return []
 
@@ -1192,10 +1206,14 @@ class Knowledge(RemoteKnowledge):
             # See the matching comment in ``search``.
             raise
         except EmbeddingError as e:
+            if self.raise_on_search_error:
+                raise
             # The provider's raw text can echo the credential; log the redacted form.
             log_error(f"Error searching for documents: {e.safe_message}")
             return []
         except Exception as e:
+            if self.raise_on_search_error:
+                raise
             log_error(f"Error searching for documents: {str(e)}")
             return []
 
@@ -5372,7 +5390,7 @@ Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUC
                 )
             except Exception as e:
                 retrieval_timer.stop()
-                log_warning(f"Knowledge search failed: {str(e)}")
+                log_warning(f"Knowledge search failed: {e.safe_message if isinstance(e, EmbeddingError) else str(e)}")
                 return f"Error searching knowledge base: {type(e).__name__}"
 
             if run_response is not None and docs:
@@ -5411,7 +5429,7 @@ Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUC
                 )
             except Exception as e:
                 retrieval_timer.stop()
-                log_warning(f"Knowledge search failed: {str(e)}")
+                log_warning(f"Knowledge search failed: {e.safe_message if isinstance(e, EmbeddingError) else str(e)}")
                 return f"Error searching knowledge base: {type(e).__name__}"
 
             if run_response is not None and docs:
@@ -5498,7 +5516,7 @@ Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUC
                 docs = self.search(query=query, filters=search_filters, user_id=getattr(run_context, "user_id", None))
             except Exception as e:
                 retrieval_timer.stop()
-                log_warning(f"Knowledge search failed: {str(e)}")
+                log_warning(f"Knowledge search failed: {e.safe_message if isinstance(e, EmbeddingError) else str(e)}")
                 return f"Error searching knowledge base: {type(e).__name__}"
 
             if run_response is not None and docs:
@@ -5559,7 +5577,7 @@ Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUC
                 )
             except Exception as e:
                 retrieval_timer.stop()
-                log_warning(f"Knowledge search failed: {str(e)}")
+                log_warning(f"Knowledge search failed: {e.safe_message if isinstance(e, EmbeddingError) else str(e)}")
                 return f"Error searching knowledge base: {type(e).__name__}"
 
             if run_response is not None and docs:
