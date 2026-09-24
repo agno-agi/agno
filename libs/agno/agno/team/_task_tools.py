@@ -121,6 +121,7 @@ def _get_task_management_tools(
 
     from agno.team._init import _initialize_member
     from agno.team._run import _record_opted_out_media, _update_team_media
+    from agno.team._storage import _hand_session_to_sub_team, _release_session_from_sub_team
     from agno.team._tools import (
         _determine_team_member_interactions,
         _find_member_by_id,
@@ -318,6 +319,11 @@ def _get_task_management_tools(
     def _setup_member_for_task(member_agent: Union[Agent, "Team"], task_description: str):
         """Initialize member and prepare task input. Returns (member_agent_task, history)."""
         _initialize_member(team, member_agent)
+
+        # Sub-teams skip the database read (they are not the session owner), so hand them this
+        # team's live session in-memory. Without it their own history lookups run against an
+        # empty run list and nested delegation loses multi-turn context.
+        _hand_session_to_sub_team(member_agent, session)
         if not team.send_media_to_model:
             member_agent.send_media_to_model = False
 
@@ -409,6 +415,9 @@ def _get_task_management_tools(
         if member_run_response is not None:
             _update_team_media(team, member_run_response)
 
+        # The delegated run is over: stop holding a reference to this team's session
+        _release_session_from_sub_team(member_agent)
+
     async def _apost_process_member_run(
         member_run_response: Optional[Union[TeamRunOutput, RunOutput]],
         member_agent: Union[Agent, "Team"],
@@ -475,6 +484,9 @@ def _get_task_management_tools(
 
         if member_run_response is not None:
             _update_team_media(team, member_run_response)
+
+        # The delegated run is over: stop holding a reference to this team's session
+        _release_session_from_sub_team(member_agent)
 
     # ------------------------------------------------------------------
     # Tool: execute_task (sync)

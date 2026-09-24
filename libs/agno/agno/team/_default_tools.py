@@ -460,6 +460,7 @@ def _get_delegate_task_function(
 ) -> Function:
     from agno.team._init import _initialize_member
     from agno.team._run import _record_opted_out_media, _update_team_media
+    from agno.team._storage import _hand_session_to_sub_team, _release_session_from_sub_team
     from agno.team._tools import (
         _determine_team_member_interactions,
         _find_member_by_id,
@@ -480,6 +481,11 @@ def _get_delegate_task_function(
         # 1. Initialize the member agent
 
         _initialize_member(team, member_agent)
+
+        # Sub-teams skip the database read (they are not the session owner), so hand them this
+        # team's live session in-memory. Without it their own history lookups run against an
+        # empty run list and nested delegation loses multi-turn context.
+        _hand_session_to_sub_team(member_agent, session)
 
         # If team has send_media_to_model=False, ensure member agent also has it set to False
         # This allows tools to access files while preventing models from receiving them
@@ -610,6 +616,9 @@ def _get_delegate_task_function(
         if member_agent_run_response is not None:
             _update_team_media(team, member_agent_run_response)  # type: ignore
 
+        # The delegated run is over: stop holding a reference to this team's session
+        _release_session_from_sub_team(member_agent)
+
     async def _aprocess_delegate_task_to_member(
         member_agent_run_response: Optional[Union[TeamRunOutput, RunOutput]],
         member_agent: Union[Agent, "Team"],
@@ -686,6 +695,9 @@ def _get_delegate_task_function(
         # Update the team media
         if member_agent_run_response is not None:
             _update_team_media(team, member_agent_run_response)  # type: ignore
+
+        # The delegated run is over: stop holding a reference to this team's session
+        _release_session_from_sub_team(member_agent)
 
     def delegate_task_to_member(member_id: str, task: str) -> Iterator[Union[RunOutputEvent, TeamRunOutputEvent, str]]:
         """Use this function to delegate a task to the selected team member.

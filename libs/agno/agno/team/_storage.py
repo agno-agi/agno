@@ -313,6 +313,90 @@ async def _aupsert_run(
         log_warning(f"Error upserting run into db: {str(e)}")
 
 
+def _hand_session_to_sub_team(member: Union[Any, "Team"], session: TeamSession) -> None:
+    """Hand the parent's live session to a sub-team member for the duration of a delegated run.
+
+    Only Team members need this: agent members receive their history from the parent through
+    the delegated input, while a sub-team has to resolve history for its own members itself.
+    """
+    from agno.team.team import Team
+
+    if not isinstance(member, Team):
+        return
+
+    # Release first: if a previous delegated run ended by raising something other than
+    # RunCancelledException the release below never ran, and the borrowed runs would still be
+    # sitting in this member's cached session.
+    _release_session_from_sub_team(member)
+    member._delegated_session = session
+
+
+def _release_session_from_sub_team(member: Union[Any, "Team"]) -> None:
+    """Drop the in-memory parent session reference once the delegated run is done.
+
+    The borrowed runs are also taken back out of the sub-team's cached session. With
+    ``cache_session=True`` the merge in ``_merge_delegated_session_runs()`` writes into the
+    cached ``TeamSession`` itself, so without this the parent's runs would outlive the
+    delegated run and leak into the sub-team's own ``get_session()`` / history lookups.
+    """
+    from agno.team.team import Team
+
+    if not isinstance(member, Team):
+        return
+
+    parent_session = getattr(member, "_delegated_session", None)
+    member._delegated_session = None
+    if parent_session is None:
+        return
+
+    cached_session = getattr(member, "_cached_session", None)
+    if cached_session is None or cached_session is parent_session:
+        return
+    if cached_session.session_id != parent_session.session_id:
+        return
+
+    borrowed_run_ids = {
+        run_id for run_id in (getattr(run, "run_id", None) for run in (parent_session.runs or [])) if run_id is not None
+    }
+    if not borrowed_run_ids:
+        return
+
+    cached_session.runs = [
+        run for run in (cached_session.runs or []) if getattr(run, "run_id", None) not in borrowed_run_ids
+    ]
+
+
+def _merge_delegated_session_runs(team: "Team", session: TeamSession) -> TeamSession:
+    """Seed a delegated sub-team's in-memory session with the parent session's runs.
+
+    ``_read_or_create_session()`` deliberately skips the database for sub-teams
+    (``parent_team_id is not None``) so that only the root team owns persistence. The side
+    effect is that a sub-team starts every delegated run with ``runs=[]``, so it cannot resolve
+    history for its own members and nested delegation loses multi-turn context.
+
+    The parent hands its live session down in-memory (``team._delegated_session``) during
+    delegation. Here we copy the parent's *run list* into the sub-team's session, which:
+      - keeps database ownership unchanged (no extra reads, no writes from the sub-team);
+      - keeps the two run lists independent, so runs the sub-team upserts locally never land in
+        the parent's session - the parent still records member runs itself after delegation.
+    """
+    parent_session = getattr(team, "_delegated_session", None)
+    if parent_session is None or team.parent_team_id is None:
+        return session
+    if parent_session is session or parent_session.session_id != session.session_id:
+        return session
+
+    parent_runs = list(parent_session.runs or [])
+    if not parent_runs:
+        return session
+
+    parent_run_ids = {run_id for run_id in (getattr(run, "run_id", None) for run in parent_runs) if run_id is not None}
+    local_runs = [run for run in (session.runs or []) if getattr(run, "run_id", None) not in parent_run_ids]
+
+    session.runs = parent_runs + local_runs
+    return session
+
+
 def _read_or_create_session(team: "Team", session_id: str, user_id: Optional[str] = None) -> TeamSession:
     """Load the TeamSession from storage
 
@@ -327,7 +411,7 @@ def _read_or_create_session(team: "Team", session_id: str, user_id: Optional[str
     # Return existing session if we have one
     cached_session = team._get_cached_session(session_id, user_id=user_id)
     if cached_session is not None:
-        return cached_session
+        return _merge_delegated_session_runs(team, cached_session)
 
     # Try to load from database
     team_session = None
@@ -380,7 +464,7 @@ def _read_or_create_session(team: "Team", session_id: str, user_id: Optional[str
     if team_session is not None and team.cache_session:
         team._set_cached_session(team_session)
 
-    return team_session
+    return _merge_delegated_session_runs(team, team_session)
 
 
 async def _aread_or_create_session(team: "Team", session_id: str, user_id: Optional[str] = None) -> TeamSession:
@@ -398,7 +482,7 @@ async def _aread_or_create_session(team: "Team", session_id: str, user_id: Optio
     # Return existing session if we have one
     cached_session = team._get_cached_session(session_id, user_id=user_id)
     if cached_session is not None:
-        return cached_session
+        return _merge_delegated_session_runs(team, cached_session)
 
     # Try to load from database
     team_session = None
@@ -459,7 +543,7 @@ async def _aread_or_create_session(team: "Team", session_id: str, user_id: Optio
     if team_session is not None and team.cache_session:
         team._set_cached_session(team_session)
 
-    return team_session
+    return _merge_delegated_session_runs(team, team_session)
 
 
 def _load_session_state(team: "Team", session: TeamSession, session_state: Dict[str, Any]) -> Dict[str, Any]:
