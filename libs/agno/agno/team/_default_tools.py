@@ -462,6 +462,7 @@ def _get_delegate_task_function(
     from agno.team._run import _record_opted_out_media, _update_team_media
     from agno.team._tools import (
         _determine_team_member_interactions,
+        _filter_team_history,
         _find_member_by_id,
         _get_history_for_member_agent,
         _propagate_member_pause,
@@ -518,6 +519,7 @@ def _get_delegate_task_function(
             team_history_str = session.get_team_history_context(
                 team_id=member_team_id, num_runs=team.num_team_history_runs
             )
+            team_history_str = _filter_team_history(team, team_history_str)
 
         # 6. Create the member agent task or use the input directly
         if team.determine_input_for_members is False:
