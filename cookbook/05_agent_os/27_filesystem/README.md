@@ -134,7 +134,8 @@ backend reads.
 
 A filesystem table created by an earlier release is refused with
 `SchemaOutdatedError` until it is upgraded: the change to the table's key is a
-deliberate step. Run `libs/agno/migrations/migrate_filesystem.py` once, or call
+deliberate step. Run `libs/agno/migrations/migrate_filesystem_postgres.py` or
+`migrate_filesystem_sqlite.py` once, or call
 `DbFileSystem(db=db).upgrade_schema()`. Existing rows keep their namespace and land
 in the shared partition, so a custom `users/{user_id}/...` template still finds
 its files.
