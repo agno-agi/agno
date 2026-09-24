@@ -195,13 +195,22 @@ def set_compression_manager(agent: Agent) -> None:
 def set_compaction(agent: Agent) -> None:
     """Resolve ``agent.compaction`` into the Compaction the run uses.
 
-    ``True`` builds one with the defaults. The model defaults to the agent's,
-    so the cheapest correct configuration is a bare ``compaction=True``.
+    ``True`` folds only when the provider rejects a request as too long. A proactive threshold
+    is a guess about a number nobody can look up - no provider exposes its context window, and
+    the same model id has different limits across deployments - so 150k is wrong for a 32k
+    model and pointless for a 1M one. The rejection is the one signal that is always right, at
+    the cost of a single failed request before the first fold.
+
+    Pass a ``Compaction`` object to opt into the proactive threshold, which defaults to 150k
+    there because someone configuring it has a size in mind.
+
+    The model defaults to the agent's either way, so a bare ``compaction=True`` is still the
+    cheapest correct configuration.
     """
     from agno.compaction.manager import Compaction
 
     if agent.compaction is True:
-        agent.compaction = Compaction()
+        agent.compaction = Compaction(compact_at_tokens=None, on_context_overflow=True)
     elif agent.compaction is False:
         agent.compaction = None
 

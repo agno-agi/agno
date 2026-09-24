@@ -2,17 +2,22 @@
 Compaction
 =============================
 
-Keeps a long session inside the context window. Once the conversation crosses a
-threshold, the older messages are replaced by a generated summary and the recent
-turns are kept verbatim.
+Keeps a long session inside the context window: older messages are replaced by a
+generated summary and the recent turns are kept verbatim. Only the messages sent
+to the model are shortened - the session still stores every message, which the run
+at the bottom demonstrates.
 
-`compaction=True` is the whole setup. Note that only the messages sent to the
-model are shortened - the session still stores every message, which the run at
-the bottom demonstrates.
+`compaction=True` is the whole setup. It folds when the provider rejects a request
+as too long, and not before. A proactive threshold would be a guess about a number
+nobody can look up - no provider exposes its context window, and the same model id
+differs across deployments - so the rejection is the one signal that is always right.
 
-Compaction triggers automatically at `compact_at_tokens` (150k by default), which a short
-demo never reaches. So this example calls `agent.compact()` directly - the same fold the
-automatic path performs, at a moment of your choosing.
+Pass a `Compaction` object to opt into a proactive threshold instead:
+
+    compaction=Compaction(compact_at_tokens=100_000)
+
+Either way `agent.compact()` folds on demand, which is what this example uses: a
+short demo reaches neither the provider's limit nor a threshold.
 """
 
 from agno.agent import Agent
@@ -34,7 +39,7 @@ agent = Agent(
     db=db,
     session_id="compaction_demo",
     add_history_to_context=True,
-    # `compaction=True` would use the defaults. keep_last_runs is lowered so the fold
+    # `compaction=True` would fold only on a provider rejection. keep_last_runs is lowered so the fold
     # below has history in front of the tail to work with at demo scale.
     compaction=Compaction(keep_last_runs=2),
 )

@@ -5,6 +5,7 @@ Examples for instructions, system messages, introduction messages, and context s
 ## Files
 - `compaction/compaction.py` - Keep a long session in the context window with `compaction=True`.
 - `compaction/compaction_thresholds.py` - Tune when compaction fires and how much it keeps.
+- `compaction/compaction_context_overflow.py` - Recover from a provider rejecting a request as too long, which is what `compaction=True` waits for.
 - `compaction/compaction_tail_budget.py` - Bound the kept tail by size with `keep_last_tokens`, for agents whose turns vary in length.
 - `compaction/compaction_searchable_archive.py` - Let the agent search history that was compacted away.
 - `compaction/compaction_events.py` - Stream `CompactionStarted` / `CompactionCompleted` and show what was reclaimed.

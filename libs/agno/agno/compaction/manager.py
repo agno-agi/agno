@@ -121,7 +121,12 @@ class Compaction:
     elide_tool_results: bool = True
 
     # Also compact reactively when the provider rejects a request as too long.
-    on_context_overflow: bool = True
+    #
+    # Off by default on a configured Compaction, because a proactive threshold is already
+    # in play there and reaching the provider's limit means that threshold was wrong - a
+    # situation worth surfacing rather than absorbing. Turn it on to fold and retry instead
+    # of failing, which is what a bare ``compaction=True`` does, having no threshold to rely on.
+    on_context_overflow: bool = False
 
     # Skip a compaction unless the folded span is at least this many times the kept tail.
     #

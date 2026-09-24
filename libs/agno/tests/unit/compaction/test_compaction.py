@@ -541,6 +541,37 @@ def test_an_explicit_default_value_still_collides():
     assert Compaction(keep_last_tokens=20_000).keep_last_runs is None
 
 
+def test_compaction_true_is_reactive_only():
+    """A proactive threshold is a guess about a number nobody can look up.
+
+    No provider exposes its context window, and the same model id differs across deployments,
+    so 150k is wrong for a 32k model and pointless for a 1M one. compaction=True waits for the
+    rejection, which is always right - at the cost of one failed request before the first fold.
+    Passing a Compaction object opts into the threshold, because someone configuring it has a
+    size in mind.
+    """
+    from agno.agent import Agent, _init
+
+    bare = Agent(compaction=True)
+    _init.set_compaction(bare)
+    assert bare.compaction.compact_at_tokens is None
+    assert bare.compaction.on_context_overflow is True
+
+    configured = Agent(compaction=Compaction())
+    _init.set_compaction(configured)
+    assert configured.compaction.compact_at_tokens == 150_000
+
+
+def test_compaction_true_never_fires_the_proactive_trigger():
+    """The threshold is off, not merely large - a 200k context still does not trip it."""
+    from agno.agent import Agent, _init
+
+    agent = Agent(compaction=True)
+    _init.set_compaction(agent)
+
+    assert agent.compaction.should_compact(_transcript(), context_tokens=200_000, model=None) is False
+
+
 def test_the_archive_is_searchable_by_default():
     """An archive the agent cannot reach only helps a developer reading a row.
 
@@ -557,6 +588,160 @@ def test_the_archive_is_searchable_by_default():
 def test_keep_last_tokens_rejects_non_positive_values():
     with pytest.raises(ValueError, match="keep_last_tokens"):
         Compaction(keep_last_tokens=0)
+
+
+def test_context_overflow_folds_and_asks_for_a_retry():
+    """The provider's rejection is the only authoritative signal that a threshold was wrong.
+
+    No provider exposes its context window, and the same model id differs across deployments,
+    so compact_at_tokens is always a guess. This folds against the messages actually sent -
+    reaching the current turn and anything a tool loop appended, which the run-start pass
+    cannot - and reports whether the payload is worth resending.
+    """
+    from agno.agent import Agent
+    from agno.agent._messages import _recompact_after_overflow
+    from agno.compaction._tokens import estimate_tokens
+    from agno.session.agent import AgentSession
+
+    class _RunMessages:
+        def __init__(self, messages):
+            self.messages = messages
+
+    messages = [Message(role="system", content="sys", id="s0")]
+    messages += [
+        m
+        for i in range(30)
+        for m in (
+            Message(role="user", content=f"q{i} " * 30, id=f"u{i}"),
+            Message(role="assistant", content=f"a{i} " * 800, id=f"a{i}"),
+        )
+    ]
+    run_messages = _RunMessages(messages)
+    before = estimate_tokens(messages)
+    agent = Agent(
+        num_history_runs=50,
+        compaction=Compaction(keep_last_runs=5, archive=False, model=_StubModel(), on_context_overflow=True),
+    )
+
+    assert _recompact_after_overflow(agent, AgentSession(session_id="s1", runs=[]), run_messages, None) is True
+    assert estimate_tokens(run_messages.messages) < before
+
+
+def test_overflow_retry_sends_the_compacted_payload():
+    """The retry has to reach the provider, not just the helper's own variable.
+
+    The model call already holds the message list object in its kwargs, so rebinding an
+    attribute leaves the retry sending exactly the payload that was just rejected - two
+    identical failures instead of a recovery.
+    """
+    from agno.compaction._tokens import estimate_tokens
+    from agno.exceptions import ContextWindowExceededError
+    from agno.models.fallback import call_model_with_fallback
+    from agno.models.response import ModelResponse
+
+    received = []
+
+    class _Model:
+        id = "m"
+
+        def __init__(self):
+            self.calls = 0
+
+        def response(self, **kwargs):
+            self.calls += 1
+            received.append(estimate_tokens(kwargs["messages"]))
+            if self.calls == 1:
+                raise ContextWindowExceededError("too long")
+            return ModelResponse(content="ok")
+
+    messages = [Message(role="user", content="q " * 2000)]
+
+    def _fold() -> bool:
+        messages[:] = [Message(role="user", content="tiny")]
+        return True
+
+    call_model_with_fallback(_Model(), None, on_context_overflow=_fold, messages=messages)
+
+    assert len(received) == 2
+    assert received[1] < received[0]
+
+
+def test_streaming_also_recovers_from_an_overflow():
+    """print_response streams, so a streaming-only gap means most users never recover.
+
+    The rejection for length arrives before the first chunk, so nothing has been yielded yet
+    and the retry can safely start the stream from scratch.
+    """
+    from agno.compaction._tokens import estimate_tokens
+    from agno.exceptions import ContextWindowExceededError
+    from agno.models.fallback import call_model_stream_with_fallback
+    from agno.models.response import ModelResponse
+
+    received = []
+
+    class _Model:
+        id = "m"
+
+        def __init__(self):
+            self.calls = 0
+
+        def response_stream(self, **kwargs):
+            self.calls += 1
+            received.append(estimate_tokens(kwargs["messages"]))
+            if self.calls == 1:
+                raise ContextWindowExceededError("prompt is too long: 326371 tokens > 200000 maximum")
+            yield ModelResponse(content="recovered")
+
+    messages = [Message(role="user", content="q " * 2000)]
+
+    def _fold() -> bool:
+        messages[:] = [Message(role="user", content="tiny")]
+        return True
+
+    events = list(call_model_stream_with_fallback(_Model(), None, on_context_overflow=_fold, messages=messages))
+
+    assert len(received) == 2
+    assert received[1] < received[0]
+    assert [e.content for e in events] == ["recovered"]
+
+
+def test_context_overflow_does_not_retry_what_it_cannot_shrink(caplog):
+    """Retrying an identical payload just fails twice."""
+    from agno.agent import Agent
+    from agno.agent._messages import _recompact_after_overflow
+    from agno.session.agent import AgentSession
+
+    class _RunMessages:
+        def __init__(self, messages):
+            self.messages = messages
+
+    run_messages = _RunMessages(
+        [
+            Message(role="system", content="sys", id="s0"),
+            Message(role="user", content="analyse", id="u0"),
+            Message(role="assistant", content="f " * 60000, id="a0"),
+        ]
+    )
+    agent = Agent(compaction=Compaction(keep_last_runs=1, archive=False, model=_StubModel(), on_context_overflow=True))
+
+    with caplog.at_level(logging.WARNING, logger="agno"):
+        assert _recompact_after_overflow(agent, AgentSession(session_id="s1", runs=[]), run_messages, None) is False
+    assert any("no safe cut left" in r.message for r in caplog.records)
+
+
+def test_context_overflow_is_a_no_op_without_compaction():
+    """An agent with no compaction configured must not be changed by the overflow path."""
+    from agno.agent import Agent
+    from agno.agent._messages import _recompact_after_overflow
+    from agno.session.agent import AgentSession
+
+    class _RunMessages:
+        def __init__(self, messages):
+            self.messages = messages
+
+    run_messages = _RunMessages([Message(role="user", content="hi", id="u0")])
+
+    assert _recompact_after_overflow(Agent(), AgentSession(session_id="s1", runs=[]), run_messages, None) is False
 
 
 # --- boundary safety -----------------------------------------------------

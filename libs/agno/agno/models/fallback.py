@@ -73,6 +73,19 @@ class FallbackConfig:
 # ---------------------------------------------------------------------------
 
 
+def _is_context_overflow(error: Exception) -> bool:
+    """Whether this error means the request was too long, after classification.
+
+    Providers report it inconsistently, so the already-classified type is checked first and a
+    generic ModelProviderError is classified as a fallback.
+    """
+    if isinstance(error, ContextWindowExceededError):
+        return True
+    if isinstance(error, ModelProviderError):
+        return isinstance(ModelProviderError.classify(error), ContextWindowExceededError)
+    return False
+
+
 def get_fallback_models(fallback_config: Optional[FallbackConfig], error: Exception) -> Optional[List[Model]]:
     """Return the appropriate fallback list for the given error.
 
@@ -158,6 +171,7 @@ def _sync_appended_messages(
 def call_model_with_fallback(
     model: Model,
     fallback_config: Optional[FallbackConfig],
+    on_context_overflow: Optional[Callable[[], bool]] = None,
     **kwargs: Any,
 ) -> ModelResponse:
     """Call the primary model, falling back on failure.
@@ -167,6 +181,14 @@ def call_model_with_fallback(
     try:
         return model.response(**kwargs)
     except ModelProviderError as primary_error:
+        # Shrinking the request and retrying the same model is cheaper than switching to a
+        # larger one, and is the only response that works when no larger model is configured.
+        # The fallback chain still runs if the retry fails, so the two compose.
+        if on_context_overflow is not None and _is_context_overflow(primary_error) and on_context_overflow():
+            try:
+                return model.response(**kwargs)
+            except ModelProviderError as retry_error:
+                primary_error = retry_error
         fallbacks = get_fallback_models(fallback_config, primary_error)
         if not fallbacks:
             raise
@@ -185,12 +207,18 @@ def call_model_with_fallback(
 async def acall_model_with_fallback(
     model: Model,
     fallback_config: Optional[FallbackConfig],
+    on_context_overflow: Optional[Callable[[], bool]] = None,
     **kwargs: Any,
 ) -> ModelResponse:
     """Async variant of call_model_with_fallback."""
     try:
         return await model.aresponse(**kwargs)
     except ModelProviderError as primary_error:
+        if on_context_overflow is not None and _is_context_overflow(primary_error) and on_context_overflow():
+            try:
+                return await model.aresponse(**kwargs)
+            except ModelProviderError as retry_error:
+                primary_error = retry_error
         fallbacks = get_fallback_models(fallback_config, primary_error)
         if not fallbacks:
             raise
@@ -214,12 +242,24 @@ async def acall_model_with_fallback(
 def call_model_stream_with_fallback(
     model: Model,
     fallback_config: Optional[FallbackConfig],
+    on_context_overflow: Optional[Callable[[], bool]] = None,
     **kwargs: Any,
 ) -> Iterator[StreamEvent]:
-    """Call the primary model stream, falling back on failure."""
+    """Call the primary model stream, falling back on failure.
+
+    ``on_context_overflow`` shrinks the payload and retries the same model before any fallback,
+    exactly as the non-streaming path does. A rejection for length arrives before the first
+    chunk, so nothing has been yielded yet and the retry is safe to start from scratch.
+    """
     try:
         yield from model.response_stream(**kwargs)
     except ModelProviderError as primary_error:
+        if on_context_overflow is not None and _is_context_overflow(primary_error) and on_context_overflow():
+            try:
+                yield from model.response_stream(**kwargs)
+                return
+            except ModelProviderError as retry_error:
+                primary_error = retry_error
         fallbacks = get_fallback_models(fallback_config, primary_error)
         if not fallbacks:
             raise
@@ -238,6 +278,7 @@ def call_model_stream_with_fallback(
 async def acall_model_stream_with_fallback(
     model: Model,
     fallback_config: Optional[FallbackConfig],
+    on_context_overflow: Optional[Callable[[], bool]] = None,
     **kwargs: Any,
 ) -> AsyncIterator[StreamEvent]:
     """Async variant of call_model_stream_with_fallback."""
@@ -245,6 +286,13 @@ async def acall_model_stream_with_fallback(
         async for event in model.aresponse_stream(**kwargs):
             yield event
     except ModelProviderError as primary_error:
+        if on_context_overflow is not None and _is_context_overflow(primary_error) and on_context_overflow():
+            try:
+                async for event in model.aresponse_stream(**kwargs):
+                    yield event
+                return
+            except ModelProviderError as retry_error:
+                primary_error = retry_error
         fallbacks = get_fallback_models(fallback_config, primary_error)
         if not fallbacks:
             raise

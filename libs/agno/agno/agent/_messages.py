@@ -295,6 +295,106 @@ async def acompact_session(agent: "Agent", session_id: Optional[str] = None, use
     return await acompact_now(agent, session, _history_for_compaction(agent, session))
 
 
+def _recompact_after_overflow(
+    agent: "Agent",
+    session: AgentSession,
+    run_messages: Any,
+    run_response: Optional[RunOutput] = None,
+) -> bool:
+    """Fold harder after the provider rejected a request as too long. True if the payload shrank.
+
+    Nobody can know a model's context window ahead of time - no provider exposes it, and the
+    same model id has different limits across deployments - so a threshold set in advance is
+    always a guess. The rejection is the one authoritative signal that the guess was wrong, and
+    this is the only path that can act on it.
+
+    Folds against the messages actually sent, so it reaches spans the run-start pass could not:
+    the current turn's input, and anything a tool loop appended since. The pair-safe boundary
+    still applies - an unsendable payload is no improvement on a too-long one - but the fold
+    ratio does not: the request has already failed, so a fold that merely helps beats the run
+    dying.
+    """
+    from dataclasses import replace
+
+    from agno.compaction._cut import leading_system_count
+    from agno.compaction._tokens import estimate_tokens
+
+    compaction = getattr(agent, "compaction", None)
+    if compaction is None or not getattr(compaction, "on_context_overflow", False):
+        return False
+
+    messages = getattr(run_messages, "messages", None)
+    if not messages:
+        return False
+
+    lead = leading_system_count(messages)
+    # Keep the configured tail when it works. Only when folding in front of it reclaims too
+    # little to be worth retrying - an oversized turn sitting INSIDE the tail, which no cut in
+    # front of it can reach - is the tail given up, one run at a time. The request has already
+    # been rejected, so a smaller tail beats no answer, but the setting is still the default.
+    folder, chosen_keep = None, compaction.keep_last_runs
+    for keep in range(compaction.keep_last_runs or 1, 0, -1):
+        candidate = replace(compaction, keep_last_runs=keep, stats=compaction.stats)
+        boundary = candidate.boundary_for(messages, min_index=lead)
+        if boundary is None or boundary <= lead:
+            continue
+        folder, chosen_keep = candidate, keep
+        # Stop as soon as the fold is large enough to be worth a summarizer call, rather than
+        # shrinking the tail further than the rejection requires.
+        if estimate_tokens(messages[lead:boundary]) >= estimate_tokens(messages[boundary:]):
+            break
+    if folder is not None and chosen_keep != compaction.keep_last_runs:
+        log_info(
+            f"Compaction: keeping {chosen_keep} run(s) instead of {compaction.keep_last_runs} - "
+            f"the request was rejected as too long, and the configured tail leaves too little "
+            f"in front of it to fold."
+        )
+    if folder is None:
+        log_warning(
+            "Compaction: the request exceeded the model's context window and there is no safe "
+            "cut left to make - the most recent turn alone is too large to send. Shorten what "
+            "it produces, or use a model with a larger context window."
+        )
+        return False
+
+    before = estimate_tokens(messages)
+    # min_fold_ratio is the run-start question - is this fold worth paying for. Here the request
+    # has already been rejected, so any fold that shrinks it is worth making.
+    record = replace(folder, min_fold_ratio=0, stats=compaction.stats).compact(
+        messages,
+        session_id=session.session_id,
+        db=agent.db,
+        previous=_stored_compaction(agent, session),
+        run_id=run_response.run_id if run_response is not None else None,
+        tokens_before=before,
+    )
+    if record is None:
+        return False
+
+    compacted = compaction.apply_record(messages, record)
+    after = estimate_tokens(compacted)
+    if after >= before:
+        # A summary has a floor cost, so a fold that reclaims nothing leaves the request no
+        # more sendable than it was. Retrying an identical payload just fails twice.
+        log_warning(
+            f"Compaction: folding after a context-window rejection did not shrink the request "
+            f"({before} -> {after} tokens), so it is not worth retrying."
+        )
+        return False
+
+    # Mutate the list in place rather than rebinding it. The caller has already passed this
+    # exact list object into the model call's kwargs, so a new list would leave the retry
+    # sending the payload that was just rejected.
+    messages[:] = compacted
+    if run_response is not None:
+        run_response.compaction = record
+    log_info(
+        f"Compaction: request exceeded the context window, folded {record.messages_compacted} "
+        f"messages ({before} -> {after} tokens) and retrying once."
+    )
+    return True
+
+
 def apply_compaction(
     agent: "Agent",
     session: AgentSession,
