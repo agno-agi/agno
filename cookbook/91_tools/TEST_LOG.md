@@ -1,5 +1,13 @@
 # Test Log
 
+### publora_tools.py (PubloraTools)
+
+**Status:** PASS
+
+**Description:** `PubloraTools` against the live Publora API: list the connected social accounts, create a post, read it back, list it, edit it and delete it. The example in the cookbook stops at a draft on purpose, so running it publishes nothing.
+
+**Result:** 13 unit tests pass (`pytest libs/agno/tests/unit/tools/test_publora.py`). Live run on a test account listed 9 connected accounts, created a draft (`6aa7a3bc...`), read it back as `status: draft`, found it in `list_posts`, edited its text and deleted it; the draft was removed afterwards. A request for a post id that does not exist returns the API's 404 as `{"error": "HTTP error: 404 ..."}` rather than raising. Note: a post created without `scheduled_time` is a draft and never goes out, which is what makes the example safe to run.
+
 ### atomic_mail_tools.py (AtomicMailTools + workflow)
 
 **Status:** PASS
