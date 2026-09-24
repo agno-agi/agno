@@ -955,8 +955,15 @@ class AgentOS:
 
         from agno.agent import _init as agent_init
 
+        # Same rule the auth middleware applies: the top-level flag, or the legacy
+        # AuthorizationConfig(user_isolation=True) on an authorized OS.
         user_isolation = bool(
-            self.authorization and self.authorization_config is not None and self.authorization_config.user_isolation
+            self.user_isolation
+            or (
+                self.authorization
+                and self.authorization_config is not None
+                and self.authorization_config.user_isolation
+            )
         )
         for agent in self._agents:
             # Set the default db to agents without their own

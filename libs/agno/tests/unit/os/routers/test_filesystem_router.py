@@ -746,3 +746,20 @@ def test_a_stored_agent_with_unresolvable_tools_does_not_break_browsing(db, clie
     assert [entry["path"] for entry in listed.json()["entries"]] == ["a.md"]
     by_namespace = client.get("/filesystem/entries", params={"namespace": "notes"}, headers=_headers("alice"))
     assert by_namespace.status_code == 200
+
+
+@pytest.mark.parametrize("enabled", [True, False])
+def test_top_level_user_isolation_partitions_agent_filesystems(db, enabled):
+    from agno.os import Authorization
+
+    agent = Agent(id="notes", db=db, filesystem=True)
+    AgentOS(
+        id=OS_ID,
+        agents=[agent],
+        db=db,
+        authorization=Authorization(verification_keys=[JWT_SECRET], algorithm="HS256"),
+        user_isolation=enabled,
+    ).get_app()
+
+    assert agent.filesystem_instance is not None
+    assert agent.filesystem_instance.user_scoped is enabled
