@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import Any, Dict, Literal, Optional, Union, get_args, get_origin
+from typing import Any, Dict, Literal, Optional, Union, get_args, get_origin, get_type_hints
 
 from pydantic import BaseModel
 
@@ -153,8 +153,20 @@ def get_json_schema_for_arg(type_hint: Any) -> Optional[Dict[str, Any]]:
         properties = {}
         required = []
 
+        resolved_field_types = None
         for field_name, field in type_hint.__dataclass_fields__.items():
             field_type = field.type
+
+            if isinstance(field_type, str):
+                if resolved_field_types is None:
+                    try:
+                        resolved_field_types = get_type_hints(type_hint)
+                    except Exception:
+                        logger.warning(f"Could not resolve type hints for {type_hint}")
+                        resolved_field_types = {}
+
+                field_type = resolved_field_types.get(field_name, field_type)
+
             field_schema = get_json_schema_for_arg(field_type)
 
             if (
@@ -199,6 +211,7 @@ def get_json_schema(
         "type": "object",
         "properties": {},
     }
+
     if strict:
         json_schema["additionalProperties"] = False
 

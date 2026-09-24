@@ -416,6 +416,33 @@ def test_get_json_schema_with_nested_dataclasses():
     assert "additionalProperties" in preferences
 
 
+def test_get_json_schema_with_future_annotations_dataclass():
+    """Regression test for #9899: dataclass fields should not be dropped when using postponed annotations."""
+    code = """
+from __future__ import annotations
+from dataclasses import dataclass
+
+@dataclass
+class MyParams:
+    city: str
+    count: int
+"""
+    namespace = {}
+    exec(code, namespace)
+    MyParams = namespace["MyParams"]
+
+    schema = get_json_schema({"params": MyParams})
+
+    assert schema["type"] == "object"
+    assert "params" in schema["properties"]
+
+    params_schema = schema["properties"]["params"]
+    assert params_schema["type"] == "object"
+    assert params_schema["properties"]["city"]["type"] == "string"
+    assert params_schema["properties"]["count"]["type"] == "integer"
+    assert params_schema["required"] == ["city", "count"]
+
+
 def test_get_json_schema_with_mixed_nested_structures():
     @dataclass
     class MixedStructure:
