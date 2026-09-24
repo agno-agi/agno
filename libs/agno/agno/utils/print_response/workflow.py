@@ -20,6 +20,7 @@ from agno.run.workflow import (
     RouterExecutionCompletedEvent,
     RouterExecutionStartedEvent,
     StepCompletedEvent,
+    StepErrorEvent,
     StepOutputEvent,
     StepsExecutionCompletedEvent,
     StepsExecutionStartedEvent,
@@ -373,6 +374,22 @@ def print_response_stream(
                     step_display = get_step_display_number(current_step_index, current_step_name)
                     status.update(f"Starting {step_display}: {current_step_name}...")
                     live_log.update(status)
+
+                elif isinstance(response, StepErrorEvent):
+                    step_name = response.step_name or current_step_name
+                    step_index = response.step_index if response.step_index is not None else current_step_index
+                    step_display = get_step_display_number(step_index, step_name)
+                    status.update(f"Failed {step_display}: {step_name}")
+                    live_log.update("", refresh=True)
+                    if show_step_details:
+                        console.print(  # type: ignore
+                            create_panel(
+                                content=response.error or "Step execution failed",
+                                title=f"{step_display}: {step_name} (Failed)",
+                                border_style="red",
+                            )
+                        )
+                    step_started_printed = True
 
                 elif isinstance(response, StepCompletedEvent):
                     step_name = response.step_name or "Unknown"
@@ -820,6 +837,7 @@ def print_response_stream(
 
             traceback.print_exc()
             response_timer.stop()
+            live_log.update("", refresh=True)
             error_panel = create_panel(
                 content=f"Workflow execution failed: {str(e)}", title="Execution Error", border_style="red"
             )
@@ -1221,6 +1239,22 @@ async def aprint_response_stream(
                     step_display = get_step_display_number(current_step_index, current_step_name)
                     status.update(f"Starting {step_display}: {current_step_name}...")
                     live_log.update(status)
+
+                elif isinstance(response, StepErrorEvent):
+                    step_name = response.step_name or current_step_name
+                    step_index = response.step_index if response.step_index is not None else current_step_index
+                    step_display = get_step_display_number(step_index, step_name)
+                    status.update(f"Failed {step_display}: {step_name}")
+                    live_log.update("", refresh=True)
+                    if show_step_details:
+                        console.print(  # type: ignore
+                            create_panel(
+                                content=response.error or "Step execution failed",
+                                title=f"{step_display}: {step_name} (Failed)",
+                                border_style="red",
+                            )
+                        )
+                    step_started_printed = True
 
                 elif isinstance(response, StepCompletedEvent):
                     step_name = response.step_name or "Unknown"
@@ -1667,6 +1701,7 @@ async def aprint_response_stream(
 
             traceback.print_exc()
             response_timer.stop()
+            live_log.update("", refresh=True)
             error_panel = create_panel(
                 content=f"Workflow execution failed: {str(e)}", title="Execution Error", border_style="red"
             )
