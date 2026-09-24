@@ -6,19 +6,32 @@ Prerequisites:
     2. Get a Salesforce org:
        - Sign up free at https://developer.salesforce.com/signup
        - Verify your email and set a password
-    3. Get your security token:
-       - Log into Salesforce > click avatar (top right) > Settings
-       - Left sidebar: "Reset My Security Token" > click "Reset Security Token"
-       - Token will be emailed to you
-    4. Set environment variables:
-       ```
-       export SALESFORCE_USERNAME=you@example.com
-       export SALESFORCE_PASSWORD=your-password
-       export SALESFORCE_SECURITY_TOKEN=token-from-email
-       export SALESFORCE_DOMAIN=login
-       ```
+    3. Authenticate (pick one option):
 
-    If you get "SOAP API login() is disabled", use session-based auth instead:
+    **Option A: Username / Password**
+       - Get your security token:
+         Log into Salesforce > click avatar (top right) > Settings
+         > "Reset My Security Token" > token will be emailed to you
+       - Set environment variables:
+         ```
+         export SALESFORCE_USERNAME=you@example.com
+         export SALESFORCE_PASSWORD=your-password
+         export SALESFORCE_SECURITY_TOKEN=token-from-email
+         export SALESFORCE_DOMAIN=login
+         ```
+
+    **Option B: Connected App (OAuth 2.0 Client Credentials)**
+       - Create a Connected App in Salesforce Setup > App Manager
+       - Enable OAuth Settings and Client Credentials Flow
+       - Set environment variables:
+         ```
+         export SALESFORCE_CONSUMER_KEY=your-consumer-key
+         export SALESFORCE_CONSUMER_SECRET=your-consumer-secret
+         export SALESFORCE_DOMAIN=your-org.my  # optional, for custom domains
+         ```
+
+    **Option C: Session / Instance URL**
+       Use when SOAP API login is disabled (default in newer Developer Edition orgs):
        ```python
        SalesforceTools(
            instance_url="https://your-org.my.salesforce.com",
