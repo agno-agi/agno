@@ -280,6 +280,28 @@ def test_get_json_schema_dataclass_optional_field_without_type():
     assert "cfg" in schema["properties"]
 
 
+def test_get_json_schema_dataclass_string_annotations():
+    """Dataclass fields whose annotations are strings (as produced by
+    `from __future__ import annotations`, or by quoting) must be resolved to
+    their real types instead of crashing and dropping the parameter."""
+
+    @dataclass
+    class StringAnnotatedDataclass:
+        count: "int"
+        name: "str"
+        tags: "Optional[List[str]]" = None
+
+    arg_schema = get_json_schema_for_arg(StringAnnotatedDataclass)
+    assert arg_schema["properties"]["count"]["type"] == "integer"
+    assert arg_schema["properties"]["name"]["type"] == "string"
+    assert arg_schema["properties"]["tags"]["type"] == "array"
+    assert arg_schema["required"] == ["count", "name"]
+
+    # And the parameter must survive instead of being silently dropped
+    schema = get_json_schema({"cfg": StringAnnotatedDataclass})
+    assert "cfg" in schema["properties"]
+
+
 def test_get_json_schema_strict():
     type_hints = {"name": str, "age": int}
     schema = get_json_schema(type_hints, strict=True)
