@@ -205,9 +205,6 @@ def test_csv_via_url():
     )
 
     knowledge.insert(
-        url="https://agno-public.s3.amazonaws.com/demo_data/IMDB-Movie-Data.csv",
-    )
-    knowledge.insert(
         url="https://agno-public.s3.amazonaws.com/csvs/employees.csv",
     )
 
@@ -224,11 +221,11 @@ def test_csv_via_url():
             "You can use the search_knowledge tool to search the knowledge base of CSVs for information.",
         ],
     )
-    response = agent.run("Give me top rated movies", markdown=True)
+    response = agent.run("Which employees work in the Engineering department?", markdown=True)
 
     # Check that we got relevant content
     assert response.content is not None
-    assert any(term in response.content.lower() for term in ["movie", "rating", "imdb", "title"])
+    assert any(term in response.content.lower() for term in ["engineering", "engineer", "employee"])
 
     # Clean up
     vector_db.drop()
@@ -245,7 +242,6 @@ async def test_csv_via_url_async():
     # Set chunk explicitly to False
     await knowledge.ainsert_many(
         urls=[
-            "https://agno-public.s3.amazonaws.com/demo_data/IMDB-Movie-Data.csv",
             "https://agno-public.s3.amazonaws.com/csvs/employees.csv",
         ],
     )
