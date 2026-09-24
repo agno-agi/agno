@@ -268,7 +268,13 @@ class GithubTools(Toolkit):
         log_debug(f"Counting pull requests for repository: {repo_name} with state: {state}")
         try:
             repo = self.g.get_repo(repo_name)
-            pulls = repo.get_pulls(state=state, base=base, head=head)
+            # PyGithub requires omitted filters rather than explicit None values.
+            params = {"state": state}
+            if base is not None:
+                params["base"] = base
+            if head is not None:
+                params["head"] = head
+            pulls = repo.get_pulls(**params)
 
             # If author is specified, filter the results
             if author:
