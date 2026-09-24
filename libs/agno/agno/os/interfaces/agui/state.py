@@ -34,6 +34,12 @@ class StreamState:
     reasoning_message_id: Optional[str] = None
     reasoning_step_count: int = 0
 
+    # Team member activity tracking (per-member AG-UI Activity snapshots).
+    # Keyed by member run_id (falls back to agent_id). Each member gets its own
+    # AG-UI message_id so the frontend can render a stable, addressable Activity.
+    member_message_ids: Dict[str, str] = field(default_factory=dict)
+    member_states: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+
     # State delta tracking
     _last_snapshot: Optional[Dict[str, Any]] = field(default=None, repr=False)
 
@@ -88,6 +94,18 @@ class StreamState:
     def end_reasoning(self) -> None:
         self.reasoning_message_id = None
         self.reasoning_step_count = 0
+
+    def get_or_create_member(self, key: str) -> Tuple[str, Dict[str, Any]]:
+        """Return the AG-UI message_id and mutable snapshot content for a team member.
+
+        Creates the entry on first use. The returned content dict is shared by
+        reference so handlers can mutate it (append text, set status) and then
+        re-emit it as an ACTIVITY_SNAPSHOT.
+        """
+        if key not in self.member_message_ids:
+            self.member_message_ids[key] = str(uuid.uuid4())
+            self.member_states[key] = {"text": "", "status": "running", "currentTool": None}
+        return self.member_message_ids[key], self.member_states[key]
 
     def set_state_snapshot(self, state: Dict[str, Any]) -> None:
         self._last_snapshot = copy.deepcopy(state)
