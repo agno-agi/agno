@@ -23,7 +23,7 @@ def _token(user_id: str, scopes: list[str] | None = None) -> str:
         {
             "sub": user_id,
             "aud": OS_ID,
-            "scopes": scopes if scopes is not None else ["agents:read"],
+            "scopes": scopes if scopes is not None else ["agents:read", "filesystem:read"],
             "exp": datetime.now(UTC) + timedelta(hours=1),
             "iat": datetime.now(UTC),
         },
@@ -166,7 +166,7 @@ def test_global_files_merges_agents_sharing_the_same_filesystem(db, monkeypatch,
     assert config.status_code == 200
     assert config.json()["filesystem"]["namespaces"][0]["agents"] == [{"id": "one"}, {"id": "two"}]
 
-    restricted = client.get("/filesystem/files", headers=_headers("alice", ["agents:one:read"]))
+    restricted = client.get("/filesystem/files", headers=_headers("alice", ["agents:one:read", "filesystem:read"]))
     assert restricted.status_code == 200
     assert restricted.json()["entries"][0]["agent_ids"] == ["one"]
 
@@ -193,6 +193,29 @@ def test_global_files_rejects_empty_scopes(db, client_factory):
     response = client.get("/filesystem/files", headers=_headers("alice", []))
 
     assert response.status_code == 403
+
+
+@pytest.mark.parametrize(
+    "path,params",
+    [
+        ("/filesystem/files", {}),
+        ("/filesystem/entries", {"agent_id": "notes"}),
+        ("/filesystem/content", {"agent_id": "notes", "path": "a.md"}),
+        ("/filesystem/search", {"agent_id": "notes", "query": "x"}),
+    ],
+)
+def test_filesystem_routes_require_filesystem_read(db, client_factory, path, params):
+    agent = Agent(id="notes", db=db, filesystem=True)
+    client = client_factory(agent)
+    assert agent.filesystem_instance is not None
+    agent.filesystem_instance.write("a.md", "x\n")
+
+    # Reading an agent is not reading its files.
+    assert client.get(path, params=params, headers=_headers("alice", ["agents:read"])).status_code == 403
+    # The files scope still needs access to the agent that holds them.
+    assert client.get(path, params=params, headers=_headers("alice", ["filesystem:read"])).status_code == 403
+    both = client.get(path, params=params, headers=_headers("alice", ["agents:notes:read", "filesystem:read"]))
+    assert both.status_code == 200
 
 
 @pytest.mark.parametrize("namespace", [None, "My Namespace", "Tenants/{user_id}/{agent_id}"])
@@ -229,7 +252,7 @@ def test_global_files_only_lists_agents_visible_to_the_caller(db, client_factory
 
     response = client.get(
         "/filesystem/files",
-        headers=_headers("alice", ["agents:notes:read"]),
+        headers=_headers("alice", ["agents:notes:read", "filesystem:read"]),
     )
 
     assert response.status_code == 200
@@ -487,7 +510,7 @@ def test_namespace_alone_addresses_a_filesystem_within_caller_access(db, client_
     assert client.get("/filesystem/content", params={"namespace": "private", "path": "secret.md"}).status_code == 401
 
     # A caller scoped to one agent cannot reach a namespace only other agents hold.
-    scoped = _headers("alice", ["agents:recorder:read"])
+    scoped = _headers("alice", ["agents:recorder:read", "filesystem:read"])
     allowed = client.get(
         "/filesystem/content", params={"namespace": "research/decisions", "path": "decisions.md"}, headers=scoped
     )
@@ -649,3 +672,62 @@ def test_a_user_may_name_only_their_own_partition(db, client_factory):
     assert other.status_code == 403
     listed = client.get("/filesystem/entries", params={"agent_id": "notes"}, headers=_headers("alice"))
     assert [(e["path"], e["user_id"]) for e in listed.json()["entries"]] == [("a.md", "alice")]
+
+
+@pytest.mark.parametrize(
+    "scopes,expected",
+    [
+        (["agents:read"], 403),
+        (["agents:read", "filesystem:read"], 200),
+    ],
+)
+def test_service_account_tokens_need_filesystem_read(db, client_factory, scopes, expected):
+    import time
+
+    from agno.os.service_accounts import generate_token
+
+    agent = Agent(id="notes", db=db, filesystem=True)
+    client = client_factory(agent, db=db)
+    assert agent.filesystem_instance is not None
+    agent.filesystem_instance.write("a.md", "x\n")
+    token, token_hash, token_prefix = generate_token()
+    now = int(time.time())
+    db.create_service_account(
+        {
+            "id": "sa-files",
+            "name": "files-bot",
+            "user_id": None,
+            "token_hash": token_hash,
+            "token_prefix": token_prefix,
+            "scopes": scopes,
+            "created_at": now,
+            "expires_at": now + 3600,
+            "last_used_at": None,
+            "revoked_at": None,
+            "created_by": None,
+        }
+    )
+
+    response = client.get(
+        "/filesystem/content",
+        params={"agent_id": "notes", "path": "a.md"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == expected
+
+
+def test_filesystem_scope_holds_for_other_methods_and_path_forms(db, client_factory):
+    agent = Agent(id="notes", db=db, filesystem=True)
+    client = client_factory(agent)
+    assert agent.filesystem_instance is not None
+    agent.filesystem_instance.write("a.md", "secret\n")
+    agent_only = _headers("alice", ["agents:read"])
+    params = {"agent_id": "notes", "path": "a.md"}
+
+    for path in ("/filesystem/content", "/filesystem/content/", "/filesystem/./content"):
+        response = client.get(path, params=params, headers=agent_only)
+        assert response.status_code in (403, 404), path
+        assert "secret" not in response.text
+    head = client.head("/filesystem/content", params=params, headers=agent_only)
+    assert head.status_code in (403, 405)
