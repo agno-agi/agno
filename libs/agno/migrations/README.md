@@ -26,10 +26,14 @@ The table is not part of the migration manager, because it belongs to `DbFileSys
 (its own schema, and it can be built from a bare `db_url`). A table created by an
 earlier release is refused with `SchemaOutdatedError` until it is upgraded, so the
 key change is a deliberate step and never runs on its own. Upgrade it once, with the
-application stopped, using the script:
+application stopped, using the script for your database:
 
 ```bash
-python libs/agno/migrations/migrate_filesystem.py
+# PostgreSQL
+python libs/agno/migrations/migrate_filesystem_postgres.py
+
+# SQLite
+python libs/agno/migrations/migrate_filesystem_sqlite.py
 ```
 
 Edit the connection in the script to match the application's, or call it from code:

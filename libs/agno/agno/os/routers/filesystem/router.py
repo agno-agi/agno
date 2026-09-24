@@ -53,6 +53,8 @@ async def _get_agent_filesystems(os: "AgentOS", agent_id: str, request: Request)
         # The browser follows the other current-config AgentOS surfaces: an
         # authorized caller may browse the current draft as well as a published
         # config. Explicit version browsing remains outside this route.
+        # Browsing never runs the agent, so a stored agent whose tools this
+        # registry cannot resolve still exposes its filesystem.
         agent = await resolve_agent(
             agent_id,
             os.agents,
@@ -61,6 +63,7 @@ async def _get_agent_filesystems(os: "AgentOS", agent_id: str, request: Request)
             request=request,
             user_id=scoped_user_id,
             published_only=False,
+            strict=False,
         )
     except HTTPException:
         raise
@@ -186,6 +189,9 @@ def _merge_entries(listings: list[list[FileSystemEntry]]) -> list[FileSystemEntr
                 existing.size_bytes = (existing.size_bytes or 0) + (entry.size_bytes or 0)
                 if entry.updated_at is not None:
                     existing.updated_at = max(existing.updated_at or entry.updated_at, entry.updated_at)
+                if existing.user_id != entry.user_id:
+                    # Several users' files share this directory: it has no single owner.
+                    existing.user_id = None
     return sorted(directories.values(), key=lambda entry: path_sort_key(entry.path)) + sorted(
         files, key=lambda entry: (path_sort_key(entry.path), entry.user_id or "")
     )
@@ -210,11 +216,13 @@ def _list_entries(filesystem: FileSystem, directory: str) -> list[FileSystemEntr
             directory_path = f"{prefix}{name}" if prefix else name
             existing = directories.get(directory_path)
             if existing is None:
+                # One listing reads one partition, so every file under the directory shares its owner.
                 directories[directory_path] = FileSystemEntry(
                     path=directory_path,
                     type="directory",
                     size_bytes=meta.size_bytes,
                     updated_at=meta.updated_at,
+                    user_id=meta.user_id,
                 )
             else:
                 existing.size_bytes = (existing.size_bytes or 0) + meta.size_bytes
@@ -286,7 +294,6 @@ async def _get_global_files(
     namespace: Optional[str],
     query: Optional[str],
     strict: bool,
-    user_id: Optional[str] = None,
 ) -> list[FileSystemTableEntry]:
     filesystems: dict[tuple, tuple[FileSystem, list[str]]] = {}
     for agent_id in agent_ids:
@@ -309,7 +316,7 @@ async def _get_global_files(
                 existing[1].append(agent_id)
 
     async def _read_files(store: FileSystem, linked_agent_ids: list[str]) -> list[FileSystemTableEntry]:
-        views = await _apartition_views(store, request, user_id)
+        views = await _apartition_views(store, request, None)
         rows: list[FileSystemTableEntry] = []
         for view in views:
             rows.extend(await _read_view(view, linked_agent_ids))
@@ -399,7 +406,6 @@ def get_filesystem_router(
         agent_id: Optional[str] = Query(None, description="Filter by agent ID"),
         namespace: Optional[str] = Query(None, description="Filter by resolved namespace"),
         query: Optional[str] = Query(None, min_length=1, max_length=200, description="Search file contents"),
-        user_id: Optional[str] = _USER_ID_QUERY,
         page: int = Query(1, ge=1, description="1-indexed page number"),
         limit: int = Query(50, ge=1, le=100, description="Page size"),
     ) -> FileSystemTableResponse:
@@ -411,7 +417,6 @@ def get_filesystem_router(
             namespace=namespace,
             query=query.strip() if query else None,
             strict=agent_id is not None,
-            user_id=user_id,
         )
         total_count = len(entries)
         total_pages = (total_count + limit - 1) // limit if total_count else 0
@@ -441,12 +446,12 @@ def get_filesystem_router(
             None, description="Agent holding the filesystem; alone, selects that agent's first filesystem"
         ),
         directory: str = Query("", description="Relative directory inside the filesystem"),
-        user_id: Optional[str] = _USER_ID_QUERY,
         page: int = Query(1, ge=1, description="1-indexed page number"),
         limit: int = Query(50, ge=1, le=100, description="Page size"),
     ) -> FileSystemListResponse:
         filesystem, holder_ids = await _resolve_filesystem(os, request, agent_id, namespace)
-        views = await _apartition_views(filesystem, request, user_id)
+        # Whose files to list comes from the JWT: an admin sees every partition.
+        views = await _apartition_views(filesystem, request, None)
         try:
             normalized_directory = normalize_directory(directory)
             listings = [await asyncio.to_thread(_list_entries, view, normalized_directory) for view in views]

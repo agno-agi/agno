@@ -621,13 +621,6 @@ def test_admin_sees_every_partition_and_may_open_any(db, client_factory):
         ("notes/a.md", "bob"),
     ]
 
-    only_bob = client.get(
-        "/filesystem/entries",
-        params={"agent_id": "notes", "directory": "notes", "user_id": "bob"},
-        headers=_admin_headers(),
-    )
-    assert [(e["path"], e["user_id"]) for e in only_bob.json()["entries"]] == [("notes/a.md", "bob")]
-
     content = client.get(
         "/filesystem/content",
         params={"agent_id": "notes", "path": "notes/a.md", "user_id": "bob"},
@@ -648,8 +641,6 @@ def test_admin_sees_every_partition_and_may_open_any(db, client_factory):
         ("notes/a.md", "bob"),
         ("shared.md", None),
     ]
-    rows = client.get("/filesystem/files", params={"user_id": "alice"}, headers=_admin_headers()).json()["entries"]
-    assert [(r["path"], r["user_id"]) for r in rows] == [("notes/a.md", "alice")]
 
 
 def test_a_user_may_name_only_their_own_partition(db, client_factory):
@@ -658,6 +649,7 @@ def test_a_user_may_name_only_their_own_partition(db, client_factory):
     store = agent.filesystem_instance
     assert store is not None
     store.resolve(user_id="alice").write("a.md", "alice\n")
+    store.resolve(user_id="alice").write("drafts/b.md", "alice\n")
     store.resolve(user_id="bob").write("a.md", "bob\n")
 
     own = client.get(
@@ -671,7 +663,8 @@ def test_a_user_may_name_only_their_own_partition(db, client_factory):
     )
     assert other.status_code == 403
     listed = client.get("/filesystem/entries", params={"agent_id": "notes"}, headers=_headers("alice"))
-    assert [(e["path"], e["user_id"]) for e in listed.json()["entries"]] == [("a.md", "alice")]
+    # A directory holding one user's files carries that owner, like its files.
+    assert [(e["path"], e["user_id"]) for e in listed.json()["entries"]] == [("drafts", "alice"), ("a.md", "alice")]
 
 
 @pytest.mark.parametrize(
@@ -731,3 +724,25 @@ def test_filesystem_scope_holds_for_other_methods_and_path_forms(db, client_fact
         assert "secret" not in response.text
     head = client.head("/filesystem/content", params=params, headers=agent_only)
     assert head.status_code in (403, 405)
+
+
+def _unregistered_tool(query: str) -> str:
+    """A tool the test registry does not hold."""
+    return query
+
+
+def test_a_stored_agent_with_unresolvable_tools_does_not_break_browsing(db, client_factory):
+    from agno.models.openai import OpenAIResponses
+
+    # Saved elsewhere with a tool this OS's registry cannot resolve.
+    Agent(id="broken", name="Broken", model=OpenAIResponses(id="gpt-5.6-luna"), tools=[_unregistered_tool]).save(db=db)
+    notes = Agent(id="notes", db=db, filesystem=True)
+    client = client_factory(notes, db=db, registry=Registry(dbs=[db]))
+    assert notes.filesystem_instance is not None
+    notes.filesystem_instance.write("a.md", "hello\n")
+
+    listed = client.get("/filesystem/files", headers=_headers("alice"))
+    assert listed.status_code == 200
+    assert [entry["path"] for entry in listed.json()["entries"]] == ["a.md"]
+    by_namespace = client.get("/filesystem/entries", params={"namespace": "notes"}, headers=_headers("alice"))
+    assert by_namespace.status_code == 200

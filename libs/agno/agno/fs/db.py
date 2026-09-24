@@ -225,7 +225,8 @@ class DbFileSystem(BaseFS):
         raise SchemaOutdatedError(
             f"filesystem table {self.table.fullname} predates the user partition (key {list(key)}, "
             f"current key {list(self._KEY_COLUMNS)}). Upgrade it once with DbFileSystem.upgrade_schema() "
-            "or the migration script libs/agno/migrations/migrate_filesystem.py, then start again."
+            "or the migration script for your database in libs/agno/migrations "
+            "(migrate_filesystem_postgres.py or migrate_filesystem_sqlite.py), then start again."
         )
 
     def upgrade_schema(self) -> bool:
