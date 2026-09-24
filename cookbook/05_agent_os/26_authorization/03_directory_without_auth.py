@@ -39,6 +39,9 @@ from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS
 
 os.makedirs("tmp", exist_ok=True)
+# Start from an empty roster so every run shows it filling in from nothing.
+if os.path.exists("tmp/directory_no_auth_agentos.db"):
+    os.remove("tmp/directory_no_auth_agentos.db")
 
 db = SqliteDb(db_file="tmp/directory_no_auth_agentos.db")
 scout_agent = Agent(

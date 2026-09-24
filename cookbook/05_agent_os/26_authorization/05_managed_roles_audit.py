@@ -111,4 +111,7 @@ if __name__ == "__main__":
     import os
 
     os.makedirs("tmp", exist_ok=True)
+    # Start from empty trails so the printout shows only this run's events.
+    if os.path.exists("tmp/audit_demo.db"):
+        os.remove("tmp/audit_demo.db")
     main()
