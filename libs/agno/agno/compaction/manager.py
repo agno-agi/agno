@@ -84,67 +84,42 @@ class Compaction:
     summary_budget_tokens: int = 2_000
 
     # -- when to compact ------------------------------------------------
-    # Compact when the context is at least this many tokens.
-    #
-    # Size is the only automatic trigger. A run or message count says nothing about how much
-    # context is actually in play - twenty short exchanges and twenty research turns differ by
-    # orders of magnitude - so counting them trips on conversations far too small to fold and
-    # stays quiet on ones that overflow. Call agent.compact() to fold at a moment of your own
-    # choosing regardless of size.
+    # Compact when the context reaches this many tokens. Size is the only automatic trigger;
+    # call agent.compact() to fold at a moment of your own choosing.
     compact_at_tokens: Optional[int] = _COMPACT_AT_TOKENS_UNSET
 
     # -- what to keep ---------------------------------------------------
     # Recent runs kept verbatim.
-    #
-    # Runs rather than messages: a run is one turn, so a tail measured in runs never cuts
-    # through the middle of one, which is what the pair-safe boundary walk wants anyway.
     keep_last_runs: Optional[int] = _KEEP_LAST_RUNS_UNSET
 
-    # Recent history kept verbatim, measured in tokens instead of runs.
-    #
-    # A run count says how many turns survive, not how large they are, so a handful of verbose
-    # turns produces a tail that grows without bound - and compaction only folds what sits in
-    # FRONT of the tail, so it cannot bring that back down. A token budget bounds the tail
-    # itself. The cut is still pair-safe: the walk snaps to a turn boundary, so the tail may
-    # come out somewhat larger than asked rather than severing a tool call from its result.
-    #
-    # Mutually exclusive with keep_last_runs: two settings claiming the same tail is a
-    # configuration nobody can reason about.
+    # Recent history kept verbatim, measured in tokens instead of runs. Use this when turns
+    # vary in length - a run count bounds how many turns survive, not how large they get.
+    # The cut still snaps to a turn boundary, so the tail may come out somewhat larger than
+    # asked. Mutually exclusive with keep_last_runs.
     keep_last_tokens: Optional[int] = None
 
     # -- archive --------------------------------------------------------
     # Write replaced messages to the filesystem so they stay recoverable.
     archive: bool = True
-    # Give the agent read-only search over the archive.
-    #
-    # On by default because an archive the agent cannot reach only helps a developer reading a
-    # row. A summary is a guess about what mattered; with the originals searchable it becomes an
-    # index over ground truth, and a detail it dropped is still answerable. The tool is scoped to
-    # one session by construction and is not registered until something has actually been
-    # archived, so it costs nothing on a conversation that never folds.
+    # Give the agent read-only search over the archive, so detail the summary dropped is still
+    # answerable. Scoped to one session, and not registered until something has been archived.
     searchable: bool = True
 
-    # Render tool results older than the cut as a short placeholder in the view. A cheap,
-    # no-inference tier: on a tool-heavy transcript this reclaims more than the summary does,
-    # and the full results stay in the transcript and the archive.
+    # Render tool results older than the cut as a short placeholder. A cheap, no-inference
+    # tier: on a tool-heavy transcript it reclaims more than the summary does.
     elide_tool_results: bool = True
 
     # Also compact reactively when the provider rejects a request as too long.
     #
-    # Off by default on a configured Compaction, because a proactive threshold is already
-    # in play there and reaching the provider's limit means that threshold was wrong - a
-    # situation worth surfacing rather than absorbing. Turn it on to fold and retry instead
-    # of failing, which is what a bare ``compaction=True`` does, having no threshold to rely on.
+    # Off by default here because a proactive threshold is already in play, and hitting the
+    # provider's limit means that threshold was wrong - worth surfacing rather than absorbing.
+    # A bare ``compaction=True`` turns it on, having no threshold to rely on.
     on_context_overflow: bool = False
 
     # Skip a compaction unless the folded span is at least this many times the kept tail.
     #
-    # A summary has a floor cost - the structured sections alone run to hundreds of tokens - so
-    # folding a span barely larger than what it replaces leaves the context BIGGER than it
-    # started, and discards the prompt-cache prefix to do it. Sizing the guard relative to the
-    # tail, rather than as an absolute char count, is what makes it hold at every scale: it is
-    # the ratio of folded-to-kept that decides whether a summary can pay for itself.
-    # Set to 0 to always compact.
+    # A summary has a floor cost of a few hundred tokens, so folding a span barely larger than
+    # what it replaces leaves the context bigger than it started. Set to 0 to always compact.
     min_fold_ratio: float = 2.0
 
     stats: CompactionStats = field(default_factory=CompactionStats)
