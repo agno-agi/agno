@@ -85,12 +85,7 @@ def disconnect(
 
 
 def _matches_targets(entry_url: str, targets: List[str]) -> bool:
-    """Whether an entry's MCP URL points at one of the target base URLs.
-
-    Same scheme+host+port AND the entry's path lives under the target's base path, so
-    two AgentOS path-routed on one host (/customer-a, /customer-b) never match each
-    other. A target with no path (the usual base URL) matches any path on that host.
-    """
+    """Whether an entry points at one of the target MCP endpoints."""
     entry = urlsplit(entry_url)
     for target in targets:
         parts = urlsplit(target)
@@ -98,9 +93,7 @@ def _matches_targets(entry_url: str, targets: List[str]) -> bool:
             continue
         if (entry.netloc or "").lower() != (parts.netloc or "").lower():
             continue
-        base_path = parts.path.rstrip("/")
-        entry_path = entry.path or "/"
-        if not base_path or entry_path == base_path or entry_path.startswith(base_path + "/"):
+        if entry.path.rstrip("/") == parts.path.rstrip("/"):
             return True
     return False
 
@@ -142,9 +135,10 @@ def _disconnect(
     target_urls: List[str] = []
     if server_name is None:
         target_urls = [os_info.base_url] if os_info is not None else [s[0] for s in _candidate_sources(url)]
+        mcp_urls = [os_info.mcp_url] if os_info is not None else [base.rstrip("/") + "/mcp" for base in target_urls]
 
         def _match(entry_url: str) -> bool:
-            return _matches_targets(entry_url, target_urls)
+            return _matches_targets(entry_url, mcp_urls)
 
         matcher = _match
         if os_info is None and not json_mode:
