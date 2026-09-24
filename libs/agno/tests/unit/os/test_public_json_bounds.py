@@ -158,11 +158,26 @@ def live_server(app):
             assert not worker.is_alive()
 
 
+def post_when_slot_free(client, *args, **kwargs):
+    # uvicorn can serve the next keep-alive request before the prior run's slot is released.
+    deadline = time.monotonic() + 5
+    while True:
+        response = client.post(*args, **kwargs)
+        if (
+            response.status_code != 503
+            or response.headers.get("content-type") != "application/json"
+            or response.json().get("error", {}).get("code") != "run_capacity"
+            or time.monotonic() > deadline
+        ):
+            return response
+        time.sleep(0.02)
+
+
 def test_default_output_limit_returns_complete_json_over_uvicorn_http():
     app, _ = application()
     with live_server(app) as url, httpx.Client(base_url=url, timeout=10, trust_env=False) as client:
         assert_complete_output_error(post_attachment(client))
-        response = client.post(ROUTE, data={"message": "Hello again", "stream": "false"})
+        response = post_when_slot_free(client, ROUTE, data={"message": "Hello again", "stream": "false"})
         assert response.status_code == 200 and response.json()["content"] == "Short answer."
         assert int(response.headers["content-length"]) == len(response.content)
 
@@ -217,10 +232,12 @@ def test_compressed_native_runs_over_http(team_mode, gzip_position, encoding):
         assert response.status_code == 200, response.text
         assert response.json()["content"] == "Short answer."
         surface.max_output_bytes = 100
-        response = client.post(route, data={"message": "Hello", "stream": "false"}, headers={"Origin": ORIGIN})
+        response = post_when_slot_free(
+            client, route, data={"message": "Hello", "stream": "false"}, headers={"Origin": ORIGIN}
+        )
         assert_complete_output_error(response)
         surface.max_output_bytes = 1024 * 1024
-        assert client.post(route, data={"message": "Again", "stream": "false"}).status_code == 200
+        assert post_when_slot_free(client, route, data={"message": "Again", "stream": "false"}).status_code == 200
 
 
 @pytest.mark.parametrize("stream", ["true", "false"])
@@ -348,7 +365,7 @@ def test_encoded_sse_cannot_bypass_public_error_inspection(team_mode, gzip_posit
             assert '"error_code": "run_failed"' in response.text
         component = surface.teams[0] if team_mode else surface.agents[0]
         component.model = ShortAnswerModel()
-        following = client.post(
-            route, data={"message": "again", "stream": "false"}, headers={"Accept-Encoding": "identity"}
+        following = post_when_slot_free(
+            client, route, data={"message": "again", "stream": "false"}, headers={"Accept-Encoding": "identity"}
         )
         assert following.status_code == 200 and following.json()["content"] == "Short answer."
