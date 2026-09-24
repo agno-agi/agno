@@ -111,13 +111,13 @@ def _clip_around(line: str, char_offset: int, match_len: int = 1) -> str:
 
 
 def _find_match_positions(
-    lines: List[str], compiled: "re.Pattern[str]", limit: int
+    lines: List[str], compiled: "re.Pattern[str]", limit: int, start_line: int = 1
 ) -> Tuple[List[Tuple[int, int, int]], bool]:
     """(1-indexed line number, char offset, match length) for each matching
     line, capped at ``limit``; the flag is True when one more match exists."""
     positions: List[Tuple[int, int, int]] = []
-    for index, line in enumerate(lines):
-        found = compiled.search(line)
+    for index in range(start_line - 1, len(lines)):
+        found = compiled.search(lines[index])
         if found is None:
             continue
         if len(positions) >= limit:
@@ -169,14 +169,14 @@ def _render_matches(
     return matches
 
 
-def _scan_for_matches(content: str, pattern: str, context_lines: int) -> List[ResultMatch]:
+def _scan_for_matches(content: str, pattern: str, context_lines: int, start_line: int = 1) -> List[ResultMatch]:
     """The search scan itself: at most 20 matches, one read_result page in total."""
     lines = content.split("\n")
-    positions, more = _find_match_positions(lines, re.compile(pattern), SEARCH_MAX_MATCHES)
+    positions, more = _find_match_positions(lines, re.compile(pattern), SEARCH_MAX_MATCHES, start_line)
     return _render_matches(lines, positions, more, context_lines)
 
 
-def _scan_in_subprocess(content: str, pattern: str, context_lines: int) -> List[ResultMatch]:
+def _scan_in_subprocess(content: str, pattern: str, context_lines: int, start_line: int = 1) -> List[ResultMatch]:
     """Run the match scan in a separate interpreter, killed at ``SEARCH_TIMEOUT_SECONDS``.
 
     A thread stuck inside the regex engine cannot be interrupted, so a pattern
@@ -196,9 +196,11 @@ def _scan_in_subprocess(content: str, pattern: str, context_lines: int) -> List[
         # An installation this file cannot read from disk (a zipapp, say)
         # keeps working, without the deadline.
         log_warning(f"Result search: {scan_script} is missing; the scan runs in-process without a time limit")
-        return _scan_for_matches(content, pattern, context_lines)
+        return _scan_for_matches(content, pattern, context_lines, start_line)
 
-    payload = json.dumps({"pattern": pattern, "content": content, "limit": SEARCH_MAX_MATCHES})
+    payload = json.dumps(
+        {"pattern": pattern, "content": content, "limit": SEARCH_MAX_MATCHES, "start_line": start_line}
+    )
     process = subprocess.Popen(
         [sys.executable, "-I", str(scan_script)],
         stdin=subprocess.PIPE,
@@ -863,32 +865,45 @@ class ResultStore:
         content = await self._aread_payload(row)
         return await asyncio.to_thread(self._page_from_content, content, start_line, end_line, start_char)
 
-    def _matches_from_content(self, content: str, pattern: str, context_lines: int) -> List[ResultMatch]:
+    def _matches_from_content(
+        self, content: str, pattern: str, context_lines: int, start_line: int = 1
+    ) -> List[ResultMatch]:
+        if start_line < 1:
+            raise ValueError("start_line must be at least 1")
         # Compiled here first so an invalid pattern raises re.error in the
         # caller, where the tool layer names it, never out of the subprocess.
         re.compile(pattern)
         if _BACKTRACKING_CHARS.isdisjoint(pattern):
-            return _scan_for_matches(content, pattern, context_lines)
+            return _scan_for_matches(content, pattern, context_lines, start_line)
         # The pattern can repeat, so it can backtrack without bound. It runs
         # in a subprocess a deadline can actually kill: a thread stuck inside
         # the regex engine cannot be interrupted.
-        return _scan_in_subprocess(content, pattern, context_lines)
+        return _scan_in_subprocess(content, pattern, context_lines, start_line)
 
-    def search(self, result_id: str, pattern: str, context_lines: int = 0) -> List[ResultMatch]:
-        """Regex search over a stored result; at most 20 matches, lines clipped, one page in total."""
+    def search(self, result_id: str, pattern: str, context_lines: int = 0, *, start_line: int = 1) -> List[ResultMatch]:
+        """Regex search from an inclusive, 1-indexed ``start_line``.
+
+        Returns at most 20 matching lines, clipped to one page in total.
+        When the last match has ``more=True``, continue with its ``line_number + 1``
+        as ``start_line``. Context may include earlier lines, but matches do not.
+        A start beyond the last line returns no matches; a start below 1 raises
+        ``ValueError``.
+        """
         row = self.get_row(result_id)
         if row is None:
             raise KeyError(f"unknown result id {result_id}")
-        return self._matches_from_content(self._read_payload(row), pattern, context_lines)
+        return self._matches_from_content(self._read_payload(row), pattern, context_lines, start_line)
 
-    async def asearch(self, result_id: str, pattern: str, context_lines: int = 0) -> List[ResultMatch]:
+    async def asearch(
+        self, result_id: str, pattern: str, context_lines: int = 0, *, start_line: int = 1
+    ) -> List[ResultMatch]:
         """Async variant of ``search``."""
         row = await self.aget_row(result_id)
         if row is None:
             raise KeyError(f"unknown result id {result_id}")
         # The regex scan is CPU work over the whole payload; it runs off the loop.
         content = await self._aread_payload(row)
-        return await asyncio.to_thread(self._matches_from_content, content, pattern, context_lines)
+        return await asyncio.to_thread(self._matches_from_content, content, pattern, context_lines, start_line)
 
     # ------------------------------------------------------------------
     # Listing, cleanup, sweep
