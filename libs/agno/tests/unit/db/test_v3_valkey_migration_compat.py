@@ -55,8 +55,8 @@ class _Batch:
     def get(self, key):
         self.commands.append(("get", key))
 
-    def set(self, key, value, expiry=None):
-        self.commands.append(("set", key, value))
+    def set(self, key, value, conditional_set=None, expiry=None):
+        self.commands.append(("set", key, value, conditional_set))
 
     def delete(self, keys):
         self.commands.append(("delete", keys))
@@ -67,8 +67,8 @@ class _Batch:
     def srem(self, key, members):
         self.commands.append(("srem", key, members))
 
-    def zadd(self, key, members_scores):
-        self.commands.append(("zadd", key, members_scores))
+    def zadd(self, key, members_scores, existing_options=None):
+        self.commands.append(("zadd", key, members_scores, existing_options))
 
     def expire(self, key, seconds):
         self.commands.append(("expire", key, seconds))
@@ -100,7 +100,10 @@ class _FakeGlideClient:
             raise _RequestError("WRONGTYPE Operation against a key holding the wrong kind of value")
         return self.strings.get(key)
 
-    def set(self, key, value, expiry=None, **kwargs):
+    def set(self, key, value, conditional_set=None, expiry=None, **kwargs):
+        if conditional_set is not None and getattr(conditional_set, "value", conditional_set) == "NX":
+            if key in self.strings:
+                return None
         self.strings[key] = value.encode() if isinstance(value, str) else value
         return "OK"
 
@@ -135,8 +138,11 @@ class _FakeGlideClient:
 
     # -- sorted sets --
 
-    def zadd(self, key, members_scores, **kwargs):
-        self.zsets.setdefault(key, {}).update(members_scores)
+    def zadd(self, key, members_scores, existing_options=None, **kwargs):
+        entries = self.zsets.setdefault(key, {})
+        if existing_options is not None and getattr(existing_options, "value", existing_options) == "NX":
+            members_scores = {m: s for m, s in members_scores.items() if m not in entries}
+        entries.update(members_scores)
         return len(members_scores)
 
     def zrange(self, key, range_query, reverse=False):
@@ -163,7 +169,7 @@ class _FakeGlideClient:
                 if op == "get":
                     results.append(self.get(command[1]))
                 elif op == "set":
-                    results.append(self.set(command[1], command[2]))
+                    results.append(self.set(command[1], command[2], conditional_set=command[3]))
                 elif op == "delete":
                     results.append(self.delete(command[1]))
                 elif op == "sadd":
@@ -171,7 +177,7 @@ class _FakeGlideClient:
                 elif op == "srem":
                     results.append(self.srem(command[1], command[2]))
                 elif op == "zadd":
-                    results.append(self.zadd(command[1], command[2]))
+                    results.append(self.zadd(command[1], command[2], existing_options=command[3]))
                 else:
                     results.append(True)
             except _RequestError as exc:
@@ -490,3 +496,29 @@ def test_cleanup_after_migration_requires_force():
     assert db.cleanup_legacy_runs_field(force=True) is True
     raw = db._get_record("sessions", "s_cleanup")
     assert raw is not None and "runs" not in raw
+
+
+def _run_content(db, run_id: str) -> str:
+    row = db.get_run(run_id, deserialize=False)
+    return row["run_data"]["content"]
+
+
+def test_migration_rerun_keeps_a_run_updated_after_the_first_run():
+    """The runs store wins on conflict: a re-run (retry, ``up(force=True)``) must not put the
+    stale legacy blob copy over a run that was updated after the first migration."""
+    from agno.db.migrations.versions.v3_0_0 import _migrate_valkey
+
+    db = _new_db()
+    legacy = [_make_run(f"r{i}", "s7", f"stale-{i}").to_dict() for i in range(2)]
+    _insert_legacy_session(db, "s7", legacy)
+
+    assert _migrate_valkey(db, "sessions", "agno_sessions") is True
+    assert _run_content(db, "r0") == "stale-0"
+
+    db.upsert_run(run=_make_run("r0", "s7", "fresh-0"), session_id="s7", user_id="u1", run_index=0)
+    assert _run_content(db, "r0") == "fresh-0"
+
+    _migrate_valkey(db, "sessions", "agno_sessions")
+
+    assert _run_content(db, "r0") == "fresh-0"
+    assert _run_content(db, "r1") == "stale-1"
