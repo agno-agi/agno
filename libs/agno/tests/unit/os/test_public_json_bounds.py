@@ -136,6 +136,20 @@ def test_native_run_returns_complete_error_and_releases_capacity_on_output_overf
         assert int(response.headers["content-length"]) == len(response.content)
 
 
+def post_when_run_slot_frees(client, route, *, timeout=5.0, **kwargs):
+    """POST once the single run slot is free again. A live server sends the last byte of a
+    streamed run before the run's cleanup (a team saving its session) returns and releases the
+    slot, so a request made the moment the stream ends can still meet ``run_capacity``. Retry
+    only that answer, so any other failure still fails the test."""
+    deadline = time.monotonic() + timeout
+    while True:
+        response = client.post(route, **kwargs)
+        busy = response.status_code == 503 and response.json().get("error", {}).get("code") == "run_capacity"
+        if not busy or time.monotonic() >= deadline:
+            return response
+        time.sleep(0.05)
+
+
 @contextmanager
 def live_server(app):
     with socket.socket() as listener:
@@ -348,7 +362,7 @@ def test_encoded_sse_cannot_bypass_public_error_inspection(team_mode, gzip_posit
             assert '"error_code": "run_failed"' in response.text
         component = surface.teams[0] if team_mode else surface.agents[0]
         component.model = ShortAnswerModel()
-        following = client.post(
-            route, data={"message": "again", "stream": "false"}, headers={"Accept-Encoding": "identity"}
+        following = post_when_run_slot_frees(
+            client, route, data={"message": "again", "stream": "false"}, headers={"Accept-Encoding": "identity"}
         )
         assert following.status_code == 200 and following.json()["content"] == "Short answer."
