@@ -3453,7 +3453,7 @@ def continue_run_dispatch(
         debug_mode: Whether to enable debug mode.
     """
     from agno.agent._init import has_async_db, set_default_model
-    from agno.agent._messages import _recompact_after_overflow, get_continue_run_messages
+    from agno.agent._messages import get_continue_run_messages
     from agno.agent._response import get_response_format
     from agno.agent._storage import load_session_state, read_or_create_session, update_metadata
     from agno.agent._tools import determine_tools_for_model
