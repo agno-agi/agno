@@ -240,6 +240,8 @@ class Team:
     references_format: Literal["json", "yaml"] = "json"
 
     # --- Tools ---
+    # If True, raise when any tool name collision is detected (default False)
+    error_on_tool_name_collision: bool = False
     # If True, add a tool to get information about the team members
     get_member_information_tool: bool = False
     # Add a tool to search the knowledge base (aka Agentic RAG)
@@ -528,6 +530,7 @@ class Team:
         max_tool_calls_from_history: Optional[int] = None,
         skills: Optional[Skills] = None,
         tools: Optional[Union[List[Union[Toolkit, Callable, Function, Dict]], Callable[..., List]]] = None,
+        error_on_tool_name_collision: bool = False,
         tool_call_limit: Optional[int] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         tool_hooks: Optional[List[Callable]] = None,
@@ -647,6 +650,7 @@ class Team:
             max_tool_calls_from_history=max_tool_calls_from_history,
             skills=skills,
             tools=tools,
+            error_on_tool_name_collision=error_on_tool_name_collision,
             tool_call_limit=tool_call_limit,
             tool_choice=tool_choice,
             tool_hooks=tool_hooks,
