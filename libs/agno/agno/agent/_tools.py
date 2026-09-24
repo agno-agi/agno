@@ -20,6 +20,7 @@ from typing import (
 
 if TYPE_CHECKING:
     from agno.agent.agent import Agent
+    from agno.fs.toolkit import FileSystemTools
     from agno.offload.store import ResultStore
 
 from agno.metrics import MessageMetrics
@@ -128,6 +129,79 @@ def _raise_if_async_tools_in_list(tools: list) -> None:
                 )
 
 
+def _namespace_filesystem_toolkit(toolkit: FileSystemTools, index: int) -> FileSystemTools:
+    """Qualify each store's tools without mutating the supplied toolkit.
+
+    Position distinguishes duplicate namespace labels. Truncation keeps built-in
+    tool names within model providers' 64-character limit.
+    """
+    import re
+    from copy import copy
+
+    from agno.tools.function import get_entrypoint_docstring
+
+    namespace = toolkit.fs.namespace
+    label = re.sub(r"[^a-zA-Z0-9_]", "_", namespace)[:24]
+    prefix = f"fs_{index}_{label}"
+    renamed = copy(toolkit)
+    renamed.name = prefix
+    renamed.id = prefix
+    names = {name: f"{prefix}_{name}" for name in toolkit.FULL_TOOLS}
+    pattern = re.compile(r"\b(" + "|".join(names) + r")\b")
+
+    def qualify(text: str) -> str:
+        return pattern.sub(lambda match: names[match.group(0)], text)
+
+    def rename_functions(functions: Dict[str, Function]) -> Dict[str, Function]:
+        result: Dict[str, Function] = {}
+        for name, function in functions.items():
+            renamed_function = function._per_run_copy()
+            renamed_function.name = names.get(name, f"{prefix}_{name}")
+            description = function.description or (
+                get_entrypoint_docstring(function.entrypoint) if function.entrypoint else ""
+            )
+            renamed_function.description = f"Filesystem namespace: {namespace!r}.\n{qualify(description)}"
+            renamed_function.source_toolkit = renamed
+            result[renamed_function.name] = renamed_function
+        return result
+
+    renamed.functions = rename_functions(toolkit.functions)
+    renamed.async_functions = rename_functions(toolkit.async_functions)
+    if toolkit.instructions:
+        renamed.instructions = f"Filesystem namespace: {namespace!r}.\n{qualify(toolkit.instructions)}"
+    return renamed
+
+
+def _append_filesystem_tools(
+    agent: Agent,
+    agent_tools: List[Union[Toolkit, Callable, Function, Dict]],
+) -> None:
+    """Inject the managed filesystem toolkit into this run's resolved tools."""
+    filesystem = agent.filesystem_instance
+    if filesystem is None:
+        return
+
+    from agno.fs.toolkit import FileSystemTools
+
+    if any(isinstance(tool, FileSystemTools) for tool in agent_tools):
+        raise ValueError(
+            "filesystem manages its own FileSystemTools. Remove the manually configured "
+            "FileSystemTools or disable the filesystem setting."
+        )
+    if isinstance(agent.filesystem, list):
+        for index, store in enumerate(agent.filesystem, start=1):
+            toolkit = store if isinstance(store, FileSystemTools) else FileSystemTools(fs=store, add_instructions=True)
+            if len(agent.filesystem) > 1:
+                toolkit = _namespace_filesystem_toolkit(toolkit, index)
+            agent_tools.append(toolkit)
+        return
+    if isinstance(agent.filesystem, FileSystemTools):
+        # The developer built the toolkit, so its permissions and instruction settings stand.
+        agent_tools.append(agent.filesystem)
+        return
+    agent_tools.append(filesystem.tools(add_instructions=True))
+
+
 def get_tools(
     agent: Agent,
     run_response: RunOutput,
@@ -164,6 +238,8 @@ def get_tools(
         # If not running in async mode, raise if any tool is async
         _raise_if_async_tools_in_list(resolved_tools)
         agent_tools.extend(resolved_tools)
+
+    _append_filesystem_tools(agent, agent_tools)
 
     # Add tools for accessing memory
     if agent.read_chat_history:
@@ -299,6 +375,8 @@ async def aget_tools(
 
             # Add the tool (MCP tools that passed checks, or any non-MCP tool)
             agent_tools.append(tool)
+
+    _append_filesystem_tools(agent, agent_tools)
 
     # Add tools for accessing memory
     if agent.read_chat_history:

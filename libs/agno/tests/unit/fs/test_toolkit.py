@@ -1,4 +1,4 @@
-"""Unit tests for FileSystemTools (spec D7/D8): schemas, parity, error strings, injection."""
+"""Unit tests for FileSystemTools: schemas, parity, error strings, and context injection."""
 
 import inspect
 import json
@@ -37,11 +37,6 @@ def _mock_model():
 
 
 @pytest.fixture
-def fs(tmp_path) -> FileSystem:
-    return FileSystem(backend=LocalFileSystem(root=tmp_path), namespace="radar")
-
-
-@pytest.fixture
 def toolkit(fs) -> FileSystemTools:
     return fs.tools()
 
@@ -53,12 +48,12 @@ def full_toolkit(fs) -> FileSystemTools:
 
 
 class TestSchemas:
-    """The empty-schema regression (spec D1): every schema must be non-empty AND
-    name every documented parameter AND lack the framework-injected ones."""
+    """Schemas expose documented parameters and omit framework-injected context."""
 
+    @pytest.mark.parametrize("function_registry", ["functions", "async_functions"], ids=["sync", "async"])
     @pytest.mark.parametrize("tool_name", list(EXPECTED_TOOL_PARAMS.keys()))
-    def test_schema_names_documented_params_and_lacks_injected(self, full_toolkit, tool_name):
-        function = full_toolkit.functions[tool_name]
+    def test_schema_names_documented_params_and_lacks_injected(self, full_toolkit, tool_name, function_registry):
+        function = getattr(full_toolkit, function_registry)[tool_name]
         function.process_entrypoint()
         properties = function.parameters.get("properties", {})
         assert list(properties.keys()) == EXPECTED_TOOL_PARAMS[tool_name]
@@ -66,18 +61,6 @@ class TestSchemas:
             assert injected not in properties
         for prop in properties.values():
             assert prop.get("description"), "every model-facing parameter carries its docstring description"
-
-    @pytest.mark.parametrize("tool_name", list(EXPECTED_TOOL_PARAMS.keys()))
-    def test_async_schema_names_documented_params(self, full_toolkit, tool_name):
-        function = full_toolkit.async_functions[tool_name]
-        function.process_entrypoint()
-        properties = function.parameters.get("properties", {})
-        assert list(properties.keys()) == EXPECTED_TOOL_PARAMS[tool_name]
-        for injected in INJECTED_PARAMS:
-            assert injected not in properties
-        # The async agent's prompt surface must be the D7 text, not "Async variant of".
-        for prop in properties.values():
-            assert prop.get("description"), "every async parameter carries its docstring description"
 
     @pytest.mark.parametrize("tool_name", list(EXPECTED_TOOL_PARAMS.keys()))
     def test_async_description_matches_sync(self, full_toolkit, tool_name):
@@ -90,16 +73,15 @@ class TestSchemas:
 
 
 class TestWorkspaceParity:
-    """Signatures and defaults match Workspace for every shared parameter of the
-    six shared tools; the D7 deviations (no encoding params) are the whole diff."""
+    """Shared tools match Workspace signatures and defaults, except encoding options."""
 
     SHARED_TOOLS = ["read_file", "write_file", "list_files", "search_content", "move_file", "delete_file"]
-    ALLOWED_MISSING = {"encoding"}  # D7 deviation 1
+    ALLOWED_MISSING = {"encoding"}
 
     @pytest.mark.parametrize("tool_name", SHARED_TOOLS)
     def test_shared_signature_parity(self, tool_name):
         # Per parameter (name -> default), never by index: the trailing
-        # keyword-only injected params have no Workspace counterpart (spec D13).
+        # keyword-only injected params have no Workspace counterpart.
         ws_sig = inspect.signature(getattr(Workspace, tool_name))
         fs_sig = inspect.signature(getattr(FileSystemTools, tool_name))
         ws_defaults = {
@@ -378,7 +360,7 @@ class TestListFilesTool:
 
     def test_recursive_max_depth_boundary_enumerated(self, fs, toolkit):
         # With max_depth=1, returned paths carry up to TWO segments below the
-        # directory: the boundary directory is itself enumerated (spec D7/D13).
+        # directory: the boundary directory is itself enumerated.
         fs.write("x.md", "1")
         fs.write("a/y.md", "2")
         fs.write("a/b/z.md", "3")
@@ -429,7 +411,7 @@ class TestListFilesTool:
 
 
 class TestContentExposure:
-    """Only read_file and search_content return content (spec D7)."""
+    """Only read_file and search_content return content."""
 
     def test_metadata_tools_never_leak_content(self, fs, toolkit):
         sentinel = "SENTINEL-CONTENT-XYZZY"
@@ -453,7 +435,7 @@ class TestContentExposure:
 
 
 class TestTemplatedResolution:
-    """Placeholder resolution from injected context only, fail closed (spec D2)."""
+    """Placeholders resolve only from injected context and fail closed when it is missing."""
 
     @pytest.fixture
     def user_toolkit(self, tmp_path):
@@ -707,10 +689,13 @@ class TestExcludeToolsTypos:
     caller believes a tool is gone and it is still registered.
     """
 
-    def test_a_typo_warns_and_excludes_nothing(self, fs, caplog) -> None:
+    def test_a_typo_warns_and_excludes_nothing(self, fs, caplog, monkeypatch) -> None:
         import logging
 
-        with caplog.at_level(logging.WARNING):
+        from agno.utils.log import logger as agno_logger
+
+        monkeypatch.setattr(agno_logger, "propagate", True)
+        with caplog.at_level(logging.WARNING, logger=agno_logger.name):
             toolkit = fs.tools(exclude_tools=["delete_fil"])
         assert any("not FileSystem tools" in r.getMessage() for r in caplog.records)
         # the call still resolves; nothing was excluded for the misspelled name

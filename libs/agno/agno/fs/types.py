@@ -10,6 +10,15 @@ class FileMeta:
     size_bytes: int
     version: Optional[int] = None  # None on backends without versioning
     updated_at: Optional[int] = None  # epoch seconds
+    user_id: Optional[str] = None  # user that created the file; None when unknown or unsupported
+
+
+@dataclass
+class FileData:
+    """One consistent read of file content and its metadata."""
+
+    content: str
+    meta: FileMeta
 
 
 @dataclass

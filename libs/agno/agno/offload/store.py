@@ -468,13 +468,18 @@ class ResultStore:
             max_namespace_bytes=MAX_SESSION_NAMESPACE_BYTES,
         )
 
-    def _fs_for_namespace(self, namespace: str) -> FileSystem:
-        return FileSystem(
+    def _fs_for_namespace(self, namespace: str, user_id: Optional[str] = None) -> FileSystem:
+        fs = FileSystem(
             backend=self.fs.backend,
             namespace=namespace,
             max_file_bytes=MAX_RESULT_BYTES,
             max_namespace_bytes=MAX_SESSION_NAMESPACE_BYTES,
         )
+        # A payload lives in its user's partition, like its index row names the user.
+        return fs.resolve(user_id=user_id) if user_id else fs
+
+    def _fs_for_row(self, row: Dict[str, Any]) -> FileSystem:
+        return self._fs_for_namespace(str(row["namespace"]), row.get("user_id") or None)
 
     def _build_row(
         self,
@@ -583,6 +588,9 @@ class ResultStore:
             session_id=session_id, run_id=run_id, tool_call_id=tool_call_id, output=output, shared=shared
         )
         session_fs = self._session_fs(session_id)
+        if user_id is not None:
+            # The payload row records its user, like the index row does.
+            session_fs = session_fs.resolve(user_id=user_id)
         session_fs.write(path, output)
         row = self._build_row(
             session_id=session_id,
@@ -625,6 +633,9 @@ class ResultStore:
             session_id=session_id, run_id=run_id, tool_call_id=tool_call_id, output=output, shared=shared
         )
         session_fs = self._session_fs(session_id)
+        if user_id is not None:
+            # The payload row records its user, like the index row does.
+            session_fs = session_fs.resolve(user_id=user_id)
         await session_fs.awrite(path, output)
         row = self._build_row(
             session_id=session_id,
@@ -812,13 +823,13 @@ class ResultStore:
         )
 
     def _read_payload(self, row: Dict[str, Any]) -> str:
-        content = self._fs_for_namespace(str(row["namespace"])).read(str(row["path"]))
+        content = self._fs_for_row(row).read(str(row["path"]))
         if content is None:
             raise KeyError(f"stored payload for {row['result_id']} is missing")
         return content
 
     async def _aread_payload(self, row: Dict[str, Any]) -> str:
-        content = await self._fs_for_namespace(str(row["namespace"])).aread(str(row["path"]))
+        content = await self._fs_for_row(row).aread(str(row["path"]))
         if content is None:
             raise KeyError(f"stored payload for {row['result_id']} is missing")
         return content
@@ -917,7 +928,7 @@ class ResultStore:
             batch = rows[batch_start : batch_start + DELETE_BATCH_SIZE]
             for row in batch:
                 try:
-                    self._fs_for_namespace(str(row["namespace"])).delete(str(row["path"]))
+                    self._fs_for_row(row).delete(str(row["path"]))
                 except Exception as e:
                     log_warning(f"Result payload delete failed for {row.get('result_id')}: {e}")
             self._db_call("delete_tool_results", [str(row["result_id"]) for row in batch])
@@ -928,7 +939,7 @@ class ResultStore:
             batch = rows[batch_start : batch_start + DELETE_BATCH_SIZE]
             for row in batch:
                 try:
-                    await self._fs_for_namespace(str(row["namespace"])).adelete(str(row["path"]))
+                    await self._fs_for_row(row).adelete(str(row["path"]))
                 except Exception as e:
                     log_warning(f"Result payload delete failed for {row.get('result_id')}: {e}")
             await self._adb_call("delete_tool_results", [str(row["result_id"]) for row in batch])
