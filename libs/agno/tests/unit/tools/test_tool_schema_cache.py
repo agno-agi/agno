@@ -575,6 +575,71 @@ def test_toolkit_bound_methods_reuse_lifetime_scoped_introspection(monkeypatch):
     assert all(left.entrypoint is not right.entrypoint for left, right in zip(first, copied_first))
 
 
+def test_media_introspection_only_allocates_the_cache_it_uses(monkeypatch):
+    import agno.tools.function as function_module
+
+    allocations = 0
+    original_lru_cache = function_module.lru_cache
+
+    def counted_lru_cache(*args, **kwargs):
+        nonlocal allocations
+        allocations += 1
+        return original_lru_cache(*args, **kwargs)
+
+    monkeypatch.setattr(function_module, "lru_cache", counted_lru_cache)
+
+    class Owner:
+        def lookup(self, query: str, images=None) -> str:
+            return query
+
+    owner = Owner()
+    cache = function_module._get_lifetime_cache(owner.lookup)
+    assert cache is not None
+    cache.clear()
+    assert allocations == 0
+
+    assert function_module.entrypoint_accepts_media(owner.lookup) is True
+    assert function_module.entrypoint_accepts_media(owner.lookup) is True
+    assert allocations == 1
+
+    cache.clear()
+    assert allocations == 1
+    assert function_module.entrypoint_accepts_media(owner.lookup) is True
+    assert allocations == 1
+
+
+@pytest.mark.parametrize(
+    "name, arguments",
+    [
+        ("entrypoint_schema", (False, False, None)),
+        ("wrapped_entrypoint", ()),
+        ("framework_params", ()),
+        ("from_callable_template", (Function, None, False)),
+        ("entrypoint_accepts_media", ()),
+    ],
+)
+def test_lifetime_cache_clear_invalidates_materialized_results(name, arguments):
+    from agno.tools.function import _get_lifetime_cache
+
+    class Owner:
+        def lookup(self, query: str) -> str:
+            return query
+
+    owner = Owner()
+    cache = _get_lifetime_cache(owner.lookup)
+    assert cache is not None
+    cached_call = getattr(cache, name)
+    cached_call(*arguments)
+    cached_call(*arguments)
+    assert cached_call.cache_info().hits == 1
+    assert cached_call.cache_info().currsize == 1
+
+    cache.clear()
+    assert cached_call.cache_info().currsize == 0
+    cached_call(*arguments)
+    assert cached_call.cache_info().misses == 1
+
+
 def test_per_run_bound_methods_are_not_pinned_when_callable_caching_is_disabled():
     """A callable-tools factory may return a fresh stateful handler method on
     every run. The introspection caches must respect cache_callables=False and
