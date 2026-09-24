@@ -33,12 +33,9 @@ class HyDE(QueryTransform):
     # cheaper or faster one.
     model: Optional[Model] = None
     prompt: str = DEFAULT_PROMPT
-    # Search with the question and the hypothetical answer together. Slightly more
-    # robust when the model invents something wide of the mark, at the cost of diluting
-    # the effect that makes HyDE work.
+    # Search with the question and the hypothetical answer together.
     include_query: bool = False
-    # Ceiling on the generated passage, so a verbose model cannot blow up the embedding
-    # input. Characters, not tokens: this is a guard rail.
+    # Ceiling on the generated passage, so a verbose model cannot blow up the embedding input.
     max_characters: int = Field(default=2000, gt=0)
 
     def _messages(self, query: str) -> List[Message]:
