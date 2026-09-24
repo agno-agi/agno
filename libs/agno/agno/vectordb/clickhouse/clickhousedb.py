@@ -618,7 +618,9 @@ class Clickhouse(VectorDb):
             )
         except Exception as e:
             logger.exception("Error searching for documents")
-            log_error(f"Table might not exist, creating for future use: {str(e)}")
+            if self.table_exists():
+                raise
+            log_error(f"Table does not exist, creating for future use: {str(e)}")
             self.create()
             return []
 
@@ -686,7 +688,9 @@ class Clickhouse(VectorDb):
             )
         except Exception as e:
             logger.exception("Async error searching for documents")
-            log_error(f"Table might not exist, creating for future use: {str(e)}")
+            if await self.async_table_exists():
+                raise
+            log_error(f"Table does not exist, creating for future use: {str(e)}")
             await self.async_create()
             return []
 

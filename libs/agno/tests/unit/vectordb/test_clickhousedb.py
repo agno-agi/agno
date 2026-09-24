@@ -594,3 +594,47 @@ def test_delete_methods_error_handling(mock_clickhouse):
     assert mock_clickhouse.delete_by_name("test_name") is False
     assert mock_clickhouse.delete_by_metadata({"type": "test"}) is False
     assert mock_clickhouse.delete_by_content_id("test_content_id") is False
+
+
+def test_search_raises_when_the_table_is_there(mock_clickhouse, mock_embedder):
+    """A query that fails while the table exists is an error, not an empty result set."""
+    mock_embedder.get_embedding.return_value = [0.1] * 1024
+    mock_clickhouse.client.query.side_effect = Exception("Code: 241. DB::Exception: Memory limit exceeded")
+
+    with (
+        patch.object(mock_clickhouse, "table_exists", return_value=True),
+        patch.object(mock_clickhouse, "create") as mock_create,
+    ):
+        with pytest.raises(Exception, match="Memory limit exceeded"):
+            mock_clickhouse.search("test query")
+
+        mock_create.assert_not_called()
+
+
+def test_search_creates_when_the_table_is_missing(mock_clickhouse, mock_embedder):
+    """A genuinely missing table still self-heals and still answers with no documents."""
+    mock_embedder.get_embedding.return_value = [0.1] * 1024
+    mock_clickhouse.client.query.side_effect = Exception("Code: 60. DB::Exception: Unknown table")
+
+    with (
+        patch.object(mock_clickhouse, "table_exists", return_value=False),
+        patch.object(mock_clickhouse, "create") as mock_create,
+    ):
+        assert mock_clickhouse.search("test query") == []
+        mock_create.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_async_search_raises_when_the_table_is_there(mock_clickhouse, mock_embedder):
+    """Same contract on the async path."""
+    mock_embedder.get_embedding.return_value = [0.1] * 1024
+    mock_clickhouse.async_client.query.side_effect = Exception("Code: 159. DB::Exception: Timeout exceeded")
+
+    with (
+        patch.object(mock_clickhouse, "async_table_exists", new=AsyncMock(return_value=True)),
+        patch.object(mock_clickhouse, "async_create", new=AsyncMock()) as mock_create,
+    ):
+        with pytest.raises(Exception, match="Timeout exceeded"):
+            await mock_clickhouse.async_search("test query")
+
+        mock_create.assert_not_called()
