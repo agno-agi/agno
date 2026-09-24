@@ -1943,6 +1943,9 @@ def run_dispatch(
     # Initialize Team
     team.initialize_team(debug_mode=debug_mode)
 
+    if team.skills is not None:
+        team.skills.reset_for_run()
+
     if (add_history_to_context or team.add_history_to_context) and not team.db and not team.parent_team_id:
         log_warning(
             "add_history_to_context is True, but no database has been assigned to the team. History will not be added to the context."
@@ -4308,6 +4311,9 @@ def arun_dispatch(  # type: ignore
 
     # Initialize Team
     team.initialize_team(debug_mode=debug_mode)
+
+    if team.skills is not None:
+        team.skills.reset_for_run()
 
     # Resolve run options centrally. No session pre-read happens here: the session
     # is read inside _arun/_arun_stream AFTER options are resolved, so session-stored
