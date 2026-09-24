@@ -177,7 +177,7 @@ def test_default_output_limit_returns_complete_json_over_uvicorn_http():
     app, _ = application()
     with live_server(app) as url, httpx.Client(base_url=url, timeout=10, trust_env=False) as client:
         assert_complete_output_error(post_attachment(client))
-        response = post_when_slot_free(client, ROUTE, data={"message": "Hello again", "stream": "false"})
+        response = client.post(ROUTE, data={"message": "Hello again", "stream": "false"})
         assert response.status_code == 200 and response.json()["content"] == "Short answer."
         assert int(response.headers["content-length"]) == len(response.content)
 
@@ -232,12 +232,10 @@ def test_compressed_native_runs_over_http(team_mode, gzip_position, encoding):
         assert response.status_code == 200, response.text
         assert response.json()["content"] == "Short answer."
         surface.max_output_bytes = 100
-        response = post_when_slot_free(
-            client, route, data={"message": "Hello", "stream": "false"}, headers={"Origin": ORIGIN}
-        )
+        response = client.post(route, data={"message": "Hello", "stream": "false"}, headers={"Origin": ORIGIN})
         assert_complete_output_error(response)
         surface.max_output_bytes = 1024 * 1024
-        assert post_when_slot_free(client, route, data={"message": "Again", "stream": "false"}).status_code == 200
+        assert client.post(route, data={"message": "Again", "stream": "false"}).status_code == 200
 
 
 @pytest.mark.parametrize("stream", ["true", "false"])
