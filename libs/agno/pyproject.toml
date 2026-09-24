@@ -190,6 +190,7 @@ async-postgres = ["asyncpg"]
 firestore = ["google-cloud-firestore"]
 gcs = ["google-cloud-storage"]
 mysql = ["pymysql", "asyncmy"]
+oracle = ["sqlalchemy", "oracledb"]
 postgres = ["sqlalchemy", "psycopg[binary]"]
 pages = ["agno[postgres]", "agno[pgvector]", "dnspython>=2.6.1", "beautifulsoup4", "regex>=2024.5.15"]
 redis = ["redis>=4.5.4", "redisvl>=0.12.1"]  # >=4.5.4: safe cancellation of blocking commands (XREAD in event stream tail)
@@ -359,6 +360,7 @@ storage = [
   "agno[firestore]",
   "agno[gcs]",  # also used by GCS media storage (gcs serves both roles)
   "agno[mysql]",
+  "agno[oracle]",
   "agno[postgres]",
   "agno[redis]",  # also listed under vectordbs (redis serves both roles)
   "agno[s3]",
@@ -635,6 +637,7 @@ module = [
   "opensearchpy.*",
   "cv2.*",
   "openbb.*",
+  "oracledb.*",
   "pandas.*",
   "pgvector.*",
   "PIL.*",
