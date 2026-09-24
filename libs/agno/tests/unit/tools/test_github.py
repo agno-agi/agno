@@ -1257,6 +1257,78 @@ def test_get_file_content(mock_github):
     assert "Not Found" in result_data["error"]
 
 
+def test_get_file_content_preserves_non_ascii_text(mock_github):
+    """Valid non-ASCII UTF-8 text must not be misclassified as binary (fixes #10477)."""
+    mock_client, mock_repo = mock_github
+    github_tools = GithubTools()
+
+    # 300 Chinese characters: every one is outside the ASCII printable range,
+    # which the old heuristic wrongly counted toward the binary threshold.
+    text = "中文文档内容" * 50
+    mock_content = MagicMock()
+    mock_content.name = "README.md"
+    mock_content.path = "README.md"
+    mock_content.sha = "abc123"
+    mock_content.size = len(text.encode("utf-8"))
+    mock_content.type = "file"
+    mock_content.html_url = "https://github.com/test-org/test-repo/blob/main/README.md"
+    mock_content.decoded_content = text.encode("utf-8")
+
+    mock_repo.get_contents.return_value = mock_content
+
+    result = github_tools.get_file_content(repo_name="test-org/test-repo", path="README.md")
+    result_data = json.loads(result)
+
+    assert result_data["content"] == text
+    assert result_data["content"] != "Binary file (content not displayed)"
+
+
+def test_get_file_content_still_hides_control_char_binary(mock_github):
+    """Content dominated by non-text control characters is still treated as binary."""
+    mock_client, mock_repo = mock_github
+    github_tools = GithubTools()
+
+    mock_content = MagicMock()
+    mock_content.name = "blob.bin"
+    mock_content.path = "blob.bin"
+    mock_content.sha = "bin123"
+    mock_content.size = 400
+    mock_content.type = "file"
+    mock_content.html_url = "https://github.com/test-org/test-repo/blob/main/blob.bin"
+    # Valid UTF-8 (control chars are single bytes) but not displayable text.
+    mock_content.decoded_content = b"\x01\x02\x03\x04" * 100
+
+    mock_repo.get_contents.return_value = mock_content
+
+    result = github_tools.get_file_content(repo_name="test-org/test-repo", path="blob.bin")
+    result_data = json.loads(result)
+
+    assert result_data["content"] == "Binary file (content not displayed)"
+
+
+def test_get_file_content_hides_del_and_c1_controls(mock_github):
+    """DEL (U+007F) and C1 (U+0080-U+009F) controls are still treated as binary."""
+    mock_client, mock_repo = mock_github
+    github_tools = GithubTools()
+
+    mock_content = MagicMock()
+    mock_content.name = "blob.bin"
+    mock_content.path = "blob.bin"
+    mock_content.sha = "bin123"
+    mock_content.size = 600
+    mock_content.type = "file"
+    mock_content.html_url = "https://github.com/test-org/test-repo/blob/main/blob.bin"
+    # DEL and a C1 control repeated past the 200 threshold; valid UTF-8 once encoded.
+    mock_content.decoded_content = ("\x7f\x9f" * 300).encode("utf-8")
+
+    mock_repo.get_contents.return_value = mock_content
+
+    result = github_tools.get_file_content(repo_name="test-org/test-repo", path="blob.bin")
+    result_data = json.loads(result)
+
+    assert result_data["content"] == "Binary file (content not displayed)"
+
+
 def test_update_file(mock_github):
     """Test updating a file in a repository."""
     mock_client, mock_repo = mock_github
