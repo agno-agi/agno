@@ -94,7 +94,10 @@ class CSVReader(Reader):
                 log_debug(f"Reading retrieved file: {getattr(file, 'name', 'BytesIO')}")
                 csv_name = name or getattr(file, "name", "csv_file").split(".")[0]
                 file.seek(0)
-                file_content = io.StringIO(file.read().decode(self.encoding or "utf-8"))
+                file_contents = file.read()
+                if isinstance(file_contents, bytes):
+                    file_contents = file_contents.decode(self.encoding or "utf-8")
+                file_content = io.StringIO(file_contents)
 
             csv_lines: List[str] = []
             with file_content as csvfile:
@@ -148,8 +151,12 @@ class CSVReader(Reader):
             List of Document objects.
 
         Raises:
+            ValueError: If page_size is less than zero.
             FileNotFoundError: If the file path doesn't exist.
         """
+        if page_size < 0:
+            raise ValueError("page_size cannot be a negative value.")
+
         try:
             if isinstance(file, (Path, str)):
                 file_path = Path(file)
@@ -165,7 +172,10 @@ class CSVReader(Reader):
             else:
                 log_debug(f"Reading retrieved file async: {getattr(file, 'name', 'BytesIO')}")
                 file.seek(0)
-                file_content_io = io.StringIO(file.read().decode(self.encoding or "utf-8"))
+                file_contents = file.read()
+                if isinstance(file_contents, bytes):
+                    file_contents = file_contents.decode(self.encoding or "utf-8")
+                file_content_io = io.StringIO(file_contents)
                 csv_name = name or getattr(file, "name", "csv_file").split(".")[0]
 
             file_content_io.seek(0)

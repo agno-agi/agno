@@ -9,6 +9,44 @@ from agno.knowledge.reader.field_labeled_csv_reader import FieldLabeledCSVReader
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("page_size", [-1, -10])
+@pytest.mark.parametrize("row_count", [1, 11])
+async def test_async_read_rejects_non_positive_page_size(page_size, row_count):
+    stream = io.StringIO("name\n" + "Alice\n" * row_count)
+    reader = FieldLabeledCSVReader()
+
+    with pytest.raises(ValueError, match="page_size"):
+        await reader.async_read(stream, page_size=page_size)
+
+    assert stream.tell() == 0
+    assert not stream.closed
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("page_size", [1, 3, 11, 20])
+async def test_async_read_page_size_preserves_rows(page_size):
+    stream = io.StringIO("name\nAlice\nBob\nCarol\nDave\nEve\nFrank\nGrace\nHeidi\nIvan\nJudy\nKarl\n")
+    reader = FieldLabeledCSVReader()
+
+    documents = await reader.async_read(stream, page_size=page_size)
+
+    assert [doc.content for doc in documents] == [
+        "Name: Alice",
+        "Name: Bob",
+        "Name: Carol",
+        "Name: Dave",
+        "Name: Eve",
+        "Name: Frank",
+        "Name: Grace",
+        "Name: Heidi",
+        "Name: Ivan",
+        "Name: Judy",
+        "Name: Karl",
+    ]
+    assert [doc.meta_data["row_index"] for doc in documents] == list(range(11))
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("use_async", [False, True], ids=["sync", "async"])
 @pytest.mark.parametrize("stream_type", ["stringio", "text_file", "bytesio"])
 @pytest.mark.parametrize("row_count", [1, 12], ids=["single-row", "paginated"])
