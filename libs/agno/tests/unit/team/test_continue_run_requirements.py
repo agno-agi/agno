@@ -4,6 +4,8 @@ import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
 from agno.models.response import ToolExecution
 from agno.run import RunStatus
 from agno.run.requirement import RunRequirement
@@ -1312,3 +1314,89 @@ class TestRoutingForwardsRunContextToMembers:
         assert "dependencies" not in kwargs
         assert "metadata" not in kwargs
         assert "knowledge_filters" not in kwargs
+
+
+# ===========================================================================
+# Callable members factory + member-HITL continue routing
+# ===========================================================================
+
+
+class TestCallableMembersHitlContinueRouting:
+    """Member-HITL continue must resolve a callable Team.members factory first.
+
+    ``_find_member_route_by_id`` / ``get_resolved_members()`` return None while
+    ``run_context.members`` is empty. Without resolving the factory before
+    grouping, every member requirement raises ``RunNotContinuableError``.
+    """
+
+    def _make_factory_team_and_requirement(self):
+        from agno.agent import Agent
+        from agno.run import RunContext
+        from agno.team.team import Team
+        from agno.utils.team import get_member_id
+
+        member = Agent(name="Researcher", id="researcher")
+
+        def members_factory():
+            return [member]
+
+        team = Team(name="Research Team", id="research-team", members=members_factory)
+        member_id = get_member_id(member)
+        req = _make_requirement(requires_confirmation=True)
+        req.confirm()
+        req.member_agent_id = member_id
+        req.member_run_id = "member-run-1"
+
+        run_response = TeamRunOutput(run_id="team-run-1", team_id="research-team")
+        run_response.requirements = [req]
+        run_response.member_responses = []
+
+        session = MagicMock()
+        session.session_id = "session-1"
+        session.runs = []
+
+        run_context = RunContext(run_id="team-run-1", session_id="session-1", user_id="user-1")
+        return team, member, run_response, session, run_context
+
+    def test_unresolved_factory_cannot_route_member_requirement(self):
+        from agno.exceptions import RunNotContinuableError
+        from agno.team._run import _group_requirements_for_continue
+
+        team, _member, run_response, session, run_context = self._make_factory_team_and_requirement()
+
+        with pytest.raises(RunNotContinuableError, match="not a member of team"):
+            _group_requirements_for_continue(team, run_response, session, run_context)
+
+    def test_resolve_before_routing_finds_factory_member(self):
+        from agno.team._run import (
+            _group_requirements_for_continue,
+            _resolve_callable_members_for_continue,
+        )
+
+        team, member, run_response, session, run_context = self._make_factory_team_and_requirement()
+        assert run_context.members is None
+
+        _resolve_callable_members_for_continue(team, run_context)
+        assert run_context.members == [member]
+
+        entries = _group_requirements_for_continue(team, run_response, session, run_context)
+        assert len(entries) == 1
+        routed_member, _target, reqs = entries[0]
+        assert routed_member is member
+        assert reqs == run_response.requirements
+
+    @pytest.mark.asyncio
+    async def test_async_resolve_before_routing_finds_factory_member(self):
+        from agno.team._run import (
+            _aresolve_callable_members_for_continue,
+            _group_requirements_for_continue,
+        )
+
+        team, member, run_response, session, run_context = self._make_factory_team_and_requirement()
+
+        await _aresolve_callable_members_for_continue(team, run_context)
+        assert run_context.members == [member]
+
+        entries = _group_requirements_for_continue(team, run_response, session, run_context)
+        assert len(entries) == 1
+        assert entries[0][0] is member
