@@ -15,6 +15,18 @@ To use the script simply:
 - Set the config variables for the backends you want to migrate
 - Run the script
 
+For ClickHouse and Milvus the store-name list is optional: omit `clickhouse_config`'s
+`table_names` (or `milvus_config`'s `collections`) and the script migrates every Agno store
+it finds. Discovery matches Agno's own store shape — `content_hash` plus `content_id`,
+alongside the vector field — so a store another tool created on the same server is left
+alone. An explicit empty list migrates nothing, which is not the same as omitting it.
+
+LanceDB and SurrealDB still take explicit names, and not merely because no one has written
+the code: LanceDB keeps `content_hash`/`content_id` inside its `payload` JSON blob rather
+than as columns, so an Agno table cannot be told apart from any other table with a vector
+and an id without reading rows. SurrealDB declares `content_id` but keeps `content_hash` in
+`meta_data`, leaving a weaker signature than the other backends match on.
+
 All operations are idempotent — a field that already exists is left as-is.
 """
 
@@ -22,11 +34,20 @@ from typing import Any, Dict, List
 
 from agno.utils.log import log_error, log_info, log_warning
 
+# Columns that together identify a table as an Agno vector store. `embedding` alone would
+# also match vector tables written by other tools sharing the database; the content columns
+# are what make the match Agno-specific.
+_AGNO_VECTOR_COLUMNS = {"embedding", "content_hash", "content_id"}
+
+# The same idea for Milvus, whose vector field is named `vector` rather than `embedding`.
+# The content fields are the Agno-specific half either way, so they carry the match.
+_AGNO_VECTOR_FIELDS = {"content_hash", "content_id"}
+
 # ------------ Milvus ------------
 milvus_config: Dict[str, Any] = {
     # "uri": "http://localhost:19530",   # or a milvus-lite .db path
     # "token": None,
-    # "collections": ["my_collection"],
+    # "collections": ["my_collection"],  # Omit to discover every Agno collection on the server
 }
 # --------------------------------
 
@@ -52,7 +73,7 @@ clickhouse_config: Dict[str, Any] = {
     # "username": "default",
     # "password": "",
     # "database": "ai",
-    # "table_names": ["my_table"],
+    # "table_names": ["my_table"],  # Omit to discover every Agno vector table in the database
 }
 # ------------------------------------
 
@@ -75,6 +96,28 @@ qdrant_config: Dict[str, Any] = {
     # ],
 }
 # -----------------------------------------------------------------
+
+
+def discover_milvus_collections() -> List[str]:
+    """Find every Agno vector collection on the configured Milvus server.
+
+    Returns:
+        Sorted collection names whose schema carries Agno's vector-store field signature.
+    """
+    from pymilvus import MilvusClient
+
+    client = MilvusClient(uri=milvus_config.get("uri"), token=milvus_config.get("token"))
+    discovered = []
+    for collection in client.list_collections():
+        try:
+            fields = {f["name"] for f in client.describe_collection(collection)["fields"]}
+        except Exception as e:
+            # A collection that cannot be described is not one this migration should touch.
+            log_warning(f"Milvus: could not read the schema of collection '{collection}' ({e}). Skipping.")
+            continue
+        if _AGNO_VECTOR_FIELDS.issubset(fields):
+            discovered.append(collection)
+    return sorted(discovered)
 
 
 def migrate_milvus_collection(collection: str) -> None:
@@ -229,6 +272,34 @@ def migrate_lancedb_table(table_name: str) -> None:
         raise
 
 
+def _clickhouse_client() -> Any:
+    """Build a ClickHouse client from ``clickhouse_config``."""
+    import clickhouse_connect
+
+    return clickhouse_connect.get_client(
+        host=clickhouse_config.get("host", "localhost"),
+        port=clickhouse_config.get("port", 8123),
+        username=clickhouse_config.get("username", "default"),
+        password=clickhouse_config.get("password", ""),
+        database=clickhouse_config.get("database", "default"),
+    )
+
+
+def discover_clickhouse_tables() -> List[str]:
+    """Find every Agno vector table in the configured ClickHouse database.
+
+    Returns:
+        Sorted table names carrying Agno's vector-table column signature.
+    """
+    client = _clickhouse_client()
+    database = clickhouse_config.get("database", "default")
+    rows = client.query(
+        "SELECT table, groupArray(name) FROM system.columns WHERE database = {db:String} GROUP BY table",
+        parameters={"db": database},
+    ).result_rows
+    return sorted(table for table, columns in rows if _AGNO_VECTOR_COLUMNS.issubset(set(columns)))
+
+
 def migrate_clickhouse_table(table_name: str) -> None:
     """Add the ``user_id`` column to an existing ClickHouse table.
 
@@ -239,15 +310,7 @@ def migrate_clickhouse_table(table_name: str) -> None:
         table_name: The ClickHouse table name.
     """
     try:
-        import clickhouse_connect
-
-        client = clickhouse_connect.get_client(
-            host=clickhouse_config.get("host", "localhost"),
-            port=clickhouse_config.get("port", 8123),
-            username=clickhouse_config.get("username", "default"),
-            password=clickhouse_config.get("password", ""),
-            database=clickhouse_config.get("database", "default"),
-        )
+        client = _clickhouse_client()
         db = clickhouse_config.get("database", "default")
 
         cols = [r[0] for r in client.query(f"DESCRIBE {db}.{table_name}").result_rows]
@@ -321,14 +384,33 @@ def run() -> None:
     a partial migration is never reported as a success.
     """
     tasks = []
-    tasks += [(f"milvus:{n}", lambda n=n: migrate_milvus_collection(n)) for n in milvus_config.get("collections", [])]
+    if milvus_config:
+        # Omitted `collections` means "discover"; an explicit empty list means "nothing",
+        # so the two must not collapse into the same default.
+        milvus_collections = milvus_config.get("collections")
+        if milvus_collections is None:
+            log_info("No `collections` set for Milvus: discovering Agno collections on the server")
+            milvus_collections = discover_milvus_collections()
+            log_info(
+                f"Discovered {len(milvus_collections)} Milvus collection(s): {', '.join(milvus_collections) or 'none'}"
+            )
+        tasks += [(f"milvus:{n}", lambda n=n: migrate_milvus_collection(n)) for n in milvus_collections]
     tasks += [
         (f"weaviate:{n}", lambda n=n: migrate_weaviate_collection(n)) for n in weaviate_config.get("collections", [])
     ]
     tasks += [(f"lancedb:{n}", lambda n=n: migrate_lancedb_table(n)) for n in lancedb_config.get("table_names", [])]
-    tasks += [
-        (f"clickhouse:{n}", lambda n=n: migrate_clickhouse_table(n)) for n in clickhouse_config.get("table_names", [])
-    ]
+    if clickhouse_config:
+        # Omitted `table_names` means "discover"; an explicit empty list means "nothing",
+        # so the two must not collapse into the same default.
+        clickhouse_tables = clickhouse_config.get("table_names")
+        if clickhouse_tables is None:
+            database = clickhouse_config.get("database", "default")
+            log_info(f"No `table_names` set for ClickHouse: discovering Agno vector tables in database '{database}'")
+            clickhouse_tables = discover_clickhouse_tables()
+            log_info(
+                f"Discovered {len(clickhouse_tables)} ClickHouse table(s): {', '.join(clickhouse_tables) or 'none'}"
+            )
+        tasks += [(f"clickhouse:{n}", lambda n=n: migrate_clickhouse_table(n)) for n in clickhouse_tables]
     tasks += [
         (f"surrealdb:{n}", lambda n=n: migrate_surrealdb_collection(n)) for n in surrealdb_config.get("collections", [])
     ]
