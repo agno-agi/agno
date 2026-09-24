@@ -374,6 +374,8 @@ class Team:
     num_followups: int = 3
     # Optional model to use for generating followups (defaults to team's model)
     followup_model: Optional[Model] = None
+    # Force JSON mode for followup generation (issue #9870)
+    followup_use_json_mode: bool = False
 
     # --- Team Streaming ---
     # Stream the response from the Team
@@ -561,6 +563,7 @@ class Team:
         followups: bool = False,
         num_followups: int = 3,
         followup_model: Optional[Union[Model, str]] = None,
+        followup_use_json_mode: bool = False,
         stream: Optional[bool] = None,
         stream_events: Optional[bool] = None,
         store_events: bool = False,
@@ -680,6 +683,7 @@ class Team:
             followups=followups,
             num_followups=num_followups,
             followup_model=followup_model,
+            followup_use_json_mode=followup_use_json_mode,
             stream=stream,
             stream_events=stream_events,
             store_events=store_events,
