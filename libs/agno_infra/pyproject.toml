@@ -70,11 +70,13 @@ build-backend = "setuptools.build_meta"
 
 
 [tool.setuptools.packages.find]
+# Ship only the agno.* SUBPACKAGES that agno-infra owns. The top-level `agno`
+# is a PEP 420 namespace package (no __init__.py in this tree), so the build
+# emits NO agno/__init__.py. The real `agno` distribution owns agno/__init__.py
+# (which defines __version__); shipping an empty one here clobbers it on
+# install and breaks `from agno import __version__`.
 include = ["agno*"]
-
-[tool.setuptools.package-data]
-agno = ["py.typed"]
-include = ["LICENSE"]
+namespaces = true
 
 [tool.pytest.ini_options]
 log_cli = true
