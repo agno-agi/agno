@@ -66,10 +66,10 @@ def hash_string_sha256(input_string):
     return hex_digest
 
 
-def _extract_json_objects(text: str) -> list[str]:
-    objs: list[str] = []
-    brace_depth = 0
-    start_idx: Optional[int] = None
+def _scan_brace_spans(text: str, quotes_in_prose: bool) -> list[tuple[int, int]]:
+    """Return (start, end) spans of outermost balanced braces; unmatched braces are skipped."""
+    closed: list[tuple[int, int]] = []
+    stack: list[int] = []
     in_string = False
     escape = False
     for idx, ch in enumerate(text):
@@ -80,19 +80,37 @@ def _extract_json_objects(text: str) -> list[str]:
                 escape = True
             elif ch == '"':
                 in_string = False
+        elif ch == '"':
+            in_string = quotes_in_prose or bool(stack)
+        elif ch == "{":
+            stack.append(idx)
+        elif ch == "}" and stack:
+            closed.append((stack.pop(), idx + 1))
+    # Spans nest, so keep the outermost; an unclosed '{' then no longer hides the spans inside it
+    spans: list[tuple[int, int]] = []
+    last_end = -1
+    for start, end in sorted(closed):
+        if start >= last_end:
+            spans.append((start, end))
+            last_end = end
+    return spans
+
+
+def _extract_json_objects(text: str) -> list[str]:
+    # A quote in prose may open a quoted phrase or be a stray, so scan both ways and keep spans that decode
+    spans = set(_scan_brace_spans(text, quotes_in_prose=True)) | set(_scan_brace_spans(text, quotes_in_prose=False))
+    objs: list[str] = []
+    last_end = -1
+    for start, end in sorted(spans):
+        if start < last_end:
             continue
-        if ch == '"':
-            in_string = True
+        candidate = text[start:end]
+        try:
+            json.loads(candidate)
+        except (json.JSONDecodeError, RecursionError):
             continue
-        if ch == "{" and brace_depth == 0:
-            start_idx = idx
-        if ch == "{":
-            brace_depth += 1
-        elif ch == "}":
-            brace_depth -= 1
-            if brace_depth == 0 and start_idx is not None:
-                objs.append(text[start_idx : idx + 1])
-                start_idx = None
+        objs.append(candidate)
+        last_end = end
     return objs
 
 
@@ -309,6 +327,45 @@ def generate_id_from_name(name: Optional[str] = None) -> str:
         from agno.utils.names import generate_human_readable_id
 
         return generate_human_readable_id()
+
+
+def generate_component_id_from_name(name: str) -> str:
+    """Strict single-segment component id: lowercase, non-alphanumerics fold to
+    one hyphen, edges stripped.
+
+    This is the Studio and REST mint (it has been Studio's since 2.8 as _slugify).
+    It never produces a value validate_component_id rejects, so a machine-
+    minted id is always a safe URL path segment. generate_id_from_name above
+    stays untouched: it is a persisted identity contract for code-defined
+    components, Toolkit ids, and everything keyed on them.
+    """
+    slug = "".join(c.lower() if c.isalnum() else "-" for c in name.strip())
+    while "--" in slug:
+        slug = slug.replace("--", "-")
+    return slug.strip("-") or "component"
+
+
+def validate_component_id(component_id: str) -> Optional[str]:
+    """One shared rule for explicit component ids; returns the problem or None.
+
+    Ids appear as URL path segments (/components/{id}, /agents/{id}/runs) and
+    inside schedule endpoints, so whitespace, path and query metacharacters,
+    and control characters are refused. Unicode letters are allowed - the
+    strict mint keeps them too, so the two agree.
+    """
+    if not component_id:
+        return "component_id must not be empty"
+    if any(ch.isspace() for ch in component_id):
+        return "component_id must not contain whitespace"
+    forbidden = set("/\\?#%")
+    hit = next((ch for ch in component_id if ch in forbidden or ord(ch) < 32), None)
+    if hit is not None:
+        return f"component_id must not contain {hit!r}"
+    # "." and ".." are path segments, not names: a URL carrying one is
+    # normalised before it reaches a route, so the row would be unaddressable.
+    if component_id in (".", ".."):
+        return "component_id must not be a path segment"
+    return None
 
 
 def sanitize_postgres_string(value: Optional[str]) -> Optional[str]:

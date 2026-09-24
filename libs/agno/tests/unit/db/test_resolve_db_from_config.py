@@ -145,6 +145,7 @@ class TestResolveDbFromConfigPostgres:
             db_url="postgresql://user:pass@host/db",
             db_engine=engine,
             db_schema="ai",
+            create_schema=False,
         )
         registry = _FakeRegistry(os_db)
 
@@ -160,6 +161,7 @@ class TestResolveDbFromConfigPostgres:
         # re-save isn't unusable.
         assert clone.db_url == os_db.db_url
         assert clone.db_schema == os_db.db_schema
+        assert clone.create_schema is False
         redict = clone.to_dict()
         assert redict["db_url"] == os_db.db_url
         assert redict["db_schema"] == os_db.db_schema

@@ -65,8 +65,7 @@ def create_support_agent(customer_id: str, ticket_id: str, org_id: str) -> Agent
             session_context=SessionContextConfig(
                 enable_planning=True,
             ),
-            entity_memory=EntityMemoryConfig(
-                mode=LearningMode.ALWAYS,
+            entity_memory=EntityMemoryConfig(  # AGENTIC-only: the agent records through its four tools
                 namespace=f"org:{org_id}:support",
             ),
             learned_knowledge=LearnedKnowledgeConfig(

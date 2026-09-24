@@ -8,9 +8,9 @@ data shape used to train reward models (RLHF) or do DPO fine-tuning.
 
 from typing import Literal
 
-from agno.agent import Agent, RunOutput  # noqa
+from agno.agent import Agent, RunOutput
 from pydantic import BaseModel, Field
-from rich.pretty import pprint  # noqa
+from rich.pretty import pprint
 
 
 # ---------------------------------------------------------------------------

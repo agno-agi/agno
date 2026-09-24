@@ -64,7 +64,7 @@ All four routes come from a single `AgentOS(knowledge=..., workflows=..., base_a
 
 ## How it works
 
-1. **Ingest** — the `image-ingest` workflow fetches each URL (httpx, redirects on), passes the bytes to a Gemini agent with `output_schema=ImageDescription`, and inserts the structured result into one shared `Knowledge` instance. The flattened description (caption + subjects + scene + style + tags) becomes the embedded text; the full `ImageDescription` plus the source URL becomes the metadata. URLs are processed concurrently with a `ThreadPoolExecutor`. The workflow is idempotent — items already present in `contents_db` are skipped.
+1. **Ingest** — the `image-ingest` workflow fetches each URL (httpx, redirects on), passes the bytes to a Gemini agent with `output_schema=ImageDescription`, and inserts the structured result into one shared `Knowledge` instance. The flattened description (caption + subjects + scene + style + tags) becomes the embedded text; the full `ImageDescription` plus the source URL becomes the metadata. URLs are processed concurrently with a `ThreadPoolExecutor`. A reindex is a full rebuild — the workflow clears `contents_db` and re-ingests everything, so runs are repeatable but not incremental.
 
 2. **Gallery** — the UI hits `GET /knowledge/content`. Items render as cards with the image, caption, subjects, scene, visual style, and tag chips.
 

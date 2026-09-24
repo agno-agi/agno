@@ -9,7 +9,8 @@ We'll build an investment research team with opposing perspectives:
 - Bear Agent: Makes the case AGAINST investing
 - Lead Analyst: Synthesizes into a balanced recommendation
 
-This adversarial approach produces better analysis than a single agent.
+This adversarial setup can surface disagreements a single pass may miss.
+Whether it improves results is something you should evaluate for your task.
 
 Key concepts:
 - Team: A group of agents coordinated by a leader
@@ -25,13 +26,16 @@ Example prompts to try:
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.google import Gemini
-from agno.team.team import Team
+from agno.team import Team
 from agno.tools.yfinance import YFinanceTools
 
 # ---------------------------------------------------------------------------
 # Storage Configuration
 # ---------------------------------------------------------------------------
-team_db = SqliteDb(db_file="tmp/agents.db")
+team_db = SqliteDb(
+    id="quickstart-team-db",
+    db_file="tmp/quickstart/team.db",
+)
 
 # ---------------------------------------------------------------------------
 # Bull Agent — Makes the Case FOR
@@ -39,8 +43,14 @@ team_db = SqliteDb(db_file="tmp/agents.db")
 bull_agent = Agent(
     name="Bull Analyst",
     role="Make the investment case FOR a stock",
-    model=Gemini(id="gemini-3.5-flash"),
-    tools=[YFinanceTools(all=True)],
+    model=Gemini(id="gemini-3.6-flash"),
+    tools=[
+        YFinanceTools(
+            enable_company_info=True,
+            enable_stock_fundamentals=True,
+            enable_company_news=True,
+        )
+    ],
     db=team_db,
     instructions="""\
 You are a bull analyst. Your job is to make the strongest possible case
@@ -63,8 +73,14 @@ Be persuasive but grounded in data. Use the tools to get real numbers.\
 bear_agent = Agent(
     name="Bear Analyst",
     role="Make the investment case AGAINST a stock",
-    model=Gemini(id="gemini-3.5-flash"),
-    tools=[YFinanceTools(all=True)],
+    model=Gemini(id="gemini-3.6-flash"),
+    tools=[
+        YFinanceTools(
+            enable_company_info=True,
+            enable_stock_fundamentals=True,
+            enable_company_news=True,
+        )
+    ],
     db=team_db,
     instructions="""\
 You are a bear analyst. Your job is to make the strongest possible case
@@ -86,7 +102,7 @@ Be critical but fair. Use the tools to get real numbers to support your concerns
 # ---------------------------------------------------------------------------
 multi_agent_team = Team(
     name="Multi-Agent Team",
-    model=Gemini(id="gemini-3.5-flash"),
+    model=Gemini(id="gemini-3.6-flash"),
     members=[bull_agent, bear_agent],
     instructions="""\
 You lead an investment research team with a Bull Analyst and Bear Analyst.
@@ -148,6 +164,9 @@ Team:
 - Specialized expertise
 - Complex tasks that benefit from division of labor
 - Adversarial reasoning (like this example)
+
+Teams add latency and cost. Start with one agent and keep the team only if
+evaluation shows that the extra perspectives improve the result.
 
 Other team patterns:
 

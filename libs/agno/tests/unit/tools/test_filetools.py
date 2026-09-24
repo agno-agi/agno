@@ -49,6 +49,30 @@ def test_list_files_returns_relative_paths():
             assert file_path in ["file1.txt", "file2.txt", "file3.md"]
 
 
+def test_list_files_schema_exposes_directory():
+    """Test that list_files exposes its optional directory argument."""
+    file_tools = FileTools()
+    function = file_tools.functions["list_files"]
+    function.process_entrypoint()
+
+    properties = function.parameters["properties"]
+    assert properties["directory"]["type"] == "string"
+    assert "kwargs" not in properties
+    assert "directory" not in function.parameters.get("required", [])
+
+
+def test_list_files_empty_directory_falls_back_to_base_dir():
+    """Test that an empty directory string lists the base directory instead of returning nothing."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base_dir = Path(tmp_dir)
+        file_tools = FileTools(base_dir=base_dir)
+
+        (base_dir / "file1.txt").write_text("content1")
+
+        assert json.loads(file_tools.list_files(directory="")) == ["file1.txt"]
+        assert file_tools.list_files(directory="") == file_tools.list_files()
+
+
 def test_search_files_returns_relative_paths():
     """Test that search_files returns relative paths in JSON structure."""
     with tempfile.TemporaryDirectory() as tmp_dir:
@@ -148,20 +172,20 @@ def test_replace_file_chunk():
         assert new_contents == "line0\nsome\nstuff\nline3\n"
 
 
-def test_check_escape():
-    """Test check_escape service function"""
+def test_check_path():
+    """Test the path-containment check used by all file operations"""
     with tempfile.TemporaryDirectory() as tempdirname:
         base_dir = Path(tempdirname)
         f = FileTools(base_dir=base_dir)
-        flag, path = f.check_escape(".")
+        flag, path = f._check_path(".", base_dir)
         assert flag
         assert path.resolve() == base_dir.resolve()
-        flag, path = f.check_escape("..")
+        flag, path = f._check_path("..", base_dir)
         assert not (flag)
-        flag, path = f.check_escape("a/b/..")
+        flag, path = f._check_path("a/b/..", base_dir)
         assert flag
         assert path.resolve() == base_dir.joinpath(Path("a")).resolve()
-        flag, path = f.check_escape("a/b/../../..")
+        flag, path = f._check_path("a/b/../../..", base_dir)
         assert not (flag)
 
 
@@ -390,6 +414,39 @@ def test_default_excludes_env_family():
 
         listed = sorted(json.loads(file_tools.list_files()))
         assert listed == ["env.yaml", "environment.py", "keep.txt"]
+
+
+def test_default_excludes_credential_files():
+    """The default list is shared with Workspace, where it is an access boundary."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base_dir = Path(tmp_dir)
+        file_tools = FileTools(base_dir=base_dir)
+
+        for name in ("id_rsa", "server.pem", "credentials.json", "secrets.yaml", ".npmrc", "terraform.tfvars"):
+            (base_dir / name).write_text("SECRET=1")
+        # Ordinary source with a credential-shaped name stays visible: the patterns are
+        # deliberately not `credentials.*` / `secrets.*`.
+        for name in ("credentials.py", "secrets.py", "key.py", "keep.txt"):
+            (base_dir / name).write_text("import os")
+
+        listed = sorted(json.loads(file_tools.list_files()))
+        assert listed == ["credentials.py", "keep.txt", "key.py", "secrets.py"]
+
+
+def test_default_excludes_keep_committed_env_templates_visible():
+    """A '!' entry exempts a component from every exclude pattern."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base_dir = Path(tmp_dir)
+        file_tools = FileTools(base_dir=base_dir)
+
+        (base_dir / ".env").write_text("SECRET=1")
+        (base_dir / ".env.production").write_text("SECRET=2")
+        (base_dir / ".env.example").write_text("OPENAI_API_KEY=")
+        (base_dir / ".env.sample").write_text("OPENAI_API_KEY=")
+        (base_dir / "example.env").write_text("OPENAI_API_KEY=")
+
+        listed = sorted(json.loads(file_tools.list_files()))
+        assert listed == [".env.example", ".env.sample", "example.env"]
 
 
 def test_default_excludes_agent_scratch_and_plural_venvs():

@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 from agno.agent import Agent
 from agno.db.in_memory import InMemoryDb
+from agno.db.sqlite import SqliteDb
 from agno.eval.agent_as_judge import AgentAsJudgeEval, BinaryJudgeResponse, NumericJudgeResponse
 from agno.models.openai import OpenAIChat
 from agno.run.agent import RunOutput
@@ -552,3 +553,51 @@ async def test_binary_mode_basic_async():
     assert len(result.results) == 1
     assert result.results[0].score is None  # Binary mode doesn't have scores
     assert isinstance(result.results[0].passed, bool)
+
+
+# ---------------------------------------------------------------------------
+# run_id is per execution: one run() call, one row, one id
+# ---------------------------------------------------------------------------
+
+
+def test_rerun_stores_a_row_and_a_file_per_run(tmp_path):
+    """run_id is the evals table primary key and create_eval_run is a plain insert, so a reused
+    id made the second write raise and be swallowed. The file sink is keyed the same way, so one
+    rerun is enough to cover both. InMemoryDb has no uniqueness and cannot show the failure."""
+    db = SqliteDb(db_file=str(tmp_path / "evals.db"))
+    eval = AgentAsJudgeEval(
+        criteria="Response must be helpful",
+        scoring_strategy="numeric",
+        db=db,
+        telemetry=False,
+        show_spinner=False,
+        file_path_to_save_results=str(tmp_path / "{run_id}.json"),
+    )
+    _mock_evaluator_numeric(eval, score=8)
+
+    first = eval.run(input="What is Python?", output="A language.", print_results=False)
+    second = eval.run(input="What is Python?", output="A language.", print_results=False)
+
+    assert {run.run_id for run in db.get_eval_runs()} == {first.run_id, second.run_id}
+    assert (tmp_path / f"{first.run_id}.json").exists()
+    assert (tmp_path / f"{second.run_id}.json").exists()
+
+
+async def test_arun_logs_distinct_run_id_per_execution():
+    """Async path also stores a distinct run_id per execution."""
+    db = InMemoryDb()
+    eval = AgentAsJudgeEval(
+        criteria="Response must be helpful", scoring_strategy="numeric", db=db, telemetry=False, show_spinner=False
+    )
+    evaluator = eval.get_evaluator_agent()
+    evaluator.model = MagicMock()
+    evaluator.arun = AsyncMock(return_value=RunOutput(content=NumericJudgeResponse(score=8, reason="Mocked.")))
+    eval.evaluator_agent = evaluator
+
+    first = await eval.arun(input="What is Python?", output="A language.", print_results=False)
+    second = await eval.arun(input="What is Python?", output="A language.", print_results=False)
+
+    runs = db.get_eval_runs()
+    assert len(runs) == 2
+    assert first.run_id != second.run_id
+    assert {run.run_id for run in runs} == {first.run_id, second.run_id}

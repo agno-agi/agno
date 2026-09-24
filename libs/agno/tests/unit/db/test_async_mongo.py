@@ -75,7 +75,6 @@ def test_init_with_all_collections():
         metrics_collection="metrics",
         eval_collection="evals",
         knowledge_collection="knowledge",
-        culture_collection="culture",
     )
 
     assert db.session_table_name == "sessions"
@@ -83,7 +82,6 @@ def test_init_with_all_collections():
     assert db.metrics_table_name == "metrics"
     assert db.eval_table_name == "evals"
     assert db.knowledge_table_name == "knowledge"
-    assert db.culture_table_name == "culture"
 
 
 @pytest.mark.asyncio

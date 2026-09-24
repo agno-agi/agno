@@ -1,16 +1,14 @@
 # Test Log - _08_image_bounding_boxes
 
-Tested 2026-05-22 against `gemini-3.5-flash`, agno 2.6.9.
+Tested 2026-07-18 against `gemini-3.5-flash`, agno 2.7.4.
 
 ### basic.py
 
 **Status:** PASS
 
-**Description:** Detect the main subject in a kayaker-in-whitewater photo, return one normalized bounding box.
+**Description:** Detects the main subject in a kayaker-in-whitewater photo (`www.gstatic.com/webp/gallery/2.jpg`) and returns one normalized bounding box via `output_schema=BoundingBox`. Exercises single-object detection with `[0, 1]` coordinates.
 
-**Result:** Sensible tight box around the kayaker.
-
-**Note:** Test image switched from a Wikimedia cat photo (Gemini can't fetch those URLs) to `www.gstatic.com/webp/gallery/2.jpg`.
+**Result:** Schema-valid box returned: `label='the main subject'`, `x=0.356`, `y=0.115`, `width=0.324`, `height=0.514` — a sensible tight box over the kayaker region. Note: the model echoes the prompt phrase as the label instead of a semantic label like "kayaker"; consistent across two runs. Coordinates vary slightly run to run (second run: `x=0.25`, `width=0.44`).
 
 ---
 
@@ -18,11 +16,9 @@ Tested 2026-05-22 against `gemini-3.5-flash`, agno 2.6.9.
 
 **Status:** PASS
 
-**Description:** Detect multiple objects in an image, return a list of bounding boxes. Input is a savanna scene with elephants, giraffes, zebras, and a crocodile.
+**Description:** Detects multiple objects of multiple classes in a savanna scene (elephants, giraffes, zebras, crocodile) and returns a `Detection` with a list of labeled normalized boxes.
 
-**Result:** Multiple boxes returned with reasonable coordinates and per-animal labels.
-
-**Note:** Test image switched from a Wikimedia "Collage of Nine Dogs" (Gemini can't fetch those URLs) to a Google generative-AI sample at `storage.googleapis.com/generativeai-downloads/images/generated_elephants_giraffes_zebras_sunset.jpg`.
+**Result:** 11 boxes returned: 6 `elephant`, 2 `giraffe`, 2 `zebra`, 1 `crocodile`. Coordinates are plausible and all in `[0, 1]` (e.g. crocodile at `x=0.606`, `y=0.848`, `width=0.321`, `height=0.081` along the bottom of the frame). Labels here are semantic, unlike the single-object files.
 
 ---
 
@@ -30,10 +26,8 @@ Tested 2026-05-22 against `gemini-3.5-flash`, agno 2.6.9.
 
 **Status:** PASS
 
-**Description:** Same task with a `confidence` field added to the schema (kayaker-in-whitewater photo).
+**Description:** Same kayaker photo as basic.py with a `confidence: Literal["high", "medium", "low"]` field added to the schema, so downstream consumers can threshold or route low-confidence boxes to review.
 
-**Result:** Sensible bounding box around the kayaker with `high` confidence.
-
-**Note:** Per-field `description` on `x`, `y`, `width`, `height` is load-bearing — without it, and without the `[0, 1]` coordinate convention spelled out in instructions, models tend to return degenerate boxes (all-zero or whole-image).
+**Result:** Box returned with `confidence='high'`: `label='the main subject'`, `x=0.354`, `y=0.115`, `width=0.332`, `height=0.521` — nearly identical to the basic.py box, with the same prompt-echo label quirk.
 
 ---

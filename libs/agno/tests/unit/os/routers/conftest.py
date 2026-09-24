@@ -55,6 +55,8 @@ def make_slack_mock(**kwargs):
     mock_slack.send_message = Mock()
     mock_slack.upload_file = Mock()
     mock_slack.max_file_size = 1_073_741_824
+    mock_slack.client = Mock()
+    mock_slack.client.auth_test = Mock(return_value={})
     for k, v in kwargs.items():
         setattr(mock_slack, k, v)
     return mock_slack

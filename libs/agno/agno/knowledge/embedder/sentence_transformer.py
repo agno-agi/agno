@@ -1,8 +1,7 @@
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple, Union
 
-from agno.knowledge.embedder.base import Embedder
-from agno.utils.log import log_warning
+from agno.knowledge.embedder.base import Embedder, raise_embedding_error
 
 try:
     from sentence_transformers import SentenceTransformer
@@ -34,15 +33,14 @@ class SentenceTransformerEmbedder(Embedder):
         if self.sentence_transformer_client is None:
             raise RuntimeError("SentenceTransformer model not initialized")
         model = self.sentence_transformer_client
-        embedding = model.encode(text, prompt=self.prompt, normalize_embeddings=self.normalize_embeddings)
         try:
+            embedding = model.encode(text, prompt=self.prompt, normalize_embeddings=self.normalize_embeddings)
             if isinstance(embedding, np.ndarray):
                 return embedding.tolist()
 
             return embedding  # type: ignore
         except Exception as e:
-            log_warning(f"Failed to get embedding: {str(e)}")
-            return []
+            raise_embedding_error(e, model_id=self.id, provider="SentenceTransformer")
 
     def get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict]]:
         return self.get_embedding(text=text), None

@@ -9,6 +9,7 @@ Observability examples for tracing and monitoring Agno agents, teams, and workfl
 - `arize_phoenix_via_openinference.py`
 - `arize_phoenix_via_openinference_local.py`
 - `atla_op.py`
+- `confident_ai.py`
 - `langfuse_via_openinference.py`
 - `langfuse_via_openinference_response_model.py`
 - `langfuse_via_openlit.py`
@@ -20,6 +21,7 @@ Observability examples for tracing and monitoring Agno agents, teams, and workfl
 - `mlflow_via_openinference.py`
 - `maxim_ops.py`
 - `opik_via_openinference.py`
+- `the_context_company.py`
 - `trace_to_database.py`
 - `traceloop_op.py`
 - `weave_op.py`

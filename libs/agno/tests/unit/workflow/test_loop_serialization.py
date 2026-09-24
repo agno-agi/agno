@@ -230,8 +230,10 @@ class TestLoopFromDict:
         assert loop.end_condition == simple_end_condition
         assert callable(loop.end_condition)
 
-    def test_from_dict_raises_without_registry_for_end_condition(self):
-        """Test from_dict raises error when end_condition needs registry but none provided."""
+    def test_from_dict_without_registry_builds_end_condition_placeholder_when_lenient(self):
+        """A lenient load keeps the loop constructible; the end-condition
+        placeholder refuses at execution and round-trips the name, so a
+        read-modify-save cycle never erases the stored reference."""
         data = {
             "type": "Loop",
             "name": "condition-loop",
@@ -241,11 +243,18 @@ class TestLoopFromDict:
             "steps": [],
         }
 
-        with pytest.raises(ValueError, match="Registry required"):
-            Loop.from_dict(data, registry=None)
+        loop = Loop.from_dict(data, registry=None)
 
-    def test_from_dict_raises_for_unknown_end_condition(self, registry_with_functions):
-        """Test from_dict raises error for unknown end_condition function."""
+        assert callable(loop.end_condition)
+        with pytest.raises(RuntimeError, match="simple_end_condition"):
+            loop.end_condition([])
+        assert loop.to_dict()["end_condition"] == "simple_end_condition"
+        assert loop.to_dict()["end_condition_type"] == "function"
+
+    def test_from_dict_unknown_end_condition_raises_under_strict(self, registry_with_functions):
+        """Under strict an unresolvable end condition refuses loudly."""
+        from agno.exceptions import ComponentRehydrationError
+
         data = {
             "type": "Loop",
             "name": "unknown-condition-loop",
@@ -255,8 +264,12 @@ class TestLoopFromDict:
             "steps": [],
         }
 
-        with pytest.raises(ValueError, match="not found in registry"):
-            Loop.from_dict(data, registry=registry_with_functions)
+        with pytest.raises(ComponentRehydrationError, match="not found in registry"):
+            Loop.from_dict(data, registry=registry_with_functions, strict=True)
+
+        lenient = Loop.from_dict(data, registry=registry_with_functions, strict=False)
+        assert callable(lenient.end_condition)
+        assert lenient.to_dict()["end_condition"] == "unknown_function"
 
     def test_from_dict_with_multiple_steps(self, registry_with_functions):
         """Test from_dict with multiple nested steps."""
@@ -494,3 +507,23 @@ class TestLoopNestedContainerSerialization:
         assert restored.steps[0].name == "steps-container"
         assert isinstance(restored.steps[0], Steps)
         assert len(restored.steps[0].steps) == 2
+
+
+class TestPlaceholderExecutionHonesty:
+    def test_end_condition_placeholder_refuses_instead_of_running_to_max_iterations(self):
+        """The loop's tolerant end-condition handling must not swallow the
+        placeholder's refusal: running with the reference missing is loud."""
+        from agno.workflow.step import UnresolvableCallableError
+
+        data = {
+            "type": "Loop",
+            "name": "l",
+            "description": None,
+            "max_iterations": 5,
+            "end_condition": "missing_condition",
+            "steps": [],
+        }
+        loop = Loop.from_dict(data, registry=Registry(), strict=False)
+
+        with pytest.raises(UnresolvableCallableError, match="missing_condition"):
+            loop._evaluate_end_condition([])

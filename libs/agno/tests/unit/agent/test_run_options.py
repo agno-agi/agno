@@ -1,16 +1,77 @@
 """Tests for centralized run option resolution."""
 
 import dataclasses
+import time
+from typing import Any, AsyncIterator, Dict, Iterator
 
 import pytest
 
 from agno.agent._run_options import ResolvedRunOptions, resolve_run_options
 from agno.agent.agent import Agent
+from agno.db.in_memory import InMemoryDb
+from agno.models.base import Model
+from agno.models.message import MessageMetrics
+from agno.models.response import ModelResponse
+from agno.session import AgentSession
 
 
 def _make_agent(**kwargs) -> Agent:
     """Create a minimal Agent instance for testing."""
     return Agent(**kwargs)
+
+
+class MockModel(Model):
+    """Minimal offline model: returns a canned text response without any network call."""
+
+    def __init__(self):
+        super().__init__(id="test-model", name="test-model", provider="test")
+        self.instructions = None
+        self._mock_response = ModelResponse(
+            content="ok",
+            role="assistant",
+            response_usage=MessageMetrics(),
+        )
+
+    def get_instructions_for_model(self, *args, **kwargs):
+        return None
+
+    def get_system_message_for_model(self, *args, **kwargs):
+        return None
+
+    async def aget_instructions_for_model(self, *args, **kwargs):
+        return None
+
+    async def aget_system_message_for_model(self, *args, **kwargs):
+        return None
+
+    def parse_args(self, *args, **kwargs):
+        return {}
+
+    def invoke(self, *args, **kwargs) -> ModelResponse:
+        return self._mock_response
+
+    async def ainvoke(self, *args, **kwargs) -> ModelResponse:
+        return self._mock_response
+
+    def invoke_stream(self, *args, **kwargs) -> Iterator[ModelResponse]:
+        yield self._mock_response
+
+    async def ainvoke_stream(self, *args, **kwargs) -> AsyncIterator[ModelResponse]:
+        yield self._mock_response
+        return
+
+    def _parse_provider_response(self, response: Any, **kwargs) -> ModelResponse:
+        return self._mock_response
+
+    def _parse_provider_response_delta(self, response: Any) -> ModelResponse:
+        return self._mock_response
+
+
+def _seed_session(db: InMemoryDb, session_id: str, agent_id: str, metadata: Dict[str, Any]) -> None:
+    """Insert a session record with the given metadata, as if written by an earlier deployment."""
+    db.upsert_session(
+        AgentSession(session_id=session_id, agent_id=agent_id, metadata=metadata, created_at=int(time.time()))
+    )
 
 
 class TestResolvedRunOptionsImmutable:
@@ -154,19 +215,98 @@ class TestMetadataMerge:
         opts = resolve_run_options(agent)
         assert opts.metadata == {"agent": "value"}
 
-    def test_merge_agent_takes_precedence(self):
-        agent = _make_agent(metadata={"shared": "agent_wins", "agent_only": "a"})
+    def test_merge_callsite_takes_precedence(self):
+        # Metadata resolves like dependencies: call-site keys win on conflict.
+        agent = _make_agent(metadata={"shared": "agent_value", "agent_only": "a"})
         opts = resolve_run_options(agent, metadata={"shared": "run_value", "run_only": "r"})
-        # agent.metadata takes precedence on conflicts
-        assert opts.metadata["shared"] == "agent_wins"
+        assert opts.metadata["shared"] == "run_value"
         assert opts.metadata["agent_only"] == "a"
         assert opts.metadata["run_only"] == "r"
 
+    def test_only_session(self):
+        agent = _make_agent()
+        opts = resolve_run_options(agent, session_metadata={"session": "value"})
+        assert opts.metadata == {"session": "value"}
+
+    def test_session_beats_agent(self):
+        agent = _make_agent(metadata={"shared": "agent_value", "agent_only": "a"})
+        opts = resolve_run_options(agent, session_metadata={"shared": "session_value", "session_only": "s"})
+        assert opts.metadata["shared"] == "session_value"
+        assert opts.metadata["agent_only"] == "a"
+        assert opts.metadata["session_only"] == "s"
+
+    def test_callsite_beats_session(self):
+        agent = _make_agent()
+        opts = resolve_run_options(
+            agent,
+            metadata={"shared": "run_value", "run_only": "r"},
+            session_metadata={"shared": "session_value", "session_only": "s"},
+        )
+        assert opts.metadata["shared"] == "run_value"
+        assert opts.metadata["session_only"] == "s"
+        assert opts.metadata["run_only"] == "r"
+
+    def test_three_layer_merge_non_conflicting_keys(self):
+        agent = _make_agent(metadata={"agent_only": "a", "shared": "agent_value"})
+        opts = resolve_run_options(
+            agent,
+            metadata={"run_only": "r", "shared": "run_value"},
+            session_metadata={"session_only": "s"},
+        )
+        assert opts.metadata == {
+            "agent_only": "a",
+            "session_only": "s",
+            "run_only": "r",
+            "shared": "run_value",
+        }
+
     def test_merge_does_not_mutate_callsite(self):
-        agent = _make_agent(metadata={"a": 1})
-        callsite_meta = {"b": 2}
+        # Includes a nested dict: the recursive in-place merge must never write
+        # other layers' values into the caller's nested dicts.
+        agent = _make_agent(metadata={"a": 1, "nested": {"agent": True}})
+        callsite_meta = {"b": 2, "nested": {"call": True}}
         resolve_run_options(agent, metadata=callsite_meta)
-        assert callsite_meta == {"b": 2}
+        assert callsite_meta == {"b": 2, "nested": {"call": True}}
+
+    def test_merge_does_not_mutate_agent_nested_dicts(self):
+        # merge_dictionaries recurses in place: a shallow copy of agent.metadata
+        # would let call-site values contaminate the agent's nested dicts.
+        agent = _make_agent(metadata={"policy": {"read_only": True}, "flat": "agent_value"})
+        opts = resolve_run_options(
+            agent,
+            metadata={"policy": {"read_only": False}, "flat": "run_value"},
+            session_metadata={"policy": {"source": "session"}},
+        )
+        assert opts.metadata["policy"] == {"read_only": False, "source": "session"}
+        assert agent.metadata == {"policy": {"read_only": True}, "flat": "agent_value"}
+
+    def test_merge_does_not_mutate_session_nested_dicts(self):
+        agent = _make_agent(metadata={"policy": {"read_only": True}})
+        session_meta = {"policy": {"source": "session"}}
+        resolve_run_options(agent, metadata={"policy": {"read_only": False}}, session_metadata=session_meta)
+        assert session_meta == {"policy": {"source": "session"}}
+
+    def test_resolved_metadata_mutation_does_not_reach_agent(self):
+        agent = _make_agent(metadata={"policy": {"read_only": True}})
+        opts = resolve_run_options(agent)
+        opts.metadata["policy"]["read_only"] = False  # type: ignore[index]
+        assert agent.metadata == {"policy": {"read_only": True}}
+
+    def test_resolved_metadata_does_not_alias_callsite_nested_dicts(self):
+        # Every layer is deep-copied, so a later mutation of the resolved metadata
+        # cannot reach the caller's nested dict (a shared module-level default).
+        agent = _make_agent()
+        callsite = {"labels": {"team": "ops"}}
+        opts = resolve_run_options(agent, metadata=callsite)
+        opts.metadata["labels"]["team"] = "sre"  # type: ignore[index]
+        assert callsite == {"labels": {"team": "ops"}}
+
+    def test_resolved_metadata_does_not_alias_session_nested_dicts(self):
+        agent = _make_agent()
+        session_meta = {"labels": {"tenant": "acme"}}
+        opts = resolve_run_options(agent, session_metadata=session_meta)
+        opts.metadata["labels"]["tenant"] = "other"  # type: ignore[index]
+        assert session_meta == {"labels": {"tenant": "acme"}}
 
 
 class TestDependenciesMerge:
@@ -371,3 +511,115 @@ class TestAgentWrappersDelegateCorrectly:
         agent.arun(input="hello")
         assert captured["called"] is True
         assert captured["input"] == "hello"
+
+
+# ---------------------------------------------------------------------------
+# Session metadata precedence on the full run() path
+# ---------------------------------------------------------------------------
+
+
+class TestRunSessionMetadataPrecedence:
+    def test_session_beats_agent_on_run(self):
+        db = InMemoryDb()
+        _seed_session(db, "s1", "agent-1", {"shared": "session_value", "session_only": "s"})
+        agent = Agent(id="agent-1", model=MockModel(), db=db, metadata={"shared": "agent_value", "agent_only": "a"})
+        out = agent.run("hi", session_id="s1")
+        assert out.metadata["shared"] == "session_value"
+        assert out.metadata["agent_only"] == "a"
+        assert out.metadata["session_only"] == "s"
+
+    def test_callsite_beats_session_and_agent_on_run(self):
+        db = InMemoryDb()
+        _seed_session(db, "s1", "agent-1", {"shared": "session_value"})
+        agent = Agent(id="agent-1", model=MockModel(), db=db, metadata={"shared": "agent_value"})
+        out = agent.run("hi", session_id="s1", metadata={"shared": "call_value", "run_only": "r"})
+        assert out.metadata["shared"] == "call_value"
+        assert out.metadata["run_only"] == "r"
+
+    @pytest.mark.asyncio
+    async def test_arun_sync_db_session_metadata_visible(self):
+        # arun_dispatch pre-reads the session when the DB is sync
+        db = InMemoryDb()
+        _seed_session(db, "s1", "agent-1", {"shared": "session_value"})
+        agent = Agent(id="agent-1", model=MockModel(), db=db, metadata={"shared": "agent_value"})
+        out = await agent.arun("hi", session_id="s1", metadata={"run_only": "r"})
+        assert out.metadata["shared"] == "session_value"
+        assert out.metadata["run_only"] == "r"
+
+    def test_session_beats_agent_stays_stable_across_runs(self):
+        # The session value must survive persistence: update_metadata merges agent
+        # defaults as the losing layer, so the session's own value is not clobbered
+        # in the record and every subsequent run resolves it identically.
+        db = InMemoryDb()
+        _seed_session(db, "s1", "agent-1", {"tier": "gold"})
+        agent = Agent(id="agent-1", model=MockModel(), db=db, metadata={"tier": "standard"})
+        first = agent.run("hi", session_id="s1").metadata["tier"]
+        record = db.get_session(session_id="s1").metadata["tier"]
+        second = agent.run("hi", session_id="s1").metadata["tier"]
+        assert (first, record, second) == ("gold", "gold", "gold")
+
+    def test_continue_run_sees_session_metadata(self):
+        # continue_run resolves options through the same session_metadata layer as run.
+        db = InMemoryDb()
+        _seed_session(db, "s1", "agent-1", {"policy": "capture-only"})
+        agent = Agent(id="agent-1", model=MockModel(), db=db, metadata={"env": "test"})
+        run_out = agent.run("hi", session_id="s1")
+        cont = agent.continue_run(run_id=run_out.run_id, session_id="s1", requirements=[])
+        assert cont.metadata["policy"] == "capture-only"
+        assert cont.metadata["env"] == "test"
+
+
+# ---------------------------------------------------------------------------
+# Singleton isolation: runs never mutate the shared Agent instance
+# ---------------------------------------------------------------------------
+
+
+class TestSingletonIsolation:
+    def test_no_bleed_across_sessions(self):
+        db = InMemoryDb()
+        _seed_session(db, "session-a", "agent-1", {"leak": "from_a"})
+        agent = Agent(id="agent-1", model=MockModel(), db=db, metadata={"env": "test"}, cache_session=True)
+
+        out_a = agent.run("hi", session_id="session-a")
+        assert out_a.metadata["leak"] == "from_a"
+        assert agent.metadata == {"env": "test"}
+        assert agent.metadata is not agent._cached_session.metadata
+
+        out_b = agent.run("hi", session_id="session-b")
+        assert "leak" not in (out_b.metadata or {})
+        assert agent.metadata == {"env": "test"}
+        assert agent.metadata is not agent._cached_session.metadata
+
+        # Session B's persisted record carries agent defaults only, no session A values
+        session_b = db.get_session(session_id="session-b")
+        assert session_b.metadata == {"env": "test"}
+
+    def test_agent_metadata_not_aliased_to_session(self):
+        from agno.agent._storage import read_or_create_session, update_metadata
+
+        db = InMemoryDb()
+        _seed_session(db, "session-a", "agent-1", {"k": "v"})
+        agent = Agent(id="agent-1", model=MockModel(), db=db, metadata={"env": "test"})
+        session = read_or_create_session(agent, session_id="session-a")
+        update_metadata(agent, session=session)
+        assert agent.metadata is not session.metadata
+        assert agent.metadata == {"env": "test"}
+        # Session side: agent metadata fills keys the session does not set
+        assert session.metadata == {"k": "v", "env": "test"}
+
+    def test_new_session_seeding_not_aliased(self):
+        from agno.agent._storage import read_or_create_session
+
+        agent = Agent(id="agent-1", model=MockModel(), db=InMemoryDb(), metadata={"env": "test"})
+        session = read_or_create_session(agent, session_id="fresh")
+        assert session.metadata == {"env": "test"}
+        assert session.metadata is not agent.metadata
+
+    @pytest.mark.asyncio
+    async def test_new_session_seeding_not_aliased_async(self):
+        from agno.agent._storage import aread_or_create_session
+
+        agent = Agent(id="agent-1", model=MockModel(), db=InMemoryDb(), metadata={"env": "test"})
+        session = await aread_or_create_session(agent, session_id="fresh")
+        assert session.metadata == {"env": "test"}
+        assert session.metadata is not agent.metadata
