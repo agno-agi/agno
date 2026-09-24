@@ -837,20 +837,10 @@ class AgentOS:
         if not self._agents:
             return
 
-        from agno.agent import _init as agent_init
-
         for agent in self._agents:
             # Set the default db to agents without their own
             if self.db is not None and agent.db is None:
                 agent.db = self.db
-            agent_init.set_filesystem_user_isolation(
-                agent,
-                bool(
-                    self.authorization
-                    and self.authorization_config is not None
-                    and self.authorization_config.user_isolation
-                ),
-            )
             # Set the default checkpoint level on agents without their own
             if self.checkpoint is not None and agent.checkpoint is None:
                 agent.checkpoint = self.checkpoint

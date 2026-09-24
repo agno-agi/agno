@@ -142,7 +142,7 @@ class Agent:
 
     # --- FileSystem ---
     # Enable a durable filesystem backed by the agent's database, or provide one or several stores.
-    # AgentOS applies its optional user-isolation policy to the managed ``True`` shorthand.
+    # Each run acts in its user's partition of the store; see FileSystem.user_scoped.
     # Pass ``FileSystem.tools(...)`` to choose the tool surface, e.g. ``fs.tools(read_only=True)``.
     filesystem: Optional[Union[bool, FileSystem, FileSystemTools, List[Union[FileSystem, FileSystemTools]]]] = None
 
@@ -537,7 +537,6 @@ class Agent:
         self.db = db
         self.filesystem = filesystem
         self._filesystem: Optional["FileSystem"] = None
-        self._filesystem_user_isolation = False
         self.checkpoint = checkpoint
 
         self.memory_manager = memory_manager

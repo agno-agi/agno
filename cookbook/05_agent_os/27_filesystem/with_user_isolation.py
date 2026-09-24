@@ -24,7 +24,7 @@ agent = Agent(
     markdown=True,
 )
 
-# Managed files use users/{verified_user_id}/personal-assistant.
+# Managed files live in the personal-assistant namespace, in the verified user's partition.
 agent_os = AgentOS(
     id="isolated-files-os",
     db=db,

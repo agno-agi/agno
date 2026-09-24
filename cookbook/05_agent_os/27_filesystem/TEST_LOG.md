@@ -59,3 +59,13 @@ defaults to `"full"`. Read-only agents carry `access: "read_only"` on their entr
 Earlier config output in this log records the previous schema.
 
 ---
+
+### with_user_isolation.py (unit-level, no model)
+
+**Status:** PASS
+
+**Description:** Exercised the isolation semantics this cookbook relies on through the unit suites rather than a model run: the managed namespace stays `personal-assistant` and tool calls act in the run user's partition; another user, and a run with no user, cannot read the files; the browser routes resolve the same partition. The explicit table upgrade (`DbFileSystem.upgrade_schema()`) was verified on SQLite (unit test) and live Postgres (smoke), and an outdated table is refused until it runs.
+
+**Result:** All partition and upgrade tests pass. Agent runs against a model were not exercised.
+
+---

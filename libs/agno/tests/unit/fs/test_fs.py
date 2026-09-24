@@ -286,7 +286,19 @@ class TestTemplatedNamespaces:
 
     def test_resolve_on_untemplated_returns_self(self, local_backend):
         fs = FileSystem(backend=local_backend, namespace="radar")
-        assert fs.resolve(user_id="u42") is fs
+        assert fs.resolve(agent_id="a1") is fs
+        assert fs.resolve() is fs
+
+    def test_resolve_with_user_binds_writer_without_changing_namespace(self, local_backend):
+        fs = FileSystem(backend=local_backend, namespace="radar")
+        bound = fs.resolve(user_id="u42")
+        assert bound is not fs
+        assert bound.namespace == "radar"
+        assert bound.user_id == "u42"
+        assert fs.user_id is None
+        # Same user again is a no-op; a different user rebinds.
+        assert bound.resolve(user_id="u42") is bound
+        assert bound.resolve(user_id="u43").user_id == "u43"
 
 
 class TestSearch:

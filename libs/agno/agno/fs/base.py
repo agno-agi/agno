@@ -1,15 +1,19 @@
 """BaseFS: the storage backend for Agno FileSystem.
 
-Backends store text files by ``(namespace, path)``.
-Paths and namespace names are normalized by ``FileSystem``.
+Backends store text files by ``(namespace, user_id, path)``. ``user_id`` is the
+user partition: ``""`` is the shared partition every unbound operation uses,
+and a bound user's files live in their own. Paths and namespace names are
+normalized by ``FileSystem``.
 """
 
 import asyncio
+import inspect
 from abc import ABC, abstractmethod
-from typing import List, Optional, Sequence, Set
+from functools import lru_cache
+from typing import Any, Callable, Dict, List, Optional, Sequence, Set
 
 from agno.fs._paths import build_chunk, path_sort_key
-from agno.fs.errors import QuotaExceededError
+from agno.fs.errors import QuotaExceededError, UnsupportedOperationError
 from agno.fs.types import FileData, FileMeta, NamespaceUsage, SearchMatch
 
 
@@ -44,23 +48,60 @@ def _build_match(
     )
 
 
-class BaseFS(ABC):
-    """Storage backend ABC: text files keyed by ``(namespace, path)``.
+@lru_cache(maxsize=None)
+def _takes_user_id(function: Callable[..., Any]) -> bool:
+    try:
+        return "user_id" in inspect.signature(function).parameters
+    except (TypeError, ValueError):
+        return False
 
-    Sync methods plus ``a``-prefixed async twins; the base class implements every
-    async twin as ``asyncio.to_thread`` over the sync one, and backends override
-    only when they have a native async client.
+
+def partition_kwargs(method: Callable[..., Any], user_id: str) -> Dict[str, Any]:
+    """``{"user_id": ...}`` for a backend call into a user partition, ``{}`` for the shared one.
+
+    ``user_id`` joined the backend contract after backends existed outside this
+    package. A subclass whose methods predate it still serves the shared
+    partition, but it cannot partition by user, so a call into a user partition
+    fails closed rather than silently landing in the shared store.
+    """
+    if not user_id:
+        return {}
+    if _takes_user_id(getattr(method, "__func__", method)):
+        return {"user_id": user_id}
+    owner = getattr(method, "__self__", None)
+    raise UnsupportedOperationError(
+        f"{type(owner).__name__} does not partition files by user; its {method.__name__} takes no user_id",
+        operation=method.__name__,
+        backend=type(owner).__name__,
+    )
+
+
+class BaseFS(ABC):
+    """Storage backend ABC: text files keyed by ``(namespace, user_id, path)``.
+
+    Every method takes ``user_id``, the partition to act in; ``""`` is the shared
+    partition. Sync methods plus ``a``-prefixed async twins; the base class
+    implements every async twin as ``asyncio.to_thread`` over the sync one, and
+    backends override only when they have a native async client.
     """
 
     # ---- required core (every backend, object-store compatible) ----
 
     @abstractmethod
-    def read(self, namespace: str, path: str) -> Optional[str]:
+    def read(self, namespace: str, path: str, *, user_id: str = "") -> Optional[str]:
         """Return the file's content, or ``None`` if it does not exist."""
         ...
 
     @abstractmethod
-    def write(self, namespace: str, path: str, content: str, *, expected_version: Optional[int] = None) -> FileMeta:
+    def write(
+        self,
+        namespace: str,
+        path: str,
+        content: str,
+        *,
+        expected_version: Optional[int] = None,
+        user_id: str = "",
+    ) -> FileMeta:
         """Create or replace a file. ``expected_version`` requests an atomic CAS.
 
         A backend that does not version its rows raises ``UnsupportedOperationError``
@@ -69,33 +110,41 @@ class BaseFS(ABC):
         ...
 
     @abstractmethod
-    def list(self, namespace: str, directory: str = "") -> List[FileMeta]:
+    def list(self, namespace: str, directory: str = "", *, user_id: str = "") -> List[FileMeta]:
         """Return metadata for every file under ``directory`` (no content). Order is unspecified."""
         ...
 
     @abstractmethod
-    def delete(self, namespace: str, path: str) -> bool:
+    def delete(self, namespace: str, path: str, *, user_id: str = "") -> bool:
         """Delete a file. Returns ``True`` if it existed. Idempotent."""
         ...
 
     # ---- capability-gated; base emulations provided ----
 
-    def read_with_meta(self, namespace: str, path: str) -> Optional[FileData]:
+    def read_with_meta(self, namespace: str, path: str, *, user_id: str = "") -> Optional[FileData]:
         """Read content and metadata from one backend snapshot when supported.
 
         The portable fallback derives size from the content returned by the one
         read instead of issuing a second metadata lookup that could observe a
         different version. Backends with versions or timestamps override this.
         """
-        content = self.read(namespace, path)
+        content = self.read(namespace, path, **partition_kwargs(self.read, user_id))
         if content is None:
             return None
         return FileData(
             content=content,
-            meta=FileMeta(path=path, size_bytes=len(content.encode("utf-8"))),
+            meta=FileMeta(path=path, size_bytes=len(content.encode("utf-8")), user_id=user_id or None),
         )
 
-    def append(self, namespace: str, path: str, content: str, *, max_file_bytes: Optional[int] = None) -> FileMeta:
+    def append(
+        self,
+        namespace: str,
+        path: str,
+        content: str,
+        *,
+        max_file_bytes: Optional[int] = None,
+        user_id: str = "",
+    ) -> FileMeta:
         """Append line-oriented content, creating the file if missing.
 
         Base emulation: read + concat + write, which is NOT atomic. The ``max_file_bytes``
@@ -104,11 +153,11 @@ class BaseFS(ABC):
         """
         chunk = build_chunk(content)
         if not chunk:
-            existing_meta = self._stat(namespace, path)
+            existing_meta = self._stat(namespace, path, user_id=user_id)
             if existing_meta is not None:
                 return existing_meta
-            return FileMeta(path=path, size_bytes=0, version=None, updated_at=None)
-        existing = self.read(namespace, path)
+            return FileMeta(path=path, size_bytes=0, version=None, updated_at=None, user_id=user_id or None)
+        existing = self.read(namespace, path, **partition_kwargs(self.read, user_id))
         if existing is None:
             new_content = chunk
         elif existing and not existing.endswith("\n"):
@@ -124,32 +173,38 @@ class BaseFS(ABC):
                     current=new_size,
                     limit=max_file_bytes,
                 )
-        return self.write(namespace, path, new_content)
+        return self.write(namespace, path, new_content, **partition_kwargs(self.write, user_id))
 
-    def move(self, namespace: str, src: str, dst: str, *, overwrite: bool = False) -> FileMeta:
+    def move(self, namespace: str, src: str, dst: str, *, overwrite: bool = False, user_id: str = "") -> FileMeta:
         """Move or rename a file. Base emulation: read + write + delete, which is NOT atomic."""
-        content = self.read(namespace, src)
+        read_kwargs = partition_kwargs(self.read, user_id)
+        content = self.read(namespace, src, **read_kwargs)
         if content is None:
             raise FileNotFoundError(f"file not found: {src}")
+        write_kwargs = partition_kwargs(self.write, user_id)
         if src == dst:
             # A self-move is a no-op. Falling through would write dst then delete src
             # (== dst), destroying the file and returning a lying success.
-            return self.write(namespace, dst, content)
-        if not overwrite and self.read(namespace, dst) is not None:
+            return self.write(namespace, dst, content, **write_kwargs)
+        if not overwrite and self.read(namespace, dst, **read_kwargs) is not None:
             raise FileExistsError(f"file exists: {dst}")
-        meta = self.write(namespace, dst, content)
-        self.delete(namespace, src)
+        meta = self.write(namespace, dst, content, **write_kwargs)
+        self.delete(namespace, src, **partition_kwargs(self.delete, user_id))
         return meta
 
-    def search(self, namespace: str, query: str, directory: str = "", limit: int = 10) -> List[SearchMatch]:
+    def search(
+        self, namespace: str, query: str, directory: str = "", limit: int = 10, *, user_id: str = ""
+    ) -> List[SearchMatch]:
         """Case-insensitive substring search. Base emulation: list + read + scan."""
         if not query:
             return []
         matches: List[SearchMatch] = []
-        for meta in sorted(self.list(namespace, directory), key=lambda m: path_sort_key(m.path)):
+        read_kwargs = partition_kwargs(self.read, user_id)
+        listed = self.list(namespace, directory, **partition_kwargs(self.list, user_id))
+        for meta in sorted(listed, key=lambda m: path_sort_key(m.path)):
             if len(matches) >= limit:
                 break
-            content = self.read(namespace, meta.path)
+            content = self.read(namespace, meta.path, **read_kwargs)
             if content is None:
                 continue
             match = _build_match(meta.path, meta.size_bytes, content, query)
@@ -157,7 +212,7 @@ class BaseFS(ABC):
                 matches.append(match)
         return matches
 
-    def contains(self, namespace: str, lines: Sequence[str], directory: str = "") -> Set[str]:
+    def contains(self, namespace: str, lines: Sequence[str], directory: str = "", *, user_id: str = "") -> Set[str]:
         """Batch exact-line membership: return the subset of ``lines`` found as whole lines.
 
         Lines arrive already normalized by ``FileSystem``. Base emulation: list + read
@@ -168,10 +223,11 @@ class BaseFS(ABC):
         found: Set[str] = set()
         if not remaining:
             return found
-        for meta in self.list(namespace, directory):
+        read_kwargs = partition_kwargs(self.read, user_id)
+        for meta in self.list(namespace, directory, **partition_kwargs(self.list, user_id)):
             if not remaining:
                 break
-            content = self.read(namespace, meta.path)
+            content = self.read(namespace, meta.path, **read_kwargs)
             if content is None:
                 continue
             hit = remaining & set(content.split("\n"))
@@ -179,63 +235,103 @@ class BaseFS(ABC):
             remaining -= hit
         return found
 
-    def usage(self, namespace: str) -> NamespaceUsage:
+    def usage(self, namespace: str, *, user_id: str = "") -> NamespaceUsage:
         """Aggregate file count and total bytes. Base emulation: list + sum."""
-        metas = self.list(namespace, "")
+        metas = self.list(namespace, "", **partition_kwargs(self.list, user_id))
         return NamespaceUsage(file_count=len(metas), total_bytes=sum(m.size_bytes for m in metas))
 
     # ---- helpers ----
 
-    def _stat(self, namespace: str, path: str) -> Optional[FileMeta]:
+    def _stat(self, namespace: str, path: str, *, user_id: str = "") -> Optional[FileMeta]:
         """Return the file's metadata without content, or ``None`` if missing."""
         parent = "/".join(path.split("/")[:-1])
-        for meta in self.list(namespace, parent):
+        for meta in self.list(namespace, parent, **partition_kwargs(self.list, user_id)):
             if meta.path == path:
                 return meta
         return None
 
     # ---- async twins ----
 
-    async def aread(self, namespace: str, path: str) -> Optional[str]:
+    async def aread(self, namespace: str, path: str, *, user_id: str = "") -> Optional[str]:
         """Async variant of ``read``."""
-        return await asyncio.to_thread(self.read, namespace, path)
+        return await asyncio.to_thread(self.read, namespace, path, **partition_kwargs(self.read, user_id))
 
-    async def aread_with_meta(self, namespace: str, path: str) -> Optional[FileData]:
+    async def aread_with_meta(self, namespace: str, path: str, *, user_id: str = "") -> Optional[FileData]:
         """Async variant of ``read_with_meta``."""
-        return await asyncio.to_thread(self.read_with_meta, namespace, path)
+        return await asyncio.to_thread(
+            self.read_with_meta, namespace, path, **partition_kwargs(self.read_with_meta, user_id)
+        )
 
     async def awrite(
-        self, namespace: str, path: str, content: str, *, expected_version: Optional[int] = None
+        self,
+        namespace: str,
+        path: str,
+        content: str,
+        *,
+        expected_version: Optional[int] = None,
+        user_id: str = "",
     ) -> FileMeta:
         """Async variant of ``write``."""
-        return await asyncio.to_thread(self.write, namespace, path, content, expected_version=expected_version)
+        return await asyncio.to_thread(
+            self.write,
+            namespace,
+            path,
+            content,
+            expected_version=expected_version,
+            **partition_kwargs(self.write, user_id),
+        )
 
-    async def alist(self, namespace: str, directory: str = "") -> List[FileMeta]:
+    async def alist(self, namespace: str, directory: str = "", *, user_id: str = "") -> List[FileMeta]:
         """Async variant of ``list``."""
-        return await asyncio.to_thread(self.list, namespace, directory)
+        return await asyncio.to_thread(self.list, namespace, directory, **partition_kwargs(self.list, user_id))
 
-    async def adelete(self, namespace: str, path: str) -> bool:
+    async def adelete(self, namespace: str, path: str, *, user_id: str = "") -> bool:
         """Async variant of ``delete``."""
-        return await asyncio.to_thread(self.delete, namespace, path)
+        return await asyncio.to_thread(self.delete, namespace, path, **partition_kwargs(self.delete, user_id))
 
     async def aappend(
-        self, namespace: str, path: str, content: str, *, max_file_bytes: Optional[int] = None
+        self,
+        namespace: str,
+        path: str,
+        content: str,
+        *,
+        max_file_bytes: Optional[int] = None,
+        user_id: str = "",
     ) -> FileMeta:
         """Async variant of ``append``."""
-        return await asyncio.to_thread(self.append, namespace, path, content, max_file_bytes=max_file_bytes)
+        return await asyncio.to_thread(
+            self.append,
+            namespace,
+            path,
+            content,
+            max_file_bytes=max_file_bytes,
+            **partition_kwargs(self.append, user_id),
+        )
 
-    async def amove(self, namespace: str, src: str, dst: str, *, overwrite: bool = False) -> FileMeta:
+    async def amove(
+        self, namespace: str, src: str, dst: str, *, overwrite: bool = False, user_id: str = ""
+    ) -> FileMeta:
         """Async variant of ``move``."""
-        return await asyncio.to_thread(self.move, namespace, src, dst, overwrite=overwrite)
+        return await asyncio.to_thread(
+            self.move, namespace, src, dst, overwrite=overwrite, **partition_kwargs(self.move, user_id)
+        )
 
-    async def asearch(self, namespace: str, query: str, directory: str = "", limit: int = 10) -> List[SearchMatch]:
+    async def asearch(
+        self, namespace: str, query: str, directory: str = "", limit: int = 10, *, user_id: str = ""
+    ) -> List[SearchMatch]:
         """Async variant of ``search``."""
-        return await asyncio.to_thread(self.search, namespace, query, directory, limit)
+        return await asyncio.to_thread(
+            self.search, namespace, query, directory, limit, **partition_kwargs(self.search, user_id)
+        )
 
-    async def acontains(self, namespace: str, lines: Sequence[str], directory: str = "") -> Set[str]:
+    async def acontains(
+        self, namespace: str, lines: Sequence[str], directory: str = "", *, user_id: str = ""
+    ) -> Set[str]:
         """Async variant of ``contains``."""
-        return await asyncio.to_thread(self.contains, namespace, lines, directory)
+        return await asyncio.to_thread(
+            self.contains, namespace, lines, directory, **partition_kwargs(self.contains, user_id)
+        )
 
-    async def ausage(self, namespace: str) -> NamespaceUsage:
+    async def ausage(self, namespace: str, *, user_id: str = "") -> NamespaceUsage:
         """Async variant of ``usage``."""
-        return await asyncio.to_thread(self.usage, namespace)
+        return await asyncio.to_thread(self.usage, namespace, **partition_kwargs(self.usage, user_id))

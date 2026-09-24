@@ -1,6 +1,7 @@
 """LocalFileSystem: the disk-based backend for FileSystem."""
 
 import os
+from urllib.parse import quote
 import tempfile
 from pathlib import Path
 from typing import List, Optional, Union
@@ -24,6 +25,19 @@ class LocalFileSystem(BaseFS):
         self.root: Path = Path(root).resolve()
 
     # ---- helpers ----
+
+    @staticmethod
+    def _encode_partition(namespace: str, user_id: str) -> str:
+        """One on-disk directory component for a ``(namespace, user_id)`` partition.
+
+        A user partition appends ``%%<user>`` to the namespace component.
+        Percent-encoding never emits ``%%``, so the join is unambiguous, and the
+        user id is percent-encoded so it stays one component.
+        """
+        encoded = LocalFileSystem._encode_namespace(namespace)
+        if not user_id:
+            return encoded
+        return f"{encoded}%%{quote(user_id, safe='')}"
 
     @staticmethod
     def _encode_namespace(namespace: str) -> str:
@@ -60,11 +74,11 @@ class LocalFileSystem(BaseFS):
             )
         return resolved
 
-    def _target(self, namespace: str, path: str) -> Path:
-        return self._safe_join(f"{self._encode_namespace(namespace)}/{path}", path)
+    def _target(self, namespace: str, path: str, user_id: str = "") -> Path:
+        return self._safe_join(f"{self._encode_partition(namespace, user_id)}/{path}", path)
 
-    def _namespace_root(self, namespace: str) -> Path:
-        return self._safe_join(self._encode_namespace(namespace), namespace)
+    def _namespace_root(self, namespace: str, user_id: str = "") -> Path:
+        return self._safe_join(self._encode_partition(namespace, user_id), namespace)
 
     @staticmethod
     def _read_text(target: Path) -> str:
@@ -72,26 +86,36 @@ class LocalFileSystem(BaseFS):
         with target.open("r", encoding="utf-8", newline="") as f:
             return f.read()
 
-    def _meta(self, path: str, target: Path) -> FileMeta:
+    def _meta(self, path: str, target: Path, user_id: str = "") -> FileMeta:
         stat = target.stat()
-        return FileMeta(path=path, size_bytes=stat.st_size, version=None, updated_at=int(stat.st_mtime))
+        return FileMeta(
+            path=path, size_bytes=stat.st_size, version=None, updated_at=int(stat.st_mtime), user_id=user_id or None
+        )
 
     # ---- required core ----
 
-    def read(self, namespace: str, path: str) -> Optional[str]:
-        target = self._target(namespace, path)
+    def read(self, namespace: str, path: str, *, user_id: str = "") -> Optional[str]:
+        target = self._target(namespace, path, user_id)
         if not target.is_file():
             return None
         return self._read_text(target)
 
-    def write(self, namespace: str, path: str, content: str, *, expected_version: Optional[int] = None) -> FileMeta:
+    def write(
+        self,
+        namespace: str,
+        path: str,
+        content: str,
+        *,
+        expected_version: Optional[int] = None,
+        user_id: str = "",
+    ) -> FileMeta:
         if expected_version is not None:
             raise UnsupportedOperationError(
                 "LocalFileSystem does not version files, expected_version is unsupported",
                 operation="write",
                 backend="LocalFileSystem",
             )
-        target = self._target(namespace, path)
+        target = self._target(namespace, path, user_id)
         target.parent.mkdir(parents=True, exist_ok=True)
         # A per-write unique temp file, not a fixed "<name>.tmp": concurrent writers to
         # one path would otherwise share the temp and unlink it out from under each
@@ -106,10 +130,10 @@ class LocalFileSystem(BaseFS):
         finally:
             if tmp_path.exists():
                 tmp_path.unlink()
-        return self._meta(path, target)
+        return self._meta(path, target, user_id)
 
-    def list(self, namespace: str, directory: str = "") -> List[FileMeta]:
-        namespace_root = self._namespace_root(namespace)
+    def list(self, namespace: str, directory: str = "", *, user_id: str = "") -> List[FileMeta]:
+        namespace_root = self._namespace_root(namespace, user_id)
         if not namespace_root.is_dir():
             return []
         metas: List[FileMeta] = []
@@ -120,13 +144,13 @@ class LocalFileSystem(BaseFS):
                 if not path_in_directory(rel, directory):
                     continue
                 try:
-                    metas.append(self._meta(rel, full))
+                    metas.append(self._meta(rel, full, user_id))
                 except OSError:
                     continue
         return metas
 
-    def delete(self, namespace: str, path: str) -> bool:
-        target = self._target(namespace, path)
+    def delete(self, namespace: str, path: str, *, user_id: str = "") -> bool:
+        target = self._target(namespace, path, user_id)
         if not target.is_file():
             return False
         target.unlink()
@@ -134,8 +158,8 @@ class LocalFileSystem(BaseFS):
 
     # ---- native overrides ----
 
-    def read_with_meta(self, namespace: str, path: str) -> Optional[FileData]:
-        target = self._target(namespace, path)
+    def read_with_meta(self, namespace: str, path: str, *, user_id: str = "") -> Optional[FileData]:
+        target = self._target(namespace, path, user_id)
         try:
             # Capture the size from the opened file, then read exactly that
             # snapshot. Writes replace the inode and appends only extend it, so
@@ -147,16 +171,30 @@ class LocalFileSystem(BaseFS):
             return None
         return FileData(
             content=content,
-            meta=FileMeta(path=path, size_bytes=stat.st_size, version=None, updated_at=int(stat.st_mtime)),
+            meta=FileMeta(
+                path=path,
+                size_bytes=stat.st_size,
+                version=None,
+                updated_at=int(stat.st_mtime),
+                user_id=user_id or None,
+            ),
         )
 
-    def append(self, namespace: str, path: str, content: str, *, max_file_bytes: Optional[int] = None) -> FileMeta:
+    def append(
+        self,
+        namespace: str,
+        path: str,
+        content: str,
+        *,
+        max_file_bytes: Optional[int] = None,
+        user_id: str = "",
+    ) -> FileMeta:
         chunk = build_chunk(content)
-        target = self._target(namespace, path)
+        target = self._target(namespace, path, user_id)
         if not chunk:
             if target.is_file():
-                return self._meta(path, target)
-            return FileMeta(path=path, size_bytes=0, version=None, updated_at=None)
+                return self._meta(path, target, user_id)
+            return FileMeta(path=path, size_bytes=0, version=None, updated_at=None, user_id=user_id or None)
         chunk_bytes = len(chunk.encode("utf-8"))
         if target.is_file():
             existing = self._read_text(target)
@@ -186,11 +224,11 @@ class LocalFileSystem(BaseFS):
             fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
             with os.fdopen(fd, "w", encoding="utf-8", newline="") as f:
                 f.write(chunk)
-        return self._meta(path, target)
+        return self._meta(path, target, user_id)
 
-    def move(self, namespace: str, src: str, dst: str, *, overwrite: bool = False) -> FileMeta:
-        src_target = self._target(namespace, src)
-        dst_target = self._target(namespace, dst)
+    def move(self, namespace: str, src: str, dst: str, *, overwrite: bool = False, user_id: str = "") -> FileMeta:
+        src_target = self._target(namespace, src, user_id)
+        dst_target = self._target(namespace, dst, user_id)
         if not src_target.is_file():
             raise FileNotFoundError(f"file not found: {src}")
         if src_target == dst_target:
@@ -198,9 +236,9 @@ class LocalFileSystem(BaseFS):
             # dst-exists check below rejects move(a, a) here while DbFileSystem and
             # the base emulation both succeed, so the two v1 backends would answer
             # the same model-reachable call differently.
-            return self._meta(dst, dst_target)
+            return self._meta(dst, dst_target, user_id)
         if dst_target.exists() and not overwrite:
             raise FileExistsError(f"file exists: {dst}")
         dst_target.parent.mkdir(parents=True, exist_ok=True)
         os.replace(src_target, dst_target)
-        return self._meta(dst, dst_target)
+        return self._meta(dst, dst_target, user_id)

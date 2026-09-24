@@ -1165,7 +1165,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                 return
             async with self.async_session_factory() as sess:
                 result = await sess.execute(
-                    select(table.c.result_id, table.c.namespace, table.c.path).where(
+                    select(table.c.result_id, table.c.namespace, table.c.path, table.c.user_id).where(
                         table.c.session_id.in_(session_ids)
                     )
                 )
@@ -1183,16 +1183,19 @@ class AsyncSqliteDb(AsyncBaseDb):
             if filesystems:
                 from agno.fs import FileSystem
 
-                for _, namespace, path in rows:
+                for _, namespace, path, user_id in rows:
                     for fs in filesystems:
                         try:
-                            if await FileSystem(backend=fs.backend, namespace=str(namespace)).adelete(str(path)):
+                            payload_fs = FileSystem(backend=fs.backend, namespace=str(namespace))
+                            if user_id:
+                                payload_fs = payload_fs.resolve(user_id=str(user_id))
+                            if await payload_fs.adelete(str(path)):
                                 removed.add((str(namespace), str(path)))
                         except Exception as e:
                             log_warning(f"Tool-result payload delete failed for {namespace}/{path}: {e}")
             async with self.async_session_factory() as sess, sess.begin():
                 if await self._adefault_payload_table_exists(sess):
-                    for _, namespace, path in rows:
+                    for _, namespace, path, _user in rows:
                         if (str(namespace), str(path)) in removed:
                             continue
                         result = await sess.execute(

@@ -174,6 +174,7 @@ def _list_entries(filesystem: FileSystem, directory: str) -> list[FileSystemEntr
                 size_bytes=meta.size_bytes,
                 version=meta.version,
                 updated_at=meta.updated_at,
+                user_id=meta.user_id,
             )
         )
 
@@ -263,6 +264,7 @@ async def _get_global_files(
                     size_bytes=item.size_bytes,
                     version=item.version,
                     updated_at=item.updated_at,
+                    user_id=item.user_id,
                 )
                 for item in metadata
             ]
@@ -280,6 +282,7 @@ async def _get_global_files(
                     size_bytes=match.size_bytes,
                     version=meta.version if meta else None,
                     updated_at=meta.updated_at if meta else None,
+                    user_id=meta.user_id if meta else None,
                     snippet=match.snippet,
                     line=match.line,
                     match_count=match.match_count,
@@ -444,6 +447,7 @@ def get_filesystem_router(
             size_bytes=metadata.size_bytes,
             version=metadata.version,
             updated_at=metadata.updated_at,
+            user_id=metadata.user_id,
             line_count=0 if not content else content.count("\n") + (0 if content.endswith("\n") else 1),
             truncated=end < len(content),
             offset=offset,
