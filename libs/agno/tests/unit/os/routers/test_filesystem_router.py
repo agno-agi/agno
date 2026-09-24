@@ -146,7 +146,7 @@ def test_global_files_merges_agents_sharing_the_same_filesystem(db, monkeypatch,
     search_files.assert_awaited_once()
     assert searched.status_code == 200
     assert searched.json()["entries"][0]["agent_ids"] == ["one", "two"]
-    config = client.get("/config", headers=_headers("alice", ["config:read"]))
+    config = client.get("/config", headers=_headers("alice", ["config:read", "agents:read"]))
 
     assert response.status_code == 200
     assert response.json()["entries"] == [
@@ -227,7 +227,7 @@ def test_config_namespace_filters_global_files_for_the_caller(db, namespace, cli
     assert filesystem is not None
     filesystem.resolve(user_id="Alice", agent_id="notes").write("state.md", "private")
 
-    config = client.get("/config", headers=_headers("Alice", ["config:read"]))
+    config = client.get("/config", headers=_headers("Alice", ["config:read", "agents:read"]))
     assert config.status_code == 200
     resolved_namespace = config.json()["filesystem"]["namespaces"][0]["namespace"]
     listed = client.get("/filesystem/files", params={"namespace": resolved_namespace}, headers=_headers("Alice"))
@@ -384,7 +384,7 @@ def test_config_describes_filesystem_at_os_level(db, client_factory):
     )
     client = client_factory(agent, factory, user_isolation=True)
 
-    response = client.get("/config", headers=_headers("alice", ["config:read"]))
+    response = client.get("/config", headers=_headers("alice", ["config:read", "agents:read"]))
 
     assert response.status_code == 200
     agents = {entry["id"]: entry for entry in response.json()["agents"]}
@@ -413,7 +413,7 @@ def test_manual_read_only_toolkit_is_discovered_and_browsable(db, client_factory
     client = client_factory(recorder, answerer)
     shared.write("decisions.md", "vector db: pgvector\n")
 
-    config = client.get("/config", headers=_headers("alice", ["config:read"])).json()
+    config = client.get("/config", headers=_headers("alice", ["config:read", "agents:read"])).json()
     assert [(i["namespace"], i["agents"]) for i in config["filesystem"]["namespaces"]] == [
         ("research/decisions", [{"id": "answerer", "access": "read_only"}, {"id": "recorder"}])
     ]
@@ -432,7 +432,7 @@ def test_read_only_toolkit_setting_is_reported_read_only(db, client_factory):
     agent = Agent(id="answerer", db=db, filesystem=FileSystem(db, namespace="research").tools(read_only=True))
     client = client_factory(agent)
 
-    config = client.get("/config", headers=_headers("alice", ["config:read"])).json()
+    config = client.get("/config", headers=_headers("alice", ["config:read", "agents:read"])).json()
     instance = config["filesystem"]["namespaces"][0]
     assert instance["agents"] == [{"id": "answerer", "access": "read_only"}]
     assert "read_only_agents" not in instance
@@ -445,7 +445,7 @@ def test_config_full_access_takes_precedence_on_shared_store(db, read_only_first
     attachments = [reader, shared] if read_only_first else [shared, reader]
     client = client_factory(Agent(id="analyst", db=db, filesystem=attachments))
 
-    config = client.get("/config", headers=_headers("alice", ["config:read"])).json()
+    config = client.get("/config", headers=_headers("alice", ["config:read", "agents:read"])).json()
 
     assert len(config["filesystem"]["namespaces"]) == 1
     assert config["filesystem"]["namespaces"][0]["agents"] == [{"id": "analyst"}]
@@ -561,7 +561,7 @@ def test_shared_namespace_is_partitioned_per_user_under_isolation(db, client_fac
     rows = client.get("/filesystem/files", headers=_headers("bob")).json()["entries"]
     assert [(r["path"], r["user_id"]) for r in rows] == [("a.md", "bob")]
 
-    config = client.get("/config", headers=_headers("alice", ["config:read"])).json()
+    config = client.get("/config", headers=_headers("alice", ["config:read", "agents:read"])).json()
     assert config["filesystem"]["namespaces"][0]["user_isolation"] is True
 
 
@@ -576,7 +576,7 @@ def test_explicit_user_scoped_false_stays_shared_under_isolation(db, client_fact
         )
         assert content.json()["content"] == "shared\n"
         assert content.json()["user_id"] is None
-    config = client.get("/config", headers=_headers("alice", ["config:read"])).json()
+    config = client.get("/config", headers=_headers("alice", ["config:read", "agents:read"])).json()
     assert config["filesystem"]["namespaces"][0]["user_isolation"] is False
 
 
