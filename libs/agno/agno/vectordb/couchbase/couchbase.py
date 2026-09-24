@@ -654,16 +654,13 @@ class CouchbaseSearch(VectorDb):
 
     def exists(self) -> bool:
         """Check if the collection exists."""
-        try:
-            scopes = self.bucket.collections().get_all_scopes()
-            for scope in scopes:
-                if scope.name == self.scope_name:
-                    for collection in scope.collections:
-                        if collection.name == self.collection_name:
-                            return True
-            return False
-        except Exception:
-            return False
+        scopes = self.bucket.collections().get_all_scopes()
+        for scope in scopes:
+            if scope.name == self.scope_name:
+                for collection in scope.collections:
+                    if collection.name == self.collection_name:
+                        return True
+        return False
 
     def _validate_user_id(self, user_id: Optional[str]) -> None:
         """Reject a user_id that collides with SHARED_USER_ID; use None for shared/unscoped access."""
@@ -1348,17 +1345,14 @@ class CouchbaseSearch(VectorDb):
                 raise
 
     async def async_exists(self) -> bool:
-        try:
-            async_bucket_instance = await self.get_async_bucket()
-            scopes = await async_bucket_instance.collections().get_all_scopes()
-            for scope in scopes:
-                if scope.name == self.scope_name:
-                    for collection in scope.collections:
-                        if collection.name == self.collection_name:
-                            return True
-            return False
-        except Exception:
-            return False
+        async_bucket_instance = await self.get_async_bucket()
+        scopes = await async_bucket_instance.collections().get_all_scopes()
+        for scope in scopes:
+            if scope.name == self.scope_name:
+                for collection in scope.collections:
+                    if collection.name == self.collection_name:
+                        return True
+        return False
 
     async def __async_get_doc_from_kv(self, response: AsyncSearchIndex) -> List[Document]:
         """
