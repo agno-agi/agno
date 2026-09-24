@@ -32,6 +32,15 @@ DEFAULT_SUMMARIZE_CHAR_BUDGET = 100_000
 # the value alone cannot tell keep_last_runs=5 written by hand from the default, so an explicit
 # 5 alongside keep_last_tokens would be silently discarded - the exact surprise the mutual
 # exclusion exists to prevent.
+_COMPACT_AT_TOKENS_DEFAULT = 150_000
+
+
+class _UnsetTokens(int):
+    """The default compact_at_tokens, so an explicit 150_000 is still distinguishable."""
+
+
+_COMPACT_AT_TOKENS_UNSET = _UnsetTokens(_COMPACT_AT_TOKENS_DEFAULT)
+
 _KEEP_LAST_RUNS_DEFAULT = 5
 
 
@@ -82,7 +91,7 @@ class Compaction:
     # orders of magnitude - so counting them trips on conversations far too small to fold and
     # stays quiet on ones that overflow. Call agent.compact() to fold at a moment of your own
     # choosing regardless of size.
-    compact_at_tokens: Optional[int] = 150_000
+    compact_at_tokens: Optional[int] = _COMPACT_AT_TOKENS_UNSET
 
     # -- what to keep ---------------------------------------------------
     # Recent runs kept verbatim.
@@ -143,6 +152,13 @@ class Compaction:
     def __post_init__(self) -> None:
         if self.id is None:
             self.id = f"compaction_{uuid4().hex[:8]}"
+        # Asking for overflow recovery is asking to fold when the provider says so. A default
+        # threshold would pre-empt that on any model with a window above it - which is every
+        # large model - leaving the flag dead code. An explicit threshold still wins: naming
+        # both is a real, if unusual, request for two triggers.
+        if self.on_context_overflow and isinstance(self.compact_at_tokens, _UnsetTokens):
+            self.compact_at_tokens = None
+
         if self.compact_at_tokens is not None and self.compact_at_tokens <= 0:
             raise ValueError(f"compact_at_tokens must be a positive integer, got {self.compact_at_tokens}")
         if self.keep_last_runs is not None and self.keep_last_runs < 0:

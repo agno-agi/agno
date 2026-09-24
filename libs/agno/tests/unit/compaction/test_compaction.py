@@ -541,6 +541,28 @@ def test_an_explicit_default_value_still_collides():
     assert Compaction(keep_last_tokens=20_000).keep_last_runs is None
 
 
+def test_opting_into_overflow_recovery_drops_the_default_threshold():
+    """Asking to fold on rejection is asking NOT to fold at a guessed size.
+
+    Every large model's window sits above 150k, so a default threshold would fire first and
+    the flag would be dead code - the user would have asked for something that never runs.
+    """
+    assert Compaction(on_context_overflow=True).compact_at_tokens is None
+    assert Compaction(on_context_overflow=True, keep_last_tokens=50_000).compact_at_tokens is None
+
+    # Without the flag the default stands.
+    assert Compaction().compact_at_tokens == 150_000
+
+
+def test_an_explicit_threshold_survives_the_overflow_flag():
+    """Naming both is unusual but coherent: fold at my size, and again if the provider says so.
+
+    An explicit 150_000 must survive too - the default value is not the same as the default.
+    """
+    assert Compaction(on_context_overflow=True, compact_at_tokens=100_000).compact_at_tokens == 100_000
+    assert Compaction(on_context_overflow=True, compact_at_tokens=150_000).compact_at_tokens == 150_000
+
+
 def test_reactive_recovery_is_opt_in_on_a_configured_compaction():
     """A configured Compaction already has a threshold, so a rejection means it was wrong.
 
