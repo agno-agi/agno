@@ -722,7 +722,7 @@ def _run(
                 return run_response
 
             except Exception as e:
-                if attempt < num_attempts - 1:
+                if attempt < num_attempts - 1 and (agent.retry_condition is None or agent.retry_condition(e)):
                     # Calculate delay with exponential backoff if enabled
                     if agent.exponential_backoff:
                         delay = agent.delay_between_retries * (2**attempt)
@@ -1254,7 +1254,7 @@ def _run_stream(
                     yield run_response
                 break
             except Exception as e:
-                if attempt < num_attempts - 1:
+                if attempt < num_attempts - 1 and (agent.retry_condition is None or agent.retry_condition(e)):
                     # Calculate delay with exponential backoff if enabled
                     if agent.exponential_backoff:
                         delay = agent.delay_between_retries * (2**attempt)
@@ -1288,6 +1288,7 @@ def _run_stream(
                     )
 
                 yield run_error
+                break
     finally:
         # Cancel background futures on error (wait_for_thread_tasks_stream handles waiting on success)
         for future in (memory_future, learning_future):
@@ -1881,7 +1882,7 @@ async def _arun(
                 return run_response
             except Exception as e:
                 # Check if this is the last attempt
-                if attempt < num_attempts - 1:
+                if attempt < num_attempts - 1 and (agent.retry_condition is None or agent.retry_condition(e)):
                     # Calculate delay with exponential backoff if enabled
                     if agent.exponential_backoff:
                         delay = agent.delay_between_retries * (2**attempt)
@@ -2767,7 +2768,7 @@ async def _arun_stream(
                 break
             except Exception as e:
                 # Check if this is the last attempt
-                if attempt < num_attempts - 1:
+                if attempt < num_attempts - 1 and (agent.retry_condition is None or agent.retry_condition(e)):
                     # Calculate delay with exponential backoff if enabled
                     if agent.exponential_backoff:
                         delay = agent.delay_between_retries * (2**attempt)
@@ -2803,6 +2804,7 @@ async def _arun_stream(
 
                 # Yield the error event
                 yield run_error
+                break
     finally:
         # Always disconnect connectable tools
         disconnect_connectable_tools(agent)
@@ -3938,7 +3940,7 @@ def _continue_run(
             except Exception as e:
                 run_response = cast(RunOutput, run_response)
                 # Check if this is the last attempt
-                if attempt < num_attempts - 1:
+                if attempt < num_attempts - 1 and (agent.retry_condition is None or agent.retry_condition(e)):
                     # Calculate delay with exponential backoff if enabled
                     if agent.exponential_backoff:
                         delay = agent.delay_between_retries * (2**attempt)
@@ -4248,7 +4250,7 @@ def _continue_run_stream(
             except Exception as e:
                 run_response = cast(RunOutput, run_response)
                 # Check if this is the last attempt
-                if attempt < num_attempts - 1:
+                if attempt < num_attempts - 1 and (agent.retry_condition is None or agent.retry_condition(e)):
                     # Calculate delay with exponential backoff if enabled
                     if agent.exponential_backoff:
                         delay = agent.delay_between_retries * (2**attempt)
@@ -4276,6 +4278,7 @@ def _continue_run_stream(
                 )
 
                 yield run_error
+                break
     finally:
         # Always disconnect connectable tools
         disconnect_connectable_tools(agent)
@@ -5239,7 +5242,7 @@ async def _acontinue_run(
             except Exception as e:
                 run_response = cast(RunOutput, run_response)
                 # Check if this is the last attempt
-                if attempt < num_attempts - 1:
+                if attempt < num_attempts - 1 and (agent.retry_condition is None or agent.retry_condition(e)):
                     # Calculate delay with exponential backoff if enabled
                     if agent.exponential_backoff:
                         delay = agent.delay_between_retries * (2**attempt)
@@ -5883,7 +5886,7 @@ async def _acontinue_run_stream(
                     run_response = RunOutput(run_id=run_id)
                 run_response = cast(RunOutput, run_response)
                 # Check if this is the last attempt
-                if attempt < num_attempts - 1:
+                if attempt < num_attempts - 1 and (agent.retry_condition is None or agent.retry_condition(e)):
                     # Calculate delay with exponential backoff if enabled
                     if agent.exponential_backoff:
                         delay = agent.delay_between_retries * (2**attempt)
@@ -5919,6 +5922,7 @@ async def _acontinue_run_stream(
 
                 # Yield the error event
                 yield run_error
+                break
     finally:
         # Always disconnect connectable tools
         disconnect_connectable_tools(agent)

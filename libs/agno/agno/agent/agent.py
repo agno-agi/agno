@@ -297,6 +297,8 @@ class Agent:
     delay_between_retries: int = 1
     # Exponential backoff: if True, the delay between retries is doubled each time
     exponential_backoff: bool = False
+    # Return True to retry a failed run, or False to stop immediately
+    retry_condition: Optional[Callable[[Exception], bool]] = None
 
     # --- Agent Response Model Settings ---
     # Provide an input schema to validate the input
@@ -471,6 +473,7 @@ class Agent:
         retries: int = 0,
         delay_between_retries: int = 1,
         exponential_backoff: bool = False,
+        retry_condition: Optional[Callable[[Exception], bool]] = None,
         parser_model: Optional[Union[Model, str]] = None,
         parser_model_prompt: Optional[str] = None,
         input_schema: Optional[Type[BaseModel]] = None,
@@ -641,6 +644,7 @@ class Agent:
         self.retries = retries
         self.delay_between_retries = delay_between_retries
         self.exponential_backoff = exponential_backoff
+        self.retry_condition = retry_condition
         self.parser_model = parser_model  # type: ignore[assignment]
         self.parser_model_prompt = parser_model_prompt
         self.input_schema = input_schema
