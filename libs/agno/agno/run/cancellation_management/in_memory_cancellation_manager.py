@@ -1,6 +1,5 @@
 """Run cancellation management."""
 
-import asyncio
 import threading
 import time
 from typing import Dict, Optional, Set, Tuple
@@ -33,8 +32,10 @@ class InMemoryRunCancellationManager(BaseRunCancellationManager):
         # iteration order and _purge_expired only ever pops from the front.
         self._cancelled_runs: Dict[str, Tuple[bool, float]] = {}
         self._member_runs: Dict[str, Tuple[Set[str], float]] = {}
+        # Sync calls may run in worker threads while async calls run on the
+        # event loop. Both access the same dictionaries, so they must share a
+        # lock. These in-memory critical sections never await.
         self._lock = threading.Lock()
-        self._async_lock = asyncio.Lock()
         self._clock = time.monotonic
 
     def _expires_at(self) -> float:
@@ -75,7 +76,7 @@ class InMemoryRunCancellationManager(BaseRunCancellationManager):
         intent (cancel-before-start support for background runs). An existing
         entry keeps its original TTL.
         """
-        async with self._async_lock:
+        with self._lock:
             self._purge_expired()
             if run_id not in self._cancelled_runs:
                 self._cancelled_runs[run_id] = (False, self._expires_at())
@@ -96,11 +97,11 @@ class InMemoryRunCancellationManager(BaseRunCancellationManager):
             was_registered = run_id in self._cancelled_runs
             self._cancelled_runs.pop(run_id, None)
             self._cancelled_runs[run_id] = (True, self._expires_at())
-            if was_registered:
-                logger.info(f"Run {run_id} marked for cancellation")
-            else:
-                logger.info(f"Run {run_id} not yet registered, storing cancellation intent")
-            return was_registered
+        if was_registered:
+            logger.info(f"Run {run_id} marked for cancellation")
+        else:
+            logger.info(f"Run {run_id} not yet registered, storing cancellation intent")
+        return was_registered
 
     async def acancel_run(self, run_id: str) -> bool:
         """Cancel a run by marking it as cancelled (async version).
@@ -113,16 +114,16 @@ class InMemoryRunCancellationManager(BaseRunCancellationManager):
             bool: True if run was previously registered, False if storing
             cancellation intent for an unregistered run.
         """
-        async with self._async_lock:
+        with self._lock:
             self._purge_expired()
             was_registered = run_id in self._cancelled_runs
             self._cancelled_runs.pop(run_id, None)
             self._cancelled_runs[run_id] = (True, self._expires_at())
-            if was_registered:
-                logger.info(f"Run {run_id} marked for cancellation")
-            else:
-                logger.info(f"Run {run_id} not yet registered, storing cancellation intent")
-            return was_registered
+        if was_registered:
+            logger.info(f"Run {run_id} marked for cancellation")
+        else:
+            logger.info(f"Run {run_id} not yet registered, storing cancellation intent")
+        return was_registered
 
     def is_cancelled(self, run_id: str) -> bool:
         """Check if a run is cancelled."""
@@ -133,7 +134,7 @@ class InMemoryRunCancellationManager(BaseRunCancellationManager):
 
     async def ais_cancelled(self, run_id: str) -> bool:
         """Check if a run is cancelled (async version)."""
-        async with self._async_lock:
+        with self._lock:
             self._purge_expired()
             entry = self._cancelled_runs.get(run_id)
             return entry[0] if entry is not None else False
@@ -146,7 +147,7 @@ class InMemoryRunCancellationManager(BaseRunCancellationManager):
 
     async def acleanup_run(self, run_id: str) -> None:
         """Remove a run from tracking (called when run completes) (async version)."""
-        async with self._async_lock:
+        with self._lock:
             self._purge_expired()
             self._cancelled_runs.pop(run_id, None)
 
@@ -170,7 +171,7 @@ class InMemoryRunCancellationManager(BaseRunCancellationManager):
 
     async def aget_active_runs(self) -> Dict[str, bool]:
         """Get all currently tracked runs and their cancellation status (async version)."""
-        async with self._async_lock:
+        with self._lock:
             self._purge_expired()
             return {run_id: cancelled for run_id, (cancelled, _) in self._cancelled_runs.items()}
 
@@ -190,7 +191,7 @@ class InMemoryRunCancellationManager(BaseRunCancellationManager):
 
         Each registration refreshes the member set's TTL.
         """
-        async with self._async_lock:
+        with self._lock:
             self._purge_expired()
             members, _ = self._member_runs.pop(team_run_id, (set(), 0.0))
             members.add(member_run_id)
@@ -205,7 +206,7 @@ class InMemoryRunCancellationManager(BaseRunCancellationManager):
 
     async def aget_member_run_ids(self, team_run_id: str) -> Set[str]:
         """Return the in-flight member run_ids of a team run (async version)."""
-        async with self._async_lock:
+        with self._lock:
             self._purge_expired()
             entry = self._member_runs.get(team_run_id)
             return set(entry[0]) if entry is not None else set()
@@ -218,6 +219,6 @@ class InMemoryRunCancellationManager(BaseRunCancellationManager):
 
     async def acleanup_member_runs(self, team_run_id: str) -> None:
         """Drop a team run's member mapping when the team run finishes (async version)."""
-        async with self._async_lock:
+        with self._lock:
             self._purge_expired()
             self._member_runs.pop(team_run_id, None)
