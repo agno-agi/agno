@@ -352,3 +352,141 @@ def test_encoded_sse_cannot_bypass_public_error_inspection(team_mode, gzip_posit
             route, data={"message": "again", "stream": "false"}, headers={"Accept-Encoding": "identity"}
         )
         assert following.status_code == 200 and following.json()["content"] == "Short answer."
+
+
+@pytest.mark.asyncio
+async def test_public_run_capacity_releases_after_final_body_before_app_returns():
+    import asyncio
+    from types import SimpleNamespace
+
+    from agno.os.public._middleware import PublicMiddleware
+
+    final_body_sent = asyncio.Event()
+    allow_return = asyncio.Event()
+    calls = 0
+
+    class Policy:
+        authenticated_api = False
+        selected = {"agents": {"docs-agent"}, "teams": set(), "workflows": set()}
+        oauth_paths = []
+
+        @staticmethod
+        def is_mcp(path):
+            return False
+
+    class DelayedResponse:
+        async def __call__(self, scope, receive, send):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                await send(
+                    {
+                        "type": "http.response.start",
+                        "status": 200,
+                        "headers": [(b"content-type", b"text/event-stream")],
+                    }
+                )
+                await send(
+                    {
+                        "type": "http.response.body",
+                        "body": b'event: RunError\ndata: {"event":"RunError"}\n\n',
+                        "more_body": False,
+                    }
+                )
+                final_body_sent.set()
+                await allow_return.wait()
+                return
+            await send(
+                {
+                    "type": "http.response.start",
+                    "status": 200,
+                    "headers": [(b"content-type", b"application/json")],
+                }
+            )
+            await send({"type": "http.response.body", "body": b'{"content":"Short answer."}', "more_body": False})
+
+    surface = SimpleNamespace(
+        client_id=None,
+        limiter=LocalAdmission(),
+        mcp=False,
+        max_active_runs=1,
+        max_body_bytes=1024 * 1024,
+        max_run_seconds=5,
+        max_output_bytes=1024 * 1024,
+        uploads=None,
+    )
+    agent_os = SimpleNamespace(
+        agents=[SimpleNamespace(id="docs-agent")],
+        teams=[],
+        workflows=[],
+        _public_interface_routes=[],
+    )
+    middleware = PublicMiddleware(DelayedResponse(), surface=surface, agent_os=agent_os, policy=Policy())
+
+    def scope(body):
+        path = "/agents/docs-agent/runs"
+        return {
+            "type": "http",
+            "asgi": {"version": "3.0", "spec_version": "2.3"},
+            "http_version": "1.1",
+            "method": "POST",
+            "scheme": "http",
+            "path": path,
+            "raw_path": path.encode(),
+            "root_path": "",
+            "query_string": b"",
+            "headers": [
+                (b"content-type", b"application/x-www-form-urlencoded"),
+                (b"content-length", str(len(body)).encode()),
+            ],
+            "client": ("127.0.0.1", 12345),
+            "server": ("127.0.0.1", 80),
+        }
+
+    def receive_for(body):
+        delivered = False
+
+        async def receive():
+            nonlocal delivered
+            if delivered:
+                return {"type": "http.disconnect"}
+            delivered = True
+            return {"type": "http.request", "body": body, "more_body": False}
+
+        return receive
+
+    def send_to(messages):
+        async def send(message):
+            messages.append(message)
+
+        return send
+
+    first_messages = []
+    first_task = asyncio.create_task(
+        middleware(
+            scope(b"message=hi&stream=true"),
+            receive_for(b"message=hi&stream=true"),
+            send_to(first_messages),
+        )
+    )
+    try:
+        await asyncio.wait_for(final_body_sent.wait(), timeout=5)
+        assert middleware.active_runs == 0
+
+        second_messages = []
+        await asyncio.wait_for(
+            middleware(
+                scope(b"message=again&stream=false"),
+                receive_for(b"message=again&stream=false"),
+                send_to(second_messages),
+            ),
+            timeout=5,
+        )
+        assert second_messages[0]["status"] == 200
+        assert second_messages[-1]["body"] == b'{"content":"Short answer."}'
+        assert first_messages[0]["status"] == 200
+        assert b"RunError" in first_messages[-1]["body"]
+        assert calls == 2
+    finally:
+        allow_return.set()
+        await asyncio.wait_for(first_task, timeout=5)
