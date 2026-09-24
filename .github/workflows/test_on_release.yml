@@ -1023,7 +1023,7 @@ jobs:
           ./libs/agno/tests/integration/knowledge/test_async_knowledge_retriever.py
 
   # Docling runs local layout and OCR models, so it gets its own job and budget
-  test-knowledge-docling:
+  test-knowledge-3:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
