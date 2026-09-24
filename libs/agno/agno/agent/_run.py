@@ -1532,7 +1532,7 @@ async def _arun(
     16. Cleanup and store (scrub, stop timer, save to file, add to session, calculate metrics, save session)
     """
     from agno.agent._hooks import aexecute_post_hooks, aexecute_pre_hooks
-    from agno.agent._init import disconnect_connectable_tools, disconnect_mcp_tools
+    from agno.agent._init import adisconnect_connectable_tools, disconnect_mcp_tools
     from agno.agent._messages import aget_run_messages
     from agno.agent._response import (
         agenerate_followups,
@@ -1914,7 +1914,7 @@ async def _arun(
                 return run_response
     finally:
         # Always disconnect connectable tools
-        disconnect_connectable_tools(agent)
+        await adisconnect_connectable_tools(agent)
         # Always disconnect MCP tools
         await disconnect_mcp_tools(agent)
 
@@ -2286,7 +2286,7 @@ async def _arun_stream(
     13. Cleanup and store (scrub, stop timer, save to file, add to session, calculate metrics, save session)
     """
     from agno.agent._hooks import aexecute_post_hooks, aexecute_pre_hooks
-    from agno.agent._init import disconnect_connectable_tools, disconnect_mcp_tools
+    from agno.agent._init import adisconnect_connectable_tools, disconnect_mcp_tools
     from agno.agent._messages import aget_run_messages
     from agno.agent._response import (
         agenerate_followups_stream,
@@ -2805,7 +2805,7 @@ async def _arun_stream(
                 yield run_error
     finally:
         # Always disconnect connectable tools
-        disconnect_connectable_tools(agent)
+        await adisconnect_connectable_tools(agent)
         # Always disconnect MCP tools
         await disconnect_mcp_tools(agent)
 
@@ -4801,7 +4801,7 @@ async def _acontinue_run(
     14. Cleanup and store (scrub, stop timer, save to file, add to session, calculate metrics, save session)
     """
     from agno.agent._hooks import aexecute_post_hooks
-    from agno.agent._init import disconnect_connectable_tools, disconnect_mcp_tools
+    from agno.agent._init import adisconnect_connectable_tools, disconnect_mcp_tools
     from agno.agent._messages import aget_continue_run_messages
     from agno.agent._response import (
         agenerate_followups,
@@ -5279,7 +5279,7 @@ async def _acontinue_run(
 
     finally:
         # Always disconnect connectable tools
-        disconnect_connectable_tools(agent)
+        await adisconnect_connectable_tools(agent)
         # Always disconnect MCP tools
         await disconnect_mcp_tools(agent)
 
@@ -5326,7 +5326,7 @@ async def _acontinue_run_stream(
     11. Cleanup and store the run response and session
     """
     from agno.agent._hooks import aexecute_post_hooks
-    from agno.agent._init import disconnect_connectable_tools, disconnect_mcp_tools
+    from agno.agent._init import adisconnect_connectable_tools, disconnect_mcp_tools
     from agno.agent._messages import aget_continue_run_messages
     from agno.agent._response import (
         agenerate_followups_stream,
@@ -5921,7 +5921,7 @@ async def _acontinue_run_stream(
                 yield run_error
     finally:
         # Always disconnect connectable tools
-        disconnect_connectable_tools(agent)
+        await adisconnect_connectable_tools(agent)
         # Always disconnect MCP tools
         await disconnect_mcp_tools(agent)
 
