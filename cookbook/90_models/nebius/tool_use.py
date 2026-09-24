@@ -16,7 +16,7 @@ from agno.tools.websearch import WebSearchTools
 # ---------------------------------------------------------------------------
 
 agent = Agent(
-    model=Nebius(id="Qwen/Qwen3-30B-A3B"),
+    model=Nebius(id="openai/gpt-oss-120b"),
     tools=[WebSearchTools()],
     markdown=True,
 )
