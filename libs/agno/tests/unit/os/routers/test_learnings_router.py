@@ -241,6 +241,44 @@ class TestCreateLearning:
         upsert_id = mock_db.upsert_learning.call_args[1]["id"]
         assert upsert_id not in ("decision_log_user-1",) and len(upsert_id) == 36
 
+    def test_create_feedback_keys_on_the_run_from_content(self, client, mock_db):
+        # Keyed by the run it reviews; a uuid here would be invisible to the run
+        # feedback routes, which look the row up by feedback_<run_id>.
+        created = _make_learning(learning_id="feedback_run-1", learning_type="feedback")
+        mock_db.get_learning_by_id = MagicMock(side_effect=[None, created])
+        resp = client.post(
+            "/learnings",
+            json={
+                "learning_type": "feedback",
+                "content": {"run_id": "run-1", "signal": "negative"},
+                "user_id": "user-1",
+            },
+        )
+        assert resp.status_code == 201
+        assert mock_db.upsert_learning.call_args[1]["id"] == "feedback_run-1"
+
+    def test_create_feedback_for_a_reviewed_run_conflicts(self, client, mock_db):
+        mock_db.get_learning_by_id = MagicMock(
+            return_value=_make_learning(learning_id="feedback_run-1", learning_type="feedback")
+        )
+        resp = client.post(
+            "/learnings",
+            json={"learning_type": "feedback", "content": {"run_id": "run-1"}, "user_id": "user-1"},
+        )
+        assert resp.status_code == 409
+        mock_db.upsert_learning.assert_not_called()
+
+    def test_create_feedback_without_a_run_still_generates_an_id(self, client, mock_db):
+        # Only half identity-keyed: with no run to key on the uuid fallback applies.
+        created = _make_learning(learning_id="generated", learning_type="feedback")
+        mock_db.get_learning_by_id = MagicMock(return_value=created)
+        resp = client.post(
+            "/learnings",
+            json={"learning_type": "feedback", "content": {"signal": "positive"}, "user_id": "user-1"},
+        )
+        assert resp.status_code == 201
+        assert len(mock_db.upsert_learning.call_args[1]["id"]) == 36
+
     def test_create_missing_learning_type_is_422(self, client):
         resp = client.post("/learnings", json={"content": {}})
         assert resp.status_code == 422

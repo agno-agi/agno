@@ -159,7 +159,7 @@ def set_learning_machine(agent: Agent) -> None:
             agent.learning.knowledge = agent.knowledge
         agent._learning = agent.learning
 
-        # PROPOSE/HITL modes need chat history for multi-turn confirmation
+        # PROPOSE/HITL and feedback modes need chat history
         if agent._learning.requires_history and not agent.add_history_to_context:
             agent.add_history_to_context = True
 

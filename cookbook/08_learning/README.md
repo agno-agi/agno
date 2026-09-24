@@ -14,6 +14,7 @@ LearningMachine is a unified learning system that enables agents to learn from e
 | **Entity Memory** | Facts, events, relationships | Configurable | CRM, knowledge graph |
 | **Learned Knowledge** | Insights, patterns, best practices | Configurable | Collective intelligence |
 | **Decision Log** | Decisions with reasoning and alternatives | Per agent | Auditing, feedback loops |
+| **Feedback** | Run reviews (positive/negative with comments) | Per agent | Adapting to user feedback |
 
 ## Quick Start
 
@@ -97,11 +98,16 @@ cookbook/08_learning/
 │   ├── seed.py
 │   └── run.py
 │
-└── 11_composition/         # The manual door: place the surfaces yourself
-    ├── basic.py
-    ├── with_filesystem.py
-    ├── context_block.py
-    └── always_capture.py
+├── 11_composition/         # The manual door: place the surfaces yourself
+│   ├── basic.py
+│   ├── with_filesystem.py
+│   ├── context_block.py
+│   └── always_capture.py
+│
+└── 12_feedback/            # Run reviews and conversational feedback
+    ├── 01_basic_feedback.py
+    ├── 02_conversational_feedback.py
+    └── 03_agentic_feedback.py
 ```
 
 ## Running the Cookbooks
@@ -450,6 +456,37 @@ agent = Agent(
 # and record_outcome tools and decides when to use them.
 ```
 
+#### 7. Feedback Store
+
+Records user feedback on agent runs. Feedback arrives three ways: explicit positive/negative over the AgentOS endpoint (stores the raw comment), programmatic `feedback_store.record()` (distills a lesson from the comment when a model is available), and - with no UI at all - extracted automatically from the conversation after each run ("too long", "that's wrong", "perfect"). Recent feedback is injected into future runs so the agent adapts to what users liked or disliked.
+
+Note: in ALWAYS mode the extraction pass adds one LLM call after each run, like the other ALWAYS-mode stores.
+
+**Supported modes:** ALWAYS (background extraction), AGENTIC (the agent logs feedback itself via a `record_feedback` tool). PROPOSE and HITL are not supported.
+
+**Scope:** Per agent - stored and retrieved by `agent_id`.
+
+```python
+from agno.learn import LearningMachine
+
+agent = Agent(
+    model=OpenAIResponses(id="gpt-5.5"),
+    db=PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai"),
+    learning=LearningMachine(feedback=True),
+)
+
+# Record feedback on a run (AgentOS exposes this as
+# POST /sessions/{session_id}/runs/{run_id}/feedback)
+run_output = agent.run("What is the population of Tokyo?")
+agent.learning_machine.feedback_store.record(
+    signal="negative",
+    comment="Too verbose, just give me the number",
+    run_id=run_output.run_id,
+    session_id=run_output.session_id,
+    agent_id=agent.id,
+)
+```
+
 ### Custom Schemas
 
 Extend the base schemas with typed fields for your domain:
@@ -482,7 +519,7 @@ learning = LearningMachine(
 
 ## View Learnings in AgentOS
 
-Everything the learning system captures is browsable in the AgentOS UI and over REST. AgentOS exposes `/learnings` CRUD endpoints backed by the `agno_learnings` table, and [os.agno.com](https://os.agno.com) renders them as dedicated Learning pages: User Profiles, User Memories, Entity Memories, Session Context, and Decision Logs.
+Everything the learning system captures is browsable in the AgentOS UI and over REST. AgentOS exposes `/learnings` CRUD endpoints backed by the `agno_learnings` table, and [os.agno.com](https://os.agno.com) renders them as dedicated Learning pages: User Profiles, User Memories, Entity Memories, Session Context, and Decision Logs. Run feedback is recorded over `POST /sessions/{session_id}/runs/{run_id}/feedback` and stored in the same table (`learning_type="feedback"`).
 
 Try it with the demo in this cookbook:
 
