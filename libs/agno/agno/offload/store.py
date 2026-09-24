@@ -311,6 +311,83 @@ def _looks_like_json(output: str) -> bool:
         return False
 
 
+def _json_pointer_tokens(json_pointer: str) -> List[str]:
+    """Decode an RFC 6901 JSON pointer into its path tokens.
+
+    JSON Pointer is deliberately implemented here instead of adding another
+    runtime dependency.  The read-back path is model-facing, so malformed
+    pointers must become a useful tool error rather than an exception from a
+    third-party parser.
+    """
+    if not isinstance(json_pointer, str):
+        raise TypeError("json_pointer must be a string")
+    if json_pointer == "":
+        return []
+    if not json_pointer.startswith("/"):
+        raise ValueError("invalid JSON pointer: it must be empty or start with '/'")
+
+    tokens: List[str] = []
+    for raw_token in json_pointer[1:].split("/"):
+        token: List[str] = []
+        index = 0
+        while index < len(raw_token):
+            character = raw_token[index]
+            if character != "~":
+                token.append(character)
+                index += 1
+                continue
+            if index + 1 >= len(raw_token) or raw_token[index + 1] not in "01":
+                raise ValueError(f"invalid JSON pointer escape in token {raw_token!r}; only '~0' and '~1' are valid")
+            token.append("~" if raw_token[index + 1] == "0" else "/")
+            index += 2
+        tokens.append("".join(token))
+    return tokens
+
+
+def _project_json_pointer(content: str, json_pointer: str) -> str:
+    """Select a JSON subtree and serialize it for bounded ``read_result`` output.
+
+    The complete payload is already bounded by the ResultStore quota.  The
+    selected value is serialized with stable, readable indentation and is
+    then passed through the normal line/character page limits.  A pointer is
+    intentionally a read-only projection: it never changes the stored bytes.
+    """
+    try:
+        document = json.loads(content)
+    except (ValueError, RecursionError) as error:
+        raise ValueError("result is not valid JSON; omit json_pointer to read it as text") from error
+
+    value: Any = document
+    for token in _json_pointer_tokens(json_pointer):
+        if isinstance(value, dict):
+            if token not in value:
+                raise ValueError(f"JSON pointer {json_pointer!r} does not resolve at token {token!r}")
+            value = value[token]
+        elif isinstance(value, list):
+            # RFC 6901 uses a decimal array index without leading zeroes;
+            # '-' is only an append operation in JSON Patch and is not valid
+            # for a read-only pointer.
+            if (
+                token == "-"
+                or not token
+                or not token.isascii()
+                or not token.isdigit()
+                or (len(token) > 1 and token.startswith("0"))
+            ):
+                raise ValueError(f"JSON pointer token {token!r} is not a valid array index")
+            array_index = int(token)
+            if array_index >= len(value):
+                raise ValueError(f"JSON pointer {json_pointer!r} is outside the array bounds")
+            value = value[array_index]
+        else:
+            raise ValueError(f"JSON pointer {json_pointer!r} traverses a non-container value")
+
+    try:
+        return json.dumps(value, ensure_ascii=False, indent=2)
+    except (TypeError, ValueError, RecursionError) as error:
+        raise ValueError("selected JSON value could not be serialized") from error
+
+
 def _safe_segment(value: str) -> str:
     """Make a caller-supplied id safe as one path segment."""
     cleaned = re.sub(r"[\\/\x00-\x1f]", "_", value) or "_"
@@ -844,23 +921,56 @@ class ResultStore:
         return await self._aread_payload(row)
 
     def read(
-        self, result_id: str, start_line: int = 1, end_line: Optional[int] = None, start_char: int = 0
+        self,
+        result_id: str,
+        start_line: int = 1,
+        end_line: Optional[int] = None,
+        start_char: int = 0,
+        json_pointer: Optional[str] = None,
     ) -> ResultPage:
         """Read a page of a stored result. Lines are 1-indexed and inclusive;
-        ``start_char`` is the 0-indexed offset into ``start_line`` to begin at."""
+        ``start_char`` is the 0-indexed offset into ``start_line`` to begin at.
+
+        When ``json_pointer`` is provided, the result must be indexed as JSON
+        and contain valid JSON; the pointer is resolved using RFC 6901 before
+        the normal page limits are applied. The empty pointer (``""``) selects
+        the JSON document root.
+        Paging a projection always uses line numbers from that projection;
+        callers must pass the same pointer on continuation calls.
+        ``None`` preserves the original text-read behavior.
+        """
         row = self.get_row(result_id)
         if row is None:
             raise KeyError(f"unknown result id {result_id}")
-        return self._page_from_content(self._read_payload(row), start_line, end_line, start_char)
+        if json_pointer is not None:
+            if row.get("content_type") != "json":
+                raise ValueError("json_pointer is only supported for stored JSON results; omit it to read text")
+        content = self._read_payload(row)
+        if json_pointer is not None:
+            content = _project_json_pointer(content, json_pointer)
+        return self._page_from_content(content, start_line, end_line, start_char)
 
     async def aread(
-        self, result_id: str, start_line: int = 1, end_line: Optional[int] = None, start_char: int = 0
+        self,
+        result_id: str,
+        start_line: int = 1,
+        end_line: Optional[int] = None,
+        start_char: int = 0,
+        json_pointer: Optional[str] = None,
     ) -> ResultPage:
         """Async variant of ``read``."""
         row = await self.aget_row(result_id)
         if row is None:
             raise KeyError(f"unknown result id {result_id}")
+        if json_pointer is not None:
+            # JSON parsing and serialization can be significant for an
+            # offloaded payload, so keep the event loop free just like the
+            # existing page calculation.
+            if row.get("content_type") != "json":
+                raise ValueError("json_pointer is only supported for stored JSON results; omit it to read text")
         content = await self._aread_payload(row)
+        if json_pointer is not None:
+            content = await asyncio.to_thread(_project_json_pointer, content, json_pointer)
         return await asyncio.to_thread(self._page_from_content, content, start_line, end_line, start_char)
 
     def _matches_from_content(self, content: str, pattern: str, context_lines: int) -> List[ResultMatch]:
