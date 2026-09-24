@@ -372,7 +372,7 @@ class Team:
     # False, True for the defaults, or a FollowupConfig that enables followups and carries their
     # model, instructions and count. Kept as given; a string model is resolved on a copy of it.
     followups: Union[bool, FollowupConfig] = False
-    # Maximum number of followup prompts to generate (default 3); FollowupConfig.num_followups wins when set
+    # Maximum number of followup prompts (default 3); must agree with FollowupConfig.num_followups if both are set
     num_followups: int = 3
     # Optional model to use for generating followups (defaults to team's model)
     followup_model: Optional[Model] = None
@@ -561,7 +561,7 @@ class Team:
         reasoning_model: Optional[Union[Model, str]] = None,
         reasoning_agent: Optional[Agent] = None,
         followups: Union[bool, FollowupConfig] = False,
-        num_followups: int = 3,
+        num_followups: Optional[int] = None,
         followup_model: Optional[Union[Model, str]] = None,
         stream: Optional[bool] = None,
         stream_events: Optional[bool] = None,

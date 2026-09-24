@@ -1090,9 +1090,6 @@ async def test_hermetic_real_agent_full_override_set(tmp_path):
     reasoning_model.cache_response = True
     followup_model = RecordingFakeModel("followup")
     followup_model.cache_response = True
-    followup_config_model = RecordingFakeModel("followup-config")
-    followup_config_model.cache_response = True
-    followup_config_model.cache_dir = str(tmp_path / "followup-config-cache")
     fallback_model = RecordingFakeModel("fallback")
     fallback_model.cache_response = True
     sub_model = RecordingFakeModel("sub")
@@ -1107,7 +1104,8 @@ async def test_hermetic_real_agent_full_override_set(tmp_path):
         db=caller_db,
         reasoning_model=reasoning_model,
         followup_model=followup_model,
-        followups=FollowupConfig(model=followup_config_model, instructions="Suggest documentation questions."),
+        # The config model slot is covered by test_followup_model_gets_fresh_provider_calls_per_attempt.
+        followups=FollowupConfig(instructions="Suggest documentation questions."),
         fallback_models=[fallback_model],
         session_summary_manager=summary_manager,
         compression_manager=compression_manager,
@@ -1131,10 +1129,7 @@ async def test_hermetic_real_agent_full_override_set(tmp_path):
         assert attempt_agent.followup_model is not followup_model
         assert attempt_agent.followup_model.cache_response is False
         assert attempt_agent.followups is not caller.followups
-        assert attempt_agent.followups.model is not followup_config_model
-        assert attempt_agent.followups.model.cache_response is False
         assert attempt_agent.followups.instructions == "Suggest documentation questions."
-        assert followup_config_model.cache_response is True
         assert attempt_agent.fallback_config is not caller.fallback_config
         assert all(entry.cache_response is False for entry in attempt_agent.fallback_config.on_error)
         # The summary manager survives as an attempt-local copy: production's

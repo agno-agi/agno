@@ -15,6 +15,7 @@ from typing import (
 if TYPE_CHECKING:
     from agno.agent.agent import Agent
 
+from agno.agent.followup import reconcile_copied_followup_fields
 from agno.filters import FilterExpr
 from agno.utils.log import log_debug, log_error, log_warning
 
@@ -163,6 +164,7 @@ def deep_copy(agent: Agent, *, update: Optional[Dict[str, Any]] = None) -> Agent
     # Update fields if provided
     if update:
         fields_for_new_agent.update(update)
+    reconcile_copied_followup_fields(fields_for_new_agent, update)
 
     # Create a new Agent
     try:

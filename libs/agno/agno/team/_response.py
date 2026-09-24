@@ -20,8 +20,7 @@ from uuid import uuid4
 from pydantic import BaseModel
 
 from agno.agent._tools import result_store_kwargs
-from agno.agent.followup import FollowupConfig
-from agno.exceptions import RunCancelledException
+from agno.agent.followup import prepare_followup_call
 from agno.media import Audio
 from agno.models.base import Model
 from agno.models.fallback import acall_model_stream_with_fallback, call_model_stream_with_fallback
@@ -1753,43 +1752,11 @@ def generate_team_followups(
     run_response: TeamRunOutput,
 ) -> None:
     """Generate followups after the main response (sync, non-streaming)."""
-    from agno.agent._response import _build_followup_messages, _get_followups_response_format, _parse_followups_response
-    from agno.metrics import ModelType, accumulate_model_metrics
+    from agno.agent._response import _run_followups_model
 
-    if not team.followups or run_response.content is None:
-        return
-
-    followup_config = team.followups if isinstance(team.followups, FollowupConfig) else None
-    followup_instructions = followup_config.instructions if followup_config else None
-    # A config model is resolved to a Model at construction (see _resolve_models).
-    config_model = cast(Optional[Model], followup_config.model) if followup_config else None
-    model = config_model or team.followup_model or team.model
-    if model is None:
-        return
-
-    response_format = _get_followups_response_format(model)
-    user_message = run_response.input.input_content_string() if run_response.input else None
-    messages = _build_followup_messages(
-        run_response.content,
-        team.num_followups,
-        user_message=user_message,
-        followup_instructions=followup_instructions,
-        response_format=response_format,
-    )
-
-    # A resumed run still carries the earlier answer's suggestions; a failed regeneration must not keep them.
-    run_response.followups = None
-    try:
-        model_response: ModelResponse = model.response(
-            messages=messages,
-            response_format=response_format,
-        )
-        run_response.followups = _parse_followups_response(model_response, team.num_followups)
-        accumulate_model_metrics(model_response, model, ModelType.FOLLOWUP_MODEL, run_response.metrics)
-    except RunCancelledException:
-        raise
-    except Exception as e:
-        log_warning(f"Error generating followups: {str(e)}")
+    call = prepare_followup_call(team, run_response)
+    if call is not None:
+        _run_followups_model(call, run_response)
 
 
 async def agenerate_team_followups(
@@ -1797,43 +1764,11 @@ async def agenerate_team_followups(
     run_response: TeamRunOutput,
 ) -> None:
     """Generate followups after the main response (async, non-streaming)."""
-    from agno.agent._response import _build_followup_messages, _get_followups_response_format, _parse_followups_response
-    from agno.metrics import ModelType, accumulate_model_metrics
+    from agno.agent._response import _arun_followups_model
 
-    if not team.followups or run_response.content is None:
-        return
-
-    followup_config = team.followups if isinstance(team.followups, FollowupConfig) else None
-    followup_instructions = followup_config.instructions if followup_config else None
-    # A config model is resolved to a Model at construction (see _resolve_models).
-    config_model = cast(Optional[Model], followup_config.model) if followup_config else None
-    model = config_model or team.followup_model or team.model
-    if model is None:
-        return
-
-    response_format = _get_followups_response_format(model)
-    user_message = run_response.input.input_content_string() if run_response.input else None
-    messages = _build_followup_messages(
-        run_response.content,
-        team.num_followups,
-        user_message=user_message,
-        followup_instructions=followup_instructions,
-        response_format=response_format,
-    )
-
-    # A resumed run still carries the earlier answer's suggestions; a failed regeneration must not keep them.
-    run_response.followups = None
-    try:
-        model_response: ModelResponse = await model.aresponse(
-            messages=messages,
-            response_format=response_format,
-        )
-        run_response.followups = _parse_followups_response(model_response, team.num_followups)
-        accumulate_model_metrics(model_response, model, ModelType.FOLLOWUP_MODEL, run_response.metrics)
-    except RunCancelledException:
-        raise
-    except Exception as e:
-        log_warning(f"Error generating followups: {str(e)}")
+    call = prepare_followup_call(team, run_response)
+    if call is not None:
+        await _arun_followups_model(call, run_response)
 
 
 def generate_team_followups_stream(
@@ -1842,18 +1777,10 @@ def generate_team_followups_stream(
     stream_events: bool = True,
 ) -> Iterator[TeamRunOutputEvent]:
     """Generate followups after the main response (sync, streaming)."""
-    from agno.agent._response import _build_followup_messages, _get_followups_response_format, _parse_followups_response
-    from agno.metrics import ModelType, accumulate_model_metrics
+    from agno.agent._response import _run_followups_model
 
-    if not team.followups or run_response.content is None:
-        return
-
-    followup_config = team.followups if isinstance(team.followups, FollowupConfig) else None
-    followup_instructions = followup_config.instructions if followup_config else None
-    # A config model is resolved to a Model at construction (see _resolve_models).
-    config_model = cast(Optional[Model], followup_config.model) if followup_config else None
-    model = config_model or team.followup_model or team.model
-    if model is None:
+    call = prepare_followup_call(team, run_response)
+    if call is None:
         return
 
     if stream_events:
@@ -1864,29 +1791,7 @@ def generate_team_followups_stream(
             store_events=team.store_events,
         )
 
-    response_format = _get_followups_response_format(model)
-    user_message = run_response.input.input_content_string() if run_response.input else None
-    messages = _build_followup_messages(
-        run_response.content,
-        team.num_followups,
-        user_message=user_message,
-        followup_instructions=followup_instructions,
-        response_format=response_format,
-    )
-
-    # A resumed run still carries the earlier answer's suggestions; a failed regeneration must not keep them.
-    run_response.followups = None
-    try:
-        model_response: ModelResponse = model.response(
-            messages=messages,
-            response_format=response_format,
-        )
-        run_response.followups = _parse_followups_response(model_response, team.num_followups)
-        accumulate_model_metrics(model_response, model, ModelType.FOLLOWUP_MODEL, run_response.metrics)
-    except RunCancelledException:
-        raise
-    except Exception as e:
-        log_warning(f"Error generating followups: {str(e)}")
+    _run_followups_model(call, run_response)
 
     if stream_events:
         yield handle_event(
@@ -1903,18 +1808,10 @@ async def agenerate_team_followups_stream(
     stream_events: bool = True,
 ) -> AsyncIterator[TeamRunOutputEvent]:
     """Generate followups after the main response (async, streaming)."""
-    from agno.agent._response import _build_followup_messages, _get_followups_response_format, _parse_followups_response
-    from agno.metrics import ModelType, accumulate_model_metrics
+    from agno.agent._response import _arun_followups_model
 
-    if not team.followups or run_response.content is None:
-        return
-
-    followup_config = team.followups if isinstance(team.followups, FollowupConfig) else None
-    followup_instructions = followup_config.instructions if followup_config else None
-    # A config model is resolved to a Model at construction (see _resolve_models).
-    config_model = cast(Optional[Model], followup_config.model) if followup_config else None
-    model = config_model or team.followup_model or team.model
-    if model is None:
+    call = prepare_followup_call(team, run_response)
+    if call is None:
         return
 
     if stream_events:
@@ -1925,29 +1822,7 @@ async def agenerate_team_followups_stream(
             store_events=team.store_events,
         )
 
-    response_format = _get_followups_response_format(model)
-    user_message = run_response.input.input_content_string() if run_response.input else None
-    messages = _build_followup_messages(
-        run_response.content,
-        team.num_followups,
-        user_message=user_message,
-        followup_instructions=followup_instructions,
-        response_format=response_format,
-    )
-
-    # A resumed run still carries the earlier answer's suggestions; a failed regeneration must not keep them.
-    run_response.followups = None
-    try:
-        model_response: ModelResponse = await model.aresponse(
-            messages=messages,
-            response_format=response_format,
-        )
-        run_response.followups = _parse_followups_response(model_response, team.num_followups)
-        accumulate_model_metrics(model_response, model, ModelType.FOLLOWUP_MODEL, run_response.metrics)
-    except RunCancelledException:
-        raise
-    except Exception as e:
-        log_warning(f"Error generating followups: {str(e)}")
+    await _arun_followups_model(call, run_response)
 
     if stream_events:
         yield handle_event(

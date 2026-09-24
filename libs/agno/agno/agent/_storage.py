@@ -21,7 +21,7 @@ if TYPE_CHECKING:
     from agno.agent.agent import Agent
     from agno.offload.store import ResultStore
 
-from agno.agent.followup import FollowupConfig, _model_identity
+from agno.agent.followup import FollowupConfig, model_identity
 from agno.db.base import BaseDb, ComponentType, SessionType
 from agno.db.schemas.scheduler import strip_reserved_run_metadata
 from agno.db.utils import resolve_db_from_config
@@ -1042,7 +1042,7 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
         config["num_followups"] = agent.num_followups
     if agent.followup_model is not None:
         if isinstance(agent.followup_model, Model):
-            config["followup_model"] = _model_identity(agent.followup_model)
+            config["followup_model"] = model_identity(agent.followup_model)
         else:
             config["followup_model"] = str(agent.followup_model)
 
@@ -1448,7 +1448,7 @@ def from_dict(
         reasoning_model=config.get("reasoning_model"),
         # --- Followup settings ---
         followups=_followups_from_config(config.get("followups"), registry),
-        num_followups=config.get("num_followups", 3),
+        num_followups=config.get("num_followups"),
         followup_model=config.get("followup_model"),
         # --- Default tools settings ---
         read_chat_history=config.get("read_chat_history", False),

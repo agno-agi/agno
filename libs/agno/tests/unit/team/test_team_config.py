@@ -2012,8 +2012,7 @@ class TestTeamFollowupConfigRoundtrip:
         assert reconstructed.followups.model.id == "gpt-5.5"
         assert reconstructed.followups.instructions == "Only docs."
 
-    def test_all_three_model_slots_survive_distinctly(self):
-        """Precedence after reconstruction: followups.model, then followup_model, then model."""
+    def test_config_model_and_main_model_survive_distinctly(self):
         from agno.agent import FollowupConfig
         from agno.models.openai import OpenAIChat, OpenAIResponses
 
@@ -2021,11 +2020,10 @@ class TestTeamFollowupConfigRoundtrip:
             members=[],
             model=OpenAIChat(id="gpt-4o"),
             followups=FollowupConfig(model=OpenAIResponses(id="gpt-4.1-mini")),
-            followup_model=OpenAIChat(id="gpt-4o-mini"),
         )
         reconstructed = Team.from_dict(team.to_dict())
         assert reconstructed.model.id == "gpt-4o"
-        assert reconstructed.followup_model.id == "gpt-4o-mini"
+        assert reconstructed.followup_model is None
         assert reconstructed.followups.model.id == "gpt-4.1-mini"
         assert isinstance(reconstructed.followups.model, OpenAIResponses)
 
@@ -2064,7 +2062,7 @@ class TestTeamFollowupConfigRoundtrip:
     def test_config_count_is_stored_on_the_config(self):
         from agno.agent import FollowupConfig
 
-        config = Team(members=[], followups=FollowupConfig(num_followups=5), num_followups=2).to_dict()
+        config = Team(members=[], followups=FollowupConfig(num_followups=5)).to_dict()
         assert config["followups"] == {"num_followups": 5}
         assert config["num_followups"] == 5  # the effective count, as the component holds it
         reconstructed = Team.from_dict(config)

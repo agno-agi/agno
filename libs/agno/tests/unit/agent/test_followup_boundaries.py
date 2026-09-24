@@ -33,7 +33,7 @@ async def test_generation_paths(kind, asynchronous, stream, source, suggestions)
     options = dict(
         followups=config,
         num_followups=2,
-        followup_model=model if source == "legacy" else unused if source == "config" else None,
+        followup_model=model if source == "legacy" else None,
         model=model if source == "component" else unused,
         telemetry=False,
     )

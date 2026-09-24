@@ -29,7 +29,6 @@ Advanced examples covering caching, compression, concurrency, events, retries, d
 ## Run
 - `.venvs/demo/bin/python cookbook/02_agents/14_advanced/<file>.py`
 
-
 ### Domain-aware follow-ups
 
 `followup_instructions.py` uses `FollowupConfig` with an agent that answers only
@@ -38,12 +37,13 @@ Python documentation questions. The same configuration works on `Team`.
 follow-ups and carries the count, custom instructions and an optional separate model:
 `followups=FollowupConfig(num_followups=5, model=..., instructions="...")`. The
 component keeps what you pass, so `agent.followups` reads back as the bool or the
-config. The earlier arguments still work alongside it: `followups=True` with
-`num_followups` or `followup_model`. A count set on the config wins over
-`num_followups`; left unset (`None`) it falls back to `num_followups`, default 3.
-`FollowupConfig.model` takes precedence over `followup_model`, then the main model;
-either slot accepts a `Model` object or a `provider:model_id` string, resolved when
-the component is built. Only the question, answer and follow-up instructions are
+config. The earlier arguments still work: `followups=True` with `num_followups` or
+`followup_model`. Set the count and the model in one place: passing both
+`FollowupConfig.num_followups` and a different `num_followups` (or both
+`FollowupConfig.model` and a different `followup_model`) raises `ValueError`. A value
+left unset on the config falls back to the argument, then to the defaults (3, and the
+main model). Either model slot accepts a `Model` object or a `provider:model_id`
+string, resolved when the component is built. Only the question, answer and follow-up instructions are
 sent to this call; the main instructions, retrieved evidence and history are not
 copied as separate context, but anything already in the user input or the answer
 still reaches the follow-up model.

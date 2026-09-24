@@ -186,15 +186,12 @@
 
 ---
 
+### followup_instructions.py
 
-## 2026-09-09 follow-up configuration and boundaries
+**Status:** PASS (offline); live run not repeated on 2026-09-24
 
-- 91 unit tests passed: custom instructions, JSON mode, all eight Agent/Team
-  generation paths, model precedence, count bounds and empty-list serialization.
-- Ten gpt-5.6-luna checks covered refusal, greeting, missing API, prompt injection
-  and technical answers with default and domain instructions. No poem was
-  re-offered. Missing-API suggestions asked for sources or documentation; these
-  model-generated questions do not establish that an API exists.
-- Three existing Fumadocs adapter tests plus empty/single-list probes passed.
-  The UI already hides empty suggestions; it was not changed.
-- Full format and validation scripts passed. No production rollout.
+**Description:** An agent limited to Python documentation, with `followups=FollowupConfig(...)` carrying a separate follow-up model and domain instructions, asked for a sea poem it should decline.
+
+**Result:** 2026-09-24: the module builds the agent offline (`followups` is the config, count 3, config model resolved to `OpenAIResponses`, no `followup_model`); no API key was available, so the live call was not repeated. 2026-09-09 (reported by the PR author, earlier API): ten gpt-5.6-luna checks across refusal, greeting, missing API, prompt injection and technical answers; no poem was re-offered, and missing-API suggestions asked for sources rather than presuming the API exists.
+
+---
