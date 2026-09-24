@@ -6589,7 +6589,13 @@ def _route_requirements_to_members(
             session.upsert_run(_member_run_for_storage(team, session, member_response))
 
             content = getattr(member_response, "content", None) or "Task completed"
-            member_results.append(f"[{member.name or member_id}]: {content}")
+            if team.respond_directly and isinstance(content, str):
+                # Route teams return the member's raw response directly instead of the
+                # leader-oriented formatted result — there is no leader synthesis to
+                # feed (see #10474).
+                member_results.append(content)
+            else:
+                member_results.append(f"[{member.name or member_id}]: {content}")
 
         # Clear _member_run_response references to allow GC of the member RunOutput
         for req in reqs:
@@ -6696,7 +6702,13 @@ def _route_requirements_to_members_stream(
         else:
             session.upsert_run(_member_run_for_storage(team, session, member_response))
             content = getattr(member_response, "content", None) or "Task completed"
-            member_results.append(f"[{member.name or member_id}]: {content}")
+            if team.respond_directly and isinstance(content, str):
+                # Route teams return the member's raw response directly instead of the
+                # leader-oriented formatted result — there is no leader synthesis to
+                # feed (see #10474).
+                member_results.append(content)
+            else:
+                member_results.append(f"[{member.name or member_id}]: {content}")
 
         # Clear _member_run_response references to allow GC of the member RunOutput
         for req in reqs:
@@ -6776,6 +6788,11 @@ async def _aroute_requirements_to_members(
             session.upsert_run(await _amember_run_for_storage(team, session, member_response))
 
             content = getattr(member_response, "content", None) or "Task completed"
+            if team.respond_directly and isinstance(content, str):
+                # Route teams return the member's raw response directly instead of the
+                # leader-oriented formatted result — there is no leader synthesis to
+                # feed (see #10474).
+                return content
             return f"[{member.name or member_id}]: {content}"
 
     tasks = [_continue_member(member, member_run_output, reqs) for member, member_run_output, reqs in groups]
@@ -6896,7 +6913,13 @@ async def _aroute_requirements_to_members_stream(
         else:
             session.upsert_run(await _amember_run_for_storage(team, session, member_response))
             content = getattr(member_response, "content", None) or "Task completed"
-            member_results.append(f"[{member.name or member_id}]: {content}")
+            if team.respond_directly and isinstance(content, str):
+                # Route teams return the member's raw response directly instead of the
+                # leader-oriented formatted result — there is no leader synthesis to
+                # feed (see #10474).
+                member_results.append(content)
+            else:
+                member_results.append(f"[{member.name or member_id}]: {content}")
 
         # Clear _member_run_response references to allow GC of the member RunOutput
         for req in reqs:
@@ -6918,10 +6941,11 @@ def _tool_result_requires_human_input(tool: ToolExecution) -> bool:
 
 
 def _prepare_member_hitl_continuation(
+    team: "Team",
     run_response: TeamRunOutput,
     run_messages: RunMessages,
     member_results: List[str],
-) -> None:
+) -> Optional[str]:
     """Prepare run_response and run_messages for member HITL continuation.
 
     Updates the delegate_task_to_member/delegate_task_to_members tool result in both
@@ -6930,9 +6954,22 @@ def _prepare_member_hitl_continuation(
 
     This is called after the member agent's HITL has been resolved and we need to
     continue the team run with the member's results.
-    """
 
-    continuation_message = _build_continuation_message(member_results)
+    Returns:
+        For route teams (respond_directly=True), the member's response is the direct
+        response — the delegate tool carries stop_after_tool_call, so there is nothing
+        left to synthesize. The content to complete the run with is returned and the
+        caller must finalize the run WITHOUT another leader-model call (see #10474).
+        Returns None for regular teams, where the caller continues into a
+        leader-model call as before.
+    """
+    # Mirror the normal respond_directly path, where the delegate tool result is the
+    # member's raw content and the run stops right after the tool call.
+    direct_response_content = "\n\n".join(member_results) if team.respond_directly else None
+
+    continuation_message = (
+        direct_response_content if direct_response_content is not None else _build_continuation_message(member_results)
+    )
 
     target_tool_call_ids: set[str] = set()
     for tool in run_response.tools or []:
@@ -6960,6 +6997,8 @@ def _prepare_member_hitl_continuation(
     # Reset run state for continuation
     run_response.status = RunStatus.running
     run_response.content = None
+
+    return direct_response_content
 
 
 async def _ahandle_model_response_for_continue(
@@ -8052,7 +8091,7 @@ def continue_run_dispatch(
         )
 
         # Prepare for member HITL continuation
-        _prepare_member_hitl_continuation(run_response, run_messages, member_results)
+        direct_content = _prepare_member_hitl_continuation(team, run_response, run_messages, member_results)
 
         log_debug(f"Team Continue Run (Member HITL): {run_response.run_id}", center=True)
 
@@ -8070,6 +8109,7 @@ def continue_run_dispatch(
                 yield_run_output=opts.yield_run_output,
                 debug_mode=debug_mode,
                 background_tasks=background_tasks,
+                direct_content=direct_content,
                 **kwargs,
             )
         else:
@@ -8084,6 +8124,7 @@ def continue_run_dispatch(
                 response_format=response_format,
                 debug_mode=debug_mode,
                 background_tasks=background_tasks,
+                direct_content=direct_content,
                 **kwargs,
             )
 
@@ -8264,7 +8305,7 @@ def _continue_run_dispatch_stream_with_member_events(
             run_context=run_context,
         )
 
-        _prepare_member_hitl_continuation(run_response, run_messages, member_results)
+        direct_content = _prepare_member_hitl_continuation(team, run_response, run_messages, member_results)
 
         log_debug(f"Team Continue Run (Member HITL): {run_response.run_id}", center=True)
 
@@ -8281,6 +8322,7 @@ def _continue_run_dispatch_stream_with_member_events(
             yield_run_output=opts.yield_run_output,
             debug_mode=debug_mode,
             background_tasks=background_tasks,
+            direct_content=direct_content,
             **kwargs,
         )
         return
@@ -8303,6 +8345,7 @@ def _continue_run(
     response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
     debug_mode: Optional[bool] = None,
     background_tasks: Optional[Any] = None,
+    direct_content: Optional[str] = None,
     **kwargs: Any,
 ) -> TeamRunOutput:
     """Continue a paused team run (sync, non-streaming).
@@ -8314,6 +8357,10 @@ def _continue_run(
     4. Convert response to structured format
     5. Create session summary
     6. Cleanup and store
+
+    When `direct_content` is provided (route teams with respond_directly=True after a
+    member HITL resolution), the run completes with it and the leader model is not
+    called — the member's response is the direct response (see #10474).
     """
     from agno.team._hooks import _execute_post_hooks
     from agno.team._init import _disconnect_connectable_tools
@@ -8344,40 +8391,45 @@ def _continue_run(
             try:
                 raise_if_cancelled(run_response.run_id)  # type: ignore
 
-                # Generate model response
-                model_response: ModelResponse = call_model_with_fallback(
-                    team.model,
-                    team.fallback_config,
-                    messages=run_messages.messages,
-                    response_format=response_format,
-                    tools=tools,
-                    tool_choice=team.tool_choice,
-                    tool_call_limit=team.tool_call_limit,
-                    run_response=run_response,
-                    send_media_to_model=team.send_media_to_model,
-                    compression_manager=team.compression_manager if team.compress_tool_results else None,
-                    **result_store_kwargs(team),
-                    after_tool_results=build_team_after_tool_results_callback(
-                        team, run_response, session, run_messages, run_context
-                    ),
-                )
+                if direct_content is not None:
+                    # respond_directly: the member's response is the direct response —
+                    # no leader-model call after member-HITL resolution (see #10474).
+                    run_response.content = direct_content
+                else:
+                    # Generate model response
+                    model_response: ModelResponse = call_model_with_fallback(
+                        team.model,
+                        team.fallback_config,
+                        messages=run_messages.messages,
+                        response_format=response_format,
+                        tools=tools,
+                        tool_choice=team.tool_choice,
+                        tool_call_limit=team.tool_call_limit,
+                        run_response=run_response,
+                        send_media_to_model=team.send_media_to_model,
+                        compression_manager=team.compression_manager if team.compress_tool_results else None,
+                        **result_store_kwargs(team),
+                        after_tool_results=build_team_after_tool_results_callback(
+                            team, run_response, session, run_messages, run_context
+                        ),
+                    )
 
-                raise_if_cancelled(run_response.run_id)  # type: ignore
+                    raise_if_cancelled(run_response.run_id)  # type: ignore
 
-                # Parse with output/parser models if needed
-                parse_response_with_output_model(team, model_response, run_messages, run_response=run_response)
-                parse_response_with_parser_model(
-                    team, model_response, run_messages, run_context=run_context, run_response=run_response
-                )
+                    # Parse with output/parser models if needed
+                    parse_response_with_output_model(team, model_response, run_messages, run_response=run_response)
+                    parse_response_with_parser_model(
+                        team, model_response, run_messages, run_context=run_context, run_response=run_response
+                    )
 
-                # Update run response
-                _update_run_response(
-                    team,
-                    model_response=model_response,
-                    run_response=run_response,
-                    run_messages=run_messages,
-                    run_context=run_context,
-                )
+                    # Update run response
+                    _update_run_response(
+                        team,
+                        model_response=model_response,
+                        run_response=run_response,
+                        run_messages=run_messages,
+                        run_context=run_context,
+                    )
 
                 # Check for new pauses (team-level tools or member propagation)
                 if run_response.requirements and any(not req.is_resolved() for req in run_response.requirements):
@@ -8391,7 +8443,9 @@ def _continue_run(
                 _convert_response_to_structured_format(team, run_response=run_response, run_context=run_context)
 
                 # Always add media to run_response for caller availability
-                store_media_util(run_response, model_response)
+                # (no model response exists on the direct-response path)
+                if direct_content is None:
+                    store_media_util(run_response, model_response)
 
                 # Execute post-hooks
                 if team.post_hooks is not None:
@@ -8502,9 +8556,15 @@ def _continue_run_stream(
     yield_run_output: bool = False,
     debug_mode: Optional[bool] = None,
     background_tasks: Optional[Any] = None,
+    direct_content: Optional[str] = None,
     **kwargs: Any,
 ) -> Iterator[Union[TeamRunOutputEvent, RunOutputEvent, TeamRunOutput]]:
-    """Continue a paused team run (sync, streaming)."""
+    """Continue a paused team run (sync, streaming).
+
+    When `direct_content` is provided (route teams with respond_directly=True after a
+    member HITL resolution), the run completes with it and the leader model is not
+    called — the member's response is the direct response (see #10474).
+    """
     from agno.team._hooks import _execute_post_hooks
     from agno.team._init import _disconnect_connectable_tools
     from agno.team._response import (
@@ -8541,56 +8601,61 @@ def _continue_run_stream(
                     stream_events=stream_events,
                 )
 
-                # Stream model response
-                if team.output_model is None:
-                    for event in _handle_model_response_stream(
-                        team,
-                        session=session,
-                        run_response=run_response,
-                        run_messages=run_messages,
-                        tools=tools,
-                        response_format=response_format,
-                        stream_events=stream_events,
-                        session_state=run_context.session_state,
-                        run_context=run_context,
-                    ):
-                        if not isinstance(event, _MEMBER_CANCEL_BYPASS_EVENT_TYPES):
-                            raise_if_cancelled(run_response.run_id)  # type: ignore
-                        yield event
+                if direct_content is not None:
+                    # respond_directly: the member's response is the direct response —
+                    # no leader-model call after member-HITL resolution (see #10474).
+                    run_response.content = direct_content
                 else:
-                    from agno.run.team import IntermediateRunContentEvent, RunContentEvent
-
-                    for event in _handle_model_response_stream(
-                        team,
-                        session=session,
-                        run_response=run_response,
-                        run_messages=run_messages,
-                        tools=tools,
-                        response_format=response_format,
-                        stream_events=stream_events,
-                        session_state=run_context.session_state,
-                        run_context=run_context,
-                    ):
-                        if not isinstance(event, _MEMBER_CANCEL_BYPASS_EVENT_TYPES):
-                            raise_if_cancelled(run_response.run_id)  # type: ignore
-                        if isinstance(event, RunContentEvent):
-                            if stream_events:
-                                yield IntermediateRunContentEvent(
-                                    content=event.content,
-                                    content_type=event.content_type,
-                                )
-                        else:
+                    # Stream model response
+                    if team.output_model is None:
+                        for event in _handle_model_response_stream(
+                            team,
+                            session=session,
+                            run_response=run_response,
+                            run_messages=run_messages,
+                            tools=tools,
+                            response_format=response_format,
+                            stream_events=stream_events,
+                            session_state=run_context.session_state,
+                            run_context=run_context,
+                        ):
+                            if not isinstance(event, _MEMBER_CANCEL_BYPASS_EVENT_TYPES):
+                                raise_if_cancelled(run_response.run_id)  # type: ignore
                             yield event
+                    else:
+                        from agno.run.team import IntermediateRunContentEvent, RunContentEvent
 
-                    for event in generate_response_with_output_model_stream(
-                        team,
-                        session=session,
-                        run_response=run_response,
-                        run_messages=run_messages,
-                        stream_events=stream_events,
-                    ):
-                        raise_if_cancelled(run_response.run_id)  # type: ignore
-                        yield event
+                        for event in _handle_model_response_stream(
+                            team,
+                            session=session,
+                            run_response=run_response,
+                            run_messages=run_messages,
+                            tools=tools,
+                            response_format=response_format,
+                            stream_events=stream_events,
+                            session_state=run_context.session_state,
+                            run_context=run_context,
+                        ):
+                            if not isinstance(event, _MEMBER_CANCEL_BYPASS_EVENT_TYPES):
+                                raise_if_cancelled(run_response.run_id)  # type: ignore
+                            if isinstance(event, RunContentEvent):
+                                if stream_events:
+                                    yield IntermediateRunContentEvent(
+                                        content=event.content,
+                                        content_type=event.content_type,
+                                    )
+                            else:
+                                yield event
+
+                        for event in generate_response_with_output_model_stream(
+                            team,
+                            session=session,
+                            run_response=run_response,
+                            run_messages=run_messages,
+                            stream_events=stream_events,
+                        ):
+                            raise_if_cancelled(run_response.run_id)  # type: ignore
+                            yield event
 
                 raise_if_cancelled(run_response.run_id)  # type: ignore
 
@@ -9796,22 +9861,27 @@ async def _acontinue_run(
                     )
 
                     # Prepare for member HITL continuation
-                    _prepare_member_hitl_continuation(run_response, run_messages, member_results)
+                    direct_content = _prepare_member_hitl_continuation(team, run_response, run_messages, member_results)
 
                     log_debug(f"Team Continue Run (Member HITL): {run_response.run_id}", center=True)
 
-                    # Handle model response using shared helper
-                    paused_result = await _ahandle_model_response_for_continue(
-                        team,
-                        run_response=run_response,
-                        run_messages=run_messages,
-                        run_context=run_context,
-                        tools=_tools,
-                        team_session=team_session,
-                        response_format=response_format,
-                    )
-                    if paused_result is not None:
-                        return paused_result
+                    if direct_content is not None:
+                        # respond_directly: the member's response is the direct response —
+                        # no leader-model call after member-HITL resolution (see #10474).
+                        run_response.content = direct_content
+                    else:
+                        # Handle model response using shared helper
+                        paused_result = await _ahandle_model_response_for_continue(
+                            team,
+                            run_response=run_response,
+                            run_messages=run_messages,
+                            run_context=run_context,
+                            tools=_tools,
+                            team_session=team_session,
+                            response_format=response_format,
+                        )
+                        if paused_result is not None:
+                            return paused_result
 
                 # Post-hooks
                 if team.post_hooks is not None:
@@ -10362,7 +10432,7 @@ async def _acontinue_run_stream(
                     )
 
                     # Prepare for member HITL continuation
-                    _prepare_member_hitl_continuation(run_response, run_messages, member_results)
+                    direct_content = _prepare_member_hitl_continuation(team, run_response, run_messages, member_results)
 
                     log_debug(f"Team Continue Run Stream (Member HITL): {run_response.run_id}", center=True)
 
@@ -10375,56 +10445,61 @@ async def _acontinue_run_stream(
                             store_events=team.store_events,
                         )
 
-                    # Stream model response
-                    if team.output_model is None:
-                        async for event in _ahandle_model_response_stream(
-                            team,
-                            session=team_session,
-                            run_response=run_response,
-                            run_messages=run_messages,
-                            tools=_tools,
-                            response_format=response_format,
-                            stream_events=stream_events,
-                            session_state=run_context.session_state,
-                            run_context=run_context,
-                        ):
-                            if not isinstance(event, _MEMBER_CANCEL_BYPASS_EVENT_TYPES):
-                                await araise_if_cancelled(run_response.run_id)  # type: ignore
-                            yield event
+                    if direct_content is not None:
+                        # respond_directly: the member's response is the direct response —
+                        # no leader-model call after member-HITL resolution (see #10474).
+                        run_response.content = direct_content
                     else:
-                        from agno.run.team import IntermediateRunContentEvent, RunContentEvent
-
-                        async for event in _ahandle_model_response_stream(
-                            team,
-                            session=team_session,
-                            run_response=run_response,
-                            run_messages=run_messages,
-                            tools=_tools,
-                            response_format=response_format,
-                            stream_events=stream_events,
-                            session_state=run_context.session_state,
-                            run_context=run_context,
-                        ):
-                            if not isinstance(event, _MEMBER_CANCEL_BYPASS_EVENT_TYPES):
-                                await araise_if_cancelled(run_response.run_id)  # type: ignore
-                            if isinstance(event, RunContentEvent):
-                                if stream_events:
-                                    yield IntermediateRunContentEvent(
-                                        content=event.content,
-                                        content_type=event.content_type,
-                                    )
-                            else:
+                        # Stream model response
+                        if team.output_model is None:
+                            async for event in _ahandle_model_response_stream(
+                                team,
+                                session=team_session,
+                                run_response=run_response,
+                                run_messages=run_messages,
+                                tools=_tools,
+                                response_format=response_format,
+                                stream_events=stream_events,
+                                session_state=run_context.session_state,
+                                run_context=run_context,
+                            ):
+                                if not isinstance(event, _MEMBER_CANCEL_BYPASS_EVENT_TYPES):
+                                    await araise_if_cancelled(run_response.run_id)  # type: ignore
                                 yield event
+                        else:
+                            from agno.run.team import IntermediateRunContentEvent, RunContentEvent
 
-                        async for event in agenerate_response_with_output_model_stream(
-                            team,
-                            session=team_session,
-                            run_response=run_response,
-                            run_messages=run_messages,
-                            stream_events=stream_events,
-                        ):
-                            await araise_if_cancelled(run_response.run_id)  # type: ignore
-                            yield event
+                            async for event in _ahandle_model_response_stream(
+                                team,
+                                session=team_session,
+                                run_response=run_response,
+                                run_messages=run_messages,
+                                tools=_tools,
+                                response_format=response_format,
+                                stream_events=stream_events,
+                                session_state=run_context.session_state,
+                                run_context=run_context,
+                            ):
+                                if not isinstance(event, _MEMBER_CANCEL_BYPASS_EVENT_TYPES):
+                                    await araise_if_cancelled(run_response.run_id)  # type: ignore
+                                if isinstance(event, RunContentEvent):
+                                    if stream_events:
+                                        yield IntermediateRunContentEvent(
+                                            content=event.content,
+                                            content_type=event.content_type,
+                                        )
+                                else:
+                                    yield event
+
+                            async for event in agenerate_response_with_output_model_stream(
+                                team,
+                                session=team_session,
+                                run_response=run_response,
+                                run_messages=run_messages,
+                                stream_events=stream_events,
+                            ):
+                                await araise_if_cancelled(run_response.run_id)  # type: ignore
+                                yield event
 
                     # Check for new pauses
                     if run_response.requirements and any(not req.is_resolved() for req in run_response.requirements):
