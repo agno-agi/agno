@@ -58,7 +58,21 @@ class LocalAdmission:
         return Admission(True)
 
 
-def application(*, bounded=True, model=None, team_mode=False, gzip_inner=False, expose_agent=False):
+class SlowTeardown:
+    """Inner ASGI middleware that keeps the request open after its response is complete."""
+
+    def __init__(self, app, delay):
+        self.app, self.delay = app, delay
+
+    async def __call__(self, scope, receive, send):
+        await self.app(scope, receive, send)
+        if scope["type"] == "http":
+            import asyncio
+
+            await asyncio.sleep(self.delay)
+
+
+def application(*, bounded=True, model=None, team_mode=False, gzip_inner=False, expose_agent=False, teardown_delay=0.0):
     agent = Agent(id="docs-agent", model=model or ShortAnswerModel(), db=InMemoryDb(), telemetry=False)
     from fastapi import FastAPI
     from starlette.middleware.gzip import GZipMiddleware
@@ -76,6 +90,8 @@ def application(*, bounded=True, model=None, team_mode=False, gzip_inner=False, 
     base_app = FastAPI()
     if gzip_inner:
         base_app.add_middleware(GZipMiddleware, minimum_size=500)
+    if teardown_delay:
+        base_app.add_middleware(SlowTeardown, delay=teardown_delay)
     server = AgentOS(
         id="json-output-bounds",
         base_app=base_app,
@@ -352,3 +368,18 @@ def test_encoded_sse_cannot_bypass_public_error_inspection(team_mode, gzip_posit
             route, data={"message": "again", "stream": "false"}, headers={"Accept-Encoding": "identity"}
         )
         assert following.status_code == 200 and following.json()["content"] == "Short answer."
+
+
+@pytest.mark.parametrize("stream", ["true", "false"])
+@pytest.mark.parametrize("team_mode", [False, True])
+def test_run_capacity_is_released_when_the_response_completes(team_mode, stream):
+    # The sole run slot must admit a follow-up request issued as soon as the client
+    # has the complete response, even while the inner app is still tearing down.
+    app, _ = application(team_mode=team_mode, teardown_delay=0.5)
+    route = "/teams/support/runs" if team_mode else ROUTE
+    with live_server(app) as url, httpx.Client(base_url=url, timeout=10, trust_env=False) as client:
+        response = client.post(route, data={"message": "hi", "stream": stream})
+        assert response.status_code == 200 and "Short answer." in response.text
+        following = client.post(route, data={"message": "again", "stream": "false"})
+        assert following.status_code == 200, following.text
+        assert following.json()["content"] == "Short answer."

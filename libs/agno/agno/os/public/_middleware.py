@@ -237,6 +237,21 @@ class PublicMiddleware:
                 headers=headers,
             )(scope, receive, send)
 
+        def release_capacity():
+            nonlocal capacity
+            if capacity == "mcp":
+                self.active_mcp -= 1
+            elif capacity == "run":
+                self.active_runs -= 1
+            capacity = None
+
+        async def deliver(message):
+            await send(message)
+            # The client can issue its next request as soon as the final chunk is
+            # out, before the inner app has finished tearing down.
+            if message["type"] == "http.response.body" and not message.get("more_body", False):
+                release_capacity()
+
         async def bounded_send(message):
             nonlocal started, output_bytes, is_sse, stream_buffer, error_status, error_headers, response_start, decoder
             if message["type"] == "http.response.start":
@@ -300,7 +315,7 @@ class PublicMiddleware:
                     assert response_start is not None
                     started = True
                     await send(response_start)
-                    await send({**message, "body": bytes(response_buffer)})
+                    await deliver({**message, "body": bytes(response_buffer)})
                     response_buffer.clear()
                     return
                 if is_sse and not mcp:
@@ -337,7 +352,7 @@ class PublicMiddleware:
                         clean.append(stream_buffer)
                         stream_buffer = b""
                     message = {**message, "body": b"".join(clean)}
-            await send(message)
+            await deliver(message)
 
         try:
             if len(request.headers.getlist("authorization")) > 1:
@@ -518,9 +533,6 @@ class PublicMiddleware:
                 )
         finally:
             response_buffer.clear()
-            if capacity == "mcp":
-                self.active_mcp -= 1
-            elif capacity == "run":
-                self.active_runs -= 1
+            release_capacity()
             if identity_token is not None:
                 _client_id.reset(identity_token)
