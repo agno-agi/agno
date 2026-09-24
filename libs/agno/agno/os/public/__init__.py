@@ -38,6 +38,11 @@ class PublicSurface:
     Successful runs retain native output, including Team member tool results and
     failure details when the leader recovers. Selecting a Team does not expose
     independent member routes. Failed top-level runs use sanitized public errors.
+
+    With AgentOS(authorization=True), anonymous requests retain these limits while
+    verified JWT callers use the normal REST API with endpoint permissions. MCP
+    remains restricted to its explicit tools and public limits. Scheduler and
+    service-account credentials retain their existing public request contracts.
     """
 
     agents: List[Any] = field(default_factory=list)

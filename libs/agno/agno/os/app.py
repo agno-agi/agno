@@ -1699,6 +1699,9 @@ class AgentOS:
             from contextlib import asynccontextmanager
 
             from agno.os.public._middleware import PublicMiddleware
+            from agno.os.public._policy import PublicRoutePolicy
+
+            fastapi_app.state.public_route_policy = PublicRoutePolicy(self.public, self)
 
             original_lifespan = fastapi_app.router.lifespan_context
 
@@ -1710,7 +1713,9 @@ class AgentOS:
                     yield state
 
             fastapi_app.router.lifespan_context = public_lifespan
-            fastapi_app.add_middleware(PublicMiddleware, surface=self.public, agent_os=self)
+            fastapi_app.add_middleware(
+                PublicMiddleware, surface=self.public, agent_os=self, policy=fastapi_app.state.public_route_policy
+            )
 
         auth_configured = self._auth_configured()
         if auth_configured:
@@ -1743,6 +1748,19 @@ class AgentOS:
         from agno.os.middleware.trailing_slash import TrailingSlashMiddleware
 
         fastapi_app.add_middleware(TrailingSlashMiddleware)
+
+        if self.mcp:
+            from agno.os.middleware.mcp_routing import MCPRoutingMiddleware, validate_mcp_routes
+
+            routing_config = self.mcp_config if self.mcp_config is not None else MCPConfig()
+            if self.mcp_auth is not None and (
+                routing_config.path != "/mcp" or routing_config.path_aliases or routing_config.root_host
+            ):
+                raise ValueError(
+                    "Custom MCP routing does not yet support OAuth resource discovery; use the native /mcp path"
+                )
+            validate_mcp_routes(fastapi_app, routing_config, self._mcp_app)
+            fastapi_app.add_middleware(MCPRoutingMiddleware, config=routing_config)
 
         if self.public is not None:
             from starlette.middleware.cors import CORSMiddleware
@@ -2362,6 +2380,7 @@ class AgentOS:
             try:
                 if hasattr(db, "_create_all_tables") and callable(db._create_all_tables):
                     db._create_all_tables()
+                    log_info(f"Database ready: {db.__class__.__name__} id={db.id}")
             except Exception as e:
                 log_warning(f"Failed to initialize {db.__class__.__name__} (id: {db.id}): {str(e)}")
 
@@ -2386,6 +2405,7 @@ class AgentOS:
             try:
                 if hasattr(db, "_create_all_tables") and callable(db._create_all_tables):
                     await db._create_all_tables()
+                    log_info(f"Database ready: {db.__class__.__name__} id={db.id}")
             except Exception as e:
                 log_warning(f"Failed to initialize async {db.__class__.__name__} (id: {db.id}): {str(e)}")
 

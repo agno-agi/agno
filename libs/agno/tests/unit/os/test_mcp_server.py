@@ -1455,7 +1455,9 @@ def test_card_name_is_reverse_dns_and_slugged():
 
 async def test_server_card_describes_the_server_and_its_endpoint(monkeypatch):
     monkeypatch.setattr(mcp_mod, "_mcp_server_is_open", lambda os: True)
-    app = get_mcp_server(_docs_os())
+    os = _docs_os()
+    os.description = "Search the docs — café."
+    app = get_mcp_server(os)
 
     async with _mcp_client(app) as client:
         response = await client.get("/mcp/server-card", headers={"accept": "application/mcp-server-card+json"})
@@ -1464,6 +1466,9 @@ async def test_server_card_describes_the_server_and_its_endpoint(monkeypatch):
     assert response.headers["content-type"].startswith("application/mcp-server-card+json")
     assert response.headers["access-control-allow-origin"] == "*"
     assert response.headers["cache-control"] == "public, max-age=300"
+    assert response.text.startswith('{\n  "$schema": ')
+    assert "Search the docs — café." in response.text
+    assert int(response.headers["content-length"]) == len(response.content)
     card = response.json()
     # The tool entries have their own tests; everything else is pinned exactly.
     assert {key: value for key, value in card.items() if key != "tools"} == {
@@ -1471,7 +1476,7 @@ async def test_server_card_describes_the_server_and_its_endpoint(monkeypatch):
         "name": "com.example/agno-docs",
         "title": "Agno Docs",
         "version": "1.0.0",
-        "description": "Search the docs.",
+        "description": "Search the docs — café.",
         "remotes": [{"type": "streamable-http", "url": "http://example.com/mcp"}],
     }
 
@@ -1934,3 +1939,58 @@ async def test_the_card_tool_entries_match_the_tools_list_wire_format(monkeypatc
             assert entry["inputSchema"] == served.input_schema
     # No internal transport metadata leaks into the published card.
     assert all("_meta" not in entry for entry in card["tools"])
+
+
+# ----------------------------- argument schemas -----------------------------
+
+
+async def test_every_builtin_argument_is_described():
+    """A client renders per-argument descriptions and a model reads them; a bare type is not enough."""
+    os = _docs_os()
+    async with Client(build_mcp_server(os)) as client:
+        served = {t.name: t for t in await client.list_tools()}
+    assert set(served) >= set(mcp_mod._BUILTIN_TOOL_NAMES) - {"continue_run", "cancel_run"}
+    for name, served_tool in served.items():
+        for argument, spec in served_tool.input_schema.get("properties", {}).items():
+            assert spec.get("description"), f"{name}.{argument} has no description"
+
+
+async def test_exposed_component_arguments_are_described():
+    os = AgentOS(
+        name="Docs AgentOS",
+        agents=[_agent()],
+        mcp=MCPConfig(name="Agno Docs", default_tools=False, tools=[_agent().as_tool(name="ask")]),
+    )
+    async with Client(build_mcp_server(os)) as client:
+        served = {t.name: t for t in await client.list_tools()}
+    for name in ("ask", "continue_run", "cancel_run"):
+        for argument, spec in served[name].input_schema["properties"].items():
+            assert spec.get("description"), f"{name}.{argument} has no description"
+
+
+async def test_get_sessions_page_bounds_are_in_the_schema_and_the_error():
+    """REST declares limit >= 1; the tool must say so too, and reject with a message, not a bare code."""
+    os = _docs_os()
+    async with Client(build_mcp_server(os)) as client:
+        schema = {t.name: t for t in await client.list_tools()}["get_sessions"].input_schema
+        assert schema["properties"]["limit"]["minimum"] == 1
+        assert schema["properties"]["page"]["minimum"] == 1
+        for arguments in ({"limit": 0}, {"limit": -5}, {"page": 0}):
+            result = await client.call_tool("get_sessions", arguments, raise_on_error=False)
+            assert result.is_error, arguments
+            text = "".join(getattr(block, "text", "") for block in result.content)
+            assert "greater than or equal to 1" in text, (arguments, text)
+
+
+async def test_continue_run_requires_the_session_id():
+    """Continuation always needs the session; the schema must not present it as optional."""
+    os = _docs_os()
+    async with Client(build_mcp_server(os)) as client:
+        served = {t.name: t for t in await client.list_tools()}
+        # continue_run only rides along with an exposure or the lifecycle tag.
+        if "continue_run" not in served:
+            os = AgentOS(agents=[_agent()], mcp=MCPConfig(tools=[_agent().as_tool(name="ask")]))
+    async with Client(build_mcp_server(os)) as client:
+        schema = {t.name: t for t in await client.list_tools()}["continue_run"].input_schema
+        assert "session_id" in schema["required"]
+        assert "run_id" in schema["required"]

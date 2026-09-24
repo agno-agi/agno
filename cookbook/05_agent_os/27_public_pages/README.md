@@ -1,5 +1,46 @@
 # Public documentation pages
 
+## Public chat with Control Plane access
+
+`public_control_plane.py` combines `authorization=True` with `PublicSurface` on
+one runtime URL. Configure the Control Plane's RS256 public key in
+`JWT_VERIFICATION_KEY` (or use `JWT_JWKS_FILE`) before starting it:
+
+```sh
+.venvs/demo/bin/python cookbook/05_agent_os/27_public_pages/public_control_plane.py --check
+.venvs/demo/bin/python cookbook/05_agent_os/27_public_pages/public_control_plane.py
+```
+
+Anonymous clients retain the selected chat routes, compact roster and public
+limits. Anonymous `/info` reports the authentication mode and counts only selected
+public components. Verified JWT callers receive the full runtime counts. Discovery
+keeps the same response fields so the Control Plane can connect.
+JWT callers get the normal REST API only after signature and endpoint permission
+checks; their responses are private and non-cacheable. Invalid credentials are
+rejected, including on anonymous routes. Public chat does not need
+`excluded_route_paths`: in mixed mode those exclusions do not bypass credential
+verification on selected public routes. Excluding a management route skips JWT
+verification, so the public layer returns 404 even with an admin JWT.
+
+Workflow WebSockets authenticate through their existing message-based protocol.
+Public upgrades use the `socket` quota (30/client/minute, 120/global/minute,
+500/client/day and 5,000/global/day). Each worker admits at most 32 connections
+awaiting authentication. Clients must authenticate within 10 seconds; five failed
+authentication attempts close the connection. Authentication releases pending
+capacity, and ordinary authenticated connections have no authentication deadline.
+MCP always keeps its explicit tool catalog and public admission limits, even for
+admin JWTs. Use `mcp_auth` if MCP itself requires OAuth authentication. Internal
+scheduler and service-account requests retain their existing public contracts.
+With a public surface, service-account tokens can use selected public routes and
+permitted protected workflows, but cannot reach management REST routes; use a JWT
+for management access.
+Mounted runtimes apply JWT and service-account permissions to the route within
+AgentOS, independent of the mount prefix, including without a public surface.
+Without `authorization=True`, the public surface continues to close management
+routes and WebSockets.
+
+## Page storage and retrieval
+
 `public_pages.py` uses one PostgreSQL database for the Knowledge catalog, quota-bounded FileSystem, vectors, sessions, durable jobs and shared public request counters. It demonstrates application-owned retrieval through an explicit callable dependency, explicit search/read/grep tools, native MCP and a typed protected sync workflow.
 
 The `docs_context` dependency is an async function that receives `run_input`, calls the application's `search_docs` function and returns evidence. Agno awaits it before pre-hooks and prompt construction. The application chooses the query and places the result through `{docs_context}` in its instructions. `add_dependencies_to_context` already defaults to `False`; it stays unset so dependencies are not additionally appended to the user message. Callables can also request `session` for previous-turn retrieval policy, plus `agent` and `run_context`.
@@ -236,3 +277,167 @@ normalizer that leaves code unchanged; run it without a database or provider key
 
 Component-specific MDX transformations, prompt rendering, citations and query
 alternatives remain application-owned.
+
+
+### Documentation Markdown
+
+`DocumentationMarkdown` imports from `agno.knowledge.page` and is a callable for
+`Knowledge.sync_pages(..., transform=...)` and `async_sync_pages`. Its default
+`markdown` profile returns text verbatim. `documentation_markdown.py` defaults to
+the `check` mode, which validates configuration without IO:
+
+```sh
+.venvs/demo/bin/python cookbook/05_agent_os/27_public_pages/documentation_markdown.py
+.venvs/demo/bin/python cookbook/05_agent_os/27_public_pages/documentation_markdown.py sync
+```
+
+`sync` needs only `./cookbook/scripts/run_pgvector.sh` and `OPENAI_API_KEY`; it
+uses the same `ai` database as the other cookbooks. It publishes every page the
+index discovers through the transform, prints one stored page, and embeds each
+chunk. `incomplete_discovery` in the report means nested indexes exceeded the
+discovery bounds, not a failed page.
+
+- `fumadocs` converts whole-line components and the leading Documentation Index
+  preamble, then decodes serializer escapes/entities outside fences. This includes
+  inline code, preserving the existing documentation application's behavior.
+- `mintlify` handles the shared steps/tabs/callouts/cards/fields/media vocabulary
+  and preamble, keeping escapes and entities unless `unescape_serializer=True`.
+- `component_aliases={"Aside": "Warning"}` selects a built-in rendering.
+  `component_renderers={"Panel": renderer}` overrides a component with a trusted
+  Python callback receiving literal attributes and normalized inner Markdown.
+  No JSX expressions, imports or JavaScript execute. Unknown wrappers keep text.
+
+This deliberately supports a bounded component vocabulary, not arbitrary MDX
+execution. Inline components and multiline attributes are not evaluated. Escaped
+HTML examples can become component text after decoding; apply the transform once
+to source, not repeatedly to already normalized pages. Use
+`unescape_serializer=False` for literal authored Markdown. Code fences preserve
+content and relative indentation. Site profiles reject empty pages and emit a
+final LF; the default profile leaves even empty input unchanged.
+
+No reader or index changes automatically on upgrade. Compare normalized bytes and
+chunks before adopting a profile on an existing corpus. Keep the same
+`index_version` only for byte-compatible extraction; bump it for intentional
+normalization changes and rerun retrieval evaluations before release.
+
+## Dedicated MCP hostname
+
+`mcp_domain.py` configures `MCPConfig(root_host="mcp.example.com", server_card_url=
+"https://mcp.example.com")`. On that exact Host, `/` and `/server-card` reach the
+same MCP server as `/mcp` and `/mcp/server-card`. The configured hostname joins
+MCP's host allowlist; localhost remains available. Scheme, port and wildcards do
+not belong in `root_host`. Configure DNS and the platform's custom domain separately.
+
+A browser GET redirects to the public card path. Protocol POSTs and SSE requests
+are routed directly, before JWT authentication and public admission. Tool catalog,
+quotas and authentication are shared. Other REST routes retain their behavior.
+Host matching is case-insensitive; a port is accepted, duplicate/malformed Host
+headers are rejected, and forwarding headers never choose the dedicated host.
+
+To change the regular endpoint, set `path="/api/mcp"`. `/mcp` is then disabled
+unless explicitly retained with `path_aliases=["/mcp"]`. Aliases also serve their
+`/server-card` paths and advertise the canonical endpoint. A configured
+`server_card_url` takes precedence over derived URLs. Conflicting REST paths fail
+at startup. ASGI submount prefixes are preserved.
+
+Custom routing currently supports anonymous MCP and REST/JWT authentication.
+OAuth deployments retain the native `/mcp` route; combining OAuth with custom
+routing fails at startup until protected-resource discovery supports that mapping.
+A different site's `/mcp` compatibility reverse proxy remains deployment configuration.
+No application middleware or mutation of `app.user_middleware` is needed for routing.
+### Relocating the documentation source
+
+Relocation changes which source URL a namespace is bound to. It does not move
+website files, verify that you own the target, or check that the target serves
+the same documentation; those remain the operator's responsibility. Inspect with
+`knowledge.inspect_page_source()` or `ainspect_page_source()`; relocate with
+`knowledge.migrate_page_source(expected_source=old, target_source=new)` or
+`amigrate_page_source(...)`, which is a dry run unless `dry_run=False`.
+
+Runbook:
+
+1. Verify that you own the target host and that it serves the same corpus at the
+   same discovery path; only the host may differ.
+2. Inspect the existing binding: filesystem, catalog, vector table, source URL and
+   revision.
+3. Run the guarded dry run. Its result reports the current binding twice, as
+   `before` and `after`, with `changed=False`; it does not project a future state.
+4. Apply with `dry_run=False`. Only the binding's source and revision change;
+   pages, catalog rows and stored vectors stay as they are, so citations keep
+   naming the old host until step 6.
+5. Point every sync producer at the target (for this example `PAGE_DEMO_INDEX_URL`,
+   which the `sync` mode and the `sync-docs` workflow read) and restart producers
+   that captured their configuration at startup. A sync still configured with the
+   old source is refused with "bound to another documentation source"; the
+   binding is never rewritten by sync.
+6. Run a normal sync against the target with `sync_pages` or `async_sync_pages`,
+   using the same transform and `index_version`. Unchanged pages are republished
+   with new citation URLs and their document embeddings are reused; changed
+   content, a different `index_version` or invalid stored vectors re-embed as
+   usual. An explicit `public_url` keeps deciding the citation host regardless of
+   the discovery host.
+7. If an apply fails after it started (timeout, lost connection, cancellation), do
+   not assume a rollback: inspect the binding, or repeat the same guarded request,
+   which is a no-op once the binding already names the target. Being at the target
+   does not mean step 6 has happened.
+
+Guards: HTTPS only; an unchanged discovery path, compared literally, so encoded or
+otherwise equivalent spellings are rejected; the configured catalog and vector
+tables; and a current source equal to `expected_source` or already equal to
+`target_source`. The namespace lock shared with sync rejects a relocation during
+an active sync or another relocation with `PageSourceBusy`; a sync started while a
+relocation holds the lock waits for it. Readers keep working throughout. An
+applied relocation bumps the namespace revision, so open `list_pages` cursors
+report `restart_required` and must be re-obtained.
+
+`migrate_page_source.py OLD_URL NEW_URL` calls `setup()` first, which on
+uninitialized storage creates the page schema even in dry-run mode, then prints
+the current binding, the dry-run result and what remains to be done; add
+`--apply` only after reviewing them. It uses the database configured by
+`public_pages.py`. No HTTP route or model/MCP tool is added automatically; keep
+this an operator action.
+
+### Typed page tools
+
+`PageFileSystem.run_command_result` and `arun_command_result` return a
+`PageCommandResult` with text, explicit errors, partial/truncated state, stop
+reason and an optional line-based continuation command. Error status comes from
+execution, never from matching words in documentation. Missing paths, invalid
+grammar and unavailable storage are distinguished; incomplete grep is successful
+but partial. Existing `run_command` and default chat tool text remain compatible.
+
+The typed result's `max_output_bytes` bounds its full UTF-8 JSON value, including
+metadata. Byte clipping clears line-based continuation so it cannot skip unseen
+text. Narrow the command when no continuation is available. MCP protocol envelope
+overhead is additional and remains subject to AgentOS's transport output limits.
+
+Use `files.tools(transport="mcp", tool_name=..., description=...)` for native MCP
+output schemas and `isError` failures. Successful structured results contain the
+same command text plus status metadata. Applications can use the direct typed
+result's `.text` or `.model_dump_json()` in custom chat presentation; product error
+wording stays explicit. Default chat command tools keep their existing character
+bound; typed direct/MCP results add the JSON byte bound.
+
+`knowledge.get_tools(page_results=True, tool_name=..., tool_description=...)`
+exposes native ranked SearchResult JSON through chat. Add `transport="mcp"` for
+the same search result as MCP structured content/schema and execution errors,
+and `async_mode=True` for async tools (`aget_tools` defaults to async). Both use
+public page search and preserve alternatives, revisions, completeness and supplied
+run reference tracking. Names, descriptions and score interpretation remain
+application choices. Generic results expose `score`; an existing `confidence`
+field remains a small application compatibility mapping. No feedback tool or
+business rules move into the framework.
+
+`page_tool_results.py` defaults to `check`, which validates configuration without
+IO. It needs only `./cookbook/scripts/run_pgvector.sh` and `OPENAI_API_KEY`, and
+uses the same `ai` database as the other cookbooks:
+
+```sh
+.venvs/demo/bin/python cookbook/05_agent_os/27_public_pages/page_tool_results.py
+.venvs/demo/bin/python cookbook/05_agent_os/27_public_pages/page_tool_results.py sync
+.venvs/demo/bin/python cookbook/05_agent_os/27_public_pages/page_tool_results.py run "cat /installation.md"
+```
+
+`sync` publishes the example corpus once; `run` executes one command and prints
+the typed result, then a missing path so the execution-derived error status is
+visible. No tool is exposed automatically.

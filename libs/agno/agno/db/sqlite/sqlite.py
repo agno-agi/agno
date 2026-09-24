@@ -74,6 +74,7 @@ from agno.db.utils import (
     learning_search_patterns,
     merge_runs_table_with_legacy_blob,
     metrics_starting_date_from_days,
+    owner_key,
     table_schema_mismatch_error,
     validate_pagination,
 )
@@ -1524,7 +1525,7 @@ class SqliteDb(BaseDb):
             session_id (str): ID of the session to read.
             session_type (SessionType): Type of session to get.
             user_id (Optional[str]): User ID to filter by. Defaults to None.
-            deserialize (Optional[bool]): Whether to serialize the session. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the session. Defaults to True.
             runs_limit (Optional[int]): If set, attach only the most recent ``runs_limit``
                 runs instead of the full history. For a fully-migrated session this is an
                 indexed ``ORDER BY run_index DESC LIMIT`` query; for a session that still
@@ -1641,7 +1642,7 @@ class SqliteDb(BaseDb):
             page (Optional[int]): The page number to return. Defaults to None.
             sort_by (Optional[str]): The field to sort by. Defaults to None.
             sort_order (Optional[str]): The sort order. Defaults to None.
-            deserialize (Optional[bool]): Whether to serialize the sessions. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the sessions. Defaults to True.
             create_table_if_not_found (Optional[bool]): Whether to create the table if it doesn't exist.
 
         Returns:
@@ -1785,7 +1786,7 @@ class SqliteDb(BaseDb):
 
         Args:
             session (Session): The session data to upsert.
-            deserialize (Optional[bool]): Whether to serialize the session. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the session. Defaults to True.
 
         Returns:
             Optional[Session]:
@@ -1920,10 +1921,14 @@ class SqliteDb(BaseDb):
                 elif isinstance(session, WorkflowSession):
                     workflow_sessions.append(session)
 
-            sessions_by_id: Dict[str, Session] = {s.session_id: s for s in sessions}
+            sessions_by_id_and_user: Dict[Tuple[str, Optional[str]], Session] = {
+                (s.session_id, owner_key(s.user_id)): s for s in sessions
+            }
 
             def _attach_runs(session_dict: Dict[str, Any]) -> Dict[str, Any]:
-                original_session = sessions_by_id.get(session_dict.get("session_id"))  # type: ignore[arg-type]
+                original_session = sessions_by_id_and_user.get(
+                    (session_dict.get("session_id"), owner_key(session_dict.get("user_id")))  # type: ignore[arg-type]
+                )
                 session_dict["runs"] = [
                     run if isinstance(run, dict) else run.to_dict()
                     for run in (original_session.runs if original_session else None) or []
@@ -1968,6 +1973,7 @@ class SqliteDb(BaseDb):
                                 summary=stmt.excluded.summary,
                                 updated_at=stmt.excluded.updated_at,
                             ),
+                            where=(table.c.user_id == stmt.excluded.user_id) | (table.c.user_id.is_(None)),
                         )
                         sess.execute(stmt, agent_data)
 
@@ -1977,6 +1983,12 @@ class SqliteDb(BaseDb):
                         result = sess.execute(select_stmt).fetchall()
 
                         for row in result:
+                            submitted = sessions_by_id_and_user.get(
+                                (row._mapping["session_id"], owner_key(row._mapping["user_id"]))
+                            )
+                            if submitted is None:
+                                # The conflict update was refused: the row belongs to another user
+                                continue
                             session_dict = _attach_runs(deserialize_session_json_fields(dict(row._mapping)))
                             if deserialize:
                                 deserialized_agent_session = AgentSession.from_dict(session_dict)
@@ -2021,6 +2033,7 @@ class SqliteDb(BaseDb):
                                 summary=stmt.excluded.summary,
                                 updated_at=stmt.excluded.updated_at,
                             ),
+                            where=(table.c.user_id == stmt.excluded.user_id) | (table.c.user_id.is_(None)),
                         )
                         sess.execute(stmt, team_data)
 
@@ -2030,6 +2043,12 @@ class SqliteDb(BaseDb):
                         result = sess.execute(select_stmt).fetchall()
 
                         for row in result:
+                            submitted = sessions_by_id_and_user.get(
+                                (row._mapping["session_id"], owner_key(row._mapping["user_id"]))
+                            )
+                            if submitted is None:
+                                # The conflict update was refused: the row belongs to another user
+                                continue
                             session_dict = _attach_runs(deserialize_session_json_fields(dict(row._mapping)))
                             if deserialize:
                                 deserialized_team_session = TeamSession.from_dict(session_dict)
@@ -2074,6 +2093,7 @@ class SqliteDb(BaseDb):
                                 summary=stmt.excluded.summary,
                                 updated_at=stmt.excluded.updated_at,
                             ),
+                            where=(table.c.user_id == stmt.excluded.user_id) | (table.c.user_id.is_(None)),
                         )
                         sess.execute(stmt, workflow_data)
 
@@ -2083,6 +2103,12 @@ class SqliteDb(BaseDb):
                         result = sess.execute(select_stmt).fetchall()
 
                         for row in result:
+                            submitted = sessions_by_id_and_user.get(
+                                (row._mapping["session_id"], owner_key(row._mapping["user_id"]))
+                            )
+                            if submitted is None:
+                                # The conflict update was refused: the row belongs to another user
+                                continue
                             session_dict = _attach_runs(deserialize_session_json_fields(dict(row._mapping)))
                             if deserialize:
                                 deserialized_workflow_session = WorkflowSession.from_dict(session_dict)
@@ -2216,7 +2242,7 @@ class SqliteDb(BaseDb):
 
         Args:
             memory_id (str): The ID of the memory to get.
-            deserialize (Optional[bool]): Whether to serialize the memory. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the memory. Defaults to True.
             user_id (Optional[str]): The user ID to filter by. Defaults to None.
 
         Returns:
@@ -2275,7 +2301,7 @@ class SqliteDb(BaseDb):
             page (Optional[int]): The page number.
             sort_by (Optional[str]): The column to sort by.
             sort_order (Optional[str]): The order to sort by.
-            deserialize (Optional[bool]): Whether to serialize the memories. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the memories. Defaults to True.
 
 
         Returns:
@@ -2415,7 +2441,7 @@ class SqliteDb(BaseDb):
 
         Args:
             memory (UserMemory): The user memory to upsert.
-            deserialize (Optional[bool]): Whether to serialize the memory. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the memory. Defaults to True.
 
         Returns:
             Optional[Union[UserMemory, Dict[str, Any]]]:
@@ -3131,7 +3157,7 @@ class SqliteDb(BaseDb):
 
         Args:
             eval_run_id (str): The ID of the eval run to get.
-            deserialize (Optional[bool]): Whether to serialize the eval run. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the eval run. Defaults to True.
             user_id (Optional[str]): If set, only return the run if owned by this user.
 
         Returns:
@@ -3194,7 +3220,7 @@ class SqliteDb(BaseDb):
             user_id (Optional[str]): If set, only return runs owned by this user.
             eval_type (Optional[List[EvalType]]): The type(s) of eval to filter by.
             filter_type (Optional[EvalFilterType]): Filter by component type (agent, team, workflow).
-            deserialize (Optional[bool]): Whether to serialize the eval runs. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the eval runs. Defaults to True.
             create_table_if_not_found (Optional[bool]): Whether to create the table if it doesn't exist.
 
         Returns:
@@ -3272,7 +3298,7 @@ class SqliteDb(BaseDb):
         Args:
             eval_run_id (str): The ID of the eval run to update.
             name (str): The new name of the eval run.
-            deserialize (Optional[bool]): Whether to serialize the eval run. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the eval run. Defaults to True.
             user_id (Optional[str]): If set, only rename the run if owned by this user.
 
         Returns:

@@ -1,5 +1,20 @@
 # Public pages test log
 
+### public_control_plane.py (2026-09-08)
+
+**Status:** PASS
+
+**Description:** Ran `public_control_plane.py --check` with the demo environment,
+this worktree on `PYTHONPATH`, and a locally generated RS256 verification public
+key. No model or database call was needed for the configuration check.
+
+**Result:** Public chat, the explicit MCP tool and JWT API access assembled
+successfully. Composed HTTP/WebSocket coverage is in
+`libs/agno/tests/integration/os/test_public_authorization.py`; a hosted Control
+Plane connection remains a deployment check.
+
+---
+
 ### full_page.py — complete page reads and fence-aware normalization (2026-09-08)
 
 **Status:** PASS
@@ -132,3 +147,93 @@ neither shared environment was modified. Live database/provider modes were not
 run. The focused public-configuration and MCP suites passed all 204 tests.
 
 ---
+
+
+## 2026-09-09 documentation Markdown transform
+
+- PASS: `documentation_markdown.py` ran with the demo Python and candidate source. Produces labeled Markdown and one chunk without network/model calls.
+- PASS: 30 normalization and chunking tests, including the existing application fixtures, nested/mismatched fences, serializer escapes, Unicode and callback isolation.
+- PASS: two disposable PostgreSQL publication tests cover sync and async transforms and repeat-sync embedding reuse.
+- PASS: full format and validation scripts.
+- Compatibility comparison: all 3,909 local published pages yield identical old/new transformed bytes and chunks, and are unchanged on repeat normalization. This is a published-text corpus comparison, not a full raw-source crawl.
+- Raw-source sample: 24 of 40 public Markdown pages fetched successfully (18 contained sampled component types); all 24 match old/new bytes and chunks. The other 16 URLs returned HTTP 500 and were excluded from equivalence claims.
+- No index mutation, re-embedding, reader default change or production deployment. Generic repeated entity decoding is not guaranteed idempotent; the documented transform operates on source once.
+
+## 2026-09-09 native MCP routing
+
+- 282 composed MCP server/OAuth/routing/public-JWT cases passed.
+- 24 routing cases passed after adding included-router-prefix conflict checks;
+  these overlap the composed suite. Covers root, native/legacy/custom paths,
+  actual ASGI submounts, initialize/catalog/quota parity, browser versus SSE GET,
+  JWT REST protection, canonical cards, Host ambiguity/case/ports/forwarding,
+  and startup rejection of unsupported custom OAuth routing.
+- The complete existing native OAuth flow remains supported at /mcp. Custom
+  OAuth routes are deliberately rejected rather than publishing a wrong resource.
+- Cookbook mcp_domain.py --check passed. Full format and validation passed.
+- No DNS, hosting or production application changes were made.
+
+---
+
+### migrate_page_source.py (2026-09-17)
+
+**Status:** PASS
+
+**Description:** Drove the CLI as a subprocess against a disposable local
+PostgreSQL 18 database created by the page storage test fixture, with the demo
+module's own `Knowledge`, a stub embedder in place of OpenAI, in-memory page
+fetching and a placeholder API key: `--help` with the database URL pointed at a
+closed port; the default dry run on uninitialized storage; seeding at the old
+host; dry run; `--apply`; a repeated `--apply`; a dry run once the target is
+current; an invalid `http://` target; and `public_pages.py sync` still configured
+with the old source. The same sequence is maintained as
+`test_source_relocation_cli_reports_each_outcome_and_keeps_setup_visible` in
+`libs/agno/tests/integration/knowledge/test_page_storage.py`.
+
+**Result:** `--help` exits before the demo import. The dry run on fresh storage
+runs `setup()`, creates the page schema and binding row, then rejects the unbound
+namespace. After seeding, the dry run leaves the binding unchanged and says so;
+`--apply` moves the source and increments the revision once; the repeated apply
+and the dry run at target report that the binding already points to the target
+with no further increment; the invalid target fails with `invalid_source_url` and
+prints no success text; the stale producer is refused with "bound to another
+documentation source" and the binding is not rewritten. No provider was called.
+Chat, serve and MCP modes were not run.
+
+---
+
+### Source relocation operator API (2026-09-17)
+
+**Status:** PASS
+
+**Description:** Focused runs on the PR head with the local review changes
+(uncommitted) against a disposable local PostgreSQL 18 database created per
+module by the fixture: `libs/agno/tests/unit/knowledge/test_page_contract.py`
+(19 passed, exact public-export set with `PageSourceBinding`,
+`PageSourceMigration` and `PageSourceBusy` checked in a storage-blocking
+subprocess) and `libs/agno/tests/integration/knowledge/test_page_storage.py`
+(153 passed, 0 skipped, including the relocation cases). Environment: Python
+3.12.13, pytest 9.1.1, SQLAlchemy 2.0.52, psycopg 3.3.5 (binary), pgvector 0.5.0.
+
+**Result:** Sync and async inspect and migrate, dry run, apply and idempotent
+retry; held-lock contention with `PageSourceBusy` for sync and async competitors
+and an independent namespace proceeding; sync waiting behind a held relocation
+and refusing the old source afterward; readers during an uncommitted update;
+cancellation before commit (rolled back) and during commit (committed); a
+simulated lost commit acknowledgement with guarded retry; worker-pool and
+connection-pool exhaustion; the URL validation matrix; binding-only persistence
+checked with plain SQL against catalog, filesystem, vector and binding tables;
+citation refresh through list, read, grep, search and legacy search without
+document embeddings, with changed-content and `public_url` controls; and
+list-cursor restart after apply. `ruff check`, `ruff format --check` and the
+cookbook pattern check passed. `mypy` reports 53 pre-existing errors in 13
+unrelated modules, identical on the PR base and head; no new diagnostics.
+
+---
+
+## 2026-09-09 typed page-tool outcomes
+
+- PASS: 267 composed command/filesystem/lazy-read/tool/MCP cases, including 66 archived command outputs unchanged, literal-grep completeness, typed grammar/missing-path/storage errors, no false error from page prose, Unicode JSON bounds, MCP schemas/isError, search parity and run reference tracking.
+- PASS: `page_tool_results.py` with demo Python. The default `check` mode validates configuration without storage/provider calls; `sync` published 174 of 175 discovered pages against the shared `ai` database; `run "ls /"` returned a typed successful result and `cat /no-such-page` returned `is_error=True` with `page_not_found`.
+- PASS: full format and validation scripts.
+- FIXED: an empty page index returned before command validation, so invalid syntax, unsupported commands, pipes and missing paths all reported `is_error=False` and MCP saw success. The empty-index message now follows validation; malformed input stays an error and a valid command against an empty index still reports it.
+- Existing chat command tools retain their character-bound text contract. Direct typed/MCP command results additionally bound the complete result JSON; MCP envelope overhead remains under the transport's own limits. No product feedback or score-interpretation policy moved upstream.

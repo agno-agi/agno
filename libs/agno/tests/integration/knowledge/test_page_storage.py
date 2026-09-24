@@ -10,6 +10,7 @@ from sqlalchemy.engine import make_url
 
 from agno.db.postgres import PostgresDb
 from agno.fs import FileSystem
+from agno.fs.errors import InvalidPathError
 from agno.knowledge.embedder.base import Embedder
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.page import PageChanged, PageError
@@ -86,6 +87,31 @@ def warm_search_pool(knowledge, count):
     with ExitStack() as stack:
         for _ in range(count):
             stack.enter_context(knowledge._page_engine.connect())
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+def test_documentation_transform_publishes_normalized_text_and_reuses_embeddings(corpus, asynchronous):
+    import asyncio
+
+    from agno.knowledge.reader.utils.mdx import DocumentationMarkdown
+
+    knowledge, embedder, site = corpus
+    raw = '# Agent\n\n<Steps>\n<Step title="Configure">\nSet API\\_KEY &amp; tools.\n</Step>\n</Steps>\n'
+    site["https://docs.example.com/agent.md"] = raw
+    transform = DocumentationMarkdown(profile="fumadocs")
+    kwargs = dict(url="https://docs.example.com/llms.txt", transform=transform, index_version="docs-v1")
+
+    def sync():
+        return asyncio.run(knowledge.async_sync_pages(**kwargs)) if asynchronous else knowledge.sync_pages(**kwargs)
+
+    assert sync().updated == 1
+    page = knowledge.read_full_page("/agent.md")
+    assert page == transform(raw, path="/agent.md")
+    assert "API_KEY & tools" in page and "<Step" not in page
+    calls = list(embedder.calls)
+    assert calls and all("<Step" not in text for text in calls)
+    assert sync().updated == 0
+    assert embedder.calls == calls
 
 
 @pytest.mark.parametrize("tuned", [False, True])
@@ -2111,3 +2137,904 @@ async def test_full_page_database_deadline_recovers_after_lock(corpus, async_mod
         with pytest.raises(PageError):
             await read(0.05)
     assert await read(2) == site["https://docs.example.com/agent.md"]
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+def test_source_relocation_dry_run_apply_retry_and_citation_refresh(corpus, asynchronous):
+    import asyncio
+
+    knowledge, embedder, site = corpus
+    old, new = "https://docs.example.com/llms.txt", "https://public.example.com/llms.txt"
+    knowledge.sync_pages(url=old)
+    before_page = knowledge.list_pages().pages[0]
+    before_text = knowledge.read_full_page(before_page.path)
+    calls = list(embedder.calls)
+
+    def inspect_source():
+        return asyncio.run(knowledge.ainspect_page_source()) if asynchronous else knowledge.inspect_page_source()
+
+    def migrate(**kwargs):
+        args = dict(expected_source=old, target_source=new, **kwargs)
+        return (
+            asyncio.run(knowledge.amigrate_page_source(**args))
+            if asynchronous
+            else knowledge.migrate_page_source(**args)
+        )
+
+    before = inspect_source()
+    plan = migrate()
+    assert plan.dry_run and not plan.changed and plan.before == plan.after == before
+    changed = migrate(dry_run=False)
+    assert changed.changed and changed.after.source == new
+    assert changed.after.revision == before.revision + 1
+    assert not migrate(dry_run=False).changed
+    assert inspect_source() == changed.after
+    assert knowledge.list_pages().pages[0] == before_page
+    assert knowledge.read_full_page(before_page.path) == before_text
+    assert embedder.calls == calls
+    with pytest.raises(ValueError, match="another documentation source"):
+        knowledge.sync_pages(url=old)
+    site[new] = "- [Agent](https://public.example.com/agent.md)"
+    site["https://public.example.com/agent.md"] = site["https://docs.example.com/agent.md"]
+    assert knowledge.sync_pages(url=new).updated == 1
+    assert knowledge.list_pages().pages[0].url == "https://public.example.com/agent"
+    assert knowledge.read_full_page(before_page.path) == before_text
+    assert embedder.calls == calls
+
+
+def test_source_relocation_rejects_wrong_source_path_storage_and_unbound_namespace(corpus):
+    from sqlalchemy import update
+
+    knowledge, _, _ = corpus
+    args = dict(
+        expected_source="https://docs.example.com/llms.txt", target_source="https://public.example.com/llms.txt"
+    )
+    with pytest.raises(ValueError, match="does not match"):
+        knowledge.migrate_page_source(**args)
+    knowledge.sync_pages(url=args["expected_source"])
+    before = knowledge.inspect_page_source()
+    for bad in (
+        {**args, "expected_source": "https://wrong.example.com/llms.txt"},
+        {**args, "target_source": "https://public.example.com/other.txt"},
+        {**args, "target_source": "http://public.example.com/llms.txt"},
+        {**args, "target_source": "https://user:secret@public.example.com/llms.txt"},
+        {**args, "dry_run": "false"},
+    ):
+        with pytest.raises(ValueError):
+            knowledge.migrate_page_source(**bad)
+        assert knowledge.inspect_page_source() == before
+    pages = knowledge._pages()
+    with pages.engine.begin() as conn:
+        conn.execute(
+            update(pages.binding).where(pages.binding.c.namespace == pages.namespace).values(vectors="ai.wrong_vectors")
+        )
+    with pytest.raises(ValueError, match="another knowledge catalog or vector table"):
+        knowledge.migrate_page_source(**args, dry_run=False)
+
+
+def test_source_relocation_rejects_active_sync_and_rolls_back_failed_transaction(corpus):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+
+    from sqlalchemy import event
+
+    from agno.knowledge.page import PageSourceBusy
+
+    knowledge, _, _ = corpus
+    args = dict(
+        expected_source="https://docs.example.com/llms.txt",
+        target_source="https://public.example.com/llms.txt",
+        dry_run=False,
+    )
+    knowledge.sync_pages(url=args["expected_source"])
+    before = knowledge.inspect_page_source()
+    entered, release = Event(), Event()
+
+    def hold_sync(discovered, published):
+        entered.set()
+        assert release.wait(5)
+
+    with ThreadPoolExecutor(1) as pool:
+        sync = pool.submit(knowledge.sync_pages, url=args["expected_source"], validate_discovery=hold_sync)
+        assert entered.wait(5)
+        try:
+            with pytest.raises(PageSourceBusy):
+                knowledge.migrate_page_source(**args)
+        finally:
+            release.set()
+        sync.result()
+    assert knowledge.inspect_page_source() == before
+    pages = knowledge._pages()
+
+    def fail_after_update(conn, cursor, statement, parameters, context, many):
+        if statement.startswith("UPDATE ") and pages.binding.name in statement:
+            raise RuntimeError("injected failure after update")
+
+    event.listen(pages.engine, "after_cursor_execute", fail_after_update)
+    try:
+        with pytest.raises(RuntimeError, match="injected failure"):
+            knowledge.migrate_page_source(**args)
+    finally:
+        event.remove(pages.engine, "after_cursor_execute", fail_after_update)
+    assert knowledge.inspect_page_source() == before
+    assert knowledge.migrate_page_source(**args).changed
+
+
+def _hold(pages, hook, matches=None):
+    """Block the first matching statement (or the first commit) on this engine until released.
+
+    Returns (entered, release, remove). Callers release and remove in ``finally``.
+    """
+    from threading import Event
+
+    from sqlalchemy import event
+
+    entered, release, armed = Event(), Event(), [True]
+
+    def pause():
+        armed[0] = False
+        entered.set()
+        assert release.wait(15)
+
+    def on_cursor(conn, cursor, statement, parameters, context, many):
+        if armed[0] and matches(statement):
+            pause()
+
+    def on_commit(conn):
+        if armed[0]:
+            pause()
+
+    listener = on_commit if hook == "commit" else on_cursor
+    event.listen(pages.engine, hook, listener)
+    return entered, release, lambda: event.remove(pages.engine, hook, listener)
+
+
+def _hold_before_row_lock(pages):
+    """A migration blocked here already owns the namespace advisory lock but not the row lock."""
+    return _hold(pages, "before_cursor_execute", lambda s: "FOR UPDATE" in s and pages.binding.name in s)
+
+
+def _hold_after_update(pages):
+    """A migration blocked here has executed its UPDATE but not committed."""
+    return _hold(pages, "after_cursor_execute", lambda s: s.startswith("UPDATE") and pages.binding.name in s)
+
+
+def _three_pages(site, base):
+    site[base + "/llms.txt"] = "\n".join(
+        "- [" + n + "](" + base + "/" + n + ".md)" for n in ("agent", "team", "workflow")
+    )
+    site[base + "/agent.md"] = "# Agent\n\n" + "\n\n".join(
+        "## Section " + str(i) + "\n\n" + ("Agent tools paragraph number " + str(i) + ". ") * 30 for i in range(8)
+    )
+    site[base + "/team.md"] = "# Team\n\nUse Team with members.\n"
+    site[base + "/workflow.md"] = "# Workflow\n\nUse Workflow with steps.\n"
+
+
+def _mirror(site, old_base, new_base):
+    for url in list(site):
+        if url.startswith(old_base + "/"):
+            site[new_base + url[len(old_base) :]] = site[url].replace(old_base, new_base)
+
+
+def _rows(engine, binding):
+    """Every row of the catalog, filesystem, vector and binding tables, read with plain SQL.
+
+    Uses the fixture's own engine and the table names the binding reports, so the
+    oracle does not depend on the coordinator's readback helpers.
+    """
+    import json
+
+    names = (binding.catalog, binding.filesystem, binding.vectors, binding.filesystem + "_knowledge")
+    with engine.connect() as conn:
+        return {
+            name: sorted(
+                json.dumps(dict(row), sort_keys=True, default=str)
+                for row in conn.execute(text("SELECT * FROM " + name)).mappings()
+            )
+            for name in names
+        }
+
+
+def _advisory_locks(pages):
+    with pages.engine.connect() as conn:
+        return conn.execute(
+            text(
+                "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' "
+                "AND database = (SELECT oid FROM pg_database WHERE datname = current_database())"
+            )
+        ).scalar_one()
+
+
+def _sibling(knowledge, namespace):
+    return Knowledge(
+        contents_db=knowledge.contents_db,
+        vector_db=knowledge.vector_db,
+        page_store=FileSystem(knowledge.contents_db, namespace=namespace),
+    )
+
+
+def test_source_relocation_held_lock_rejects_competitors_and_leaves_other_namespaces_free(corpus):
+    import asyncio
+    from concurrent.futures import ThreadPoolExecutor
+
+    from agno.knowledge.page import PageSourceBusy
+
+    knowledge, _, site = corpus
+    old, new = "https://docs.example.com/llms.txt", "https://public.example.com/llms.txt"
+    stale = "https://two.example.com/llms.txt"
+    knowledge.sync_pages(url=old)
+    before = knowledge.inspect_page_source()
+    pages = knowledge._pages()
+    site["https://other.example.com/llms.txt"] = "- [Agent](https://other.example.com/agent.md)"
+    site["https://other.example.com/agent.md"] = site["https://docs.example.com/agent.md"]
+    other = _sibling(knowledge, "other-" + pages.namespace)
+    other.setup()
+    other.sync_pages(url="https://other.example.com/llms.txt")
+    entered, release, remove = _hold_before_row_lock(pages)
+    try:
+        with ThreadPoolExecutor(1) as pool:
+            holder = pool.submit(knowledge.migrate_page_source, expected_source=old, target_source=new, dry_run=False)
+            assert entered.wait(5)
+            assert _advisory_locks(pages) == 1
+            with pytest.raises(PageSourceBusy):
+                knowledge.migrate_page_source(expected_source=old, target_source=stale, dry_run=False)
+            with pytest.raises(PageSourceBusy):
+                asyncio.run(knowledge.amigrate_page_source(expected_source=old, target_source=new, dry_run=False))
+            with pytest.raises(PageSourceBusy):
+                knowledge.migrate_page_source(expected_source=old, target_source=new)
+            assert knowledge.inspect_page_source() == before
+            assert asyncio.run(knowledge.ainspect_page_source()) == before
+            assert knowledge.read_page("/agent.md").url == "https://docs.example.com/agent"
+            # Another namespace's lock key differs, so its relocation proceeds during the hold.
+            moved = other.migrate_page_source(
+                expected_source="https://other.example.com/llms.txt",
+                target_source="https://moved.example.com/llms.txt",
+                dry_run=False,
+            )
+            assert moved.changed
+            release.set()
+            applied = holder.result(timeout=10)
+    finally:
+        release.set()
+        remove()
+        if hasattr(other, "_page_engine"):
+            other._page_engine.dispose()
+    assert applied.changed and applied.after.source == new and applied.after.revision == before.revision + 1
+    assert _advisory_locks(pages) == 0
+    # Sequential control: after the commit the stale competitor hits the source guard, not the lock.
+    with pytest.raises(ValueError, match="does not match"):
+        knowledge.migrate_page_source(expected_source=old, target_source=stale, dry_run=False)
+    assert not asyncio.run(
+        knowledge.amigrate_page_source(expected_source=old, target_source=new, dry_run=False)
+    ).changed
+    assert knowledge.inspect_page_source() == applied.after
+
+
+def test_source_relocation_state_matrix(corpus):
+    from sqlalchemy import delete, insert
+
+    knowledge, _, _ = corpus
+    old, new = "https://docs.example.com/llms.txt", "https://public.example.com/llms.txt"
+    pages = knowledge._pages()
+
+    unready = _sibling(knowledge, knowledge.page_store.namespace)
+    with pytest.raises(ValueError, match="call Knowledge.setup"):
+        unready.inspect_page_source()
+    with pytest.raises(ValueError, match="call Knowledge.setup"):
+        unready.migrate_page_source(expected_source=old, target_source=new, dry_run=False)
+
+    # Initialized but never synced: the row exists with source NULL.
+    before = knowledge.inspect_page_source()
+    assert before.source is None and before.revision == 0
+    with pytest.raises(ValueError, match="does not match"):
+        knowledge.migrate_page_source(expected_source=old, target_source=new, dry_run=False)
+    assert knowledge.inspect_page_source() == before
+
+    with pages.engine.begin() as conn:
+        conn.execute(delete(pages.binding).where(pages.binding.c.namespace == pages.namespace))
+    with pytest.raises(ValueError, match="not initialized"):
+        knowledge.inspect_page_source()
+    with pytest.raises(ValueError, match="not initialized"):
+        knowledge.migrate_page_source(expected_source=old, target_source=new, dry_run=False)
+    with pages.engine.begin() as conn:
+        conn.execute(
+            insert(pages.binding).values(namespace=pages.namespace, catalog=before.catalog, vectors=before.vectors)
+        )
+    assert knowledge.inspect_page_source() == before
+
+    knowledge.sync_pages(url=old)
+    synced = knowledge.inspect_page_source()
+    assert synced.source == old and synced.revision > 0
+    same = knowledge.migrate_page_source(expected_source=old, target_source=old, dry_run=False)
+    assert not same.changed and same.after == synced
+    with pytest.raises(ValueError, match="does not match"):
+        knowledge.migrate_page_source(expected_source=new, target_source=new, dry_run=False)
+    assert knowledge.inspect_page_source() == synced
+
+    applied = knowledge.migrate_page_source(expected_source=old, target_source=new, dry_run=False)
+    assert applied.changed and applied.after.revision == synced.revision + 1
+    # Once the binding equals the target, the request is a no-op whatever expected_source says.
+    retry = knowledge.migrate_page_source(
+        expected_source="https://wrong.example.com/llms.txt", target_source=new, dry_run=False
+    )
+    assert not retry.changed and retry.after == applied.after
+    assert knowledge.inspect_page_source() == applied.after
+
+
+def test_source_relocation_changes_only_the_binding_row(corpus, engine):
+    import json
+
+    knowledge, embedder, site = corpus
+    old, new = "https://docs.example.com/llms.txt", "https://public.example.com/llms.txt"
+    _three_pages(site, "https://docs.example.com")
+    assert knowledge.sync_pages(url=old).updated == 3
+    other = _sibling(knowledge, "sentinel-" + knowledge.page_store.namespace)
+    fresh = None
+    try:
+        other.setup()
+        _three_pages(site, "https://sentinel.example.com")
+        assert other.sync_pages(url="https://sentinel.example.com/llms.txt").updated == 3
+        binding = knowledge.inspect_page_source()
+        base_rows = _rows(engine, binding)
+        calls = list(embedder.calls)
+
+        assert knowledge.inspect_page_source() == binding
+        plan = knowledge.migrate_page_source(expected_source=old, target_source=new)
+        assert plan.dry_run and not plan.changed and plan.before == plan.after == binding
+        assert _rows(engine, binding) == base_rows
+
+        applied = knowledge.migrate_page_source(expected_source=old, target_source=new, dry_run=False)
+        assert applied.changed
+        after_rows = _rows(engine, binding)
+        for name in (binding.catalog, binding.filesystem, binding.vectors):
+            assert after_rows[name] == base_rows[name], name
+        table = binding.filesystem + "_knowledge"
+        changed = set(after_rows[table]) ^ set(base_rows[table])
+        assert len(changed) == 2, changed
+        old_row, new_row = sorted((json.loads(r) for r in changed), key=lambda r: r["revision"])
+        assert old_row["namespace"] == new_row["namespace"] == binding.namespace
+        assert (old_row["source"], new_row["source"]) == (old, new)
+        assert new_row["revision"] == old_row["revision"] + 1
+        assert {k: v for k, v in old_row.items() if k not in ("source", "revision")} == {
+            k: v for k, v in new_row.items() if k not in ("source", "revision")
+        }
+
+        assert not knowledge.migrate_page_source(expected_source=old, target_source=new, dry_run=False).changed
+        assert _rows(engine, binding) == after_rows
+        assert embedder.calls == calls
+        fresh = _sibling(knowledge, knowledge.page_store.namespace)
+        fresh.setup()
+        assert fresh.inspect_page_source() == applied.after
+        assert other.inspect_page_source().source == "https://sentinel.example.com/llms.txt"
+    finally:
+        for instance in (other, fresh):
+            if instance is not None and hasattr(instance, "_page_engine"):
+                instance._page_engine.dispose()
+
+
+def test_source_relocation_refresh_sync_updates_every_citation_surface_without_document_embeddings(corpus, engine):
+    knowledge, embedder, site = corpus
+    old_base, new_base = "https://docs.example.com", "https://public.example.com"
+    old, new = old_base + "/llms.txt", new_base + "/llms.txt"
+    _three_pages(site, old_base)
+    knowledge.sync_pages(url=old)
+    knowledge.migrate_page_source(expected_source=old, target_source=new, dry_run=False)
+    _mirror(site, old_base, new_base)
+    binding = knowledge.inspect_page_source()
+    before_rows = _rows(engine, binding)
+    before_pages = {p.path: p for p in knowledge.list_pages().pages}
+    assert len(before_pages) == 3
+    calls = list(embedder.calls)
+
+    report = knowledge.sync_pages(url=new)
+    assert report.status == "completed" and report.updated == 3 and report.failed == 0 and report.unknown == 0
+    assert embedder.calls == calls, "citation refresh must not embed documents"
+    after_rows = _rows(engine, binding)
+    assert after_rows[binding.vectors] == before_rows[binding.vectors]
+    after_pages = {p.path: p for p in knowledge.list_pages().pages}
+    assert set(after_pages) == set(before_pages)
+    for path, page in after_pages.items():
+        previous = before_pages[path]
+        assert previous.url.startswith(old_base + "/") and page.url.startswith(new_base + "/")
+        assert (page.revision, page.digest, page.index_fingerprint) == (
+            previous.revision,
+            previous.digest,
+            previous.index_fingerprint,
+        )
+        assert page.filesystem_version == previous.filesystem_version + 1
+        read = knowledge.read_page(path)
+        assert read.url == page.url and read.revision == previous.revision
+    grep = knowledge.grep_pages("Use")
+    assert grep.matches and all(m.url.startswith(new_base + "/") for m in grep.matches)
+
+    # Search embeds exactly the query text; that is the only embedding it may add.
+    calls = list(embedder.calls)
+    hits = knowledge.search_pages("Agent tools").results
+    assert hits and all(h.url.startswith(new_base + "/") for h in hits)
+    assert embedder.calls == calls + ["Agent tools"]
+    docs = knowledge.search("Agent tools")
+    assert docs and all(d.meta_data["url"].startswith(new_base + "/") for d in docs)
+    assert embedder.calls == calls + ["Agent tools", "Agent tools"]
+
+    # Control: changed content re-embeds only that page.
+    calls = list(embedder.calls)
+    site[new_base + "/team.md"] = "# Team\n\nChanged members.\n"
+    assert knowledge.sync_pages(url=new).updated == 1
+    new_calls = embedder.calls[len(calls) :]
+    assert new_calls and all("Changed members" in c for c in new_calls)
+    control_rows = _rows(engine, binding)
+    untouched = {r for r in control_rows[binding.vectors] if '"/team.md"' not in r}
+    assert untouched == {r for r in after_rows[binding.vectors] if '"/team.md"' not in r}
+
+    # Control: an explicit public_url decides the citation host, still without embeddings.
+    calls = list(embedder.calls)
+    assert knowledge.sync_pages(url=new, public_url="https://cdn.example.com").updated == 3
+    assert embedder.calls == calls
+    assert all(p.url.startswith("https://cdn.example.com/") for p in knowledge.list_pages().pages)
+    assert knowledge.inspect_page_source().source == new
+
+
+def test_source_relocation_list_cursor_survives_dry_run_and_retry_but_not_apply(corpus):
+    knowledge, _, site = corpus
+    old, new = "https://docs.example.com/llms.txt", "https://public.example.com/llms.txt"
+    _three_pages(site, "https://docs.example.com")
+    knowledge.sync_pages(url=old)
+    first = knowledge.list_pages(limit=1)
+    cursor = first.next_cursor
+    assert cursor
+
+    knowledge.migrate_page_source(expected_source=old, target_source=new)
+    second = knowledge.list_pages(limit=1, cursor=cursor)
+    assert not second.restart_required and second.pages and second.pages[0].path != first.pages[0].path
+
+    knowledge.migrate_page_source(expected_source=old, target_source=new, dry_run=False)
+    stale = knowledge.list_pages(limit=1, cursor=cursor)
+    assert stale.restart_required and stale.pages == () and stale.next_cursor is None
+
+    renewed = knowledge.list_pages(limit=1)
+    assert renewed.next_cursor
+    assert not knowledge.migrate_page_source(expected_source=old, target_source=new, dry_run=False).changed
+    again = knowledge.list_pages(limit=1, cursor=renewed.next_cursor)
+    assert not again.restart_required and again.pages
+    assert knowledge.list_pages(limit=1, cursor=cursor).restart_required
+
+
+def test_source_relocation_sync_waits_behind_a_held_migration_then_refuses_the_old_source(corpus):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+
+    from sqlalchemy import event
+
+    knowledge, _, site = corpus
+    old_base, new_base = "https://docs.example.com", "https://public.example.com"
+    old, new = old_base + "/llms.txt", new_base + "/llms.txt"
+    knowledge.sync_pages(url=old)
+    _mirror(site, old_base, new_base)
+    pages = knowledge._pages()
+    entered, release, remove = _hold_before_row_lock(pages)
+    polls, third_poll = [0], Event()
+
+    def count_sync_polls(conn, cursor, statement, parameters, context, many):
+        if "pg_try_advisory_lock(" in statement:
+            polls[0] += 1
+            if polls[0] >= 3:
+                third_poll.set()
+
+    event.listen(pages.engine, "before_cursor_execute", count_sync_polls)
+    try:
+        with ThreadPoolExecutor(2) as pool:
+            holder = pool.submit(knowledge.migrate_page_source, expected_source=old, target_source=new, dry_run=False)
+            assert entered.wait(5)
+            sync = pool.submit(knowledge.sync_pages, url=old)
+            assert third_poll.wait(5), "sync never polled the session lock"
+            assert not sync.done(), "sync completed while the migration held the lock"
+            release.set()
+            assert holder.result(timeout=10).changed
+            with pytest.raises(ValueError, match="another documentation source"):
+                sync.result(timeout=15)
+    finally:
+        release.set()
+        remove()
+        event.remove(pages.engine, "before_cursor_execute", count_sync_polls)
+    assert _advisory_locks(pages) == 0
+    assert knowledge.inspect_page_source().source == new
+    assert knowledge.sync_pages(url=new).status == "completed"
+
+
+def test_source_relocation_readers_see_the_old_binding_until_commit(corpus):
+    from concurrent.futures import ThreadPoolExecutor
+
+    knowledge, _, _ = corpus
+    old, new = "https://docs.example.com/llms.txt", "https://public.example.com/llms.txt"
+    knowledge.sync_pages(url=old)
+    before = knowledge.inspect_page_source()
+    pages = knowledge._pages()
+    entered, release, remove = _hold_after_update(pages)
+    try:
+        with ThreadPoolExecutor(1) as pool:
+            holder = pool.submit(knowledge.migrate_page_source, expected_source=old, target_source=new, dry_run=False)
+            assert entered.wait(5)
+            # UPDATE executed but uncommitted: readers neither block nor observe it.
+            assert knowledge.inspect_page_source() == before
+            listing = knowledge.list_pages()
+            assert listing.pages and not listing.restart_required
+            assert knowledge.read_page("/agent.md").revision
+            release.set()
+            assert holder.result(timeout=10).changed
+    finally:
+        release.set()
+        remove()
+    assert knowledge.inspect_page_source().source == new
+
+
+async def _until_capacity(check, seconds=8):
+    import asyncio
+    import time
+
+    deadline = time.monotonic() + seconds
+    while True:
+        try:
+            return check()
+        except TimeoutError as exc:
+            if "worker_capacity" not in str(exc) or time.monotonic() > deadline:
+                raise
+            await asyncio.sleep(0.05)
+
+
+async def test_source_relocation_cancellation_after_update_rolls_back_and_frees_the_slot(corpus, monkeypatch):
+    import asyncio
+
+    import agno.knowledge.page._coordinator as coordinator
+    from agno.utils.bounded import BoundedWorkers
+
+    knowledge, _, _ = corpus
+    old, new = "https://docs.example.com/llms.txt", "https://public.example.com/llms.txt"
+    knowledge.sync_pages(url=old)
+    before = knowledge.inspect_page_source()
+    pages = knowledge._pages()
+    monkeypatch.setattr(coordinator, "READ_WORKERS", BoundedWorkers(1, "page-relocation-test"))
+    entered, release, remove = _hold_after_update(pages)
+    try:
+        task = asyncio.create_task(
+            knowledge.amigrate_page_source(expected_source=old, target_source=new, dry_run=False)
+        )
+        while not entered.is_set():
+            await asyncio.sleep(0.01)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        # The worker still holds the only slot until it exits.
+        with pytest.raises(TimeoutError, match="worker_capacity"):
+            await knowledge.ainspect_page_source()
+        release.set()
+        after = await _until_capacity(knowledge.inspect_page_source)
+    finally:
+        release.set()
+        remove()
+    assert after == before, "cancellation observed after the UPDATE must roll back"
+    assert _advisory_locks(pages) == 0
+    assert (await knowledge.amigrate_page_source(expected_source=old, target_source=new, dry_run=False)).changed
+
+
+async def test_source_relocation_cancellation_during_commit_still_commits(corpus, monkeypatch):
+    import asyncio
+
+    import agno.knowledge.page._coordinator as coordinator
+    from agno.utils.bounded import BoundedWorkers
+
+    knowledge, _, _ = corpus
+    old, new = "https://docs.example.com/llms.txt", "https://public.example.com/llms.txt"
+    knowledge.sync_pages(url=old)
+    before = knowledge.inspect_page_source()
+    pages = knowledge._pages()
+    monkeypatch.setattr(coordinator, "READ_WORKERS", BoundedWorkers(1, "page-relocation-test"))
+    entered, release, remove = _hold(pages, "commit")
+    try:
+        task = asyncio.create_task(
+            knowledge.amigrate_page_source(expected_source=old, target_source=new, dry_run=False)
+        )
+        while not entered.is_set():
+            await asyncio.sleep(0.01)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        release.set()
+        after = await _until_capacity(knowledge.inspect_page_source)
+    finally:
+        release.set()
+        remove()
+    # The final budget check ran before commit, so the commit proceeds despite the caller's cancellation.
+    assert after.source == new and after.revision == before.revision + 1
+    assert _advisory_locks(pages) == 0
+    retry = knowledge.migrate_page_source(expected_source=old, target_source=new, dry_run=False)
+    assert not retry.changed and retry.after == after
+
+
+def test_source_relocation_lost_commit_acknowledgement_converges_on_retry(corpus):
+    from sqlalchemy import event
+
+    knowledge, _, _ = corpus
+    old, new = "https://docs.example.com/llms.txt", "https://public.example.com/llms.txt"
+    knowledge.sync_pages(url=old)
+    before = knowledge.inspect_page_source()
+    pages = knowledge._pages()
+    state = {"armed": False, "tripped": 0}
+
+    # Simulates a client that loses the acknowledgement of a commit the server completed.
+    # This is a DBAPI-level simulation, not transport loss.
+    def wrap_commit(dbapi_connection, connection_record, connection_proxy):
+        if getattr(dbapi_connection, "_relocation_test_wrapped", False):
+            return
+        real_commit = dbapi_connection.commit
+
+        def commit():
+            real_commit()
+            if state["armed"]:
+                state["tripped"] += 1
+                raise RuntimeError("injected: commit acknowledged by the server, lost by the client")
+
+        dbapi_connection.commit = commit
+        dbapi_connection._relocation_test_wrapped = True
+
+    event.listen(pages.engine, "checkout", wrap_commit)
+    try:
+        state["armed"] = True
+        with pytest.raises(RuntimeError, match="lost by the client"):
+            knowledge.migrate_page_source(expected_source=old, target_source=new, dry_run=False)
+    finally:
+        state["armed"] = False
+        event.remove(pages.engine, "checkout", wrap_commit)
+    assert state["tripped"] == 1
+    after = knowledge.inspect_page_source()
+    assert after.source == new and after.revision == before.revision + 1
+    retry = knowledge.migrate_page_source(expected_source=old, target_source=new, dry_run=False)
+    assert not retry.changed and retry.after == after
+    assert _advisory_locks(pages) == 0
+
+
+def test_source_relocation_capacity_limits_reject_without_touching_the_binding(corpus, monkeypatch):
+    import time
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+
+    from sqlalchemy import event
+    from sqlalchemy.exc import TimeoutError as PoolTimeout
+
+    import agno.knowledge.page._coordinator as coordinator
+    from agno.utils.bounded import BoundedWorkers
+
+    knowledge, _, _ = corpus
+    old, new = "https://docs.example.com/llms.txt", "https://public.example.com/llms.txt"
+    knowledge.sync_pages(url=old)
+    before = knowledge.inspect_page_source()
+    pages = knowledge._pages()
+
+    # Worker pool full: immediate rejection with no database statement.
+    workers = BoundedWorkers(2, "page-relocation-test")
+    monkeypatch.setattr(coordinator, "READ_WORKERS", workers)
+    entered, release, statements = [Event(), Event()], Event(), [0]
+
+    def count(conn, cursor, statement, parameters, context, many):
+        statements[0] += 1
+
+    def blocker(index, *, budget):
+        entered[index].set()
+        assert release.wait(10)
+
+    event.listen(pages.engine, "before_cursor_execute", count)
+    try:
+        with ThreadPoolExecutor(2) as pool:
+            holders = [pool.submit(workers.run_sync, blocker, i, seconds=10) for i in range(2)]
+            assert all(e.wait(5) for e in entered)
+            seen = statements[0]
+            start = time.monotonic()
+            with pytest.raises(TimeoutError, match="worker_capacity"):
+                knowledge.migrate_page_source(expected_source=old, target_source=new, dry_run=False)
+            with pytest.raises(TimeoutError, match="worker_capacity"):
+                knowledge.inspect_page_source()
+            assert time.monotonic() - start < 1.0
+            assert statements[0] == seen
+            assert knowledge.list_pages().pages, "non-pooled synchronous readers still work"
+            release.set()
+            for holder in holders:
+                holder.result(timeout=10)
+    finally:
+        release.set()
+        event.remove(pages.engine, "before_cursor_execute", count)
+    assert knowledge.inspect_page_source() == before
+
+    # Connection pool exhausted: the raw pool timeout surfaces, binding unchanged.
+    with ExitStack() as stack:
+        for _ in range(knowledge._page_engine.pool.size()):
+            stack.enter_context(knowledge._page_engine.connect())
+        with pytest.raises(PoolTimeout):
+            knowledge.migrate_page_source(expected_source=old, target_source=new, dry_run=False)
+    assert knowledge.inspect_page_source() == before
+    assert knowledge.migrate_page_source(expected_source=old, target_source=new, dry_run=False).changed
+
+
+_REJECTED_RELOCATION_TARGETS = [
+    ("http://public.example.com/llms.txt", ValueError, "invalid_source_url"),
+    ("https://user:secret@public.example.com/llms.txt", ValueError, "invalid_source_url"),
+    ("https://public.example.com/llms.txt?x=1", ValueError, "invalid_source_url"),
+    ("https://public.example.com/llms.txt#frag", ValueError, "invalid_source_url"),
+    ("https://public.example.com:8443/llms.txt", ValueError, "invalid_source_port"),
+    ("https://public.example.com:abc/llms.txt", ValueError, "Port could not be cast"),
+    ("https://public.example.com/llms .txt", ValueError, "invalid_source_url"),
+    ("https://public.example.com/llms\ttxt", ValueError, "invalid_source_url"),
+    ("https://public.example.com/../llms.txt", InvalidPathError, "not allowed"),
+    ("https://public.example.com/a%2fllms.txt", ValueError, "invalid_page_encoding"),
+    ("https://public.example.com/a\\llms.txt", ValueError, "invalid_page_path"),
+    ("https://public.example.com/other.txt", ValueError, "must preserve the discovery path"),
+    ("https://public.example.com/llms.txt/", ValueError, "must preserve the discovery path"),
+    ("https://public.example.com/llms%2Etxt", ValueError, "must preserve the discovery path"),
+    ("https://public.example.com/LLMS.txt", ValueError, "must preserve the discovery path"),
+    (123, ValueError, "invalid_source_url"),
+]
+
+
+@pytest.mark.parametrize(
+    "target, exc, message", _REJECTED_RELOCATION_TARGETS, ids=[repr(t[0]) for t in _REJECTED_RELOCATION_TARGETS]
+)
+def test_source_relocation_rejects_invalid_targets_with_documented_errors(corpus, target, exc, message):
+    knowledge, _, _ = corpus
+    old = "https://docs.example.com/llms.txt"
+    knowledge.sync_pages(url=old)
+    before = knowledge.inspect_page_source()
+    with pytest.raises(exc, match=message):
+        knowledge.migrate_page_source(expected_source=old, target_source=target, dry_run=False)
+    assert knowledge.inspect_page_source() == before
+
+
+def _url_of_size(total_bytes, multibyte=False):
+    prefix, suffix = "https://", ".example.com/llms.txt"
+    host_bytes = total_bytes - len(prefix) - len(suffix)
+    if multibyte:
+        wide = "é" * (host_bytes // 4)
+        host = wide + "a" * (host_bytes - len(wide.encode("utf-8")))
+    else:
+        host = "a" * host_bytes
+    url = prefix + host + suffix
+    assert len(url.encode("utf-8")) == total_bytes
+    return url
+
+
+def test_source_relocation_accepts_equivalent_spellings_and_size_boundaries(corpus):
+    knowledge, _, _ = corpus
+    old, new = "https://docs.example.com/llms.txt", "https://public.example.com/llms.txt"
+    knowledge.sync_pages(url=old)
+    before = knowledge.inspect_page_source()
+    # expected_source position: hostname case and an empty query or fragment are recognized.
+    assert (
+        knowledge.migrate_page_source(expected_source="https://Docs.Example.com/llms.txt", target_source=new).before
+        == before
+    )
+    assert knowledge.migrate_page_source(expected_source=old + "?", target_source=new).before == before
+    assert knowledge.migrate_page_source(expected_source=old + "#", target_source=new).before == before
+    with pytest.raises(ValueError, match="does not match"):
+        knowledge.migrate_page_source(expected_source="https://docs.example.com:443/llms.txt", target_source=new)
+    # target_source position: an explicit :443 is accepted and preserved verbatim.
+    plan = knowledge.migrate_page_source(expected_source=old, target_source="https://public.example.com:443/llms.txt")
+    assert plan.target_source == "https://public.example.com:443/llms.txt" and not plan.changed
+    for multibyte in (False, True):
+        for size in (2047, 2048):
+            assert knowledge.migrate_page_source(
+                expected_source=old, target_source=_url_of_size(size, multibyte)
+            ).dry_run
+        with pytest.raises(ValueError, match="invalid_source_url"):
+            knowledge.migrate_page_source(expected_source=old, target_source=_url_of_size(2049, multibyte))
+    for bad in ("false", "true", 0, 1, None):
+        with pytest.raises(ValueError, match="dry_run must be a boolean"):
+            knowledge.migrate_page_source(expected_source=old, target_source=new, dry_run=bad)
+    assert knowledge.inspect_page_source() == before
+
+
+_DEMO_DIR = "cookbook/05_agent_os/27_public_pages"
+
+# Seeds the cookbook's own namespace inside the disposable test database: the demo
+# module's Knowledge, a stub embedder instead of OpenAI, an in-memory site instead
+# of page fetching. Runs in a subprocess so the demo import never enters this process.
+_SEED_DEMO = """
+import sys
+sys.path.insert(0, sys.argv[1])
+from agno.knowledge.embedder.base import Embedder
+from agno.knowledge.page._source import PageSource
+from public_pages import knowledge
+
+class StubEmbedder(Embedder):
+    dimensions = 1536
+    def __init__(self):
+        super().__init__(dimensions=1536)
+    def get_embedding(self, text, *, timeout=30):
+        return [0.001] * 1536
+
+site = {
+    "https://docs.example.com/llms.txt": "- [Agent](https://docs.example.com/agent.md)",
+    "https://docs.example.com/agent.md": "# Agent\\n\\nUse Agent with tools.\\n",
+}
+PageSource.fetch = lambda self, url, max_bytes: site[url]
+knowledge.vector_db.embedder = StubEmbedder()
+knowledge.setup()
+print("SEEDED", knowledge.sync_pages(url="https://docs.example.com/llms.txt").updated)
+"""
+
+
+def test_source_relocation_cli_reports_each_outcome_and_keeps_setup_visible(corpus, engine):
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    pytest.importorskip("fastmcp")
+    pytest.importorskip("openai")
+    root = Path(__file__).resolve().parents[5]
+    cli = str(root / _DEMO_DIR / "migrate_page_source.py")
+    demo = str(root / _DEMO_DIR / "public_pages.py")
+    old, new = "https://docs.example.com/llms.txt", "https://public.example.com/llms.txt"
+    env = {
+        **os.environ,
+        "PAGE_DEMO_DB_URL": engine.url.render_as_string(hide_password=False),
+        "OPENAI_API_KEY": "not-a-real-key",
+        "PAGE_DEMO_INDEX_URL": old,
+        "AGNO_TELEMETRY": "false",
+    }
+
+    def run(*argv, **overrides):
+        return subprocess.run(
+            [sys.executable, *argv], capture_output=True, text=True, timeout=120, env={**env, **overrides}
+        )
+
+    def binding():
+        with engine.connect() as conn:
+            row = conn.execute(
+                text("SELECT source, revision FROM fs.agno_fs_knowledge WHERE namespace = 'public-page-demo'")
+            ).one_or_none()
+        return None if row is None else tuple(row)
+
+    # --help parses and exits before the demo import; a closed port proves no connection.
+    helped = run(cli, "--help", PAGE_DEMO_DB_URL="postgresql+psycopg://ai:ai@127.0.0.1:1/nope")
+    assert helped.returncode == 0 and "Calls Knowledge.setup()" in helped.stdout, helped.stderr
+
+    # Fresh storage: the dry run still runs setup (schema created) and then rejects the unbound namespace.
+    assert binding() is None
+    unbound = run(cli, old, new)
+    assert unbound.returncode == 1 and "does not match" in unbound.stderr
+    assert "setup runs before inspection" in unbound.stdout and "Dry run" not in unbound.stdout
+    assert binding() == (None, 0)
+
+    seeded = run("-c", _SEED_DEMO, str(root / _DEMO_DIR))
+    assert seeded.returncode == 0 and "SEEDED 1" in seeded.stdout, seeded.stderr
+    source, revision = binding()
+    assert source == old
+
+    dry = run(cli, old, new)
+    assert dry.returncode == 0, dry.stderr
+    assert "Dry run: no source relocation was applied" in dry.stdout and "--apply" in dry.stdout
+    assert "Relocation applied" not in dry.stdout
+    assert binding() == (old, revision)
+
+    applied = run(cli, old, new, "--apply")
+    assert applied.returncode == 0, applied.stderr
+    assert "Relocation applied" in applied.stdout and "PAGE_DEMO_INDEX_URL" in applied.stdout
+    assert binding() == (new, revision + 1)
+
+    again = run(cli, old, new, "--apply")
+    assert again.returncode == 0, again.stderr
+    assert "already points to the target; no additional binding change" in again.stdout
+    assert "Relocation applied" not in again.stdout
+    assert binding() == (new, revision + 1)
+
+    dry_current = run(cli, old, new)
+    assert dry_current.returncode == 0, dry_current.stderr
+    assert "Dry run" in dry_current.stdout and "already points to the target" in dry_current.stdout
+    assert "--apply" not in dry_current.stdout
+    assert binding() == (new, revision + 1)
+
+    invalid = run(cli, new, "http://public.example.com/llms.txt", "--apply")
+    assert invalid.returncode == 1 and "invalid_source_url" in invalid.stderr
+    assert "Relocation applied" not in invalid.stdout and "Dry run" not in invalid.stdout
+    assert binding() == (new, revision + 1)
+
+    # A producer still configured with the old source is refused, not silently rewritten.
+    stale_sync = run(demo, "sync")
+    assert stale_sync.returncode == 1 and "another documentation source" in stale_sync.stderr
+    assert binding() == (new, revision + 1)

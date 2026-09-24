@@ -710,7 +710,7 @@ class GithubTools(Toolkit):
             state (str, optional): State of the PRs to retrieve. Can be 'open', 'closed', or 'all'. Defaults to 'open'.
             sort (str, optional): What to sort results by. Can be 'created', 'updated', 'popularity', 'long-running'. Defaults to 'created'.
             direction (str, optional): The direction of the sort. Can be 'asc' or 'desc'. Defaults to 'desc'.
-            limit (int, optional): The maximum number of pull requests to return. Defaults to 20.
+            limit (int, optional): The maximum number of pull requests to return. Defaults to 50.
 
         Returns:
             A JSON-formatted string containing a list of pull requests.
@@ -1326,9 +1326,18 @@ class GithubTools(Toolkit):
                 log_debug(f"Error decoding file content: {e}")
                 decoded_content = "Binary file (content not displayed)"
 
-            # Make sure we don't try to display binary content
+            # Make sure we don't try to display binary content. Only NUL and control
+            # characters that never occur in normal text (C0 excluding common
+            # whitespace, DEL and the C1 range) are treated as a binary signal, so
+            # valid non-ASCII UTF-8 text (e.g. Chinese) is preserved.
             if isinstance(decoded_content, str) and (
-                "\x00" in decoded_content or sum(1 for c in decoded_content[:1000] if not (32 <= ord(c) <= 126)) > 200
+                "\x00" in decoded_content
+                or sum(
+                    1
+                    for c in decoded_content[:1000]
+                    if c not in "\t\n\r\x0b\x0c" and (ord(c) < 32 or 0x7F <= ord(c) <= 0x9F)
+                )
+                > 200
             ):
                 decoded_content = "Binary file (content not displayed)"
 
