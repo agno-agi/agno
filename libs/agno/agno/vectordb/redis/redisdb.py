@@ -85,7 +85,7 @@ class RedisDb(VectorDb):
             search_type (SearchType): Type of search to perform.
             distance (Distance): Distance metric for vector comparisons.
             vector_score_weight (float): Weight for vector similarity in hybrid search.
-            reranker (Optional[Reranker]): Reranker instance.
+            reranker (Optional[Reranker]): Reranker instance. Deprecated: pass the reranker to Knowledge instead.
             **redis_kwargs: Additional Redis connection parameters.
         """
         if not index_name:
