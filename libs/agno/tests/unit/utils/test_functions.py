@@ -98,13 +98,13 @@ def test_get_function_call_non_dict_arguments(sample_functions):
 
 
 def test_get_function_call_argument(sample_functions):
-    """Test boolean and null coercion and whitespace preservation for other strings."""
+    """Test boolean and null coercion for non-string parameters and whitespace preservation for strings."""
     arguments = json.dumps(
         {
-            "param1": "None",
-            "param2": "True",
-            "param3": "False",
-            "param4": "  test  ",
+            "param1": "  test  ",
+            "param2": "None",
+            "param3": "True",
+            "param4": "False",
         }
     )
 
@@ -115,10 +115,10 @@ def test_get_function_call_argument(sample_functions):
     )
     assert result is not None
     assert result.arguments == {
-        "param1": None,
-        "param2": True,
-        "param3": False,
-        "param4": "  test  ",
+        "param1": "  test  ",
+        "param2": None,
+        "param3": True,
+        "param4": False,
     }
 
 
@@ -152,8 +152,8 @@ def test_get_function_call_preserves_newline_only_string_arguments(sample_functi
 
 
 def test_get_function_call_coercion_with_surrounding_whitespace(sample_functions):
-    """Test boolean and null coercion with surrounding whitespace."""
-    arguments = json.dumps({"param1": "  None  ", "param2": " true ", "param3": "  FALSE  "})
+    """Test boolean and null coercion with surrounding whitespace for non-string parameters."""
+    arguments = json.dumps({"param2": "  None  ", "param3": " true ", "param4": "  FALSE  "})
     result = get_function_call(
         name="test_function",
         arguments=arguments,
@@ -161,7 +161,58 @@ def test_get_function_call_coercion_with_surrounding_whitespace(sample_functions
     )
     assert result is not None
     assert result.error is None
-    assert result.arguments == {"param1": None, "param2": True, "param3": False}
+    assert result.arguments == {"param2": None, "param3": True, "param4": False}
+
+
+@pytest.mark.parametrize("value", ["true", "false", "True", "FALSE", "none", "None", "null", " TRUE "])
+def test_get_function_call_does_not_coerce_string_parameters(sample_functions, value):
+    """Test that literal-looking values are passed through unchanged to string parameters."""
+    result = get_function_call(
+        name="test_function",
+        arguments=json.dumps({"param1": value}),
+        functions=sample_functions,
+    )
+    assert result is not None
+    assert result.error is None
+    assert result.arguments == {"param1": value}
+
+
+@pytest.mark.parametrize(
+    "schema",
+    [
+        {"type": ["string", "null"]},
+        {"anyOf": [{"type": "string"}, {"type": "null"}]},
+        {"oneOf": [{"type": "integer"}, {"type": "string"}]},
+    ],
+)
+def test_get_function_call_does_not_coerce_parameters_accepting_strings(schema):
+    """Test that parameters whose schema accepts strings are left unchanged."""
+    functions = {
+        "fn": Function(
+            name="fn",
+            parameters={"type": "object", "properties": {"value": schema}},
+        )
+    }
+    result = get_function_call(name="fn", arguments='{"value": "true"}', functions=functions)
+    assert result is not None
+    assert result.arguments == {"value": "true"}
+
+
+def test_get_function_call_from_callable_keeps_string_arguments():
+    """Test that a str-annotated tool receives a "true" string rather than a boolean."""
+
+    def run(command: str, verbose: bool = False) -> str:
+        return command
+
+    functions = {"run": Function.from_callable(run)}
+    result = get_function_call(
+        name="run",
+        arguments='{"command": "true", "verbose": "true"}',
+        functions=functions,
+    )
+    assert result is not None
+    assert result.error is None
+    assert result.arguments == {"command": "true", "verbose": True}
 
 
 def test_get_function_call_argument_advanced(sample_functions):
