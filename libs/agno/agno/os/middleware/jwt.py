@@ -6,18 +6,25 @@ import json
 import re
 from enum import Enum
 from os import getenv
-from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Optional, Union
+from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Optional, Set, Tuple, Union
+from urllib.parse import unquote
 
 from fastapi import Request, Response
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from agno.os.auth import INTERNAL_SCHEDULER_USER_ID, INTERNAL_SERVICE_SCOPES, build_insufficient_permissions_detail
+from agno.os.auth import (
+    INTERNAL_SCHEDULER_USER_ID,
+    INTERNAL_SERVICE_SCOPES,
+    aprovision_user_with_default_role,
+    build_insufficient_permissions_detail,
+)
 from agno.os.scopes import (
     AgentOSScope,
-    check_route_scopes,
+    RouteScopeCheck,
     get_default_scope_mappings,
     get_required_scopes_for_route,
+    get_resource_context_from_path,
     has_required_scopes,
 )
 from agno.os.service_accounts import SERVICE_ACCOUNT_PRINCIPAL_PREFIX, authenticate_service_account_request
@@ -88,6 +95,20 @@ def resolve_expected_audience(
     return audience or os_id
 
 
+def _route_action(required_scopes: List[str]) -> Optional[str]:
+    """The single action a route requires (``read`` / ``run`` / ``write`` / ...),
+    or None when the route's required scopes span more than one action.
+
+    Only used to populate ``AuthorizationContext.action`` for providers that decide
+    per-resource (managed roles). The default scope provider's ``authorize_route``
+    ignores ``ctx.action`` and matches against ``required_scopes`` directly, so this
+    can never change the default decision. A resource route in the shipped mappings
+    requires exactly one scope, hence one action; returning None for the ambiguous
+    case makes ``EngineAuthorizationProvider`` fall back to AND-ing every scope."""
+    actions = {s.rsplit(":", 1)[1] for s in required_scopes if ":" in s}
+    return next(iter(actions)) if len(actions) == 1 else None
+
+
 class TokenSource(str, Enum):
     """Enum for JWT token source options."""
 
@@ -137,6 +158,8 @@ class JWTValidator:
         user_id_claim: str = "sub",
         session_id_claim: str = "session_id",
         audience_claim: str = "aud",
+        issuer: Optional[str] = None,
+        issuer_claim: str = "iss",
         leeway: int = 10,
     ):
         """
@@ -153,6 +176,10 @@ class JWTValidator:
             user_id_claim: JWT claim name for user ID (default: "sub").
             session_id_claim: JWT claim name for session ID (default: "session_id").
             audience_claim: JWT claim name for audience (default: "aud").
+            issuer: Expected token issuer. When set, a token whose issuer claim does
+                    not match exactly is rejected. Pin this whenever more than one
+                    IdP can mint tokens your keys verify.
+            issuer_claim: JWT claim name for issuer (default: "iss").
             leeway: Seconds of leeway for clock skew tolerance (default: 10).
         """
         self.algorithm = algorithm
@@ -161,6 +188,8 @@ class JWTValidator:
         self.user_id_claim = user_id_claim
         self.session_id_claim = session_id_claim
         self.audience_claim = audience_claim
+        self.issuer = issuer
+        self.issuer_claim = issuer_claim
         self.leeway = leeway
 
         # Build list of verification keys
@@ -350,6 +379,21 @@ class JWTValidator:
                     f"Invalid audience. Expected one of: {expected_audiences}, got: {token_audiences}"
                 )
 
+        # Verify the issuer when one is pinned. Signature validity alone does not say
+        # WHO minted the token: a deployment that trusts several keys (multi-IdP, or a
+        # JWKS with more than one signer) will happily verify a token from any of them,
+        # so a caller who can obtain a token from a second trusted issuer could otherwise
+        # present it here. Pinning makes that a hard rejection.
+        if self.issuer:
+            token_issuer = payload.get(self.issuer_claim)
+            if token_issuer is None:
+                raise jwt.InvalidTokenError(
+                    f'Token is missing the "{self.issuer_claim}" claim. '
+                    f"Issuer verification requires this claim to be present in the token."
+                )
+            if token_issuer != self.issuer:
+                raise jwt.InvalidIssuerError(f"Invalid issuer. Expected: {self.issuer}, got: {token_issuer}")
+
         return payload
 
     def extract_claims(self, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -394,8 +438,12 @@ def build_jwt_middleware_kwargs(
     authorization: bool,
     service_account_verifier: Optional[Any] = None,
     excluded_route_paths: Optional[List[str]] = None,
+    issuer: Optional[str] = None,
 ) -> Dict[str, Any]:
     """JWTMiddleware kwargs derived from an ``AuthorizationConfig``, in one place.
+
+    ``issuer`` is passed by the caller (it lives on the ``Authorization`` object, not on the
+    released config), so both surfaces pin the same one.
 
     Both the REST app wiring (``agno.os.app``) and the mounted MCP app
     (``agno.os.mcp.get_mcp_server``) construct their middleware from this builder, so
@@ -432,6 +480,8 @@ def build_jwt_middleware_kwargs(
     }
     if audience:
         kwargs["audience"] = audience
+    if issuer:
+        kwargs["issuer"] = issuer
     if admin_scope:
         kwargs["admin_scope"] = admin_scope
     if user_isolation:
@@ -543,6 +593,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
         audience_claim: str = "aud",
         audience: Optional[Union[str, Iterable[str]]] = None,
         verify_audience: bool = False,
+        issuer: Optional[str] = None,
         dependencies_claims: Optional[List[str]] = None,
         session_state_claims: Optional[List[str]] = None,
         scope_mappings: Optional[Dict[str, List[str]]] = None,
@@ -640,6 +691,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 user_id_claim=user_id_claim,
                 session_id_claim=session_id_claim,
                 audience_claim=audience_claim,
+                issuer=issuer,
             )
             if self._jwt_configured
             else None
@@ -656,6 +708,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
         self.session_id_claim = session_id_claim
         self.audience_claim = audience_claim
         self.verify_audience = verify_audience
+        self.issuer = issuer
         self.dependencies_claims: List[str] = dependencies_claims or []
         self.session_state_claims: List[str] = session_state_claims or []
 
@@ -787,6 +840,243 @@ class AuthMiddleware(BaseHTTPMiddleware):
         """
         return get_required_scopes_for_route(self.scope_mappings, method, path)
 
+    @staticmethod
+    def _provider_error_check(required_scopes: List[str], error: Exception) -> "RouteScopeCheck":
+        """A provider that raised (an FGA outage, an unreachable role database) is a denial.
+
+        Fail closed rather than open, and keep the decision on the trail. Before this the
+        exception escaped into the token-decode handler, which answered 401 "Error decoding
+        token: <backend message>" -- the wrong status, the backend's error text in the body,
+        and no decision row, so an outage was invisible to the audit. The message is logged
+        here, server side only."""
+        log_warning(f"authorization provider raised during route authorization; denying: {error}")
+        return RouteScopeCheck(allowed=False, required_scopes=required_scopes, reason="provider_error")
+
+    def _authorize_route(
+        self,
+        request: Request,
+        scopes: List[str],
+        mappings: Dict[str, List[str]],
+        method: str,
+        path: str,
+    ) -> "RouteScopeCheck":
+        """Route-level authorization decision, delegated to the configured provider.
+
+        This is the choke point that used to call ``check_route_scopes`` directly. It
+        preserves that function's structure exactly — the route→scope lookup, the
+        resource-context extraction, and the GET-listing filtered-access escape hatch —
+        but routes the two actual *decisions* (allow? and which resource ids for a
+        listing?) through the resolved :class:`AuthorizationProvider`.
+
+        With no provider configured the resolver returns
+        :class:`ScopeAuthorizationProvider`, whose ``authorize_route`` /
+        ``accessible_resource_ids`` are thin wrappers over ``has_required_scopes`` /
+        ``get_accessible_resource_ids`` — the very functions ``check_route_scopes``
+        called — so the result is byte-identical to v2.7. A managed-role / custom
+        provider enforces its own model at the same point instead.
+        """
+        from agno.os.auth import resolve_authorization_provider
+        from agno.os.authz.provider import AuthorizationContext
+
+        required_scopes = get_required_scopes_for_route(mappings, method, path)
+        if not required_scopes:
+            return RouteScopeCheck(allowed=True, required_scopes=required_scopes)
+
+        resource_type, resource_id = get_resource_context_from_path(path)
+
+        provider = resolve_authorization_provider(request)
+        ctx = AuthorizationContext(
+            principal_id=getattr(request.state, "user_id", None),
+            scopes=scopes,
+            claims=getattr(request.state, "claims", None) or {},
+            resource_type=resource_type,
+            resource_id=resource_id,
+            action=_route_action(required_scopes),
+            admin_scope=self.admin_scope,
+        )
+        try:
+            allowed = provider.authorize_route(ctx, required_scopes)
+        except Exception as e:
+            return self._provider_error_check(required_scopes, e)
+
+        accessible_resource_ids: Optional[Set[str]] = None
+        first_required = required_scopes[0]
+        required_family = first_required.split(":", 1)[0] if ":" in first_required else None
+        if not allowed and method == "GET" and not resource_id and resource_type and required_family == resource_type:
+            # GET-listing escape hatch, identical to check_route_scopes: a caller
+            # without the collection-wide grant is still allowed through, but the
+            # endpoint is told which ids to expose (possibly none) so it returns a
+            # filtered list instead of a 403. The action comes from the required scope
+            # so the provider only surfaces ids the caller is authorised for under it.
+            required_action: Optional[str] = None
+            if ":" in first_required:
+                required_action = first_required.rsplit(":", 1)[1]
+            listing_ctx = AuthorizationContext(
+                principal_id=ctx.principal_id,
+                scopes=scopes,
+                claims=ctx.claims,
+                resource_type=resource_type,
+                resource_id=None,
+                action=required_action,
+                admin_scope=self.admin_scope,
+            )
+            try:
+                accessible_resource_ids = provider.accessible_resource_ids(listing_ctx)
+            except Exception as e:
+                return self._provider_error_check(required_scopes, e)
+            allowed = True
+
+        return RouteScopeCheck(
+            allowed=allowed,
+            required_scopes=required_scopes,
+            accessible_resource_ids=accessible_resource_ids,
+        )
+
+    async def _aauthorize_route(
+        self,
+        request: Request,
+        scopes: List[str],
+        mappings: Dict[str, List[str]],
+        method: str,
+        path: str,
+    ) -> "RouteScopeCheck":
+        """Async twin of :meth:`_authorize_route`. Awaits the provider's async decision so the
+        route gate -- run on the event loop inside the async dispatch -- never blocks it on a
+        managed-role/ReBAC DB or network round trip, and works against an async database."""
+        from agno.os.auth import resolve_authorization_provider
+        from agno.os.authz.provider import AuthorizationContext
+
+        required_scopes = get_required_scopes_for_route(mappings, method, path)
+        if not required_scopes:
+            return RouteScopeCheck(allowed=True, required_scopes=required_scopes)
+
+        resource_type, resource_id = get_resource_context_from_path(path)
+
+        provider = resolve_authorization_provider(request)
+        ctx = AuthorizationContext(
+            principal_id=getattr(request.state, "user_id", None),
+            scopes=scopes,
+            claims=getattr(request.state, "claims", None) or {},
+            resource_type=resource_type,
+            resource_id=resource_id,
+            action=_route_action(required_scopes),
+            admin_scope=self.admin_scope,
+        )
+        try:
+            allowed = await provider.aauthorize_route(ctx, required_scopes)
+        except Exception as e:
+            return self._provider_error_check(required_scopes, e)
+
+        accessible_resource_ids: Optional[Set[str]] = None
+        first_required = required_scopes[0]
+        required_family = first_required.split(":", 1)[0] if ":" in first_required else None
+        if not allowed and method == "GET" and not resource_id and resource_type and required_family == resource_type:
+            required_action: Optional[str] = None
+            if ":" in first_required:
+                required_action = first_required.rsplit(":", 1)[1]
+            listing_ctx = AuthorizationContext(
+                principal_id=ctx.principal_id,
+                scopes=scopes,
+                claims=ctx.claims,
+                resource_type=resource_type,
+                resource_id=None,
+                action=required_action,
+                admin_scope=self.admin_scope,
+            )
+            try:
+                accessible_resource_ids = await provider.aaccessible_resource_ids(listing_ctx)
+            except Exception as e:
+                return self._provider_error_check(required_scopes, e)
+            allowed = True
+
+        return RouteScopeCheck(
+            allowed=allowed,
+            required_scopes=required_scopes,
+            accessible_resource_ids=accessible_resource_ids,
+        )
+
+    def _record_decision(
+        self,
+        request: Request,
+        *,
+        allowed: bool,
+        method: str,
+        path: str,
+        principal: Optional[str],
+        required_scopes: List[str],
+        scopes: List[str],
+        reason: Optional[str] = None,
+    ) -> None:
+        """Record one authorization decision to the audit sink, if one is configured
+        on ``app.state.authz_audit`` (seeded from ``Authorization(audit=...)``).
+
+        Captures the principal, route, required scopes, the caller's scopes, and a
+        NON-secret token reference (see :meth:`_token_reference`). Never the token
+        itself, and never raises into the request path — audit must not turn a served
+        request into a 500. No-op when no decision sink is configured, so the default
+        (no audit) path is untouched.
+        """
+        from agno.os.authz.audit import record_decision
+
+        record_decision(
+            request,
+            allowed=allowed,
+            target=f"{method} {path}",
+            principal=principal,
+            required_scopes=required_scopes,
+            scopes=scopes,
+            claims=getattr(request.state, "claims", None),
+            token=self._extract_token(request),
+            reason=reason,
+        )
+
+    async def _arecord_decision(
+        self,
+        request: Request,
+        *,
+        allowed: bool,
+        method: str,
+        path: str,
+        principal: Optional[str],
+        required_scopes: List[str],
+        scopes: List[str],
+        reason: Optional[str] = None,
+    ) -> None:
+        """Async twin of :meth:`_record_decision` (awaits the sink off the loop)."""
+        from agno.os.authz.audit import arecord_decision
+
+        await arecord_decision(
+            request,
+            allowed=allowed,
+            target=f"{method} {path}",
+            principal=principal,
+            required_scopes=required_scopes,
+            scopes=scopes,
+            claims=getattr(request.state, "claims", None),
+            token=self._extract_token(request),
+            reason=reason,
+        )
+
+    @staticmethod
+    def _token_reference(token: Optional[str], claims: Optional[dict]) -> Optional[str]:
+        """A non-secret reference to the presented token, for the decision trail.
+
+        Prefer the token's ``jti`` (RFC 7519 JWT ID): an opaque identifier the issuer
+        already minted, so it correlates to the issuer's own logs and any revocation
+        list. When the token has no ``jti``, fall back to a short SHA-256 of the raw
+        token so two distinct tokens are still distinguishable — without ever storing
+        the credential itself.
+        """
+        if claims:
+            jti = claims.get("jti")
+            if jti:
+                return str(jti)
+        if token:
+            import hashlib
+
+            return hashlib.sha256(token.encode()).hexdigest()[:12]
+        return None
+
     def _check_scopes(
         self,
         request: Request,
@@ -808,7 +1098,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
             An error response when access is denied, None when access is allowed.
         """
         mappings = scope_mappings if scope_mappings is not None else self.scope_mappings
-        result = check_route_scopes(scopes, mappings, method, path, admin_scope=self.admin_scope)
+        result = self._authorize_route(request, scopes, mappings, method, path)
 
         request.state.required_scopes = result.required_scopes
         if result.accessible_resource_ids is not None:
@@ -818,9 +1108,265 @@ class AuthMiddleware(BaseHTTPMiddleware):
             else:
                 log_debug("Caller has no matching resource scopes. Will return empty list.")
 
+        # Decision audit: record the allow/deny with a non-secret token reference, if a
+        # sink is configured. Emitted for EVERY authenticated request that reaches this
+        # gate (including allow-by-default routes with no required scopes) so the trail
+        # is complete. No-op when no decision sink is set, so the default path is untouched.
+        self._record_decision(
+            request,
+            allowed=result.allowed,
+            method=method,
+            path=path,
+            principal=getattr(request.state, "user_id", None),
+            required_scopes=result.required_scopes,
+            scopes=scopes,
+            reason=result.reason or (None if result.required_scopes else "no_scopes_required"),
+        )
+
         if not result.allowed:
+            # Explain through the role store only when its engine is the plane that decided; under
+            # an authorization_provider= override the roles never took part, so citing them would
+            # send an operator to the wrong place.
+            role_store = self._deciding_role_store(request)
+            held_roles, roles_from_token = self._token_roles(request, role_store)
+            subject = getattr(request.state, "user_id", None)
+            if held_roles is None and role_store is not None and subject:
+                try:
+                    held_roles = list(role_store.roles_of(subject))
+                except Exception:
+                    held_roles = None  # a store read failure must not turn a denial into a 500
+            # A directory user with no assignment is evaluated through the role flagged default
+            # (decision time only, never written), so that role, not "no role", decided. Ask the
+            # engine's own rule: on a split db it never applied the default, and neither do we.
+            via_default = False
+            if held_roles == [] and role_store is not None and subject:
+                try:
+                    default_role = role_store._default_role_applied(subject)
+                    if default_role:
+                        held_roles, via_default = [default_role], True
+                except Exception:
+                    via_default = False
+            explicit_deny: Optional[str] = None
+            resource_type, resource_id = get_resource_context_from_path(path)
+            # Only when the route names ONE action: with several (a custom mapping), the failed
+            # action is unknown and an action-less lookup would surface a deny on any action --
+            # naming, say, a write deny for a request that failed on a missing run grant.
+            route_action = _route_action(result.required_scopes)
+            if (
+                role_store is not None
+                and resource_type
+                and resource_id
+                and route_action is not None
+                and hasattr(role_store, "_explicit_denials")
+            ):
+                try:
+                    denied = role_store._explicit_denials(
+                        resource_type,
+                        route_action,
+                        subject=subject,
+                        roles=held_roles if roles_from_token else None,
+                    )
+                    if resource_id in denied or "*" in denied:
+                        explicit_deny = f"{resource_type}/{resource_id if resource_id in denied else '*'}"
+                except Exception:
+                    explicit_deny = None
             log_warning(
-                f"Insufficient scopes for {method} {path}. Required: {result.required_scopes}, User has: {scopes}"
+                self._denial_message(
+                    request,
+                    method,
+                    path,
+                    result.required_scopes,
+                    scopes,
+                    held_roles,
+                    roles_from_token,
+                    explicit_deny,
+                    via_default,
+                    token_scopes_ignored=role_store is not None and not role_store.trust_token_scopes,
+                )
+            )
+            return self._create_error_response(
+                403,
+                "Insufficient permissions",
+                origin,
+                cors_allowed_origins,
+                required_scopes=result.required_scopes,
+            )
+
+        if result.required_scopes:
+            log_debug(f"Scope check passed for {method} {path}. User scopes: {scopes}")
+        else:
+            log_debug(f"No scopes required for {method} {path}")
+        return None
+
+    @staticmethod
+    def _deciding_role_store(request: Request) -> Optional[Any]:
+        """The Authorization object on the app, but only when its managed-role engine is the plane
+        that decided (``roles_decide``). Under an ``authorization_provider=`` override the object is
+        still on ``app.state`` (for provisioning and ``/authz``) yet the override decided alone, so
+        a denial explanation must not read roles from it."""
+        role_store = getattr(request.app.state, "role_store", None)
+        return role_store if role_store is not None and getattr(role_store, "roles_decide", False) else None
+
+    @staticmethod
+    def _token_roles(request: Request, role_store: Optional[Any]) -> Tuple[Optional[List[str]], bool]:
+        """(roles, True) when the deciding role store reads a ``roles_claim`` and this token carries
+        one -- the roles the engine actually decided on for an external-IdP caller -- else
+        (None, False) so the caller falls back to the subject's stored assignments."""
+        claim = getattr(role_store, "roles_claim", None) if role_store is not None else None
+        if not claim:
+            return None, False
+        from agno.os.authz.engine import normalize_roles_claim
+
+        roles = normalize_roles_claim(getattr(request.state, "claims", None) or {}, claim)
+        return (list(roles), True) if roles else (None, False)
+
+    @staticmethod
+    def _denial_message(
+        request: Request,
+        method: str,
+        path: str,
+        required_scopes: List[str],
+        scopes: List[str],
+        held_roles: Optional[List[str]],
+        roles_from_token: bool = False,
+        explicit_deny: Optional[str] = None,
+        via_default: bool = False,
+        token_scopes_ignored: bool = False,
+    ) -> str:
+        """The log line for a route-gate denial, worded for the plane that actually decided.
+
+        When the caller's token scopes are what the gate compared, "required vs held" is the
+        truth. Under a managed-roles or ReBAC provider the token's scopes were never consulted,
+        so listing them as what the user "has" reads as a contradiction (the required scope is
+        right there in the list) and hides the real reason: the provider denied the subject.
+        ``held_roles`` is what the engine decided on: the roles carried on the token when the
+        store reads a ``roles_claim`` and the token has one (``roles_from_token``), else the
+        subject's stored assignments; None when no role store is configured. ``explicit_deny``
+        is the resource an explicit deny row refused, when the engine reports one: with
+        deny-overrides the role may well grant the route's scope, so "does not grant" would send
+        an operator to add a grant that already exists. ``via_default`` marks ``held_roles`` as the
+        role flagged default, applied at decision time to a directory user with no assignment.
+        ``token_scopes_ignored`` is True only when managed roles decided with
+        ``trust_token_scopes=False``, the one case where that flag is why the token's scopes did not
+        count; under any other provider the flag is not the reason and is not cited.
+        """
+        from agno.os.auth import caller_scopes_are_authoritative
+
+        if caller_scopes_are_authoritative(request):
+            return f"Insufficient scopes for {method} {path}. Required: {required_scopes}, User has: {scopes}"
+        subject = getattr(request.state, "user_id", None)
+        line = f"Denied {method} {path} for {subject!r}: the configured authorization provider refused it."
+        if held_roles and roles_from_token:
+            line += f" The token carries role(s) {held_roles}, which do not authorize {method} {path}."
+        elif held_roles and via_default:
+            line += (
+                f" The subject holds no assigned role; the default role {held_roles} applied and does not "
+                f"authorize {method} {path}."
+            )
+        elif held_roles:
+            line += f" The subject holds role(s) {held_roles}, which do not authorize {method} {path}."
+        elif held_roles is not None:
+            line += " The subject holds no role in the role store."
+        if explicit_deny:
+            line += f" An explicit deny on '{explicit_deny}' applies (deny overrides any wider allow)."
+        if scopes and token_scopes_ignored:
+            on_token = [sc for sc in scopes if sc in required_scopes] or scopes
+            line += (
+                " Token scopes are not trusted under this provider (Authorization(trust_token_scopes=False)), "
+                f"so {on_token} on the token does not apply."
+            )
+        return line
+
+    async def _acheck_scopes(
+        self,
+        request: Request,
+        method: str,
+        path: str,
+        scopes: List[str],
+        origin: Optional[str],
+        cors_allowed_origins: Optional[List[str]],
+        scope_mappings: Optional[Dict[str, List[str]]] = None,
+    ) -> Optional[JSONResponse]:
+        """Async twin of :meth:`_check_scopes`: same gate, awaiting the provider and the
+        decision sink so the always-on route gate does its DB/network I/O off the event loop
+        (and works against an async database)."""
+        mappings = scope_mappings if scope_mappings is not None else self.scope_mappings
+        result = await self._aauthorize_route(request, scopes, mappings, method, path)
+
+        request.state.required_scopes = result.required_scopes
+        if result.accessible_resource_ids is not None:
+            request.state.accessible_resource_ids = result.accessible_resource_ids
+            if result.accessible_resource_ids:
+                log_debug(f"Caller has specific resource scopes. Accessible IDs: {result.accessible_resource_ids}")
+            else:
+                log_debug("Caller has no matching resource scopes. Will return empty list.")
+
+        await self._arecord_decision(
+            request,
+            allowed=result.allowed,
+            method=method,
+            path=path,
+            principal=getattr(request.state, "user_id", None),
+            required_scopes=result.required_scopes,
+            scopes=scopes,
+            reason=result.reason or (None if result.required_scopes else "no_scopes_required"),
+        )
+
+        if not result.allowed:
+            # See _check_scopes: explain through the role store only when its engine decided.
+            role_store = self._deciding_role_store(request)
+            held_roles, roles_from_token = self._token_roles(request, role_store)
+            subject = getattr(request.state, "user_id", None)
+            if held_roles is None and role_store is not None and subject:
+                try:
+                    held_roles = list(await role_store.aroles_of(subject))
+                except Exception:
+                    held_roles = None  # a store read failure must not turn a denial into a 500
+            via_default = False
+            if held_roles == [] and role_store is not None and subject:
+                try:
+                    default_role = await role_store._adefault_role_applied(subject)
+                    if default_role:
+                        held_roles, via_default = [default_role], True
+                except Exception:
+                    via_default = False
+            explicit_deny: Optional[str] = None
+            resource_type, resource_id = get_resource_context_from_path(path)
+            # Only when the route names ONE action: with several (a custom mapping), the failed
+            # action is unknown and an action-less lookup would surface a deny on any action --
+            # naming, say, a write deny for a request that failed on a missing run grant.
+            route_action = _route_action(result.required_scopes)
+            if (
+                role_store is not None
+                and resource_type
+                and resource_id
+                and route_action is not None
+                and hasattr(role_store, "_aexplicit_denials")
+            ):
+                try:
+                    denied = await role_store._aexplicit_denials(
+                        resource_type,
+                        route_action,
+                        subject=subject,
+                        roles=held_roles if roles_from_token else None,
+                    )
+                    if resource_id in denied or "*" in denied:
+                        explicit_deny = f"{resource_type}/{resource_id if resource_id in denied else '*'}"
+                except Exception:
+                    explicit_deny = None
+            log_warning(
+                self._denial_message(
+                    request,
+                    method,
+                    path,
+                    result.required_scopes,
+                    scopes,
+                    held_roles,
+                    roles_from_token,
+                    explicit_deny,
+                    via_default,
+                    token_scopes_ignored=role_store is not None and not role_store.trust_token_scopes,
+                )
             )
             return self._create_error_response(
                 403,
@@ -889,16 +1435,33 @@ class AuthMiddleware(BaseHTTPMiddleware):
         return response
 
     def _is_origin_allowed(self, origin: str, cors_allowed_origins: Optional[List[str]] = None) -> bool:
-        """Check if the origin is in the allowed origins list."""
-        if not cors_allowed_origins:
-            # If no allowed origins configured, allow all (fallback to default behavior)
-            return True
+        """Check if the origin is in the allowed origins list.
 
-        # Check if origin is in the allowed list
+        With no list configured (a hand-mounted middleware on an app that set no
+        ``cors_allowed_origins`` state) nothing is reflected: an error response that
+        echoed any Origin with ``Allow-Credentials: true`` would let any site read
+        the body of an authenticated failure. AgentOS always resolves a list, so
+        its error responses keep their CORS headers.
+        """
+        if not cors_allowed_origins:
+            return False
         return origin in cors_allowed_origins
 
     async def dispatch(self, request: Request, call_next) -> Response:
-        """Process the request: extract JWT, validate, and check RBAC scopes."""
+        """Process the request: extract JWT, validate, and check RBAC scopes.
+
+        The whole request runs inside an authorization request scope, so the several
+        gates that ask the policy store the same question -- the route gate here, the
+        per-resource gate in the endpoint's dependency, and a list endpoint's accessible
+        and denied id lookups -- resolve it once instead of once each. The scope dies
+        with the request, so nothing is cached across requests or replicas.
+        """
+        from agno.os.authz._request_scope import request_scope
+
+        with request_scope():
+            return await self._dispatch(request, call_next)
+
+    async def _dispatch(self, request: Request, call_next) -> Response:
         import jwt
 
         # Ensure the JWT auth config is accessible on app.state for WebSocket
@@ -997,6 +1560,12 @@ class AuthMiddleware(BaseHTTPMiddleware):
             request.state.session_id = None
             internal_scopes = list(INTERNAL_SERVICE_SCOPES)
             request.state.scopes = internal_scopes
+            # Trusted internal caller: mark AFTER the constant-time hmac match above so the
+            # provider-backed per-resource gate (check_resource_access) short-circuits — the
+            # scheduler principal has no role/subject in a managed store. The route gate below
+            # still enforces INTERNAL_SERVICE_SCOPES. Unforgeable: request.state is server-only,
+            # no client input maps onto this attribute.
+            request.state.is_internal_service = True
             request.state.authorization_enabled = self.authorization or False
             request.state.admin_scope = self.admin_scope
             request.state.user_isolation_enabled = self.user_isolation
@@ -1024,6 +1593,10 @@ class AuthMiddleware(BaseHTTPMiddleware):
                         required_scopes=required_scopes,
                     )
 
+            owner_denial = await self._deny_for_schedule_owner(request, method, path, origin, cors_allowed_origins)
+            if owner_denial is not None:
+                return owner_denial
+
             return await call_next(request)
 
         # No JWT source configured: security-key mode (static comparison, mirroring
@@ -1033,6 +1606,10 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 return await call_next(request)
             if hmac.compare_digest(token, self.security_key):
                 request.state.authenticated = True
+                # The key is the OS's unscoped root: no subject, no scopes. Gates that need an
+                # administrator (the /users directory API) read this rather than inferring root
+                # from the absence of claims.
+                request.state.security_key_verified = True
                 setattr(request.state, _AUTH_COMPLETE_ATTR, True)
                 return await call_next(request)
             return self._create_error_response(401, "Invalid authentication token", origin, cors_allowed_origins)
@@ -1080,6 +1657,54 @@ class AuthMiddleware(BaseHTTPMiddleware):
             # ownership gates stay dormant.
             request.state.user_isolation_enabled = self.user_isolation
 
+            # User directory (no-IdP): optionally auto-provision the subject from
+            # token claims, then enforce the disabled flag. This is the revocation
+            # kill-switch — a disabled user is denied even with a valid token, on
+            # EVERY route (independent of per-route scopes). Identity is still the
+            # app's to assert; we only gate it.
+            user_store = getattr(getattr(request.app, "state", None), "user_store", None)
+            if user_store is not None and user_id:
+                try:
+                    if getattr(request.app.state, "user_auto_provision", False):
+                        # Provisioning already reads the row; read `disabled` off it rather
+                        # than issuing a second query for the same row every request. Awaited
+                        # so provisioning against an async directory stays off the event loop.
+                        provisioned = await aprovision_user_with_default_role(
+                            user_store,
+                            getattr(request.app.state, "role_store", None),
+                            user_id,
+                            payload,
+                            email_claim=getattr(request.app.state, "user_email_claim", "email"),
+                            name_claim=getattr(request.app.state, "user_name_claim", "name"),
+                        )
+                        disabled = bool(provisioned.get("disabled")) if provisioned is not None else False
+                    else:
+                        disabled = await user_store.ais_disabled(user_id)
+                except Exception as e:  # directory unreachable: honour the configured policy
+                    fail_closed = bool(getattr(request.app.state, "user_directory_fail_closed", False))
+                    log_warning(
+                        f"user directory check failed for {user_id!r}: {e} "
+                        f"(failing {'closed' if fail_closed else 'open'})"
+                    )
+                    if fail_closed:
+                        return self._create_error_response(
+                            503, "User directory unavailable", origin, cors_allowed_origins
+                        )
+                    disabled = False
+                if disabled:
+                    log_warning(f"Disabled user denied: {user_id} for {method} {path}")
+                    await self._arecord_decision(
+                        request,
+                        allowed=False,
+                        method=method,
+                        path=path,
+                        principal=user_id,
+                        required_scopes=[],
+                        scopes=scopes,
+                        reason="user_disabled",
+                    )
+                    return self._create_error_response(403, "User is disabled", origin, cors_allowed_origins)
+
             # Extract dependencies claims
             dependencies = {}
             if self.dependencies_claims:
@@ -1104,7 +1729,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
             # RBAC scope checking (only if enabled)
             if self.authorization:
-                error_response = self._check_scopes(request, method, path, scopes, origin, cors_allowed_origins)
+                error_response = await self._acheck_scopes(request, method, path, scopes, origin, cors_allowed_origins)
                 if error_response is not None:
                     return error_response
 
@@ -1160,11 +1785,123 @@ class AuthMiddleware(BaseHTTPMiddleware):
             request.state.admin_scope = self.admin_scope
             request.state.user_isolation_enabled = self.user_isolation
             if self.authorization:
-                error_response = self._check_scopes(request, method, path, [], origin, cors_allowed_origins)
+                error_response = await self._acheck_scopes(request, method, path, [], origin, cors_allowed_origins)
                 if error_response is not None:
                     return error_response
 
         return await call_next(request)
+
+    async def _deny_for_schedule_owner(
+        self,
+        request: Request,
+        method: str,
+        path: str,
+        origin: Optional[str],
+        cors_allowed_origins: Optional[List[str]],
+    ) -> Optional[Response]:
+        """Re-decide an OWNED schedule's firing as its owner, every time it fires.
+
+        The executor authenticates with the internal token and forwards the schedule's owner
+        in a header; the run is then attributed to that owner. The owner's permission was
+        checked when the schedule was created, but nothing re-checked it afterwards, so a
+        user who was disabled, or whose grant on the target was revoked, kept running it on
+        a timer. Two checks, both on the owner rather than the scheduler principal:
+
+        - the directory off switch, honouring the configured fail-closed policy, and
+        - the route decision under a provider that decides from stored grants (managed
+          roles, ReBAC). A token-scope plane cannot be re-asked here, since the owner's
+          grants live in tokens this OS never sees; there the create-time check stands.
+          The same holds for managed roles read from a ``roles_claim``: the owner's role
+          is on their IdP token, the executor has no such token, and stored assignments
+          are empty for an IdP user, so re-asking would refuse every owned schedule.
+
+        An unowned (system) schedule forwards no owner and is not affected. A denial is
+        written to the decision trail and answered 403, so the executor records a failed
+        run rather than silently skipping.
+        """
+        from agno.db.schemas.scheduler import SCHEDULE_OWNER_HEADER
+
+        raw = request.headers.get(SCHEDULE_OWNER_HEADER)
+        if raw is None:
+            return None
+        owner = unquote(raw)
+        if not owner.strip() or owner == INTERNAL_SCHEDULER_USER_ID:
+            return None  # refused downstream as an unusable identity (get_scoped_user_id)
+
+        user_store = getattr(getattr(request.app, "state", None), "user_store", None)
+        if user_store is not None:
+            try:
+                disabled = bool(await user_store.ais_disabled(owner))
+            except Exception as e:
+                fail_closed = bool(getattr(request.app.state, "user_directory_fail_closed", False))
+                log_warning(
+                    f"user directory check failed for schedule owner {owner!r}: {e} "
+                    f"(failing {'closed' if fail_closed else 'open'})"
+                )
+                if fail_closed:
+                    return self._create_error_response(503, "User directory unavailable", origin, cors_allowed_origins)
+                disabled = False
+            if disabled:
+                log_warning(f"Schedule owner is disabled; run refused: {owner} for {method} {path}")
+                await self._arecord_decision(
+                    request,
+                    allowed=False,
+                    method=method,
+                    path=path,
+                    principal=owner,
+                    required_scopes=[],
+                    scopes=[],
+                    reason="schedule_owner_disabled",
+                )
+                return self._create_error_response(403, "Schedule owner is disabled", origin, cors_allowed_origins)
+
+        if not self.authorization:
+            return None
+        from agno.os.auth import resolve_authorization_provider, token_scopes_are_authoritative
+        from agno.os.authz.provider import AuthorizationContext
+
+        if token_scopes_are_authoritative(request):
+            return None
+        # Roles read from a token claim are grants this OS never stores; the executor's
+        # request carries no such claim, so a stored-assignment decision for the owner
+        # would be a false denial. The create-time check stands, as for token scopes.
+        if getattr(getattr(request.app.state, "role_store", None), "roles_claim", None):
+            return None
+        required_scopes = self._get_required_scopes(method, path)
+        if not required_scopes:
+            return None
+        resource_type, resource_id = get_resource_context_from_path(path)
+        ctx = AuthorizationContext(
+            principal_id=owner,
+            scopes=[],
+            claims={},
+            resource_type=resource_type,
+            resource_id=resource_id,
+            action=_route_action(required_scopes),
+            admin_scope=self.admin_scope,
+        )
+        try:
+            allowed = await resolve_authorization_provider(request).aauthorize_route(ctx, required_scopes)
+            reason = "schedule_owner_denied"
+        except Exception as e:
+            log_warning(f"authorization provider raised while re-checking schedule owner {owner!r}; denying: {e}")
+            allowed, reason = False, "provider_error"
+        if allowed:
+            return None
+        log_warning(f"Schedule owner {owner!r} no longer authorized for {method} {path}; run refused")
+        await self._arecord_decision(
+            request,
+            allowed=False,
+            method=method,
+            path=path,
+            principal=owner,
+            required_scopes=required_scopes,
+            scopes=[],
+            reason=reason,
+        )
+        return self._create_error_response(
+            403, "Schedule owner is not authorized to run this target", origin, cors_allowed_origins
+        )
 
     async def _dispatch_service_account(
         self,

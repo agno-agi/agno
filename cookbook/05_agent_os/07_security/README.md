@@ -102,12 +102,13 @@ Otherwise, audience verification uses the AgentOS id.
 ## Excluded Routes
 
 Some routes should be public even when JWT authentication is enabled. Use
-`AuthorizationConfig.excluded_route_paths` to mark them:
+`Authorization(excluded_route_paths=[...])` to mark them:
 
 ```python
+from agno.os import Authorization
+
 AgentOS(
-    authorization=True,
-    authorization_config=AuthorizationConfig(
+    authorization=Authorization(
         verification_keys=[JWT_SECRET],
         excluded_route_paths=[
             "/public/*",     # Wildcard: matches /public/anything

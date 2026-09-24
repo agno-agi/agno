@@ -212,7 +212,8 @@ class TestOwnerStampingBestEffort:
                 "input": "What is 2+2?",
                 "expected_output": "4",
             },
-            headers=auth_header(create_token("user-a")),
+            # Running an eval executes the target, so the caller needs run on it too.
+            headers=auth_header(create_token("user-a", scopes=["evals:write", "agents:test-agent:run"])),
         )
 
         # Stamping failed, but the eval run is still returned — just unowned.

@@ -2,7 +2,7 @@
 JWT RBAC with per-user data isolation
 =====================================
 
-Turn on AuthorizationConfig(user_isolation=True) so non-admin session reads
+Turn on AgentOS(user_isolation=True) so non-admin session reads
 and writes are pinned to the JWT subject. The smoke creates two sessions,
 proves each user sees only their own row, and proves admin bypass.
 
@@ -19,8 +19,7 @@ import jwt
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
-from agno.os import AgentOS
-from agno.os.config import AuthorizationConfig
+from agno.os import AgentOS, Authorization
 from fastapi.testclient import TestClient
 
 # ---------------------------------------------------------------------------
@@ -43,13 +42,12 @@ agent_os = AgentOS(
     id=OS_ID,
     agents=[isolation_agent],
     db=db,
-    authorization=True,
-    authorization_config=AuthorizationConfig(
+    authorization=Authorization(
         verification_keys=[JWT_SECRET],
         algorithm="HS256",
         verify_audience=True,
-        user_isolation=True,
     ),
+    user_isolation=True,
 )
 app = agent_os.get_app()
 
