@@ -155,3 +155,137 @@ def test_background_storage_does_not_enable_chaining():
     assert params["store"] is True
     assert "previous_response_id" not in params
     assert len(model._format_messages(messages)) == 2
+
+
+@pytest.fixture
+def stale_chain_client():
+    """Reject any chained request as OpenAI does for an unknown previous_response_id."""
+    requests = []
+    response = {
+        "id": "resp_new",
+        "object": "response",
+        "created_at": 0,
+        "model": "gpt-5.6-luna",
+        "status": "completed",
+        "error": None,
+        "usage": None,
+        "output": [
+            {
+                "type": "message",
+                "id": "msg_new",
+                "role": "assistant",
+                "status": "completed",
+                "content": [{"type": "output_text", "text": "Recovered", "annotations": []}],
+            }
+        ],
+    }
+
+    def handle(request):
+        payload = json.loads(request.content)
+        requests.append(payload)
+        if "previous_response_id" in payload:
+            body = {
+                "error": {
+                    "message": f"Previous response with id '{payload['previous_response_id']}' not found.",
+                    "type": "invalid_request_error",
+                    "param": "previous_response_id",
+                    "code": None,
+                }
+            }
+            return httpx.Response(400, json=body)
+        if payload.get("stream"):
+            events = [
+                {"type": "response.created", "response": response},
+                {"type": "response.completed", "response": response},
+            ]
+            body_text = "".join(f"data: {json.dumps(event)}\n\n" for event in events)
+            return httpx.Response(200, text=body_text, headers={"content-type": "text/event-stream"})
+        return httpx.Response(200, json=response)
+
+    return requests, httpx.MockTransport(handle)
+
+
+def _stale_chain_messages():
+    return [
+        Message(role="system", content="Instructions"),
+        Message(role="user", content="Look it up", from_history=True),
+        Message(
+            role="assistant",
+            provider_data={"response_id": "resp_stale"},
+            tool_calls=[
+                {
+                    "id": "fc_old",
+                    "call_id": "call_old",
+                    "type": "function",
+                    "function": {"name": "lookup", "arguments": "{}"},
+                }
+            ],
+            from_history=True,
+        ),
+        Message(role="tool", tool_call_id="call_old", content="Found it", from_history=True),
+        Message(role="assistant", content="Here it is", provider_data={"response_id": "resp_stale"}, from_history=True),
+        Message(role="user", content="Thanks, and again?"),
+    ]
+
+
+@pytest.mark.parametrize("mode", ["sync", "async", "sync_stream", "async_stream"])
+async def test_stale_previous_response_id_is_retried_with_replayed_context(stale_chain_client, mode):
+    requests, transport = stale_chain_client
+    with OpenAI(api_key="test", http_client=httpx.Client(transport=transport)) as client:
+        async with AsyncOpenAI(api_key="test", http_client=httpx.AsyncClient(transport=transport)) as async_client:
+            model = OpenAIResponses(id="gpt-5.6-luna", client=client, async_client=async_client)
+            messages = _stale_chain_messages()
+            assistant = await _invoke(model, mode, messages)
+
+    assert assistant.provider_data["response_id"] == "resp_new"
+    assert [("previous_response_id" in payload) for payload in requests] == [True, False]
+    assert requests[0]["input"] == [{"role": "user", "content": "Thanks, and again?"}]
+
+    replayed = requests[1]["input"]
+    assert [item.get("role") or item["type"] for item in replayed] == [
+        "developer",
+        "user",
+        "function_call",
+        "function_call_output",
+        "assistant",
+        "user",
+    ]
+    # The rejected ids are unknown to the server, so the replayed call must not carry one.
+    assert "id" not in replayed[2]
+    assert replayed[2]["call_id"] == replayed[3]["call_id"] == "call_old"
+    assert requests[1]["store"] is True
+
+
+@pytest.mark.parametrize("mode", ["sync", "async", "sync_stream", "async_stream"])
+async def test_other_bad_requests_are_not_retried(mode):
+    from agno.exceptions import ModelProviderError
+
+    requests = []
+
+    def handle(request):
+        requests.append(json.loads(request.content))
+        return httpx.Response(
+            400, json={"error": {"message": "Invalid value for 'tools'.", "type": "invalid_request_error"}}
+        )
+
+    transport = httpx.MockTransport(handle)
+    with OpenAI(api_key="test", http_client=httpx.Client(transport=transport)) as client:
+        async with AsyncOpenAI(api_key="test", http_client=httpx.AsyncClient(transport=transport)) as async_client:
+            model = OpenAIResponses(id="gpt-5.6-luna", client=client, async_client=async_client)
+            with pytest.raises(ModelProviderError, match="Invalid value"):
+                await _invoke(model, mode, _stale_chain_messages())
+
+    assert len(requests) == 1
+
+
+async def test_missing_previous_response_is_not_retried_without_a_chain(stale_chain_client):
+    """A user-supplied previous_response_id in request_params is not something Agno can recover from."""
+    from agno.exceptions import ModelProviderError
+
+    requests, transport = stale_chain_client
+    with OpenAI(api_key="test", http_client=httpx.Client(transport=transport)) as client:
+        model = OpenAIResponses(id="gpt-4.1-mini", client=client, request_params={"previous_response_id": "resp_user"})
+        with pytest.raises(ModelProviderError, match="not found"):
+            await _invoke(model, "sync", [Message(role="user", content="hi")])
+
+    assert len(requests) == 1
