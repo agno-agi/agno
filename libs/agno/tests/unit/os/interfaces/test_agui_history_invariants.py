@@ -9,7 +9,7 @@ Each fixture gives its messages distinct keys, asserted below, so a forwarded me
 be traced back to exactly one source message.
 """
 
-from typing import Any, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import pytest
 
@@ -33,10 +33,11 @@ from ag_ui.core.types import (
     ToolMessage,
     UserMessage,
 )
+from pydantic import ValidationError
 
 from agno.agent.agent import Agent
 from agno.models.message import Message
-from agno.os.interfaces.agui.input import extract_media, extract_message_history, extract_user_input
+from agno.os.interfaces.agui.input import extract_current_turn, extract_message_history
 from agno.team.team import Team
 
 
@@ -44,8 +45,22 @@ def _tool_call(call_id: str, name: str = "weather", arguments: str = "{}") -> To
     return ToolCall(id=call_id, type="function", function=FunctionCall(name=name, arguments=arguments))
 
 
+def _binary_parts_accepted() -> bool:
+    """ag-ui-protocol 1.0 dropped the deprecated binary part from user messages."""
+    try:
+        UserMessage(id="probe", role="user", content=[BinaryInputContent(mime_type="image/png", data="aGk=")])
+    except ValidationError:
+        return False
+    return True
+
+
 def _shapes() -> List[Tuple[str, List[Any]]]:
     """Transcript shapes a client can send, named for the failure each one guards."""
+    return _common_shapes() + (_binary_shapes() if _binary_parts_accepted() else [])
+
+
+def _common_shapes() -> List[Tuple[str, List[Any]]]:
+    """Shapes every supported ag-ui-protocol version accepts."""
     return [
         ("single turn", [UserMessage(id="a1", role="user", content="q1")]),
         (
@@ -266,7 +281,13 @@ def _shapes() -> List[Tuple[str, List[Any]]]:
                 UserMessage(
                     id="w3",
                     role="user",
-                    content=[BinaryInputContent(mime_type="image/jpeg", data=base64.b64encode(b"binary").decode())],
+                    content=[
+                        ImageInputContent(
+                            source=InputContentDataSource(
+                                value=base64.b64encode(b"caption-less").decode(), mime_type="image/jpeg"
+                            )
+                        )
+                    ],
                 ),
                 UserMessage(id="w4", role="user", content="q2"),
             ],
@@ -279,18 +300,6 @@ def _shapes() -> List[Tuple[str, List[Any]]]:
                 ReasoningMessage(id="x3", role="reasoning", content="thinking"),
                 ToolMessage(id="x4", role="tool", content="rx", tool_call_id="x-call"),
                 UserMessage(id="x5", role="user", content="q2"),
-            ],
-        ),
-        (
-            "newest user message carries only a deprecated binary part",
-            [
-                UserMessage(id="y1", role="user", content="q1"),
-                AssistantMessage(id="y2", role="assistant", content="r1"),
-                UserMessage(
-                    id="y3",
-                    role="user",
-                    content=[BinaryInputContent(mime_type="image/png", data=base64.b64encode(b"newest").decode())],
-                ),
             ],
         ),
         (
@@ -308,6 +317,37 @@ def _shapes() -> List[Tuple[str, List[Any]]]:
                 UserMessage(id="t1", role="user", content="q1"),
                 UserMessage(id="t2", role="user", content="q2"),
                 ToolMessage(id="t3", role="tool", content="orphan", tool_call_id="t-call"),
+            ],
+        ),
+    ]
+
+
+def _binary_shapes() -> List[Tuple[str, List[Any]]]:
+    """Shapes only a protocol that still accepts the deprecated binary part can carry."""
+    return [
+        (
+            "earlier turn carries only a deprecated binary part",
+            [
+                UserMessage(id="z1", role="user", content="q1"),
+                AssistantMessage(id="z2", role="assistant", content="r1"),
+                UserMessage(
+                    id="z3",
+                    role="user",
+                    content=[BinaryInputContent(mime_type="image/jpeg", data=base64.b64encode(b"binary").decode())],
+                ),
+                UserMessage(id="z4", role="user", content="q2"),
+            ],
+        ),
+        (
+            "newest user message carries only a deprecated binary part",
+            [
+                UserMessage(id="y1", role="user", content="q1"),
+                AssistantMessage(id="y2", role="assistant", content="r1"),
+                UserMessage(
+                    id="y3",
+                    role="user",
+                    content=[BinaryInputContent(mime_type="image/png", data=base64.b64encode(b"newest").decode())],
+                ),
             ],
         ),
     ]
@@ -364,10 +404,43 @@ def _source_key(msg: Any) -> Optional[Tuple[str, ...]]:
     return None
 
 
-def _forwarded_key(msg: Message) -> Tuple[str, ...]:
+def _forwarded_key(msg: Message, client_call_ids: Dict[str, str]) -> Tuple[str, ...]:
+    """The source key a forwarded message should match, its call id read as the client's."""
     if msg.role == "tool":
-        return ("tool", msg.tool_call_id or "", msg.content or "")
+        return ("tool", client_call_ids.get(msg.tool_call_id or "", ""), msg.content or "")
     return (msg.role, msg.content or "")
+
+
+def _trace(messages: List[Any], history: List[Message]) -> Tuple[List[int], Dict[str, str]]:
+    """Match each forwarded message to the client message it came from, in order.
+
+    Forwarded call ids are not the client's, so each one is read back through the client
+    call it was traced to: the call in the matched assistant message with the same name
+    and arguments. Returns the matched indices and the forwarded-to-client id map.
+    """
+    source_keys = _source_keys(messages)
+    client_call_ids: Dict[str, str] = {}
+    matched: List[int] = []
+    cursor = 0
+    for forwarded in history:
+        key = _forwarded_key(forwarded, client_call_ids)
+        while cursor < len(source_keys) and source_keys[cursor] != key:
+            cursor += 1
+        assert cursor < len(source_keys), (
+            f"forwarded {key} matches no remaining client message, so history reorders, repeats or invents a message"
+        )
+        for tool_call in forwarded.tool_calls or []:
+            candidates = {
+                client_call.id
+                for client_call in messages[cursor].tool_calls or []
+                if (client_call.function.name, client_call.function.arguments)
+                == (tool_call["function"]["name"], tool_call["function"]["arguments"])
+            }
+            assert len(candidates) == 1, f"forwarded call {tool_call} traces to client calls {candidates}"
+            client_call_ids[tool_call["id"]] = candidates.pop()
+        matched.append(cursor)
+        cursor += 1
+    return matched, client_call_ids
 
 
 @pytest.mark.parametrize("messages", [messages for _, messages in SHAPES], ids=SHAPE_IDS)
@@ -375,23 +448,9 @@ class TestHistoryInvariants:
     def test_history_is_the_transcript_before_the_current_turn_in_order(self, messages):
         """Every forwarded message traces back to one distinct client message that
         precedes the current turn, and the order they arrived in survives."""
-        history = extract_message_history(messages)
-        source_keys = _source_keys(messages)
+        matched, _ = _trace(messages, extract_message_history(messages))
         turn = _turn_index(messages)
         boundary = len(messages) if turn is None else turn
-
-        matched: List[int] = []
-        cursor = 0
-        for forwarded in history:
-            key = _forwarded_key(forwarded)
-            while cursor < len(source_keys) and source_keys[cursor] != key:
-                cursor += 1
-            assert cursor < len(source_keys), (
-                f"forwarded {key} matches no remaining client message, so history reorders, "
-                f"repeats or invents a message"
-            )
-            matched.append(cursor)
-            cursor += 1
 
         assert all(index < boundary for index in matched), (
             f"history reaches the current turn or past it: matched {matched}, boundary {boundary}"
@@ -408,7 +467,7 @@ class TestHistoryInvariants:
         ]
         # An opening user message can only be dropped with the whole opening block, which
         # cannot happen: a user message opens history legally.
-        forwarded = [_forwarded_key(msg) for msg in extract_message_history(messages) if msg.role == "user"]
+        forwarded = [_forwarded_key(msg, {}) for msg in extract_message_history(messages) if msg.role == "user"]
         assert forwarded == expected
 
     def test_history_opens_on_a_user_message(self, messages):
@@ -434,8 +493,22 @@ class TestHistoryInvariants:
 
     def test_no_call_id_is_forwarded_twice(self, messages):
         history = extract_message_history(messages)
+        _, client_call_ids = _trace(messages, history)
         called = [tool_call["id"] for msg in history for tool_call in msg.tool_calls or []]
         assert len(called) == len(set(called))
+        assert len(set(client_call_ids.values())) == len(called), "one client call was forwarded as two"
+
+    def test_no_forwarded_call_id_is_one_the_client_sent(self, messages):
+        """A client echoes the id the stream carried, which for some providers is an id of
+        their own. Sent back, the provider resolves it instead of pairing by it."""
+        client_ids = {msg.tool_call_id for msg in messages if msg.role == "tool"}
+        client_ids.update(
+            tool_call.id for msg in messages if msg.role == "assistant" for tool_call in msg.tool_calls or []
+        )
+        history = extract_message_history(messages)
+        forwarded = {tool_call["id"] for msg in history for tool_call in msg.tool_calls or []}
+        forwarded.update(msg.tool_call_id for msg in history if msg.role == "tool")
+        assert not forwarded & client_ids
 
     def test_a_forwarded_result_names_the_tool_its_own_call_named(self, messages):
         history = extract_message_history(messages)
@@ -452,9 +525,9 @@ class TestHistoryInvariants:
 
     def test_the_current_turn_is_the_newest_user_message_that_said_something(self, messages):
         turn = _turn_index(messages)
-        assert extract_user_input(messages) == ("" if turn is None else _text_of(messages[turn]))
+        text, images, audio, videos, files = extract_current_turn(messages)
+        assert text == ("" if turn is None else _text_of(messages[turn]))
 
-        images, audio, videos, files = extract_media(messages)
         expected_media = [] if turn is None else _media_parts(messages[turn])
         assert len(images) + len(audio) + len(videos) + len(files) == len(expected_media)
 

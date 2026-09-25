@@ -30,11 +30,13 @@ from ag_ui.core.types import (
     ToolMessage,
     UserMessage,
 )
+from pydantic import ValidationError
 
 from agno.agent.agent import Agent
 from agno.db.in_memory import InMemoryDb
 from agno.models.base import Model
 from agno.models.message import Message, MessageMetrics
+from agno.models.openai import OpenAIChat, OpenAIResponses
 from agno.models.response import ModelResponse
 from agno.os.interfaces.agui.router import run_entity
 from agno.team.team import Team
@@ -302,11 +304,12 @@ class TestAgentWithoutDatabase:
         ]
         await _drive(agent, messages)
 
-        forwarded_calls = [msg.tool_calls for msg in model.calls[0] if msg.tool_calls]
-        assert forwarded_calls == [
-            [{"id": "call-1", "type": "function", "function": {"name": "weather", "arguments": '{"c":"NO"}'}}]
+        forwarded_calls = [tool_call for msg in model.calls[0] for tool_call in msg.tool_calls or []]
+        assert [(call["function"]["name"], call["function"]["arguments"]) for call in forwarded_calls] == [
+            ("weather", '{"c":"NO"}')
         ]
-        assert [msg.content for msg in model.calls[0] if msg.role == "tool"] == ["rain"]
+        results = [msg for msg in model.calls[0] if msg.role == "tool"]
+        assert [(msg.tool_call_id, msg.content) for msg in results] == [(forwarded_calls[0]["id"], "rain")]
 
     @pytest.mark.asyncio
     async def test_history_media_is_forwarded(self):
@@ -355,13 +358,15 @@ class TestAgentWithoutDatabase:
             ("user", "and tomorrow?"),
         ]
         forwarded_call = next(msg for msg in model.calls[0] if msg.tool_calls)
-        assert forwarded_call.tool_calls == [
-            {"id": "call-1", "type": "function", "function": {"name": "weather", "arguments": '{"c":"NO"}'}}
-        ]
+        [tool_call] = forwarded_call.tool_calls
+        assert {key: value for key, value in tool_call.items() if key != "id"} == {
+            "type": "function",
+            "function": {"name": "weather", "arguments": '{"c":"NO"}'},
+        }
         forwarded_result = next(msg for msg in model.calls[0] if msg.role == "tool")
         # Gemini formats a tool message with no tool_name as plain text, which leaves the
         # forwarded call unanswered.
-        assert (forwarded_result.tool_call_id, forwarded_result.tool_name) == ("call-1", "weather")
+        assert (forwarded_result.tool_call_id, forwarded_result.tool_name) == (tool_call["id"], "weather")
         assert forwarded_result.tool_call_error is False
 
     @pytest.mark.asyncio
@@ -420,6 +425,68 @@ class TestAgentWithoutDatabase:
         forwarded_result = next(msg for msg in model.calls[0] if msg.role == "tool")
         assert forwarded_result.content == "partial\nupstream refused"
         assert forwarded_result.tool_call_error is True
+
+    @pytest.mark.asyncio
+    async def test_a_tool_result_sent_as_content_parts_is_forwarded_as_its_text(self):
+        """ag-ui-protocol 1.0 lets a tool result be a list of content parts. Joining the
+        list as if it were text failed every later request that carried it."""
+        try:
+            result = ToolMessage(
+                id="m3",
+                role="tool",
+                content=[
+                    TextInputContent(text="rain"),
+                    ImageInputContent(
+                        source=InputContentUrlSource(value="https://example.com/radar.png", mime_type="image/png")
+                    ),
+                    TextInputContent(text="and wind"),
+                ],
+                tool_call_id="call-1",
+            )
+        except ValidationError:
+            pytest.skip("this ag-ui-protocol only accepts a tool result as a string")
+        model = RecordingModel()
+        agent = Agent(model=model)
+
+        messages = [
+            UserMessage(id="m1", role="user", content="weather in Oslo?"),
+            AssistantMessage(id="m2", role="assistant", content=None, tool_calls=[_tool_call()]),
+            result,
+            UserMessage(id="m4", role="user", content="and tomorrow?"),
+        ]
+        await _drive(agent, messages)
+
+        assert [msg.content for msg in model.calls[0] if msg.role == "tool"] == ["rain\nand wind"]
+
+    @pytest.mark.asyncio
+    async def test_a_tool_result_with_no_text_part_does_not_answer_its_call(self):
+        """Only the text of a content-part result reaches the model, so a result with none
+        answers nothing, like an empty string result."""
+        try:
+            result = ToolMessage(
+                id="m3",
+                role="tool",
+                content=[
+                    ImageInputContent(
+                        source=InputContentUrlSource(value="https://example.com/radar.png", mime_type="image/png")
+                    )
+                ],
+                tool_call_id="call-1",
+            )
+        except ValidationError:
+            pytest.skip("this ag-ui-protocol only accepts a tool result as a string")
+        model = RecordingModel()
+        agent = Agent(model=model)
+
+        messages = [
+            UserMessage(id="m1", role="user", content="weather in Oslo?"),
+            AssistantMessage(id="m2", role="assistant", content=None, tool_calls=[_tool_call()]),
+            result,
+            UserMessage(id="m4", role="user", content="and tomorrow?"),
+        ]
+        await _drive(agent, messages)
+
+        assert _conversation(model, 0) == [("user", "weather in Oslo?"), ("user", "and tomorrow?")]
 
     @pytest.mark.asyncio
     async def test_unanswered_tool_call_is_dropped(self):
@@ -697,6 +764,24 @@ class TestAgentWithDatabase:
 
         assert _conversation(model, 1) == [("user", "what is my name?")]
 
+    @pytest.mark.asyncio
+    async def test_an_empty_newest_message_does_not_ask_the_answered_question_again(self):
+        """The answer to the previous question is already in the session, so taking that
+        question as the turn would ask it a second time and store it twice."""
+        model = RecordingModel()
+        agent = Agent(model=model, db=InMemoryDb(), add_history_to_context=True)
+
+        await _two_turns(agent, model)
+        turn_3 = _turn_2() + [
+            AssistantMessage(id="m4", role="assistant", content="ok"),
+            UserMessage(id="m5", role="user", content=""),
+        ]
+        await _drive(agent, turn_3, "run-3")
+
+        session = agent.get_session(session_id="thread-1")
+        assert [run.input.input_content for run in session.runs] == ["my name is Ada", "what is my name?", ""]
+        assert [content for role, content in _conversation(model, 2) if role == "user"].count("what is my name?") == 1
+
 
 class TestAgentWithACachedSession:
     """An in-process cached session is not a substitute for a database here.
@@ -856,3 +941,95 @@ class TestTeamWithDatabase:
         await _two_turns(team, leader_model)
 
         assert _conversation(leader_model, 1) == [("user", "what is my name?")]
+
+
+# toolCallIds two live AG-UI streams emitted for OpenAI Responses tool calls. Agno streams
+# the Responses output item id, so it is what the client sends back; the API's own call id
+# never reaches the client.
+_RESPONSES_ITEM_IDS = (
+    "fc_01fa1d4aa4e1af91006a62d93d320c8191bee4a9476e4a4eba",
+    "fc_0555339da3dade57006a62d9a7a6388191a2c63cd5b0cebfd6",
+)
+
+
+def _responses_tool_transcript() -> List[Any]:
+    """A turn in which a Responses model called two tools, then the next question."""
+    return [
+        UserMessage(id="m1", role="user", content="weather in Oslo and Bergen?"),
+        AssistantMessage(
+            id="m2",
+            role="assistant",
+            content=None,
+            tool_calls=[
+                _tool_call(_RESPONSES_ITEM_IDS[0], "get_weather", '{"city":"Oslo"}'),
+                _tool_call(_RESPONSES_ITEM_IDS[1], "get_weather", '{"city":"Bergen"}'),
+            ],
+        ),
+        ToolMessage(id="m3", role="tool", content="rain", tool_call_id=_RESPONSES_ITEM_IDS[0]),
+        ToolMessage(id="m4", role="tool", content="sun", tool_call_id=_RESPONSES_ITEM_IDS[1]),
+        AssistantMessage(id="m5", role="assistant", content="Rain in Oslo, sun in Bergen"),
+        UserMessage(id="m6", role="user", content="and tomorrow?"),
+    ]
+
+
+def _client_ids(messages: List[Any]) -> set:
+    ids = {msg.tool_call_id for msg in messages if msg.role == "tool"}
+    ids.update(tool_call.id for msg in messages if msg.role == "assistant" for tool_call in msg.tool_calls or [])
+    return ids
+
+
+class TestForwardedToolCallIds:
+    """A forwarded call id only has to pair a call with its result.
+
+    Handing a provider an id it minted makes it resolve the id: OpenAI Responses looks up
+    the stored output item, whose real call id this history never answers, and rejects the
+    follow-up turn with "No tool output found for function call".
+    """
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("model_id", ["gpt-4o", "gpt-5.5"])
+    async def test_openai_responses_pairs_every_forwarded_call_with_one_output(self, model_id):
+        model = RecordingModel()
+        await _drive(Agent(model=model), _responses_tool_transcript())
+
+        formatted = [
+            item for item in OpenAIResponses(id=model_id)._format_messages(model.calls[0]) if isinstance(item, dict)
+        ]
+        calls = [item for item in formatted if item.get("type") == "function_call"]
+        outputs = [item["call_id"] for item in formatted if item.get("type") == "function_call_output"]
+
+        assert len(calls) == 2
+        assert sorted(outputs) == sorted(call["call_id"] for call in calls)
+        assert len(set(outputs)) == len(outputs)
+        client_ids = _client_ids(_responses_tool_transcript())
+        assert [call["id"] for call in calls if call.get("id") in client_ids] == [], (
+            "a stored output item id was sent back, so the API pairs the output with the stored call instead"
+        )
+
+    @pytest.mark.asyncio
+    async def test_openai_chat_pairs_every_forwarded_call_with_one_result(self):
+        """The control: Chat Completions has no stored item to resolve, and must keep pairing."""
+        model = RecordingModel()
+        await _drive(Agent(model=model), _responses_tool_transcript())
+
+        formatted = OpenAIChat(id="gpt-4o")._format_all_messages(model.calls[0])
+        calls = [tool_call["id"] for msg in formatted for tool_call in msg.get("tool_calls") or []]
+        results = [msg["tool_call_id"] for msg in formatted if msg["role"] == "tool"]
+
+        assert len(calls) == 2
+        assert sorted(results) == sorted(calls)
+        assert len(set(results)) == len(results)
+
+    @pytest.mark.asyncio
+    async def test_a_forwarded_call_and_its_result_share_an_id_the_client_never_sent(self):
+        model = RecordingModel()
+        await _drive(Agent(model=model), _responses_tool_transcript())
+
+        calls = [tool_call for msg in model.calls[0] for tool_call in msg.tool_calls or []]
+        results = [msg for msg in model.calls[0] if msg.role == "tool"]
+        assert [(call["id"], call["function"]["arguments"]) for call in calls] == [
+            (results[0].tool_call_id, '{"city":"Oslo"}'),
+            (results[1].tool_call_id, '{"city":"Bergen"}'),
+        ]
+        assert [msg.content for msg in results] == ["rain", "sun"]
+        assert not {call["id"] for call in calls} & _client_ids(_responses_tool_transcript())

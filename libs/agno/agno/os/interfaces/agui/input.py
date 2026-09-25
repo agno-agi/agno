@@ -11,6 +11,7 @@ from pydantic import BaseModel
 
 from agno.media import Audio, File, Image, Video
 from agno.models.message import Message
+from agno.os.interfaces.agui.resume import _tool_message_text
 from agno.tools.function import Function
 from agno.utils.log import log_warning
 
@@ -22,9 +23,10 @@ def extract_current_turn(
 ) -> Tuple[str, List[Image], List[Audio], List[Video], List[File]]:
     """The text and media of the message this request is asking about.
 
-    Resolved and decoded once. Reading text from one message and media from another would
-    make a single turn out of two, so this is one message: the newest user message that
-    carries anything.
+    This is the selection for a request that forwards the transcript as history, where the
+    turn and the history have to partition the transcript. Resolved and decoded once.
+    Reading text from one message and media from another would make a single turn out of
+    two, so this is one message: the newest user message that carries anything.
 
     An empty newest user message is not the turn. Some clients append one before the user
     has typed, and taking it would ask the model nothing. Reaching back past it means the
@@ -44,16 +46,31 @@ def extract_current_turn(
 
 
 def extract_user_input(messages: List[AGUIMessage]) -> str:
-    """Extract the current turn's text from AG-UI messages."""
-    return extract_current_turn(messages)[0]
+    """Extract the last user message content from AG-UI messages."""
+    for msg in reversed(messages):
+        if msg.role == "user" and msg.content is not None:
+            if isinstance(msg.content, str):
+                return msg.content
+            if isinstance(msg.content, list):
+                text_parts = []
+                for part in msg.content:
+                    if hasattr(part, "type") and part.type == "text" and hasattr(part, "text"):
+                        text_parts.append(part.text)
+                if text_parts:
+                    return "\n".join(text_parts)
+    return ""
 
 
 def extract_media(
     messages: List[AGUIMessage],
 ) -> Tuple[List[Image], List[Audio], List[Video], List[File]]:
-    """Extract media from the current turn."""
-    _, images, audio, videos, files = extract_current_turn(messages)
-    return images, audio, videos, files
+    """Extract media from the last user message."""
+    for msg in reversed(messages):
+        if msg.role != "user" or msg.content is None:
+            continue
+        return _extract_media_from_content(msg.content)
+
+    return [], [], [], []
 
 
 def _current_turn_index(messages: List[AGUIMessage]) -> Optional[int]:
@@ -186,8 +203,8 @@ def extract_message_history(messages: List[AGUIMessage]) -> List[Message]:
     messages. The result is history and nothing else:
 
     - The current turn is excluded, and so is anything after it: the turn reaches the
-      model as ``extract_user_input`` plus ``extract_media``, and a reply that follows it
-      is the answer this run is about to produce again.
+      model as ``extract_current_turn``, and a reply that follows it is the answer this
+      run is about to produce again.
     - Client system and developer messages are excluded: the entity owns its system
       message, and a second one inserted mid-conversation would fight it.
     - Activity and reasoning messages are excluded: they carry no model-facing content.
@@ -197,7 +214,8 @@ def extract_message_history(messages: List[AGUIMessage]) -> List[Message]:
       assistant turn's calls followed immediately by their results. A call whose result
       does not arrive in that block is dropped along with the result, a call id is
       forwarded at most once however often the client reuses it, and a result carrying
-      neither content nor an error does not count as one.
+      neither text nor an error does not count as one. Each forwarded call and its
+      result carry a fresh id rather than the client's.
     - History starts at a user message. Providers reject a conversation that opens on an
       assistant turn, which is what a client's opening greeting would produce.
 
@@ -257,13 +275,23 @@ def extract_message_history(messages: List[AGUIMessage]) -> List[Message]:
             # Nothing to answer yet: an assistant turn cannot open the conversation.
             continue
 
+        # A call id in history only pairs a call with its result, so each forwarded call
+        # gets a fresh one. The client echoes whatever id the stream carried, which can be
+        # the provider's own: OpenAI Responses streams its stored output item id, and sent
+        # back that id resolves to the stored call, whose real call id this history never
+        # answers. A fresh id carries no provider's prefix, so every provider remaps it.
+        history_ids: Dict[str, str] = {}
+        for tool_call in answered:
+            history_ids[tool_call.id] = f"agui_history_{len(forwarded_calls)}"
+            forwarded_calls.add(tool_call.id)
+
         history.append(
             Message(
                 role="assistant",
                 content=msg.content,
                 tool_calls=[
                     {
-                        "id": tool_call.id,
+                        "id": history_ids[tool_call.id],
                         "type": "function",
                         "function": {"name": tool_call.function.name, "arguments": tool_call.function.arguments},
                     }
@@ -274,13 +302,11 @@ def extract_message_history(messages: List[AGUIMessage]) -> List[Message]:
             )
         )
         for tool_call in answered:
-            forwarded_calls.add(tool_call.id)
-            result = results[tool_call.id]
-            error = getattr(result, "error", None)
+            text, error = results[tool_call.id]
             history.append(
                 Message(
                     role="tool",
-                    tool_call_id=tool_call.id,
+                    tool_call_id=history_ids[tool_call.id],
                     # Gemini formats a tool message with no tool_name as plain text, which
                     # leaves the call it answers unanswered. The name comes from the call
                     # so the two can never disagree.
@@ -288,7 +314,7 @@ def extract_message_history(messages: List[AGUIMessage]) -> List[Message]:
                     # Both halves ride along: the result the frontend produced before it
                     # failed is context, and dropping the error replays a failure as a
                     # success.
-                    content="\n".join(part for part in (result.content, error) if part),
+                    content="\n".join(part for part in (text, error) if part),
                     tool_call_error=bool(error),
                     from_history=True,
                 )
@@ -309,22 +335,26 @@ def _unique_tool_calls(msg: AGUIMessage) -> List[Any]:
     return unique
 
 
-def _tool_results_following(prior: List[AGUIMessage], index: int) -> Tuple[Dict[str, Any], int]:
-    """The tool results in the block that starts at ``index``, and where the block ends.
+def _tool_results_following(prior: List[AGUIMessage], index: int) -> Tuple[Dict[str, Tuple[str, Optional[str]]], int]:
+    """The text and error of each tool result in the block that starts at ``index``, and
+    where the block ends.
 
-    Only results that carry something count: a result with neither content nor an error
+    Only results that carry something count: a result with neither text nor an error
     tells the model nothing, and forwarding the call it answers without it would leave
     the call unanswered.
     """
-    results: Dict[str, Any] = {}
+    results: Dict[str, Tuple[str, Optional[str]]] = {}
 
     while index < len(prior) and prior[index].role == "tool":
         result = prior[index]
         index += 1
         call_id = getattr(result, "tool_call_id", None)
-        if not call_id or not (result.content or getattr(result, "error", None)):
+        if not call_id or call_id in results:
             continue
-        results.setdefault(call_id, result)
+        text = _tool_message_text(result)  # type: ignore[arg-type]
+        error = getattr(result, "error", None)
+        if text or error:
+            results[call_id] = (text, error)
 
     return results, index
 

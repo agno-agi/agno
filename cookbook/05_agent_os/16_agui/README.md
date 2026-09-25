@@ -141,8 +141,12 @@ What the forwarding path does and does not do:
 - Tool traffic is forwarded in the shape providers accept: an assistant turn's
   calls followed immediately by their results. A call whose result does not
   arrive with it is dropped along with the result, a call id is forwarded once
-  however often the client reuses it, and a result carrying neither content nor
-  an error does not count as one.
+  however often the client reuses it, and a result carrying neither text nor an
+  error does not count as one. A result sent as content parts contributes its
+  text parts. Each forwarded call and its result get a fresh id, because the id
+  the client echoes back can be one the provider minted: OpenAI Responses streams
+  its stored output item id, and re-sent, that id resolves to the stored call
+  rather than pairing with the forwarded result.
 - The whole transcript the client sent is forwarded, consecutive turns of the
   same role included, exactly as the client ordered them. `num_history_runs` and
   `num_history_messages` do not apply here: they window a session this path does

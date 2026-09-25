@@ -25,8 +25,10 @@ from agno.models.message import Message
 from agno.os.interfaces.agui.input import (
     extract_context,
     extract_current_turn,
+    extract_media,
     extract_message_history,
     extract_tool_messages,
+    extract_user_input,
     parse_client_tools,
     validate_state,
 )
@@ -92,7 +94,13 @@ async def run_entity(
         messages = run_input.messages or []
 
         # 1. Extract inputs from AG-UI message history
-        user_input, images, audio, videos, files = extract_current_turn(messages)
+        forwards_history = not isinstance(entity, (RemoteAgent, RemoteTeam)) and getattr(entity, "db", None) is None
+        if forwards_history:
+            # The turn has to be the one the forwarded history stops at.
+            user_input, images, audio, videos, files = extract_current_turn(messages)
+        else:
+            user_input = extract_user_input(messages)
+            images, audio, videos, files = extract_media(messages)
         tool_messages = extract_tool_messages(messages)
 
         # 2. Convert frontend tool definitions to Agno Functions
@@ -151,7 +159,7 @@ async def run_entity(
                         "The remote entity's own session store has to provide it."
                     )
             else:
-                if getattr(entity, "db", None) is None:
+                if forwards_history:
                     # AG-UI clients resend the whole conversation every turn, while Agno reads
                     # history from a session: with no database there is no session worth
                     # reading, so the transcript the client sent is the conversation. The run
