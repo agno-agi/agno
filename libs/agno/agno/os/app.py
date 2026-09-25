@@ -232,20 +232,13 @@ def _combine_app_lifespans(lifespans: list) -> Any:
     if len(lifespans) == 1:
         return lifespans[0]
 
-    from contextlib import asynccontextmanager
+    from contextlib import AsyncExitStack, asynccontextmanager
 
     @asynccontextmanager
     async def combined_lifespan(app):
-        async def _run_nested(index: int):
-            if index >= len(lifespans):
-                yield
-                return
-
-            async with lifespans[index](app):
-                async for _ in _run_nested(index + 1):
-                    yield
-
-        async for _ in _run_nested(0):
+        async with AsyncExitStack() as stack:
+            for lifespan in lifespans:
+                await stack.enter_async_context(lifespan(app))
             yield
 
     return combined_lifespan
