@@ -730,6 +730,11 @@ class TestPrepareMemberHitlContinuation:
         run_messages.messages = msgs
         return run_messages
 
+    def _team(self):
+        # Minimal team stand-in: respond_directly keeps the leader-oriented
+        # continuation message; True would return the raw member response instead.
+        return SimpleNamespace(respond_directly=False)
+
     def test_updates_delegate_task_to_member(self):
         from agno.team._run import _prepare_member_hitl_continuation
 
@@ -741,7 +746,7 @@ class TestPrepareMemberHitlContinuation:
         run_response = self._make_run_response_with_tools([tool])
         run_messages = self._make_run_messages(["tc-1"])
 
-        _prepare_member_hitl_continuation(run_response, run_messages, ["[Agent]: Done"])
+        _prepare_member_hitl_continuation(self._team(), run_response, run_messages, ["[Agent]: Done"])
 
         assert "requires human input" not in tool.result
         assert "Done" in tool.result
@@ -757,7 +762,7 @@ class TestPrepareMemberHitlContinuation:
         run_response = self._make_run_response_with_tools([tool])
         run_messages = self._make_run_messages(["tc-1"])
 
-        _prepare_member_hitl_continuation(run_response, run_messages, ["[Agent]: Done"])
+        _prepare_member_hitl_continuation(self._team(), run_response, run_messages, ["[Agent]: Done"])
 
         assert "Done" in tool.result
 
@@ -777,7 +782,7 @@ class TestPrepareMemberHitlContinuation:
         run_response = self._make_run_response_with_tools([tool1, tool2])
         run_messages = self._make_run_messages(["tc-1", "tc-2"])
 
-        _prepare_member_hitl_continuation(run_response, run_messages, ["[Agent]: Done"])
+        _prepare_member_hitl_continuation(self._team(), run_response, run_messages, ["[Agent]: Done"])
 
         assert "Done" in tool1.result
         assert "Done" in tool2.result
@@ -795,7 +800,7 @@ class TestPrepareMemberHitlContinuation:
         run_response = self._make_run_response_with_tools([tool])
         run_messages = self._make_run_messages(["tc-1"])
 
-        _prepare_member_hitl_continuation(run_response, run_messages, ["[Agent]: Done"])
+        _prepare_member_hitl_continuation(self._team(), run_response, run_messages, ["[Agent]: Done"])
 
         assert "Done" in tool.result
 
@@ -812,10 +817,53 @@ class TestPrepareMemberHitlContinuation:
         run_response.content = "old content"
         run_messages = self._make_run_messages(["tc-1"])
 
-        _prepare_member_hitl_continuation(run_response, run_messages, ["[Agent]: Done"])
+        _prepare_member_hitl_continuation(self._team(), run_response, run_messages, ["[Agent]: Done"])
 
         assert run_response.status == RunStatus.running
         assert run_response.content is None
+
+    def test_route_teams_get_raw_direct_response(self):
+        """respond_directly=True: the raw member content is returned as the direct
+        response and written as the delegate tool result — no leader-oriented
+        wrapper, and the caller must skip the leader-model call (see #10474)."""
+        from agno.team._run import _prepare_member_hitl_continuation
+
+        tool = _make_tool_execution(
+            tool_name="delegate_task_to_member",
+            tool_call_id="tc-1",
+            result="requires human input",
+        )
+        run_response = self._make_run_response_with_tools([tool])
+        run_messages = self._make_run_messages(["tc-1"])
+
+        direct = _prepare_member_hitl_continuation(
+            SimpleNamespace(respond_directly=True), run_response, run_messages, ["Direct answer"]
+        )
+
+        assert direct == "Direct answer"
+        assert tool.result == "Direct answer"
+        assert run_messages.messages[0].content == "Direct answer"
+
+    def test_regular_teams_get_leader_continuation_message(self):
+        """respond_directly=False: the leader-oriented continuation message is used
+        and no direct-response content is returned."""
+        from agno.team._run import _prepare_member_hitl_continuation
+
+        tool = _make_tool_execution(
+            tool_name="delegate_task_to_member",
+            tool_call_id="tc-1",
+            result="requires human input",
+        )
+        run_response = self._make_run_response_with_tools([tool])
+        run_messages = self._make_run_messages(["tc-1"])
+
+        direct = _prepare_member_hitl_continuation(
+            SimpleNamespace(respond_directly=False), run_response, run_messages, ["[Agent]: Done"]
+        )
+
+        assert direct is None
+        assert "Member results after human-in-the-loop resolution:" in tool.result
+        assert "[Agent]: Done" in tool.result
 
 
 # ===========================================================================
