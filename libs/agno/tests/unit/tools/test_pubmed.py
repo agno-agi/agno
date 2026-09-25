@@ -51,6 +51,14 @@ def test_search_pubmed_call_arg_overrides_constructor(mock_httpx_get):
     assert get_retmax_sent(mock_httpx_get) == 5
 
 
+def test_search_pubmed_call_arg_explicit_zero_overrides_constructor(mock_httpx_get):
+    """Test that an explicit max_results=0 argument is honored rather than falling back to default."""
+    tools = PubmedTools(max_results=3)
+    tools.search_pubmed("test query", max_results=0)
+
+    assert get_retmax_sent(mock_httpx_get) == 0
+
+
 def test_search_pubmed_defaults_to_ten(mock_httpx_get):
     """Test that max_results falls back to 10 when not configured anywhere."""
     tools = PubmedTools()
