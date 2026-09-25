@@ -34,6 +34,8 @@ def create_mock_search_result(
     author: str = None,
     published_date: str = None,
     text: str = None,
+    summary: str = None,
+    highlights: list = None,
 ):
     """Helper function to create mock search result."""
     result = Mock()
@@ -42,6 +44,8 @@ def create_mock_search_result(
     result.author = author
     result.published_date = published_date
     result.text = text
+    result.summary = summary
+    result.highlights = highlights
     return result
 
 
@@ -389,3 +393,155 @@ def test_research_error_handling(exa_tools, mock_exa_client):
 
     assert "error" in result_data
     assert "Research failed: API Error" in result_data["error"]
+
+
+def test_livecrawl_is_passed_to_exa(mock_exa_client):
+    """livecrawl must reach the API calls, not just sit on the toolkit."""
+    with patch.dict("os.environ", {"EXA_API_KEY": "test_key"}):
+        tools = ExaTools(livecrawl="always")
+    tools.exa = mock_exa_client
+
+    mock_response = Mock(spec=SearchResponse)
+    mock_response.results = [create_mock_search_result(url="https://example.com")]
+    mock_exa_client.search_and_contents.return_value = mock_response
+    mock_exa_client.get_contents.return_value = mock_response
+    mock_exa_client.find_similar_and_contents.return_value = mock_response
+
+    tools.search_exa("test query")
+    assert mock_exa_client.search_and_contents.call_args.kwargs["livecrawl"] == "always"
+
+    tools.get_contents(["https://example.com"])
+    assert mock_exa_client.get_contents.call_args.kwargs["livecrawl"] == "always"
+
+    tools.find_similar("https://example.com")
+    assert mock_exa_client.find_similar_and_contents.call_args.kwargs["livecrawl"] == "always"
+
+
+def test_livecrawl_unset_by_default(exa_tools, mock_exa_client):
+    """Without livecrawl configured, nothing is sent and Exa keeps its own default."""
+    mock_response = Mock(spec=SearchResponse)
+    mock_response.results = [create_mock_search_result(url="https://example.com")]
+    mock_exa_client.search_and_contents.return_value = mock_response
+
+    exa_tools.search_exa("test query")
+
+    assert "livecrawl" not in mock_exa_client.search_and_contents.call_args.kwargs
+
+
+def test_summary_is_returned_when_requested(mock_exa_client):
+    """A summary that Exa returned (and billed for) must reach the model."""
+    with patch.dict("os.environ", {"EXA_API_KEY": "test_key"}):
+        tools = ExaTools(summary=True)
+    tools.exa = mock_exa_client
+
+    mock_response = Mock(spec=SearchResponse)
+    mock_response.results = [
+        create_mock_search_result(
+            url="https://example.com",
+            title="Test Article",
+            text="Sample text content",
+            summary="A short summary of the article",
+        )
+    ]
+    mock_exa_client.search_and_contents.return_value = mock_response
+
+    result_data = json.loads(tools.search_exa("test query"))
+
+    assert mock_exa_client.search_and_contents.call_args.kwargs["summary"] is True
+    assert result_data[0]["summary"] == "A short summary of the article"
+
+
+def test_summary_absent_when_not_returned(exa_tools, mock_exa_client):
+    """No summary in the response means no summary key in the output."""
+    mock_response = Mock(spec=SearchResponse)
+    mock_response.results = [create_mock_search_result(url="https://example.com", text="Sample text content")]
+    mock_exa_client.search_and_contents.return_value = mock_response
+
+    result_data = json.loads(exa_tools.search_exa("test query"))
+
+    assert "summary" not in result_data[0]
+
+
+def test_search_forwards_the_full_option_set(mock_exa_client):
+    """Options accepted by the constructor must reach the search call."""
+    with patch.dict("os.environ", {"EXA_API_KEY": "test_key"}):
+        tools = ExaTools(
+            include_text=["docket number"],
+            exclude_text=["sponsored"],
+            user_location="US",
+            moderation=True,
+            highlights=True,
+            subpages=2,
+        )
+    tools.exa = mock_exa_client
+
+    mock_response = Mock(spec=SearchResponse)
+    mock_response.results = [create_mock_search_result(url="https://example.com")]
+    mock_exa_client.search_and_contents.return_value = mock_response
+
+    tools.search_exa("test query")
+
+    kwargs = mock_exa_client.search_and_contents.call_args.kwargs
+    assert kwargs["include_text"] == ["docket number"]
+    assert kwargs["exclude_text"] == ["sponsored"]
+    assert kwargs["user_location"] == "US"
+    assert kwargs["moderation"] is True
+    assert kwargs["highlights"] is True
+    assert kwargs["subpages"] == 2
+
+
+def test_contents_options_reach_get_contents_and_find_similar(mock_exa_client):
+    """highlights/subpages apply to the contents-bearing calls too."""
+    with patch.dict("os.environ", {"EXA_API_KEY": "test_key"}):
+        tools = ExaTools(highlights=True, subpages=2, include_text=["docket number"])
+    tools.exa = mock_exa_client
+
+    mock_response = Mock(spec=SearchResponse)
+    mock_response.results = [create_mock_search_result(url="https://example.com")]
+    mock_exa_client.get_contents.return_value = mock_response
+    mock_exa_client.find_similar_and_contents.return_value = mock_response
+
+    tools.get_contents(["https://example.com"])
+    contents_kwargs = mock_exa_client.get_contents.call_args.kwargs
+    assert contents_kwargs["highlights"] is True
+    assert contents_kwargs["subpages"] == 2
+
+    tools.find_similar("https://example.com")
+    similar_kwargs = mock_exa_client.find_similar_and_contents.call_args.kwargs
+    assert similar_kwargs["highlights"] is True
+    assert similar_kwargs["subpages"] == 2
+    assert similar_kwargs["include_text"] == ["docket number"]
+
+
+def test_new_options_unset_by_default(exa_tools, mock_exa_client):
+    """None of the new options are sent unless they are configured."""
+    mock_response = Mock(spec=SearchResponse)
+    mock_response.results = [create_mock_search_result(url="https://example.com")]
+    mock_exa_client.search_and_contents.return_value = mock_response
+
+    exa_tools.search_exa("test query")
+
+    kwargs = mock_exa_client.search_and_contents.call_args.kwargs
+    for option in ("include_text", "exclude_text", "user_location", "moderation", "highlights", "subpages"):
+        assert option not in kwargs
+
+
+def test_highlights_are_returned_when_requested(mock_exa_client):
+    """Highlights that Exa returned must reach the model."""
+    with patch.dict("os.environ", {"EXA_API_KEY": "test_key"}):
+        tools = ExaTools(highlights=True)
+    tools.exa = mock_exa_client
+
+    mock_response = Mock(spec=SearchResponse)
+    mock_response.results = [
+        create_mock_search_result(
+            url="https://example.com",
+            text="Sample text content",
+            highlights=["The relevant sentence."],
+        )
+    ]
+    mock_exa_client.search_and_contents.return_value = mock_response
+
+    result_data = json.loads(tools.search_exa("test query"))
+
+    assert result_data[0]["highlights"] == ["The relevant sentence."]
