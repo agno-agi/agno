@@ -35,6 +35,7 @@ from agno.exceptions import (
     AgentRunException,
     ContextWindowExceededError,
     ModelProviderError,
+    ModelRefusalError,
     RetryableModelProviderError,
     RunCancelledException,
 )
@@ -220,6 +221,10 @@ class Model(ABC):
         # Defense-in-depth: catch context window errors even if not pre-classified
         error_msg = str(error.message).lower()
         if any(pattern in error_msg for pattern in ModelProviderError.CONTEXT_WINDOW_PATTERNS):
+            return False
+
+        # A refusal is the model's answer to this request; fallback models may still take it.
+        if isinstance(error, ModelRefusalError):
             return False
 
         return True
