@@ -415,7 +415,9 @@ class ReaderFactory:
     def get_reader_for_extension(cls, extension: str) -> Reader:
         """Get the appropriate reader for a file extension."""
         # TODO: add docling for unique file extensions eg: images, audios, etc.
-        extension = extension.lower()
+        # Callers may provide either a filename extension or an HTTP Content-Type.
+        # Normalize MIME parameters (for example, ``charset``) before routing.
+        extension = extension.lower().split(";", 1)[0].strip()
 
         if extension in [".pdf", "application/pdf"]:
             return cls.create_reader("pdf")
@@ -428,15 +430,20 @@ class ReaderFactory:
             "application/vnd.ms-excel",
         ]:
             return cls.create_reader("excel")
-        elif extension in [".docx", ".doc", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"]:
+        elif extension in [
+            ".docx",
+            ".doc",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "application/msword",
+        ]:
             return cls.create_reader("docx")
-        elif extension == ".pptx":
+        elif extension in [".pptx", "application/vnd.openxmlformats-officedocument.presentationml.presentation"]:
             return cls.create_reader("pptx")
-        elif extension == ".json":
+        elif extension in [".json", "application/json"]:
             return cls.create_reader("json")
-        elif extension in [".md", ".markdown"]:
+        elif extension in [".md", ".markdown", "text/markdown"]:
             return cls.create_reader("markdown")
-        elif extension in [".txt", ".text"]:
+        elif extension in [".txt", ".text", "text/plain"]:
             return cls.create_reader("text")
         else:
             # Default to text reader for unknown extensions
