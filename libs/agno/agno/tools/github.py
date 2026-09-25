@@ -1,4 +1,5 @@
 import json
+from contextlib import closing
 from os import getenv
 from typing import Any, List, Optional
 from urllib.parse import quote
@@ -99,35 +100,40 @@ class GithubTools(Toolkit):
             sort (str, optional): The field to sort results by. Can be 'stars', 'forks', or 'updated'. Defaults to 'stars'.
             order (str, optional): The order of results. Can be 'asc' or 'desc'. Defaults to 'desc'.
             page (int, optional): Page number of results to return, counting from 1. Defaults to 1.
-            per_page (int, optional): Number of results per page. Max 100. Defaults to 30.
+            per_page (int, optional): Number of results per page. Must be positive. Max 100. Defaults to 30.
 
         Returns:
             A JSON-formatted string containing a list of repositories matching the search query.
         """
         log_debug(f"Searching repositories with query: '{query}', page: {page}, per_page: {per_page}")
+        if page < 1 or per_page < 1:
+            return json.dumps({"error": "page and per_page must be positive integers"})
         try:
             # Ensure per_page doesn't exceed GitHub's max of 100
             per_page = min(per_page, 100)
 
-            repositories = self.g.search_repositories(query=query, sort=sort, order=order)
+            # Keep each search's page size independent of the shared client.
+            with closing(self.authenticate()) as client:
+                client.per_page = per_page
+                repositories = client.search_repositories(query=query, sort=sort, order=order)
 
-            # Get the specified page of results
-            repo_list = []
-            for repo in repositories.get_page(page - 1):
-                repo_info = {
-                    "full_name": repo.full_name,
-                    "description": repo.description,
-                    "url": repo.html_url,
-                    "stars": repo.stargazers_count,
-                    "forks": repo.forks_count,
-                    "language": repo.language,
-                }
-                repo_list.append(repo_info)
+                # Get the specified page of results
+                repo_list = []
+                for repo in repositories.get_page(page - 1):
+                    repo_info = {
+                        "full_name": repo.full_name,
+                        "description": repo.description,
+                        "url": repo.html_url,
+                        "stars": repo.stargazers_count,
+                        "forks": repo.forks_count,
+                        "language": repo.language,
+                    }
+                    repo_list.append(repo_info)
 
-                if len(repo_list) >= per_page:
-                    break
+                    if len(repo_list) >= per_page:
+                        break
 
-            return json.dumps(repo_list, indent=2)
+                return json.dumps(repo_list, indent=2)
 
         except GithubException as e:
             logger.exception("Error searching repositories")
@@ -1698,13 +1704,15 @@ class GithubTools(Toolkit):
             label (str, optional): Filter by label. Defaults to None.
             sort (str, optional): Sort results by ('created', 'updated', 'comments'). Defaults to "created".
             order (str, optional): Sort order ('asc', 'desc'). Defaults to "desc".
-            page (int, optional): Page number for pagination. Defaults to 1.
-            per_page (int, optional): Number of results per page. Defaults to 30.
+            page (int, optional): Page number of results to return, counting from 1. Defaults to 1.
+            per_page (int, optional): Number of results per page. Must be positive. Max 100. Defaults to 30.
 
         Returns:
             A JSON-formatted string containing the search results.
         """
         log_debug(f"Searching issues and PRs with query: {query}")
+        if page < 1 or per_page < 1:
+            return json.dumps({"error": "page and per_page must be positive integers"})
         try:
             search_query = query
 
@@ -1724,50 +1732,53 @@ class GithubTools(Toolkit):
 
             # Perform the search
             log_debug(f"Final search query: {search_query}")
-            issue_results = self.g.search_issues(search_query, sort=sort, order=order)
-
-            # Process results
             per_page = min(per_page, 100)  # Ensure per_page doesn't exceed 100
-            results = []
+            # Keep each search's page size independent of the shared client.
+            with closing(self.authenticate()) as client:
+                client.per_page = per_page
+                issue_results = client.search_issues(search_query, sort=sort, order=order)
 
-            try:
-                # Get the specific page of results
-                page_items = issue_results.get_page(page - 1)
+                # Process results
+                results = []
 
-                for issue in page_items:
-                    issue_info = {
-                        "number": issue.number,
-                        "title": issue.title,
-                        "repository": issue.repository.full_name,
-                        "state": issue.state,
-                        "created_at": issue.created_at.isoformat(),
-                        "updated_at": issue.updated_at.isoformat(),
-                        "html_url": issue.html_url,
-                        "user": issue.user.login,
-                        "is_pull_request": hasattr(issue, "pull_request") and issue.pull_request is not None,
-                        "comments": issue.comments,
-                        "labels": [label.name for label in issue.labels],
-                    }
-                    results.append(issue_info)
+                try:
+                    # Get the specific page of results
+                    page_items = issue_results.get_page(page - 1)
 
-                    if len(results) >= per_page:
-                        break
-            except IndexError:
-                # Page is out of range
-                pass
+                    for issue in page_items:
+                        issue_info = {
+                            "number": issue.number,
+                            "title": issue.title,
+                            "repository": issue.repository.full_name,
+                            "state": issue.state,
+                            "created_at": issue.created_at.isoformat(),
+                            "updated_at": issue.updated_at.isoformat(),
+                            "html_url": issue.html_url,
+                            "user": issue.user.login,
+                            "is_pull_request": hasattr(issue, "pull_request") and issue.pull_request is not None,
+                            "comments": issue.comments,
+                            "labels": [label.name for label in issue.labels],
+                        }
+                        results.append(issue_info)
 
-            # Return search results
-            return json.dumps(
-                {
-                    "query": search_query,
-                    "total_count": issue_results.totalCount,
-                    "page": page,
-                    "per_page": per_page,
-                    "results_count": len(results),
-                    "results": results,
-                },
-                indent=2,
-            )
+                        if len(results) >= per_page:
+                            break
+                except IndexError:
+                    # Page is out of range
+                    pass
+
+                # Return search results
+                return json.dumps(
+                    {
+                        "query": search_query,
+                        "total_count": issue_results.totalCount,
+                        "page": page,
+                        "per_page": per_page,
+                        "results_count": len(results),
+                        "results": results,
+                    },
+                    indent=2,
+                )
         except GithubException as e:
             logger.exception("Error searching issues and PRs")
             return json.dumps({"error": str(e)})
