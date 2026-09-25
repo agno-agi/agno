@@ -74,6 +74,7 @@ from agno.run.cancel import (
     cancel_run as cancel_run_global,
 )
 from agno.run.concurrency import SSE_KEEPALIVE_INTERVAL_SECONDS, background_run_slot
+from agno.run.continuation import _apersist_continue_start, _persist_continue_start
 from agno.run.messages import RunMessages
 from agno.run.requirement import RunRequirement
 from agno.run.status_persist import apersist_run_transition
@@ -3710,6 +3711,7 @@ def continue_run_dispatch(
         session=agent_session,
         add_history_to_context=agent.add_history_to_context,
         run_context=run_context,
+        run_response=run_response,
     )
 
     # Reset the run state
@@ -3786,6 +3788,8 @@ def _continue_run(
     )
     from agno.agent._telemetry import log_agent_telemetry
     from agno.agent._tools import handle_tool_call_updates
+
+    _persist_continue_start(agent, "agent", run_response, session, run_context)
 
     register_run(run_response.run_id)  # type: ignore
 
@@ -4006,6 +4010,8 @@ def _continue_run_stream(
     )
     from agno.agent._telemetry import log_agent_telemetry
     from agno.agent._tools import handle_tool_call_updates_stream
+
+    _persist_continue_start(agent, "agent", run_response, session, run_context)
 
     register_run(run_response.run_id)  # type: ignore
 
@@ -5035,10 +5041,11 @@ async def _acontinue_run(
                     input=input_messages,
                     session=agent_session,
                     add_history_to_context=agent.add_history_to_context,
+                    run_response=run_response,
                 )
 
                 # Reset the run state
-                run_response.status = RunStatus.running
+                await _apersist_continue_start(agent, "agent", run_response, agent_session, run_context)
 
                 # Register run for cancellation tracking
                 await aregister_run(run_response.run_id)  # type: ignore
@@ -5558,10 +5565,11 @@ async def _acontinue_run_stream(
                     input=input_messages,
                     session=agent_session,
                     add_history_to_context=agent.add_history_to_context,
+                    run_response=run_response,
                 )
 
                 # Reset the run state
-                run_response.status = RunStatus.running
+                await _apersist_continue_start(agent, "agent", run_response, agent_session, run_context)
 
                 # Register run for cancellation tracking
                 await aregister_run(run_response.run_id)  # type: ignore
