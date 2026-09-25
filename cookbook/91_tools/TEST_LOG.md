@@ -1,5 +1,15 @@
 # Test Log
 
+### anysearch_tools.py (new toolkit)
+
+**Status:** PASS (cookbook run on DeepSeek; no OPENAI_API_KEY in the test environment)
+
+**Description:** Added `AnySearchTools` (`agno/tools/anysearch.py`) for AnySearch's REST API: `search` (general and vertical), `batch_search` (up to five queries per call), `extract`, and `get_sub_domains` (vertical tag discovery), each with a same-named async twin registered through `async_tools`, so `run()` and `arun()` both work. The cookbook exercises a research agent, a vertical-search analyst, and a page reader.
+
+**Result:** 61 unit tests pass (`pytest libs/agno/tests/unit/tools/test_anysearch.py`), network mocked with `httpx.MockTransport`: request shape (URL, body, headers), `max_results` clamping, result mapping and `content_length_limit` truncation, per-status error envelope, envelope drift reported instead of a silent empty result set, credential-shaped error bodies withheld from both the result and the logs, a base URL without a scheme falling back to the default, batch caps and per-query isolation, sync/async shape parity, a non-dict metadata field ignored instead of raising, and a null extract body read as empty. Cookbook run: the research agent searched twice and extracted twice, then answered a CPython-version question citing python.org; the vertical agent called `get_sub_domains` first and then worked its question through tagged `batch_search` and `extract` calls; the reader agent surfaced an extract failure (HTTP 422 on a JavaScript-only page) instead of inventing content. All four tools also ran live against the API, keyed and anonymous, returning the documented envelope; a vertical search whose tag was missing a required param came back as HTTP 400 with the API's own message passed through as `detail`, which the `search` docstring now calls out. Both test files also pass in a stock `python:3.13-slim` container with only the working tree mounted.
+
+---
+
 ### atomic_mail_tools.py (AtomicMailTools + workflow)
 
 **Status:** PASS
