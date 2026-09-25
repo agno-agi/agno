@@ -2,20 +2,18 @@
 Serve AgentOS Metrics
 =====================
 
-Serve two agents on different models. After they run, GET /os/metrics/models
-returns the model usage breakdown that backs the homepage metrics card.
+Serve two agents on different models. After they run, the /os/metrics routes
+return the sessions, runs, tokens, latency and models of a date range, read from
+the agno_os_metrics table the AgentOS builds from its sessions and runs.
 
-Prerequisites: OPENAI_API_KEY
+Prerequisites: OPENAI_API_KEY and ./cookbook/scripts/run_pgvector.sh
 Run: .venvs/demo/bin/python cookbook/05_agent_os/13_observability/os_metrics.py
-Try: Run both agents, then open http://localhost:7777/os/metrics/models for the last
-     30 days, or add ?starting_date=YYYY-MM-DD&ending_date=YYYY-MM-DD.
-     http://localhost:7777/os/metrics/sessions counts the sessions per day and
-     compares the window with the one before it, and
-     http://localhost:7777/os/metrics/tokens does the same for tokens.
+Try: Run both agents, then open http://localhost:7777/os/metrics/sessions (also
+     /runs, /tokens, /latency and /models), optionally with ?user_id=<id>
 """
 
 from agno.agent import Agent
-from agno.db.sqlite import SqliteDb
+from agno.db.postgres import PostgresDb
 from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS
 
@@ -23,9 +21,9 @@ from agno.os import AgentOS
 # Create Metrics AgentOS
 # ---------------------------------------------------------------------------
 
-db = SqliteDb(
+db = PostgresDb(
     id="observability-metrics-db",
-    db_file="tmp/observability_metrics.db",
+    db_url="postgresql+psycopg://ai:ai@localhost:5532/ai",
 )
 
 researcher = Agent(
@@ -44,7 +42,7 @@ summarizer = Agent(
 
 agent_os = AgentOS(
     id="observability-metrics-os",
-    description="AgentOS serving model usage metrics.",
+    description="AgentOS serving the OS metrics routes.",
     db=db,
     agents=[researcher, summarizer],
 )

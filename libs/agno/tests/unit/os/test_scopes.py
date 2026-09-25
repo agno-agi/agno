@@ -70,6 +70,22 @@ class TestCheckRouteScopes:
         result = check_route_scopes(["metrics:read"], get_default_scope_mappings(), "GET", "/os/metrics/tokens")
         assert result.allowed is True
 
+    def test_os_run_metrics_needs_the_metrics_read_scope(self):
+        result = check_route_scopes(
+            ["agents:agent-openai:run"], get_default_scope_mappings(), "GET", "/os/metrics/runs"
+        )
+        assert result.allowed is False
+        result = check_route_scopes(["metrics:read"], get_default_scope_mappings(), "GET", "/os/metrics/runs")
+        assert result.allowed is True
+
+    def test_os_latency_metrics_needs_the_metrics_read_scope(self):
+        result = check_route_scopes(
+            ["agents:agent-openai:run"], get_default_scope_mappings(), "GET", "/os/metrics/latency"
+        )
+        assert result.allowed is False
+        result = check_route_scopes(["metrics:read"], get_default_scope_mappings(), "GET", "/os/metrics/latency")
+        assert result.allowed is True
+
     def test_os_metrics_refresh_needs_the_metrics_write_scope(self):
         result = check_route_scopes(["metrics:read"], get_default_scope_mappings(), "POST", "/os/metrics/refresh")
         assert result.allowed is False
