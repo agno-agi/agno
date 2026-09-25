@@ -188,3 +188,77 @@ def test_reasoning_previous_response_skips_prior_function_call_items(monkeypatch
 
     # Expect no re-sent function_call when previous_response_id is present for reasoning models
     assert all(x.get("type") != "function_call" for x in fm)
+
+
+def test_replayed_function_call_without_reasoning_drops_item_id_on_stored_reasoning_model():
+    """With no stored response id to chain from and no reasoning item to pair with, a stored
+    reasoning model must not resend the fc_* id: the API rejects it as missing its reasoning item."""
+    model = OpenAIResponses(id="gpt-5")
+    formatted = model._format_messages(
+        messages=[
+            Message(role="user", content="u"),
+            Message(
+                role="assistant",
+                tool_calls=[
+                    {
+                        "id": "fc_1",
+                        "call_id": "call_1",
+                        "type": "function",
+                        "function": {"name": "lookup", "arguments": "{}"},
+                    }
+                ],
+            ),
+            Message(role="tool", tool_call_id="fc_1", content="ok"),
+        ]
+    )
+    function_call = next(item for item in formatted if isinstance(item, dict) and item.get("type") == "function_call")
+    assert "id" not in function_call
+    assert function_call["call_id"] == "call_1"
+    assert formatted[-1] == {"type": "function_call_output", "call_id": "call_1", "output": "ok"}
+
+
+def test_replayed_function_call_keeps_item_id_when_its_reasoning_item_is_replayed():
+    """Under zero data retention the reasoning item travels with the call, and the ids bind them."""
+    model = OpenAIResponses(id="gpt-5", store=False)
+    formatted = model._format_messages(
+        messages=[
+            Message(role="user", content="u"),
+            Message(
+                role="assistant",
+                tool_calls=[
+                    {
+                        "id": "fc_1",
+                        "call_id": "call_1",
+                        "type": "function",
+                        "function": {"name": "lookup", "arguments": "{}"},
+                    }
+                ],
+                provider_data={"reasoning_output": {"id": "rs_1", "type": "reasoning", "summary": []}},
+            ),
+            Message(role="tool", tool_call_id="fc_1", content="ok"),
+        ]
+    )
+    assert getattr(formatted[1], "type", None) == "reasoning"
+    assert formatted[2]["id"] == "fc_1"
+
+
+def test_replayed_function_call_keeps_item_id_on_non_reasoning_model():
+    model = OpenAIResponses(id="gpt-4.1-mini")
+    formatted = model._format_messages(
+        messages=[
+            Message(role="user", content="u"),
+            Message(
+                role="assistant",
+                tool_calls=[
+                    {
+                        "id": "fc_1",
+                        "call_id": "call_1",
+                        "type": "function",
+                        "function": {"name": "lookup", "arguments": "{}"},
+                    }
+                ],
+            ),
+            Message(role="tool", tool_call_id="fc_1", content="ok"),
+        ]
+    )
+    assert formatted[1]["id"] == "fc_1"
