@@ -66,15 +66,14 @@ def is_table_available(session: Session, table_name: str, db_schema: Optional[st
 
     Returns:
         bool: True if the table exists, False otherwise.
+
+    Raises:
+        Any error from the query, so a failed check is not read as a missing table.
     """
-    try:
-        # SQLite uses sqlite_master instead of information_schema
-        exists_query = text("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = :table")
-        exists = session.execute(exists_query, {"table": table_name}).scalar() is not None
-        return exists
-    except Exception as e:
-        log_error(f"Error checking if table exists: {str(e)}")
-        return False
+    # SQLite uses sqlite_master instead of information_schema
+    exists_query = text("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = :table")
+    exists = session.execute(exists_query, {"table": table_name}).scalar() is not None
+    return exists
 
 
 async def ais_table_available(session: AsyncSession, table_name: str, db_schema: Optional[str] = None) -> bool:
@@ -84,14 +83,13 @@ async def ais_table_available(session: AsyncSession, table_name: str, db_schema:
 
     Returns:
         bool: True if the table exists, False otherwise.
+
+    Raises:
+        Any error from the query, so a failed check is not read as a missing table.
     """
-    try:
-        exists_query = text("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = :table")
-        exists = (await session.execute(exists_query, {"table": table_name})).scalar() is not None
-        return exists
-    except Exception as e:
-        log_error(f"Error checking if table exists: {str(e)}")
-        return False
+    exists_query = text("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = :table")
+    exists = (await session.execute(exists_query, {"table": table_name})).scalar() is not None
+    return exists
 
 
 def is_valid_table(db_engine: Engine, table_name: str, table_type: str) -> bool:

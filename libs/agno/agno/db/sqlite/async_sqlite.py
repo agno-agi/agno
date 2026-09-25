@@ -4391,8 +4391,8 @@ class AsyncSqliteDb(AsyncBaseDb):
         try:
             table = await self._get_table(table_type="schedules")
             if table is None:
-                # _get_table also returns None on connection errors (ais_table_available
-                # swallows them), so strict callers must not see this as an empty catalog
+                # No schedules table yet (a database error raises from _get_table instead);
+                # strict callers must not see this as an empty catalog
                 if raise_on_error:
                     raise RuntimeError("schedules table unavailable (database error or table never created)")
                 return [], 0

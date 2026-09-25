@@ -81,25 +81,23 @@ def is_table_available(session: Session, table_name: str, db_schema: Optional[st
 
     Returns:
         bool: True if the table exists, False otherwise.
+
+    Raises:
+        Any error from the query, so a failed check is not read as a missing table.
     """
-    try:
-        if db_schema is not None:
-            exists_query = text(
-                "SELECT 1 FROM information_schema.tables WHERE table_schema = :schema AND table_name = :table"
-            )
-            exists = session.execute(exists_query, {"schema": db_schema, "table": table_name}).scalar() is not None
-        else:
-            # Check in current database/schema
-            exists_query = text(
-                "SELECT 1 FROM information_schema.tables WHERE table_name = :table AND table_schema = DATABASE()"
-            )
-            exists = session.execute(exists_query, {"table": table_name}).scalar() is not None
+    if db_schema is not None:
+        exists_query = text(
+            "SELECT 1 FROM information_schema.tables WHERE table_schema = :schema AND table_name = :table"
+        )
+        exists = session.execute(exists_query, {"schema": db_schema, "table": table_name}).scalar() is not None
+    else:
+        # Check in current database/schema
+        exists_query = text(
+            "SELECT 1 FROM information_schema.tables WHERE table_name = :table AND table_schema = DATABASE()"
+        )
+        exists = session.execute(exists_query, {"table": table_name}).scalar() is not None
 
-        return exists
-
-    except Exception as e:
-        log_error(f"Error checking if table exists: {str(e)}")
-        return False
+    return exists
 
 
 def is_valid_table(db_engine: Engine, table_name: str, table_type: str, db_schema: Optional[str]) -> bool:

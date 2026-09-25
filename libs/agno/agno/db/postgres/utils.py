@@ -94,17 +94,15 @@ def is_table_available(session: Session, table_name: str, db_schema: str) -> boo
 
     Returns:
         bool: True if the table exists, False otherwise.
-    """
-    try:
-        exists_query = text(
-            "SELECT 1 FROM information_schema.tables WHERE table_schema = :schema AND table_name = :table"
-        )
-        exists = session.execute(exists_query, {"schema": db_schema, "table": table_name}).scalar() is not None
-        return exists
 
-    except Exception as e:
-        log_error(f"Error checking if table exists: {str(e)}")
-        return False
+    Raises:
+        Any error from the query, so a failed check is not read as a missing table.
+    """
+    exists_query = text(
+        "SELECT 1 FROM information_schema.tables WHERE table_schema = :schema AND table_name = :table"
+    )
+    exists = session.execute(exists_query, {"schema": db_schema, "table": table_name}).scalar() is not None
+    return exists
 
 
 async def ais_table_available(session: AsyncSession, table_name: str, db_schema: str) -> bool:
@@ -113,16 +111,15 @@ async def ais_table_available(session: AsyncSession, table_name: str, db_schema:
 
     Returns:
         bool: True if the table exists, False otherwise.
+
+    Raises:
+        Any error from the query, so a failed check is not read as a missing table.
     """
-    try:
-        exists_query = text(
-            "SELECT 1 FROM information_schema.tables WHERE table_schema = :schema AND table_name = :table"
-        )
-        exists = (await session.execute(exists_query, {"schema": db_schema, "table": table_name})).scalar() is not None
-        return exists
-    except Exception as e:
-        log_error(f"Error checking if table exists: {str(e)}")
-        return False
+    exists_query = text(
+        "SELECT 1 FROM information_schema.tables WHERE table_schema = :schema AND table_name = :table"
+    )
+    exists = (await session.execute(exists_query, {"schema": db_schema, "table": table_name})).scalar() is not None
+    return exists
 
 
 def is_valid_table(db_engine: Engine, table_name: str, table_type: str, db_schema: str) -> bool:
