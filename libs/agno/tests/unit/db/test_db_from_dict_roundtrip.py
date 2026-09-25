@@ -101,3 +101,82 @@ class TestPostgresDbFromDictRoundTrip:
         assert restored.approvals_table_name == "custom_approvals"
         assert restored.schedules_table_name == "custom_schedules"
         assert restored.schedule_runs_table_name == "custom_schedule_runs"
+
+
+class TestOracleDbFromDictRoundTrip:
+    """OracleDb.__init__ eagerly calls detect_capabilities (a real version
+    query) unless ``json_storage`` is passed -- and ``from_dict`` never
+    passes it through, by design (a restored db should re-detect against
+    whatever server it actually reconnects to, not trust a stale cached
+    capability). So unlike Postgres/Sqlite, a plain create_engine mock isn't
+    enough here: detect_capabilities itself is the network seam to patch.
+    """
+
+    @patch("agno.db.oracle.oracle.detect_capabilities")
+    def test_v25_fields_survive_roundtrip(self, mock_detect_capabilities):
+        from agno.db.oracle._version import OracleCapabilities
+        from agno.db.oracle.oracle import OracleDb
+
+        mock_detect_capabilities.return_value = OracleCapabilities.from_version(23, "23.4.0.0.0")
+
+        original = OracleDb(
+            db_url="oracle+oracledb://user:pass@host/db",
+            learnings_table="custom_learnings",
+            approvals_table="custom_approvals",
+            schedules_table="custom_schedules",
+            schedule_runs_table="custom_schedule_runs",
+        )
+
+        serialized = original.to_dict()
+        restored = OracleDb.from_dict(serialized)
+
+        assert restored.learnings_table_name == "custom_learnings"
+        assert restored.approvals_table_name == "custom_approvals"
+        assert restored.schedules_table_name == "custom_schedules"
+        assert restored.schedule_runs_table_name == "custom_schedule_runs"
+
+    @patch("agno.db.oracle.oracle.detect_capabilities")
+    def test_seven_previously_dropped_overrides_survive_roundtrip(self, mock_detect_capabilities):
+        """Ticket 12's own explicit fix: job_table, auth_tokens_table and
+        the five mcp_oauth_*_table overrides must round-trip, unlike
+        PostgresDb.from_dict's own long-standing gap for these seven keys.
+        """
+        from agno.db.oracle._version import OracleCapabilities
+        from agno.db.oracle.oracle import OracleDb
+
+        mock_detect_capabilities.return_value = OracleCapabilities.from_version(23, "23.4.0.0.0")
+
+        original = OracleDb(
+            db_url="oracle+oracledb://user:pass@host/db",
+            job_table="custom_jobs",
+            auth_tokens_table="custom_auth_tokens",
+            mcp_oauth_clients_table="custom_mcp_clients",
+            mcp_oauth_transactions_table="custom_mcp_transactions",
+            mcp_oauth_codes_table="custom_mcp_codes",
+            mcp_oauth_refresh_tokens_table="custom_mcp_refresh_tokens",
+            mcp_oauth_keys_table="custom_mcp_keys",
+        )
+
+        restored = OracleDb.from_dict(original.to_dict())
+
+        assert restored.job_table_name == "custom_jobs"
+        assert restored.auth_tokens_table_name == "custom_auth_tokens"
+        assert restored.mcp_oauth_clients_table_name == "custom_mcp_clients"
+        assert restored.mcp_oauth_transactions_table_name == "custom_mcp_transactions"
+        assert restored.mcp_oauth_codes_table_name == "custom_mcp_codes"
+        assert restored.mcp_oauth_refresh_tokens_table_name == "custom_mcp_refresh_tokens"
+        assert restored.mcp_oauth_keys_table_name == "custom_mcp_keys"
+
+    @patch("agno.db.oracle.oracle.detect_capabilities")
+    def test_defaults_used_when_fields_absent(self, mock_detect_capabilities):
+        from agno.db.oracle._version import OracleCapabilities
+        from agno.db.oracle.oracle import OracleDb
+
+        mock_detect_capabilities.return_value = OracleCapabilities.from_version(23, "23.4.0.0.0")
+
+        restored = OracleDb.from_dict({"db_url": "oracle+oracledb://user:pass@host/db"})
+
+        assert restored.learnings_table_name == "agno_learnings"
+        assert restored.approvals_table_name == "agno_approvals"
+        assert restored.schedules_table_name == "agno_schedules"
+        assert restored.schedule_runs_table_name == "agno_schedule_runs"

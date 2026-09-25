@@ -36,6 +36,11 @@ def up(db: BaseDb, table_type: str, table_name: str) -> bool:
             return _migrate_singlestore(db, table_name)
         elif db_type == "SqliteDb":
             return _migrate_sqlite(db, table_name)
+        elif db_type == "OracleDb":
+            # OracleDb was introduced against the v3.0.0 schema directly; its
+            # approvals table has always declared run_status, with its index,
+            # from creation (agno.db.oracle.schemas.get_approval_table_schema).
+            return False
         else:
             log_info(f"{db_type} does not require schema migrations")
         return False
@@ -63,6 +68,10 @@ async def async_up(db: AsyncBaseDb, table_type: str, table_name: str) -> bool:
             return await _migrate_async_mysql(db, table_name)
         elif db_type == "AsyncSqliteDb":
             return await _migrate_async_sqlite(db, table_name)
+        elif db_type == "AsyncOracleDb":
+            # See the sync twin's own comment: run_status has been present
+            # since creation for every Oracle approvals table.
+            return False
         else:
             log_info(f"{db_type} does not require schema migrations")
         return False
@@ -92,6 +101,9 @@ def down(db: BaseDb, table_type: str, table_name: str) -> bool:
             return _revert_singlestore(db, table_name)
         elif db_type == "SqliteDb":
             return _revert_sqlite(db, table_name)
+        elif db_type == "OracleDb":
+            # There is no pre-v2.5.6 Oracle approvals shape to revert to.
+            return False
         else:
             log_info(f"Revert not implemented for {db_type}")
         return False
@@ -119,6 +131,9 @@ async def async_down(db: AsyncBaseDb, table_type: str, table_name: str) -> bool:
             return await _revert_async_mysql(db, table_name)
         elif db_type == "AsyncSqliteDb":
             return await _revert_async_sqlite(db, table_name)
+        elif db_type == "AsyncOracleDb":
+            # See the sync twin's own comment: no pre-v2.5.6 Oracle shape exists.
+            return False
         else:
             log_info(f"Revert not implemented for {db_type}")
         return False
