@@ -3,7 +3,7 @@ import collections.abc
 import json
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from hashlib import md5
+from hashlib import md5, sha256
 from pathlib import Path
 from time import sleep, time
 from types import AsyncGeneratorType, GeneratorType
@@ -443,14 +443,51 @@ class Model(ABC):
     def get_provider(self) -> str:
         return self.provider or self.name or self.__class__.__name__
 
+    @staticmethod
+    def _get_image_cache_data(image: Image) -> Dict[str, Any]:
+        """Identify image inputs without random tracking IDs or output-only metadata."""
+        image_data: Dict[str, Any] = {
+            "url": image.url,
+            "filepath": str(image.filepath) if image.filepath is not None else None,
+            "content_hash": sha256(image.content).hexdigest() if image.content is not None else None,
+            "format": image.format,
+            "mime_type": image.mime_type,
+            "detail": image.detail,
+        }
+        if image.filepath is not None:
+            try:
+                image_data["file_content_hash"] = sha256(Path(image.filepath).read_bytes()).hexdigest()
+            except (OSError, ValueError):
+                # Providers may skip unreadable files. Preserve that behavior, but distinguish
+                # it from a later request where the same path contains a readable image.
+                image_data["file_content_hash"] = None
+        if image.media_reference is not None:
+            image_data["media_reference"] = image.media_reference.model_dump(
+                include={
+                    "storage_backend",
+                    "storage_key",
+                    "bucket",
+                    "region",
+                    "url",
+                    "content_hash",
+                    "mime_type",
+                    "filename",
+                },
+                exclude_none=True,
+            )
+        return image_data
+
     def _get_model_cache_key(self, messages: List[Message], stream: bool, **kwargs: Any) -> str:
         """Generate a cache key based on model messages and core parameters."""
         message_data = []
         for msg in messages:
-            msg_dict = {
+            msg_dict: Dict[str, Any] = {
                 "role": msg.role,
                 "content": msg.content,
             }
+            if msg.images:
+                # Keep existing text-only keys, and avoid fetching remote images on cache hits.
+                msg_dict["images"] = [self._get_image_cache_data(image) for image in msg.images]
             message_data.append(msg_dict)
 
         # Include tools parameter in cache key

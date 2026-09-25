@@ -345,7 +345,14 @@ def test_encoded_sse_cannot_bypass_public_error_inspection(team_mode, gzip_posit
     if gzip_position == "outer":
         app = GZipMiddleware(app, minimum_size=500, **options)
     route = "/teams/support/runs" if team_mode else ROUTE
-    with live_server(app) as url, httpx.Client(base_url=url, timeout=10, trust_env=False) as client:
+    request_finished = threading.Event()
+
+    async def completed_app(scope, receive, send):
+        await app(scope, receive, send)
+        if scope["type"] == "http":
+            request_finished.set()
+
+    with live_server(completed_app) as url, httpx.Client(base_url=url, timeout=10, trust_env=False) as client:
         response = client.post(
             route, data={"message": "hi", "stream": "true"}, headers={"Accept-Encoding": "gzip", "Origin": ORIGIN}
         )
@@ -361,6 +368,8 @@ def test_encoded_sse_cannot_bypass_public_error_inspection(team_mode, gzip_posit
             assert response.status_code == 200
             assert "event: " + ("TeamRunError" if team_mode else "RunError") in response.text
             assert '"error_code": "run_failed"' in response.text
+        # The final SSE frame can arrive before middleware releases the run slot.
+        assert request_finished.wait(10), "The first request did not finish cleanup"
         component = surface.teams[0] if team_mode else surface.agents[0]
         component.model = ShortAnswerModel()
         following = post_when_slot_free(
