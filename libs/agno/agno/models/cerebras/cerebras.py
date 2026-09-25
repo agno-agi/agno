@@ -51,6 +51,14 @@ class Cerebras(Model):
     temperature: Optional[float] = None
     top_p: Optional[float] = None
     top_k: Optional[int] = None
+    seed: Optional[int] = None
+    stop: Optional[Union[str, List[str]]] = None
+    frequency_penalty: Optional[float] = None
+    presence_penalty: Optional[float] = None
+    logit_bias: Optional[Any] = None
+    logprobs: Optional[bool] = None
+    top_logprobs: Optional[int] = None
+    user: Optional[str] = None
     strict_output: bool = True  # When True, guarantees schema adherence for structured outputs. When False, attempts to follow schema as a guide but may occasionally deviate
     extra_headers: Optional[Any] = None
     extra_query: Optional[Any] = None
@@ -190,6 +198,14 @@ class Cerebras(Model):
             "temperature": self.temperature,
             "top_p": self.top_p,
             "top_k": self.top_k,
+            "seed": self.seed,
+            "stop": self.stop,
+            "frequency_penalty": self.frequency_penalty,
+            "presence_penalty": self.presence_penalty,
+            "logit_bias": self.logit_bias,
+            "logprobs": self.logprobs,
+            "top_logprobs": self.top_logprobs,
+            "user": self.user,
             "extra_headers": self.extra_headers,
             "extra_query": self.extra_query,
             "extra_body": self.extra_body,
