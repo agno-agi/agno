@@ -203,6 +203,7 @@ class Model(ABC):
         - ContextWindowExceededError (fast path after ModelProviderError.classify)
         - Client errors (400, 401, 403, 404, 413, 422) that won't change on retry
         - Context window/token limit patterns in error message (defense-in-depth)
+        - A TypeError the adapter wrapped (e.g. a keyword the installed SDK does not accept)
 
         Retryable errors include:
         - Rate limit errors (429)
@@ -211,6 +212,11 @@ class Model(ABC):
         """
         # Fast path: already classified by ModelProviderError.classify()
         if isinstance(error, ContextWindowExceededError):
+            return False
+
+        # The adapters wrap unexpected exceptions as a 502. A TypeError is a wrong call, not a
+        # provider failure: the same request raises it again on every attempt.
+        if isinstance(error.__cause__, TypeError):
             return False
 
         non_retryable_codes = {400, 401, 403, 404, 413, 422}
@@ -254,6 +260,9 @@ class Model(ABC):
                 # Check if error is non-retryable
                 if not self._is_retryable_error(last_exception):
                     log_error(f"Non-retryable model provider error: {str(e)}")
+                    # classify() usually returns e itself, and `raise e from e` would drop its SDK cause.
+                    if last_exception is e:
+                        raise
                     raise last_exception from e
                 if attempt < self.retries:
                     delay = self._get_retry_delay(attempt)
@@ -302,6 +311,9 @@ class Model(ABC):
                 # Check if error is non-retryable
                 if not self._is_retryable_error(last_exception):
                     log_error(f"Non-retryable model provider error: {str(e)}")
+                    # classify() usually returns e itself, and `raise e from e` would drop its SDK cause.
+                    if last_exception is e:
+                        raise
                     raise last_exception from e
                 if attempt < self.retries:
                     delay = self._get_retry_delay(attempt)
@@ -352,6 +364,9 @@ class Model(ABC):
                 # Check if error is non-retryable (e.g., context window exceeded, auth errors)
                 if not self._is_retryable_error(last_exception):
                     log_error(f"Non-retryable model provider error: {str(e)}")
+                    # classify() usually returns e itself, and `raise e from e` would drop its SDK cause.
+                    if last_exception is e:
+                        raise
                     raise last_exception from e
                 if attempt < self.retries:
                     delay = self._get_retry_delay(attempt)
@@ -405,6 +420,9 @@ class Model(ABC):
                 # Check if error is non-retryable
                 if not self._is_retryable_error(last_exception):
                     log_error(f"Non-retryable model provider error: {str(e)}")
+                    # classify() usually returns e itself, and `raise e from e` would drop its SDK cause.
+                    if last_exception is e:
+                        raise
                     raise last_exception from e
                 if attempt < self.retries:
                     delay = self._get_retry_delay(attempt)
