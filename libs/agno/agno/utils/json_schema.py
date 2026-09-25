@@ -124,8 +124,14 @@ def get_json_schema_for_arg(type_hint: Any) -> Optional[Dict[str, Any]]:
             json_schema_for_items = get_json_schema_for_arg(type_args[0]) if type_args else {"type": "string"}
             return {"type": "array", "items": json_schema_for_items}
         elif type_origin is dict:
-            # Dict[K, V] with type args — use typed additionalProperties
+            # Dict[K, V] with type args — use typed additionalProperties.
+            # JSON object keys are always strings, so `propertyNames` has to describe a
+            # string. Passing the key type straight through produced schemas that no real
+            # JSON object can satisfy (e.g. {"type": "integer"} for Dict[int, str]), which
+            # providers reject or silently ignore. See issue #10556.
             key_schema = get_json_schema_for_arg(type_args[0]) if type_args else {"type": "string"}
+            if not key_schema or key_schema.get("type") != "string":
+                key_schema = {"type": "string"}
             value_schema = get_json_schema_for_arg(type_args[1]) if len(type_args) > 1 else {"type": "string"}
             return {"type": "object", "propertyNames": key_schema, "additionalProperties": value_schema}
         elif is_origin_union_type(type_origin):

@@ -118,6 +118,39 @@ def test_get_json_schema_for_arg_bare_dict():
     bare_dict_schema = get_json_schema_for_arg(dict)
     assert bare_dict_schema == {"type": "object", "additionalProperties": True}
 
+
+def test_get_json_schema_for_arg_non_str_dict_keys():
+    """JSON object keys are always strings, so `propertyNames` must describe one.
+
+    Regression test for issue #10556: `Dict[int, str]` used to advertise
+    `propertyNames: {"type": "integer"}`, a schema no real JSON object can satisfy.
+    """
+    assert get_json_schema_for_arg(Dict[int, str]) == {
+        "type": "object",
+        "propertyNames": {"type": "string"},
+        "additionalProperties": {"type": "string"},
+    }
+
+    # The value schema must still be typed even when the key type is coerced.
+    assert get_json_schema_for_arg(dict[int, int]) == {
+        "type": "object",
+        "propertyNames": {"type": "string"},
+        "additionalProperties": {"type": "integer"},
+    }
+
+    for key_type in (int, float, bool):
+        schema = get_json_schema_for_arg(Dict[key_type, str])
+        assert schema["propertyNames"] == {"type": "string"}
+
+
+def test_get_json_schema_for_arg_string_key_enums_are_kept():
+    """Key types that are already strings keep their enum constraint."""
+    assert get_json_schema_for_arg(Dict[Literal["a", "b"], int]) == {
+        "type": "object",
+        "propertyNames": {"type": "string", "enum": ["a", "b"]},
+        "additionalProperties": {"type": "integer"},
+    }
+
     # List of bare dicts
     list_dict_schema = get_json_schema_for_arg(List[dict])
     assert list_dict_schema == {
