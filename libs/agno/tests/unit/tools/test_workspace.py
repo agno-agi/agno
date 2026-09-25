@@ -1696,7 +1696,7 @@ def test_empty_deny_list_with_only_exemptions_excludes_nothing():
 
 
 # ------------------------------------------------------------------
-# run_command / arun_command: explicit zero tail
+# run_command / arun_command: explicit zero tail tests
 # ------------------------------------------------------------------
 
 
