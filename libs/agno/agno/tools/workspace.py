@@ -1038,9 +1038,10 @@ class Workspace(Toolkit):
                 timeout=timeout,
             )
             if result.returncode != 0:
-                err = "\n".join(_strip_ansi(result.stderr).splitlines()[-tail:])
+                # tail=0 asks for no lines; [-0:] would return the whole output.
+                err = "\n".join(_strip_ansi(result.stderr).splitlines()[-tail:]) if tail > 0 else ""
                 return f"Error (exit {result.returncode}): {err}"
-            return "\n".join(_strip_ansi(result.stdout).splitlines()[-tail:])
+            return "\n".join(_strip_ansi(result.stdout).splitlines()[-tail:]) if tail > 0 else ""
         except subprocess.TimeoutExpired:
             log_warning(f"run_command timed out after {timeout}s: {args}")
             return f"Error: command timed out after {timeout} seconds"
@@ -1119,9 +1120,9 @@ class Workspace(Toolkit):
             stdout = stdout_b.decode("utf-8", errors="replace") if stdout_b else ""
             stderr = stderr_b.decode("utf-8", errors="replace") if stderr_b else ""
             if proc.returncode != 0:
-                err = "\n".join(_strip_ansi(stderr).splitlines()[-tail:])
+                err = "\n".join(_strip_ansi(stderr).splitlines()[-tail:]) if tail > 0 else ""
                 return f"Error (exit {proc.returncode}): {err}"
-            return "\n".join(_strip_ansi(stdout).splitlines()[-tail:])
+            return "\n".join(_strip_ansi(stdout).splitlines()[-tail:]) if tail > 0 else ""
         except Exception as e:
             log_warning(f"arun_command failed: {e}")
             return f"Error running command: {e}"
