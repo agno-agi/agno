@@ -1,9 +1,27 @@
 import base64
+import struct
+import sys
+from unittest.mock import patch
 
 import pytest
 
-from agno.media import File
-from agno.utils.models.claude import _format_file_for_message
+from agno.media import File, Image
+from agno.utils.models.claude import _format_file_for_message, _format_image_for_message
+
+
+def _jpeg(first_marker: int, payload: bytes) -> bytes:
+    """A JPEG whose first segment after SOI is `first_marker`, ending with a minimal DQT and EOI."""
+    first_segment = struct.pack(">HH", first_marker, len(payload) + 2) + payload
+    dqt = struct.pack(">HH", 0xFFDB, 67) + b"\x00" + bytes(range(1, 65))
+    return b"\xff\xd8" + first_segment + dqt + b"\xff\xd9"
+
+
+JPEG_JFIF = _jpeg(0xFFE0, b"JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00")
+JPEG_EXIF = _jpeg(0xFFE1, b"Exif\x00\x00MM\x00\x2a\x00\x00\x00\x08\x00\x00")
+JPEG_XMP = _jpeg(0xFFE1, b"http://ns.adobe.com/xap/1.0/\x00<x:xmpmeta xmlns:x='adobe:ns:meta/'/>")
+JPEG_ICC = _jpeg(0xFFE2, b"ICC_PROFILE\x00\x01\x01" + b"\x00" * 128)
+JPEG_ADOBE = _jpeg(0xFFEE, b"Adobe\x00\x64\x00\x00\x00\x00\x01")
+PNG_BYTES = b"\x89PNG\r\n\x1a\n" + b"\x00" * 32
 
 
 class TestFormatFileForMessage:
@@ -188,3 +206,55 @@ class TestUrlDocumentMimeTypes:
         assert result["source"]["type"] == "base64"
         assert result["source"]["media_type"] == "application/msword"
         assert base64.standard_b64decode(result["source"]["data"]) == b"\x00\x01BINARY"
+
+
+class TestFormatImageForMessage:
+    @pytest.mark.parametrize(
+        "content",
+        [JPEG_JFIF, JPEG_EXIF, JPEG_XMP, JPEG_ICC, JPEG_ADOBE],
+        ids=["jfif", "exif", "xmp", "icc", "adobe"],
+    )
+    def test_jpeg_bytes_are_detected_whatever_the_first_segment(self, content):
+        result = _format_image_for_message(Image(content=content))
+
+        assert result is not None
+        assert result["source"]["media_type"] == "image/jpeg"
+        assert base64.b64decode(result["source"]["data"]) == content
+
+    def test_detection_does_not_need_imghdr_or_filetype(self, monkeypatch):
+        """imghdr is gone on Python 3.13+ and filetype is not an agno dependency."""
+        monkeypatch.setitem(sys.modules, "imghdr", None)
+        monkeypatch.setitem(sys.modules, "filetype", None)
+
+        result = _format_image_for_message(Image(content=JPEG_XMP))
+
+        assert result is not None
+        assert result["source"]["media_type"] == "image/jpeg"
+
+    def test_bytes_win_over_a_wrong_file_suffix(self, tmp_path):
+        p = tmp_path / "scan.jpg"
+        p.write_bytes(PNG_BYTES)
+
+        result = _format_image_for_message(Image(filepath=str(p)))
+
+        assert result is not None
+        assert result["source"]["media_type"] == "image/png"
+
+    def test_bytes_win_over_a_wrong_url_suffix(self):
+        with patch.object(Image, "get_content_bytes", return_value=JPEG_ICC):
+            result = _format_image_for_message(Image(url="https://example.com/photo.png"))
+
+        assert result is not None
+        assert result["source"]["media_type"] == "image/jpeg"
+
+    def test_file_suffix_is_used_when_the_bytes_are_not_recognised(self, tmp_path):
+        p = tmp_path / "photo.png"
+        p.write_bytes(b"\x00" * 16)
+
+        result = _format_image_for_message(Image(filepath=str(p)))
+
+        assert result is not None
+        assert result["source"]["media_type"] == "image/png"
+
+    def test_unrecognised_bytes_without_a_suffix_are_dropped(self):
+        assert _format_image_for_message(Image(content=b"not an image at all")) is None

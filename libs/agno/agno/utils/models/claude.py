@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 from agno.media import File, Image
 from agno.models.message import Message
 from agno.utils.log import log_debug, log_error, log_info, log_warning
+from agno.utils.media import get_image_type
 
 if TYPE_CHECKING:
     from agno.models.anthropic.claude import SystemPromptBlock
@@ -181,21 +182,7 @@ def _format_image_for_message(image: Image) -> Optional[Dict[str, Any]]:
     """
     Add an image to a message by converting it to base64 encoded format.
     """
-    using_filetype = False
-
     import base64
-
-    # 'imghdr' was deprecated in Python 3.11: https://docs.python.org/3/library/imghdr.html
-    # 'filetype' used as a fallback
-    try:
-        import imghdr
-    except ImportError:
-        try:
-            import filetype
-
-            using_filetype = True
-        except ImportError:
-            raise ImportError("`filetype` not installed. Please install using `pip install filetype`")
 
     type_mapping = {
         "jpeg": "image/jpeg",
@@ -216,7 +203,7 @@ def _format_image_for_message(image: Image) -> Optional[Dict[str, Any]]:
         if image.url is not None:
             content_bytes = image.get_content_bytes()  # type: ignore
 
-            # If image URL has a suffix, use it as the type (without dot)
+            # The URL suffix (without dot) is a fallback for when the bytes are not recognised
             import os
             from urllib.parse import urlparse
 
@@ -235,7 +222,7 @@ def _format_image_for_message(image: Image) -> Optional[Dict[str, Any]]:
                 with open(image.filepath, "rb") as f:
                     content_bytes = f.read()
 
-                # If image file path has a suffix, use it as the type (without dot)
+                # The file suffix (without dot) is a fallback for when the bytes are not recognised
                 path_ext = path.suffix.lstrip(".")
                 if path_ext:
                     img_type = path_ext.lower()
@@ -251,16 +238,8 @@ def _format_image_for_message(image: Image) -> Optional[Dict[str, Any]]:
             log_error(f"Unsupported image type: {type(image)}")
             return None
 
-        if not img_type:
-            if using_filetype:
-                kind = filetype.guess(content_bytes)
-                if not kind:
-                    log_error("Unable to determine image type")
-                    return None
-
-                img_type = kind.extension
-            else:
-                img_type = imghdr.what(None, h=content_bytes)  # type: ignore
+        if isinstance(content_bytes, bytes):
+            img_type = get_image_type(content_bytes) or img_type
 
         if not img_type:
             log_error("Unable to determine image type")
