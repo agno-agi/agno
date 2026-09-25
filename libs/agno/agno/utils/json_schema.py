@@ -121,6 +121,15 @@ def get_json_schema_for_arg(type_hint: Any) -> Optional[Dict[str, Any]]:
                     return {"enum": list(type_args)}
             return {"type": "string"}
         elif type_origin in (list, tuple, set, frozenset):
+            if type_origin is tuple and type_args and len(type_args) > 1 and type_args[-1] is not Ellipsis:
+                # Fixed-length heterogeneous tuple (e.g. tuple[int, str]): advertise each slot
+                # with prefixItems instead of dropping every type after the first one.
+                return {
+                    "type": "array",
+                    "prefixItems": [get_json_schema_for_arg(arg) for arg in type_args],
+                    "minItems": len(type_args),
+                    "maxItems": len(type_args),
+                }
             json_schema_for_items = get_json_schema_for_arg(type_args[0]) if type_args else {"type": "string"}
             return {"type": "array", "items": json_schema_for_items}
         elif type_origin is dict:
