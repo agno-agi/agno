@@ -165,6 +165,21 @@ async def test_async_read_video(mock_transcript):
 
 
 @pytest.mark.asyncio
+async def test_async_read_video_with_custom_name(mock_transcript):
+    video_url = "https://www.youtube.com/watch?v=test_video_id"
+
+    with patch("agno.knowledge.reader.youtube_reader.YouTubeTranscriptApi") as mock_api_class:
+        mock_api_class.return_value.fetch.return_value = mock_transcript
+
+        reader = YouTubeReader(chunk=False)
+        documents = await reader.async_read(video_url, name="Product demo")
+
+    assert len(documents) == 1
+    assert documents[0].name == "Product demo"
+    assert documents[0].content == "First segment Second segment Third segment"
+
+
+@pytest.mark.asyncio
 async def test_async_read_video_with_chunking(mock_transcript):
     video_url = "https://www.youtube.com/watch?v=test_video_id"
 
