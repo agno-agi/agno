@@ -1,4 +1,5 @@
 import os
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -7,7 +8,9 @@ import pytest
 os.environ.setdefault("OPENAI_API_KEY", "test-key-for-testing")
 
 from agno.exceptions import ModelProviderError, RetryableModelProviderError
+from agno.models.anthropic import Claude
 from agno.models.google.gemini import Gemini
+from agno.models.message import Message
 from agno.models.openai.chat import OpenAIChat
 
 
@@ -543,3 +546,60 @@ async def test_async_stream_guidance_count_preserved_across_plain_retries(model_
         # Entering at the limit (count=1), the guidance error must raise on the 2nd invoke;
         # a reset counter would allow a 3rd invoke instead.
         assert call_count == 2, f"Expected 2 invokes (limit enforced), got {call_count}"
+
+
+# =============================================================================
+# Tests for exceptions the adapter wrapped as ModelProviderError
+# =============================================================================
+
+
+def _wrapped(cause: Exception) -> ModelProviderError:
+    """Build the error an adapter's catch-all raises: a 502 ModelProviderError chained to the cause."""
+    try:
+        raise ModelProviderError(message=str(cause)) from cause
+    except ModelProviderError as error:
+        return error
+
+
+def test_wrapped_type_error_is_not_retryable(model):
+    error = _wrapped(TypeError("create() got an unexpected keyword argument 'new_param'"))
+
+    assert model._is_retryable_error(error) is False
+
+
+def test_wrapped_runtime_error_stays_retryable(model):
+    assert model._is_retryable_error(_wrapped(RuntimeError("stream ended early"))) is True
+
+
+def test_sync_wrapped_type_error_not_retried(model_with_retries):
+    call_count = 0
+
+    def mock_invoke(**kwargs):
+        nonlocal call_count
+        call_count += 1
+        raise _wrapped(TypeError("create() got an unexpected keyword argument 'new_param'"))
+
+    with patch.object(model_with_retries, "invoke", side_effect=mock_invoke):
+        with pytest.raises(ModelProviderError):
+            model_with_retries._invoke_with_retry(messages=[])
+
+    assert call_count == 1, f"A wrapped TypeError should not be retried, got {call_count} calls"
+
+
+def test_claude_does_not_retry_a_keyword_the_sdk_rejects():
+    """The SDK raises TypeError for a keyword its create() does not take, before any request is sent."""
+    calls = []
+
+    def create(**kwargs):
+        calls.append(kwargs)
+        raise TypeError("Messages.create() got an unexpected keyword argument 'new_param'")
+
+    model = Claude(id="claude-sonnet-4-5", api_key="test-key", retries=3, delay_between_retries=0)
+    model.client = SimpleNamespace(messages=SimpleNamespace(create=create), is_closed=lambda: False)
+
+    with pytest.raises(ModelProviderError):
+        model._invoke_with_retry(
+            messages=[Message(role="user", content="hi")], assistant_message=Message(role="assistant")
+        )
+
+    assert len(calls) == 1
