@@ -1,6 +1,6 @@
 import asyncio
 from asyncio import Future, Task
-from copy import deepcopy
+from copy import copy, deepcopy
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -43,6 +43,32 @@ if TYPE_CHECKING:
     from agno.agent.agent import Agent
     from agno.media.reference import MediaReference
     from agno.team.team import Team
+
+
+_HistorySession = TypeVar("_HistorySession", AgentSession, TeamSession)
+
+
+def _history_session(session: _HistorySession, run: Any) -> _HistorySession:
+    """Exclude the supplied transcript's run and fork ancestors before history limits.
+
+    Keep the original session and its runs untouched, including cached sessions.
+    The shallow copy also preserves custom session history implementations.
+    """
+    if run is None:
+        return session
+    runs_by_id = {r.run_id: r for r in session.runs or []}
+    excluded = set()
+    while run is not None and run.run_id not in excluded:
+        excluded.add(run.run_id)
+        source_id = run.forked_from_run_id
+        if not source_id or source_id in excluded:
+            break
+        run = runs_by_id.get(source_id)
+        if run is None:
+            excluded.add(source_id)
+    history_session = copy(session)
+    history_session.runs = [r for r in session.runs or [] if r.run_id not in excluded]
+    return history_session
 
 
 def _has_async_db(entity: Union["Agent", "Team"]) -> bool:

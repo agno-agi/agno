@@ -74,7 +74,6 @@ from agno.run.cancel import (
     cancel_run as cancel_run_global,
 )
 from agno.run.concurrency import SSE_KEEPALIVE_INTERVAL_SECONDS, background_run_slot
-from agno.run.continuation import _apersist_continue_start, _persist_continue_start
 from agno.run.messages import RunMessages
 from agno.run.requirement import RunRequirement
 from agno.run.status_persist import apersist_run_transition
@@ -3789,8 +3788,6 @@ def _continue_run(
     from agno.agent._telemetry import log_agent_telemetry
     from agno.agent._tools import handle_tool_call_updates
 
-    _persist_continue_start(agent, "agent", run_response, session, run_context)
-
     register_run(run_response.run_id)  # type: ignore
 
     agent.model = cast(Model, agent.model)
@@ -4010,8 +4007,6 @@ def _continue_run_stream(
     )
     from agno.agent._telemetry import log_agent_telemetry
     from agno.agent._tools import handle_tool_call_updates_stream
-
-    _persist_continue_start(agent, "agent", run_response, session, run_context)
 
     register_run(run_response.run_id)  # type: ignore
 
@@ -5045,7 +5040,7 @@ async def _acontinue_run(
                 )
 
                 # Reset the run state
-                await _apersist_continue_start(agent, "agent", run_response, agent_session, run_context)
+                run_response.status = RunStatus.running
 
                 # Register run for cancellation tracking
                 await aregister_run(run_response.run_id)  # type: ignore
@@ -5569,7 +5564,7 @@ async def _acontinue_run_stream(
                 )
 
                 # Reset the run state
-                await _apersist_continue_start(agent, "agent", run_response, agent_session, run_context)
+                run_response.status = RunStatus.running
 
                 # Register run for cancellation tracking
                 await aregister_run(run_response.run_id)  # type: ignore

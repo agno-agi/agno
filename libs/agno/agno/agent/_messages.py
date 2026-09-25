@@ -1561,7 +1561,7 @@ def _build_continue_run_messages(
             agent.system_message_role if agent.system_message_role not in ["user", "assistant", "tool"] else None
         )
 
-        from agno.run.continuation import _history_session
+        from agno.utils.agent import _history_session
 
         history: List[Message] = _history_session(session, run_response).get_messages(
             last_n_runs=agent.num_history_runs,

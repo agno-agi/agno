@@ -1,22 +1,18 @@
-"""Continuation history and observable status, without provider requests."""
+"""Background continuation history, with foreground compatibility coverage."""
 
 from copy import deepcopy
-from unittest.mock import AsyncMock, Mock
 
 import pytest
 
 from agno.agent import Agent
 from agno.agent._messages import _build_continue_run_messages as agent_messages
 from agno.db.sqlite import AsyncSqliteDb, SqliteDb
-from agno.exceptions import RunNotContinuableError
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.response import ModelResponse, ToolExecution
-from agno.run import RunContext, RunStatus
+from agno.run import RunStatus
 from agno.run.agent import RunOutput
-from agno.run.continuation import _apersist_continue_start, _persist_continue_start
 from agno.run.requirement import RunRequirement
-from agno.run.status_persist import RunPersistOutcome
 from agno.run.team import TeamRunOutput
 from agno.session import AgentSession, TeamSession
 from agno.team import Team
@@ -98,7 +94,7 @@ def test_history_excludes_current_transcript_before_limits(kind, status, fork_de
     assert session.to_dict() == before
 
 
-def prepare_continuation(kind, tmp_path, pause_type):
+def prepare_continuation(kind, tmp_path, pause_type, expected_status=RunStatus.paused):
     db = SqliteDb(db_file=str(tmp_path / "runs.db"))
     tool_calls = []
 
@@ -110,7 +106,7 @@ def prepare_continuation(kind, tmp_path, pause_type):
     )
     def location(city: str) -> str:
         """Return a city after approval or user input."""
-        assert db.get_run("current").status == RunStatus.running
+        assert db.get_run("current").status == expected_status
         tool_calls.append(city)
         return city
 
@@ -151,7 +147,7 @@ def prepare_continuation(kind, tmp_path, pause_type):
         db.upsert_run(run, session_id=session.session_id, user_id="owner", run_index=index)
 
     def inspect_messages(messages):
-        assert db.get_run("current").status == RunStatus.running
+        assert db.get_run("current").status == expected_status
         assert sum(m.content == "prior" for m in messages) == 1
         assert sum(m.content == "current request" for m in messages) == 1
         assert sum(bool(m.tool_calls) for m in messages) == 1
@@ -173,7 +169,7 @@ def prepare_continuation(kind, tmp_path, pause_type):
 @pytest.mark.parametrize("stream", [False, True])
 @pytest.mark.parametrize("by_id", [False, True])
 @pytest.mark.parametrize("pause_type", ["external", "confirmation", "user_input"])
-def test_sync_continue_persists_running_and_pairs_tools(kind, tmp_path, stream, by_id, pause_type):
+def test_sync_continue_preserves_status_behavior_and_pairs_tools(kind, tmp_path, stream, by_id, pause_type):
     component, current, model, calls = prepare_continuation(kind, tmp_path, pause_type)
     args = {"run_id": current.run_id, "requirements": current.requirements} if by_id else {"run_response": current}
     result = component.continue_run(session_id="session", stream=stream, **args)
@@ -189,10 +185,12 @@ def test_sync_continue_persists_running_and_pairs_tools(kind, tmp_path, stream, 
 @pytest.mark.parametrize("by_id", [False, True])
 @pytest.mark.parametrize("pause_type", ["external", "confirmation", "user_input"])
 @pytest.mark.parametrize("async_db", [False, True])
-async def test_async_continue_persists_running_and_pairs_tools(
+async def test_async_continue_preserves_status_behavior_and_pairs_tools(
     kind, tmp_path, stream, background, by_id, pause_type, async_db
 ):
-    component, current, model, calls = prepare_continuation(kind, tmp_path, pause_type)
+    component, current, model, calls = prepare_continuation(
+        kind, tmp_path, pause_type, expected_status=RunStatus.running if stream and background else RunStatus.paused
+    )
     reader = component.db
     if async_db:
         component.db = AsyncSqliteDb(db_file=str(tmp_path / "runs.db"))
@@ -219,7 +217,7 @@ def test_unconsumed_agent_stream_does_not_persist_running(tmp_path):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("asynchronous", [False, True])
 @pytest.mark.parametrize("stream", [False, True])
-async def test_completed_continue_creates_running_fork_and_keeps_source(kind, tmp_path, asynchronous, stream):
+async def test_completed_continue_excludes_fork_source_from_history(kind, tmp_path, asynchronous, stream):
     component, current, model, _ = prepare_continuation(kind, tmp_path, "external")
     current.status = RunStatus.completed
     current.tools = None
@@ -235,11 +233,7 @@ async def test_completed_continue_creates_running_fork_and_keeps_source(kind, tm
         assert sum(m.content == "source request" for m in messages) == 1
         assert sum(m.content == "source answer" for m in messages) == 1
         assert sum(m.content == "prior" for m in messages) == 1
-        running = component.db.get_runs(session_id="session", status=RunStatus.running)
-        assert len(running) == 1
-        assert running[0].run_id != "current"
-        assert running[0].forked_from_run_id == "current"
-        assert component.db.get_run(running[0].run_id, deserialize=False)["run_index"] is not None
+        assert component.db.get_runs(session_id="session", status=RunStatus.running) == []
 
     model.inspect_messages = inspect_fork
     method = component.acontinue_run if asynchronous else component.continue_run
@@ -254,70 +248,3 @@ async def test_completed_continue_creates_running_fork_and_keeps_source(kind, tm
         list(result)
     assert model.calls == 1
     assert component.db.get_run("current").to_dict() == source_before
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("asynchronous", [False, True])
-@pytest.mark.parametrize("outage", [False, True])
-async def test_start_uses_scoped_atomic_patch_and_propagates_failure(kind, monkeypatch, asynchronous, outage):
-    from agno.run.concurrency import worker_managed_execution
-
-    component = make_component(kind)
-    component.db = Mock()
-    update = AsyncMock() if asynchronous else Mock()
-    update.return_value = RunPersistOutcome.UPDATED
-    if outage:
-        update.side_effect = RuntimeError("database unavailable")
-    component.db.update_run_in_session = update
-    run = make_run(kind, "current", status=RunStatus.paused)
-    session = make_session(kind, [run])
-    context = RunContext(run_id=run.run_id, session_id="session", user_id="owner")
-
-    async def start():
-        if asynchronous:
-            await _apersist_continue_start(component, kind, run, session, context)
-        else:
-            _persist_continue_start(component, kind, run, session, context)
-
-    with worker_managed_execution(run.run_id, "worker", attempt=3):
-        if outage:
-            with pytest.raises(RuntimeError, match="database unavailable"):
-                await start()
-        else:
-            await start()
-    update.assert_called_once_with(
-        session_id="session", run_id="current", fields={"status": "RUNNING"}, user_id="owner", expected_attempt=3
-    )
-    component.db.upsert_run.assert_not_called()
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("async_db", [False, True])
-@pytest.mark.parametrize("outcome", [RunPersistOutcome.STALE_ATTEMPT, RunPersistOutcome.TERMINAL_REFUSED])
-async def test_refused_start_does_not_fall_back(kind, monkeypatch, async_db, outcome):
-    component = make_component(kind)
-    component.db = Mock()
-    update = AsyncMock(return_value=outcome) if async_db else Mock(return_value=outcome)
-    component.db.update_run_in_session = update
-    run = make_run(kind, "current", status=RunStatus.paused)
-    session = make_session(kind, [run])
-    context = RunContext(run_id=run.run_id, session_id="session", user_id="owner")
-    fallback_path = (
-        "agno.agent._run.apersist_run_in_session" if kind == "agent" else "agno.team._run._apersist_team_run_in_session"
-    )
-    fallback = AsyncMock()
-    monkeypatch.setattr(fallback_path, fallback)
-    with pytest.raises(RunNotContinuableError):
-        await _apersist_continue_start(component, kind, run, session, context)
-    fallback.assert_not_called()
-    if not async_db:
-        sync_path = (
-            "agno.agent._run.persist_run_in_session"
-            if kind == "agent"
-            else "agno.team._run._persist_team_run_in_session"
-        )
-        sync_fallback = Mock()
-        monkeypatch.setattr(sync_path, sync_fallback)
-        with pytest.raises(RunNotContinuableError):
-            _persist_continue_start(component, kind, run, session, context)
-        sync_fallback.assert_not_called()

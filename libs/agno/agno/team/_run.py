@@ -75,7 +75,6 @@ from agno.run.cancel import (
     cancel_run as cancel_run_global,
 )
 from agno.run.concurrency import SSE_KEEPALIVE_INTERVAL_SECONDS, background_run_slot
-from agno.run.continuation import _apersist_continue_start, _persist_continue_start
 from agno.run.messages import RunMessages
 from agno.run.status_persist import apersist_run_transition
 from agno.run.team import (
@@ -5460,7 +5459,7 @@ def _build_continue_run_messages(
 
         skip_role = team.system_message_role if team.system_message_role not in ["user", "assistant", "tool"] else None
 
-        from agno.run.continuation import _history_session
+        from agno.utils.agent import _history_session
 
         history: List[Message] = _history_session(session, run_response).get_messages(
             last_n_runs=team.num_history_runs,
@@ -6546,8 +6545,6 @@ def _route_requirements_to_members(
     from agno.utils.team import get_member_id
 
     groups = _group_requirements_for_continue(team, run_response, session, run_context)
-    if groups:
-        _persist_continue_start(team, "team", run_response, session, run_context)
     member_results: List[str] = []
 
     for member, member_run_output, reqs in groups:
@@ -6631,8 +6628,6 @@ def _route_requirements_to_members_stream(
     from agno.utils.team import get_member_id
 
     groups = _group_requirements_for_continue(team, run_response, session, run_context)
-    if groups:
-        _persist_continue_start(team, "team", run_response, session, run_context)
 
     for member, member_run_output, reqs in groups:
         member_id = get_member_id(member) or ""
@@ -6729,8 +6724,6 @@ async def _aroute_requirements_to_members(
     from agno.utils.team import get_member_id
 
     groups = _group_requirements_for_continue(team, run_response, session, run_context)
-    if groups:
-        await _apersist_continue_start(team, "team", run_response, session, run_context)
 
     if not groups:
         return []
@@ -6835,8 +6828,6 @@ async def _aroute_requirements_to_members_stream(
     from agno.utils.team import get_member_id
 
     groups = _group_requirements_for_continue(team, run_response, session, run_context)
-    if groups:
-        await _apersist_continue_start(team, "team", run_response, session, run_context)
 
     for member, member_run_output, reqs in groups:
         member_id = get_member_id(member) or ""
@@ -7996,7 +7987,6 @@ def continue_run_dispatch(
         )
 
         # Handle tool call updates (execute confirmed tools, etc.)
-        _persist_continue_start(team, "team", run_response, team_session, run_context)
         _handle_team_tool_call_updates(team, run_response=run_response, run_messages=run_messages, tools=_tools)
 
         # Reset run state for continuation
@@ -8232,7 +8222,6 @@ def _continue_run_dispatch_stream_with_member_events(
             run_response=run_response,
         )
 
-        _persist_continue_start(team, "team", run_response, team_session, run_context)
         _handle_team_tool_call_updates(team, run_response=run_response, run_messages=run_messages, tools=_tools)
 
         run_response.status = RunStatus.running
@@ -8346,8 +8335,6 @@ def _continue_run(
     )
     from agno.team._telemetry import log_team_telemetry
     from agno.utils.events import create_team_run_continued_event
-
-    _persist_continue_start(team, "team", run_response, session, run_context)
 
     register_run(run_response.run_id)  # type: ignore
 
@@ -8537,8 +8524,6 @@ def _continue_run_stream(
     )
     from agno.team._telemetry import log_team_telemetry
     from agno.utils.events import create_team_run_continued_event
-
-    _persist_continue_start(team, "team", run_response, session, run_context)
 
     register_run(run_response.run_id)  # type: ignore
 
@@ -9773,12 +9758,11 @@ async def _acontinue_run(
                         run_response=run_response,
                     )
 
-                    await _apersist_continue_start(team, "team", run_response, team_session, run_context)
-
                     await _ahandle_team_tool_call_updates(
                         team, run_response=run_response, run_messages=run_messages, tools=_tools
                     )
 
+                    run_response.status = RunStatus.running
                     run_response.content = None
 
                     # Handle model response using shared helper
@@ -9825,7 +9809,6 @@ async def _acontinue_run(
 
                     # Prepare for member HITL continuation
                     _prepare_member_hitl_continuation(run_response, run_messages, member_results)
-                    await _apersist_continue_start(team, "team", run_response, team_session, run_context)
 
                     log_debug(f"Team Continue Run (Member HITL): {run_response.run_id}", center=True)
 
@@ -10263,7 +10246,7 @@ async def _acontinue_run_stream(
                         run_response=run_response,
                     )
 
-                    await _apersist_continue_start(team, "team", run_response, team_session, run_context)
+                    run_response.status = RunStatus.running
                     run_response.content = None
 
                     # Yield RunContinued event
@@ -10394,7 +10377,6 @@ async def _acontinue_run_stream(
 
                     # Prepare for member HITL continuation
                     _prepare_member_hitl_continuation(run_response, run_messages, member_results)
-                    await _apersist_continue_start(team, "team", run_response, team_session, run_context)
 
                     log_debug(f"Team Continue Run Stream (Member HITL): {run_response.run_id}", center=True)
 
