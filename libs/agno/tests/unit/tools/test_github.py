@@ -1557,6 +1557,20 @@ def test_create_branch_uses_enterprise_repository_url(mock_github):
     assert json.loads(result)["url"] == "https://github.example.com/test-org/test-repo/tree/feature/agent"
 
 
+def test_create_branch_url_encodes_branch_name(mock_github):
+    """Branch names with URL-reserved characters should produce a working link."""
+    _, mock_repo = mock_github
+    github_tools = GithubTools()
+    mock_repo.default_branch = "main"
+    mock_repo.html_url = "https://github.com/test-org/test-repo"
+    mock_repo.get_git_ref.return_value.object.sha = "source-commit-sha"
+    mock_repo.create_git_ref.return_value.object.sha = "source-commit-sha"
+
+    result = github_tools.create_branch(repo_name="test-org/test-repo", branch_name="fix/issue#123")
+
+    assert json.loads(result)["url"] == "https://github.com/test-org/test-repo/tree/fix/issue%23123"
+
+
 def test_set_default_branch(mock_github):
     """Test setting the default branch for a repository."""
     mock_client, mock_repo = mock_github

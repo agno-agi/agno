@@ -1,6 +1,7 @@
 import json
 from os import getenv
 from typing import Any, List, Optional
+from urllib.parse import quote
 
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, logger
@@ -1548,7 +1549,7 @@ class GithubTools(Toolkit):
             branch_info = {
                 "name": branch_name,
                 "sha": new_branch.object.sha,
-                "url": f"{repo.html_url.rstrip('/')}/tree/{branch_name}",
+                "url": f"{repo.html_url.rstrip('/')}/tree/{quote(branch_name, safe='/')}",
             }
 
             return json.dumps(branch_info, indent=2)
