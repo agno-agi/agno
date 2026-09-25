@@ -1,6 +1,7 @@
 """Tests for Knowledge.get_readers() method, specifically testing list to dict conversion."""
 
 from agno.knowledge.reader.base import Reader
+from agno.knowledge.reader.reader_factory import ReaderFactory
 from agno.knowledge.reader.text_reader import TextReader
 
 
@@ -167,3 +168,28 @@ def test_get_readers_preserves_existing_dict_on_multiple_calls(knowledge):
     assert result1 is result2
     assert result1 is knowledge.readers
     assert len(result1) == 2
+
+
+def test_reader_factory_honors_each_call_configuration():
+    first = ReaderFactory.create_reader("text", chunk_size=100)
+    second = ReaderFactory.create_reader("text", chunk_size=200)
+
+    assert first is not second
+    assert first.chunk_size == 100
+    assert second.chunk_size == 200
+
+
+def test_knowledge_readers_are_isolated_between_instances():
+    from agno.knowledge.knowledge import Knowledge
+
+    first = Knowledge()
+    second = Knowledge()
+
+    first_reader = first.text_reader
+    second_reader = second.text_reader
+
+    assert first_reader is not second_reader
+    assert first.text_reader is first_reader
+
+    first_reader.separators.append("custom")
+    assert "custom" not in second_reader.separators
