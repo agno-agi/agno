@@ -2615,6 +2615,177 @@ class Model(ABC):
         function_call_timer.stop()
         return success, function_call_timer, function_call, result
 
+    async def _aprocess_function_call_result(
+        self,
+        result: Tuple[Union[bool, AgentRunException], Timer, FunctionCall, FunctionExecutionResult],
+        function_call_results: List[Message],
+        additional_input: List[Message],
+        result_store: Optional["ResultStore"] = None,
+    ) -> AsyncIterator[Union[ModelResponse, RunOutputEvent, TeamRunOutputEvent]]:
+        """Convert one executed function call into streamed events and its tool message."""
+        function_call_success, function_call_timer, function_call, function_execution_result = result
+        updated_session_state = function_execution_result.updated_session_state
+
+        stop_after_tool_call_from_exception = False
+        if isinstance(function_call_success, AgentRunException):
+            a_exc = function_call_success
+            _handle_agent_exception(a_exc, additional_input)
+            if a_exc.stop_execution:
+                stop_after_tool_call_from_exception = True
+            function_call_success = False
+
+        function_call_output: str = ""
+        raw_function_call_result = function_call.result
+        is_async_generator = isinstance(raw_function_call_result, (AsyncGeneratorType, collections.abc.AsyncIterator))
+        is_sync_generator = isinstance(raw_function_call_result, (GeneratorType, collections.abc.Iterator))
+
+        if is_async_generator:
+            assert raw_function_call_result is not None
+            try:
+                async for item in raw_function_call_result:
+                    if isinstance(item, _ALL_RUN_OUTPUT_EVENT_TYPES):
+                        if isinstance(item, RunContentEvent) or isinstance(item, TeamRunContentEvent):
+                            if item.content is not None and isinstance(item.content, BaseModel):
+                                function_call_output += item.content.model_dump_json()
+                            else:
+                                function_call_output += item.content or ""
+
+                            if function_call.function.show_result and item.content is not None:
+                                yield ModelResponse(content=item.content)
+                                continue
+
+                        if isinstance(item, CustomEvent):
+                            function_call_output += str(item)
+                            item.tool_call_id = function_call.call_id
+
+                            from agno.run.workflow import WorkflowCompletedEvent
+
+                            if isinstance(item, WorkflowCompletedEvent) and item.content is not None:
+                                if isinstance(item.content, BaseModel):
+                                    function_call_output += item.content.model_dump_json()
+                                else:
+                                    function_call_output += str(item.content)
+
+                        yield item
+                    else:
+                        function_call_output += str(item)
+                        if function_call.function.show_result and item is not None:
+                            yield ModelResponse(content=str(item))
+            except RunCancelledException:
+                raise
+            except Exception as e:
+                log_error(f"Error while iterating async generator for {function_call.function.name}: {e}")
+                function_call_output = ""
+                function_call.error = str(e)
+                function_call_success = False
+
+        elif is_sync_generator:
+            assert raw_function_call_result is not None
+            try:
+                for item in raw_function_call_result:
+                    if isinstance(item, _ALL_RUN_OUTPUT_EVENT_TYPES):
+                        if isinstance(item, RunContentEvent) or isinstance(item, TeamRunContentEvent):
+                            if item.content is not None and isinstance(item.content, BaseModel):
+                                function_call_output += item.content.model_dump_json()
+                            else:
+                                function_call_output += item.content or ""
+
+                            if function_call.function.show_result and item.content is not None:
+                                yield ModelResponse(content=item.content)
+                                continue
+
+                        elif isinstance(item, CustomEvent):
+                            function_call_output += str(item)
+                            item.tool_call_id = function_call.call_id
+
+                        yield item
+                    else:
+                        function_call_output += str(item)
+                        if function_call.function.show_result and item is not None:
+                            yield ModelResponse(content=str(item))
+            except RunCancelledException:
+                raise
+            except Exception as e:
+                log_error(
+                    f"Error while iterating function result generator for {function_call.function.name}: {str(e)}"
+                )
+                function_call.error = str(e)
+                function_call_success = False
+
+        if is_async_generator or is_sync_generator:
+            if updated_session_state is None:
+                if (
+                    function_call.function._run_context is not None
+                    and function_call.function._run_context.session_state is not None
+                ):
+                    updated_session_state = function_call.function._run_context.session_state
+        else:
+            from agno.tools.function import ToolResult
+
+            if isinstance(function_execution_result.result, ToolResult):
+                tool_result = function_execution_result.result
+                function_call_output = tool_result.content
+
+                if tool_result.images:
+                    function_execution_result.images = tool_result.images
+                if tool_result.videos:
+                    function_execution_result.videos = tool_result.videos
+                if tool_result.audios:
+                    function_execution_result.audios = tool_result.audios
+                if tool_result.files:
+                    function_execution_result.files = tool_result.files
+            else:
+                function_call_output = str(function_call.result)
+
+            if function_call.function.show_result and function_call_output is not None:
+                yield ModelResponse(content=function_call_output)
+
+        tool_metrics = None
+        if function_call_timer.elapsed > 0:
+            tool_metrics = ToolCallMetrics()
+            tool_metrics.timer = function_call_timer
+            tool_metrics.duration = function_call_timer.elapsed
+            current_time = time()
+            tool_metrics.end_time = current_time
+            tool_metrics.start_time = current_time - function_call_timer.elapsed
+
+        if result_store is not None:
+            function_call_output = await self._asubstitute_tool_result(
+                result_store, function_call, function_call_success, function_call_output
+            )
+
+        function_call_result = self.create_function_call_result(
+            function_call,
+            success=function_call_success,
+            output=function_call_output,
+            timer=function_call_timer,
+            function_execution_result=function_execution_result,
+        )
+        if stop_after_tool_call_from_exception:
+            function_call_result.stop_after_tool_call = True
+
+        yield ModelResponse(
+            content=f"{function_call.get_call_str()} completed in {function_call_timer.elapsed:.4f}s. ",
+            tool_executions=[
+                ToolExecution(
+                    tool_call_id=function_call_result.tool_call_id,
+                    tool_name=function_call_result.tool_name,
+                    tool_args=function_call_result.tool_args,
+                    tool_call_error=function_call_result.tool_call_error,
+                    result=str(function_call_result.content),
+                    stop_after_tool_call=function_call_result.stop_after_tool_call,
+                    metrics=tool_metrics,
+                )
+            ],
+            event=ModelResponseEvent.tool_call_completed.value,
+            updated_session_state=updated_session_state,
+            images=function_execution_result.images,
+            videos=function_execution_result.videos,
+            audios=function_execution_result.audios,
+            files=function_execution_result.files,
+        )
+        function_call_results.append(function_call_result)
+
     async def arun_function_calls(
         self,
         function_calls: List[FunctionCall],
@@ -2808,306 +2979,69 @@ class Model(ABC):
                 )
             ]
 
-        # gather even for a single call: its cancel bookkeeping re-raises
-        # caller cancellation even when a tool swallows the CancelledError
-        # thrown into it, and its task wrapper isolates the tool's contextvars.
-        # A bare await loses both; replicating them needs Task.cancelling(),
-        # which requires Python 3.11.
-        results = await asyncio.gather(
-            *(self.arun_function_call(fc) for fc in function_calls_to_run), return_exceptions=True
-        )
-
-        # Separate async generators from other results for concurrent processing
-        async_generator_results: List[Any] = []
-        non_async_generator_results: List[Any] = []
-
-        for result in results:
-            if isinstance(result, BaseException):
-                non_async_generator_results.append(result)
-                continue
-
-            function_call_success, function_call_timer, function_call, function_execution_result = result
-
-            # Check if this result contains an async generator
-            if isinstance(function_call.result, (AsyncGeneratorType, AsyncIterator)):
-                async_generator_results.append(result)
-            else:
-                non_async_generator_results.append(result)
-
-        # Process async generators with real-time event streaming using asyncio.Queue
-        async_generator_outputs: Dict[int, Tuple[Any, str, Optional[BaseException]]] = {}
         event_queue: asyncio.Queue = asyncio.Queue()
-        active_generators_count: int = len(async_generator_results)
+        results: List[Any] = [None] * len(function_calls_to_run)
+        ordered_function_call_results: List[Optional[Message]] = [None] * len(function_calls_to_run)
+        ordered_additional_input: List[List[Message]] = [[] for _ in function_calls_to_run]
 
-        # Create background tasks for each async generator
-        async def process_async_generator(result, generator_id):
-            function_call_success, function_call_timer, function_call, function_execution_result = result
-            function_call_output = ""
-
+        async def run_function_call(index: int, function_call: FunctionCall) -> None:
+            call_results: List[Message] = []
+            call_additional_input: List[Message] = []
+            result: Union[
+                Tuple[Union[bool, AgentRunException], Timer, FunctionCall, FunctionExecutionResult], BaseException
+            ]
             try:
-                async for item in function_call.result:
-                    # This function yields agent/team/workflow run events
-                    if isinstance(item, _ALL_RUN_OUTPUT_EVENT_TYPES):
-                        # We only capture content events
-                        if isinstance(item, RunContentEvent) or isinstance(item, TeamRunContentEvent):
-                            if item.content is not None and isinstance(item.content, BaseModel):
-                                function_call_output += item.content.model_dump_json()
-                            else:
-                                # Capture output
-                                function_call_output += item.content or ""
+                result = await self.arun_function_call(function_call)
+                async for event in self._aprocess_function_call_result(
+                    result,
+                    function_call_results=call_results,
+                    additional_input=call_additional_input,
+                    result_store=result_store,
+                ):
+                    await event_queue.put(("event", event))
+            except BaseException as error:
+                # Match gather(return_exceptions=True): sibling tool calls finish before
+                # the first error in model-request order is re-raised below.
+                result = error
+            await event_queue.put(("done", index, result, call_results, call_additional_input))
 
-                            if function_call.function.show_result and item.content is not None:
-                                await event_queue.put(ModelResponse(content=item.content))
-                                continue
+        tasks = [
+            asyncio.create_task(run_function_call(index, function_call))
+            for index, function_call in enumerate(function_calls_to_run)
+        ]
 
-                        if isinstance(item, CustomEvent):
-                            function_call_output += str(item)
-                            item.tool_call_id = function_call.call_id
-
-                            # For WorkflowCompletedEvent, extract content for final output
-                            from agno.run.workflow import WorkflowCompletedEvent
-
-                            if isinstance(item, WorkflowCompletedEvent):
-                                if item.content is not None:
-                                    if isinstance(item.content, BaseModel):
-                                        function_call_output += item.content.model_dump_json()
-                                    else:
-                                        function_call_output += str(item.content)
-
-                        # Put the event into the queue to be yielded
-                        await event_queue.put(item)
-
-                    # Yield custom events emitted by the tool
-                    else:
-                        function_call_output += str(item)
-                        if function_call.function.show_result and item is not None:
-                            await event_queue.put(ModelResponse(content=str(item)))
-
-                # Store the final output for this generator
-                async_generator_outputs[generator_id] = (result, function_call_output, None)
-
-            except Exception as e:
-                # Store the exception
-                async_generator_outputs[generator_id] = (result, "", e)
-
-            # Signal that this generator is done
-            await event_queue.put(("GENERATOR_DONE", generator_id))
-
-        # Start all async generator tasks
-        generator_tasks = []
-        for i, result in enumerate(async_generator_results):
-            task = asyncio.create_task(process_async_generator(result, i))
-            generator_tasks.append(task)
-
-        # Stream events from the queue as they arrive
-        completed_generators_count = 0
-        while completed_generators_count < active_generators_count:
-            try:
-                event = await event_queue.get()
-
-                # Check if this is a completion signal
-                if isinstance(event, tuple) and event[0] == "GENERATOR_DONE":
-                    completed_generators_count += 1
+        completed_count = 0
+        try:
+            while completed_count < len(tasks):
+                queue_item = await event_queue.get()
+                if queue_item[0] == "event":
+                    yield queue_item[1]
                     continue
 
-                # Yield the actual event
-                yield event
+                _, index, result, call_results, call_additional_input = queue_item
+                results[index] = result
+                if call_results:
+                    ordered_function_call_results[index] = call_results[0]
+                ordered_additional_input[index] = call_additional_input
+                completed_count += 1
+        finally:
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
 
-            except Exception as e:
-                log_error(f"Error processing async generator event: {str(e)}")
-                break
+        for index, result in enumerate(results):
+            if isinstance(result, BaseException):
+                if isinstance(result, RunCancelledException):
+                    raise result
+                log_error(f"Error during function call: {result}")
+                raise result
 
-        # Now process all results (non-async generators and completed async generators)
-        for i, original_result in enumerate(results):
-            # If result is an exception, skip processing it
-            if isinstance(original_result, BaseException):
-                # Cancellation is intentional, not an error — re-raise without logging
-                if isinstance(original_result, RunCancelledException):
-                    raise original_result
-                log_error(f"Error during function call: {original_result}")
-                raise original_result
+            function_call_result = ordered_function_call_results[index]
+            if function_call_result is not None:
+                function_call_results.append(function_call_result)
+            additional_input.extend(ordered_additional_input[index])
 
-            # Unpack result
-            function_call_success, function_call_timer, function_call, function_execution_result = original_result
-
-            # Check if this was an async generator that was already processed
-            async_function_call_output = None
-            if isinstance(function_call.result, (AsyncGeneratorType, collections.abc.AsyncIterator)):
-                # Find the corresponding processed result
-                async_gen_index = 0
-                for j, result in enumerate(results[: i + 1]):
-                    if not isinstance(result, BaseException):
-                        _, _, fc, _ = result
-                        if isinstance(fc.result, (AsyncGeneratorType, collections.abc.AsyncIterator)):
-                            if j == i:  # This is our async generator
-                                if async_gen_index in async_generator_outputs:
-                                    _, async_function_call_output, error = async_generator_outputs[async_gen_index]
-                                    if error:
-                                        # Re-raise cancellation — it is not an error
-                                        if isinstance(error, RunCancelledException):
-                                            raise error
-                                        # Handle async generator exceptions gracefully like sync generators
-                                        log_error(
-                                            f"Error while iterating async generator for {function_call.function.name}: {error}"
-                                        )
-                                        function_call.error = str(error)
-                                        function_call_success = False
-                                break
-                            async_gen_index += 1
-
-            updated_session_state = function_execution_result.updated_session_state
-
-            # Handle AgentRunException
-            stop_after_tool_call_from_exception = False
-            if isinstance(function_call_success, AgentRunException):
-                a_exc = function_call_success
-                # Update additional messages from function call
-                _handle_agent_exception(a_exc, additional_input)
-                # If stop_execution is True, mark that we should stop after this tool call
-                if a_exc.stop_execution:
-                    stop_after_tool_call_from_exception = True
-                # Set function call success to False if an exception occurred
-                function_call_success = False
-
-            # Process function call output
-            function_call_output: str = ""
-
-            # Check if this was an async generator that was already processed
-            if async_function_call_output is not None:
-                function_call_output = async_function_call_output
-                # Events from async generators were already yielded in real-time above
-            elif isinstance(function_call.result, (GeneratorType, collections.abc.Iterator)):
-                try:
-                    for item in function_call.result:
-                        # This function yields agent/team/workflow run events
-                        if isinstance(item, _ALL_RUN_OUTPUT_EVENT_TYPES):
-                            # We only capture content events
-                            if isinstance(item, RunContentEvent) or isinstance(item, TeamRunContentEvent):
-                                if item.content is not None and isinstance(item.content, BaseModel):
-                                    function_call_output += item.content.model_dump_json()
-                                else:
-                                    # Capture output
-                                    function_call_output += item.content or ""
-
-                                if function_call.function.show_result and item.content is not None:
-                                    yield ModelResponse(content=item.content)
-                                    continue
-
-                            elif isinstance(item, CustomEvent):
-                                function_call_output += str(item)
-                                item.tool_call_id = function_call.call_id
-
-                            # Yield the event itself to bubble it up
-                            yield item
-                        else:
-                            function_call_output += str(item)
-                            if function_call.function.show_result and item is not None:
-                                yield ModelResponse(content=str(item))
-                except RunCancelledException:
-                    raise
-                except Exception as e:
-                    log_error(
-                        f"Error while iterating function result generator for {function_call.function.name}: {str(e)}"
-                    )
-                    function_call.error = str(e)
-                    function_call_success = False
-
-            # For generators (sync or async), re-capture updated_session_state after consumption
-            # since session_state modifications were made during iteration
-            if async_function_call_output is not None or isinstance(
-                function_call.result,
-                (GeneratorType, collections.abc.Iterator, AsyncGeneratorType, collections.abc.AsyncIterator),
-            ):
-                if updated_session_state is None:
-                    if (
-                        function_call.function._run_context is not None
-                        and function_call.function._run_context.session_state is not None
-                    ):
-                        updated_session_state = function_call.function._run_context.session_state
-
-            if not (
-                async_function_call_output is not None
-                or isinstance(
-                    function_call.result,
-                    (GeneratorType, collections.abc.Iterator, AsyncGeneratorType, collections.abc.AsyncIterator),
-                )
-            ):
-                from agno.tools.function import ToolResult
-
-                if isinstance(function_execution_result.result, ToolResult):
-                    tool_result = function_execution_result.result
-                    function_call_output = tool_result.content
-
-                    if tool_result.images:
-                        function_execution_result.images = tool_result.images
-                    if tool_result.videos:
-                        function_execution_result.videos = tool_result.videos
-                    if tool_result.audios:
-                        function_execution_result.audios = tool_result.audios
-                    if tool_result.files:
-                        function_execution_result.files = tool_result.files
-                else:
-                    function_call_output = str(function_call.result)
-
-                if function_call.function.show_result and function_call_output is not None:
-                    yield ModelResponse(content=function_call_output)
-
-            # Create ToolCallMetrics for the tool execution
-            tool_metrics = None
-            if function_call_timer is not None and function_call_timer.elapsed > 0:
-                from time import time
-
-                tool_metrics = ToolCallMetrics()
-                tool_metrics.timer = function_call_timer
-                tool_metrics.duration = function_call_timer.elapsed
-                # Calculate Unix timestamps (Timer uses perf_counter which is relative)
-                current_time = time()
-                tool_metrics.end_time = current_time
-                tool_metrics.start_time = current_time - function_call_timer.elapsed
-
-            # Replace an oversized successful result with its stored envelope
-            # BEFORE the tool message (and the ToolExecution derived from it)
-            # is built. Async parity: the a-prefixed store methods do the I/O.
-            if result_store is not None:
-                function_call_output = await self._asubstitute_tool_result(
-                    result_store, function_call, function_call_success, function_call_output
-                )
-            # Create and yield function call result
-            function_call_result = self.create_function_call_result(
-                function_call,
-                success=function_call_success,
-                output=function_call_output,
-                timer=function_call_timer,
-                function_execution_result=function_execution_result,
-            )
-            # Override stop_after_tool_call if set by exception
-            if stop_after_tool_call_from_exception:
-                function_call_result.stop_after_tool_call = True
-            yield ModelResponse(
-                content=f"{function_call.get_call_str()} completed in {function_call_timer.elapsed:.4f}s. ",
-                tool_executions=[
-                    ToolExecution(
-                        tool_call_id=function_call_result.tool_call_id,
-                        tool_name=function_call_result.tool_name,
-                        tool_args=function_call_result.tool_args,
-                        tool_call_error=function_call_result.tool_call_error,
-                        result=str(function_call_result.content),
-                        stop_after_tool_call=function_call_result.stop_after_tool_call,
-                        metrics=tool_metrics,
-                    )
-                ],
-                event=ModelResponseEvent.tool_call_completed.value,
-                updated_session_state=updated_session_state,
-                images=function_execution_result.images,
-                videos=function_execution_result.videos,
-                audios=function_execution_result.audios,
-                files=function_execution_result.files,
-            )
-
-            # Add function call result to function call results
-            function_call_results.append(function_call_result)
-
-        # Add any additional messages at the end
         if additional_input:
             function_call_results.extend(additional_input)
 
