@@ -720,22 +720,26 @@ class Claude(Model):
         Raises the appropriate ModelProviderError or ModelRateLimitError.
         Always raises — never returns normally.
         """
+        # Logged at WARNING: the error is raised, and the run that handles it logs the one ERROR.
         if isinstance(e, APIConnectionError):
-            log_error("Connection error while calling Claude API")
+            log_warning("Connection error while calling Claude API")
             raise ModelProviderError(message=e.message, model_name=self.name, model_id=self.id) from e
         if isinstance(e, RateLimitError):
             log_warning("Rate limit exceeded")
             raise ModelRateLimitError(message=e.message, model_name=self.name, model_id=self.id) from e
         if isinstance(e, APIStatusError):
-            log_error(f"Claude API error (status {e.status_code})")
             if e.status_code == 529 or "overloaded_error" in str(e):
+                # An overload signalled inside a stream carries the stream's own HTTP
+                # status, 200, so name the condition rather than that status.
+                log_warning("Claude API overloaded")
                 raise ModelRateLimitError(
                     message=e.message, status_code=e.status_code, model_name=self.name, model_id=self.id
                 ) from e
+            log_warning(f"Claude API error (status {e.status_code})")
             raise ModelProviderError(
                 message=e.message, status_code=e.status_code, model_name=self.name, model_id=self.id
             ) from e
-        log_error(f"Unexpected error calling Claude API: {e}")
+        log_warning(f"Unexpected error calling Claude API: {e}")
         raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     def invoke(
