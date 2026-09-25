@@ -494,3 +494,96 @@ def test_message_round_trip_keeps_the_persisted_url():
 
         assert rebuilt.images[0].url == "https://origin.example.com/c.png"
         assert rebuilt.images[0].media_reference is not None
+
+
+def test_base64_round_trip_keeps_every_persisted_field():
+    """What ``to_dict`` writes is the database row; reconstruction must give all of it back.
+
+    Each ``reconstruct_*_from_dict`` has two content branches. The media-reference branch
+    restores the full field list, while the base64 branch - the one a row without an
+    external reference takes - named only part of it, so the fields the row had stored
+    came back as ``None`` on every read-back. ``metadata`` was dropped for all four types,
+    ``duration`` also for Audio, and eight of Video's eleven persisted fields.
+    ``test_reconstruction_keeps_the_stored_url_and_filepath`` already fixes this contract
+    for the reference branch; this pins it for the byte-backed one.
+    """
+    samples = [
+        (
+            "Image",
+            Image(
+                id="img-1",
+                content=b"PNGBYTES",
+                mime_type="image/png",
+                format="png",
+                detail="high",
+                original_prompt="a chart",
+                revised_prompt="a nicer chart",
+                alt_text="chart",
+                metadata={"source": "nightly-batch", "page": 3},
+            ),
+            reconstruct_image_from_dict,
+        ),
+        (
+            "Audio",
+            Audio(
+                id="aud-1",
+                content=b"MP3BYTES",
+                mime_type="audio/mp3",
+                duration=12.5,
+                sample_rate=44100,
+                channels=2,
+                transcript="hello",
+                expires_at=1_800_000_000,
+                metadata={"voice": "nova"},
+            ),
+            reconstruct_audio_from_dict,
+        ),
+        (
+            "Video",
+            Video(
+                id="vid-1",
+                content=b"MP4BYTES",
+                mime_type="video/mp4",
+                format="mp4",
+                duration=30.0,
+                width=1920,
+                height=1080,
+                fps=24.0,
+                eta="5m",
+                original_prompt="a clip",
+                revised_prompt="a nicer clip",
+                metadata={"camera": "front"},
+            ),
+            reconstruct_video_from_dict,
+        ),
+        (
+            "File",
+            File(
+                id="file-1",
+                content=b"PDFBYTES",
+                mime_type="application/pdf",
+                file_type="pdf",
+                filename="report.pdf",
+                size=8,
+                format="pdf",
+                name="Report",
+                metadata={"report_id": 42},
+            ),
+            reconstruct_file_from_dict,
+        ),
+    ]
+
+    for label, sample, reconstruct in samples:
+        stored = json.loads(json.dumps(sample.to_dict()))
+        # A sample that stops carrying inline content would silently test the other branch.
+        assert "content" in stored, f"{label}: sample no longer exercises the base64 branch"
+
+        restored = reconstruct(stored)
+
+        assert restored is not None, f"{label}: reconstruction returned None"
+        assert restored.content == sample.content, f"{label}: decoded bytes differ from the stored bytes"
+        for field, value in stored.items():
+            if field == "content":
+                continue
+            got = getattr(restored, field)
+            assert got == value, f"{label}.{field}: {value!r} came back {got!r}"
