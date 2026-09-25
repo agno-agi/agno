@@ -2397,7 +2397,7 @@ class Step:
 
         return
 
-    def get_chat_history(self, session_id: str, last_n_runs: Optional[int] = None) -> List[Message]:
+    def get_chat_history(self, session_id: Optional[str] = None, last_n_runs: Optional[int] = None) -> List[Message]:
         """Return the step's Agent or Team chat history for the given session.
 
         Args:
