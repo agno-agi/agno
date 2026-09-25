@@ -57,8 +57,10 @@ from agno.run.team import (
 )
 from agno.session import TeamSession
 from agno.team._default_tools import (
+    _MEMBER_TRANSIENT_STATE_KEYS,
     _acascading_cancel_run,
     _cascading_cancel_run,
+    _merge_member_session_state,
 )
 from agno.team.task import TaskList, TaskStatus, save_task_list
 from agno.tools.function import Function
@@ -72,7 +74,7 @@ from agno.utils.log import (
     use_agent_logger,
     use_team_logger,
 )
-from agno.utils.merge_dict import merge_dictionaries, merge_parallel_session_states
+from agno.utils.merge_dict import merge_parallel_session_states
 from agno.utils.response import check_if_run_cancelled
 from agno.utils.team import (
     add_interaction_to_team_run_context,
@@ -404,7 +406,7 @@ def _get_task_management_tools(
             session.upsert_run(_member_run_for_storage(team, session, member_run_response))
 
         if run_context.session_state is not None and member_session_state_copy is not None and not skip_session_merge:
-            merge_dictionaries(run_context.session_state, member_session_state_copy)
+            _merge_member_session_state(run_context, member_session_state_copy)
 
         if member_run_response is not None:
             _update_team_media(team, member_run_response)
@@ -471,7 +473,7 @@ def _get_task_management_tools(
             session.upsert_run(await _amember_run_for_storage(team, session, member_run_response))
 
         if run_context.session_state is not None and member_session_state_copy is not None and not skip_session_merge:
-            merge_dictionaries(run_context.session_state, member_session_state_copy)
+            _merge_member_session_state(run_context, member_session_state_copy)
 
         if member_run_response is not None:
             _update_team_media(team, member_run_response)
@@ -1040,9 +1042,14 @@ def _get_task_management_tools(
                         completion_events.append(_emit_task_updated(task_obj, "in_progress", result=task_obj.result))
                     results_text.append(f"Task [{task_obj.id}] failed unexpectedly: {e}")
 
-        # Merge all modified session states
+        # Merge all modified session states, minus each member's own run identity
         if modified_states:
-            merge_parallel_session_states(run_context.session_state, modified_states)  # type: ignore
+            merged = [
+                {k: v for k, v in state.items() if k not in _MEMBER_TRANSIENT_STATE_KEYS}
+                for state in modified_states
+                if state
+            ]
+            merge_parallel_session_states(run_context.session_state, merged)  # type: ignore
 
         save_task_list(run_context.session_state, task_list)
         use_team_logger()
@@ -1239,9 +1246,14 @@ def _get_task_management_tools(
                     completion_events.append(_emit_task_updated(task_obj, "in_progress", result=task_obj.result))
                 results_text.append(f"Task [{tid}] completed with no content.")
 
-        # Merge all modified session states
+        # Merge all modified session states, minus each member's own run identity
         if modified_states:
-            merge_parallel_session_states(run_context.session_state, modified_states)  # type: ignore
+            merged = [
+                {k: v for k, v in state.items() if k not in _MEMBER_TRANSIENT_STATE_KEYS}
+                for state in modified_states
+                if state
+            ]
+            merge_parallel_session_states(run_context.session_state, merged)  # type: ignore
 
         save_task_list(run_context.session_state, task_list)
         use_team_logger()
