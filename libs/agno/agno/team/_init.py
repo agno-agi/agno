@@ -87,6 +87,7 @@ def __init__(
     cache_session: bool = False,
     add_team_history_to_members: bool = False,
     num_team_history_runs: int = 3,
+    team_history_filter: Optional[Callable[[str], Optional[str]]] = None,
     search_past_sessions: Optional[bool] = False,
     num_past_sessions_to_search: Optional[int] = None,
     num_past_session_runs_in_search: Optional[int] = None,
@@ -250,6 +251,7 @@ def __init__(
 
     team.add_team_history_to_members = add_team_history_to_members
     team.num_team_history_runs = num_team_history_runs
+    team.team_history_filter = team_history_filter
 
     team.search_past_sessions = search_past_sessions
     team.num_past_sessions_to_search = num_past_sessions_to_search
