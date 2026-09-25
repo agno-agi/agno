@@ -1599,6 +1599,11 @@ class AgentOS:
 
         fastapi_app.add_middleware(TrailingSlashMiddleware)
 
+        # Keep SSE responses un-buffered behind reverse proxies (e.g. nginx)
+        from agno.os.middleware.sse_buffering import SSEBufferingMiddleware
+
+        fastapi_app.add_middleware(SSEBufferingMiddleware)
+
         if self.mcp:
             from agno.os.middleware.mcp_routing import MCPRoutingMiddleware, validate_mcp_routes
 
