@@ -1693,3 +1693,41 @@ def test_empty_deny_list_with_only_exemptions_excludes_nothing():
         _write(base, ".env", "SECRET=1\n")
         ws = Workspace(tmp_dir, exclude_patterns=["!.env.example"])
         assert "SECRET=1" in ws.read_file(".env")
+
+
+# ------------------------------------------------------------------
+# run_command / arun_command: explicit zero tail tests
+# ------------------------------------------------------------------
+
+
+def test_run_command_zero_tail_returns_empty():
+    """tail=0 asks for no lines; [-0:] slicing returns the whole output instead."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        ws = Workspace(tmp_dir)
+        out = ws.run_command(
+            [sys.executable, "-c", "import sys; sys.stdout.write(chr(97) + chr(10) + chr(98) + chr(10) + chr(99))"],
+            tail=0,
+        )
+        assert out == ""
+
+
+def test_run_command_positive_tail_returns_last_lines():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        ws = Workspace(tmp_dir)
+        out = ws.run_command(
+            [sys.executable, "-c", "import sys; sys.stdout.write(chr(97) + chr(10) + chr(98) + chr(10) + chr(99))"],
+            tail=2,
+        )
+        assert out == "b" + chr(10) + "c"
+
+
+def test_arun_command_zero_tail_returns_empty():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        ws = Workspace(tmp_dir)
+        out = asyncio.run(
+            ws.arun_command(
+                [sys.executable, "-c", "import sys; sys.stdout.write(chr(97) + chr(10) + chr(98) + chr(10) + chr(99))"],
+                tail=0,
+            )
+        )
+        assert out == ""
