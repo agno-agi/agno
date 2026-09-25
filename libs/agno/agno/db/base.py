@@ -9,6 +9,7 @@ from uuid import uuid4
 if TYPE_CHECKING:
     from agno.tracing.schemas import Span, Trace
 
+from agno.db.run_writes import RunCreateOutcome, RunUpdateOutcome
 from agno.db.schemas import UserMemory
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
@@ -297,6 +298,13 @@ class BaseDb(ABC):
 
     # We assume the database to be up to date with the 2.0.0 release
     default_schema_version = "2.0.0"
+
+    # Whether this adapter refuses to overwrite an existing run when a run is
+    # created, i.e. implements the strict ``create_run`` / scoped ``update_run``
+    # pair rather than only the overwriting ``upsert_run``. Runtime capability
+    # probe for callers that must know whether a conflicting caller-supplied
+    # run_id is rejected by storage itself (see agno.db.run_writes).
+    supports_atomic_run_creation: bool = False
 
     def __init__(
         self,
@@ -644,6 +652,55 @@ class BaseDb(ABC):
         raise NotImplementedError(
             f"{type(self).__name__} does not implement upsert_run yet. Use upsert_session() to persist runs inline."
         )
+
+    def create_run(
+        self,
+        run: Union[RunOutput, TeamRunOutput, WorkflowRunOutput, Dict[str, Any]],
+        session_id: str,
+        user_id: Optional[str] = None,
+        run_index: Optional[int] = None,
+    ) -> RunCreateOutcome:
+        """Insert a run, never overwriting an existing row with the same run_id.
+
+        This is the creation half of the split ``upsert_run`` performs in one
+        statement. It must be atomic: two concurrent calls with the same fresh
+        run_id have to produce exactly one ``CREATED`` and one ``CONFLICT``, so
+        a preflight read cannot substitute for it.
+
+        An adapter that overrides this must also override ``update_run``, and
+        only then set ``supports_atomic_run_creation``: the probe advertises
+        both halves, and implementing one would advertise a guarantee the
+        adapter does not provide. Adapters that have not been ported return
+        ``UNSUPPORTED``, leaving their callers on ``upsert_run``.
+
+        The guarantee covers the runs storage. A session that predates v3 can
+        still hold runs inline in its legacy ``runs`` blob, and an id taken
+        only there is not seen here; migrating the session moves those runs
+        into the runs storage and back under the check.
+        """
+        return RunCreateOutcome.UNSUPPORTED
+
+    def update_run(
+        self,
+        run: Union[RunOutput, TeamRunOutput, WorkflowRunOutput, Dict[str, Any]],
+        session_id: str,
+        user_id: Optional[str] = None,
+        run_index: Optional[int] = None,
+    ) -> RunUpdateOutcome:
+        """Patch an existing run, scoped to its owner; never inserts.
+
+        ``run_index`` repairs a legacy row stored with a NULL index, using the
+        position the caller resolved. Never overwrites a stored index.
+
+        The scope is the run's own ``session_id``, effective ``user_id`` and
+        component identity (``agent_id`` / ``team_id`` / ``workflow_id``). A
+        write whose scope does not match the stored row is refused with
+        ``SCOPE_MISMATCH`` instead of replacing it, so a lifecycle transition
+        cannot cross a session or user boundary.
+
+        Adapters that have not been ported return ``UNSUPPORTED``.
+        """
+        return RunUpdateOutcome.UNSUPPORTED
 
     def delete_run(self, run_id: str) -> bool:
         """Delete a single run from the runs storage.
@@ -2100,6 +2157,9 @@ class BaseDb(ABC):
 class AsyncBaseDb(ABC):
     """Base abstract class for all our async database implementations."""
 
+    # See BaseDb.supports_atomic_run_creation.
+    supports_atomic_run_creation: bool = False
+
     def __init__(
         self,
         id: Optional[str] = None,
@@ -2333,6 +2393,26 @@ class AsyncBaseDb(ABC):
         raise NotImplementedError(
             f"{type(self).__name__} does not implement upsert_run yet. Use upsert_session() to persist runs inline."
         )
+
+    async def create_run(
+        self,
+        run: Union[RunOutput, TeamRunOutput, WorkflowRunOutput, Dict[str, Any]],
+        session_id: str,
+        user_id: Optional[str] = None,
+        run_index: Optional[int] = None,
+    ) -> RunCreateOutcome:
+        """Async strict run insert. See ``BaseDb.create_run``."""
+        return RunCreateOutcome.UNSUPPORTED
+
+    async def update_run(
+        self,
+        run: Union[RunOutput, TeamRunOutput, WorkflowRunOutput, Dict[str, Any]],
+        session_id: str,
+        user_id: Optional[str] = None,
+        run_index: Optional[int] = None,
+    ) -> RunUpdateOutcome:
+        """Async scoped run update. See ``BaseDb.update_run``."""
+        return RunUpdateOutcome.UNSUPPORTED
 
     async def delete_run(self, run_id: str) -> bool:
         """Async delete of a single run. Adapters ported to v3 storage override this."""
