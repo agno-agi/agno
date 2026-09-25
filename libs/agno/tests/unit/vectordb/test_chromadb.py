@@ -231,6 +231,47 @@ def test_update_metadata_with_complex_data(chroma_db):
             raise
 
 
+@pytest.mark.parametrize(
+    ("initial_metadata", "updated_metadata", "expected_metadata"),
+    [
+        ({"enabled": True}, {"enabled": False}, {"enabled": False}),
+        ({"count": 7}, {"count": 0}, {"count": 0}),
+        ({"price": 3.5}, {"price": 0.0}, {"price": 0.0}),
+        ({"label": "old"}, {"label": ""}, {"label": ""}),
+        ({}, {"new_count": 0}, {"new_count": 0}),
+        ({"stats": {"count": 7}}, {"stats": {"count": 0}}, {"stats.count": 0}),
+        ({"enabled": False}, {"enabled": True}, {"enabled": True}),
+    ],
+    ids=["false", "zero", "float-zero", "empty-string", "new-field", "nested-field", "truthy-control"],
+)
+def test_update_metadata_preserves_falsy_values(chroma_db, initial_metadata, updated_metadata, expected_metadata):
+    """Read updates back from Chroma, including values that are valid but falsy."""
+    chroma_db.insert(
+        content_hash="falsy_metadata_hash",
+        documents=[
+            Document(
+                content="Document for metadata update testing",
+                content_id="falsy_metadata_content",
+                meta_data={**initial_metadata, "untouched": "keep", "nullable": "keep"},
+            )
+        ],
+    )
+
+    chroma_db.update_metadata(
+        content_id="falsy_metadata_content",
+        metadata={**updated_metadata, "nullable": None, "": "ignored"},
+    )
+
+    collection = chroma_db.client.get_collection(name=chroma_db.collection_name)
+    stored_metadata = collection.get(where={"content_id": "falsy_metadata_content"})["metadatas"][0]
+    for key, value in expected_metadata.items():
+        assert stored_metadata[key] == value
+        assert type(stored_metadata[key]) is type(value)
+    assert stored_metadata["untouched"] == "keep"
+    assert stored_metadata["nullable"] == "keep"
+    assert "" not in stored_metadata
+
+
 def test_edge_case_metadata_types(chroma_db):
     """Test various edge cases for metadata flattening"""
 
