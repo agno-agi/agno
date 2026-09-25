@@ -1,3 +1,4 @@
+import threading
 import uuid
 from unittest.mock import MagicMock, patch
 
@@ -519,6 +520,80 @@ async def test_async_upsert_429_no_write(mock_pgvector, enable_batch):
         assert not sess.execute.called
         assert not sess.commit.called
         assert sess.rollback.called
+
+
+@pytest.mark.asyncio
+async def test_async_upsert_db_io_off_event_loop(mock_pgvector):
+    """Session I/O during async upsert must not run on the event loop thread."""
+    docs = create_test_documents()
+    loop_thread = threading.get_ident()
+    io_threads = []
+
+    sess = MagicMock()
+    sess.execute.side_effect = lambda *args, **kwargs: io_threads.append(threading.get_ident())
+    sess.commit.side_effect = lambda *args, **kwargs: io_threads.append(threading.get_ident())
+    cm = MagicMock()
+    cm.__enter__.return_value = sess
+    mock_pgvector.Session.return_value = cm
+
+    with (
+        patch("agno.vectordb.pgvector.pgvector.postgresql.insert") as mock_insert,
+        patch.object(mock_pgvector, "content_hash_exists", return_value=False),
+    ):
+        mock_insert.return_value.values.return_value = MagicMock()
+        await mock_pgvector.async_upsert(content_hash="test_hash", documents=docs)
+
+    assert io_threads, "expected session I/O to run"
+    assert all(t != loop_thread for t in io_threads)
+
+
+@pytest.mark.asyncio
+async def test_async_insert_db_io_off_event_loop(mock_pgvector):
+    """Session I/O during async insert must not run on the event loop thread."""
+    docs = create_test_documents()
+    loop_thread = threading.get_ident()
+    io_threads = []
+
+    sess = MagicMock()
+    sess.execute.side_effect = lambda *args, **kwargs: io_threads.append(threading.get_ident())
+    sess.commit.side_effect = lambda *args, **kwargs: io_threads.append(threading.get_ident())
+    cm = MagicMock()
+    cm.__enter__.return_value = sess
+    mock_pgvector.Session.return_value = cm
+
+    with patch("agno.vectordb.pgvector.pgvector.postgresql.insert"):
+        await mock_pgvector.async_insert(content_hash="test_hash", documents=docs)
+
+    assert io_threads, "expected session I/O to run"
+    assert all(t != loop_thread for t in io_threads)
+
+
+@pytest.mark.asyncio
+async def test_async_upsert_content_hash_ops_off_event_loop(mock_pgvector):
+    """Content-hash lookup and stale-chunk deletion must not run on the event loop thread."""
+    loop_thread = threading.get_ident()
+    io_threads = []
+
+    def _record_thread(*args, **kwargs):
+        io_threads.append(threading.get_ident())
+        return True
+
+    sess = MagicMock()
+    cm = MagicMock()
+    cm.__enter__.return_value = sess
+    mock_pgvector.Session.return_value = cm
+
+    with (
+        patch("agno.vectordb.pgvector.pgvector.postgresql.insert") as mock_insert,
+        patch.object(mock_pgvector, "content_hash_exists", side_effect=_record_thread),
+        patch.object(mock_pgvector, "_delete_by_content_hash", side_effect=_record_thread),
+    ):
+        mock_insert.return_value.values.return_value = MagicMock()
+        await mock_pgvector.async_upsert(content_hash="test_hash", documents=create_test_documents())
+
+        mock_pgvector._delete_by_content_hash.assert_called_once()
+    assert io_threads, "expected content-hash I/O to run"
+    assert all(t != loop_thread for t in io_threads)
 
 
 @pytest.mark.asyncio
