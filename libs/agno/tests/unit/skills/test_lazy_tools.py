@@ -222,3 +222,112 @@ def test_backward_compat_eager_mode_skills_object() -> None:
     assert "get_skill_instructions" in tool_names
     assert "get_skill_reference" in tool_names
     assert "get_skill_script" in tool_names
+
+
+# --- get_tools Integration Tests ---
+
+
+def test_get_tools_lazy_mode_injects_active_skill_tools() -> None:
+    """Test that get_tools() in lazy mode injects tools for active skills from session state."""
+    from unittest.mock import MagicMock, patch
+    from agno.agent._tools import get_tools
+    from agno.run import RunContext
+    from agno.session import AgentSession
+
+    mock_tool = MagicMock()
+    mock_tool.name = "my_tool"
+    skill = Skill(
+        name="test-skill",
+        description="A test skill",
+        instructions="Instructions",
+        source_path="/path/to/test-skill",
+        tools=[mock_tool],
+    )
+    loader = MockSkillLoader([skill])
+    agent = Agent(skills=Skills(loaders=[loader]), lazy_load_skills=True)
+
+    mock_session = MagicMock(spec=AgentSession)
+    mock_session.session_state = {"active_skills": ["test-skill"]}
+    mock_run_context = MagicMock(spec=RunContext)
+    mock_run_response = MagicMock()
+
+    with patch("agno.agent._tools._raise_if_async_tools_in_list"):
+        tools = get_tools(
+            agent=agent,
+            run_response=mock_run_response,
+            run_context=mock_run_context,
+            session=mock_session,
+        )
+
+    tool_names = [t.name for t in tools if hasattr(t, "name")]
+    assert "activate_skill" in tool_names
+    assert "deactivate_skill" in tool_names
+    assert mock_tool in tools
+
+
+def test_get_tools_lazy_mode_no_active_skills() -> None:
+    """Test that get_tools() in lazy mode only exposes meta-tools when no skills are active."""
+    from unittest.mock import MagicMock, patch
+    from agno.agent._tools import get_tools
+    from agno.run import RunContext
+    from agno.session import AgentSession
+
+    skill = Skill(
+        name="test-skill",
+        description="A test skill",
+        instructions="Instructions",
+        source_path="/path/to/test-skill",
+        tools=[MagicMock()],
+    )
+    loader = MockSkillLoader([skill])
+    agent = Agent(skills=Skills(loaders=[loader]), lazy_load_skills=True)
+
+    mock_session = MagicMock(spec=AgentSession)
+    mock_session.session_state = {"active_skills": []}
+    mock_run_context = MagicMock(spec=RunContext, knowledge=None)
+    mock_run_response = MagicMock()
+
+    tools = get_tools(
+        agent=agent,
+        run_response=mock_run_response,
+        run_context=mock_run_context,
+        session=mock_session,
+    )
+
+    tool_names = [t.name for t in tools if hasattr(t, "name")]
+    assert "activate_skill" in tool_names
+    assert "deactivate_skill" in tool_names
+    # skill's actual tool should NOT be injected
+    assert len([t for t in tools if not hasattr(t, "name") or t.name not in ("activate_skill", "deactivate_skill")]) == 0
+
+
+def test_activate_then_deactivate_multi_skill() -> None:
+    """Test that activating two skills and deactivating one leaves only the other active."""
+    skill_a = Skill(
+        name="skill-a",
+        description="Skill A",
+        instructions="Instructions A",
+        source_path="/path/to/skill-a",
+    )
+    skill_b = Skill(
+        name="skill-b",
+        description="Skill B",
+        instructions="Instructions B",
+        source_path="/path/to/skill-b",
+    )
+    loader = MockSkillLoader([skill_a, skill_b])
+    agent = Agent(skills=Skills(loaders=[loader]), lazy_load_skills=True)
+
+    from unittest.mock import MagicMock
+    run_context = MagicMock()
+    run_context.session_state = {}
+
+    activate = make_activate_skill_entrypoint(agent)
+    deactivate = make_deactivate_skill_entrypoint(agent)
+
+    activate(run_context, skill_name="skill-a")
+    activate(run_context, skill_name="skill-b")
+    assert set(run_context.session_state["active_skills"]) == {"skill-a", "skill-b"}
+
+    deactivate(run_context, skill_name="skill-a")
+    assert run_context.session_state["active_skills"] == ["skill-b"]

@@ -66,6 +66,6 @@ class Skill:
             license=data.get("license"),
             compatibility=data.get("compatibility"),
             allowed_tools=data.get("allowed_tools"),
-            tools=data.get("tools"),
+            tools=data.get("tools"),  # always None from dict; tools are runtime-only, set programmatically after loading
         )
 
