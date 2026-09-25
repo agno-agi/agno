@@ -167,6 +167,35 @@ def extract_tool_messages(messages: List[AGUIMessage]) -> List[AGUIToolMessage]:
     return list(reversed(tool_msgs))
 
 
+def describe_tool_results(messages: List[AGUIMessage], tool_messages: List[AGUIToolMessage]) -> str:
+    """Render trailing tool results as the input for a turn.
+
+    A tool result no paused run is waiting on is still the newest thing the
+    client has to say, and this request is the only place it exists: an
+    interactive surface reports a click as a result for a tool call it minted
+    itself, and nothing wrote it into the session. Left out, the turn runs on
+    the last user message, which is a turn already answered, and the click is
+    answered with a repeat of it.
+
+    Each result is named from the assistant call carrying its id, because the
+    content alone need not say what produced it.
+    """
+    tool_names: Dict[str, str] = {}
+    for msg in messages:
+        for call in getattr(msg, "tool_calls", None) or []:
+            call_id = getattr(call, "id", None)
+            name = getattr(getattr(call, "function", None), "name", None)
+            if call_id and name:
+                tool_names[call_id] = name
+
+    lines: List[str] = []
+    for msg in tool_messages:
+        content = msg.error or msg.content or ""
+        name = tool_names.get(msg.tool_call_id)
+        lines.append(f"Result of the {name} tool call: {content}" if name else f"Tool result: {content}")
+    return "\n".join(lines)
+
+
 def parse_client_tools(agui_tools: Optional[List[AGUITool]]) -> List[Function]:
     # Frontend tools run in the browser; external_execution=True pauses the run
     if not agui_tools:
