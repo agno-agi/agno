@@ -98,9 +98,7 @@ def is_table_available(session: Session, table_name: str, db_schema: str) -> boo
     Raises:
         Any error from the query, so a failed check is not read as a missing table.
     """
-    exists_query = text(
-        "SELECT 1 FROM information_schema.tables WHERE table_schema = :schema AND table_name = :table"
-    )
+    exists_query = text("SELECT 1 FROM information_schema.tables WHERE table_schema = :schema AND table_name = :table")
     exists = session.execute(exists_query, {"schema": db_schema, "table": table_name}).scalar() is not None
     return exists
 
@@ -115,9 +113,7 @@ async def ais_table_available(session: AsyncSession, table_name: str, db_schema:
     Raises:
         Any error from the query, so a failed check is not read as a missing table.
     """
-    exists_query = text(
-        "SELECT 1 FROM information_schema.tables WHERE table_schema = :schema AND table_name = :table"
-    )
+    exists_query = text("SELECT 1 FROM information_schema.tables WHERE table_schema = :schema AND table_name = :table")
     exists = (await session.execute(exists_query, {"schema": db_schema, "table": table_name})).scalar() is not None
     return exists
 
