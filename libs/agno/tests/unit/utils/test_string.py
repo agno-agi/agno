@@ -5,6 +5,7 @@ from pydantic import BaseModel
 from agno.utils.string import (
     _extract_json_objects,
     generate_id_from_name,
+    hash_string_sha256,
     parse_response_dict_str,
     parse_response_model_str,
     sanitize_postgres_string,
@@ -494,3 +495,11 @@ def test_extract_json_objects_ignores_unmatched_opening_brace():
     assert _extract_json_objects(text) == ['{"a": 1}']
     assert parse_response_dict_str(text) == {"a": 1}
     assert _extract_json_objects('Open { here and { there, then {"a": 1} and {"b": 2}') == ['{"a": 1}', '{"b": 2}']
+
+
+def test_hash_string_sha256_none_matches_empty():
+    """None content must not AttributeError; hash like empty string."""
+    assert hash_string_sha256(None) == hash_string_sha256("")
+    assert hash_string_sha256("hello") == (
+        "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+    )
