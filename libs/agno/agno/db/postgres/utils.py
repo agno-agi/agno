@@ -197,6 +197,14 @@ async def ais_valid_table(db_engine: AsyncEngine, table_name: str, table_type: s
         raise
 
 
+# Serializes enqueue and claim of one job-queue session. Taken before the
+# insert and held to commit, and taken in a gated claim before the head is
+# re-validated: an insert in flight is invisible to a concurrent claim (its
+# sequence value is allocated before it commits), so ordering alone cannot
+# keep a not-yet-visible predecessor from being claimed beside its sibling.
+JOBS_SESSION_LOCK_SQL = "SELECT pg_advisory_xact_lock(hashtext('agno_jobs_session'), hashtext(:sid))"
+
+
 def _get_table_columns(conn, table_name: str, db_schema: str) -> set[str]:
     """Helper function to get table columns using sync inspector."""
     inspector = inspect(conn)
