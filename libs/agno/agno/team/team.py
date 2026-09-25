@@ -23,6 +23,7 @@ from typing import (
 from pydantic import BaseModel
 
 from agno.agent import Agent
+from agno.agent.followup import FollowupConfig
 from agno.compression.manager import CompressionManager
 from agno.db.base import AsyncBaseDb, BaseDb, ComponentType, UserMemory
 from agno.eval.base import BaseEval
@@ -368,11 +369,12 @@ class Team:
     reasoning_agent: Optional[Agent] = None
 
     # --- Team Followups ---
-    # If True, generate followup prompts after the main response
-    followups: bool = False
-    # Number of followup prompts to generate (default 3)
+    # False, True for the defaults, or a FollowupConfig that enables followups and carries their
+    # model, instructions and count. Kept as given; a string model is resolved on a copy of it.
+    followups: Union[bool, FollowupConfig] = False
+    # Maximum number of followup prompts (default 3); with a FollowupConfig, its count
     num_followups: int = 3
-    # Optional model to use for generating followups (defaults to team's model)
+    # Optional model to use for generating followups (defaults to team's model); with a FollowupConfig, its model
     followup_model: Optional[Model] = None
 
     # --- Team Streaming ---
@@ -558,8 +560,8 @@ class Team:
         metadata: Optional[Dict[str, Any]] = None,
         reasoning_model: Optional[Union[Model, str]] = None,
         reasoning_agent: Optional[Agent] = None,
-        followups: bool = False,
-        num_followups: int = 3,
+        followups: Union[bool, FollowupConfig] = False,
+        num_followups: Optional[int] = None,
         followup_model: Optional[Union[Model, str]] = None,
         stream: Optional[bool] = None,
         stream_events: Optional[bool] = None,

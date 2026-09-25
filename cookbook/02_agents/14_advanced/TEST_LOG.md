@@ -185,3 +185,13 @@
 **Observation:** Running the earlier version of this cookbook (all runs sharing the agent's default session) reproduced the known shared-session status-clobbering bug on cue - runs stuck at PENDING forever with free slots (different victims each run: 1 then 2). The transition-site fix ships in the durable run queue PR chain; the cookbook now uses one session per run, which is also the realistic shape.
 
 ---
+
+### followup_instructions.py
+
+**Status:** PASS (offline); live run not repeated on 2026-09-24
+
+**Description:** An agent limited to Python documentation, with `followups=FollowupConfig(...)` carrying a separate follow-up model and domain instructions, asked for a sea poem it should decline.
+
+**Result:** 2026-09-24: the module builds the agent offline (`followups` is the config, count 3, config model resolved to `OpenAIResponses`, no `followup_model`); no API key was available, so the live call was not repeated. 2026-09-09 (reported by the PR author, earlier API): ten gpt-5.6-luna checks across refusal, greeting, missing API, prompt injection and technical answers; no poem was re-offered, and missing-API suggestions asked for sources rather than presuming the API exists.
+
+---

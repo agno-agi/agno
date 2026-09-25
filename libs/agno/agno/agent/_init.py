@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from os import getenv
 from typing import (
     TYPE_CHECKING,
@@ -18,6 +19,7 @@ from typing import (
 if TYPE_CHECKING:
     from agno.agent.agent import Agent
 
+from agno.agent.followup import FollowupConfig
 from agno.compression.manager import CompressionManager
 from agno.db.base import AsyncBaseDb
 from agno.memory import MemoryManager
@@ -276,6 +278,15 @@ def get_models(agent: Agent) -> None:
         agent.output_model = get_model(agent.output_model)
         if agent.output_model is not None:
             agent.output_model.model_type = ModelType.OUTPUT_MODEL
+
+    # Follow-up slots resolve strings like the siblings but keep the instance's
+    # model_type: follow-up metrics are attributed explicitly at the call site, and
+    # the same instance may also serve as the main model.
+    if agent.followup_model is not None:
+        agent.followup_model = get_model(agent.followup_model)
+    if isinstance(agent.followups, FollowupConfig) and isinstance(agent.followups.model, str):
+        # Resolve on a copy: one config object may be shared across components.
+        agent.followups = replace(agent.followups, model=get_model(agent.followups.model))
 
     if agent.fallback_config is not None:
         agent.fallback_config.resolve_models()
