@@ -23,9 +23,9 @@ from os import getenv
 from typing import Any, Dict, List, Optional, Tuple
 
 try:
-    import httpx
+    import httpx2
 except ImportError:
-    raise ImportError("`httpx` not installed. Please install it via `pip install httpx`.")
+    raise ImportError("`httpx2` not installed. Please install it via `pip install httpx2`.")
 
 from agno.tools import Toolkit
 from agno.utils.log import log_info, logger
@@ -77,7 +77,7 @@ class OpenRouteServiceTools(Toolkit):
             )
 
         self.base_url = base_url.rstrip("/")
-        self.timeout = httpx.Timeout(timeout)
+        self.timeout = httpx2.Timeout(timeout)
 
         # sync tools: used by agent.run() and agent.print_response()
         # async tools: used by agent.arun() and agent.aprint_response()
@@ -111,7 +111,7 @@ class OpenRouteServiceTools(Toolkit):
         return None
 
     @staticmethod
-    def _http_error(exc: "httpx.HTTPStatusError") -> Dict[str, str]:
+    def _http_error(exc: "httpx2.HTTPStatusError") -> Dict[str, str]:
         status = exc.response.status_code
         if status in (401, 403):
             return {"error": "Invalid or unauthorized OpenRouteService API key."}
@@ -168,11 +168,11 @@ class OpenRouteServiceTools(Toolkit):
         log_info(f"Geocoding location: {location}")
         params = {"api_key": self.api_key, "text": location, "size": 1}
         try:
-            with httpx.Client(timeout=self.timeout) as client:
+            with httpx2.Client(timeout=self.timeout) as client:
                 response = client.get(f"{self.base_url}/geocode/search", params=params)
                 response.raise_for_status()
                 return self._parse_geocode(response.json(), location)
-        except httpx.HTTPStatusError as e:
+        except httpx2.HTTPStatusError as e:
             return self._http_error(e)
         except Exception as e:
             logger.exception("Error geocoding location")
@@ -190,11 +190,11 @@ class OpenRouteServiceTools(Toolkit):
         log_info(f"Geocoding location: {location}")
         params = {"api_key": self.api_key, "text": location, "size": 1}
         try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
+            async with httpx2.AsyncClient(timeout=self.timeout) as client:
                 response = await client.get(f"{self.base_url}/geocode/search", params=params)
                 response.raise_for_status()
                 return self._parse_geocode(response.json(), location)
-        except httpx.HTTPStatusError as e:
+        except httpx2.HTTPStatusError as e:
             return self._http_error(e)
         except Exception as e:
             logger.exception("Error geocoding location")
@@ -235,13 +235,13 @@ class OpenRouteServiceTools(Toolkit):
         log_info(f"Getting {profile} directions from {start['label']} to {end['label']}")
         payload = {"coordinates": [[start["longitude"], start["latitude"]], [end["longitude"], end["latitude"]]]}
         try:
-            with httpx.Client(timeout=self.timeout) as client:
+            with httpx2.Client(timeout=self.timeout) as client:
                 response = client.post(
                     f"{self.base_url}/v2/directions/{profile}", headers=self._auth_headers(), json=payload
                 )
                 response.raise_for_status()
                 return self._format_directions(response.json(), start["label"], end["label"], profile)
-        except httpx.HTTPStatusError as e:
+        except httpx2.HTTPStatusError as e:
             return self._http_error(e)
         except Exception as e:
             logger.exception("Error getting directions")
@@ -281,13 +281,13 @@ class OpenRouteServiceTools(Toolkit):
         log_info(f"Getting {profile} directions from {start['label']} to {end['label']}")
         payload = {"coordinates": [[start["longitude"], start["latitude"]], [end["longitude"], end["latitude"]]]}
         try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
+            async with httpx2.AsyncClient(timeout=self.timeout) as client:
                 response = await client.post(
                     f"{self.base_url}/v2/directions/{profile}", headers=self._auth_headers(), json=payload
                 )
                 response.raise_for_status()
                 return self._format_directions(response.json(), start["label"], end["label"], profile)
-        except httpx.HTTPStatusError as e:
+        except httpx2.HTTPStatusError as e:
             return self._http_error(e)
         except Exception as e:
             logger.exception("Error getting directions")
@@ -357,7 +357,7 @@ class OpenRouteServiceTools(Toolkit):
 
         log_info(f"Getting {profile} distance matrix for {len(labels)} locations")
         try:
-            with httpx.Client(timeout=self.timeout) as client:
+            with httpx2.Client(timeout=self.timeout) as client:
                 response = client.post(
                     f"{self.base_url}/v2/matrix/{profile}",
                     headers=self._auth_headers(),
@@ -365,7 +365,7 @@ class OpenRouteServiceTools(Toolkit):
                 )
                 response.raise_for_status()
                 return self._format_matrix(response.json(), labels, profile)
-        except httpx.HTTPStatusError as e:
+        except httpx2.HTTPStatusError as e:
             return self._http_error(e)
         except Exception as e:
             logger.exception("Error getting distance matrix")
@@ -395,7 +395,7 @@ class OpenRouteServiceTools(Toolkit):
 
         log_info(f"Getting {profile} distance matrix for {len(labels)} locations")
         try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
+            async with httpx2.AsyncClient(timeout=self.timeout) as client:
                 response = await client.post(
                     f"{self.base_url}/v2/matrix/{profile}",
                     headers=self._auth_headers(),
@@ -403,7 +403,7 @@ class OpenRouteServiceTools(Toolkit):
                 )
                 response.raise_for_status()
                 return self._format_matrix(response.json(), labels, profile)
-        except httpx.HTTPStatusError as e:
+        except httpx2.HTTPStatusError as e:
             return self._http_error(e)
         except Exception as e:
             logger.exception("Error getting distance matrix")

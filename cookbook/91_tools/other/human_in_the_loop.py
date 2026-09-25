@@ -12,13 +12,13 @@ Some practical applications:
 - Validating data transformations
 - Approving automated actions in critical systems
 
-Run `uv pip install openai httpx rich agno` to install dependencies.
+Run `uv pip install openai httpx2 rich agno` to install dependencies.
 """
 
 import json
 from typing import Iterator
 
-import httpx
+import httpx2
 from agno.agent import Agent
 from agno.exceptions import StopAgentRun
 from agno.models.openai import OpenAIChat
@@ -60,12 +60,12 @@ def get_top_hackernews_stories(num_stories: int) -> Iterator[str]:
         str: JSON string containing story details
     """
     # Fetch top story IDs
-    response = httpx.get("https://hacker-news.firebaseio.com/v0/topstories.json")
+    response = httpx2.get("https://hacker-news.firebaseio.com/v0/topstories.json")
     story_ids = response.json()
 
     # Yield story details
     for story_id in story_ids[:num_stories]:
-        story_response = httpx.get(
+        story_response = httpx2.get(
             f"https://hacker-news.firebaseio.com/v0/item/{story_id}.json"
         )
         story = story_response.json()

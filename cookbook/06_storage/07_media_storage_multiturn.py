@@ -18,7 +18,7 @@ Requirements:
 
 import os
 
-import httpx
+import httpx2
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.media import Image
@@ -59,7 +59,7 @@ agent = Agent(
 # Run the Agent
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    image_bytes = httpx.get(IMAGE_URL, follow_redirects=True).content
+    image_bytes = httpx2.get(IMAGE_URL, follow_redirects=True).content
 
     # Turn 1: send the image and ask about it
     agent.print_response(

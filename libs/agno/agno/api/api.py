@@ -7,9 +7,9 @@ import weakref
 from queue import Empty, Full, Queue
 from typing import Callable, Dict, Optional, Tuple, cast
 
-from httpx import AsyncClient as HttpxAsyncClient
-from httpx import Client as HttpxClient
-from httpx import Response
+from httpx2 import AsyncClient as HttpxAsyncClient
+from httpx2 import Client as HttpxClient
+from httpx2 import Response
 
 from agno.api.settings import agno_api_settings
 from agno.utils.log import log_debug
@@ -304,7 +304,7 @@ class _TelemetryDispatcher:
         # Defensive recovery for an unsupported post-telemetry fork: fresh
         # dispatcher state lets the child deliver, but cannot reclaim resources
         # retained by vanished parent threads. Do not close the inherited client
-        # here: httpx/OpenSSL locks are not safe in an at-fork callback. Supported
+        # here: httpx2/OpenSSL locks are not safe in an at-fork callback. Supported
         # applications fork before the first event or use a spawn-based method.
         self._queue = Queue(maxsize=TELEMETRY_QUEUE_SIZE)
         self._worker = None

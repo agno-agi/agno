@@ -24,16 +24,16 @@ import os
 from dataclasses import dataclass, field
 from typing import Optional
 
-import httpx
+import httpx2
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.utils.pprint import pprint_run_response
 
 try:
-    import httpx as _httpx  # noqa: F401
+    import httpx2 as _httpx  # noqa: F401
 except ImportError:
     raise ImportError(
-        "httpx is not installed. Please install it using `uv pip install httpx`."
+        "httpx2 is not installed. Please install it using `uv pip install httpx2`."
     )
 
 
@@ -70,7 +70,7 @@ class DakeraMemoryStore:
         self, content: str, user_id: str = "default", session_id: str = "default"
     ) -> None:
         """Persist a memory entry to Dakera."""
-        httpx.post(
+        httpx2.post(
             f"{self.base_url}/v1/memories",
             headers=self._headers(),
             json={
@@ -93,7 +93,7 @@ class DakeraMemoryStore:
         payload: dict = {"query": query, "agent_id": self.namespace, "top_k": top_k}
         if user_id:
             payload["filter"] = {"metadata.user_id": user_id}
-        resp = httpx.post(
+        resp = httpx2.post(
             f"{self.base_url}/v1/memories/search",
             headers=self._headers(),
             json=payload,

@@ -11,7 +11,7 @@ from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
-from httpx import HTTPStatusError
+from httpx2 import HTTPStatusError
 from rich import box
 from rich.panel import Panel
 from starlette.requests import Request
@@ -110,7 +110,7 @@ async def mcp_lifespan(_, mcp_tools):
 
 @asynccontextmanager
 async def http_client_lifespan(_):
-    """Manage httpx client lifecycle for proper connection pool cleanup."""
+    """Manage httpx2 client lifecycle for proper connection pool cleanup."""
     from agno.utils.http import aclose_default_clients
 
     yield
@@ -1347,7 +1347,7 @@ class AgentOS:
             if self.telemetry:
                 lifespans.append(partial(agent_os_telemetry_lifespan, agent_os=self))
 
-            # The httpx client cleanup lifespan (should be last to close after other lifespans)
+            # The httpx2 client cleanup lifespan (should be last to close after other lifespans)
             lifespans.append(http_client_lifespan)
 
             # Combine lifespans and set them in the app
@@ -1396,7 +1396,7 @@ class AgentOS:
             if self.telemetry:
                 lifespans.append(partial(agent_os_telemetry_lifespan, agent_os=self))
 
-            # The httpx client cleanup lifespan (should be last to close after other lifespans)
+            # The httpx2 client cleanup lifespan (should be last to close after other lifespans)
             lifespans.append(http_client_lifespan)
 
             final_lifespan = _combine_app_lifespans(lifespans) if lifespans else None

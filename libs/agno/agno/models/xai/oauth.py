@@ -14,7 +14,7 @@ from os import getenv
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional, Tuple
 
-import httpx
+import httpx2
 
 from agno.exceptions import ModelAuthenticationError
 from agno.utils.log import log_debug, log_warning
@@ -161,9 +161,9 @@ class XAITokenManager:
     # (NIST SP 800-57 Pt 1 §5.2).
     encryption_key: Optional[str] = field(default_factory=lambda: getenv("XAI_TOKEN_ENCRYPTION_KEY"))
     encrypt_tokens: bool = True  # Require encryption by default; set False for local dev only
-    http_client: Optional[httpx.Client] = None
-    async_http_client: Optional[httpx.AsyncClient] = None
-    # httpx defaults to 5s, which is too short for a device-code poll against a
+    http_client: Optional[httpx2.Client] = None
+    async_http_client: Optional[httpx2.AsyncClient] = None
+    # httpx2 defaults to 5s, which is too short for a device-code poll against a
     # live IdP: a sign-in that had already been approved timed out on it.
     timeout: float = 30.0
     now_fn: Callable[[], float] = time.time
@@ -282,7 +282,7 @@ class XAITokenManager:
         }
 
     @staticmethod
-    def _parse_device_response(response: httpx.Response) -> DeviceLoginInfo:
+    def _parse_device_response(response: httpx2.Response) -> DeviceLoginInfo:
         if response.status_code != 200:
             raise ModelAuthenticationError(f"SuperGrok device login could not be started: {response.text}")
         data = response.json()
@@ -298,7 +298,7 @@ class XAITokenManager:
         )
 
     @staticmethod
-    def _classify_poll_error(response: httpx.Response, interval: int) -> DevicePollResult:
+    def _classify_poll_error(response: httpx2.Response, interval: int) -> DevicePollResult:
         """Classify a non-200 poll response per RFC 8628 section 3.5; unknown errors raise."""
         error = XAITokenManager._error_code(response)
         if error == "authorization_pending":
@@ -318,7 +318,7 @@ class XAITokenManager:
         raise ModelAuthenticationError(f"SuperGrok sign-in failed: {response.text}")
 
     @staticmethod
-    def _error_code(response: httpx.Response) -> Optional[str]:
+    def _error_code(response: httpx2.Response) -> Optional[str]:
         try:
             body = response.json()
         except ValueError:
@@ -725,14 +725,14 @@ class XAITokenManager:
     # HTTP
     # ------------------------------------------------------------------
 
-    def _post_form(self, url: str, data: Dict[str, str]) -> httpx.Response:
+    def _post_form(self, url: str, data: Dict[str, str]) -> httpx2.Response:
         if self.http_client is not None:
             return self.http_client.post(url, data=data)
-        with httpx.Client(timeout=self.timeout) as client:
+        with httpx2.Client(timeout=self.timeout) as client:
             return client.post(url, data=data)
 
-    async def _apost_form(self, url: str, data: Dict[str, str]) -> httpx.Response:
+    async def _apost_form(self, url: str, data: Dict[str, str]) -> httpx2.Response:
         if self.async_http_client is not None:
             return await self.async_http_client.post(url, data=data)
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
+        async with httpx2.AsyncClient(timeout=self.timeout) as client:
             return await client.post(url, data=data)

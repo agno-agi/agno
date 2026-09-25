@@ -28,7 +28,7 @@ hybrid search. The paired HTTP walkthrough persisted one agent session.
 
 **Test mode:** LIVE
 
-**Description:** Ran the raw `httpx` walkthrough against `full_os.py`, including
+**Description:** Ran the raw `httpx2` walkthrough against `full_os.py`, including
 discovery, a non-streaming model run, an SSE-streaming model run, and paginated
 session retrieval.
 

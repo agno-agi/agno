@@ -1,6 +1,6 @@
 """Discovery: structured /info fields, probe fallbacks, and failure modes."""
 
-import httpx
+import httpx2
 import pytest
 
 from agnoctl.discovery import _agentos_url_from_env_files, _read_env_value, discover, discover_all
@@ -13,13 +13,13 @@ def _install_hosts(monkeypatch, live):
     every other URL is connection-refused, like a dead localhost port."""
     import agnoctl.http as http_module
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         fake = live.get(request.url.host + ":" + str(request.url.port))
         if fake is None:
-            raise httpx.ConnectError("connection refused", request=request)
+            raise httpx2.ConnectError("connection refused", request=request)
         return fake.handler(request)
 
-    monkeypatch.setattr(http_module, "_transport_override", httpx.MockTransport(handler))
+    monkeypatch.setattr(http_module, "_transport_override", httpx2.MockTransport(handler))
     for var in ("AGNO_ADMIN_TOKEN", "OS_SECURITY_KEY", "AGENTOS_URL"):
         monkeypatch.delenv(var, raising=False)
 
@@ -65,12 +65,12 @@ def test_discover_probe_detects_mcp_disabled(monkeypatch):
 
 
 def test_discover_unreachable_raises(monkeypatch, tmp_path):
-    def refuse(request: httpx.Request) -> httpx.Response:
-        raise httpx.ConnectError("connection refused", request=request)
+    def refuse(request: httpx2.Request) -> httpx2.Response:
+        raise httpx2.ConnectError("connection refused", request=request)
 
     import agnoctl.http as http_module
 
-    monkeypatch.setattr(http_module, "_transport_override", httpx.MockTransport(refuse))
+    monkeypatch.setattr(http_module, "_transport_override", httpx2.MockTransport(refuse))
     monkeypatch.delenv("AGENTOS_URL", raising=False)
     monkeypatch.chdir(tmp_path)  # no AGENTOS_URL in a .env file to pick up
     with pytest.raises(CLIError) as exc_info:
@@ -96,14 +96,14 @@ def test_discover_finds_os_on_bumped_port_when_7777_is_taken(monkeypatch, tmp_pa
     """An AgentOS on 7778 (7777 occupied) must be found by autodiscovery, not missed."""
     fake = FakeAgentOS()
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         if request.url.port != 7778:
-            raise httpx.ConnectError("connection refused", request=request)
+            raise httpx2.ConnectError("connection refused", request=request)
         return fake.handler(request)
 
     import agnoctl.http as http_module
 
-    monkeypatch.setattr(http_module, "_transport_override", httpx.MockTransport(handler))
+    monkeypatch.setattr(http_module, "_transport_override", httpx2.MockTransport(handler))
     monkeypatch.delenv("AGENTOS_URL", raising=False)
     monkeypatch.chdir(tmp_path)  # exercise the localhost-defaults path, not a .env file
 

@@ -7,7 +7,7 @@ Demonstrates tool calls accesing agent.
 
 import json
 
-import httpx
+import httpx2
 from agno.agent import Agent
 
 # ---------------------------------------------------------------------------
@@ -19,13 +19,13 @@ def get_top_hackernews_stories(agent: Agent) -> str:
     num_stories = agent.dependencies.get("num_stories", 5) if agent.dependencies else 5
 
     # Fetch top story IDs
-    response = httpx.get("https://hacker-news.firebaseio.com/v0/topstories.json")
+    response = httpx2.get("https://hacker-news.firebaseio.com/v0/topstories.json")
     story_ids = response.json()
 
     # Fetch story details
     stories = []
     for story_id in story_ids[:num_stories]:
-        story_response = httpx.get(
+        story_response = httpx2.get(
             f"https://hacker-news.firebaseio.com/v0/item/{story_id}.json"
         )
         story = story_response.json()

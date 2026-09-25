@@ -2,14 +2,14 @@
 
 Speaks just enough JSON-RPC over streamable HTTP (initialize -> notifications/initialized
 -> tools/list) to prove that a written client config would actually work. Implemented on
-plain httpx so the CLI does not depend on the mcp package.
+plain httpx2 so the CLI does not depend on the mcp package.
 """
 
 import json
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
-import httpx
+import httpx2
 
 from agnoctl import __version__
 from agnoctl.http import build_client
@@ -40,7 +40,7 @@ class MCPVerifyResult:
         }
 
 
-def _parse_jsonrpc_body(response: httpx.Response) -> Optional[Dict[str, Any]]:
+def _parse_jsonrpc_body(response: httpx2.Response) -> Optional[Dict[str, Any]]:
     """Extract the first JSON-RPC message from a JSON or SSE response body."""
     content_type = response.headers.get("content-type", "")
     text = response.text
@@ -170,5 +170,5 @@ def _verify_mcp(mcp_url: str, token: Optional[str], timeout: float, expect_oauth
                 raw_tools = []
             tools = [tool.get("name", "") for tool in raw_tools if isinstance(tool, dict)]
             return MCPVerifyResult(ok=True, tools=tools, status_code=tools_response.status_code)
-    except httpx.HTTPError as e:
+    except httpx2.HTTPError as e:
         return MCPVerifyResult(ok=False, error="Could not reach the MCP endpoint: " + str(e))

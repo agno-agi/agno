@@ -14,7 +14,7 @@ import argparse
 import os
 from pathlib import Path
 
-import httpx
+import httpx2
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
@@ -58,7 +58,7 @@ app = agent_os.get_app()
 
 def show_rendered_config() -> None:
     """Fetch and verify the YAML configuration rendered by AgentOS."""
-    with httpx.Client(base_url=BASE_URL, timeout=30.0) as client:
+    with httpx2.Client(base_url=BASE_URL, timeout=30.0) as client:
         health_response = client.get("/health")
         health_response.raise_for_status()
 

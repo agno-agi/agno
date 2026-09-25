@@ -16,7 +16,7 @@ import time
 from typing import Any
 from uuid import uuid4
 
-import httpx
+import httpx2
 
 # ---------------------------------------------------------------------------
 # Create Knowledge API Helpers
@@ -27,7 +27,7 @@ AGENT_ID = "knowledge-assistant"
 KNOWLEDGE_NAME = "AgentOS Knowledge"
 
 
-def wait_until_processed(client: httpx.Client, content_id: str) -> dict[str, Any]:
+def wait_until_processed(client: httpx2.Client, content_id: str) -> dict[str, Any]:
     """Poll one content item until processing reaches a terminal state."""
     for _ in range(60):
         response = client.get(f"/knowledge/content/{content_id}/status")
@@ -51,7 +51,7 @@ def wait_until_processed(client: httpx.Client, content_id: str) -> dict[str, Any
     raise TimeoutError("Knowledge content did not finish processing")
 
 
-def verify_server(client: httpx.Client) -> None:
+def verify_server(client: httpx2.Client) -> None:
     """Verify health and the served agent and knowledge configuration."""
     health_response = client.get("/health")
     health_response.raise_for_status()
@@ -85,7 +85,7 @@ if __name__ == "__main__":
     content_id: str | None = None
     deleted = False
 
-    with httpx.Client(base_url=BASE_URL, timeout=120.0) as http_client:
+    with httpx2.Client(base_url=BASE_URL, timeout=120.0) as http_client:
         verify_server(http_client)
 
         try:

@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Set, Tuple
 from urllib.parse import urljoin, urlparse
 
-import httpx
+import httpx2
 
 from agno.knowledge.chunking.fixed import FixedSizeChunking
 from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyType
@@ -163,8 +163,8 @@ class WebsiteReader(Reader):
                           content extracted from that URL.
 
         Raises:
-        - httpx.HTTPStatusError: If there's an HTTP status error.
-        - httpx.RequestError: If there's a request-related error (connection, timeout, etc).
+        - httpx2.HTTPStatusError: If there's an HTTP status error.
+        - httpx2.RequestError: If there's a request-related error (connection, timeout, etc).
 
         Note:
         The function focuses on extracting the main content by prioritizing content inside common HTML tags
@@ -213,15 +213,15 @@ class WebsiteReader(Reader):
                 guard = make_redirect_guard(self.allowed_hosts)
                 if guard is None:
                     response = (
-                        httpx.get(current_url, timeout=self.timeout, proxy=self.proxy, follow_redirects=True)
+                        httpx2.get(current_url, timeout=self.timeout, proxy=self.proxy, follow_redirects=True)
                         if self.proxy
-                        else httpx.get(current_url, timeout=self.timeout, follow_redirects=True)
+                        else httpx2.get(current_url, timeout=self.timeout, follow_redirects=True)
                     )
                 else:
                     client_kwargs: Dict[str, Any] = {"timeout": self.timeout, "event_hooks": {"request": [guard]}}
                     if self.proxy:
                         client_kwargs["proxy"] = self.proxy
-                    with httpx.Client(**client_kwargs) as client:
+                    with httpx2.Client(**client_kwargs) as client:
                         response = client.get(current_url, follow_redirects=True)
                 response.raise_for_status()
 
@@ -255,7 +255,7 @@ class WebsiteReader(Reader):
                         ):
                             self._urls_to_crawl.append((full_url_str, current_depth + 1))
 
-            except httpx.HTTPStatusError as e:
+            except httpx2.HTTPStatusError as e:
                 # Log HTTP status errors but continue crawling other pages
                 # Skip redirect errors (3xx) as they should be handled by follow_redirects
                 if e.response.status_code >= 300 and e.response.status_code < 400:
@@ -265,7 +265,7 @@ class WebsiteReader(Reader):
                 # For the initial URL, we should raise the error only if it's not a redirect
                 if current_url == url and not crawler_result and not (300 <= e.response.status_code < 400):
                     raise
-            except httpx.RequestError as e:
+            except httpx2.RequestError as e:
                 # Log request errors but continue crawling other pages
                 log_warning(f"Request error while crawling {current_url}: {str(e)}")
                 # For the initial URL, we should raise the error
@@ -277,11 +277,11 @@ class WebsiteReader(Reader):
                 # For the initial URL, we should raise the error
                 if current_url == url and not crawler_result:
                     # Wrap non-HTTP exceptions in a RequestError
-                    raise httpx.RequestError(f"Failed to crawl starting URL {url}: {str(e)}", request=None) from e
+                    raise httpx2.RequestError(f"Failed to crawl starting URL {url}: {str(e)}", request=None) from e
 
         # If we couldn't crawl any pages, raise an error
         if not crawler_result:
-            raise httpx.RequestError(f"Failed to extract any content from {url}", request=None)
+            raise httpx2.RequestError(f"Failed to extract any content from {url}", request=None)
 
         return crawler_result
 
@@ -298,8 +298,8 @@ class WebsiteReader(Reader):
                         content extracted from that URL.
 
         Raises:
-        - httpx.HTTPStatusError: If there's an HTTP status error.
-        - httpx.RequestError: If there's a request-related error (connection, timeout, etc).
+        - httpx2.HTTPStatusError: If there's an HTTP status error.
+        - httpx2.RequestError: If there's a request-related error (connection, timeout, etc).
         """
         num_links = 0
         crawler_result: Dict[str, str] = {}
@@ -317,7 +317,7 @@ class WebsiteReader(Reader):
         guard = make_async_redirect_guard(self.allowed_hosts)
         if guard is not None:
             client_args["event_hooks"] = {"request": [guard]}
-        async with httpx.AsyncClient(**client_args) as client:
+        async with httpx2.AsyncClient(**client_args) as client:
             while self._urls_to_crawl and num_links < self.max_links:
                 current_url, current_depth = self._urls_to_crawl.pop(0)
 
@@ -370,13 +370,13 @@ class WebsiteReader(Reader):
                             ):
                                 self._urls_to_crawl.append((full_url_str, current_depth + 1))
 
-                except httpx.HTTPStatusError as e:
+                except httpx2.HTTPStatusError as e:
                     # Log HTTP status errors but continue crawling other pages
                     log_warning(f"HTTP status error while crawling asynchronously {current_url}: {str(e)}")
                     # For the initial URL, we should raise the error
                     if current_url == url and not crawler_result:
                         raise
-                except httpx.RequestError as e:
+                except httpx2.RequestError as e:
                     # Log request errors but continue crawling other pages
                     log_warning(f"Request error while crawling asynchronously {current_url}: {str(e)}")
                     # For the initial URL, we should raise the error
@@ -388,13 +388,13 @@ class WebsiteReader(Reader):
                     # For the initial URL, we should raise the error
                     if current_url == url and not crawler_result:
                         # Wrap non-HTTP exceptions in a RequestError
-                        raise httpx.RequestError(
+                        raise httpx2.RequestError(
                             f"Failed to crawl starting URL {url} asynchronously: {str(e)}", request=None
                         ) from e
 
         # If we couldn't crawl any pages, raise an error
         if not crawler_result:
-            raise httpx.RequestError(f"Failed to extract any content from {url} asynchronously", request=None)
+            raise httpx2.RequestError(f"Failed to extract any content from {url} asynchronously", request=None)
 
         return crawler_result
 
@@ -407,8 +407,8 @@ class WebsiteReader(Reader):
 
         :param url: The URL of the website to read.
         :return: A list of documents.
-        :raises httpx.HTTPStatusError: If there's an HTTP status error.
-        :raises httpx.RequestError: If there's a request-related error.
+        :raises httpx2.HTTPStatusError: If there's an HTTP status error.
+        :raises httpx2.RequestError: If there's a request-related error.
         """
 
         log_debug(f"Reading: {url}")
@@ -437,7 +437,7 @@ class WebsiteReader(Reader):
                         )
                     )
             return documents
-        except (httpx.HTTPStatusError, httpx.RequestError):
+        except (httpx2.HTTPStatusError, httpx2.RequestError):
             log_error(f"Error reading website {url}")
             raise
 
@@ -450,8 +450,8 @@ class WebsiteReader(Reader):
 
         :param url: The URL of the website to read.
         :return: A list of documents.
-        :raises httpx.HTTPStatusError: If there's an HTTP status error.
-        :raises httpx.RequestError: If there's a request-related error.
+        :raises httpx2.HTTPStatusError: If there's an HTTP status error.
+        :raises httpx2.RequestError: If there's a request-related error.
         """
         log_debug(f"Reading asynchronously: {url}")
         try:
@@ -492,6 +492,6 @@ class WebsiteReader(Reader):
                 documents.extend(doc_list)
 
             return documents
-        except (httpx.HTTPStatusError, httpx.RequestError):
+        except (httpx2.HTTPStatusError, httpx2.RequestError):
             log_error(f"Error reading website asynchronously {url}")
             raise

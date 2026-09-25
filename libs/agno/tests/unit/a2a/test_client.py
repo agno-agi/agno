@@ -4,7 +4,7 @@ from typing import AsyncIterator
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from httpx import HTTPStatusError, Request, Response
+from httpx2 import HTTPStatusError, Request, Response
 
 from agno.client.a2a import (
     A2AClient,
@@ -296,7 +296,7 @@ class TestSendMessage:
     async def test_send_message_connection_error(self):
         """Test send_message with connection error."""
         with patch("agno.client.a2a.client.get_default_async_client") as mock_get_client:
-            from httpx import ConnectError
+            from httpx2 import ConnectError
 
             mock_http_client = AsyncMock()
             mock_http_client.post.side_effect = ConnectError("Connection refused")
@@ -314,7 +314,7 @@ class TestSendMessage:
     async def test_send_message_timeout(self):
         """Test send_message with timeout."""
         with patch("agno.client.a2a.client.get_default_async_client") as mock_get_client:
-            from httpx import TimeoutException
+            from httpx2 import TimeoutException
 
             mock_http_client = AsyncMock()
             mock_http_client.post.side_effect = TimeoutException("Request timed out")

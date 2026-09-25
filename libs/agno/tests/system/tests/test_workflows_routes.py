@@ -6,7 +6,7 @@ Run with: pytest test_workflows_routes.py -v --tb=short
 
 import uuid
 
-import httpx
+import httpx2
 import pytest
 
 from .test_utils import (
@@ -26,9 +26,9 @@ def test_user_id() -> str:
 
 
 @pytest.fixture(scope="module")
-def client(gateway_url: str, test_user_id: str) -> httpx.Client:
+def client(gateway_url: str, test_user_id: str) -> httpx2.Client:
     """Create an HTTP client for the gateway server with authentication."""
-    return httpx.Client(
+    return httpx2.Client(
         base_url=gateway_url,
         timeout=REQUEST_TIMEOUT,
         headers={"Authorization": f"Bearer {generate_jwt_token(audience='gateway-os', user_id=test_user_id)}"},
@@ -40,7 +40,7 @@ def client(gateway_url: str, test_user_id: str) -> httpx.Client:
 # =============================================================================
 
 
-def test_get_workflows_list(client: httpx.Client):
+def test_get_workflows_list(client: httpx2.Client):
     """Test GET /workflows returns all workflows with required fields."""
     response = client.get("/workflows")
     assert response.status_code == 200
@@ -56,7 +56,7 @@ def test_get_workflows_list(client: httpx.Client):
         assert "name" in workflow
 
 
-def test_get_local_workflow_details(client: httpx.Client):
+def test_get_local_workflow_details(client: httpx2.Client):
     """Test GET /workflows/gateway-workflow returns workflow details."""
     response = client.get("/workflows/gateway-workflow")
     assert response.status_code == 200
@@ -66,7 +66,7 @@ def test_get_local_workflow_details(client: httpx.Client):
     assert data["name"] == "Gateway Workflow"
 
 
-def test_get_remote_workflow_details(client: httpx.Client):
+def test_get_remote_workflow_details(client: httpx2.Client):
     """Test GET /workflows/qa-workflow returns remote workflow details."""
     response = client.get("/workflows/qa-workflow")
     assert response.status_code == 200
@@ -76,13 +76,13 @@ def test_get_remote_workflow_details(client: httpx.Client):
     assert data["name"] == "QA Workflow"
 
 
-def test_get_workflow_not_found(client: httpx.Client):
+def test_get_workflow_not_found(client: httpx2.Client):
     """Test GET /workflows/{workflow_id} returns 404 for non-existent workflow."""
     response = client.get("/workflows/non-existent-workflow")
     assert response.status_code == 404
 
 
-def test_create_workflow_run_non_streaming(client: httpx.Client, test_user_id: str):
+def test_create_workflow_run_non_streaming(client: httpx2.Client, test_user_id: str):
     """Test POST /workflows/{workflow_id}/runs returns complete response."""
     session_id = str(uuid.uuid4())
     response = client.post(
@@ -109,7 +109,7 @@ def test_create_workflow_run_non_streaming(client: httpx.Client, test_user_id: s
     assert data["session_id"] == session_id
 
 
-def test_create_workflow_run_streaming(client: httpx.Client, test_user_id: str):
+def test_create_workflow_run_streaming(client: httpx2.Client, test_user_id: str):
     """Test POST /workflows/{workflow_id}/runs (streaming) returns proper SSE stream with WorkflowRunStarted and WorkflowRunCompleted events."""
     session_id = str(uuid.uuid4())
     response = client.post(
@@ -156,7 +156,7 @@ def test_create_workflow_run_streaming(client: httpx.Client, test_user_id: str):
 # =============================================================================
 
 
-def test_get_a2a_workflow_details(client: httpx.Client):
+def test_get_a2a_workflow_details(client: httpx2.Client):
     """Test GET /workflows/qa-workflow-2 returns Agno A2A workflow details."""
     response = client.get("/workflows/qa-workflow-2")
     assert response.status_code == 200
@@ -166,7 +166,7 @@ def test_get_a2a_workflow_details(client: httpx.Client):
     assert "name" in data
 
 
-def test_create_a2a_workflow_run_non_streaming(client: httpx.Client, test_user_id: str):
+def test_create_a2a_workflow_run_non_streaming(client: httpx2.Client, test_user_id: str):
     """Test POST /workflows/qa-workflow-2/runs (non-streaming) for Agno A2A workflow returns complete response."""
     session_id = str(uuid.uuid4())
     response = client.post(
@@ -192,7 +192,7 @@ def test_create_a2a_workflow_run_non_streaming(client: httpx.Client, test_user_i
     assert data["user_id"] == test_user_id
 
 
-def test_create_a2a_workflow_run_streaming(client: httpx.Client, test_user_id: str):
+def test_create_a2a_workflow_run_streaming(client: httpx2.Client, test_user_id: str):
     """Test POST /workflows/qa-workflow-2/runs (streaming) for Agno A2A workflow returns proper SSE stream."""
     session_id = str(uuid.uuid4())
     response = client.post(

@@ -48,7 +48,7 @@ integration tests.
 
 **Test mode:** LIVE
 
-**Description:** Ran both checked-in raw-`httpx` clients against the live
+**Description:** Ran both checked-in raw-`httpx2` clients against the live
 OpenAI Responses `gpt-5.5` server: a new background SSE run and a
 confirmation-paused run continued with `background=true`, `stream=true`.
 

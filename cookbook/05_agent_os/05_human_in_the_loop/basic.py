@@ -15,7 +15,7 @@ Try: Run this file with --demo in another terminal
 import argparse
 import json
 
-import httpx
+import httpx2
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
@@ -64,7 +64,7 @@ app = agent_os.get_app()
 
 def run_demo() -> None:
     """Pause, confirm the returned tool execution, and continue the same run."""
-    with httpx.Client(base_url=BASE_URL, timeout=120.0) as client:
+    with httpx2.Client(base_url=BASE_URL, timeout=120.0) as client:
         response = client.post(
             f"/agents/{AGENT_ID}/runs",
             data={

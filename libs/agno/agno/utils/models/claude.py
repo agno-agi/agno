@@ -861,22 +861,18 @@ def sdk_http_client_type(is_async: bool = False) -> type:
 
     anthropic 1.0.0 moved its HTTP layer from httpx to httpx2 and raises TypeError at
     construction when handed an ``httpx.Client``, so the accepted class is read off the
-    SDK's own re-export rather than assumed to be httpx's.
+    SDK's own re-export rather than assumed.
     """
-    import httpx
+    from agno.utils.http import sdk_http_client_type as _sdk_http_client_type
 
-    fallback = httpx.AsyncClient if is_async else httpx.Client
     try:
         from anthropic import DefaultAsyncHttpxClient, DefaultHttpxClient
     except ImportError:
-        return fallback
+        import httpx2
 
-    default = DefaultAsyncHttpxClient if is_async else DefaultHttpxClient
-    wanted = "AsyncClient" if is_async else "Client"
-    for base in default.__mro__[1:]:
-        if base.__name__ == wanted:
-            return base
-    return fallback
+        return httpx2.AsyncClient if is_async else httpx2.Client
+
+    return _sdk_http_client_type(DefaultHttpxClient, DefaultAsyncHttpxClient, is_async)
 
 
 def resolve_http_client(
@@ -887,17 +883,6 @@ def resolve_http_client(
     A client of the wrong flavour is dropped with a warning instead of being passed on,
     where it would raise TypeError at client construction and take every request with it.
     """
-    expected = sdk_http_client_type(is_async)
+    from agno.utils.http import resolve_http_client as _resolve_http_client
 
-    if http_client is not None:
-        if isinstance(http_client, expected):
-            return http_client
-        log_warning(
-            f"http_client is not an instance of {expected.__module__}.{expected.__qualname__} "
-            f"(the Anthropic SDK's HTTP client). Ignoring and using the SDK default."
-        )
-
-    # The shared agno client is httpx's, which an httpx2-based SDK will not take.
-    if fallback is not None and isinstance(fallback, expected):
-        return fallback
-    return None
+    return _resolve_http_client(http_client, sdk_http_client_type(is_async), fallback)

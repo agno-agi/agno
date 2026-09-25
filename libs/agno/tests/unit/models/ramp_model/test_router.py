@@ -454,21 +454,29 @@ COMPLETED_RESPONSE = {
 
 def _captured_body(model, stream=False):
     """Run one invoke against a stub transport and return the request body the SDK sent."""
+    import importlib
     import json
 
-    import httpx
+    from openai import DefaultAsyncHttpxClient, DefaultHttpxClient
+
+    from agno.utils.http import sdk_http_client_type
+
+    # Build the stub client in whichever flavour the installed OpenAI SDK accepts:
+    # agno[tests] resolves openai to 2.x (httpx) because litellm pins openai<3.
+    client_cls = sdk_http_client_type(DefaultHttpxClient, DefaultAsyncHttpxClient)
+    http_mod = importlib.import_module(client_cls.__module__.split(".")[0])
 
     bodies = []
 
-    def handler(request: "httpx.Request") -> "httpx.Response":
+    def handler(request):
         bodies.append(json.loads(request.content))
         if stream:
             event = {"type": "response.completed", "sequence_number": 0, "response": COMPLETED_RESPONSE}
             body = f"event: response.completed\ndata: {json.dumps(event)}\n\n"
-            return httpx.Response(200, text=body, headers={"content-type": "text/event-stream"})
-        return httpx.Response(200, json=COMPLETED_RESPONSE)
+            return http_mod.Response(200, text=body, headers={"content-type": "text/event-stream"})
+        return http_mod.Response(200, json=COMPLETED_RESPONSE)
 
-    model.http_client = httpx.Client(transport=httpx.MockTransport(handler))
+    model.http_client = client_cls(transport=http_mod.MockTransport(handler))
     messages = [Message(role="user", content="hi")]
 
     if stream:

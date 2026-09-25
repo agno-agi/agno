@@ -801,7 +801,7 @@ def test_the_async_401_retry_refreshes_the_runs_own_user():
 
 def test_one_users_401_never_rotates_the_deployment_refresh_token(sqlite_db, fake_clock, token_endpoint):
     """A per-user 401 must not burn the credential every other user is sharing."""
-    import httpx
+    import httpx2
 
     from agno.models.xai.oauth import XAITokenManager
 
@@ -809,7 +809,7 @@ def test_one_users_401_never_rotates_the_deployment_refresh_token(sqlite_db, fak
         db=sqlite_db,
         encrypt_tokens=False,
         now_fn=fake_clock,
-        http_client=httpx.Client(transport=httpx.MockTransport(token_endpoint)),
+        http_client=httpx2.Client(transport=httpx2.MockTransport(token_endpoint)),
     )
     for user_id, token in (("u1", "user-one"), ("", "deployment")):
         manager._save(
@@ -854,7 +854,7 @@ def test_a_fresh_replica_spends_the_row_an_async_backend_holds(fake_clock):
     Wire-level on purpose: the sync resolution path refuses coroutine db methods,
     so a header assertion is the only thing that proves the async seam works.
     """
-    import httpx
+    import httpx2
     from openai import AsyncOpenAI
 
     from agno.models.xai import oauth as oauth_module
@@ -869,16 +869,16 @@ def test_a_fresh_replica_spends_the_row_an_async_backend_holds(fake_clock):
     reader = XAITokenManager(db=db, encrypt_tokens=False, now_fn=fake_clock)
     sent = []
 
-    def capture(request: httpx.Request) -> httpx.Response:
+    def capture(request: httpx2.Request) -> httpx2.Response:
         sent.append(request.headers.get("authorization"))
-        return httpx.Response(200, json={"id": "r", "object": "response", "status": "completed", "output": []})
+        return httpx2.Response(200, json={"id": "r", "object": "response", "status": "completed", "output": []})
 
     async def go():
         model = xAIResponses(token_manager=reader)
         model.async_client = AsyncOpenAI(
             api_key=model._async_token_callable(),
             base_url="https://api.x.ai/v1",
-            http_client=httpx.AsyncClient(transport=httpx.MockTransport(capture)),
+            http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(capture)),
         )
         await model.ainvoke(messages=_messages(), assistant_message=_assistant(), run_response=_run("u1"))
 
@@ -929,7 +929,7 @@ def test_require_user_token_fails_closed_without_a_token_manager():
 
 def test_a_failed_personal_refresh_does_not_spend_the_deployment_credential(sqlite_db, fake_clock, token_endpoint):
     """Only an ABSENT per-user row may fall through to the shared slot."""
-    import httpx
+    import httpx2
 
     from agno.models.xai.oauth import XAITokenManager
 
@@ -938,7 +938,7 @@ def test_a_failed_personal_refresh_does_not_spend_the_deployment_credential(sqli
         db=sqlite_db,
         encrypt_tokens=False,
         now_fn=fake_clock,
-        http_client=httpx.Client(transport=httpx.MockTransport(token_endpoint)),
+        http_client=httpx2.Client(transport=httpx2.MockTransport(token_endpoint)),
     )
     manager._save({"access_token": "stale", "refresh_token": "r", "expires_at": fake_clock() - 1}, user_id="u1")
     manager._save({"access_token": "deployment", "expires_at": fake_clock() + 21600}, user_id="")
@@ -966,18 +966,18 @@ def test_nothing_stored_anywhere_falls_through_to_the_environment_key(sqlite_db,
 
 def test_the_deployment_callable_swallows_a_transport_failure(sqlite_db, fake_clock):
     """The SDK calls this on every request; an outage must not kill a valid one."""
-    import httpx
+    import httpx2
 
     from agno.models.xai.oauth import XAITokenManager
 
     def unreachable(request):
-        raise httpx.ConnectError("token endpoint unreachable")
+        raise httpx2.ConnectError("token endpoint unreachable")
 
     manager = XAITokenManager(
         db=sqlite_db,
         encrypt_tokens=False,
         now_fn=fake_clock,
-        http_client=httpx.Client(transport=httpx.MockTransport(unreachable)),
+        http_client=httpx2.Client(transport=httpx2.MockTransport(unreachable)),
     )
     manager._save({"access_token": "stale", "refresh_token": "r", "expires_at": fake_clock() - 1}, user_id="")
     model = xAIResponses(token_manager=manager)
@@ -996,7 +996,7 @@ def test_a_401_on_a_deployment_served_request_refreshes_the_deployment(sqlite_db
     Passing the run's uid unconditionally sends the refresh to a slot the request
     never used, so the one-shot leg cannot fire and the user is told to sign in.
     """
-    import httpx
+    import httpx2
 
     from agno.models.xai.oauth import XAITokenManager
 
@@ -1004,7 +1004,7 @@ def test_a_401_on_a_deployment_served_request_refreshes_the_deployment(sqlite_db
         db=sqlite_db,
         encrypt_tokens=False,
         now_fn=fake_clock,
-        http_client=httpx.Client(transport=httpx.MockTransport(token_endpoint)),
+        http_client=httpx2.Client(transport=httpx2.MockTransport(token_endpoint)),
     )
     manager._save(
         {"access_token": "deployment", "refresh_token": "deployment-refresh", "expires_at": fake_clock() + 21600},
@@ -1025,7 +1025,7 @@ def test_a_401_on_an_api_key_served_request_does_not_trigger_an_oauth_refresh(
     sqlite_db, fake_clock, token_endpoint, monkeypatch
 ):
     """The env key served it; a 401 means the key is wrong, and no refresh can fix that."""
-    import httpx
+    import httpx2
 
     from agno.models.xai.oauth import XAITokenManager
 
@@ -1034,7 +1034,7 @@ def test_a_401_on_an_api_key_served_request_does_not_trigger_an_oauth_refresh(
         db=sqlite_db,
         encrypt_tokens=False,
         now_fn=fake_clock,
-        http_client=httpx.Client(transport=httpx.MockTransport(token_endpoint)),
+        http_client=httpx2.Client(transport=httpx2.MockTransport(token_endpoint)),
     )
     parent = MagicMock(side_effect=[ModelProviderError("unauthorized", status_code=401), MagicMock()])
 
@@ -1054,13 +1054,13 @@ def test_a_401_on_an_api_key_served_request_does_not_trigger_an_oauth_refresh(
 
 def test_an_async_failed_personal_refresh_does_not_spend_the_deployment_credential(fake_clock):
     """The async twin of the sync rule: a failed refresh is not an absent row."""
-    import httpx
+    import httpx2
 
     from agno.models.xai import oauth as oauth_module
     from agno.models.xai.oauth import XAITokenManager
 
-    def five_hundred(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(500, json={"error": "server_error"})
+    def five_hundred(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(500, json={"error": "server_error"})
 
     db = _AsyncOnlyDb()
     writer = XAITokenManager(db=db, encrypt_tokens=False, now_fn=fake_clock)
@@ -1072,8 +1072,8 @@ def test_an_async_failed_personal_refresh_does_not_spend_the_deployment_credenti
         db=db,
         encrypt_tokens=False,
         now_fn=fake_clock,
-        http_client=httpx.Client(transport=httpx.MockTransport(five_hundred)),
-        async_http_client=httpx.AsyncClient(transport=httpx.MockTransport(five_hundred)),
+        http_client=httpx2.Client(transport=httpx2.MockTransport(five_hundred)),
+        async_http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(five_hundred)),
     )
     model = xAIResponses(token_manager=reader)
 
@@ -1087,18 +1087,18 @@ def test_an_async_failed_personal_refresh_does_not_spend_the_deployment_credenti
 
 def test_a_refresh_failure_is_not_reported_as_a_missing_sign_in(sqlite_db, fake_clock):
     """require_user_token fails closed either way, but must say which one happened."""
-    import httpx
+    import httpx2
 
     from agno.models.xai.oauth import XAITokenManager
 
-    def five_hundred(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(500, json={"error": "server_error"})
+    def five_hundred(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(500, json={"error": "server_error"})
 
     manager = XAITokenManager(
         db=sqlite_db,
         encrypt_tokens=False,
         now_fn=fake_clock,
-        http_client=httpx.Client(transport=httpx.MockTransport(five_hundred)),
+        http_client=httpx2.Client(transport=httpx2.MockTransport(five_hundred)),
     )
     manager._save({"access_token": "stale", "refresh_token": "r", "expires_at": fake_clock() - 1}, user_id="u1")
     model = xAIResponses(token_manager=manager, require_user_token=True)
@@ -1187,18 +1187,18 @@ def test_an_undecryptable_user_row_does_not_fall_through_to_the_deployment(sqlit
 
 def test_a_transport_failure_while_picking_the_refresh_slot_keeps_the_401(sqlite_db, fake_clock):
     """The slot probe can need the network; losing the 401 to a ConnectError helps nobody."""
-    import httpx
+    import httpx2
 
     from agno.models.xai.oauth import XAITokenManager
 
-    def unreachable(request: httpx.Request) -> httpx.Response:
-        raise httpx.ConnectError("network down")
+    def unreachable(request: httpx2.Request) -> httpx2.Response:
+        raise httpx2.ConnectError("network down")
 
     manager = XAITokenManager(
         db=sqlite_db,
         encrypt_tokens=False,
         now_fn=fake_clock,
-        http_client=httpx.Client(transport=httpx.MockTransport(unreachable)),
+        http_client=httpx2.Client(transport=httpx2.MockTransport(unreachable)),
     )
     manager._save({"access_token": "stale", "refresh_token": "r", "expires_at": fake_clock() - 1}, user_id="u1")
     parent = MagicMock(side_effect=[ModelProviderError("unauthorized", status_code=401), MagicMock()])
@@ -1215,31 +1215,31 @@ def test_a_transport_failure_while_picking_the_refresh_slot_keeps_the_401(sqlite
 def test_the_async_path_never_falls_back_to_a_blocking_refresh(sqlite_db, fake_clock):
     """The warm-up exists so assembly is a cache read; a dead endpoint must not move
     the refresh onto the event loop."""
-    import httpx
+    import httpx2
 
     from agno.models.xai.oauth import XAITokenManager
 
     sync_calls = []
 
-    def sync_transport(request: httpx.Request) -> httpx.Response:
+    def sync_transport(request: httpx2.Request) -> httpx2.Response:
         sync_calls.append(str(request.url))
-        raise httpx.ConnectError("network down")
+        raise httpx2.ConnectError("network down")
 
-    async def async_transport(request: httpx.Request) -> httpx.Response:
-        raise httpx.ConnectError("network down")
+    async def async_transport(request: httpx2.Request) -> httpx2.Response:
+        raise httpx2.ConnectError("network down")
 
     manager = XAITokenManager(
         db=sqlite_db,
         encrypt_tokens=False,
         now_fn=fake_clock,
-        http_client=httpx.Client(transport=httpx.MockTransport(sync_transport)),
-        async_http_client=httpx.AsyncClient(transport=httpx.MockTransport(async_transport)),
+        http_client=httpx2.Client(transport=httpx2.MockTransport(sync_transport)),
+        async_http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(async_transport)),
     )
     manager._save({"access_token": "stale", "refresh_token": "r", "expires_at": fake_clock() - 1}, user_id="")
     model = xAIResponses(token_manager=manager)
 
     async def go():
-        with pytest.raises(httpx.HTTPError):
+        with pytest.raises(httpx2.HTTPError):
             await model._awarm_credential(_run())
 
     asyncio.run(go())

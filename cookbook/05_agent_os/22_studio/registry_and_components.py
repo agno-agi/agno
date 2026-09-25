@@ -18,7 +18,7 @@ import os
 from pathlib import Path
 from uuid import uuid4
 
-import httpx
+import httpx2
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.anthropic import Claude
@@ -87,7 +87,7 @@ def run_demo() -> None:
         instructions="Answer catalog questions in one sentence.",
     ).to_dict()
 
-    with httpx.Client(base_url=BASE_URL, timeout=60.0) as client:
+    with httpx2.Client(base_url=BASE_URL, timeout=60.0) as client:
         registry_response = client.get("/registry", params={"limit": 100})
         registry_response.raise_for_status()
         registry_payload = registry_response.json()

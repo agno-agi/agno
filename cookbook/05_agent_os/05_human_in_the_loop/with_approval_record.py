@@ -14,7 +14,7 @@ Try: Run this file with --demo in another terminal
 
 import argparse
 
-import httpx
+import httpx2
 from agno.agent import Agent
 from agno.approval import approval
 from agno.db.sqlite import SqliteDb
@@ -64,7 +64,7 @@ agent_os = AgentOS(
 app = agent_os.get_app()
 
 
-def get_approval(client: httpx.Client, run_id: str) -> dict:
+def get_approval(client: httpx2.Client, run_id: str) -> dict:
     """Return the required approval record created for one paused run."""
     response = client.get(
         "/approvals",
@@ -83,7 +83,7 @@ def get_approval(client: httpx.Client, run_id: str) -> dict:
 
 def run_demo() -> None:
     """Create, inspect, resolve, and continue one persistent approval."""
-    with httpx.Client(base_url=BASE_URL, timeout=120.0) as client:
+    with httpx2.Client(base_url=BASE_URL, timeout=120.0) as client:
         response = client.post(
             f"/agents/{AGENT_ID}/runs",
             data={

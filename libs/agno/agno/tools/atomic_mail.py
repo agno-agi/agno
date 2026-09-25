@@ -9,7 +9,7 @@ from os import cpu_count, getenv
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-import httpx
+import httpx2
 
 from agno.tools import Toolkit
 from agno.utils.log import log_error, log_info
@@ -139,7 +139,7 @@ class AtomicMailTools(Toolkit):
 
     # -- pure helpers shared by the sync and async paths -----------------------------
     # These never touch the network; only the HTTP client calls below differ between
-    # the sync (httpx.Client) and async (httpx.AsyncClient) tool variants.
+    # the sync (httpx2.Client) and async (httpx2.AsyncClient) tool variants.
 
     @staticmethod
     def _decode_jwt_payload(token: str) -> Dict[str, Any]:
@@ -214,7 +214,7 @@ class AtomicMailTools(Toolkit):
         return solved
 
     @staticmethod
-    def _bearer_token(response: httpx.Response) -> str:
+    def _bearer_token(response: httpx2.Response) -> str:
         header = response.headers.get("Authorization", "")
         if not header.lower().startswith("bearer "):
             raise ValueError(f"{response.request.url} did not return a Bearer Authorization header.")
@@ -437,13 +437,13 @@ class AtomicMailTools(Toolkit):
 
     @staticmethod
     def _registration_error(e: Exception) -> Dict[str, Any]:
-        if isinstance(e, httpx.HTTPStatusError):
+        if isinstance(e, httpx2.HTTPStatusError):
             return {"error": f"AtomicMail registration failed: {e.response.status_code} {e.response.text}"}
         return {"error": f"AtomicMail registration failed: {e}"}
 
     @staticmethod
     def _request_error(e: Exception) -> Dict[str, Any]:
-        if isinstance(e, httpx.HTTPStatusError):
+        if isinstance(e, httpx2.HTTPStatusError):
             return {"error": f"AtomicMail request failed: {e.response.status_code} {e.response.text}"}
         return {"error": f"AtomicMail request failed: {e}"}
 
@@ -473,7 +473,7 @@ class AtomicMailTools(Toolkit):
     # -- sync HTTP calls ---------------------------------------------------------
 
     def _authenticate(
-        self, client: httpx.Client, *, username: Optional[str] = None, api_key: Optional[str] = None
+        self, client: httpx2.Client, *, username: Optional[str] = None, api_key: Optional[str] = None
     ) -> Dict[str, Any]:
         """Run the challenge -> proof-of-work -> session -> capability handshake.
 
@@ -507,7 +507,7 @@ class AtomicMailTools(Toolkit):
 
         return self._parse_auth_result(capability_jwt, session_data, api_key)
 
-    def _jmap_session(self, client: httpx.Client, capability_jwt: str) -> Dict[str, Any]:
+    def _jmap_session(self, client: httpx2.Client, capability_jwt: str) -> Dict[str, Any]:
         response = client.get(
             f"{self.api_url}/.well-known/jmap",
             headers={"Authorization": f"Bearer {capability_jwt}"},
@@ -516,7 +516,7 @@ class AtomicMailTools(Toolkit):
         return response.json()
 
     def _jmap_call(
-        self, client: httpx.Client, capability_jwt: str, jmap_api_url: str, using: List[str], method_calls: List[Any]
+        self, client: httpx2.Client, capability_jwt: str, jmap_api_url: str, using: List[str], method_calls: List[Any]
     ) -> Dict[str, Any]:
         response = client.post(
             jmap_api_url,
@@ -526,7 +526,7 @@ class AtomicMailTools(Toolkit):
         response.raise_for_status()
         return response.json()
 
-    def _prepare_jmap_context(self, client: httpx.Client) -> Dict[str, Any]:
+    def _prepare_jmap_context(self, client: httpx2.Client) -> Dict[str, Any]:
         """Authenticate with the stored API key and resolve the inbox's JMAP account/mailbox ids.
 
         The result is cached until the capability token nears expiry or the stored api_key
@@ -546,7 +546,7 @@ class AtomicMailTools(Toolkit):
         self._cache_jmap_context(context)
         return context
 
-    def _resolve_account_id(self, client: httpx.Client, capability_jwt: str) -> Optional[str]:
+    def _resolve_account_id(self, client: httpx2.Client, capability_jwt: str) -> Optional[str]:
         """Best-effort JMAP account-id lookup for the registration result.
 
         The inbox already exists once signup authenticates, so a failure resolving its
@@ -556,14 +556,14 @@ class AtomicMailTools(Toolkit):
         try:
             session = self._jmap_session(client, capability_jwt)
             return self._extract_account_id(session)
-        except (httpx.HTTPStatusError, httpx.RequestError, KeyError, IndexError, ValueError) as e:
+        except (httpx2.HTTPStatusError, httpx2.RequestError, KeyError, IndexError, ValueError) as e:
             log_error(f"AtomicMail inbox registered, but its account id could not be resolved yet: {e}")
             return None
 
     # -- async HTTP calls ---------------------------------------------------------
 
     async def _aauthenticate(
-        self, client: httpx.AsyncClient, *, username: Optional[str] = None, api_key: Optional[str] = None
+        self, client: httpx2.AsyncClient, *, username: Optional[str] = None, api_key: Optional[str] = None
     ) -> Dict[str, Any]:
         """Async counterpart of `_authenticate`; see there for the handshake description."""
         challenge_response = await client.post(f"{self.auth_url}/api/v1/challenge")
@@ -598,7 +598,7 @@ class AtomicMailTools(Toolkit):
 
         return self._parse_auth_result(capability_jwt, session_data, api_key)
 
-    async def _ajmap_session(self, client: httpx.AsyncClient, capability_jwt: str) -> Dict[str, Any]:
+    async def _ajmap_session(self, client: httpx2.AsyncClient, capability_jwt: str) -> Dict[str, Any]:
         response = await client.get(
             f"{self.api_url}/.well-known/jmap",
             headers={"Authorization": f"Bearer {capability_jwt}"},
@@ -608,7 +608,7 @@ class AtomicMailTools(Toolkit):
 
     async def _ajmap_call(
         self,
-        client: httpx.AsyncClient,
+        client: httpx2.AsyncClient,
         capability_jwt: str,
         jmap_api_url: str,
         using: List[str],
@@ -622,7 +622,7 @@ class AtomicMailTools(Toolkit):
         response.raise_for_status()
         return response.json()
 
-    async def _aprepare_jmap_context(self, client: httpx.AsyncClient) -> Dict[str, Any]:
+    async def _aprepare_jmap_context(self, client: httpx2.AsyncClient) -> Dict[str, Any]:
         """Async counterpart of `_prepare_jmap_context`."""
         credentials = self._require_credentials()
         cached = self._cached_jmap_context(credentials)
@@ -638,12 +638,12 @@ class AtomicMailTools(Toolkit):
         self._cache_jmap_context(context)
         return context
 
-    async def _aresolve_account_id(self, client: httpx.AsyncClient, capability_jwt: str) -> Optional[str]:
+    async def _aresolve_account_id(self, client: httpx2.AsyncClient, capability_jwt: str) -> Optional[str]:
         """Async counterpart of `_resolve_account_id`."""
         try:
             session = await self._ajmap_session(client, capability_jwt)
             return self._extract_account_id(session)
-        except (httpx.HTTPStatusError, httpx.RequestError, KeyError, IndexError, ValueError) as e:
+        except (httpx2.HTTPStatusError, httpx2.RequestError, KeyError, IndexError, ValueError) as e:
             log_error(f"AtomicMail inbox registered, but its account id could not be resolved yet: {e}")
             return None
 
@@ -670,7 +670,7 @@ class AtomicMailTools(Toolkit):
             if early_result is not None:
                 return early_result
 
-            with httpx.Client(timeout=self.timeout) as client:
+            with httpx2.Client(timeout=self.timeout) as client:
                 auth = self._authenticate(client, username=normalized)
                 if not auth["api_key"]:
                     return {"error": "AtomicMail signup did not return an API key."}
@@ -678,7 +678,7 @@ class AtomicMailTools(Toolkit):
                     return {"error": "AtomicMail signup did not return an inbox address."}
                 account_id = self._resolve_account_id(client, auth["capability_jwt"])
                 return self._finalize_registration(auth, account_id)
-        except (httpx.HTTPStatusError, httpx.RequestError, KeyError, ValueError, IndexError) as e:
+        except (httpx2.HTTPStatusError, httpx2.RequestError, KeyError, ValueError, IndexError) as e:
             return self._registration_error(e)
 
     async def aregister_inbox(self, username: str, forced: bool = False) -> Dict[str, Any]:
@@ -702,7 +702,7 @@ class AtomicMailTools(Toolkit):
             if early_result is not None:
                 return early_result
 
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
+            async with httpx2.AsyncClient(timeout=self.timeout) as client:
                 auth = await self._aauthenticate(client, username=normalized)
                 if not auth["api_key"]:
                     return {"error": "AtomicMail signup did not return an API key."}
@@ -710,7 +710,7 @@ class AtomicMailTools(Toolkit):
                     return {"error": "AtomicMail signup did not return an inbox address."}
                 account_id = await self._aresolve_account_id(client, auth["capability_jwt"])
                 return self._finalize_registration(auth, account_id)
-        except (httpx.HTTPStatusError, httpx.RequestError, KeyError, ValueError, IndexError) as e:
+        except (httpx2.HTTPStatusError, httpx2.RequestError, KeyError, ValueError, IndexError) as e:
             return self._registration_error(e)
 
     def send_email(self, to: str, subject: str, body: str) -> Dict[str, Any]:
@@ -725,14 +725,14 @@ class AtomicMailTools(Toolkit):
             Dict with `email_id`, `submission_id`, `to`, and `subject` on success, or `error`.
         """
         try:
-            with httpx.Client(timeout=self.timeout) as client:
+            with httpx2.Client(timeout=self.timeout) as client:
                 context = self._prepare_jmap_context(client)
                 using, method_calls = self._send_email_call(context, to, subject, body)
                 result = self._jmap_call(client, context["capability_jwt"], context["api_url"], using, method_calls)
                 return self._parse_send_email_result(result, to, subject)
         except ValueError as e:
             return {"error": str(e)}
-        except (httpx.HTTPStatusError, httpx.RequestError, KeyError, IndexError) as e:
+        except (httpx2.HTTPStatusError, httpx2.RequestError, KeyError, IndexError) as e:
             return self._request_error(e)
 
     async def asend_email(self, to: str, subject: str, body: str) -> Dict[str, Any]:
@@ -747,7 +747,7 @@ class AtomicMailTools(Toolkit):
             Dict with `email_id`, `submission_id`, `to`, and `subject` on success, or `error`.
         """
         try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
+            async with httpx2.AsyncClient(timeout=self.timeout) as client:
                 context = await self._aprepare_jmap_context(client)
                 using, method_calls = self._send_email_call(context, to, subject, body)
                 result = await self._ajmap_call(
@@ -756,7 +756,7 @@ class AtomicMailTools(Toolkit):
                 return self._parse_send_email_result(result, to, subject)
         except ValueError as e:
             return {"error": str(e)}
-        except (httpx.HTTPStatusError, httpx.RequestError, KeyError, IndexError) as e:
+        except (httpx2.HTTPStatusError, httpx2.RequestError, KeyError, IndexError) as e:
             return self._request_error(e)
 
     def list_inbox(self, limit: int = 20) -> Dict[str, Any]:
@@ -771,14 +771,14 @@ class AtomicMailTools(Toolkit):
         """
         capped_limit = max(1, min(limit, 100))
         try:
-            with httpx.Client(timeout=self.timeout) as client:
+            with httpx2.Client(timeout=self.timeout) as client:
                 context = self._prepare_jmap_context(client)
                 using, method_calls = self._list_inbox_call(context, capped_limit)
                 result = self._jmap_call(client, context["capability_jwt"], context["api_url"], using, method_calls)
                 return self._parse_list_inbox_result(result, context["inbox"])
         except ValueError as e:
             return {"error": str(e)}
-        except (httpx.HTTPStatusError, httpx.RequestError, KeyError, IndexError) as e:
+        except (httpx2.HTTPStatusError, httpx2.RequestError, KeyError, IndexError) as e:
             return self._request_error(e)
 
     async def alist_inbox(self, limit: int = 20) -> Dict[str, Any]:
@@ -793,7 +793,7 @@ class AtomicMailTools(Toolkit):
         """
         capped_limit = max(1, min(limit, 100))
         try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
+            async with httpx2.AsyncClient(timeout=self.timeout) as client:
                 context = await self._aprepare_jmap_context(client)
                 using, method_calls = self._list_inbox_call(context, capped_limit)
                 result = await self._ajmap_call(
@@ -802,5 +802,5 @@ class AtomicMailTools(Toolkit):
                 return self._parse_list_inbox_result(result, context["inbox"])
         except ValueError as e:
             return {"error": str(e)}
-        except (httpx.HTTPStatusError, httpx.RequestError, KeyError, IndexError) as e:
+        except (httpx2.HTTPStatusError, httpx2.RequestError, KeyError, IndexError) as e:
             return self._request_error(e)

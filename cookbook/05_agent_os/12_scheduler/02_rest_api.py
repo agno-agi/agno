@@ -12,7 +12,7 @@ Try: Inspect the data and meta objects returned for run-history pages 1 and 2
 
 import os
 
-import httpx
+import httpx2
 
 # ---------------------------------------------------------------------------
 # Create REST Client Helpers
@@ -23,7 +23,7 @@ AGENT_ID = "scheduled-greeter"
 SCHEDULE_NAME = "rest-api-greeting"
 
 
-def delete_existing(client: httpx.Client) -> None:
+def delete_existing(client: httpx2.Client) -> None:
     """Remove an earlier copy so the walkthrough is repeatable."""
     response = client.get("/schedules", params={"limit": 100, "page": 1})
     response.raise_for_status()
@@ -33,7 +33,7 @@ def delete_existing(client: httpx.Client) -> None:
             delete_response.raise_for_status()
 
 
-def trigger(client: httpx.Client, schedule_id: str) -> dict:
+def trigger(client: httpx2.Client, schedule_id: str) -> dict:
     """Trigger one schedule and require a completed executor record."""
     response = client.post(f"/schedules/{schedule_id}/trigger")
     response.raise_for_status()
@@ -50,7 +50,7 @@ def trigger(client: httpx.Client, schedule_id: str) -> dict:
 
 def run_rest_lifecycle() -> None:
     """Exercise the complete schedule REST lifecycle."""
-    with httpx.Client(base_url=BASE_URL, timeout=180.0) as client:
+    with httpx2.Client(base_url=BASE_URL, timeout=180.0) as client:
         health_response = client.get("/health")
         health_response.raise_for_status()
         config_response = client.get("/config")

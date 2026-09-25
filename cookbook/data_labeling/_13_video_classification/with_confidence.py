@@ -8,7 +8,7 @@ human review or a stronger model.
 
 from typing import Literal
 
-import httpx
+import httpx2
 from agno.agent import Agent, RunOutput
 from agno.media import Video
 from pydantic import BaseModel, Field
@@ -60,7 +60,7 @@ agent = Agent(
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
     url = "https://agno-public.s3.amazonaws.com/demo/sample_seaview.mp4"
-    video_bytes = httpx.get(url).content
+    video_bytes = httpx2.get(url).content
     run: RunOutput = agent.run(
         "Classify this clip with confidence.",
         videos=[Video(content=video_bytes, format="mp4")],
