@@ -99,3 +99,11 @@ def test_search_pubmed_reports_http_status_error():
         result = PubmedTools().search_pubmed("test query")
 
     assert result == "Could not fetch articles. Error: rate limited"
+
+
+def test_search_pubmed_zero_max_results_is_forwarded(mock_httpx_get):
+    """An explicit max_results=0 must not be silently replaced (retmax=0 is valid PubMed input)."""
+    tools = PubmedTools(max_results=3)
+    tools.search_pubmed("test query", max_results=0)
+
+    assert get_retmax_sent(mock_httpx_get) == 0

@@ -151,7 +151,8 @@ class PubmedTools(Toolkit):
         """
         try:
             log_debug(f"Searching PubMed for: {query}")
-            max_results = max_results or self.max_results or 10
+            # `or` would replace an explicit 0 (retmax=0 is valid PubMed input) with the fallbacks.
+            max_results = max_results if max_results is not None else (self.max_results or 10)
             ids = self.fetch_pubmed_ids(query, max_results, self.email)
             details_root = self.fetch_details(ids)
             articles = self.parse_details(details_root)

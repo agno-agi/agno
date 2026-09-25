@@ -1,5 +1,6 @@
 """Unit tests for PerplexitySearch class."""
 
+import asyncio
 import json
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -351,3 +352,41 @@ async def test_asearch_empty_results():
         result = await tools.asearch("test query")
         result_data = json.loads(result)
         assert result_data == []
+
+
+# ============================================================================
+# EXPLICIT ZERO MAX RESULTS
+# ============================================================================
+
+
+def test_search_zero_max_results_is_forwarded():
+    """An explicit max_results=0 must reach the API instead of the instance default."""
+    mock_response = Mock()
+    mock_response.status_code = 200
+    mock_response.raise_for_status.return_value = None
+    mock_response.json.return_value = {"id": "test-id", "results": []}
+
+    tools = PerplexitySearch(api_key="test_key")
+
+    with patch("agno.tools.perplexity.httpx.post", return_value=mock_response) as mock_post:
+        tools.search("AI agents", max_results=0)
+
+    call_kwargs = mock_post.call_args
+    assert call_kwargs[1]["json"]["max_results"] == 0
+
+
+def test_asearch_zero_max_results_is_forwarded():
+    mock_response = Mock()
+    mock_response.status_code = 200
+    mock_response.raise_for_status.return_value = None
+    mock_response.json.return_value = {"id": "test-id", "results": []}
+
+    tools = PerplexitySearch(api_key="test_key")
+
+    with patch("agno.tools.perplexity.httpx.AsyncClient") as mock_client_cls:
+        mock_client = mock_client_cls.return_value
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.post = AsyncMock(return_value=mock_response)
+        asyncio.run(tools.asearch("AI agents", max_results=0))
+
+    assert mock_client.post.call_args[1]["json"]["max_results"] == 0
