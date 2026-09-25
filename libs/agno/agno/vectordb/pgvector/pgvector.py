@@ -1456,6 +1456,10 @@ class PgVector(VectorDb):
                     results = sess.execute(stmt).fetchall()
             except Exception as e:
                 log_error(f"Error performing hybrid search: {str(e)}")
+                if self.table_exists():
+                    raise
+                log_error(f"Table does not exist, creating for future use: {str(e)}")
+                self.create()
                 return []
 
             search_results: List[Document] = []

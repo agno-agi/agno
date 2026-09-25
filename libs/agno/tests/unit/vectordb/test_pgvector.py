@@ -399,6 +399,23 @@ def test_keyword_search_raises_when_the_table_is_there(mock_pgvector, mock_embed
         mock_create.assert_not_called()
 
 
+def test_hybrid_search_raises_when_the_table_is_there(mock_pgvector, mock_embedder):
+    """The third search path has the same contract, and had no test reaching it."""
+    mock_embedder.get_embedding.return_value = [0.1] * 1024
+    mock_pgvector.Session.side_effect = Exception("permission denied for table")
+
+    with (
+        patch("agno.vectordb.pgvector.pgvector.select"),
+        patch("agno.vectordb.pgvector.pgvector.func"),
+        patch.object(mock_pgvector, "table_exists", return_value=True),
+        patch.object(mock_pgvector, "create") as mock_create,
+    ):
+        with pytest.raises(Exception, match="permission denied"):
+            mock_pgvector.hybrid_search("test query")
+
+        mock_create.assert_not_called()
+
+
 def test_drop(mock_pgvector):
     """Test drop method."""
     with patch.object(mock_pgvector, "table_exists", return_value=True):
