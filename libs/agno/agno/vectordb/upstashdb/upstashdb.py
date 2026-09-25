@@ -268,7 +268,7 @@ class UpstashVectorDb(VectorDb):
             bool: True if the index exists, False otherwise. (Name is not used.)
         """
         logger.warning(
-            f"You can check if an index with name {name} exists in Upstash Console."
+            f"You can check if an index with name {name} exists in Upstash Console. "
             "The token and url parameters you provided are used to connect to a specific index."
         )
         return self.exists()
