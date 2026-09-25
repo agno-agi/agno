@@ -1,7 +1,7 @@
-"""``Claude._handle_api_error`` maps SDK exceptions to agno's model errors. The base model retries
-the retryable ones and logs every attempt itself, so the handler must not log those at ERROR first
-unless no retry will run, and an overload signalled inside a stream (which the SDK raises with the
-stream's HTTP status, 200) must be reported as an overload, not as "status 200"."""
+"""``Claude._handle_api_error`` maps SDK exceptions to agno's model errors and logs them at WARNING:
+the error is raised, and the run that handles it logs the one ERROR. An overload signalled inside a
+stream (which the SDK raises with the stream's HTTP status, 200) must be reported as an overload,
+not as "status 200"."""
 
 from unittest.mock import MagicMock
 
@@ -96,23 +96,21 @@ def test_rate_limit_stays_a_warning(logs):
     ],
     ids=["in_stream_overload", "529", "connection", "rate_limit"],
 )
-def test_without_retries_a_retryable_error_is_terminal_and_logged_at_error(logs, exc):
-    # The base model logs the final failure only when retries > 0, so with the default of 0
-    # the handler's own line is the only ERROR a monitoring rule can catch.
+def test_without_retries_a_retryable_error_is_still_a_warning(logs, exc):
     warn, error = logs
 
     _handle(exc, retries=0)
 
-    error.assert_called_once()
-    warn.assert_not_called()
+    warn.assert_called_once()
+    error.assert_not_called()
 
 
-def test_a_client_error_is_still_an_error(logs):
+def test_a_client_error_is_a_warning_too(logs):
     warn, error = logs
 
     raised = _handle(_status_error(400, "invalid_request_error"))
 
     assert type(raised) is ModelProviderError
     assert raised.status_code == 400
-    error.assert_called_once_with("Claude API error (status 400)")
-    warn.assert_not_called()
+    warn.assert_called_once_with("Claude API error (status 400)")
+    error.assert_not_called()

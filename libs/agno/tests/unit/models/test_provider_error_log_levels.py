@@ -2,6 +2,7 @@ import logging
 from types import SimpleNamespace
 from typing import List
 
+import anthropic
 import httpx
 import openai
 import pytest
@@ -9,10 +10,13 @@ from google.genai import errors as genai_errors
 from google.genai import types as genai_types
 from openai.types.chat import ChatCompletion
 
+from agno.agent import Agent
 from agno.exceptions import ModelProviderError
+from agno.models.anthropic import Claude
 from agno.models.google import Gemini
 from agno.models.message import Message
 from agno.models.openai import OpenAIChat, OpenAIResponses
+from agno.run.base import RunStatus
 
 
 class _Collect(logging.Handler):
@@ -91,61 +95,64 @@ def _gemini(error: Exception, retries: int) -> Gemini:
 
 
 @pytest.mark.parametrize(
-    "status, retries, expected",
+    "build, error, retries, text",
     [
-        (503, 2, logging.WARNING),
-        (429, 2, logging.WARNING),
-        (503, 0, logging.ERROR),
-        (400, 2, logging.ERROR),
+        (_openai_chat, _openai_error(503), 2, "API status error from OpenAI API"),
+        (_openai_chat, _openai_error(503), 0, "API status error from OpenAI API"),
+        (_openai_chat, _openai_error(429), 2, "Rate limit error from OpenAI API"),
+        (_openai_chat, _openai_error(400), 2, "API status error from OpenAI API"),
+        (_openai_responses, _openai_error(503), 2, "API status error from OpenAI API"),
+        (_openai_responses, _openai_error(400), 2, "API status error from OpenAI API"),
+        (_gemini, _gemini_error(503), 2, "Error from Gemini API"),
+        (_gemini, _gemini_error(503), 0, "Error from Gemini API"),
+        (_gemini, _gemini_error(400), 2, "Error from Gemini API"),
+    ],
+    ids=[
+        "chat-503",
+        "chat-503-no-retries",
+        "chat-429",
+        "chat-400",
+        "responses-503",
+        "responses-400",
+        "gemini-503",
+        "gemini-503-no-retries",
+        "gemini-400",
     ],
 )
-def test_log_provider_error_follows_the_retry_decision(logged, status, retries, expected):
-    OpenAIChat(id="gpt-test", api_key="offline", retries=retries)._log_provider_error(f"boom {status}", status)
-
-    assert _levels(logged, f"boom {status}") == [expected]
-
-
-def test_log_provider_error_treats_a_context_window_message_as_final(logged):
-    model = OpenAIChat(id="gpt-test", api_key="offline", retries=2)
-
-    model._log_provider_error("This model's maximum context length is 8192 tokens", 500)
-
-    assert _levels(logged, "maximum context length") == [logging.ERROR]
-
-
-@pytest.mark.parametrize(
-    "build, error, text",
-    [
-        (_openai_chat, _openai_error(503), "API status error from OpenAI API"),
-        (_openai_chat, _openai_error(429), "Rate limit error from OpenAI API"),
-        (_openai_responses, _openai_error(503), "API status error from OpenAI API"),
-        (_gemini, _gemini_error(503), "Error from Gemini API"),
-    ],
-    ids=["chat-503", "chat-429", "responses-503", "gemini-503"],
-)
-def test_a_retryable_error_is_a_warning_while_retries_remain(logged, build, error, text):
+def test_an_adapter_logs_the_error_it_raises_at_warning(logged, build, error, retries, text):
     with pytest.raises(ModelProviderError):
-        build(error, retries=2).invoke(**_messages())
+        build(error, retries=retries).invoke(**_messages())
 
     assert _levels(logged, text) == [logging.WARNING]
 
 
-@pytest.mark.parametrize(
-    "build, error, retries, text",
-    [
-        (_openai_chat, _openai_error(503), 0, "API status error from OpenAI API"),
-        (_openai_chat, _openai_error(400), 2, "API status error from OpenAI API"),
-        (_openai_responses, _openai_error(400), 2, "API status error from OpenAI API"),
-        (_gemini, _gemini_error(503), 0, "Error from Gemini API"),
-        (_gemini, _gemini_error(400), 2, "Error from Gemini API"),
-    ],
-    ids=["chat-503-no-retries", "chat-400", "responses-400", "gemini-503-no-retries", "gemini-400"],
-)
-def test_an_error_that_will_not_be_retried_stays_an_error(logged, build, error, retries, text):
-    with pytest.raises(ModelProviderError):
-        build(error, retries=retries).invoke(**_messages())
+def _claude(error: Exception) -> Claude:
+    model = Claude(id="claude-test", api_key="offline", retries=2, delay_between_retries=0)
+    model.client = SimpleNamespace(messages=SimpleNamespace(create=_raise(error)), is_closed=lambda: False)
+    return model
 
-    assert _levels(logged, text) == [logging.ERROR]
+
+def _claude_error(status: int) -> anthropic.APIStatusError:
+    request = httpx.Request("POST", "https://api.anthropic.com/v1/messages")
+    response = httpx.Response(status, request=request, json={"type": "error", "error": {"message": f"status {status}"}})
+    return anthropic.BadRequestError(f"Error code: {status}", response=response, body=None)
+
+
+@pytest.mark.parametrize(
+    "model",
+    [
+        lambda: _openai_chat(_openai_error(400), retries=2),
+        lambda: _gemini(_gemini_error(503), retries=1),
+        lambda: _claude(_claude_error(400)),
+    ],
+    ids=["openai-400", "gemini-503-after-retries", "claude-400"],
+)
+def test_a_failed_agent_run_logs_one_error(logged, model):
+    run = Agent(model=model()).run("hi")
+
+    assert run.status == RunStatus.error
+    [error] = _errors(logged)
+    assert error.startswith("Error in Agent run:")
 
 
 class _FlakyGeminiModels:
