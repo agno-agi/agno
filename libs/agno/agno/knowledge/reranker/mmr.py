@@ -66,7 +66,7 @@ class MMRReranker(Reranker):
     def _select(self, query_embedding: Optional[List[float]], documents: List[Document], limit: int) -> List[Document]:
         # Vector dbs return embeddings as lists or as numpy arrays, whose truth value
         # is ambiguous, so length is the portable emptiness check throughout.
-        if query_embedding is None or len(query_embedding) == 0:
+        if query_embedding is None or len(query_embedding) == 0 or not any(query_embedding):
             raise ValueError("MMRReranker could not embed the query: the embedder returned no vector")
 
         raw: List[List[float]] = [doc.embedding for doc in documents]  # type: ignore[misc]
@@ -129,6 +129,8 @@ class MMRReranker(Reranker):
 
     def _prepare(self, documents: List[Document], requested: Optional[int] = None) -> Optional[int]:
         """Validate inputs and return the number of documents to select."""
+        if requested is not None and requested < 0:
+            raise ValueError("MMRReranker limit must be non-negative")
         if not documents:
             return None
 
@@ -167,6 +169,8 @@ class MMRReranker(Reranker):
         limit = self._prepare(documents, limit)
         if limit is None:
             return documents
+        if limit == 0:
+            return []
 
         embedder = self._resolve_embedder(documents)
         return self._select(embedder.get_embedding(query), documents, limit)
@@ -175,6 +179,8 @@ class MMRReranker(Reranker):
         selection = self._prepare(documents, limit)
         if selection is None:
             return documents
+        if selection == 0:
+            return []
 
         embedder = self._resolve_embedder(documents)
         query_embedding = await embedder.async_get_embedding(query)
