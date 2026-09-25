@@ -1,28 +1,37 @@
 import logging
-import time
-from collections import OrderedDict
 from datetime import date, datetime, timedelta, timezone
-from typing import Any, Awaitable, Callable, Dict, List, Optional, Set, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from fastapi import BackgroundTasks, Depends, HTTPException, Query, Request, Response
 from fastapi.routing import APIRouter
 from starlette.concurrency import run_in_threadpool
 
 from agno.db.base import AsyncBaseDb, BaseDb
-from agno.db.utils import aggregate_metrics_by_date, identify_metrics_by_owner, is_legacy_metric
+from agno.db.utils import (
+    aggregate_metrics_by_date,
+    identify_metrics_by_owner,
+    is_legacy_metric,
+    merge_os_metrics_json,
+    merge_os_model_metrics,
+    os_metrics_percentile,
+)
 from agno.exceptions import AgnoError
 from agno.os.auth import get_auth_token_from_request, get_authentication_dependency
 from agno.os.middleware.user_scope import get_scoped_user_id, resolve_db_and_scope
 from agno.os.routers.metrics.schemas import (
     DayAggregatedMetrics,
+    DayLatencyMetrics,
+    DayRunMetrics,
     DaySessionMetrics,
     DayTokenMetrics,
     MetricsRefreshResponse,
     MetricsRefreshStatusResponse,
     MetricsResponse,
     ModelUsage,
+    OSLatencyMetricsResponse,
     OSMetricsRefreshStatusResponse,
     OSModelMetricsResponse,
+    OSRunMetricsResponse,
     OSSessionMetricsResponse,
     OSTokenMetricsResponse,
 )
@@ -36,19 +45,10 @@ from agno.os.schema import (
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import AgnoHTTPException, get_db, to_utc_datetime
 from agno.remote.base import RemoteDb
-from agno.utils.log import log_error, log_exception
+from agno.run.base import RunStatus
+from agno.utils.log import log_error
 
 logger = logging.getLogger(__name__)
-
-# OS metrics are recomputed at most this often per owner and window, which bounds how far they
-# can trail the daily metrics. Past this age an entry is still served, and a recompute starts
-# in the background.
-CACHE_TTL_SECONDS = 300
-
-# The window is caller-supplied, so a multi-tenant OS can be walked across owners and
-# windows. The key holds whole days, so every open of one window lands on one entry, and
-# entries are evicted least-recently-read beyond this.
-CACHE_MAX_ENTRIES = 512
 
 # Without bounds a route covers the last 30 days. Both days are inclusive, so a starting_date
 # equal to the ending_date covers that one day.
@@ -210,44 +210,6 @@ def attach_routes(
             logger.exception("GET /metrics failed")
             raise HTTPException(status_code=500, detail=f"Error getting metrics: {str(e)}")
 
-    # Most recent computation per owner and window. Only mutated on the event loop (the sync
-    # database reads themselves run in the threadpool), so no lock is needed. Per-process:
-    # each worker warms its own entries.
-    cache: "OrderedDict[Tuple[str, Optional[str], date, date], Tuple[Any, float]]" = OrderedDict()
-
-    # Keys with a background recompute in flight, so concurrent opens of a stale entry start
-    # one recompute between them rather than one each.
-    recomputing: Set[Tuple[str, Optional[str], date, date]] = set()
-
-    # Bumped each time the cache is dropped, so a read that was computing across the drop
-    # can tell its answer predates the rebuild.
-    generation = 0
-
-    def _drop_os_metrics_cache(db: Union[BaseDb, AsyncBaseDb, RemoteDb]) -> None:
-        """Forget the OS metrics once the daily metrics they are built from have been rebuilt."""
-        nonlocal generation
-        if os_db is None or db is not os_db:
-            return
-        cache.clear()
-        # A recompute already in flight read the metrics before the rebuild, so its result is
-        # dropped rather than written back over the entry this just cleared
-        recomputing.clear()
-        generation += 1
-
-    def _cache_get(key: Tuple[str, Optional[str], date, date]) -> Optional[Tuple[Any, bool]]:
-        entry = cache.get(key)
-        if entry is None:
-            return None
-        metrics, cached_at = entry
-        cache.move_to_end(key)
-        return metrics, time.monotonic() - cached_at <= CACHE_TTL_SECONDS
-
-    def _cache_put(key: Tuple[str, Optional[str], date, date], metrics: Any) -> None:
-        cache[key] = (metrics, time.monotonic())
-        cache.move_to_end(key)
-        while len(cache) > CACHE_MAX_ENTRIES:
-            cache.popitem(last=False)
-
     # Most recent refresh state per db id, doubling as the in-flight guard ('running').
     # Only mutated on the event loop (the sync calculation itself runs in the threadpool),
     # so no lock is needed. Per-process: each worker tracks the refreshes it started.
@@ -295,7 +257,6 @@ def attach_routes(
             _record_refresh_outcome(refresh_key, error=str(e))
         else:
             _record_refresh_outcome(refresh_key)
-            _drop_os_metrics_cache(db)
 
     @router.post(
         "/metrics/refresh",
@@ -406,7 +367,6 @@ def attach_routes(
                 _record_refresh_outcome(refresh_key, error=str(e))
                 raise
             _record_refresh_outcome(refresh_key)
-            _drop_os_metrics_cache(db)
 
             if result is None:
                 return []
@@ -484,236 +444,110 @@ def attach_routes(
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Error getting metrics refresh status: {str(e)}")
 
-    async def _daily_metrics(
+    def _require_os_db() -> Union[BaseDb, AsyncBaseDb]:
+        if os_db is None:
+            raise HTTPException(
+                status_code=503,
+                detail="Metrics not available: pass a `db` to AgentOS to enable this feature.",
+            )
+        return os_db
+
+    def _owner(request: Request, user_id: Optional[str]) -> Optional[str]:
+        """The owner a read covers: the caller's own scope, else the requested user_id, else every owner."""
+        scoped_user_id = get_scoped_user_id(request)
+        return scoped_user_id if scoped_user_id is not None else user_id
+
+    async def _os_metrics(
         db: Union[BaseDb, AsyncBaseDb],
         effective_user_id: Optional[str],
         starting_date: date,
         ending_date: date,
-    ) -> List[Dict[str, Any]]:
-        """The daily metrics the AgentOS database holds for the window, scoped the way GET /metrics scopes them."""
-        if isinstance(db, AsyncBaseDb):
-            metrics, latest_updated_at = await db.get_metrics(
-                starting_date=starting_date, ending_date=ending_date, user_id=effective_user_id
-            )
-        else:
-            metrics, latest_updated_at = await run_in_threadpool(
-                db.get_metrics,
-                starting_date=starting_date,
-                ending_date=ending_date,
-                user_id=effective_user_id,
-            )
-
-        # A read of one owner keeps that owner's rows; every other read collapses to the
-        # legacy one-row-per-day shape.
-        if effective_user_id is None:
-            metrics = aggregate_metrics_by_date(metrics)
-        elif not effective_user_id:
-            # The unowned bucket is asked for by the same sentinel the SQL adapters stamp
-            # pre-ownership records with, and those hold every user's traffic
-            metrics = [metric for metric in metrics if not is_legacy_metric(metric)]
-        return list(metrics)
-
-    async def _compute_os_model_metrics(
-        db: Union[BaseDb, AsyncBaseDb],
-        effective_user_id: Optional[str],
-        starting_date: date,
-        ending_date: date,
-    ) -> OSModelMetricsResponse:
-        metrics = await _daily_metrics(db, effective_user_id, starting_date, ending_date)
-
-        run_counts: Dict[Tuple[str, Optional[str]], int] = {}
-        for metric in metrics:
-            for model_metric in metric.get("model_metrics") or []:
-                model_id = model_metric.get("model_id")
-                if not model_id:
-                    continue
-                key = (model_id, model_metric.get("model_provider") or None)
-                run_counts[key] = run_counts.get(key, 0) + (model_metric.get("count") or 0)
-
-        total_model_runs = sum(run_counts.values())
-        models = [
-            ModelUsage(
-                model_id=model_id,
-                model_provider=model_provider,
-                run_count=count,
-                run_share=round(count / total_model_runs * 100, 1) if total_model_runs else 0.0,
-            )
-            for (model_id, model_provider), count in sorted(run_counts.items(), key=lambda item: (-item[1], item[0][0]))
-        ]
-
-        return OSModelMetricsResponse(
-            models=models,
-            total_model_runs=total_model_runs,
-            window_days=(ending_date - starting_date).days + 1,
-            computed_at=datetime.now(timezone.utc),
-        )
-
-    async def _recompute_in_background(
-        label: str,
-        compute: Callable[[Union[BaseDb, AsyncBaseDb], Optional[str], date, date], Awaitable[Any]],
-        db: Union[BaseDb, AsyncBaseDb],
-        key: Tuple[str, Optional[str], date, date],
-        effective_user_id: Optional[str],
-        starting_date: date,
-        ending_date: date,
-    ) -> None:
-        """Refresh one cached entry once it has gone stale."""
+        fields: List[str],
+    ) -> Tuple[List[Dict[str, Any]], Optional[datetime]]:
+        """The window's OS metrics, totalled by the database per day, oldest first."""
         try:
-            metrics = await compute(db, effective_user_id, starting_date, ending_date)
-            # A rebuild of the daily metrics forgets this key while the read above was in
-            # flight, so these numbers predate it and must not be written back over it
-            if key in recomputing:
-                _cache_put(key, metrics)
-        except Exception as e:
-            # The stale entry keeps being served, and the next open retries
-            log_error(f"{label} recompute failed: {e}")
-        finally:
-            recomputing.discard(key)
-
-    @router.get(
-        "/os/metrics/models",
-        response_model=OSModelMetricsResponse,
-        status_code=200,
-        operation_id="get_os_model_metrics",
-        summary="Get OS Model Metrics",
-        description=(
-            "Retrieve how many runs each model served over a date range. "
-            "If no date range is specified, covers the last 30 days."
-        ),
-        responses={
-            200: {
-                "description": "OS model metrics computed successfully",
-                "content": {
-                    "application/json": {
-                        "example": {
-                            "models": [
-                                {
-                                    "model_id": "gpt-5.5",
-                                    "model_provider": "OpenAI",
-                                    "run_count": 96,
-                                    "run_share": 80.0,
-                                }
-                            ],
-                            "total_model_runs": 120,
-                            "window_days": 30,
-                            "computed_at": "2025-07-31T12:49:01Z",
-                        }
-                    }
-                },
-            },
-            500: {"description": "Failed to compute OS model metrics", "model": InternalServerErrorResponse},
-            503: {"description": "No AgentOS database configured", "model": InternalServerErrorResponse},
-        },
-    )
-    async def get_os_model_metrics(
-        request: Request,
-        background_tasks: BackgroundTasks,
-        starting_date: Optional[date] = Query(
-            default=None,
-            description="Starting date for the window (YYYY-MM-DD format). Defaults to 29 days before ending_date",
-        ),
-        ending_date: Optional[date] = Query(
-            default=None, description="Ending date for the window (YYYY-MM-DD format). Defaults to today"
-        ),
-        user_id: Optional[str] = Query(
-            default=None, description="Return only this user's metrics. Ignored for non-admin callers"
-        ),
-        refresh: bool = Query(default=False, description="Recompute now instead of serving the cached result"),
-    ) -> OSModelMetricsResponse:
-        try:
-            if os_db is None:
-                raise HTTPException(
-                    status_code=503,
-                    detail="Metrics not available: pass a `db` to AgentOS to enable this feature.",
+            if isinstance(db, AsyncBaseDb):
+                totals, latest_updated_at = await db.get_os_metrics(
+                    starting_date=starting_date,
+                    ending_date=ending_date,
+                    user_id=effective_user_id,
+                    fields=fields,
                 )
+            else:
+                totals, latest_updated_at = await run_in_threadpool(
+                    db.get_os_metrics,
+                    starting_date=starting_date,
+                    ending_date=ending_date,
+                    user_id=effective_user_id,
+                    fields=fields,
+                )
+        except NotImplementedError:
+            raise HTTPException(status_code=501, detail="OS metrics not supported by the configured database")
+        return totals, to_utc_datetime(latest_updated_at)
 
-            starting_date, ending_date = _window(starting_date, ending_date)
-            scoped_user_id = get_scoped_user_id(request)
-            effective_user_id = scoped_user_id if scoped_user_id is not None else user_id
-
-            cache_key = ("os_model_metrics", effective_user_id, starting_date, ending_date)
-            if not refresh:
-                cached = _cache_get(cache_key)
-                if cached is not None:
-                    metrics, fresh = cached
-                    # A stale entry is still served straight away; opening the page never waits on
-                    # a recompute once one has completed for this owner and window
-                    if not fresh and cache_key not in recomputing:
-                        recomputing.add(cache_key)
-                        background_tasks.add_task(
-                            _recompute_in_background,
-                            "OS model metrics",
-                            _compute_os_model_metrics,
-                            os_db,
-                            cache_key,
-                            effective_user_id,
-                            starting_date,
-                            ending_date,
-                        )
-                    return metrics
-
-            generation_before = generation
-            metrics = await _compute_os_model_metrics(os_db, effective_user_id, starting_date, ending_date)
-            # A rebuild since this read started makes these numbers stale, so they are returned but not kept
-            if generation_before == generation:
-                _cache_put(cache_key, metrics)
-            return metrics
-
-        except HTTPException:
-            raise
-        except AgnoError as e:
-            raise AgnoHTTPException(e)
-        except Exception as e:
-            log_exception("GET /os/metrics/models failed")
-            raise HTTPException(status_code=500, detail=f"Error getting OS model metrics: {str(e)}")
-
-    # The three session counts on a daily metrics row, one per kind of component
-    session_count_fields = ("agent_sessions_count", "team_sessions_count", "workflow_sessions_count")
-
-    async def _compute_os_session_metrics(
+    async def _os_metrics_by_day(
         db: Union[BaseDb, AsyncBaseDb],
         effective_user_id: Optional[str],
         starting_date: date,
         ending_date: date,
-    ) -> OSSessionMetricsResponse:
-        days = (ending_date - starting_date).days + 1
-        # The change is measured against the window of the same length that ends the day
-        # before this one starts, so both windows come from one read of the daily metrics
-        previous_starting_date = starting_date - timedelta(days=days)
-        metrics = await _daily_metrics(db, effective_user_id, previous_starting_date, ending_date)
+        fields: List[str],
+    ) -> Tuple[Dict[date, Dict[str, Any]], Optional[datetime]]:
+        """The window's OS metrics, totalled per day by the database, keyed by day."""
+        totals, updated_at = await _os_metrics(db, effective_user_id, starting_date, ending_date, fields)
+        return {day_totals["date"]: day_totals for day_totals in totals}, updated_at
 
-        def _sessions(metric: Dict[str, Any]) -> int:
-            return sum(metric.get(field) or 0 for field in session_count_fields)
+    def _days(starting_date: date, ending_date: date) -> List[date]:
+        """Every day of the window, a day without rows included."""
+        return [starting_date + timedelta(days=offset) for offset in range((ending_date - starting_date).days + 1)]
 
-        # Every day of the window is returned, so a chart never has to guess at a missing day
-        buckets: Dict[date, int] = {starting_date + timedelta(days=offset): 0 for offset in range(days)}
-        previous_total_sessions = 0
-        for metric in metrics:
-            row_date = to_utc_datetime(metric.get("date"))
-            day = row_date.date() if row_date is not None else None
-            if day in buckets:
-                buckets[day] += _sessions(metric)
-            elif day is not None and previous_starting_date <= day < starting_date:
-                previous_total_sessions += _sessions(metric)
+    def _previous_starting_date(starting_date: date, ending_date: date) -> date:
+        """The first day of the window of the same length that ends the day before this one starts.
 
-        total_sessions = sum(buckets.values())
+        Both windows then come from one read.
+        """
+        return starting_date - timedelta(days=(ending_date - starting_date).days + 1)
 
-        return OSSessionMetricsResponse(
-            metrics=[
-                DaySessionMetrics(
-                    date=datetime.combine(day, datetime.min.time(), tzinfo=timezone.utc), sessions_count=count
-                )
-                for day, count in sorted(buckets.items())
-            ],
-            total_sessions=total_sessions,
-            previous_total_sessions=previous_total_sessions,
-            # No sessions before means no rate to compare against, rather than an infinite rise
-            change_percent=round((total_sessions - previous_total_sessions) / previous_total_sessions * 100, 1)
-            if previous_total_sessions
-            else None,
-            window_days=days,
-            computed_at=datetime.now(timezone.utc),
-        )
+    def _change_percent(total: int, previous_total: int) -> Optional[float]:
+        # Nothing before means no rate to compare against, rather than an infinite rise
+        return round((total - previous_total) / previous_total * 100, 1) if previous_total else None
+
+    def _average(total: int, count: int) -> Optional[int]:
+        return round(total / count) if count else None
+
+    def _latency(duration_metrics: Dict[str, Any], buckets: Dict[str, Any]) -> Dict[str, Optional[int]]:
+        """The latency numbers of one set of totals: the runs, and the average, median, p95 and max of each timing."""
+        duration_ms_buckets = buckets.get("duration_ms_buckets", {})
+        time_to_first_token_ms_buckets = buckets.get("time_to_first_token_ms_buckets", {})
+        model_call_ms_buckets = buckets.get("model_call_ms_buckets", {})
+        max_duration_ms = duration_metrics.get("max_duration_ms")
+        max_time_to_first_token_ms = duration_metrics.get("max_time_to_first_token_ms")
+        max_model_call_ms = duration_metrics.get("max_model_call_ms")
+        return {
+            "runs_count": duration_metrics.get("duration_runs_count", 0),
+            "avg_duration_ms": _average(
+                duration_metrics.get("total_duration_ms", 0), duration_metrics.get("duration_runs_count", 0)
+            ),
+            "median_duration_ms": os_metrics_percentile(duration_ms_buckets, 0.5, max_duration_ms),
+            "p95_duration_ms": os_metrics_percentile(duration_ms_buckets, 0.95, max_duration_ms),
+            "max_duration_ms": max_duration_ms,
+            "avg_time_to_first_token_ms": _average(
+                duration_metrics.get("total_time_to_first_token_ms", 0),
+                duration_metrics.get("time_to_first_token_runs_count", 0),
+            ),
+            "median_time_to_first_token_ms": os_metrics_percentile(
+                time_to_first_token_ms_buckets, 0.5, max_time_to_first_token_ms
+            ),
+            "p95_time_to_first_token_ms": os_metrics_percentile(
+                time_to_first_token_ms_buckets, 0.95, max_time_to_first_token_ms
+            ),
+            "max_time_to_first_token_ms": max_time_to_first_token_ms,
+            "avg_model_call_ms": _average(
+                duration_metrics.get("total_model_call_ms", 0), duration_metrics.get("model_calls_count", 0)
+            ),
+            "median_model_call_ms": os_metrics_percentile(model_call_ms_buckets, 0.5, max_model_call_ms),
+            "p95_model_call_ms": os_metrics_percentile(model_call_ms_buckets, 0.95, max_model_call_ms),
+            "max_model_call_ms": max_model_call_ms,
+        }
 
     @router.get(
         "/os/metrics/sessions",
@@ -728,7 +562,7 @@ def attach_routes(
         ),
         responses={
             200: {
-                "description": "OS session metrics computed successfully",
+                "description": "OS session metrics retrieved successfully",
                 "content": {
                     "application/json": {
                         "example": {
@@ -737,18 +571,18 @@ def attach_routes(
                             "previous_total_sessions": 161,
                             "change_percent": 24.2,
                             "window_days": 30,
-                            "computed_at": "2025-07-31T12:49:01Z",
+                            "updated_at": "2025-07-31T12:49:01Z",
                         }
                     }
                 },
             },
-            500: {"description": "Failed to compute OS session metrics", "model": InternalServerErrorResponse},
+            500: {"description": "Failed to get OS session metrics", "model": InternalServerErrorResponse},
+            501: {"description": "OS metrics not supported by the configured database"},
             503: {"description": "No AgentOS database configured", "model": InternalServerErrorResponse},
         },
     )
     async def get_os_session_metrics(
         request: Request,
-        background_tasks: BackgroundTasks,
         starting_date: Optional[date] = Query(
             default=None,
             description="Starting date for the window (YYYY-MM-DD format). Defaults to 29 days before ending_date",
@@ -759,99 +593,41 @@ def attach_routes(
         user_id: Optional[str] = Query(
             default=None, description="Return only this user's sessions. Ignored for non-admin callers"
         ),
-        refresh: bool = Query(default=False, description="Recompute now instead of serving the cached result"),
     ) -> OSSessionMetricsResponse:
         try:
-            if os_db is None:
-                raise HTTPException(
-                    status_code=503,
-                    detail="Metrics not available: pass a `db` to AgentOS to enable this feature.",
-                )
-
+            db = _require_os_db()
             starting_date, ending_date = _window(starting_date, ending_date)
-            scoped_user_id = get_scoped_user_id(request)
-            effective_user_id = scoped_user_id if scoped_user_id is not None else user_id
+            previous_starting_date = _previous_starting_date(starting_date, ending_date)
+            totals, updated_at = await _os_metrics_by_day(
+                db, _owner(request, user_id), previous_starting_date, ending_date, ["sessions_count"]
+            )
 
-            cache_key = ("os_session_metrics", effective_user_id, starting_date, ending_date)
-            if not refresh:
-                cached = _cache_get(cache_key)
-                if cached is not None:
-                    metrics, fresh = cached
-                    # A stale entry is still served straight away; opening the page never waits on
-                    # a recompute once one has completed for this owner and window
-                    if not fresh and cache_key not in recomputing:
-                        recomputing.add(cache_key)
-                        background_tasks.add_task(
-                            _recompute_in_background,
-                            "OS session metrics",
-                            _compute_os_session_metrics,
-                            os_db,
-                            cache_key,
-                            effective_user_id,
-                            starting_date,
-                            ending_date,
-                        )
-                    return metrics
-
-            generation_before = generation
-            metrics = await _compute_os_session_metrics(os_db, effective_user_id, starting_date, ending_date)
-            # A rebuild since this read started makes these numbers stale, so they are returned but not kept
-            if generation_before == generation:
-                _cache_put(cache_key, metrics)
-            return metrics
+            metrics = [
+                DaySessionMetrics(
+                    date=to_utc_datetime(day), sessions_count=totals.get(day, {}).get("sessions_count", 0)
+                )
+                for day in _days(starting_date, ending_date)
+            ]
+            total_sessions = sum(day_metrics.sessions_count for day_metrics in metrics)
+            previous_total_sessions = sum(
+                day_totals["sessions_count"] for day, day_totals in totals.items() if day < starting_date
+            )
+            return OSSessionMetricsResponse(
+                metrics=metrics,
+                total_sessions=total_sessions,
+                previous_total_sessions=previous_total_sessions,
+                change_percent=_change_percent(total_sessions, previous_total_sessions),
+                window_days=(ending_date - starting_date).days + 1,
+                updated_at=updated_at,
+            )
 
         except HTTPException:
             raise
         except AgnoError as e:
             raise AgnoHTTPException(e)
         except Exception as e:
-            log_exception("GET /os/metrics/sessions failed")
+            log_error(f"Error getting OS session metrics: {str(e)}")
             raise HTTPException(status_code=500, detail=f"Error getting OS session metrics: {str(e)}")
-
-    async def _compute_os_token_metrics(
-        db: Union[BaseDb, AsyncBaseDb],
-        effective_user_id: Optional[str],
-        starting_date: date,
-        ending_date: date,
-    ) -> OSTokenMetricsResponse:
-        days = (ending_date - starting_date).days + 1
-        # The change is measured against the window of the same length that ends the day
-        # before this one starts, so both windows come from one read of the daily metrics
-        previous_starting_date = starting_date - timedelta(days=days)
-        metrics = await _daily_metrics(db, effective_user_id, previous_starting_date, ending_date)
-
-        def _tokens(metric: Dict[str, Any]) -> int:
-            return (metric.get("token_metrics") or {}).get("total_tokens") or 0
-
-        # Every day of the window is returned, so a chart never has to guess at a missing day
-        buckets: Dict[date, int] = {starting_date + timedelta(days=offset): 0 for offset in range(days)}
-        previous_total_tokens = 0
-        for metric in metrics:
-            row_date = to_utc_datetime(metric.get("date"))
-            day = row_date.date() if row_date is not None else None
-            if day in buckets:
-                buckets[day] += _tokens(metric)
-            elif day is not None and previous_starting_date <= day < starting_date:
-                previous_total_tokens += _tokens(metric)
-
-        total_tokens = sum(buckets.values())
-
-        return OSTokenMetricsResponse(
-            metrics=[
-                DayTokenMetrics(
-                    date=datetime.combine(day, datetime.min.time(), tzinfo=timezone.utc), tokens_count=count
-                )
-                for day, count in sorted(buckets.items())
-            ],
-            total_tokens=total_tokens,
-            previous_total_tokens=previous_total_tokens,
-            # No tokens before means no rate to compare against, rather than an infinite rise
-            change_percent=round((total_tokens - previous_total_tokens) / previous_total_tokens * 100, 1)
-            if previous_total_tokens
-            else None,
-            window_days=days,
-            computed_at=datetime.now(timezone.utc),
-        )
 
     @router.get(
         "/os/metrics/tokens",
@@ -866,27 +642,32 @@ def attach_routes(
         ),
         responses={
             200: {
-                "description": "OS token metrics computed successfully",
+                "description": "OS token metrics retrieved successfully",
                 "content": {
                     "application/json": {
                         "example": {
-                            "metrics": [{"date": "2025-07-31T00:00:00Z", "tokens_count": 5962}],
+                            "metrics": [
+                                {
+                                    "date": "2025-07-31T00:00:00Z",
+                                    "tokens_count": 5962,
+                                }
+                            ],
                             "total_tokens": 184500,
                             "previous_total_tokens": 150000,
                             "change_percent": 23.0,
                             "window_days": 30,
-                            "computed_at": "2025-07-31T12:49:01Z",
+                            "updated_at": "2025-07-31T12:49:01Z",
                         }
                     }
                 },
             },
-            500: {"description": "Failed to compute OS token metrics", "model": InternalServerErrorResponse},
+            500: {"description": "Failed to get OS token metrics", "model": InternalServerErrorResponse},
+            501: {"description": "OS metrics not supported by the configured database"},
             503: {"description": "No AgentOS database configured", "model": InternalServerErrorResponse},
         },
     )
     async def get_os_token_metrics(
         request: Request,
-        background_tasks: BackgroundTasks,
         starting_date: Optional[date] = Query(
             default=None,
             description="Starting date for the window (YYYY-MM-DD format). Defaults to 29 days before ending_date",
@@ -897,99 +678,372 @@ def attach_routes(
         user_id: Optional[str] = Query(
             default=None, description="Return only this user's tokens. Ignored for non-admin callers"
         ),
-        refresh: bool = Query(default=False, description="Recompute now instead of serving the cached result"),
     ) -> OSTokenMetricsResponse:
         try:
-            if os_db is None:
-                raise HTTPException(
-                    status_code=503,
-                    detail="Metrics not available: pass a `db` to AgentOS to enable this feature.",
-                )
-
+            db = _require_os_db()
             starting_date, ending_date = _window(starting_date, ending_date)
-            scoped_user_id = get_scoped_user_id(request)
-            effective_user_id = scoped_user_id if scoped_user_id is not None else user_id
+            previous_starting_date = _previous_starting_date(starting_date, ending_date)
+            totals, updated_at = await _os_metrics_by_day(
+                db, _owner(request, user_id), previous_starting_date, ending_date, ["token_metrics"]
+            )
 
-            cache_key = ("os_token_metrics", effective_user_id, starting_date, ending_date)
-            if not refresh:
-                cached = _cache_get(cache_key)
-                if cached is not None:
-                    metrics, fresh = cached
-                    # A stale entry is still served straight away; opening the page never waits on
-                    # a recompute once one has completed for this owner and window
-                    if not fresh and cache_key not in recomputing:
-                        recomputing.add(cache_key)
-                        background_tasks.add_task(
-                            _recompute_in_background,
-                            "OS token metrics",
-                            _compute_os_token_metrics,
-                            os_db,
-                            cache_key,
-                            effective_user_id,
-                            starting_date,
-                            ending_date,
-                        )
-                    return metrics
-
-            generation_before = generation
-            metrics = await _compute_os_token_metrics(os_db, effective_user_id, starting_date, ending_date)
-            # A rebuild since this read started makes these numbers stale, so they are returned but not kept
-            if generation_before == generation:
-                _cache_put(cache_key, metrics)
-            return metrics
+            metrics = []
+            for day in _days(starting_date, ending_date):
+                token_metrics = totals.get(day, {}).get("token_metrics", {})
+                metrics.append(
+                    DayTokenMetrics(date=to_utc_datetime(day), tokens_count=token_metrics.get("total_tokens", 0))
+                )
+            total_tokens = sum(day_metrics.tokens_count for day_metrics in metrics)
+            previous_total_tokens = sum(
+                day_totals["token_metrics"].get("total_tokens", 0)
+                for day, day_totals in totals.items()
+                if day < starting_date
+            )
+            return OSTokenMetricsResponse(
+                metrics=metrics,
+                total_tokens=total_tokens,
+                previous_total_tokens=previous_total_tokens,
+                change_percent=_change_percent(total_tokens, previous_total_tokens),
+                window_days=(ending_date - starting_date).days + 1,
+                updated_at=updated_at,
+            )
 
         except HTTPException:
             raise
         except AgnoError as e:
             raise AgnoHTTPException(e)
         except Exception as e:
-            log_exception("GET /os/metrics/tokens failed")
+            log_error(f"Error getting OS token metrics: {str(e)}")
             raise HTTPException(status_code=500, detail=f"Error getting OS token metrics: {str(e)}")
 
-    # The OS metrics routes, by the name each keeps its cache entries under
-    os_metrics_routes = {
-        "os_model_metrics": "model_metrics",
-        "os_session_metrics": "session_metrics",
-        "os_token_metrics": "token_metrics",
-    }
-
-    async def _daily_metrics_updated_at(
-        db: Union[BaseDb, AsyncBaseDb], effective_user_id: Optional[str], starting_date: date, ending_date: date
-    ) -> Optional[datetime]:
-        """When the daily metrics of the window were last written, as the database records it.
-
-        Bounded to the window so a status poll reads as many rows as the answers it describes,
-        not the whole table.
-        """
-        if isinstance(db, AsyncBaseDb):
-            metrics, latest_updated_at = await db.get_metrics(
-                starting_date=starting_date, ending_date=ending_date, user_id=effective_user_id
+    @router.get(
+        "/os/metrics/models",
+        response_model=OSModelMetricsResponse,
+        status_code=200,
+        operation_id="get_os_model_metrics",
+        summary="Get OS Model Metrics",
+        description=(
+            "Retrieve how many runs each model served over a date range. "
+            "If no date range is specified, covers the last 30 days."
+        ),
+        responses={
+            200: {
+                "description": "OS model metrics retrieved successfully",
+                "content": {
+                    "application/json": {
+                        "example": {
+                            "models": [
+                                {
+                                    "model_id": "gpt-5.5",
+                                    "model_provider": "OpenAI",
+                                    "run_count": 96,
+                                    "run_share": 80.0,
+                                }
+                            ],
+                            "total_model_runs": 120,
+                            "window_days": 30,
+                            "updated_at": "2025-07-31T12:49:01Z",
+                        }
+                    }
+                },
+            },
+            500: {"description": "Failed to get OS model metrics", "model": InternalServerErrorResponse},
+            501: {"description": "OS metrics not supported by the configured database"},
+            503: {"description": "No AgentOS database configured", "model": InternalServerErrorResponse},
+        },
+    )
+    async def get_os_model_metrics(
+        request: Request,
+        starting_date: Optional[date] = Query(
+            default=None,
+            description="Starting date for the window (YYYY-MM-DD format). Defaults to 29 days before ending_date",
+        ),
+        ending_date: Optional[date] = Query(
+            default=None, description="Ending date for the window (YYYY-MM-DD format). Defaults to today"
+        ),
+        user_id: Optional[str] = Query(
+            default=None, description="Return only this user's metrics. Ignored for non-admin callers"
+        ),
+    ) -> OSModelMetricsResponse:
+        try:
+            db = _require_os_db()
+            starting_date, ending_date = _window(starting_date, ending_date)
+            totals, updated_at = await _os_metrics(
+                db, _owner(request, user_id), starting_date, ending_date, ["model_metrics"]
             )
-        else:
-            metrics, latest_updated_at = await run_in_threadpool(
-                db.get_metrics, starting_date=starting_date, ending_date=ending_date, user_id=effective_user_id
-            )
-        return to_utc_datetime(latest_updated_at)
 
-    async def _os_metrics_refresh_status(
-        db: Union[BaseDb, AsyncBaseDb],
-        effective_user_id: Optional[str],
-        starting_date: date,
-        ending_date: date,
-    ) -> OSMetricsRefreshStatusResponse:
-        state = refresh_states.get(str(db.id))
-        computed_at: Dict[str, Optional[datetime]] = {}
-        for prefix, name in os_metrics_routes.items():
-            entry = cache.get((prefix, effective_user_id, starting_date, ending_date))
-            computed_at[name] = entry[0].computed_at if entry is not None else None
-        return OSMetricsRefreshStatusResponse(
-            status=state.status if state is not None else "idle",
-            started_at=state.started_at if state is not None else None,
-            finished_at=state.finished_at if state is not None else None,
-            error=state.error if state is not None else None,
-            updated_at=await _daily_metrics_updated_at(db, effective_user_id, starting_date, ending_date),
-            computed_at=computed_at,
+            model_metrics: List[Dict[str, Any]] = []
+            for day_totals in totals:
+                merge_os_model_metrics(model_metrics, day_totals["model_metrics"])
+
+            # One entry per model and caller, so the runs add up per model
+            run_counts: Dict[Tuple[str, Optional[str]], int] = {}
+            for model_metric in model_metrics:
+                key = (model_metric["model_id"], model_metric["model_provider"] or None)
+                run_counts[key] = run_counts.get(key, 0) + model_metric["count"]
+
+            total_model_runs = sum(run_counts.values())
+            return OSModelMetricsResponse(
+                models=[
+                    ModelUsage(
+                        model_id=model_id,
+                        model_provider=model_provider,
+                        run_count=count,
+                        run_share=round(count / total_model_runs * 100, 1),
+                    )
+                    for (model_id, model_provider), count in sorted(
+                        run_counts.items(), key=lambda item: (-item[1], item[0][0])
+                    )
+                ],
+                total_model_runs=total_model_runs,
+                window_days=(ending_date - starting_date).days + 1,
+                updated_at=updated_at,
+            )
+
+        except HTTPException:
+            raise
+        except AgnoError as e:
+            raise AgnoHTTPException(e)
+        except Exception as e:
+            log_error(f"Error getting OS model metrics: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"Error getting OS model metrics: {str(e)}")
+
+    @router.get(
+        "/os/metrics/runs",
+        response_model=OSRunMetricsResponse,
+        status_code=200,
+        operation_id="get_os_run_metrics",
+        summary="Get OS Run Metrics",
+        description=(
+            "Retrieve the runs started on each day of a date range by status, their total, the share of "
+            "finished runs that completed, and how the total compares with the date range of the same length "
+            "before it. A team member's run counts as a run of its own, beside the team's run. "
+            "If no date range is specified, covers the last 30 days."
+        ),
+        responses={
+            200: {
+                "description": "OS run metrics retrieved successfully",
+                "content": {
+                    "application/json": {
+                        "example": {
+                            "metrics": [
+                                {
+                                    "date": "2025-07-31T00:00:00Z",
+                                    "runs_count": 12,
+                                    "status_metrics": {"COMPLETED": 10, "ERROR": 1, "CANCELLED": 1},
+                                }
+                            ],
+                            "total_runs": 310,
+                            "status_metrics": {"COMPLETED": 281, "ERROR": 17, "CANCELLED": 8, "PAUSED": 4},
+                            "success_rate": 91.8,
+                            "previous_total_runs": 262,
+                            "change_percent": 18.3,
+                            "window_days": 30,
+                            "updated_at": "2025-07-31T12:49:01Z",
+                        }
+                    }
+                },
+            },
+            500: {"description": "Failed to get OS run metrics", "model": InternalServerErrorResponse},
+            501: {"description": "OS metrics not supported by the configured database"},
+            503: {"description": "No AgentOS database configured", "model": InternalServerErrorResponse},
+        },
+    )
+    async def get_os_run_metrics(
+        request: Request,
+        starting_date: Optional[date] = Query(
+            default=None,
+            description="Starting date for the window (YYYY-MM-DD format). Defaults to 29 days before ending_date",
+        ),
+        ending_date: Optional[date] = Query(
+            default=None, description="Ending date for the window (YYYY-MM-DD format). Defaults to today"
+        ),
+        user_id: Optional[str] = Query(
+            default=None, description="Return only this user's runs. Ignored for non-admin callers"
+        ),
+    ) -> OSRunMetricsResponse:
+        try:
+            db = _require_os_db()
+            starting_date, ending_date = _window(starting_date, ending_date)
+            previous_starting_date = _previous_starting_date(starting_date, ending_date)
+            totals, updated_at = await _os_metrics_by_day(
+                db, _owner(request, user_id), previous_starting_date, ending_date, ["runs_count", "status_metrics"]
+            )
+
+            metrics = []
+            status_metrics: Dict[str, int] = {}
+            for day in _days(starting_date, ending_date):
+                day_totals = totals.get(day, {})
+                day_status_metrics = day_totals.get("status_metrics", {})
+                metrics.append(
+                    DayRunMetrics(
+                        date=to_utc_datetime(day),
+                        runs_count=day_totals.get("runs_count", 0),
+                        status_metrics=day_status_metrics,
+                    )
+                )
+                merge_os_metrics_json(status_metrics, day_status_metrics)
+
+            total_runs = sum(day_metrics.runs_count for day_metrics in metrics)
+            previous_total_runs = sum(
+                day_totals["runs_count"] for day, day_totals in totals.items() if day < starting_date
+            )
+            # A run still pending, running or paused has no outcome to rate yet
+            finished_runs = sum(
+                status_metrics.get(status, 0)
+                for status in (RunStatus.completed.value, RunStatus.error.value, RunStatus.cancelled.value)
+            )
+            return OSRunMetricsResponse(
+                metrics=metrics,
+                total_runs=total_runs,
+                status_metrics=status_metrics,
+                success_rate=round(status_metrics.get(RunStatus.completed.value, 0) / finished_runs * 100, 1)
+                if finished_runs
+                else None,
+                previous_total_runs=previous_total_runs,
+                change_percent=_change_percent(total_runs, previous_total_runs),
+                window_days=(ending_date - starting_date).days + 1,
+                updated_at=updated_at,
+            )
+
+        except HTTPException:
+            raise
+        except AgnoError as e:
+            raise AgnoHTTPException(e)
+        except Exception as e:
+            log_error(f"Error getting OS run metrics: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"Error getting OS run metrics: {str(e)}")
+
+    @router.get(
+        "/os/metrics/latency",
+        response_model=OSLatencyMetricsResponse,
+        status_code=200,
+        operation_id="get_os_latency_metrics",
+        summary="Get OS Latency Metrics",
+        description=(
+            "Retrieve how long completed runs and their model calls took on each day of a date range and "
+            "across the whole range: the average, median, 95th percentile and slowest run duration, time to "
+            "the first token and model call. Medians and percentiles are approximate. "
+            "If no date range is specified, covers the last 30 days."
+        ),
+        responses={
+            200: {
+                "description": "OS latency metrics retrieved successfully",
+                "content": {
+                    "application/json": {
+                        "example": {
+                            "metrics": [
+                                {
+                                    "date": "2025-07-31T00:00:00Z",
+                                    "runs_count": 40,
+                                    "avg_duration_ms": 3120,
+                                    "median_duration_ms": 2400,
+                                    "p95_duration_ms": 8100,
+                                    "max_duration_ms": 9404,
+                                    "avg_time_to_first_token_ms": 820,
+                                    "median_time_to_first_token_ms": 640,
+                                    "p95_time_to_first_token_ms": 1900,
+                                    "max_time_to_first_token_ms": 2210,
+                                    "avg_model_call_ms": 1410,
+                                    "median_model_call_ms": 1150,
+                                    "p95_model_call_ms": 3600,
+                                    "max_model_call_ms": 4120,
+                                }
+                            ],
+                            "runs_count": 310,
+                            "avg_duration_ms": 2987,
+                            "median_duration_ms": 2250,
+                            "p95_duration_ms": 9800,
+                            "max_duration_ms": 14210,
+                            "avg_time_to_first_token_ms": 790,
+                            "median_time_to_first_token_ms": 610,
+                            "p95_time_to_first_token_ms": 2400,
+                            "max_time_to_first_token_ms": 3104,
+                            "avg_model_call_ms": 1390,
+                            "median_model_call_ms": 1100,
+                            "p95_model_call_ms": 4600,
+                            "max_model_call_ms": 6100,
+                            "window_days": 30,
+                            "updated_at": "2025-07-31T12:49:01Z",
+                        }
+                    }
+                },
+            },
+            500: {"description": "Failed to get OS latency metrics", "model": InternalServerErrorResponse},
+            501: {"description": "OS metrics not supported by the configured database"},
+            503: {"description": "No AgentOS database configured", "model": InternalServerErrorResponse},
+        },
+    )
+    async def get_os_latency_metrics(
+        request: Request,
+        starting_date: Optional[date] = Query(
+            default=None,
+            description="Starting date for the window (YYYY-MM-DD format). Defaults to 29 days before ending_date",
+        ),
+        ending_date: Optional[date] = Query(
+            default=None, description="Ending date for the window (YYYY-MM-DD format). Defaults to today"
+        ),
+        user_id: Optional[str] = Query(
+            default=None, description="Return only this user's runs. Ignored for non-admin callers"
+        ),
+    ) -> OSLatencyMetricsResponse:
+        try:
+            db = _require_os_db()
+            starting_date, ending_date = _window(starting_date, ending_date)
+            # The medians and p95s are read from each day's bucket counts
+            totals, updated_at = await _os_metrics_by_day(
+                db, _owner(request, user_id), starting_date, ending_date, ["duration_metrics", "duration_buckets"]
+            )
+
+            metrics = []
+            window_duration_metrics: Dict[str, Any] = {}
+            window_buckets: Dict[str, Any] = {}
+            for day in _days(starting_date, ending_date):
+                duration_metrics = totals.get(day, {}).get("duration_metrics", {})
+                buckets = totals.get(day, {}).get("duration_buckets", {})
+                metrics.append(DayLatencyMetrics(date=to_utc_datetime(day), **_latency(duration_metrics, buckets)))
+                merge_os_metrics_json(window_duration_metrics, duration_metrics)
+                merge_os_metrics_json(window_buckets, buckets)
+
+            return OSLatencyMetricsResponse(
+                metrics=metrics,
+                window_days=(ending_date - starting_date).days + 1,
+                updated_at=updated_at,
+                **_latency(window_duration_metrics, window_buckets),
+            )
+
+        except HTTPException:
+            raise
+        except AgnoError as e:
+            raise AgnoHTTPException(e)
+        except Exception as e:
+            log_error(f"Error getting OS latency metrics: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"Error getting OS latency metrics: {str(e)}")
+
+    def _stores_os_metrics(db: Union[BaseDb, AsyncBaseDb]) -> bool:
+        """Whether the database implements the OS metrics table, both the read and the rebuild, rather than the stubs."""
+        db_class = type(db)
+        return getattr(db_class, "get_os_metrics", None) not in (
+            BaseDb.get_os_metrics,
+            AsyncBaseDb.get_os_metrics,
+        ) and getattr(db_class, "calculate_os_metrics", None) not in (
+            BaseDb.calculate_os_metrics,
+            AsyncBaseDb.calculate_os_metrics,
         )
+
+    async def _do_os_refresh(db: Union[BaseDb, AsyncBaseDb], refresh_key: str) -> None:
+        try:
+            if isinstance(db, AsyncBaseDb):
+                await db.calculate_os_metrics()
+            else:
+                await run_in_threadpool(db.calculate_os_metrics)
+        except Exception as e:
+            # An exception with no message, like a bare NotImplementedError, is recorded by its type
+            error = str(e) or type(e).__name__
+            log_error(f"Error refreshing OS metrics: {error}")
+            _record_refresh_outcome(refresh_key, error=error)
+        else:
+            _record_refresh_outcome(refresh_key)
 
     @router.post(
         "/os/metrics/refresh",
@@ -998,19 +1052,15 @@ def attach_routes(
         operation_id="refresh_os_metrics",
         summary="Refresh OS Metrics",
         description=(
-            "Rebuild the daily metrics of the AgentOS database and forget every cached OS metrics "
-            "answer, so the next read of any OS metrics route recomputes from the rebuilt metrics. "
-            "No db_id: the AgentOS database is always the one refreshed, the one the OS metrics routes read.\n\n"
+            "Rebuild the OS metrics of the AgentOS database from its sessions and runs. "
             "By default the refresh runs synchronously and returns its outcome. Pass background=true "
-            "to run the refresh in the background instead: the endpoint returns 202 Accepted "
-            "immediately and GET /os/metrics/refresh/status can be polled. If a refresh is already in "
-            "progress for the database, returns status 'already_running' without starting a new one. "
-            "When the daily metrics were last written, and when each OS metrics route last computed "
-            "its answer, are reported by GET /os/metrics/refresh/status."
+            "to run the refresh in the background instead: the endpoint returns 202 Accepted immediately. "
+            "If this server process is already refreshing, returns status 'already_running' without "
+            "starting a new one."
         ),
         responses={
             200: {
-                "description": "Daily metrics rebuilt and the cached answers dropped",
+                "description": "OS metrics refreshed successfully",
                 "content": {
                     "application/json": {
                         "example": {
@@ -1030,7 +1080,8 @@ def attach_routes(
                     }
                 },
             },
-            500: {"description": "Failed to refresh metrics", "model": InternalServerErrorResponse},
+            500: {"description": "Failed to refresh OS metrics", "model": InternalServerErrorResponse},
+            501: {"description": "OS metrics not supported by the configured database"},
             503: {"description": "No AgentOS database configured", "model": InternalServerErrorResponse},
         },
     )
@@ -1043,15 +1094,14 @@ def attach_routes(
         ),
     ) -> Union[MetricsRefreshStatusResponse, MetricsRefreshResponse]:
         try:
-            if os_db is None:
-                raise HTTPException(
-                    status_code=503,
-                    detail="Metrics not available: pass a `db` to AgentOS to enable this feature.",
-                )
-
+            db = _require_os_db()
             # Resolved before the background branch so an identity-less token cannot start a refresh.
             get_scoped_user_id(request)
-            refresh_key = str(os_db.id)
+            # Kept apart from the daily metrics refresh of the same database, which rebuilds another table
+            refresh_key = f"os_metrics:{db.id}"
+            # Refused before anything runs, so a database without the table is never told "started"
+            if not _stores_os_metrics(db):
+                raise HTTPException(status_code=501, detail="OS metrics not supported by the configured database")
 
             if background:
                 response.status_code = 202
@@ -1059,26 +1109,25 @@ def attach_routes(
                     return _already_running_response()
 
                 _mark_refresh_running(refresh_key)
-                background_tasks.add_task(_do_refresh, os_db, None, None, None)
+                background_tasks.add_task(_do_os_refresh, db, refresh_key)
 
                 return MetricsRefreshResponse(status="started", message="Metrics refresh started in background")
 
             # The same guard the background path has: without it every concurrent caller
-            # starts its own full recalculation of every date the database still needs
+            # starts its own rebuild of every day the table still needs
             if _refresh_is_running(refresh_key):
                 return _already_running_response()
 
             _mark_refresh_running(refresh_key)
             try:
-                if isinstance(os_db, AsyncBaseDb):
-                    await os_db.calculate_metrics()
+                if isinstance(db, AsyncBaseDb):
+                    await db.calculate_os_metrics()
                 else:
-                    await run_in_threadpool(os_db.calculate_metrics)
+                    await run_in_threadpool(db.calculate_os_metrics)
             except Exception as e:
-                _record_refresh_outcome(refresh_key, error=str(e))
+                _record_refresh_outcome(refresh_key, error=str(e) or type(e).__name__)
                 raise
             _record_refresh_outcome(refresh_key)
-            _drop_os_metrics_cache(os_db)
 
             return refresh_states[refresh_key]
 
@@ -1087,7 +1136,7 @@ def attach_routes(
         except AgnoError as e:
             raise AgnoHTTPException(e)
         except Exception as e:
-            log_exception("POST /os/metrics/refresh failed")
+            log_error(f"Error refreshing OS metrics: {str(e)}")
             raise HTTPException(status_code=500, detail=f"Error refreshing OS metrics: {str(e)}")
 
     @router.get(
@@ -1097,36 +1146,18 @@ def attach_routes(
         operation_id="get_os_metrics_refresh_status",
         summary="Get OS Metrics Refresh Status",
         description=(
-            "Get the status of the most recent refresh of the AgentOS database's daily metrics, "
-            "when those metrics were last written, and when each OS metrics route's answer was last computed "
-            "for the caller's owner and window.\n\n"
-            "Returns 'running' while a refresh is in progress, then 'completed' or 'failed' with the "
-            "finish timestamp, or 'idle' if no refresh has been triggered since this server process "
-            "started. updated_at comes from the database, so it is the same on every server process; "
-            "the computed_at times are this process's own cache. Intended for the home page header and for "
-            "polling after POST /os/metrics/refresh?background=true."
+            "Get when the OS metrics of a date range were last written, as the database records it, so every "
+            "server process reports the same time. Intended for showing how fresh the numbers are. To refresh "
+            "and know when it is done, call POST /os/metrics/refresh without background=true: it answers when "
+            "the rebuild has landed. If no date range is specified, covers the last 30 days."
         ),
         responses={
             200: {
-                "description": "Current refresh status",
-                "content": {
-                    "application/json": {
-                        "example": {
-                            "status": "completed",
-                            "started_at": "2025-08-12T08:01:47Z",
-                            "finished_at": "2025-08-12T08:01:49Z",
-                            "error": None,
-                            "updated_at": "2025-08-12T08:01:49Z",
-                            "computed_at": {
-                                "model_metrics": "2025-08-12T08:03:10Z",
-                                "session_metrics": None,
-                                "token_metrics": None,
-                            },
-                        }
-                    }
-                },
+                "description": "Current OS metrics refresh status",
+                "content": {"application/json": {"example": {"updated_at": "2025-08-12T08:01:49Z"}}},
             },
-            500: {"description": "Failed to get refresh status", "model": InternalServerErrorResponse},
+            500: {"description": "Failed to get OS metrics refresh status", "model": InternalServerErrorResponse},
+            501: {"description": "OS metrics not supported by the configured database"},
             503: {"description": "No AgentOS database configured", "model": InternalServerErrorResponse},
         },
     )
@@ -1134,35 +1165,30 @@ def attach_routes(
         request: Request,
         starting_date: Optional[date] = Query(
             default=None,
-            description="Starting date of the window the computed_at times refer to (YYYY-MM-DD format). Defaults to 29 days before ending_date",
+            description="Starting date for the window (YYYY-MM-DD format). Defaults to 29 days before ending_date",
         ),
         ending_date: Optional[date] = Query(
-            default=None,
-            description="Ending date of the window the computed_at times refer to (YYYY-MM-DD format). Defaults to today",
+            default=None, description="Ending date for the window (YYYY-MM-DD format). Defaults to today"
         ),
         user_id: Optional[str] = Query(
-            default=None, description="Report this user's computed_at times. Ignored for non-admin callers"
+            default=None, description="Return only this user's metrics. Ignored for non-admin callers"
         ),
     ) -> OSMetricsRefreshStatusResponse:
         try:
-            if os_db is None:
-                raise HTTPException(
-                    status_code=503,
-                    detail="Metrics not available: pass a `db` to AgentOS to enable this feature.",
-                )
-
+            db = _require_os_db()
             starting_date, ending_date = _window(starting_date, ending_date)
-            scoped_user_id = get_scoped_user_id(request)
-            effective_user_id = scoped_user_id if scoped_user_id is not None else user_id
-
-            return await _os_metrics_refresh_status(os_db, effective_user_id, starting_date, ending_date)
+            # The cheapest total to read; only its updated_at is used
+            _, updated_at = await _os_metrics(
+                db, _owner(request, user_id), starting_date, ending_date, ["sessions_count"]
+            )
+            return OSMetricsRefreshStatusResponse(updated_at=updated_at)
 
         except HTTPException:
             raise
         except AgnoError as e:
             raise AgnoHTTPException(e)
         except Exception as e:
-            log_exception("GET /os/metrics/refresh/status failed")
+            log_error(f"Error getting OS metrics refresh status: {str(e)}")
             raise HTTPException(status_code=500, detail=f"Error getting OS metrics refresh status: {str(e)}")
 
     return router

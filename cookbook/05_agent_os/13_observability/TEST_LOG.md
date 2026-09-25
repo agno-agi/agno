@@ -92,31 +92,18 @@ one agent run, one agent session, one user, and 42 total tokens.
 
 **Test mode:** LIVE
 
-**Description:** Started the checked-in metrics AgentOS server on a clean
-database, ran `metrics-researcher` (`gpt-5.5`) twice in session `s-a` and
-`metrics-summarizer` (`gpt-5.6-luna`) once in session `s-b` through
-`POST /agents/{agent_id}/runs`, called `POST /os/metrics/refresh`, then read
-`GET /os/metrics/models?starting_date=<6 days ago>` twice,
-`GET /os/metrics/sessions?starting_date=<6 days ago>` once and
-`GET /os/metrics/tokens?starting_date=<6 days ago>` twice, with
-`GET /os/metrics/refresh/status` before the refresh, after the reads and
-after a second `POST /os/metrics/refresh`.
+**Description:** Started the checked-in metrics AgentOS server against the
+local PostgreSQL, ran `metrics-researcher` (`gpt-5.5`) and
+`metrics-summarizer` (`gpt-5.6-luna`) twice each as one user, called
+`POST /os/metrics/refresh`, then read every `GET /os/metrics/*` route for that
+user on 2026-09-25.
 
-**Result:** `GET /os/metrics/models` reported `window_days` 7 and 3 runs that
-recorded a model: `gpt-5.5` at 66.7% run share over 2 runs and `gpt-5.6-luna`
-at 33.3% over 1. The second read returned the same `computed_at`, so it was
-served from the cache. `GET /os/metrics/sessions` reported 7 entries, one per
-day, every earlier day at 0 and 2 sessions today, `previous_total_sessions` 0
-and `change_percent` null, since the seven days before held no sessions.
-In a later live run, the three runs reported 63, 66 and 79 tokens, and
-`GET /os/metrics/tokens` reported 7 entries, every earlier day at 0 and 208
-tokens today, `total_tokens` 208, `previous_total_tokens` 0 and
-`change_percent` null; the second read returned the same `computed_at`.
-`GET /os/metrics/refresh/status` reported `idle` with `updated_at` null and
-every `computed_at` entry null on the clean database, `completed` with `updated_at` set once
-the refresh ran, each entry carrying its route's `computed_at` after the reads,
-including `token_metrics`, and every entry null again after the second refresh. `?background=true` returned
-202 `started`, and `GET /metrics/refresh/status` showed the same state.
+**Result:** Every route answered 200 from the `agno_os_metrics` table: 4
+sessions, 4 completed runs (success rate 100%) and 134 tokens, equal to the
+four run outputs (46 + 26 + 35 + 27); `GET /os/metrics/models` listed each
+model with 2 runs; `GET /os/metrics/latency` returned the averages, medians,
+p95s and maxima; and `GET /os/metrics/refresh/status` returned the
+`updated_at` of the refresh.
 
 ---
 
