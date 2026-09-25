@@ -597,9 +597,77 @@ def test_claude_does_not_retry_a_keyword_the_sdk_rejects():
     model = Claude(id="claude-sonnet-4-5", api_key="test-key", retries=3, delay_between_retries=0)
     model.client = SimpleNamespace(messages=SimpleNamespace(create=create), is_closed=lambda: False)
 
-    with pytest.raises(ModelProviderError):
+    with pytest.raises(ModelProviderError) as exc_info:
         model._invoke_with_retry(
             messages=[Message(role="user", content="hi")], assistant_message=Message(role="assistant")
         )
 
     assert len(calls) == 1
+    assert isinstance(exc_info.value.__cause__, TypeError)
+
+
+# =============================================================================
+# Tests for the cause a non-retryable error keeps
+# =============================================================================
+
+_SDK_ERROR = ValueError("the SDK's BadRequestError")
+
+
+def _bad_request() -> ModelProviderError:
+    try:
+        raise ModelProviderError("invalid request", status_code=400) from _SDK_ERROR
+    except ModelProviderError as error:
+        return error
+
+
+def test_sync_non_retryable_error_keeps_its_sdk_cause(model_with_retries):
+    with patch.object(model_with_retries, "invoke", side_effect=_bad_request()):
+        with pytest.raises(ModelProviderError) as exc_info:
+            model_with_retries._invoke_with_retry(messages=[])
+
+    assert exc_info.value.__cause__ is _SDK_ERROR
+
+
+async def test_async_non_retryable_error_keeps_its_sdk_cause(model_with_retries):
+    with patch.object(model_with_retries, "ainvoke", side_effect=_bad_request()):
+        with pytest.raises(ModelProviderError) as exc_info:
+            await model_with_retries._ainvoke_with_retry(messages=[])
+
+    assert exc_info.value.__cause__ is _SDK_ERROR
+
+
+def test_sync_stream_non_retryable_error_keeps_its_sdk_cause(model_with_retries):
+    def mock_invoke_stream(**kwargs):
+        raise _bad_request()
+        yield  # Make it a generator
+
+    with patch.object(model_with_retries, "invoke_stream", side_effect=mock_invoke_stream):
+        with pytest.raises(ModelProviderError) as exc_info:
+            list(model_with_retries._invoke_stream_with_retry(messages=[]))
+
+    assert exc_info.value.__cause__ is _SDK_ERROR
+
+
+async def test_async_stream_non_retryable_error_keeps_its_sdk_cause(model_with_retries):
+    async def mock_ainvoke_stream(**kwargs):
+        raise _bad_request()
+        yield  # Make it an async generator
+
+    with patch.object(model_with_retries, "ainvoke_stream", side_effect=mock_ainvoke_stream):
+        with pytest.raises(ModelProviderError) as exc_info:
+            async for _ in model_with_retries._ainvoke_stream_with_retry(messages=[]):
+                pass
+
+    assert exc_info.value.__cause__ is _SDK_ERROR
+
+
+def test_a_narrowed_error_is_chained_to_the_original(model_with_retries):
+    """When classify() returns a new class, the loop still chains it to the error it narrowed."""
+    original = ModelProviderError("prompt is too long: 250000 tokens", status_code=500)
+
+    with patch.object(model_with_retries, "invoke", side_effect=original):
+        with pytest.raises(ModelProviderError) as exc_info:
+            model_with_retries._invoke_with_retry(messages=[])
+
+    assert exc_info.value is not original
+    assert exc_info.value.__cause__ is original

@@ -248,6 +248,9 @@ class Model(ABC):
                 # Check if error is non-retryable
                 if not self._is_retryable_error(last_exception):
                     log_error(f"Non-retryable model provider error: {str(e)}")
+                    # classify() usually returns e itself, and `raise e from e` would drop its SDK cause.
+                    if last_exception is e:
+                        raise
                     raise last_exception from e
                 if attempt < self.retries:
                     delay = self._get_retry_delay(attempt)
@@ -296,6 +299,9 @@ class Model(ABC):
                 # Check if error is non-retryable
                 if not self._is_retryable_error(last_exception):
                     log_error(f"Non-retryable model provider error: {str(e)}")
+                    # classify() usually returns e itself, and `raise e from e` would drop its SDK cause.
+                    if last_exception is e:
+                        raise
                     raise last_exception from e
                 if attempt < self.retries:
                     delay = self._get_retry_delay(attempt)
@@ -346,6 +352,9 @@ class Model(ABC):
                 # Check if error is non-retryable (e.g., context window exceeded, auth errors)
                 if not self._is_retryable_error(last_exception):
                     log_error(f"Non-retryable model provider error: {str(e)}")
+                    # classify() usually returns e itself, and `raise e from e` would drop its SDK cause.
+                    if last_exception is e:
+                        raise
                     raise last_exception from e
                 if attempt < self.retries:
                     delay = self._get_retry_delay(attempt)
@@ -399,6 +408,9 @@ class Model(ABC):
                 # Check if error is non-retryable
                 if not self._is_retryable_error(last_exception):
                     log_error(f"Non-retryable model provider error: {str(e)}")
+                    # classify() usually returns e itself, and `raise e from e` would drop its SDK cause.
+                    if last_exception is e:
+                        raise
                     raise last_exception from e
                 if attempt < self.retries:
                     delay = self._get_retry_delay(attempt)
