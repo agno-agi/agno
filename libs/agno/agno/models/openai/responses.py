@@ -712,7 +712,12 @@ class OpenAIResponses(Model):
         fc_id_to_call_id = self._build_fc_id_to_call_id_map(messages)
 
         for message in messages_to_format:
-            # Without a response to chain from, replay reasoning before the assistant's text or function calls.
+            # Without a response to chain from, replay reasoning before the assistant's text or
+            # function calls. The chain is absent when the model is configured without it, and
+            # also when it was severed at request time - compaction drops response_id from the
+            # assistant copies it sends, so a fold leaves a reasoning model's function_call with
+            # no server-held reasoning item. Either way the item has to travel with the call, or
+            # the API rejects the pair outright.
             replayed_reasoning = False
             if (
                 previous_response_id is None

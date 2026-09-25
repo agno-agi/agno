@@ -32,6 +32,7 @@ from agno.agent import (
     _tools,
     _utils,
 )
+from agno.compaction.manager import Compaction
 from agno.compression.manager import CompressionManager
 from agno.db.base import AsyncBaseDb, BaseDb, ComponentType, UserMemory
 from agno.eval.base import BaseEval
@@ -40,6 +41,7 @@ from agno.guardrails import BaseGuardrail
 from agno.knowledge.protocol import KnowledgeProtocol
 
 if TYPE_CHECKING:
+    from agno.compaction.types import CompactionResult
     from agno.learn.machine import LearningMachine
     from agno.tools.component import ComponentTool
 
@@ -353,6 +355,13 @@ class Agent:
     # Metadata stored with this agent
     metadata: Optional[Dict[str, Any]] = None
 
+    # --- Compaction ---
+    # Keep a long session inside the context window: when the conversation
+    # crosses a threshold, older messages are archived and replaced by a
+    # summary. True uses the defaults; a Compaction sets the thresholds, what
+    # is kept verbatim, and whether the agent can search the archive.
+    compaction: Optional[Union[bool, "Compaction"]] = None
+
     # --- Context Compression ---
     # If True, compress tool call results to save context
     compress_tool_results: bool = False
@@ -414,6 +423,7 @@ class Agent:
         enable_session_summaries: bool = False,
         add_session_summary_to_context: Optional[bool] = None,
         session_summary_manager: Optional[SessionSummaryManager] = None,
+        compaction: Optional[Union[bool, Compaction]] = None,
         compress_tool_results: bool = False,
         compression_manager: Optional[CompressionManager] = None,
         offload_tool_results: Optional[Union[bool, "ResultStore"]] = None,
@@ -541,6 +551,9 @@ class Agent:
 
         self.add_session_summary_to_context = add_session_summary_to_context
 
+        # Compaction settings
+        self.compaction = compaction
+
         # Context compression settings
         self.compress_tool_results = compress_tool_results
         self.compression_manager = compression_manager
@@ -561,8 +574,13 @@ class Agent:
                 "num_history_messages and num_history_runs cannot be set at the same time. Using num_history_runs."
             )
             self.num_history_messages = None
+        # Whether the 3-run window is this default or the user's own choice. Compaction needs to
+        # tell them apart: it may widen its own view past a default, but an explicit window is a
+        # decision it should respect.
+        self._num_history_runs_defaulted = False
         if self.num_history_messages is None and self.num_history_runs is None:
             self.num_history_runs = 3
+            self._num_history_runs_defaulted = True
 
         self.max_tool_calls_from_history = max_tool_calls_from_history
 
@@ -1077,6 +1095,22 @@ class Agent:
 
     async def asave_session(self, session: Union[AgentSession, TeamSession, WorkflowSession]) -> None:
         return await _session.asave_session(self, session=session)
+
+    def compact(self, session_id: Optional[str] = None, user_id: Optional[str] = None) -> "CompactionResult":
+        """Compact this session's history now, without waiting for the size trigger.
+
+        For folding at a moment you choose - the end of a topic, before a long task - rather
+        than when the context happens to cross a threshold.
+
+        Returns a CompactionResult carrying a status and a human-readable message. A fold can
+        legitimately decline: if the span is too small to pay for the summary replacing it,
+        compacting would leave the context bigger, so it is reported rather than performed.
+        Check ``result.compacted``, or show ``result.message``.
+        """
+        return _messages.compact_session(self, session_id=session_id, user_id=user_id)
+
+    async def acompact(self, session_id: Optional[str] = None, user_id: Optional[str] = None) -> "CompactionResult":
+        return await _messages.acompact_session(self, session_id=session_id, user_id=user_id)
 
     def rename(self, name: str, session_id: Optional[str] = None) -> None:
         return _session.rename(self, name=name, session_id=session_id)

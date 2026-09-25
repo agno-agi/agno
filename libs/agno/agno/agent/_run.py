@@ -401,7 +401,7 @@ def _run(
     """
     from agno.agent._hooks import execute_post_hooks, execute_pre_hooks
     from agno.agent._init import disconnect_connectable_tools
-    from agno.agent._messages import get_run_messages
+    from agno.agent._messages import _recompact_after_overflow, get_run_messages
     from agno.agent._response import (
         convert_response_to_structured_format,
         generate_followups,
@@ -554,6 +554,9 @@ def _run(
                 model_response: ModelResponse = call_model_with_fallback(
                     agent.model,
                     agent.fallback_config,
+                    on_context_overflow=lambda: _recompact_after_overflow(
+                        agent, agent_session, run_messages, run_response
+                    ),
                     messages=run_messages.messages,
                     tools=_tools,
                     tool_choice=agent.tool_choice,
@@ -925,6 +928,17 @@ def _run_stream(
                 )
                 if len(run_messages.messages) == 0:
                     log_error("No messages to be sent to the model.")
+
+                # Events raised while assembling messages (compaction). Assembly
+                # is not a generator, so they are collected there and emitted here.
+                if stream_events:
+                    for assembly_event in run_messages.events:
+                        yield handle_event(  # type: ignore
+                            assembly_event,
+                            run_response,
+                            events_to_skip=agent.events_to_skip,  # type: ignore
+                            store_events=agent.store_events,
+                        )
 
                 # 7. Start memory creation in background thread
                 from agno.agent import _managers
@@ -1533,7 +1547,7 @@ async def _arun(
     """
     from agno.agent._hooks import aexecute_post_hooks, aexecute_pre_hooks
     from agno.agent._init import disconnect_connectable_tools, disconnect_mcp_tools
-    from agno.agent._messages import aget_run_messages
+    from agno.agent._messages import _recompact_after_overflow, aget_run_messages
     from agno.agent._response import (
         agenerate_followups,
         agenerate_response_with_output_model,
@@ -1656,7 +1670,6 @@ async def _arun(
                 )
                 if len(run_messages.messages) == 0:
                     log_error("No messages to be sent to the model.")
-
                 # 7. Start memory creation as a background task (runs concurrently with the main execution)
                 from agno.agent import _managers
 
@@ -1692,6 +1705,9 @@ async def _arun(
                 model_response: ModelResponse = await acall_model_with_fallback(
                     agent.model,
                     agent.fallback_config,
+                    on_context_overflow=lambda: _recompact_after_overflow(
+                        agent, agent_session, run_messages, run_response
+                    ),
                     messages=run_messages.messages,
                     tools=_tools,
                     tool_choice=agent.tool_choice,
@@ -2418,6 +2434,17 @@ async def _arun_stream(
                 )
                 if len(run_messages.messages) == 0:
                     log_error("No messages to be sent to the model.")
+
+                # Events raised while assembling messages (compaction). Assembly
+                # is not a generator, so they are collected there and emitted here.
+                if stream_events:
+                    for assembly_event in run_messages.events:
+                        yield handle_event(  # type: ignore
+                            assembly_event,
+                            run_response,
+                            events_to_skip=agent.events_to_skip,  # type: ignore
+                            store_events=agent.store_events,
+                        )
 
                 # 7. Start memory creation as a background task (runs concurrently with the main execution)
                 from agno.agent import _managers
@@ -3777,6 +3804,7 @@ def _continue_run(
     # Register run for cancellation tracking
     from agno.agent._hooks import execute_post_hooks
     from agno.agent._init import disconnect_connectable_tools
+    from agno.agent._messages import _recompact_after_overflow
     from agno.agent._response import (
         convert_response_to_structured_format,
         generate_followups,
@@ -3806,6 +3834,7 @@ def _continue_run(
                 model_response: ModelResponse = call_model_with_fallback(
                     agent.model,
                     agent.fallback_config,
+                    on_context_overflow=lambda: _recompact_after_overflow(agent, session, run_messages, run_response),
                     messages=run_messages.messages,
                     response_format=response_format,
                     tools=tools,
@@ -4802,7 +4831,7 @@ async def _acontinue_run(
     """
     from agno.agent._hooks import aexecute_post_hooks
     from agno.agent._init import disconnect_connectable_tools, disconnect_mcp_tools
-    from agno.agent._messages import aget_continue_run_messages
+    from agno.agent._messages import _recompact_after_overflow, aget_continue_run_messages
     from agno.agent._response import (
         agenerate_followups,
         agenerate_response_with_output_model,
@@ -5052,6 +5081,9 @@ async def _acontinue_run(
                 model_response: ModelResponse = await acall_model_with_fallback(
                     agent.model,
                     agent.fallback_config,
+                    on_context_overflow=lambda: _recompact_after_overflow(
+                        agent, agent_session, run_messages, run_response
+                    ),
                     messages=run_messages.messages,
                     response_format=response_format,
                     tools=_tools,
