@@ -466,7 +466,7 @@ def test_get_pull_request_count(mock_github):
     result = github_tools.get_pull_request_count("test-org/test-repo")
     result_data = json.loads(result)
     assert result_data["count"] == 3
-    mock_repo.get_pulls.assert_called_with(state="all", base=None, head=None)
+    mock_repo.get_pulls.assert_called_with(state="all")
 
     # Test getting count of open pull requests
     # Reset mock and set up a new mock with different totalCount for the open state
@@ -491,13 +491,13 @@ def test_get_pull_request_count(mock_github):
     result = github_tools.get_pull_request_count("test-org/test-repo", author="test-user")
     result_data = json.loads(result)
     assert result_data["count"] == 2  # mock_pr1 and mock_pr2 are by test-user
-    mock_repo.get_pulls.assert_called_with(state="all", base=None, head=None)
+    mock_repo.get_pulls.assert_called_with(state="all")
 
     # Test getting count of pull requests by author and state
     result = github_tools.get_pull_request_count("test-org/test-repo", state="open", author="test-user")
     result_data = json.loads(result)
     assert result_data["count"] == 1  # Only mock_pr1 is open and by test-user
-    mock_repo.get_pulls.assert_called_with(state="open", base=None, head=None)
+    mock_repo.get_pulls.assert_called_with(state="open")
 
     # Test with base and head filters
     result = github_tools.get_pull_request_count("test-org/test-repo", base="main", head="feature")
@@ -511,6 +511,40 @@ def test_get_pull_request_count(mock_github):
     result_data = json.loads(result)
     assert "error" in result_data
     assert "Repository not found" in result_data["error"]
+
+
+@pytest.mark.parametrize(
+    "filters",
+    [
+        {},
+        {"base": "main"},
+        {"head": "test-user:feature"},
+        {"base": "main", "head": "test-user:feature"},
+        {"base": None, "head": None},
+        {"base": "", "head": ""},
+    ],
+)
+@pytest.mark.parametrize("author, expected_count", [(None, 1), ("test-user", 1), ("another-user", 0)])
+def test_get_pull_request_count_with_pygithub(mock_github, filters, author, expected_count):
+    """Exercise real PyGithub validation and pagination without making HTTP requests."""
+    mock_client, _ = mock_github
+    requester = MagicMock(base_url="https://api.github.com", per_page=30)
+    repo_url = "https://api.github.com/repos/test-org/test-repo"
+    requester.requestJsonAndCheck.return_value = (
+        {},
+        [{"number": 1, "state": "open", "user": {"login": "test-user"}}],
+    )
+    mock_client.get_repo.return_value = Repository(requester, {}, {"url": repo_url}, completed=True)
+
+    result = GithubTools().get_pull_request_count("test-org/test-repo", author=author, **filters)
+
+    assert json.loads(result) == {"count": expected_count}
+    expected_params = {"state": "all", **{key: value for key, value in filters.items() if value is not None}}
+    if author is None:
+        expected_params["per_page"] = 1
+    requester.requestJsonAndCheck.assert_called_once_with(
+        "GET", f"{repo_url}/pulls", parameters=expected_params, headers=None
+    )
 
 
 def test_get_repository_stars(mock_github):
