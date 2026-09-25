@@ -1233,6 +1233,29 @@ async def test_mcp_audio_accepts_whitespace_wrapped_base64():
 
 
 @pytest.mark.asyncio
+async def test_mcp_tool_result_accepts_null_content():
+    mock_tool = MagicMock()
+    mock_tool.name = "get_data"
+    structured_content = {"id": "u1", "name": "Ada"}
+
+    result = MagicMock()
+    result.is_error = False
+    result.content = None
+    result.meta = None
+    result.structured_content = structured_content
+
+    session = AsyncMock()
+    session.send_ping = AsyncMock()
+    session.call_tool = AsyncMock(return_value=result)
+
+    tool_result = await get_entrypoint_for_tool(mock_tool, session)()
+
+    assert not str(tool_result.content).startswith("Error:")
+    assert json.loads(tool_result.content) == structured_content
+    assert tool_result.metadata["structured_content"] == structured_content
+
+
+@pytest.mark.asyncio
 async def test_mcp_tool_result_uses_structured_content_when_content_is_empty():
     mock_tool = MagicMock()
     mock_tool.name = "get_data"
