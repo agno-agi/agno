@@ -230,12 +230,21 @@ class PublicMiddleware:
         public_run = False
         decoder = None
 
+        def release_capacity():
+            nonlocal capacity
+            if capacity == "mcp":
+                self.active_mcp -= 1
+            elif capacity == "run":
+                self.active_runs -= 1
+            capacity = None
+
         async def error(status: int, code: str, headers=None):
             await JSONResponse(
                 {"error": {"code": code, "message": code.replace("_", " "), "correlation_id": correlation}},
                 status_code=status,
                 headers=headers,
             )(scope, receive, send)
+            release_capacity()
 
         async def bounded_send(message):
             nonlocal started, output_bytes, is_sse, stream_buffer, error_status, error_headers, response_start, decoder
@@ -302,6 +311,7 @@ class PublicMiddleware:
                     await send(response_start)
                     await send({**message, "body": bytes(response_buffer)})
                     response_buffer.clear()
+                    release_capacity()
                     return
                 if is_sse and not mcp:
                     stream_buffer += body
@@ -337,7 +347,10 @@ class PublicMiddleware:
                         clean.append(stream_buffer)
                         stream_buffer = b""
                     message = {**message, "body": b"".join(clean)}
+            final_body = message["type"] == "http.response.body" and not message.get("more_body", False)
             await send(message)
+            if final_body:
+                release_capacity()
 
         try:
             if len(request.headers.getlist("authorization")) > 1:
@@ -516,11 +529,9 @@ class PublicMiddleware:
                         "more_body": False,
                     }
                 )
+                release_capacity()
         finally:
             response_buffer.clear()
-            if capacity == "mcp":
-                self.active_mcp -= 1
-            elif capacity == "run":
-                self.active_runs -= 1
+            release_capacity()
             if identity_token is not None:
                 _client_id.reset(identity_token)
