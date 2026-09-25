@@ -19,7 +19,7 @@ docker run -d \
 ```
 or use our script:
 ```bash
-./scripts/run_mongodb.sh
+./cookbook/scripts/run_mongodb.sh
 ```
 
 ## Configuration

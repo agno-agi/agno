@@ -25,6 +25,7 @@ from agno.db.singlestore.utils import (
 )
 from agno.db.utils import (
     HISTORY_SKIP_STATUSES,
+    SessionRunObjectCache,
     build_single_run_row,
     deserialize_run,
     deserialize_session,
@@ -45,7 +46,7 @@ from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id
 
 try:
-    from sqlalchemy import ForeignKey, Index, UniqueConstraint, and_, func, or_, select, update
+    from sqlalchemy import TEXT, ForeignKey, Index, UniqueConstraint, and_, cast, func, or_, select, update
     from sqlalchemy.dialects import mysql
     from sqlalchemy.engine import Engine, create_engine
     from sqlalchemy.orm import scoped_session, sessionmaker
@@ -144,6 +145,12 @@ class SingleStoreDb(BaseDb):
 
         # Initialize database session
         self.Session: scoped_session = scoped_session(sessionmaker(bind=self.db_engine))
+
+        # Deserialized history-run objects, keyed per run by the raw row text;
+        # see SessionRunObjectCache for the invalidation and immutability
+        # contract. Per adapter instance, so it can never serve runs across
+        # databases.
+        self._run_object_cache = SessionRunObjectCache()
 
     # -- DB methods --
     def table_exists(self, table_name: str) -> bool:
@@ -604,6 +611,28 @@ class SingleStoreDb(BaseDb):
         return True
 
     # -- Run methods --
+    def _get_session_run_rows(self, sess, runs_table: Table, session_id: str) -> List[Tuple[str, str]]:
+        """(run_id, raw run_data text) for the whole session, in insertion order.
+
+        The raw text feeds the run-object cache, which parses and rebuilds a
+        run only when its text changed since the last read. The cast keeps the
+        JSON column's result processor out of the way -- the whole point is to
+        not parse unchanged rows.
+        """
+        stmt = (
+            select(runs_table.c.run_id, cast(runs_table.c.run_data, TEXT))
+            .where(runs_table.c.session_id == session_id)
+            .order_by(
+                runs_table.c.run_index.asc(),
+                runs_table.c.created_at.asc(),
+                runs_table.c.run_id.asc(),
+            )
+        )
+        return [
+            (run_id, run_data if isinstance(run_data, str) else json.dumps(run_data))
+            for run_id, run_data in sess.execute(stmt).fetchall()
+        ]
+
     def _get_session_runs_data(
         self, sess, runs_table: Table, session_id: str, limit: Optional[int] = None
     ) -> List[Dict[str, Any]]:
@@ -911,6 +940,8 @@ class SingleStoreDb(BaseDb):
                     sess.execute(runs_table.delete().where(runs_table.c.session_id == session_id))
 
                 log_debug(f"Successfully deleted session with session_id: {session_id} in table {table.name}")
+                # A deleted session's deserialized history must not stay resident.
+                self._run_object_cache.drop_session(session_id)
                 return True
 
         except Exception as e:
@@ -946,6 +977,9 @@ class SingleStoreDb(BaseDb):
                         runs_delete_stmt = runs_delete_stmt.where(runs_table.c.user_id == user_id)
                     sess.execute(runs_delete_stmt)
 
+            for deleted_id in session_ids:
+                self._run_object_cache.drop_session(deleted_id)
+
             log_debug(f"Successfully deleted {result.rowcount} sessions")
 
         except Exception as e:
@@ -967,7 +1001,7 @@ class SingleStoreDb(BaseDb):
             session_id (str): ID of the session to read.
             session_type (Optional[SessionType]): Type of session to get. If None, the type is inferred.
             user_id (Optional[str]): User ID to filter by. Defaults to None.
-            deserialize (Optional[bool]): Whether to serialize the session. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the session. Defaults to True.
 
         Returns:
             Union[Session, Dict[str, Any], None]:
@@ -997,12 +1031,25 @@ class SingleStoreDb(BaseDb):
                 # Attach the runs stored in the runs table, merged with any runs still
                 # sitting in the legacy `runs` column (so partially-migrated sessions
                 # don't silently lose history).
+                run_rows: Optional[List[Tuple[str, str]]] = None
                 legacy_runs = session.get("runs")
                 if runs_table is not None and runs_limit is not None and not legacy_runs:
                     # Fully migrated: push "most recent N" down to the DB.
                     session["runs"] = self._get_session_runs_data(
                         sess=sess, runs_table=runs_table, session_id=session_id, limit=runs_limit
                     )
+                elif (
+                    runs_table is not None
+                    and not legacy_runs
+                    and deserialize
+                    and session.get("session_type") == SessionType.AGENT.value
+                    and (session_type is None or session_type == SessionType.AGENT)
+                ):
+                    # Fully-migrated agent session on the per-turn path: fetch
+                    # the rows raw and serve run objects from the cache instead
+                    # of rebuilding every run on every read.
+                    run_rows = self._get_session_run_rows(sess=sess, runs_table=runs_table, session_id=session_id)
+                    session["runs"] = None
                 elif runs_table is not None:
                     # Full load + merge. Also the un-migrated fallback: the legacy blob
                     # holds the whole history in one column, so "last N" can't be pushed
@@ -1020,6 +1067,10 @@ class SingleStoreDb(BaseDb):
             if not deserialize:
                 return session
 
+            if run_rows is not None:
+                session_obj = deserialize_session(session_type, session)
+                session_obj.runs = self._run_object_cache.runs_from_rows(session_id, run_rows)  # type: ignore[union-attr]
+                return session_obj
             return deserialize_session(session_type, session)
 
         except Exception as e:
@@ -1054,7 +1105,7 @@ class SingleStoreDb(BaseDb):
             page (Optional[int]): The page number to return. Defaults to None.
             sort_by (Optional[str]): The field to sort by. Defaults to None.
             sort_order (Optional[str]): The sort order. Defaults to None.
-            deserialize (Optional[bool]): Whether to serialize the sessions. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the sessions. Defaults to True.
             create_table_if_not_found (Optional[bool]): Whether to create the table if it doesn't exist.
 
         Returns:
@@ -1157,7 +1208,7 @@ class SingleStoreDb(BaseDb):
             session_type (SessionType): The type of session to rename.
             session_name (str): The new name for the session.
             user_id (Optional[str]): User ID to filter by. Defaults to None.
-            deserialize (Optional[bool]): Whether to serialize the session. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the session. Defaults to True.
 
         Returns:
             Optional[Union[Session, Dict[str, Any]]]:
@@ -1621,7 +1672,7 @@ class SingleStoreDb(BaseDb):
 
         Args:
             memory_id (str): The ID of the memory to get.
-            deserialize (Optional[bool]): Whether to serialize the memory. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the memory. Defaults to True.
             user_id (Optional[str]): The ID of the user to filter by. Defaults to None.
 
         Returns:
@@ -1680,7 +1731,7 @@ class SingleStoreDb(BaseDb):
             page (Optional[int]): The page number.
             sort_by (Optional[str]): The column to sort by.
             sort_order (Optional[str]): The order to sort by.
-            deserialize (Optional[bool]): Whether to serialize the memories. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the memories. Defaults to True.
 
 
         Returns:
@@ -1817,7 +1868,7 @@ class SingleStoreDb(BaseDb):
 
         Args:
             memory (UserMemory): The user memory to upsert.
-            deserialize (Optional[bool]): Whether to serialize the memory. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the memory. Defaults to True.
 
         Returns:
             Optional[Union[UserMemory, Dict[str, Any]]]:
@@ -2482,7 +2533,7 @@ class SingleStoreDb(BaseDb):
 
         Args:
             eval_run_id (str): The ID of the eval run to get.
-            deserialize (Optional[bool]): Whether to serialize the eval run. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the eval run. Defaults to True.
             user_id (Optional[str]): If set, only return the run if owned by this user.
 
         Returns:
@@ -2545,7 +2596,7 @@ class SingleStoreDb(BaseDb):
             user_id (Optional[str]): If set, only return runs owned by this user.
             eval_type (Optional[List[EvalType]]): The type(s) of eval to filter by.
             filter_type (Optional[EvalFilterType]): Filter by component type (agent, team, workflow).
-            deserialize (Optional[bool]): Whether to serialize the eval runs. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the eval runs. Defaults to True.
             create_table_if_not_found (Optional[bool]): Whether to create the table if it doesn't exist.
 
         Returns:

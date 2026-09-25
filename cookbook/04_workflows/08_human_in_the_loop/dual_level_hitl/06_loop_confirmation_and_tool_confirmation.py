@@ -54,7 +54,7 @@ def publish_draft(title: str, content: str) -> str:
 
 writer_agent = Agent(
     name="WriterAgent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[publish_draft],
     instructions=(
         "You are a writer. Write a short blog post and call publish_draft EXACTLY ONCE "

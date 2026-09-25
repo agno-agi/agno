@@ -228,6 +228,12 @@ def test_provider_both_flags_false_raises(tmp_path: Path):
         WikiContextProvider(backend=FileSystemBackend(path=tmp_path), read=False, write=False)
 
 
+def test_provider_query_timeout_plumbs_to_base(tmp_path: Path):
+    p = WikiContextProvider(backend=FileSystemBackend(path=tmp_path), query_timeout=2.5)
+    assert p.query_timeout == 2.5
+    assert WikiContextProvider(backend=FileSystemBackend(path=tmp_path)).query_timeout is None
+
+
 def test_provider_instructions_omit_update_when_write_false(tmp_path: Path):
     p = WikiContextProvider(backend=FileSystemBackend(path=tmp_path), id="voice", write=False)
     text = p.instructions()
@@ -858,6 +864,71 @@ async def test_web_backend_tools_attached_to_write_sub_agent(tmp_path: Path):
     # Workspace toolkit registers methods, not tool names — but it
     # must still be in the list (name attribute on Toolkit instances).
     assert any(getattr(t, "name", "") == "workspace" for t in write_agent.tools or [])
+
+
+def test_write_tools_replace_default_workspace(tmp_path: Path):
+    from agno.tools import tool
+    from agno.tools.workspace import Workspace
+
+    @tool(name="kb_write")
+    def _kb_write(path: str, content: str) -> str:
+        return "ok"
+
+    p = WikiContextProvider(backend=FileSystemBackend(path=tmp_path), write_tools=[_kb_write])
+    agent = p._ensure_write_agent()
+    assert agent.tools is not None
+    assert len(agent.tools) == 1
+    assert agent.tools[0] is _kb_write
+    assert not any(isinstance(t, Workspace) for t in agent.tools)
+
+
+def test_write_tools_and_web_backend_both_attached(tmp_path: Path):
+    from agno.context.backend import ContextBackend
+    from agno.context.provider import Status as _Status
+    from agno.tools import tool
+
+    @tool(name="kb_write")
+    def _kb_write(path: str, content: str) -> str:
+        return "ok"
+
+    @tool(name="web_search")
+    async def _web_search(query: str) -> str:
+        return "{}"
+
+    class _StubWeb(ContextBackend):
+        def status(self) -> _Status:
+            return _Status(ok=True, detail="stub")
+
+        async def astatus(self) -> _Status:
+            return self.status()
+
+        def get_tools(self) -> list:
+            return [_web_search]
+
+    injected = [_kb_write]
+    p = WikiContextProvider(backend=FileSystemBackend(path=tmp_path), write_tools=injected, web=_StubWeb())
+    agent = p._ensure_write_agent()
+    names = [getattr(t, "name", None) for t in agent.tools or []]
+    assert "kb_write" in names
+    assert "web_search" in names
+    # Appending web tools must not mutate the caller's list.
+    assert len(injected) == 1
+    assert injected[0] is _kb_write
+
+
+def test_default_write_agent_uses_read_write_workspace(tmp_path: Path):
+    from agno.tools.workspace import Workspace
+
+    p = WikiContextProvider(backend=FileSystemBackend(path=tmp_path))
+    agent = p._ensure_write_agent()
+    ws = next(t for t in agent.tools or [] if isinstance(t, Workspace))
+    assert sorted(ws.functions.keys()) == [
+        "edit_file",
+        "list_files",
+        "read_file",
+        "search_content",
+        "write_file",
+    ]
 
 
 @pytest.mark.asyncio

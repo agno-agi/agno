@@ -34,7 +34,7 @@ db = AsyncSqliteDb(db_file=DB_FILE)
 # Create Agent
 # ---------------------------------------------------------------------------
 agent = Agent(
-    model=OpenAIResponses(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.6-luna"),
     db=db,
     search_past_sessions=True,
     num_past_sessions_to_search=10,

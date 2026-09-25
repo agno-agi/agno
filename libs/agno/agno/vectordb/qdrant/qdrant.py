@@ -15,7 +15,7 @@ from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.knowledge.reranker.base import Reranker
 from agno.utils.log import log_debug, log_error, log_info, log_warning
-from agno.vectordb.base import VectorDb
+from agno.vectordb.base import VectorDb, embed_before_replace, is_rate_limit_error
 from agno.vectordb.distance import Distance
 from agno.vectordb.search import SearchType
 
@@ -76,7 +76,7 @@ class Qdrant(VectorDb):
             timeout (Optional[float]): Request timeout (REST: default 5s, gRPC: unlimited).
             host (Optional[str]): Qdrant host (default: "localhost" if not specified).
             path (Optional[str]): Path for local persistence (QdrantLocal).
-            reranker (Optional[Reranker]): Optional reranker for result refinement.
+            reranker (Optional[Reranker]): Optional reranker for result refinement. Deprecated: pass the reranker to Knowledge instead.
             search_type (SearchType): Whether to use vector, keyword or hybrid search.
             dense_vector_name (str): Dense vector name.
             sparse_vector_name (str): Sparse vector name.
@@ -487,12 +487,8 @@ class Qdrant(VectorDb):
                             log_error(f"Error assigning batch embedding to document '{doc.name}': {str(e)}")
 
                 except Exception as e:
-                    # Check if this is a rate limit error - don't fall back as it would make things worse
-                    error_str = str(e).lower()
-                    is_rate_limit = any(
-                        phrase in error_str
-                        for phrase in ["rate limit", "too many requests", "429", "trial key", "api calls / minute"]
-                    )
+                    # A throttle must not fall back to per-item calls, which would throttle harder.
+                    is_rate_limit = is_rate_limit_error(e)
 
                     if is_rate_limit:
                         log_error(f"Rate limit detected during batch embedding.: {str(e)}")
@@ -585,6 +581,9 @@ class Qdrant(VectorDb):
             filters (Optional[Dict[str, Any]]): Filters to apply while upserting
             user_id (Optional[str]): Owner of these chunks. ``None`` writes to the shared bucket
         """
+        # Embed before the delete below: clearing the old chunks first would destroy
+        # retrievable content if the embedder then fails.
+        embed_before_replace(documents, self.embedder)
         log_debug("Redirecting the request to insert")
         if self.content_hash_exists(content_hash, user_id=user_id):
             self._delete_by_content_hash(content_hash, user_id=user_id)
@@ -604,6 +603,13 @@ class Qdrant(VectorDb):
         if await asyncio.to_thread(self.content_hash_exists, content_hash, user_id):
             await asyncio.to_thread(self._delete_by_content_hash, content_hash, user_id)
         await self.async_insert(content_hash=content_hash, documents=documents, filters=filters, user_id=user_id)
+
+    def _dense_vector(self, vector: Any) -> Optional[List[float]]:
+        """Named-vector searches return a mapping, so pull the dense vector out of it."""
+        if isinstance(vector, dict):
+            dense = vector.get(self.dense_vector_name)
+            return list(dense) if dense is not None else None
+        return vector
 
     def search(
         self,
@@ -826,7 +832,7 @@ class Qdrant(VectorDb):
                     meta_data=result.payload["meta_data"],
                     content=result.payload["content"],
                     embedder=self.embedder,
-                    embedding=result.vector,  # type: ignore
+                    embedding=self._dense_vector(result.vector),
                     usage=result.payload.get("usage"),
                     content_id=result.payload.get("content_id"),
                 )

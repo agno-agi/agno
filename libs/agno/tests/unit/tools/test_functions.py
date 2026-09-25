@@ -1,4 +1,5 @@
 import sys
+from inspect import isasyncgen, isawaitable
 from typing import Any, Callable, Dict, List, Optional, Union
 
 import pytest
@@ -348,6 +349,23 @@ def test_function_process_schema_for_strict():
     assert "param2" in func.parameters["required"]  # All properties should be required in strict mode
 
 
+def test_process_schema_for_strict_tolerates_a_schema_without_properties():
+    """A tool schema can reach strict processing without a `properties` key.
+
+    An MCP server advertises an argument-free tool as `{"type": "object"}`, and
+    `MCPTools` registers that schema verbatim. Reading the properties map bare used to
+    raise `KeyError: 'properties'` out of every run of the agent, not at registration.
+    """
+    for parameters in ({"type": "object"}, {"type": "object", "properties": None}):
+        func = Function(name="no_args", parameters=dict(parameters))
+
+        func.process_schema_for_strict()
+
+        assert func.parameters["properties"] == {}
+        assert func.parameters["required"] == []
+        assert func.parameters["additionalProperties"] is False
+
+
 def test_function_cache_key_generation():
     """Test generation of cache keys for function calls."""
     func = Function(name="test_func", cache_results=True, cache_dir="/tmp")
@@ -690,6 +708,221 @@ async def test_function_call_async_with_tool_hooks():
     assert hook_calls[0][1] == "test_func"
     assert hook_calls[1][0] == "after"
     assert hook_calls[1][2] == "processed-value1"
+
+
+@pytest.mark.asyncio
+async def test_function_call_async_awaits_coroutine_returned_by_sync_tool_hook():
+    """A sync middleware may transparently return its async next call."""
+    hook_calls = []
+
+    def tool_hook(function_name: str, function_call: Callable, arguments: Dict[str, Any]):
+        hook_calls.append(function_name)
+        return function_call(**arguments)
+
+    @tool(tool_hooks=[tool_hook])
+    async def test_func(param1: str) -> str:
+        return f"processed-{param1}"
+
+    test_func.process_entrypoint()
+    result = await FunctionCall(
+        function=test_func,
+        arguments={"param1": "value1"},
+    ).aexecute()
+
+    assert result.status == "success"
+    assert result.result == "processed-value1"
+    assert hook_calls == ["test_func"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("async_hook", [False, True], ids=["sync-hook", "async-hook"])
+async def test_function_call_async_sync_tool_with_hook_runs_twice(async_hook):
+    """Reusing a FunctionCall executes fresh hooks and a fresh sync tool call."""
+    hook_calls = []
+    tool_calls = []
+
+    def sync_hook(function_name: str, function_call: Callable, arguments: Dict[str, Any]):
+        hook_calls.append(function_name)
+        return function_call(**arguments)
+
+    async def awaited_hook(function_name: str, function_call: Callable, arguments: Dict[str, Any]):
+        hook_calls.append(function_name)
+        return await function_call(**arguments)
+
+    @tool(tool_hooks=[awaited_hook if async_hook else sync_hook])
+    def test_func(param1: str) -> str:
+        tool_calls.append(param1)
+        return f"processed-{param1}-{len(tool_calls)}"
+
+    test_func.process_entrypoint()
+    call = FunctionCall(function=test_func, arguments={"param1": "value1"})
+
+    for invocation in (1, 2):
+        result = await call.aexecute()
+        assert result.status == "success"
+        assert result.error is None
+        assert result.result == f"processed-value1-{invocation}"
+        assert call.result == result.result
+
+    assert hook_calls == ["test_func", "test_func"]
+    assert tool_calls == ["value1", "value1"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("async_tool", [False, True], ids=["sync-tool", "async-tool"])
+@pytest.mark.parametrize(
+    "hook_order, expected_events",
+    [
+        (("async", "sync"), ["async-before", "sync", "tool", "async-after"]),
+        (("sync", "async"), ["sync", "async-before", "tool", "async-after"]),
+        (("sync", "sync", "sync"), ["sync", "sync", "sync", "tool"]),
+    ],
+    ids=["async-sync", "sync-async", "sync-sync-sync"],
+)
+async def test_function_call_async_awaits_nested_hook_continuations(async_tool, hook_order, expected_events):
+    """Every hook layer resolves its continuation in the declared order."""
+    events = []
+
+    def sync_hook(function_name: str, function_call: Callable, arguments: Dict[str, Any]):
+        events.append("sync")
+        return function_call(**arguments)
+
+    async def async_hook(function_name: str, function_call: Callable, arguments: Dict[str, Any]):
+        events.append("async-before")
+        result = await function_call(**arguments)
+        assert result == "processed-value1"
+        events.append("async-after")
+        return result
+
+    def sync_entrypoint(param1: str) -> str:
+        events.append("tool")
+        return f"processed-{param1}"
+
+    async def async_entrypoint(param1: str) -> str:
+        events.append("tool")
+        return f"processed-{param1}"
+
+    hooks = [async_hook if kind == "async" else sync_hook for kind in hook_order]
+    test_func = tool(tool_hooks=hooks)(async_entrypoint if async_tool else sync_entrypoint)
+    test_func.process_entrypoint()
+    call = FunctionCall(function=test_func, arguments={"param1": "value1"})
+
+    for invocation in (1, 2):
+        result = await call.aexecute()
+        assert result.status == "success"
+        assert result.error is None
+        assert result.result == "processed-value1"
+        assert events == expected_events * invocation
+
+
+@pytest.mark.asyncio
+async def test_function_call_async_generator_behind_sync_hook():
+    """Await the continuation without consuming or awaiting its async generator."""
+    yielded = []
+
+    def sync_hook(function_name: str, function_call: Callable, arguments: Dict[str, Any]):
+        return function_call(**arguments)
+
+    @tool(tool_hooks=[sync_hook])
+    async def test_func(count: int):
+        for value in range(count):
+            yielded.append(value)
+            yield f"chunk-{value}"
+
+    test_func.process_entrypoint()
+    result = await FunctionCall(function=test_func, arguments={"count": 2}).aexecute()
+
+    assert result.status == "success"
+    assert result.error is None
+    assert isasyncgen(result.result)
+    assert not isawaitable(result.result)
+    assert yielded == []
+    assert [chunk async for chunk in result.result] == ["chunk-0", "chunk-1"]
+    assert yielded == [0, 1]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("async_tool", [False, True], ids=["sync-tool", "async-tool"])
+async def test_function_call_async_reports_tool_error_behind_sync_hook(async_tool):
+    """A deferred tool exception must not be hidden by a successful coroutine result."""
+    tool_calls = []
+
+    def sync_hook(function_name: str, function_call: Callable, arguments: Dict[str, Any]):
+        return function_call(**arguments)
+
+    def sync_entrypoint(param1: str) -> str:
+        tool_calls.append(param1)
+        raise ValueError("tool failed behind sync hook")
+
+    async def async_entrypoint(param1: str) -> str:
+        tool_calls.append(param1)
+        raise ValueError("tool failed behind sync hook")
+
+    test_func = tool(tool_hooks=[sync_hook])(async_entrypoint if async_tool else sync_entrypoint)
+    test_func.process_entrypoint()
+    result = await FunctionCall(function=test_func, arguments={"param1": "value1"}).aexecute()
+
+    assert result.status == "failure"
+    assert result.error is not None
+    assert "tool failed behind sync hook" in result.error
+    assert result.result is None
+    assert tool_calls == ["value1"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("async_tool", [False, True], ids=["sync-tool", "async-tool"])
+async def test_function_call_async_awaits_continuation_returned_by_async_hook(async_tool):
+    """An async hook may return its continuation without awaiting it itself."""
+    tool_calls = []
+
+    async def async_hook(function_name: str, function_call: Callable, arguments: Dict[str, Any]):
+        return function_call(**arguments)
+
+    def sync_entrypoint(param1: str) -> str:
+        tool_calls.append(param1)
+        return f"processed-{param1}"
+
+    async def async_entrypoint(param1: str) -> str:
+        tool_calls.append(param1)
+        return f"processed-{param1}"
+
+    test_func = tool(tool_hooks=[async_hook])(async_entrypoint if async_tool else sync_entrypoint)
+    test_func.process_entrypoint()
+    result = await FunctionCall(function=test_func, arguments={"param1": "value1"}).aexecute()
+
+    assert result.status == "success"
+    assert result.error is None
+    assert result.result == "processed-value1"
+    assert tool_calls == ["value1"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("async_tool", [False, True], ids=["sync-tool", "async-tool"])
+async def test_function_call_async_preserves_sync_hook_short_circuit_dict(async_tool):
+    """A hook's non-awaitable result passes through unchanged and skips the tool."""
+    hook_result = {"blocked": True, "reason": "short circuit"}
+    tool_calls = []
+
+    def sync_hook(function_name: str, function_call: Callable, arguments: Dict[str, Any]):
+        return hook_result
+
+    def sync_entrypoint(param1: str) -> str:
+        tool_calls.append(param1)
+        return f"processed-{param1}"
+
+    async def async_entrypoint(param1: str) -> str:
+        tool_calls.append(param1)
+        return f"processed-{param1}"
+
+    test_func = tool(tool_hooks=[sync_hook])(async_entrypoint if async_tool else sync_entrypoint)
+    test_func.process_entrypoint()
+    result = await FunctionCall(function=test_func, arguments={"param1": "value1"}).aexecute()
+
+    assert result.status == "success"
+    assert result.error is None
+    assert result.result is hook_result
+    assert hook_result == {"blocked": True, "reason": "short circuit"}
+    assert tool_calls == []
 
 
 @pytest.mark.asyncio
@@ -1967,7 +2200,7 @@ def test_optional_agent_param_registers_and_is_excluded():
 # ----------------------------------------------------------------------------
 # Exclusion and injection must name the same annotations.
 #
-# _is_framework_typed decides what to hide from the model; _build_entrypoint_args
+# is_framework_typed decides what to hide from the model; _build_entrypoint_args
 # decides what to fill. An annotation hidden by the first and skipped by the second
 # is filled by nobody: a required parameter raises on every call, and one with a
 # default silently keeps it forever.
@@ -2349,7 +2582,7 @@ def test_the_whole_annotation_graph_decides_identity():
 
     from agno.agent.agent import Agent
     from agno.media import Image
-    from agno.tools.function import _is_framework_typed
+    from agno.utils.schema import is_framework_typed
 
     @dataclass
     class DataclassWrapper:
@@ -2382,8 +2615,8 @@ def test_the_whole_annotation_graph_decides_identity():
         List[Image],
         List[List[List[List[List[List[str]]]]]],
     ]
-    assert [h for h in hidden if not _is_framework_typed(h)] == []
-    assert [h for h in fillable if _is_framework_typed(h)] == []
+    assert [h for h in hidden if not is_framework_typed(h)] == []
+    assert [h for h in fillable if is_framework_typed(h)] == []
 
 
 @pytest.mark.skipif(sys.version_info < (3, 12), reason="PEP 695 type alias syntax needs 3.12")
@@ -2426,14 +2659,14 @@ def test_a_parameter_that_cannot_be_classified_does_not_expose_the_others(monkey
     off an identity parameter, and fail open while doing it."""
     from agno.tools import function as function_module
 
-    real = function_module._is_framework_typed
+    real = function_module.is_framework_typed
 
     def raising(hint):
         if hint is str:
             raise RuntimeError("cannot read this one")
         return real(hint)
 
-    monkeypatch.setattr(function_module, "_is_framework_typed", raising)
+    monkeypatch.setattr(function_module, "is_framework_typed", raising)
 
     def probe(note: str, ctx: RunContext = None) -> str:  # type: ignore[assignment]
         return f"user={getattr(ctx, 'user_id', None)}"
@@ -2486,7 +2719,7 @@ def test_identity_is_found_through_structural_types_and_typevars():
     bound or constraints all carry identity just as a plain field does."""
     from typing import NamedTuple, TypedDict, TypeVar
 
-    from agno.tools.function import _is_framework_typed
+    from agno.utils.schema import is_framework_typed
 
     class Payload(TypedDict):
         ctx: RunContext
@@ -2500,7 +2733,7 @@ def test_identity_is_found_through_structural_types_and_typevars():
     Constrained = TypeVar("Constrained", str, RunContext)
 
     for hint in (Payload, Row, Bound, Constrained):
-        assert _is_framework_typed(hint), hint
+        assert is_framework_typed(hint), hint
 
     # A field whose annotation is a string, which is every annotation in a
     # module using postponed evaluation.
@@ -2509,14 +2742,14 @@ def test_identity_is_found_through_structural_types_and_typevars():
         "from dataclasses import dataclass\n@dataclass\nclass Postponed:\n    ctx: 'RunContext'\n    note: str = ''\n",
         namespace,
     )
-    assert _is_framework_typed(namespace["Postponed"])
+    assert is_framework_typed(namespace["Postponed"])
 
     # An annotation this walk cannot read is not one to hand the model.
     class Unresolvable:
         __annotations__ = {"ctx": "NameThatDoesNotExistAnywhere"}
         __total__ = True
 
-    assert _is_framework_typed(Unresolvable)
+    assert is_framework_typed(Unresolvable)
 
 
 @pytest.mark.parametrize(

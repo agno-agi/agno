@@ -53,6 +53,7 @@ from agno.db.sqlite.utils import (
 )
 from agno.db.utils import (
     HISTORY_SKIP_STATUSES,
+    SessionRunObjectCache,
     build_single_run_row,
     deserialize_run,
     deserialize_session,
@@ -63,7 +64,7 @@ from agno.db.utils import (
     learning_search_patterns,
     merge_runs_table_with_legacy_blob,
     metrics_starting_date_from_days,
-    serialize_session_json_fields,
+    owner_key,
     table_schema_mismatch_error,
     validate_pagination,
 )
@@ -76,7 +77,7 @@ from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id
 
 try:
-    from sqlalchemy import Column, MetaData, String, Table, and_, func, or_, select, text
+    from sqlalchemy import Column, MetaData, String, Table, Text, and_, func, or_, select, text
     from sqlalchemy.dialects import sqlite
     from sqlalchemy.engine import Engine, create_engine
     from sqlalchemy.exc import IntegrityError
@@ -242,6 +243,12 @@ class SqliteDb(BaseDb):
 
         # Initialize database session
         self.Session: scoped_session = scoped_session(sessionmaker(bind=self.db_engine))
+
+        # Deserialized history-run objects, keyed per run by the raw row text;
+        # see SessionRunObjectCache for the invalidation and immutability
+        # contract. Per adapter instance, so it can never serve runs across
+        # databases.
+        self._run_object_cache = SessionRunObjectCache()
 
         # SingletonThreadPool (SQLite's pool for in-memory databases, any URL
         # spelling) gives every thread its own private database, so "this
@@ -934,6 +941,28 @@ class SqliteDb(BaseDb):
         )
         return [json.loads(row[0]) if isinstance(row[0], str) else row[0] for row in sess.execute(stmt).fetchall()]
 
+    def _get_session_run_rows(self, sess, runs_table: Table, session_id: str) -> List[Tuple[str, str]]:
+        """(run_id, raw run_data text) for the whole session, in insertion order.
+
+        The raw text feeds the run-object cache, which parses and rebuilds a
+        run only when its text changed since the last read. The cast keeps the
+        JSON column's result processor out of the way -- the whole point is to
+        not parse unchanged rows.
+        """
+        stmt = (
+            select(runs_table.c.run_id, runs_table.c.run_data.cast(Text))
+            .where(runs_table.c.session_id == session_id)
+            .order_by(
+                runs_table.c.run_index.asc(),
+                runs_table.c.created_at.asc(),
+                runs_table.c.run_id.asc(),
+            )
+        )
+        return [
+            (run_id, run_data if isinstance(run_data, str) else json.dumps(run_data))
+            for run_id, run_data in sess.execute(stmt).fetchall()
+        ]
+
     def _get_sessions_runs_data(
         self, sess, runs_table: Table, session_ids: List[str]
     ) -> Dict[str, List[Dict[str, Any]]]:
@@ -1274,6 +1303,8 @@ class SqliteDb(BaseDb):
 
             # Cascade offloaded tool results after the session delete commits.
             self._cascade_tool_results([session_id])
+            # A deleted session's deserialized history must not stay resident.
+            self._run_object_cache.drop_session(session_id)
             return True
 
         except Exception as e:
@@ -1326,6 +1357,8 @@ class SqliteDb(BaseDb):
 
             # Cascade offloaded tool results after the session delete commits.
             self._cascade_tool_results(cascade_ids)
+            for deleted_id in cascade_ids:
+                self._run_object_cache.drop_session(deleted_id)
 
         except Exception as e:
             log_error(f"Error deleting sessions: {str(e)}")
@@ -1475,7 +1508,7 @@ class SqliteDb(BaseDb):
             session_id (str): ID of the session to read.
             session_type (SessionType): Type of session to get.
             user_id (Optional[str]): User ID to filter by. Defaults to None.
-            deserialize (Optional[bool]): Whether to serialize the session. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the session. Defaults to True.
             runs_limit (Optional[int]): If set, attach only the most recent ``runs_limit``
                 runs instead of the full history. For a fully-migrated session this is an
                 indexed ``ORDER BY run_index DESC LIMIT`` query; for a session that still
@@ -1512,6 +1545,7 @@ class SqliteDb(BaseDb):
                 # Attach the runs stored in the runs table, merged with any runs still
                 # sitting in the legacy `runs` column (so partially-migrated sessions
                 # don't silently lose history).
+                run_rows: Optional[List[Tuple[str, str]]] = None
                 if session_raw is not None:
                     legacy_runs = session_raw.get("runs")
                     if runs_table is not None and runs_limit is not None and not legacy_runs:
@@ -1519,6 +1553,18 @@ class SqliteDb(BaseDb):
                         session_raw["runs"] = self._get_session_runs_data(
                             sess=sess, runs_table=runs_table, session_id=session_id, limit=runs_limit
                         )
+                    elif (
+                        runs_table is not None
+                        and not legacy_runs
+                        and deserialize
+                        and session_raw.get("session_type") == SessionType.AGENT.value
+                        and (session_type is None or session_type == SessionType.AGENT)
+                    ):
+                        # Fully-migrated agent session on the per-turn path: fetch
+                        # the rows raw and serve run objects from the cache instead
+                        # of rebuilding every run on every read.
+                        run_rows = self._get_session_run_rows(sess=sess, runs_table=runs_table, session_id=session_id)
+                        session_raw["runs"] = None
                     elif runs_table is not None:
                         # Full load + merge. Also the un-migrated fallback: the legacy blob
                         # holds the whole history in one column, so "last N" can't be pushed
@@ -1536,6 +1582,10 @@ class SqliteDb(BaseDb):
                 if not session_raw or not deserialize:
                     return session_raw
 
+            if run_rows is not None:
+                session_obj = deserialize_session(session_type, session_raw)
+                session_obj.runs = self._run_object_cache.runs_from_rows(session_id, run_rows)  # type: ignore[union-attr]
+                return session_obj
             return deserialize_session(session_type, session_raw)
 
         except Exception as e:
@@ -1575,7 +1625,7 @@ class SqliteDb(BaseDb):
             page (Optional[int]): The page number to return. Defaults to None.
             sort_by (Optional[str]): The field to sort by. Defaults to None.
             sort_order (Optional[str]): The sort order. Defaults to None.
-            deserialize (Optional[bool]): Whether to serialize the sessions. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the sessions. Defaults to True.
             create_table_if_not_found (Optional[bool]): Whether to create the table if it doesn't exist.
 
         Returns:
@@ -1719,7 +1769,7 @@ class SqliteDb(BaseDb):
 
         Args:
             session (Session): The session data to upsert.
-            deserialize (Optional[bool]): Whether to serialize the session. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the session. Defaults to True.
 
         Returns:
             Optional[Session]:
@@ -1734,37 +1784,38 @@ class SqliteDb(BaseDb):
             if table is None:
                 return None
 
-            serialized_session = serialize_session_json_fields(session.to_dict(include_runs=False))
+            # The JSON columns take the dicts as-is; the engine's json_serializer encodes them
+            session_dict = session.to_dict(include_runs=False)
 
             if isinstance(session, AgentSession):
                 values = dict(
                     session_type=SessionType.AGENT.value,
-                    agent_id=serialized_session.get("agent_id"),
-                    user_id=serialized_session.get("user_id"),
-                    agent_data=serialized_session.get("agent_data"),
-                    session_data=serialized_session.get("session_data"),
-                    summary=serialized_session.get("summary"),
-                    metadata=serialized_session.get("metadata"),
+                    agent_id=session_dict.get("agent_id"),
+                    user_id=session_dict.get("user_id"),
+                    agent_data=session_dict.get("agent_data"),
+                    session_data=session_dict.get("session_data"),
+                    summary=session_dict.get("summary"),
+                    metadata=session_dict.get("metadata"),
                 )
             elif isinstance(session, TeamSession):
                 values = dict(
                     session_type=SessionType.TEAM.value,
-                    team_id=serialized_session.get("team_id"),
-                    user_id=serialized_session.get("user_id"),
-                    team_data=serialized_session.get("team_data"),
-                    session_data=serialized_session.get("session_data"),
-                    summary=serialized_session.get("summary"),
-                    metadata=serialized_session.get("metadata"),
+                    team_id=session_dict.get("team_id"),
+                    user_id=session_dict.get("user_id"),
+                    team_data=session_dict.get("team_data"),
+                    session_data=session_dict.get("session_data"),
+                    summary=session_dict.get("summary"),
+                    metadata=session_dict.get("metadata"),
                 )
             else:
                 values = dict(
                     session_type=SessionType.WORKFLOW.value,
-                    workflow_id=serialized_session.get("workflow_id"),
-                    user_id=serialized_session.get("user_id"),
-                    workflow_data=serialized_session.get("workflow_data"),
-                    session_data=serialized_session.get("session_data"),
-                    summary=serialized_session.get("summary"),
-                    metadata=serialized_session.get("metadata"),
+                    workflow_id=session_dict.get("workflow_id"),
+                    user_id=session_dict.get("user_id"),
+                    workflow_data=session_dict.get("workflow_data"),
+                    session_data=session_dict.get("session_data"),
+                    summary=session_dict.get("summary"),
+                    metadata=session_dict.get("metadata"),
                 )
 
             update_values = {k: v for k, v in values.items() if k != "session_type"}
@@ -1775,15 +1826,15 @@ class SqliteDb(BaseDb):
 
             with self.Session() as sess, sess.begin():
                 stmt = sqlite.insert(table).values(
-                    session_id=serialized_session.get("session_id"),
-                    created_at=serialized_session.get("created_at") or int(time.time()),
-                    updated_at=serialized_session.get("created_at") or int(time.time()),
+                    session_id=session_dict.get("session_id"),
+                    created_at=session_dict.get("created_at") or int(time.time()),
+                    updated_at=session_dict.get("created_at") or int(time.time()),
                     **values,
                 )
                 stmt = stmt.on_conflict_do_update(
                     index_elements=["session_id"],
                     set_=dict(updated_at=int(time.time()), **update_values),
-                    where=(table.c.user_id == serialized_session.get("user_id")) | (table.c.user_id.is_(None)),
+                    where=(table.c.user_id == session_dict.get("user_id")) | (table.c.user_id.is_(None)),
                 )
                 stmt = stmt.returning(*table.columns)  # type: ignore
                 result = sess.execute(stmt)
@@ -1853,10 +1904,14 @@ class SqliteDb(BaseDb):
                 elif isinstance(session, WorkflowSession):
                     workflow_sessions.append(session)
 
-            sessions_by_id: Dict[str, Session] = {s.session_id: s for s in sessions}
+            sessions_by_id_and_user: Dict[Tuple[str, Optional[str]], Session] = {
+                (s.session_id, owner_key(s.user_id)): s for s in sessions
+            }
 
             def _attach_runs(session_dict: Dict[str, Any]) -> Dict[str, Any]:
-                original_session = sessions_by_id.get(session_dict.get("session_id"))  # type: ignore[arg-type]
+                original_session = sessions_by_id_and_user.get(
+                    (session_dict.get("session_id"), owner_key(session_dict.get("user_id")))  # type: ignore[arg-type]
+                )
                 session_dict["runs"] = [
                     run if isinstance(run, dict) else run.to_dict()
                     for run in (original_session.runs if original_session else None) or []
@@ -1870,20 +1925,20 @@ class SqliteDb(BaseDb):
                 if agent_sessions:
                     agent_data = []
                     for session in agent_sessions:
-                        serialized_session = serialize_session_json_fields(session.to_dict(include_runs=False))
+                        session_dict = session.to_dict(include_runs=False)
                         # Use preserved updated_at if flag is set and value exists, otherwise use current time
-                        updated_at = serialized_session.get("updated_at") if preserve_updated_at else int(time.time())
+                        updated_at = session_dict.get("updated_at") if preserve_updated_at else int(time.time())
                         agent_data.append(
                             {
-                                "session_id": serialized_session.get("session_id"),
+                                "session_id": session_dict.get("session_id"),
                                 "session_type": SessionType.AGENT.value,
-                                "agent_id": serialized_session.get("agent_id"),
-                                "user_id": serialized_session.get("user_id"),
-                                "agent_data": serialized_session.get("agent_data"),
-                                "session_data": serialized_session.get("session_data"),
-                                "metadata": serialized_session.get("metadata"),
-                                "summary": serialized_session.get("summary"),
-                                "created_at": serialized_session.get("created_at"),
+                                "agent_id": session_dict.get("agent_id"),
+                                "user_id": session_dict.get("user_id"),
+                                "agent_data": session_dict.get("agent_data"),
+                                "session_data": session_dict.get("session_data"),
+                                "metadata": session_dict.get("metadata"),
+                                "summary": session_dict.get("summary"),
+                                "created_at": session_dict.get("created_at"),
                                 "updated_at": updated_at,
                             }
                         )
@@ -1901,6 +1956,7 @@ class SqliteDb(BaseDb):
                                 summary=stmt.excluded.summary,
                                 updated_at=stmt.excluded.updated_at,
                             ),
+                            where=(table.c.user_id == stmt.excluded.user_id) | (table.c.user_id.is_(None)),
                         )
                         sess.execute(stmt, agent_data)
 
@@ -1910,6 +1966,12 @@ class SqliteDb(BaseDb):
                         result = sess.execute(select_stmt).fetchall()
 
                         for row in result:
+                            submitted = sessions_by_id_and_user.get(
+                                (row._mapping["session_id"], owner_key(row._mapping["user_id"]))
+                            )
+                            if submitted is None:
+                                # The conflict update was refused: the row belongs to another user
+                                continue
                             session_dict = _attach_runs(deserialize_session_json_fields(dict(row._mapping)))
                             if deserialize:
                                 deserialized_agent_session = AgentSession.from_dict(session_dict)
@@ -1923,21 +1985,21 @@ class SqliteDb(BaseDb):
                 if team_sessions:
                     team_data = []
                     for session in team_sessions:
-                        serialized_session = serialize_session_json_fields(session.to_dict(include_runs=False))
+                        session_dict = session.to_dict(include_runs=False)
                         # Use preserved updated_at if flag is set and value exists, otherwise use current time
-                        updated_at = serialized_session.get("updated_at") if preserve_updated_at else int(time.time())
+                        updated_at = session_dict.get("updated_at") if preserve_updated_at else int(time.time())
                         team_data.append(
                             {
-                                "session_id": serialized_session.get("session_id"),
+                                "session_id": session_dict.get("session_id"),
                                 "session_type": SessionType.TEAM.value,
-                                "team_id": serialized_session.get("team_id"),
-                                "user_id": serialized_session.get("user_id"),
-                                "summary": serialized_session.get("summary"),
-                                "created_at": serialized_session.get("created_at"),
+                                "team_id": session_dict.get("team_id"),
+                                "user_id": session_dict.get("user_id"),
+                                "summary": session_dict.get("summary"),
+                                "created_at": session_dict.get("created_at"),
                                 "updated_at": updated_at,
-                                "team_data": serialized_session.get("team_data"),
-                                "session_data": serialized_session.get("session_data"),
-                                "metadata": serialized_session.get("metadata"),
+                                "team_data": session_dict.get("team_data"),
+                                "session_data": session_dict.get("session_data"),
+                                "metadata": session_dict.get("metadata"),
                             }
                         )
 
@@ -1954,6 +2016,7 @@ class SqliteDb(BaseDb):
                                 summary=stmt.excluded.summary,
                                 updated_at=stmt.excluded.updated_at,
                             ),
+                            where=(table.c.user_id == stmt.excluded.user_id) | (table.c.user_id.is_(None)),
                         )
                         sess.execute(stmt, team_data)
 
@@ -1963,6 +2026,12 @@ class SqliteDb(BaseDb):
                         result = sess.execute(select_stmt).fetchall()
 
                         for row in result:
+                            submitted = sessions_by_id_and_user.get(
+                                (row._mapping["session_id"], owner_key(row._mapping["user_id"]))
+                            )
+                            if submitted is None:
+                                # The conflict update was refused: the row belongs to another user
+                                continue
                             session_dict = _attach_runs(deserialize_session_json_fields(dict(row._mapping)))
                             if deserialize:
                                 deserialized_team_session = TeamSession.from_dict(session_dict)
@@ -1976,21 +2045,21 @@ class SqliteDb(BaseDb):
                 if workflow_sessions:
                     workflow_data = []
                     for session in workflow_sessions:
-                        serialized_session = serialize_session_json_fields(session.to_dict(include_runs=False))
+                        session_dict = session.to_dict(include_runs=False)
                         # Use preserved updated_at if flag is set and value exists, otherwise use current time
-                        updated_at = serialized_session.get("updated_at") if preserve_updated_at else int(time.time())
+                        updated_at = session_dict.get("updated_at") if preserve_updated_at else int(time.time())
                         workflow_data.append(
                             {
-                                "session_id": serialized_session.get("session_id"),
+                                "session_id": session_dict.get("session_id"),
                                 "session_type": SessionType.WORKFLOW.value,
-                                "workflow_id": serialized_session.get("workflow_id"),
-                                "user_id": serialized_session.get("user_id"),
-                                "summary": serialized_session.get("summary"),
-                                "created_at": serialized_session.get("created_at"),
+                                "workflow_id": session_dict.get("workflow_id"),
+                                "user_id": session_dict.get("user_id"),
+                                "summary": session_dict.get("summary"),
+                                "created_at": session_dict.get("created_at"),
                                 "updated_at": updated_at,
-                                "workflow_data": serialized_session.get("workflow_data"),
-                                "session_data": serialized_session.get("session_data"),
-                                "metadata": serialized_session.get("metadata"),
+                                "workflow_data": session_dict.get("workflow_data"),
+                                "session_data": session_dict.get("session_data"),
+                                "metadata": session_dict.get("metadata"),
                             }
                         )
 
@@ -2007,6 +2076,7 @@ class SqliteDb(BaseDb):
                                 summary=stmt.excluded.summary,
                                 updated_at=stmt.excluded.updated_at,
                             ),
+                            where=(table.c.user_id == stmt.excluded.user_id) | (table.c.user_id.is_(None)),
                         )
                         sess.execute(stmt, workflow_data)
 
@@ -2016,6 +2086,12 @@ class SqliteDb(BaseDb):
                         result = sess.execute(select_stmt).fetchall()
 
                         for row in result:
+                            submitted = sessions_by_id_and_user.get(
+                                (row._mapping["session_id"], owner_key(row._mapping["user_id"]))
+                            )
+                            if submitted is None:
+                                # The conflict update was refused: the row belongs to another user
+                                continue
                             session_dict = _attach_runs(deserialize_session_json_fields(dict(row._mapping)))
                             if deserialize:
                                 deserialized_workflow_session = WorkflowSession.from_dict(session_dict)
@@ -2149,7 +2225,7 @@ class SqliteDb(BaseDb):
 
         Args:
             memory_id (str): The ID of the memory to get.
-            deserialize (Optional[bool]): Whether to serialize the memory. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the memory. Defaults to True.
             user_id (Optional[str]): The user ID to filter by. Defaults to None.
 
         Returns:
@@ -2208,7 +2284,7 @@ class SqliteDb(BaseDb):
             page (Optional[int]): The page number.
             sort_by (Optional[str]): The column to sort by.
             sort_order (Optional[str]): The order to sort by.
-            deserialize (Optional[bool]): Whether to serialize the memories. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the memories. Defaults to True.
 
 
         Returns:
@@ -2348,7 +2424,7 @@ class SqliteDb(BaseDb):
 
         Args:
             memory (UserMemory): The user memory to upsert.
-            deserialize (Optional[bool]): Whether to serialize the memory. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the memory. Defaults to True.
 
         Returns:
             Optional[Union[UserMemory, Dict[str, Any]]]:
@@ -3064,7 +3140,7 @@ class SqliteDb(BaseDb):
 
         Args:
             eval_run_id (str): The ID of the eval run to get.
-            deserialize (Optional[bool]): Whether to serialize the eval run. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the eval run. Defaults to True.
             user_id (Optional[str]): If set, only return the run if owned by this user.
 
         Returns:
@@ -3127,7 +3203,7 @@ class SqliteDb(BaseDb):
             user_id (Optional[str]): If set, only return runs owned by this user.
             eval_type (Optional[List[EvalType]]): The type(s) of eval to filter by.
             filter_type (Optional[EvalFilterType]): Filter by component type (agent, team, workflow).
-            deserialize (Optional[bool]): Whether to serialize the eval runs. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the eval runs. Defaults to True.
             create_table_if_not_found (Optional[bool]): Whether to create the table if it doesn't exist.
 
         Returns:
@@ -3205,7 +3281,7 @@ class SqliteDb(BaseDb):
         Args:
             eval_run_id (str): The ID of the eval run to update.
             name (str): The new name of the eval run.
-            deserialize (Optional[bool]): Whether to serialize the eval run. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the eval run. Defaults to True.
             user_id (Optional[str]): If set, only rename the run if owned by this user.
 
         Returns:
@@ -6679,10 +6755,15 @@ class SqliteDb(BaseDb):
         limit: int = 100,
         page: int = 1,
         user_id: Optional[str] = None,
+        raise_on_error: bool = False,
     ) -> Tuple[List[Dict[str, Any]], int]:
         try:
             table = self._get_table(table_type="schedules")
             if table is None:
+                # _get_table also returns None on connection errors (is_table_available
+                # swallows them), so strict callers must not see this as an empty catalog
+                if raise_on_error:
+                    raise RuntimeError("schedules table unavailable (database error or table never created)")
                 return [], 0
             with self.Session() as sess:
                 # Build base query with filters
@@ -6699,12 +6780,15 @@ class SqliteDb(BaseDb):
                 # Calculate offset from page
                 offset = (page - 1) * limit
 
-                # Get paginated results
-                stmt = base_query.order_by(table.c.created_at.desc()).limit(limit).offset(offset)
+                # Get paginated results (id is a unique tiebreaker so offset pages do not overlap
+                # or skip rows when many schedules share a created_at second)
+                stmt = base_query.order_by(table.c.created_at.desc(), table.c.id.desc()).limit(limit).offset(offset)
                 results = sess.execute(stmt).fetchall()
                 return [dict(row._mapping) for row in results], total_count
         except Exception as e:
             log_debug(f"Error listing schedules: {e}")
+            if raise_on_error:
+                raise
             return [], 0
 
     def create_schedule(self, schedule_data: Dict[str, Any]) -> Dict[str, Any]:

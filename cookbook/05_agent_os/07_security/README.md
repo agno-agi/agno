@@ -21,6 +21,7 @@ the documented construction smoke.
 | `asymmetric_keys.py` | RS256 signing and the production private-key/public-key boundary |
 | `per_resource_scopes.py` | Wildcard and per-id scopes for agents, teams, and workflows |
 | `custom_scope_mappings.py` | Add or override route-to-scope mappings |
+| `excluded_routes.py` | Mark custom routes as public using fnmatch patterns |
 | `cookie_auth.py` | Read a JWT from a secure HTTP-only cookie |
 | `jwt_claims.py` | Move trusted claims through request state into agent dependencies |
 | `user_isolation.py` | Restrict sessions and other user-owned data to the JWT subject |
@@ -97,6 +98,30 @@ other JWT examples that mint tokens follow the same audience-bound pattern.
 
 If one issuer serves several AgentOS instances, pass an explicit `audience`.
 Otherwise, audience verification uses the AgentOS id.
+
+## Excluded Routes
+
+Some routes should be public even when JWT authentication is enabled. Use
+`AuthorizationConfig.excluded_route_paths` to mark them:
+
+```python
+AgentOS(
+    authorization=True,
+    authorization_config=AuthorizationConfig(
+        verification_keys=[JWT_SECRET],
+        excluded_route_paths=[
+            "/public/*",     # Wildcard: matches /public/anything
+            "/webhooks/*",   # External webhooks with their own auth
+        ],
+    ),
+)
+```
+
+Patterns use `fnmatch` syntax - `*` matches any characters including `/`. Note
+that `/public/*` does not match the bare `/public` path; list both if needed.
+The default exclusions (`/`, `/health`, `/info`, `/docs`, `/redoc`,
+`/openapi.json`) are always preserved; custom paths are additive. Use this for
+webhooks, login flows, or any route that handles authentication differently.
 
 ## Cookies and Trusted Claims
 

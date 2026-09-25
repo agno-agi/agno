@@ -8,7 +8,9 @@ catch before reaching the calling agent.
 
 from __future__ import annotations
 
+import asyncio
 import json
+import time
 
 import pytest
 
@@ -957,3 +959,171 @@ async def test_streaming_unicode():
             result += chunk.content or ""
 
     assert result == content
+
+
+# ---------------------------------------------------------------------------
+# query_timeout — one wall-clock deadline over the query tool
+# ---------------------------------------------------------------------------
+
+
+def test_query_timeout_defaults_to_none():
+    p = _EchoProvider(id="e")
+    assert p.query_timeout is None
+
+
+def test_query_timeout_requires_python_311(monkeypatch):
+    monkeypatch.setattr("sys.version_info", (3, 10, 9))
+    with pytest.raises(RuntimeError, match="query_timeout requires Python 3.11"):
+        _EchoProvider(id="e", query_timeout=1.0)
+
+
+def test_query_timeout_unset_skips_python_guard(monkeypatch):
+    # The default path must keep working on older interpreters.
+    monkeypatch.setattr("sys.version_info", (3, 10, 9))
+    _EchoProvider(id="e")
+
+
+@pytest.mark.parametrize("bad", [0, 0.0, -1, -5.5])
+def test_query_timeout_must_be_positive(bad):
+    # A zero/negative deadline is already expired: reject it at construction
+    # instead of producing load-dependent "timed out after 0s" errors at runtime.
+    with pytest.raises(ValueError, match="query_timeout must be positive"):
+        _EchoProvider(id="e", query_timeout=bad)
+
+
+@pytest.mark.asyncio
+async def test_query_timeout_none_leaves_slow_query_unbounded():
+    class _SlowButFine(_EchoProvider):
+        async def aquery(self, question: str, *, run_context: RunContext | None = None) -> Answer:
+            await asyncio.sleep(0.05)
+            return Answer(text="slow answer")
+
+    p = _SlowButFine(id="e")
+    out = await _collect_tool_output(p._query_tool(), question="q")
+    assert json.loads(out) == {"text": "slow answer"}
+
+
+@pytest.mark.asyncio
+async def test_query_timeout_trips_on_hanging_aquery():
+    class _Hanging(_EchoProvider):
+        async def aquery(self, question: str, *, run_context: RunContext | None = None) -> Answer:
+            await asyncio.sleep(5)
+            return Answer(text="never")
+
+    p = _Hanging(id="e", query_timeout=0.1)
+    started = time.monotonic()
+    out = await _collect_tool_output(p._query_tool(), question="q")
+    assert time.monotonic() - started < 0.5
+    assert json.loads(out) == {"error": "e timed out after 0.1s"}
+
+
+@pytest.mark.asyncio
+async def test_query_timeout_trips_on_agent_acquisition_hang():
+    """A dead session during _aget_query_agent (the MCP _ensure_session case)
+    must be under the same deadline as the query itself."""
+
+    class _HangingAcquisition(_EchoProvider):
+        async def _aget_query_agent(self, run_context):
+            await asyncio.sleep(5)
+
+    p = _HangingAcquisition(id="mcpish", query_timeout=0.1)
+    started = time.monotonic()
+    out = await _collect_tool_output(p._query_tool(), question="q")
+    assert time.monotonic() - started < 0.5
+    assert json.loads(out) == {"error": "mcpish timed out after 0.1s"}
+
+
+@pytest.mark.asyncio
+async def test_query_timeout_trips_on_inter_chunk_stall():
+    from agno.run.agent import RunOutput, ToolCallStartedEvent
+
+    class _Stalling(_EchoProvider):
+        async def _aget_query_agent(self, run_context):
+            class _FakeAgent:
+                async def arun(self, message, **kwargs):
+                    yield ToolCallStartedEvent()
+                    await asyncio.sleep(5)
+                    yield RunOutput(content="never")
+
+            return _FakeAgent()
+
+    p = _Stalling(id="s", query_timeout=0.2)
+    gen = await p._query_tool().entrypoint(question="q")
+    events = []
+    final = None
+    started = time.monotonic()
+
+    async def _drain():
+        nonlocal final
+        async for chunk in gen:
+            if isinstance(chunk, str):
+                final = chunk
+            else:
+                events.append(chunk)
+
+    # Bounded so a per-chunk idle-timeout regression fails instead of hanging.
+    await asyncio.wait_for(_drain(), timeout=5)
+    assert time.monotonic() - started < 1.0
+    assert len(events) == 1
+    assert json.loads(final) == {"error": "s timed out after 0.2s"}
+
+
+@pytest.mark.asyncio
+async def test_query_timeout_is_wall_clock_not_inter_chunk_idle():
+    from agno.run.agent import ToolCallStartedEvent
+
+    class _SteadyStream(_EchoProvider):
+        async def _aget_query_agent(self, run_context):
+            class _FakeAgent:
+                async def arun(self, message, **kwargs):
+                    while True:
+                        await asyncio.sleep(0.02)
+                        yield ToolCallStartedEvent()
+
+            return _FakeAgent()
+
+    p = _SteadyStream(id="s", query_timeout=0.2)
+    gen = await p._query_tool().entrypoint(question="q")
+    events = []
+    final = None
+    started = time.monotonic()
+
+    async def _drain():
+        nonlocal final
+        async for chunk in gen:
+            if isinstance(chunk, str):
+                final = chunk
+            else:
+                events.append(chunk)
+
+    # Bounded so a per-chunk idle-timeout regression fails instead of hanging:
+    # the stream yields forever and only a wall-clock deadline can end it.
+    await asyncio.wait_for(_drain(), timeout=5)
+    # Chunks land every 0.02s, so a per-chunk idle timeout of 0.2s would
+    # never trip — only a total wall-clock deadline ends this stream.
+    assert time.monotonic() - started < 1.0
+    assert len(events) >= 2
+    assert json.loads(final) == {"error": "s timed out after 0.2s"}
+
+
+@pytest.mark.asyncio
+async def test_provider_raised_timeout_error_is_not_reported_as_expiry():
+    class _InnerTimeout(_EchoProvider):
+        async def aquery(self, question: str, *, run_context: RunContext | None = None) -> Answer:
+            raise TimeoutError("upstream limit hit")
+
+    p = _InnerTimeout(id="e", query_timeout=5)
+    out = await _collect_tool_output(p._query_tool(), question="q")
+    assert json.loads(out) == {"error": "TimeoutError: upstream limit hit"}
+
+
+@pytest.mark.asyncio
+async def test_query_timeout_does_not_bound_update_tool():
+    class _SlowWriter(_EchoProvider):
+        async def aupdate(self, instruction: str, *, run_context: RunContext | None = None) -> Answer:
+            await asyncio.sleep(0.2)
+            return Answer(text="wrote")
+
+    p = _SlowWriter(id="w", query_timeout=0.05)
+    out = await _collect_update_output(p._update_tool(), instruction="add")
+    assert json.loads(out) == {"text": "wrote"}

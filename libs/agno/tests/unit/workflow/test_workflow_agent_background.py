@@ -31,7 +31,7 @@ class TestWorkflowAgentBackgroundSingleRun:
             # pairing the session-row save with a per-run write
             from agno.run.workflow import WorkflowRunOutput
 
-            session, _ = await wf._aload_or_create_session(
+            session, _, _ = await wf._aload_or_create_session(
                 session_id=run_context.session_id, user_id=None, session_state=None
             )
             run = WorkflowRunOutput(

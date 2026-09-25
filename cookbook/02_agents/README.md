@@ -13,7 +13,7 @@ Practical examples for building agents with Agno, organized by feature area.
 | 05 | [05_state_and_session](./05_state_and_session/) | Session state, chat history, persistence | 12 |
 | 06 | [06_memory_and_learning](./06_memory_and_learning/) | Memory manager, learning machine | 2 |
 | 07 | [07_knowledge](./07_knowledge/) | RAG, custom retrievers, knowledge filters | 8 |
-| 08 | [08_guardrails](./08_guardrails/) | PII detection, prompt injection, custom guardrails | 5 |
+| 08 | [08_guardrails](./08_guardrails/) | PII detection, prompt injection, custom guardrails | 6 |
 | 09 | [09_hooks](./09_hooks/) | Pre/post hooks, tool hooks, stream hooks | 5 |
 | 10 | [10_human_in_the_loop](./10_human_in_the_loop/) | Confirmation flows, user input, external execution | 7 |
 | 11 | [11_approvals](./11_approvals/) | Approval workflows, audit trails | 11 |
@@ -29,7 +29,7 @@ Practical examples for building agents with Agno, organized by feature area.
 | 21 | [21_fork_session](./21_fork_session/) | Fork a whole session into a new one | 1 |
 | 22 | [22_result_offloading](./22_result_offloading/) | Large tool results stored as files, envelopes in the transcript | 2 |
 
-**Total: 124 files across 22 directories**
+**Total: 125 files across 22 directories**
 
 ## Prerequisites
 

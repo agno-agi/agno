@@ -259,7 +259,7 @@ class TableResolutionCache:
         for key in [k for k in self._tables if k[1] == table_name]:
             self._tables.pop(key, None)
             evicted += 1
-        log_debug(f"Table cache: invalidated '{table_name}' ({evicted} cached resolution(s) evicted)")
+        log_debug(f"Table cache: invalidated '{table_name}' ({evicted} cached resolution(s) evicted)", log_level=2)
 
     def clear(self) -> None:
         self._tables.clear()
@@ -388,7 +388,7 @@ class BaseDb(ABC):
         if cached is not None:
             return cached
         if not create_table_if_not_found and not self.table_exists(table_name):
-            log_debug(f"Table '{table_name}' does not exist")
+            log_debug(f"Table '{table_name}' does not exist", log_level=2)
             return None
         with self._resolve_lock:
             cached = self._table_cache.get(table_type, table_name)
@@ -1781,8 +1781,17 @@ class BaseDb(ABC):
         limit: int = 100,
         page: int = 1,
         user_id: Optional[str] = None,
+        raise_on_error: bool = False,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """List schedules with optional filtering.
+
+        Args:
+            enabled: Optional filter on the enabled flag.
+            limit: Page size.
+            page: 1-indexed page number.
+            raise_on_error: When True, re-raise DB failures and raise when the
+                schedules table is unavailable (database error or table never
+                created), instead of returning ([], 0).
 
         Returns:
             Tuple of (schedules, total_count)
@@ -2167,7 +2176,7 @@ class AsyncBaseDb(ABC):
         if cached is not None:
             return cached
         if not create_table_if_not_found and not await self.table_exists(table_name):
-            log_debug(f"Table '{table_name}' does not exist")
+            log_debug(f"Table '{table_name}' does not exist", log_level=2)
             return None
         async with self._resolve_lock_async:
             cached = self._table_cache.get(table_type, table_name)
@@ -3160,8 +3169,17 @@ class AsyncBaseDb(ABC):
         limit: int = 100,
         page: int = 1,
         user_id: Optional[str] = None,
+        raise_on_error: bool = False,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """List schedules with optional filtering.
+
+        Args:
+            enabled: Optional filter on the enabled flag.
+            limit: Page size.
+            page: 1-indexed page number.
+            raise_on_error: When True, re-raise DB failures and raise when the
+                schedules table is unavailable (database error or table never
+                created), instead of returning ([], 0).
 
         Returns:
             Tuple of (schedules, total_count)

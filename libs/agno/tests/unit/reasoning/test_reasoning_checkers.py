@@ -1,5 +1,8 @@
 """Unit tests for reasoning model checker functions."""
 
+import pytest
+
+import agno.reasoning.ollama as ollama_mod
 from agno.reasoning.anthropic import is_anthropic_reasoning_model
 from agno.reasoning.azure_ai_foundry import is_ai_foundry_reasoning_model
 from agno.reasoning.deepseek import is_deepseek_reasoning_model
@@ -19,6 +22,12 @@ class MockModel:
         self.id = model_id
         for key, value in kwargs.items():
             setattr(self, key, value)
+
+
+@pytest.fixture(autouse=True)
+def _force_ollama_fallback(monkeypatch):
+    """Force the Ollama detector down its substring-fallback path (no network in unit tests)."""
+    monkeypatch.setattr(ollama_mod, "_fetch_ollama_capabilities", lambda model: None)
 
 
 # ============================================================================
@@ -190,6 +199,24 @@ def test_openai_chat_with_5_2_in_id():
     assert is_openai_reasoning_model(model) is True
 
 
+def test_openai_chat_with_gpt_5_5_in_id():
+    """Test OpenAIResponses model with gpt-5.5 returns True (gpt-5 family prefix)."""
+    model = MockModel(
+        class_name="OpenAIResponses",
+        model_id="gpt-5.5",
+    )
+    assert is_openai_reasoning_model(model) is True
+
+
+def test_openai_chat_with_gpt_5_mini_in_id():
+    """Test OpenAIResponses model with gpt-5-mini returns True (gpt-5 family prefix)."""
+    model = MockModel(
+        class_name="OpenAIResponses",
+        model_id="gpt-5-mini",
+    )
+    assert is_openai_reasoning_model(model) is True
+
+
 def test_openai_responses_with_reasoning_model():
     """Test OpenAIResponses model with o1 in ID returns True."""
     model = MockModel(
@@ -218,6 +245,43 @@ def test_openai_like_with_deepseek_r1():
         name="DeepSeek",
     )
     assert is_openai_reasoning_model(model) is True
+
+
+@pytest.mark.parametrize(
+    "model_id",
+    ["deepseek-v4-pro", "deepseek-v4-flash", "deepseek-v3.1-terminus", "deepseek-v3.2-exp", "deepseek-reasoner"],
+)
+def test_openai_like_with_deepseek_thinking_ids(model_id):
+    """DeepSeek thinking-mode IDs served over OpenAI-compatible endpoints are native reasoning models (#10277)."""
+    from agno.models.openai.like import OpenAILike
+
+    model = OpenAILike(
+        id=model_id,
+        name="DeepSeek",
+    )
+    assert is_openai_reasoning_model(model) is True
+
+
+def test_dashscope_with_deepseek_v4():
+    """Test DashScope (an OpenAILike subclass) with a DeepSeek V4 reasoning_model ID returns True."""
+    from agno.models.dashscope.dashscope import DashScope
+
+    model = DashScope(
+        id="deepseek-v4-pro",
+        name="DashScope",
+    )
+    assert is_openai_reasoning_model(model) is True
+
+
+def test_openai_like_with_deepseek_chat_stays_false():
+    """Test OpenAILike model with the non-reasoning deepseek-chat ID stays False."""
+    from agno.models.openai.like import OpenAILike
+
+    model = OpenAILike(
+        id="deepseek-chat",
+        name="DeepSeek",
+    )
+    assert is_openai_reasoning_model(model) is False
 
 
 def test_openai_chat_without_reasoning_id():
@@ -574,6 +638,21 @@ def test_groq_with_deepseek():
     assert is_groq_reasoning_model(model) is True
 
 
+def test_groq_with_gpt_oss():
+    """Test Groq model with gpt-oss in ID returns True."""
+    model = MockModel(
+        class_name="Groq",
+        model_id="openai/gpt-oss-120b",
+    )
+    assert is_groq_reasoning_model(model) is True
+
+
+def test_groq_with_qwen3():
+    """Test Groq model with qwen3 in ID returns True (covers qwen3-32b and qwen3.6-27b)."""
+    assert is_groq_reasoning_model(MockModel(class_name="Groq", model_id="qwen/qwen3-32b")) is True
+    assert is_groq_reasoning_model(MockModel(class_name="Groq", model_id="qwen/qwen3.6-27b")) is True
+
+
 def test_groq_without_deepseek():
     """Test Groq model without deepseek in ID returns False."""
     model = MockModel(
@@ -615,11 +694,38 @@ def test_ollama_with_deepseek_r1():
     assert is_ollama_reasoning_model(model) is True
 
 
-def test_ollama_with_qwen2_5_coder():
-    """Test Ollama model with qwen2.5-coder in ID returns True."""
+def test_ollama_with_qwen2_5_coder_not_reasoning():
+    """Test Ollama model with qwen2.5-coder is NOT treated as a reasoning model (fallback path)."""
     model = MockModel(
         class_name="Ollama",
         model_id="qwen2.5-coder:32b",
+    )
+    assert is_ollama_reasoning_model(model) is False
+
+
+def test_ollama_with_qwen3():
+    """Test Ollama model with qwen3 in ID returns True (fallback substring)."""
+    model = MockModel(
+        class_name="Ollama",
+        model_id="qwen3:8b",
+    )
+    assert is_ollama_reasoning_model(model) is True
+
+
+def test_ollama_with_gpt_oss():
+    """Test Ollama model with gpt-oss in ID returns True (fallback substring)."""
+    model = MockModel(
+        class_name="Ollama",
+        model_id="gpt-oss:20b",
+    )
+    assert is_ollama_reasoning_model(model) is True
+
+
+def test_ollama_with_magistral():
+    """Test Ollama model with magistral in ID returns True (fallback substring)."""
+    model = MockModel(
+        class_name="Ollama",
+        model_id="magistral:24b",
     )
     assert is_ollama_reasoning_model(model) is True
 
@@ -688,6 +794,24 @@ def test_ai_foundry_with_o4():
     model = MockModel(
         class_name="AzureAIFoundry",
         model_id="gpt-o4",
+    )
+    assert is_ai_foundry_reasoning_model(model) is True
+
+
+def test_ai_foundry_with_gpt_5():
+    """Test AzureAIFoundry model with gpt-5 in ID returns True."""
+    model = MockModel(
+        class_name="AzureAIFoundry",
+        model_id="gpt-5.5",
+    )
+    assert is_ai_foundry_reasoning_model(model) is True
+
+
+def test_ai_foundry_with_phi_4_reasoning():
+    """Test AzureAIFoundry model with Phi-4-reasoning returns True (reasoning substring)."""
+    model = MockModel(
+        class_name="AzureAIFoundry",
+        model_id="Phi-4-reasoning",
     )
     assert is_ai_foundry_reasoning_model(model) is True
 

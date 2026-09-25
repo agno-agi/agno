@@ -1,6 +1,7 @@
 import json
 from io import BytesIO
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -204,10 +205,14 @@ async def test_async_chunking():
 
     reader = JSONReader()
     reader.chunk = True
-    reader.chunk_document = lambda doc: [
-        Document(name=f"{doc.name}_chunk_{i}", id=f"{doc.id}_chunk_{i}", content=f"chunk_{i}", meta_data={"chunk": i})
-        for i in range(2)
-    ]
+    reader.achunk_document = AsyncMock(
+        side_effect=lambda doc: [
+            Document(
+                name=f"{doc.name}_chunk_{i}", id=f"{doc.id}_chunk_{i}", content=f"chunk_{i}", meta_data={"chunk": i}
+            )
+            for i in range(2)
+        ]
+    )
 
     documents = await reader.async_read(json_bytes)
 
@@ -311,3 +316,26 @@ def test_chunk_false_keeps_large_objects_whole():
     parsed = [json.loads(doc.content) for doc in documents]
     assert parsed == test_data
     assert all("chunk" not in doc.meta_data for doc in documents)
+
+
+@pytest.mark.parametrize(
+    ("json_text", "expected"),
+    [('"hello"', "hello"), ('""', ""), ("42", 42), ("true", True), ("null", None)],
+)
+def test_scalar_json_roots_are_read_as_single_documents(json_text, expected):
+    documents = JSONReader(chunk=False).read(BytesIO(json_text.encode()))
+
+    assert len(documents) == 1
+    assert json.loads(documents[0].content) == expected
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("json_text", "expected"),
+    [('"hello"', "hello"), ('""', ""), ("42", 42), ("true", True), ("null", None)],
+)
+async def test_async_scalar_json_roots_are_read_as_single_documents(json_text, expected):
+    documents = await JSONReader(chunk=False).async_read(BytesIO(json_text.encode()))
+
+    assert len(documents) == 1
+    assert json.loads(documents[0].content) == expected

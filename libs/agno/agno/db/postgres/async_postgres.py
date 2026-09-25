@@ -9,6 +9,7 @@ if TYPE_CHECKING:
 
 from agno.db.base import AsyncBaseDb, SessionType
 from agno.db.migrations.manager import MigrationManager
+from agno.db.postgres.engine import _engine_options
 from agno.db.postgres.schemas import get_table_schema_definition
 from agno.db.postgres.utils import (
     abulk_upsert_metrics,
@@ -29,12 +30,12 @@ from agno.db.schemas.service_accounts import (
 )
 from agno.db.utils import (
     HISTORY_SKIP_STATUSES,
+    SessionRunObjectCache,
     build_single_run_row,
     deserialize_run,
     deserialize_session,
     deserialize_sessions,
     filter_context_runs,
-    json_serializer,
     learning_search_patterns,
     merge_runs_table_with_legacy_blob,
     metrics_starting_date_from_days,
@@ -186,9 +187,7 @@ class AsyncPostgresDb(AsyncBaseDb):
         if _engine is None and db_url is not None:
             _engine = create_async_engine(
                 db_url,
-                pool_pre_ping=True,
-                pool_recycle=3600,
-                json_serializer=json_serializer,
+                **_engine_options(),
             )
         if _engine is None:
             raise ValueError("One of db_url or db_engine must be provided")
@@ -204,6 +203,12 @@ class AsyncPostgresDb(AsyncBaseDb):
             bind=self.db_engine,
             expire_on_commit=False,
         )
+
+        # Deserialized history-run objects, keyed per run by the raw row text;
+        # see SessionRunObjectCache for the invalidation and immutability
+        # contract. Per adapter instance, so it can never serve runs across
+        # databases.
+        self._run_object_cache = SessionRunObjectCache()
         # Zero means never refreshed; get_metrics uses this to refresh lazily, at most once per minute
         self._metrics_refreshed_at: float = 0.0
 
@@ -368,10 +373,10 @@ class AsyncPostgresDb(AsyncBaseDb):
             if not await self.table_exists(table_name):
                 async with self.db_engine.begin() as conn:
                     await conn.run_sync(table.create, checkfirst=True)
-                log_debug(f"Successfully created table '{table_name}'")
+                log_debug(f"Created table {self.db_schema}.{table_name}")
                 table_created = True
             else:
-                log_debug(f"Table '{self.db_schema}.{table_name}' already exists, skipping creation")
+                log_debug(f"Table {self.db_schema}.{table_name} already exists", log_level=2)
 
             # Create indexes
             for idx in table.indexes:
@@ -398,14 +403,22 @@ class AsyncPostgresDb(AsyncBaseDb):
                 # Also store the schema version for the created table
                 latest_schema_version = MigrationManager(self).latest_schema_version
                 await self.upsert_schema_version(table_name=table_name, version=latest_schema_version.public)
-                log_info(
-                    f"Successfully stored version {latest_schema_version.public} in database for table {table_name}"
+                log_debug(
+                    f"Stored schema version {latest_schema_version.public}: {self.db_schema}.{table_name}", log_level=2
                 )
 
             return table
 
         except Exception as e:
-            log_error(f"Could not create table {self.db_schema}.{table_name}: {str(e)}")
+            # Concurrent CREATE TABLE may lose the catalog's uniqueness race.
+            # The caller still receives the exception and decides whether it can
+            # resolve the winner; an existing winner is not a database outage.
+            cause = getattr(e, "orig", e)
+            sqlstate = getattr(cause, "sqlstate", getattr(cause, "pgcode", None))
+            if sqlstate in ("42P07", "23505") and await self.table_exists(table_name):
+                log_debug(f"Concurrent table creation: {self.db_schema}.{table_name}", log_level=2)
+            else:
+                log_error(f"Could not create table {self.db_schema}.{table_name}: {str(e)}")
             raise
 
     async def _get_table(self, table_type: str, create_table_if_not_found: Optional[bool] = False) -> Optional[Table]:
@@ -688,6 +701,31 @@ class AsyncPostgresDb(AsyncBaseDb):
         return True
 
     # -- Run methods --
+    async def _get_session_run_rows(self, sess, runs_table: Table, session_id: str) -> List[Tuple[str, str]]:
+        """(run_id, raw run_data text) for the whole session, in insertion order.
+
+        The raw text feeds the run-object cache, which parses and rebuilds a
+        run only when its text changed since the last read. The cast keeps the
+        JSON column's result processor out of the way -- the whole point is to
+        not parse unchanged rows.
+        """
+        import json
+
+        from sqlalchemy import Text
+
+        stmt = (
+            select(runs_table.c.run_id, runs_table.c.run_data.cast(Text))
+            .where(runs_table.c.session_id == session_id)
+            .order_by(
+                runs_table.c.run_index.asc(),
+                runs_table.c.created_at.asc(),
+                runs_table.c.run_id.asc(),
+            )
+        )
+        result = await sess.execute(stmt)
+        rows = result.fetchall()
+        return [(run_id, run_data if isinstance(run_data, str) else json.dumps(run_data)) for run_id, run_data in rows]
+
     async def _get_session_runs_data(
         self, sess, runs_table: Table, session_id: str, limit: Optional[int] = None
     ) -> List[Dict[str, Any]]:
@@ -1057,6 +1095,8 @@ class AsyncPostgresDb(AsyncBaseDb):
 
             # Cascade offloaded tool results after the session delete commits.
             await self._cascade_tool_results([session_id])
+            # A deleted session's deserialized history must not stay resident.
+            self._run_object_cache.drop_session(session_id)
             return True
 
         except Exception as e:
@@ -1109,6 +1149,8 @@ class AsyncPostgresDb(AsyncBaseDb):
 
             # Cascade offloaded tool results after the session delete commits.
             await self._cascade_tool_results(cascade_ids)
+            for deleted_id in cascade_ids:
+                self._run_object_cache.drop_session(deleted_id)
 
         except Exception as e:
             log_error(f"Error deleting sessions: {str(e)}")
@@ -1258,7 +1300,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             session_id (str): ID of the session to read.
             user_id (Optional[str]): User ID to filter by. Defaults to None.
             session_type (Optional[SessionType]): Type of session to read. Defaults to None.
-            deserialize (Optional[bool]): Whether to serialize the session. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the session. Defaults to True.
             runs_limit (Optional[int]): If set, attach only the most recent ``runs_limit``
                 runs instead of the full history. For a fully-migrated session this is an
                 indexed ``ORDER BY run_index DESC LIMIT`` query; for a session that still
@@ -1296,11 +1338,24 @@ class AsyncPostgresDb(AsyncBaseDb):
                 # sitting in the legacy `runs` column (so partially-migrated sessions
                 # don't silently lose history).
                 legacy_runs = session.get("runs")
+                run_rows: Optional[List[Tuple[str, str]]] = None
                 if runs_table is not None and runs_limit is not None and not legacy_runs:
                     # Fully migrated: push "most recent N" down to the DB (indexed).
                     session["runs"] = await self._get_session_runs_data(
                         sess=sess, runs_table=runs_table, session_id=session_id, limit=runs_limit
                     )
+                elif (
+                    runs_table is not None
+                    and not legacy_runs
+                    and deserialize
+                    and session.get("session_type") == SessionType.AGENT.value
+                    and (session_type is None or session_type == SessionType.AGENT)
+                ):
+                    # Fully-migrated agent session on the per-turn path: fetch
+                    # the rows raw and serve run objects from the cache instead
+                    # of rebuilding every run on every read.
+                    run_rows = await self._get_session_run_rows(sess=sess, runs_table=runs_table, session_id=session_id)
+                    session["runs"] = None
                 elif runs_table is not None:
                     # Full load + merge. Also the un-migrated fallback: the legacy blob
                     # holds the whole history in one column, so "last N" can't be pushed
@@ -1320,6 +1375,10 @@ class AsyncPostgresDb(AsyncBaseDb):
             if not deserialize:
                 return session
 
+            if run_rows is not None:
+                session_obj = deserialize_session(session_type, session)
+                session_obj.runs = self._run_object_cache.runs_from_rows(session_id, run_rows)  # type: ignore[union-attr]
+                return session_obj
             return deserialize_session(session_type, session)
 
         except Exception as e:
@@ -1359,7 +1418,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             page (Optional[int]): The page number to return. Defaults to None.
             sort_by (Optional[str]): The field to sort by. Defaults to None.
             sort_order (Optional[str]): The sort order. Defaults to None.
-            deserialize (Optional[bool]): Whether to serialize the sessions. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the sessions. Defaults to True.
 
         Returns:
             Union[List[Session], Tuple[List[Dict], int]]:
@@ -1767,7 +1826,7 @@ class AsyncPostgresDb(AsyncBaseDb):
 
         Args:
             memory_id (str): The ID of the memory to get.
-            deserialize (Optional[bool]): Whether to serialize the memory. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the memory. Defaults to True.
             user_id (Optional[str]): The ID of the user to filter by.
 
         Returns:
@@ -1828,7 +1887,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             page (Optional[int]): The page number.
             sort_by (Optional[str]): The column to sort by.
             sort_order (Optional[str]): The order to sort by.
-            deserialize (Optional[bool]): Whether to serialize the memories. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the memories. Defaults to True.
 
         Returns:
             Union[List[UserMemory], Tuple[List[Dict[str, Any]], int]]:
@@ -1983,7 +2042,7 @@ class AsyncPostgresDb(AsyncBaseDb):
 
         Args:
             memory (UserMemory): The user memory to upsert.
-            deserialize (Optional[bool]): Whether to serialize the memory. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the memory. Defaults to True.
 
         Returns:
             Optional[Union[UserMemory, Dict[str, Any]]]:
@@ -2631,7 +2690,7 @@ class AsyncPostgresDb(AsyncBaseDb):
 
         Args:
             eval_run_id (str): The ID of the eval run to get.
-            deserialize (Optional[bool]): Whether to serialize the eval run. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the eval run. Defaults to True.
             user_id (Optional[str]): If set, only return the run if owned by this user.
 
         Returns:
@@ -2694,7 +2753,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             model_id (Optional[str]): The ID of the model to filter by.
             eval_type (Optional[List[EvalType]]): The type(s) of eval to filter by.
             filter_type (Optional[EvalFilterType]): Filter by component type (agent, team, workflow).
-            deserialize (Optional[bool]): Whether to serialize the eval runs. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the eval runs. Defaults to True.
             user_id (Optional[str]): If set, only return runs owned by this user.
 
         Returns:
@@ -4159,10 +4218,15 @@ class AsyncPostgresDb(AsyncBaseDb):
         limit: int = 100,
         page: int = 1,
         user_id: Optional[str] = None,
+        raise_on_error: bool = False,
     ) -> Tuple[List[Dict[str, Any]], int]:
         try:
             table = await self._get_table(table_type="schedules")
             if table is None:
+                # _get_table also returns None on connection errors (ais_table_available
+                # swallows them), so strict callers must not see this as an empty catalog
+                if raise_on_error:
+                    raise RuntimeError("schedules table unavailable (database error or table never created)")
                 return [], 0
             async with self.async_session_factory() as sess:
                 # Build base query with filters
@@ -4180,12 +4244,15 @@ class AsyncPostgresDb(AsyncBaseDb):
                 # Calculate offset from page
                 offset = (page - 1) * limit
 
-                # Get paginated results
-                stmt = base_query.order_by(table.c.created_at.desc()).limit(limit).offset(offset)
+                # Get paginated results (id is a unique tiebreaker so offset pages do not overlap
+                # or skip rows when many schedules share a created_at second)
+                stmt = base_query.order_by(table.c.created_at.desc(), table.c.id.desc()).limit(limit).offset(offset)
                 result = await sess.execute(stmt)
                 return [dict(row._mapping) for row in result.fetchall()], total_count
         except Exception as e:
             log_debug(f"Error listing schedules: {e}")
+            if raise_on_error:
+                raise
             return [], 0
 
     async def create_schedule(self, schedule_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -4670,6 +4737,25 @@ class AsyncPostgresDb(AsyncBaseDb):
         except Exception as e:
             log_warning(f"Error inserting session if absent (caller falls back): {e}")
             return None
+
+    async def ensure_jobs_table(self) -> None:
+        """Prepare durable queue storage before polling or accepting continuations.
+
+        Stores without this optional hook retain lazy initialization. Propagate
+        provisioning failures so the worker can report unavailable storage.
+        """
+        try:
+            table = await self._get_table(table_type="jobs", create_table_if_not_found=True)
+        except Exception as exc:
+            # Another replica may have completed the first-time DDL meanwhile.
+            cause = getattr(exc, "orig", exc)
+            sqlstate = getattr(cause, "sqlstate", getattr(cause, "pgcode", None))
+            if sqlstate not in ("42P07", "23505") or not await self.table_exists(self.job_table_name):
+                raise
+            self._invalidate_table_cache(self.job_table_name)
+            table = await self._get_table(table_type="jobs")
+        if table is None:
+            raise RuntimeError("Job queue table is unavailable after provisioning")
 
     async def enqueue_job(self, job: Dict[str, Any], max_depth: int = 0) -> Dict[str, Any]:
         """Insert an accepted run job.

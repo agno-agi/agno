@@ -42,7 +42,7 @@ from agno.models.base import Model
 from agno.models.fallback import acall_model_with_fallback, call_model_with_fallback
 from agno.models.message import Message
 from agno.models.response import ModelResponse, ToolExecution
-from agno.run import RunContext, RunStatus
+from agno.run import CancellationStage, RunContext, RunStatus
 from agno.run.agent import (
     RunCancelledEvent as AgentRunCancelledEvent,
 )
@@ -1985,10 +1985,15 @@ def run_dispatch(
         )
 
         # Read existing session from database
+        from copy import deepcopy
+
         team_session = _read_or_create_session(team, session_id=session_id, user_id=user_id)
+        # Snapshot BEFORE _update_metadata merges team.metadata into the session dict,
+        # so the session layer keeps the session's own values (team < session < call-site).
+        session_metadata = deepcopy(team_session.metadata)
         _update_metadata(team, session=team_session)
 
-        # Resolve run options AFTER _update_metadata so session-stored metadata is visible
+        # Resolve run options with session-stored metadata as the middle layer
         opts = resolve_run_options(
             team,
             stream=stream,
@@ -2000,6 +2005,7 @@ def run_dispatch(
             dependencies=dependencies,
             knowledge_filters=knowledge_filters,
             metadata=metadata,
+            session_metadata=session_metadata,
             output_schema=output_schema,
         )
 
@@ -3517,6 +3523,7 @@ async def _arun_background(
             log_info(f"Background run {run_response.run_id} cancelled while waiting for a slot")
             try:
                 run_response.status = RunStatus.cancelled
+                run_response.cancellation_stage = CancellationStage.pending
                 await apersist_run_transition(team, "team", session_id, run_response, user_id=user_id)
             except Exception as e:
                 log_error(f"Failed to persist cancelled state for background run {run_response.run_id}: {str(e)}")
@@ -3698,6 +3705,7 @@ async def _arun_background_stream(
             log_info(f"Background stream run {run_id} cancelled while waiting for a slot")
             try:
                 run_response.status = RunStatus.cancelled
+                run_response.cancellation_stage = CancellationStage.pending
                 await apersist_run_transition(team, "team", session_id, run_response, user_id=user_id)
             except Exception:
                 log_error(f"Failed to persist cancelled state for background stream run {run_id}", exc_info=True)
@@ -4301,7 +4309,9 @@ def arun_dispatch(  # type: ignore
     # Initialize Team
     team.initialize_team(debug_mode=debug_mode)
 
-    # Resolve run options centrally
+    # Resolve run options centrally. No session pre-read happens here: the session
+    # is read inside _arun/_arun_stream AFTER options are resolved, so session-stored
+    # metadata does not reach this run's resolved options (matches the agent async-DB path).
     opts = resolve_run_options(
         team,
         stream=stream,
@@ -4530,6 +4540,12 @@ def _handle_team_run_cancellation(
     reason = _normalize_team_cancellation_reason(run_response, error)
     log_debug(f"Team run {run_response.run_id} was cancelled")
     run_response.status = RunStatus.cancelled
+    # Only a run cancellation is a stage. Callers also route task-level
+    # interrupts here (event-loop shutdown, a disconnected streaming task) as
+    # a KeyboardInterrupt; those are neither a user cancel nor a never-started
+    # run and stay unknown.
+    if isinstance(error, RunCancelledException):
+        run_response.cancellation_stage = CancellationStage.executing
     has_partial_content = bool(run_response.content)
     if not run_response.content:
         run_response.content = reason
@@ -7558,7 +7574,12 @@ def continue_run_dispatch(
     team.initialize_team(debug_mode=debug_mode)
 
     # Read existing session from storage
+    from copy import deepcopy
+
     team_session = _read_or_create_session(team, session_id=session_id, user_id=user_id)
+    # Snapshot BEFORE _update_metadata merges team.metadata into the session dict,
+    # so the session layer keeps the session's own values (team < session < call-site).
+    session_metadata = deepcopy(team_session.metadata)
     _update_metadata(team, session=team_session)
 
     # Fall back to the owner the run paused with, so the resume retrieves under the same scope
@@ -7592,6 +7613,7 @@ def continue_run_dispatch(
         dependencies=dependencies,
         knowledge_filters=knowledge_filters,
         metadata=metadata,
+        session_metadata=session_metadata,
     )
 
     # Initialize run context
@@ -9019,6 +9041,10 @@ async def _acontinue_run_background_stream(
                     cancelled_run = _get_session_run(lookup_session)
                 if cancelled_run is not None:
                     cancelled_run.status = RunStatus.cancelled
+                    # A continuation only ever resumes a run that paused for
+                    # HITL: it has output and requirements, so the stage is
+                    # the status it held, not "never started"
+                    cancelled_run.cancellation_stage = CancellationStage.paused
                     await apersist_run_transition(team, "team", session_id, cancelled_run, user_id=user_id)
             except Exception:
                 log_error(
@@ -9289,6 +9315,24 @@ def acontinue_run_dispatch(  # type: ignore
     # Initialize the Team
     team.initialize_team(debug_mode=debug_mode)
 
+    # Pre-read the session so session-stored metadata is visible to
+    # resolve_run_options via session_metadata. Only possible with a sync DB:
+    # with an async DB the session is read inside _acontinue_run AFTER options are
+    # resolved, so session metadata does not reach this run's resolved options.
+    from agno.team._init import _has_async_db
+
+    session_metadata: Optional[Dict[str, Any]] = None
+    if team.db is not None and not _has_async_db(team):
+        from copy import deepcopy
+
+        from agno.team._storage import _read_or_create_session, _update_metadata
+
+        _pre_session = _read_or_create_session(team, session_id=session_id_resolved, user_id=user_id)
+        # Snapshot BEFORE _update_metadata merges team.metadata into the session dict,
+        # so the session layer keeps the session's own values (team < session < call-site).
+        session_metadata = deepcopy(_pre_session.metadata)
+        _update_metadata(team, session=_pre_session)
+
     # Resolve run options
     opts = resolve_run_options(
         team,
@@ -9298,6 +9342,7 @@ def acontinue_run_dispatch(  # type: ignore
         dependencies=dependencies,
         knowledge_filters=knowledge_filters,
         metadata=metadata,
+        session_metadata=session_metadata,
     )
 
     # Initialize run context
