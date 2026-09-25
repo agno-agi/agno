@@ -20,6 +20,7 @@ class Skill:
         license: Optional license information
         compatibility: Optional compatibility requirements
         allowed_tools: Optional list of tools this skill is allowed to use
+        tools: Optional list of tool objects (Toolkit, Callable, Function, dict) to load when this skill is activated
     """
 
     name: str
@@ -32,6 +33,8 @@ class Skill:
     license: Optional[str] = None
     compatibility: Optional[str] = None
     allowed_tools: Optional[List[str]] = None
+    # Optional list of tool objects (Toolkit, Callable, Function, dict) to load when this skill is activated
+    tools: Optional[List[Any]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert the Skill to a dictionary representation."""
@@ -46,6 +49,7 @@ class Skill:
             "license": self.license,
             "compatibility": self.compatibility,
             "allowed_tools": self.allowed_tools,
+            "tools": None,  # tools are runtime objects, not serializable; always None in dict form
         }
 
     @classmethod
@@ -62,4 +66,6 @@ class Skill:
             license=data.get("license"),
             compatibility=data.get("compatibility"),
             allowed_tools=data.get("allowed_tools"),
+            tools=data.get("tools"),
         )
+

@@ -235,7 +235,34 @@ def get_tools(
 
     # Add tools for accessing skills
     if agent.skills is not None:
-        agent_tools.extend(agent.skills.get_tools())
+        if agent.lazy_load_skills:
+            # Lazy mode: expose activate/deactivate meta-tools instead of all skill tools
+            agent_tools.append(
+                Function(
+                    name="activate_skill",
+                    entrypoint=_default_tools.make_activate_skill_entrypoint(agent),
+                )
+            )
+            agent_tools.append(
+                Function(
+                    name="deactivate_skill",
+                    entrypoint=_default_tools.make_deactivate_skill_entrypoint(agent),
+                )
+            )
+            # Inject tools for any currently active skills from session state
+            active_skill_names: List[str] = (
+                list(session.session_state.get("active_skills", []))
+                if session and session.session_state
+                else []
+            )
+            for skill_name in active_skill_names:
+                skill = agent.skills.get_skill(skill_name)
+                if skill is not None and skill.tools:
+                    _raise_if_async_tools_in_list(skill.tools)
+                    agent_tools.extend(skill.tools)
+        else:
+            # Eager mode (default): expose all skill accessor tools
+            agent_tools.extend(agent.skills.get_tools())
 
     return agent_tools
 
@@ -370,7 +397,33 @@ async def aget_tools(
 
     # Add tools for accessing skills
     if agent.skills is not None:
-        agent_tools.extend(agent.skills.get_tools())
+        if agent.lazy_load_skills:
+            # Lazy mode: expose activate/deactivate meta-tools instead of all skill tools
+            agent_tools.append(
+                Function(
+                    name="activate_skill",
+                    entrypoint=_default_tools.make_activate_skill_entrypoint(agent),
+                )
+            )
+            agent_tools.append(
+                Function(
+                    name="deactivate_skill",
+                    entrypoint=_default_tools.make_deactivate_skill_entrypoint(agent),
+                )
+            )
+            # Inject tools for any currently active skills from session state
+            active_skill_names_async: List[str] = (
+                list(session.session_state.get("active_skills", []))
+                if session and session.session_state
+                else []
+            )
+            for skill_name in active_skill_names_async:
+                skill = agent.skills.get_skill(skill_name)
+                if skill is not None and skill.tools:
+                    agent_tools.extend(skill.tools)
+        else:
+            # Eager mode (default): expose all skill accessor tools
+            agent_tools.extend(agent.skills.get_tools())
 
     return agent_tools
 
