@@ -161,6 +161,7 @@ class RunEvent(str, Enum):
     post_hook_started = "PostHookStarted"
     post_hook_completed = "PostHookCompleted"
 
+    tool_call_args_delta = "ToolCallArgsDelta"
     tool_call_started = "ToolCallStarted"
     tool_call_completed = "ToolCallCompleted"
     tool_call_error = "ToolCallError"
@@ -414,6 +415,43 @@ class ReasoningCompletedEvent(BaseAgentRunEvent):
 
 
 @dataclass
+class ToolCallArgsDeltaEvent(BaseAgentRunEvent):
+    """Event for streaming a tool call's arguments as they arrive.
+
+    Each event carries one fragment of one call's arguments. Concatenating the
+    `tool_args_delta` values that share a `tool_call_id`, in the order they
+    arrive, reproduces that call's argument string. How many fragments a call
+    is split into is up to the model provider, and may be a single fragment
+    holding the whole string. `tool_name` may be None, so group fragments by
+    `tool_call_id` rather than by name.
+
+    Several cases break that concatenation, and none of them can be repaired
+    from here, because a subscriber can only ever append what it is sent. A
+    provider stream that restarts part way through a call re-sends the
+    fragments it already sent, so the concatenation holds the retraced text
+    twice. A provider that reuses a `tool_call_id` for a later turn's call
+    gives two calls one id, and nothing on this event marks where the first
+    call's arguments end, so the concatenation runs both calls' arguments
+    together. Either way it will not parse. Both come from the model layer
+    below this event, which passes a provider's ids and fragments on as the
+    provider wrote them, so Agno's own reassembly is affected identically: a
+    restart doubles the finished call's arguments too, and a reused id leaves
+    the run holding two calls under the one id.
+
+    Two kinds of fragment never go out at all, which leaves the concatenation
+    short of the call's arguments: one whose arguments the provider wrote as a
+    structure rather than as the text the model wrote, and one that no call of
+    the turn can be attributed to. Each is logged as a warning by the run,
+    once for the stream, and is marked nowhere on this event.
+    """
+
+    event: str = RunEvent.tool_call_args_delta.value
+    tool_call_id: Optional[str] = None
+    tool_name: Optional[str] = None
+    tool_args_delta: str = ""
+
+
+@dataclass
 class ToolCallStartedEvent(BaseAgentRunEvent):
     event: str = RunEvent.tool_call_started.value
     tool: Optional[ToolExecution] = None
@@ -544,6 +582,7 @@ RunOutputEvent = Union[
     MemoryUpdateCompletedEvent,
     SessionSummaryStartedEvent,
     SessionSummaryCompletedEvent,
+    ToolCallArgsDeltaEvent,
     ToolCallStartedEvent,
     ToolCallCompletedEvent,
     ToolCallErrorEvent,
@@ -589,6 +628,7 @@ RUN_EVENT_TYPE_REGISTRY = {
     RunEvent.memory_update_completed.value: MemoryUpdateCompletedEvent,
     RunEvent.session_summary_started.value: SessionSummaryStartedEvent,
     RunEvent.session_summary_completed.value: SessionSummaryCompletedEvent,
+    RunEvent.tool_call_args_delta.value: ToolCallArgsDeltaEvent,
     RunEvent.tool_call_started.value: ToolCallStartedEvent,
     RunEvent.tool_call_completed.value: ToolCallCompletedEvent,
     RunEvent.tool_call_error.value: ToolCallErrorEvent,
