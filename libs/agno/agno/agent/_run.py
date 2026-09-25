@@ -723,15 +723,27 @@ def _run(
 
             except Exception as e:
                 if attempt < num_attempts - 1:
-                    # Calculate delay with exponential backoff if enabled
-                    if agent.exponential_backoff:
-                        delay = agent.delay_between_retries * (2**attempt)
+                    # Do not retry if tool calls already completed — replaying the run
+                    # would re-execute non-idempotent tools (payments, messages, etc.).
+                    _completed_tool_msgs = [
+                        m for m in (run_messages.messages if run_messages else []) if m.role == "tool"
+                    ]
+                    if _completed_tool_msgs:
+                        log_warning(
+                            f"Attempt {attempt + 1}/{num_attempts} failed after "
+                            f"{len(_completed_tool_msgs)} tool call(s) already completed. "
+                            f"Not retrying to avoid re-executing non-idempotent tools."
+                        )
                     else:
-                        delay = agent.delay_between_retries
+                        # Calculate delay with exponential backoff if enabled
+                        if agent.exponential_backoff:
+                            delay = agent.delay_between_retries * (2**attempt)
+                        else:
+                            delay = agent.delay_between_retries
 
-                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed. Retrying in {delay}s...: {str(e)}")
-                    time.sleep(delay)
-                    continue
+                        log_warning(f"Attempt {attempt + 1}/{num_attempts} failed. Retrying in {delay}s...: {str(e)}")
+                        time.sleep(delay)
+                        continue
 
                 run_response.status = RunStatus.error
                 flush_in_flight_messages_on_error(run_response, locals().get("run_messages"))
@@ -1255,15 +1267,27 @@ def _run_stream(
                 break
             except Exception as e:
                 if attempt < num_attempts - 1:
-                    # Calculate delay with exponential backoff if enabled
-                    if agent.exponential_backoff:
-                        delay = agent.delay_between_retries * (2**attempt)
+                    # Do not retry if tool calls already completed — replaying the run
+                    # would re-execute non-idempotent tools (payments, messages, etc.).
+                    _completed_tool_msgs = [
+                        m for m in (run_messages.messages if run_messages else []) if m.role == "tool"
+                    ]
+                    if _completed_tool_msgs:
+                        log_warning(
+                            f"Attempt {attempt + 1}/{num_attempts} failed after "
+                            f"{len(_completed_tool_msgs)} tool call(s) already completed. "
+                            f"Not retrying to avoid re-executing non-idempotent tools."
+                        )
                     else:
-                        delay = agent.delay_between_retries
+                        # Calculate delay with exponential backoff if enabled
+                        if agent.exponential_backoff:
+                            delay = agent.delay_between_retries * (2**attempt)
+                        else:
+                            delay = agent.delay_between_retries
 
-                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed. Retrying in {delay}s...: {str(e)}")
-                    time.sleep(delay)
-                    continue
+                        log_warning(f"Attempt {attempt + 1}/{num_attempts} failed. Retrying in {delay}s...: {str(e)}")
+                        time.sleep(delay)
+                        continue
 
                 run_response.status = RunStatus.error
                 flush_in_flight_messages_on_error(run_response, locals().get("run_messages"))
@@ -1882,15 +1906,27 @@ async def _arun(
             except Exception as e:
                 # Check if this is the last attempt
                 if attempt < num_attempts - 1:
-                    # Calculate delay with exponential backoff if enabled
-                    if agent.exponential_backoff:
-                        delay = agent.delay_between_retries * (2**attempt)
+                    # Do not retry if tool calls already completed — replaying the run
+                    # would re-execute non-idempotent tools (payments, messages, etc.).
+                    _completed_tool_msgs = [
+                        m for m in (run_messages.messages if run_messages else []) if m.role == "tool"
+                    ]
+                    if _completed_tool_msgs:
+                        log_warning(
+                            f"Attempt {attempt + 1}/{num_attempts} failed after "
+                            f"{len(_completed_tool_msgs)} tool call(s) already completed. "
+                            f"Not retrying to avoid re-executing non-idempotent tools."
+                        )
                     else:
-                        delay = agent.delay_between_retries
+                        # Calculate delay with exponential backoff if enabled
+                        if agent.exponential_backoff:
+                            delay = agent.delay_between_retries * (2**attempt)
+                        else:
+                            delay = agent.delay_between_retries
 
-                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed. Retrying in {delay}s...: {str(e)}")
-                    await asyncio.sleep(delay)
-                    continue
+                        log_warning(f"Attempt {attempt + 1}/{num_attempts} failed. Retrying in {delay}s...: {str(e)}")
+                        await asyncio.sleep(delay)
+                        continue
 
                 run_response.status = RunStatus.error
                 flush_in_flight_messages_on_error(run_response, locals().get("run_messages"))
@@ -2768,15 +2804,27 @@ async def _arun_stream(
             except Exception as e:
                 # Check if this is the last attempt
                 if attempt < num_attempts - 1:
-                    # Calculate delay with exponential backoff if enabled
-                    if agent.exponential_backoff:
-                        delay = agent.delay_between_retries * (2**attempt)
+                    # Do not retry if tool calls already completed — replaying the run
+                    # would re-execute non-idempotent tools (payments, messages, etc.).
+                    _completed_tool_msgs = [
+                        m for m in (run_messages.messages if run_messages else []) if m.role == "tool"
+                    ]
+                    if _completed_tool_msgs:
+                        log_warning(
+                            f"Attempt {attempt + 1}/{num_attempts} failed after "
+                            f"{len(_completed_tool_msgs)} tool call(s) already completed. "
+                            f"Not retrying to avoid re-executing non-idempotent tools."
+                        )
                     else:
-                        delay = agent.delay_between_retries
+                        # Calculate delay with exponential backoff if enabled
+                        if agent.exponential_backoff:
+                            delay = agent.delay_between_retries * (2**attempt)
+                        else:
+                            delay = agent.delay_between_retries
 
-                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed. Retrying in {delay}s...: {str(e)}")
-                    await asyncio.sleep(delay)
-                    continue
+                        log_warning(f"Attempt {attempt + 1}/{num_attempts} failed. Retrying in {delay}s...: {str(e)}")
+                        await asyncio.sleep(delay)
+                        continue
 
                 # Handle exceptions during async streaming
                 run_response.status = RunStatus.error
@@ -3939,15 +3987,27 @@ def _continue_run(
                 run_response = cast(RunOutput, run_response)
                 # Check if this is the last attempt
                 if attempt < num_attempts - 1:
-                    # Calculate delay with exponential backoff if enabled
-                    if agent.exponential_backoff:
-                        delay = agent.delay_between_retries * (2**attempt)
+                    # Do not retry if tool calls already completed — replaying the run
+                    # would re-execute non-idempotent tools (payments, messages, etc.).
+                    _completed_tool_msgs = [
+                        m for m in (run_messages.messages if run_messages else []) if m.role == "tool"
+                    ]
+                    if _completed_tool_msgs:
+                        log_warning(
+                            f"Attempt {attempt + 1}/{num_attempts} failed after "
+                            f"{len(_completed_tool_msgs)} tool call(s) already completed. "
+                            f"Not retrying to avoid re-executing non-idempotent tools."
+                        )
                     else:
-                        delay = agent.delay_between_retries
+                        # Calculate delay with exponential backoff if enabled
+                        if agent.exponential_backoff:
+                            delay = agent.delay_between_retries * (2**attempt)
+                        else:
+                            delay = agent.delay_between_retries
 
-                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed. Retrying in {delay}s...: {str(e)}")
-                    time.sleep(delay)
-                    continue
+                        log_warning(f"Attempt {attempt + 1}/{num_attempts} failed. Retrying in {delay}s...: {str(e)}")
+                        time.sleep(delay)
+                        continue
                 run_response.status = RunStatus.error
                 flush_in_flight_messages_on_error(run_response, locals().get("run_messages"))
 
@@ -4249,15 +4309,27 @@ def _continue_run_stream(
                 run_response = cast(RunOutput, run_response)
                 # Check if this is the last attempt
                 if attempt < num_attempts - 1:
-                    # Calculate delay with exponential backoff if enabled
-                    if agent.exponential_backoff:
-                        delay = agent.delay_between_retries * (2**attempt)
+                    # Do not retry if tool calls already completed — replaying the run
+                    # would re-execute non-idempotent tools (payments, messages, etc.).
+                    _completed_tool_msgs = [
+                        m for m in (run_messages.messages if run_messages else []) if m.role == "tool"
+                    ]
+                    if _completed_tool_msgs:
+                        log_warning(
+                            f"Attempt {attempt + 1}/{num_attempts} failed after "
+                            f"{len(_completed_tool_msgs)} tool call(s) already completed. "
+                            f"Not retrying to avoid re-executing non-idempotent tools."
+                        )
                     else:
-                        delay = agent.delay_between_retries
+                        # Calculate delay with exponential backoff if enabled
+                        if agent.exponential_backoff:
+                            delay = agent.delay_between_retries * (2**attempt)
+                        else:
+                            delay = agent.delay_between_retries
 
-                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed. Retrying in {delay}s...: {str(e)}")
-                    time.sleep(delay)
-                    continue
+                        log_warning(f"Attempt {attempt + 1}/{num_attempts} failed. Retrying in {delay}s...: {str(e)}")
+                        time.sleep(delay)
+                        continue
                 run_response.status = RunStatus.error
                 flush_in_flight_messages_on_error(run_response, locals().get("run_messages"))
                 # Add error event to list of events
@@ -5240,15 +5312,27 @@ async def _acontinue_run(
                 run_response = cast(RunOutput, run_response)
                 # Check if this is the last attempt
                 if attempt < num_attempts - 1:
-                    # Calculate delay with exponential backoff if enabled
-                    if agent.exponential_backoff:
-                        delay = agent.delay_between_retries * (2**attempt)
+                    # Do not retry if tool calls already completed — replaying the run
+                    # would re-execute non-idempotent tools (payments, messages, etc.).
+                    _completed_tool_msgs = [
+                        m for m in (run_messages.messages if run_messages else []) if m.role == "tool"
+                    ]
+                    if _completed_tool_msgs:
+                        log_warning(
+                            f"Attempt {attempt + 1}/{num_attempts} failed after "
+                            f"{len(_completed_tool_msgs)} tool call(s) already completed. "
+                            f"Not retrying to avoid re-executing non-idempotent tools."
+                        )
                     else:
-                        delay = agent.delay_between_retries
+                        # Calculate delay with exponential backoff if enabled
+                        if agent.exponential_backoff:
+                            delay = agent.delay_between_retries * (2**attempt)
+                        else:
+                            delay = agent.delay_between_retries
 
-                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed. Retrying in {delay}s...: {str(e)}")
-                    await asyncio.sleep(delay)
-                    continue
+                        log_warning(f"Attempt {attempt + 1}/{num_attempts} failed. Retrying in {delay}s...: {str(e)}")
+                        await asyncio.sleep(delay)
+                        continue
 
                 if not run_response:
                     run_response = RunOutput(run_id=run_id)
@@ -5884,15 +5968,27 @@ async def _acontinue_run_stream(
                 run_response = cast(RunOutput, run_response)
                 # Check if this is the last attempt
                 if attempt < num_attempts - 1:
-                    # Calculate delay with exponential backoff if enabled
-                    if agent.exponential_backoff:
-                        delay = agent.delay_between_retries * (2**attempt)
+                    # Do not retry if tool calls already completed — replaying the run
+                    # would re-execute non-idempotent tools (payments, messages, etc.).
+                    _completed_tool_msgs = [
+                        m for m in (run_messages.messages if run_messages else []) if m.role == "tool"
+                    ]
+                    if _completed_tool_msgs:
+                        log_warning(
+                            f"Attempt {attempt + 1}/{num_attempts} failed after "
+                            f"{len(_completed_tool_msgs)} tool call(s) already completed. "
+                            f"Not retrying to avoid re-executing non-idempotent tools."
+                        )
                     else:
-                        delay = agent.delay_between_retries
+                        # Calculate delay with exponential backoff if enabled
+                        if agent.exponential_backoff:
+                            delay = agent.delay_between_retries * (2**attempt)
+                        else:
+                            delay = agent.delay_between_retries
 
-                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed. Retrying in {delay}s...: {str(e)}")
-                    await asyncio.sleep(delay)
-                    continue
+                        log_warning(f"Attempt {attempt + 1}/{num_attempts} failed. Retrying in {delay}s...: {str(e)}")
+                        await asyncio.sleep(delay)
+                        continue
 
                 # Handle exceptions during async streaming
                 run_response.status = RunStatus.error
