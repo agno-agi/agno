@@ -5417,6 +5417,7 @@ def _build_continue_run_messages(
     session: Optional[TeamSession] = None,
     add_history_to_context: Optional[bool] = None,
     run_context: Optional[RunContext] = None,
+    current_run_id: Optional[str] = None,
 ) -> RunMessages:
     """Build a RunMessages object from the existing conversation messages.
 
@@ -5463,6 +5464,7 @@ def _build_continue_run_messages(
             limit=team.num_history_messages,
             skip_roles=[skip_role] if skip_role else None,
             team_id=team.id if team.parent_team_id is not None else None,
+            exclude_run_ids=[current_run_id] if current_run_id is not None else None,
         )
 
         if len(history) > 0:
@@ -5490,12 +5492,15 @@ def _get_continue_run_messages(
     session: Optional[TeamSession] = None,
     add_history_to_context: Optional[bool] = None,
     run_context: Optional[RunContext] = None,
+    current_run_id: Optional[str] = None,
 ) -> RunMessages:
     """Build the messages that resume a paused run, reading offloaded media back first.
 
     The paused run's own messages come off the database carrying a reference and no bytes.
     """
-    run_messages = _build_continue_run_messages(team, input, session, add_history_to_context, run_context)
+    run_messages = _build_continue_run_messages(
+        team, input, session, add_history_to_context, run_context, current_run_id
+    )
     if team.media_storage is not None:
         from agno.utils.media_offload import refresh_messages_media
 
@@ -5509,9 +5514,12 @@ async def _aget_continue_run_messages(
     session: Optional[TeamSession] = None,
     add_history_to_context: Optional[bool] = None,
     run_context: Optional[RunContext] = None,
+    current_run_id: Optional[str] = None,
 ) -> RunMessages:
     """Async variant of :func:`_get_continue_run_messages`."""
-    run_messages = _build_continue_run_messages(team, input, session, add_history_to_context, run_context)
+    run_messages = _build_continue_run_messages(
+        team, input, session, add_history_to_context, run_context, current_run_id
+    )
     if team.media_storage is not None:
         from agno.utils.media_offload import arefresh_messages_media
 
@@ -7733,6 +7741,7 @@ def continue_run_dispatch(
             session=team_session,
             add_history_to_context=team.add_history_to_context,
             run_context=run_context,
+            current_run_id=run_response.run_id,
         )
 
         log_debug(f"Team Continue Run (forked): {run_response.run_id}", center=True)
@@ -7977,6 +7986,7 @@ def continue_run_dispatch(
             session=team_session,
             add_history_to_context=team.add_history_to_context,
             run_context=run_context,
+            current_run_id=run_response.run_id,
         )
 
         # Handle tool call updates (execute confirmed tools, etc.)
@@ -8049,6 +8059,7 @@ def continue_run_dispatch(
             session=team_session,
             add_history_to_context=team.add_history_to_context,
             run_context=run_context,
+            current_run_id=run_response.run_id,
         )
 
         # Prepare for member HITL continuation
@@ -8211,6 +8222,7 @@ def _continue_run_dispatch_stream_with_member_events(
             session=team_session,
             add_history_to_context=team.add_history_to_context,
             run_context=run_context,
+            current_run_id=run_response.run_id,
         )
 
         _handle_team_tool_call_updates(team, run_response=run_response, run_messages=run_messages, tools=_tools)
@@ -8262,6 +8274,7 @@ def _continue_run_dispatch_stream_with_member_events(
             session=team_session,
             add_history_to_context=team.add_history_to_context,
             run_context=run_context,
+            current_run_id=run_response.run_id,
         )
 
         _prepare_member_hitl_continuation(run_response, run_messages, member_results)
@@ -9745,6 +9758,7 @@ async def _acontinue_run(
                         session=team_session,
                         add_history_to_context=team.add_history_to_context,
                         run_context=run_context,
+                        current_run_id=run_response.run_id,
                     )
 
                     await _ahandle_team_tool_call_updates(
@@ -9793,6 +9807,7 @@ async def _acontinue_run(
                         session=team_session,
                         add_history_to_context=team.add_history_to_context,
                         run_context=run_context,
+                        current_run_id=run_response.run_id,
                     )
 
                     # Prepare for member HITL continuation
@@ -10231,6 +10246,7 @@ async def _acontinue_run_stream(
                         session=team_session,
                         add_history_to_context=team.add_history_to_context,
                         run_context=run_context,
+                        current_run_id=run_response.run_id,
                     )
 
                     run_response.status = RunStatus.running
@@ -10359,6 +10375,7 @@ async def _acontinue_run_stream(
                         session=team_session,
                         add_history_to_context=team.add_history_to_context,
                         run_context=run_context,
+                        current_run_id=run_response.run_id,
                     )
 
                     # Prepare for member HITL continuation
