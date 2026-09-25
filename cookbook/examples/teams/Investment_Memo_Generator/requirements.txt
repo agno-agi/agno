@@ -1,0 +1,20 @@
+# Investment Memo Generator - MCP Version Dependencies
+
+# Core AgentOS and AI
+agno
+google-generativeai
+
+# MCP (Model Context Protocol)
+fastmcp
+
+# API and Web
+requests
+finnhub-python
+
+# Environment and utilities
+python-dotenv
+pydantic
+
+# Web server
+fastapi
+uvicorn
