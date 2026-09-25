@@ -76,7 +76,7 @@ class PerplexitySearch(Toolkit):
 
         body: Dict[str, Any] = {
             "query": query,
-            "max_results": max_results or self.max_results,
+            "max_results": max_results if max_results is not None else self.max_results,
             "max_tokens_per_page": self.max_tokens_per_page,
         }
         if self.search_recency_filter:
@@ -135,7 +135,7 @@ class PerplexitySearch(Toolkit):
 
         body: Dict[str, Any] = {
             "query": query,
-            "max_results": max_results or self.max_results,
+            "max_results": max_results if max_results is not None else self.max_results,
             "max_tokens_per_page": self.max_tokens_per_page,
         }
         if self.search_recency_filter:
