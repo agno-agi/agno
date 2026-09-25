@@ -467,6 +467,57 @@ class TestBackgroundStreamConcurrencyLimit:
         monkeypatch.setattr(_run, "_arun_stream", fake_arun_stream)
 
     @pytest.mark.asyncio
+    async def test_stream_end_waits_for_terminal_bookkeeping(self, monkeypatch: pytest.MonkeyPatch):
+        """The primary SSE stream must not end before the producer has marked
+        the run terminal in the event stream. A client that reacts to
+        end-of-stream immediately (for example by continuing the same run)
+        would otherwise observe a run the event stream still reports as
+        RUNNING."""
+        from unittest.mock import AsyncMock
+
+        agent = Agent(name="test-agent")
+        stream_started = asyncio.Event()
+        release_stream = asyncio.Event()
+        release_stream.set()
+        self._patch_stream_deps(monkeypatch, stream_started, release_stream)
+
+        entered_complete = asyncio.Event()
+        release_complete = asyncio.Event()
+        settled = asyncio.Event()
+
+        async def complete_run(*args, **kwargs):
+            entered_complete.set()
+            await release_complete.wait()
+            settled.set()
+
+        event_stream = MagicMock()
+        event_stream.register_run = AsyncMock()
+        event_stream.set_run_status = AsyncMock()
+        event_stream.add_event = AsyncMock(return_value=0)
+        event_stream.complete_run = AsyncMock(side_effect=complete_run)
+        monkeypatch.setattr("agno.os.event_streams.get_event_stream", lambda: event_stream)
+
+        run_response = RunOutput(run_id="bg-stream-eof", session_id="test-session", status=RunStatus.pending)
+        run_context = RunContext(run_id="bg-stream-eof", session_id="test-session")
+
+        async def consume():
+            async for _ in _run._arun_background_stream(
+                agent, run_response=run_response, run_context=run_context, session_id="test-session"
+            ):
+                pass
+
+        consumer = asyncio.create_task(consume())
+        try:
+            await asyncio.wait_for(entered_complete.wait(), timeout=2)
+            await asyncio.sleep(0)
+            await asyncio.sleep(0)
+            assert not consumer.done(), "end-of-stream preceded producer terminal bookkeeping"
+        finally:
+            release_complete.set()
+            await asyncio.wait_for(consumer, timeout=2)
+            await asyncio.wait_for(settled.wait(), timeout=2)
+
+    @pytest.mark.asyncio
     async def test_stream_run_waits_for_slot_as_pending(self, monkeypatch: pytest.MonkeyPatch):
         """A background stream run behind a full limiter stays PENDING, produces
         no events, and starts once the slot frees."""
