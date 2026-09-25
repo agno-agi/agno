@@ -113,9 +113,10 @@ async def http_client_lifespan(_):
     """Manage httpx client lifecycle for proper connection pool cleanup."""
     from agno.utils.http import aclose_default_clients
 
-    yield
-
-    await aclose_default_clients()
+    try:
+        yield
+    finally:
+        await aclose_default_clients()
 
 
 @asynccontextmanager
@@ -186,11 +187,15 @@ async def db_lifespan(app: FastAPI, agent_os: "AgentOS"):
         agent_os._initialize_sync_databases()
         await agent_os._initialize_async_databases()
 
-    yield
-
-    # Let in-flight cancel-persist tasks finish writing before the pool closes
-    await _drain_cancel_persist_tasks()
-    await agent_os._close_databases()
+    try:
+        yield
+    finally:
+        # Let in-flight cancel-persist tasks finish writing before the pool closes,
+        # but close the databases even if draining fails
+        try:
+            await _drain_cancel_persist_tasks()
+        finally:
+            await agent_os._close_databases()
 
 
 @asynccontextmanager
@@ -222,9 +227,10 @@ async def scheduler_lifespan(app: FastAPI, agent_os: "AgentOS"):
     app.state.scheduler_poller = poller
     await poller.start()
 
-    yield
-
-    await poller.stop()
+    try:
+        yield
+    finally:
+        await poller.stop()
 
 
 def _combine_app_lifespans(lifespans: list) -> Any:
