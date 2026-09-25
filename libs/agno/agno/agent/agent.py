@@ -61,6 +61,7 @@ from agno.run.agent import (
     RunOutputEvent,
 )
 from agno.run.requirement import RunRequirement
+from agno.run.steering import asteer_run, steer_run
 from agno.session import AgentSession, SessionSummaryManager, TeamSession, WorkflowSession
 from agno.session.summary import SessionSummary
 from agno.skills import Skills
@@ -864,6 +865,32 @@ class Agent:
     @staticmethod
     async def acancel_run(run_id: str) -> bool:
         return await _run.acancel_run(run_id)
+
+    @staticmethod
+    def steer(run_id: str, input: Union[str, Message]) -> bool:
+        """Send input to one of this agent's runs while it is executing.
+
+        The input joins the run's conversation as a user message before the model's next
+        request: after the tool calls in flight finish, or, if the model has just answered,
+        in place of finishing, so the model answers it too. Input accepted here is always
+        delivered, including across a human-in-the-loop pause.
+
+        Args:
+            run_id: The run to steer.
+            input: Text, framed for the model as a message the user sent mid-run (see
+                agno.run.steering.steering_message), or a Message, used verbatim.
+
+        Returns:
+            bool: True if the run accepted the input. False if the run is not accepting input:
+            it has not reached its model call yet, is paused for a human, is finishing, or has
+            finished. Continue a paused run with continue_run(); otherwise start a new run.
+        """
+        return steer_run(run_id, input)
+
+    @staticmethod
+    async def asteer(run_id: str, input: Union[str, Message]) -> bool:
+        """Async version of steer()."""
+        return await asteer_run(run_id, input)
 
     # ---------------------------------------------------------------
     # Session forking — copy a session into a new independent session

@@ -1,7 +1,7 @@
 from typing import Any, Dict, List, Optional, Union
 
 from agno.media import Audio, Image
-from agno.models.message import Citations
+from agno.models.message import Citations, Message
 from agno.models.response import ToolExecution
 from agno.reasoning.step import ReasoningStep
 from agno.run.agent import (
@@ -37,6 +37,7 @@ from agno.run.agent import (
     RunOutputEvent,
     RunPausedEvent,
     RunStartedEvent,
+    RunSteeredEvent,
     SessionSummaryCompletedEvent,
     SessionSummaryStartedEvent,
     ToolCallCompletedEvent,
@@ -72,6 +73,7 @@ from agno.run.team import RunContinuedEvent as TeamRunContinuedEvent
 from agno.run.team import RunErrorEvent as TeamRunErrorEvent
 from agno.run.team import RunPausedEvent as TeamRunPausedEvent
 from agno.run.team import RunStartedEvent as TeamRunStartedEvent
+from agno.run.team import RunSteeredEvent as TeamRunSteeredEvent
 from agno.run.team import SessionSummaryCompletedEvent as TeamSessionSummaryCompletedEvent
 from agno.run.team import SessionSummaryStartedEvent as TeamSessionSummaryStartedEvent
 from agno.run.team import TaskCreatedEvent as TeamTaskCreatedEvent
@@ -187,6 +189,17 @@ def create_run_continued_event(from_run_response: RunOutput) -> RunContinuedEven
     )
 
 
+def create_run_steered_event(from_run_response: RunOutput, message: Message) -> RunSteeredEvent:
+    return RunSteeredEvent(
+        session_id=from_run_response.session_id,
+        agent_id=from_run_response.agent_id,  # type: ignore
+        agent_name=from_run_response.agent_name,  # type: ignore
+        run_id=from_run_response.run_id,
+        message_id=message.id,
+        content=message.content,
+    )
+
+
 def error_type_of(exc: BaseException) -> str:
     """The stable identity of an exception for an error event's error_type field.
 
@@ -273,6 +286,17 @@ def create_team_run_continued_event(from_run_response: TeamRunOutput) -> TeamRun
         team_id=from_run_response.team_id,  # type: ignore
         team_name=from_run_response.team_name,  # type: ignore
         run_id=from_run_response.run_id,
+    )
+
+
+def create_team_run_steered_event(from_run_response: TeamRunOutput, message: Message) -> TeamRunSteeredEvent:
+    return TeamRunSteeredEvent(
+        session_id=from_run_response.session_id,
+        team_id=from_run_response.team_id,  # type: ignore
+        team_name=from_run_response.team_name,  # type: ignore
+        run_id=from_run_response.run_id,
+        message_id=message.id,
+        content=message.content,
     )
 
 

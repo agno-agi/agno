@@ -77,6 +77,7 @@ from agno.run.concurrency import SSE_KEEPALIVE_INTERVAL_SECONDS, background_run_
 from agno.run.messages import RunMessages
 from agno.run.requirement import RunRequirement
 from agno.run.status_persist import apersist_run_transition
+from agno.run.steering import steering_for
 from agno.session import AgentSession
 from agno.session._utils import resolve_run_index
 from agno.tools.function import Function
@@ -570,6 +571,7 @@ def _run(
                         run_messages=run_messages,
                         run_context=run_context,
                     ),
+                    steering=steering_for(run_response.run_id),
                 )
 
                 # Check for cancellation after model call
@@ -1708,6 +1710,7 @@ async def _arun(
                         run_messages=run_messages,
                         run_context=run_context,
                     ),
+                    steering=steering_for(run_response.run_id),
                 )
 
                 # Check for cancellation after model call
@@ -3822,6 +3825,7 @@ def _continue_run(
                         run_messages=run_messages,
                         run_context=run_context,
                     ),
+                    steering=steering_for(run_response.run_id),
                 )
 
                 # Check for cancellation after model processing
@@ -5068,6 +5072,7 @@ async def _acontinue_run(
                         run_messages=run_messages,
                         run_context=run_context,
                     ),
+                    steering=steering_for(run_response.run_id),
                 )
                 # Check for cancellation after model call
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
