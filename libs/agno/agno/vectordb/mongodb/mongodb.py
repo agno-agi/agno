@@ -53,6 +53,8 @@ class MongoDb(VectorDb):
         client: Optional[MongoClient] = None,
         search_index_name: Optional[str] = "vector_index_1",
         cosmos_compatibility: Optional[bool] = False,
+        embedding_path: str = "embedding",
+        search_projection: Optional[Dict[str, Any]] = None,
         search_type: SearchType = SearchType.vector,
         hybrid_vector_weight: float = 0.5,
         hybrid_keyword_weight: float = 0.5,
@@ -78,6 +80,8 @@ class MongoDb(VectorDb):
             client (Optional[MongoClient]): An existing MongoClient instance.
             search_index_name (str): Name of the search index (default: "vector_index_1")
             cosmos_compatibility (bool): Whether to use Azure Cosmos DB Mongovcore compatibility mode.
+            embedding_path (str): Field path containing vector embeddings.
+            search_projection (Optional[Dict[str, Any]]): Extra projection fields for Cosmos DB search results.
             search_type: The search type to use when searching for documents.
             hybrid_vector_weight (float): Default weight for vector search results in hybrid search.
             hybrid_keyword_weight (float): Default weight for keyword search results in hybrid search.
@@ -105,6 +109,8 @@ class MongoDb(VectorDb):
         self.database = database
         self.search_index_name = search_index_name
         self.cosmos_compatibility = cosmos_compatibility
+        self.embedding_path = embedding_path
+        self.search_projection = search_projection
         self.search_type = search_type
         self.hybrid_vector_weight = hybrid_vector_weight
         self.hybrid_keyword_weight = hybrid_keyword_weight
@@ -273,7 +279,7 @@ class MongoDb(VectorDb):
 
                 # Create vector search index using Cosmos DB IVF format
                 collection.create_index(
-                    [("embedding", "cosmosSearch")],
+                    [(self.embedding_path, "cosmosSearch")],
                     name=index_name,
                     cosmosSearchOptions={
                         "kind": "vector-ivf",
@@ -323,7 +329,7 @@ class MongoDb(VectorDb):
                                 {
                                     "type": "vector",
                                     "numDimensions": embedding_dim,
-                                    "path": "embedding",
+                                    "path": self.embedding_path,
                                     "similarity": self.distance_metric,
                                 },
                                 # Declared here so the owner scope can pre-filter inside $vectorSearch.
@@ -376,7 +382,7 @@ class MongoDb(VectorDb):
                             {
                                 "type": "vector",
                                 "numDimensions": embedding_dim,
-                                "path": "embedding",
+                                "path": self.embedding_path,
                                 "similarity": self.distance_metric,
                             },
                             # Declared here so the owner scope can pre-filter inside $vectorSearch.
@@ -417,7 +423,7 @@ class MongoDb(VectorDb):
                             # Ensure we have a tuple/list with exactly 2 elements
                             if isinstance(key_value_pair, (tuple, list)) and len(key_value_pair) == 2:
                                 key, value = key_value_pair
-                                if key == "embedding" and value == "cosmosSearch":
+                                if key == self.embedding_path and value == "cosmosSearch":
                                     log_debug(f"Found existing vector search index: {index_name}")
                                     return True
 
@@ -674,9 +680,13 @@ class MongoDb(VectorDb):
                 k = min(limit * 4, 100) if scope_filter is not None else limit
 
                 # Construct the search pipeline
+                cosmos_search = {"vector": query_embedding, "path": self.embedding_path, "k": k, "nProbes": 2}
+                if filters:
+                    cosmos_search["filter"] = self._prepare_mongo_filters(filters)
+
                 search_stage = {
                     "$search": {
-                        "cosmosSearch": {"vector": query_embedding, "path": "embedding", "k": k, "nProbes": 2},
+                        "cosmosSearch": cosmos_search,
                         "returnStoredSource": True,
                     }
                 }
@@ -686,17 +696,7 @@ class MongoDb(VectorDb):
                 if scope_filter is not None:
                     pipeline.append({"$match": scope_filter})
                     pipeline.append({"$limit": limit})
-                pipeline.append(
-                    {
-                        "$project": {
-                            "similarityScore": {"$meta": "searchScore"},
-                            "_id": 1,
-                            "name": 1,
-                            "content": 1,
-                            "meta_data": 1,
-                        }
-                    }
-                )
+                pipeline.append({"$project": self._get_cosmos_search_projection()})
 
                 results = list(collection.aggregate(pipeline))
                 docs = [
@@ -725,7 +725,7 @@ class MongoDb(VectorDb):
                     "limit": limit,
                     "numCandidates": min(limit * 4, 100),
                     "queryVector": query_embedding,
-                    "path": "embedding",
+                    "path": self.embedding_path,
                 }
                 # Pre-filter inside $vectorSearch so scoping doesn't cut the result set below ``limit``.
                 if scope_filter is not None:
@@ -741,21 +741,12 @@ class MongoDb(VectorDb):
 
                 # Handle filters if provided
                 if filters:
-                    # MongoDB uses dot notation for nested fields, so we need to prepend meta_data. if needed
-                    mongo_filters = {}
-                    for key, value in filters.items():
-                        # If the key doesn't already include a dot notation for meta_data
-                        if not key.startswith("meta_data.") and "." not in key:
-                            mongo_filters[f"meta_data.{key}"] = value
-                        else:
-                            mongo_filters[key] = value
-
-                    match_filters.update(mongo_filters)
+                    match_filters.update(self._prepare_mongo_filters(filters))
 
                 if match_filters:
                     pipeline.append({"$match": match_filters})  # type: ignore
 
-                pipeline.append({"$project": {"embedding": 0}})
+                pipeline.append({"$project": {self.embedding_path: 0}})
 
                 results = list(collection.aggregate(pipeline))  # type: ignore
 
@@ -861,18 +852,13 @@ class MongoDb(VectorDb):
 
         mongo_filters = {}
         if filters:
-            for key, value in filters.items():
-                # If the key doesn't already include a dot notation for meta_data
-                if not key.startswith("meta_data.") and "." not in key:
-                    mongo_filters[f"meta_data.{key}"] = value
-                else:
-                    mongo_filters[key] = value
+            mongo_filters = self._prepare_mongo_filters(filters)
 
         scope_filter = self._user_scope_filter(user_id)
 
         vector_search_stage: Dict[str, Any] = {
             "index": self.search_index_name,
-            "path": "embedding",
+            "path": self.embedding_path,
             "queryVector": query_embedding,
             "numCandidates": min(limit * 10, 200),
             "limit": limit * 2,
@@ -1118,11 +1104,11 @@ class MongoDb(VectorDb):
             "name": document.name,
             "content": cleaned_content,
             "meta_data": document.meta_data,
-            "embedding": document.embedding,
             "content_id": document.content_id,
             "content_hash": content_hash,
             USER_ID_FIELD: user_id,
         }
+        self._set_embedding(doc_data, document.embedding)
         log_debug(f"Prepared document: {doc_data['_id']}")
         return doc_data
 
@@ -1310,43 +1296,49 @@ class MongoDb(VectorDb):
 
         try:
             collection = await self._get_async_collection()
-            vector_search_stage: Dict[str, Any] = {
-                "index": self.search_index_name,
-                "limit": limit,
-                "numCandidates": min(limit * 4, 100),
-                "queryVector": query_embedding,
-                "path": "embedding",
-            }
-            # Pre-filter inside $vectorSearch so scoping doesn't cut the result set below ``limit``.
             scope_filter = self._user_scope_filter(user_id)
-            if scope_filter is not None:
-                vector_search_stage["filter"] = scope_filter
-            pipeline = [
-                {"$vectorSearch": vector_search_stage},
-                {"$set": {"score": {"$meta": "vectorSearchScore"}}},
-            ]
+            if self.cosmos_compatibility:
+                # Cosmos has no vector pre-filter, so scope after the search and over-fetch to absorb it.
+                k = min(limit * 4, 100) if scope_filter is not None else limit
+                cosmos_search = {"vector": query_embedding, "path": self.embedding_path, "k": k, "nProbes": 2}
+                if filters:
+                    cosmos_search["filter"] = self._prepare_mongo_filters(filters)
 
-            match_filters: Dict[str, Any] = {}
-            if min_score > 0:
-                match_filters["score"] = {"$gte": min_score}
+                pipeline: List[Dict[str, Any]] = [
+                    {"$search": {"cosmosSearch": cosmos_search, "returnStoredSource": True}}
+                ]
+                if scope_filter is not None:
+                    pipeline.append({"$match": scope_filter})
+                    pipeline.append({"$limit": limit})
+                pipeline.append({"$project": self._get_cosmos_search_projection()})
+            else:
+                vector_search_stage: Dict[str, Any] = {
+                    "index": self.search_index_name,
+                    "limit": limit,
+                    "numCandidates": min(limit * 4, 100),
+                    "queryVector": query_embedding,
+                    "path": self.embedding_path,
+                }
+                # Pre-filter inside $vectorSearch so scoping doesn't cut the result set below ``limit``.
+                if scope_filter is not None:
+                    vector_search_stage["filter"] = scope_filter
+                pipeline = [
+                    {"$vectorSearch": vector_search_stage},
+                    {"$set": {"score": {"$meta": "vectorSearchScore"}}},
+                ]
 
-            # Handle filters if provided
-            if filters:
-                # MongoDB uses dot notation for nested fields, so we need to prepend meta_data. if needed
-                mongo_filters = {}
-                for key, value in filters.items():
-                    # If the key doesn't already include a dot notation for meta_data
-                    if not key.startswith("meta_data.") and "." not in key:
-                        mongo_filters[f"meta_data.{key}"] = value
-                    else:
-                        mongo_filters[key] = value
+                match_filters: Dict[str, Any] = {}
+                if min_score > 0:
+                    match_filters["score"] = {"$gte": min_score}
 
-                match_filters.update(mongo_filters)
+                # Handle filters if provided
+                if filters:
+                    match_filters.update(self._prepare_mongo_filters(filters))
 
-            if match_filters:
-                pipeline.append({"$match": match_filters})
+                if match_filters:
+                    pipeline.append({"$match": match_filters})
 
-            pipeline.append({"$project": {"embedding": 0}})
+                pipeline.append({"$project": {self.embedding_path: 0}})
 
             # With AsyncMongoClient, aggregate() returns a coroutine that resolves to a cursor
             # We need to await it first to get the cursor
@@ -1364,7 +1356,7 @@ class MongoDb(VectorDb):
                     id=str(doc["_id"]),
                     name=doc.get("name"),
                     content=doc["content"],
-                    meta_data={**doc.get("meta_data", {}), "score": doc.get("score", 0.0)},
+                    meta_data={**doc.get("meta_data", {}), "score": doc.get("score", doc.get("similarityScore", 0.0))},
                     content_id=doc.get("content_id"),
                 )
                 for doc in results
@@ -1416,6 +1408,39 @@ class MongoDb(VectorDb):
         # Cosmos DB supports: COS (cosine), L2 (Euclidean), IP (inner product)
         metric_mapping = {"cosine": "COS", "euclidean": "L2", "dotProduct": "IP"}
         return metric_mapping.get(self.distance_metric, "COS")
+
+    def _prepare_mongo_filters(self, filters: Dict[str, Any]) -> Dict[str, Any]:
+        """Normalize plain metadata filters to MongoDB dot notation."""
+        mongo_filters = {}
+        for key, value in filters.items():
+            if not key.startswith("meta_data.") and "." not in key:
+                mongo_filters[f"meta_data.{key}"] = value
+            else:
+                mongo_filters[key] = value
+        return mongo_filters
+
+    def _get_cosmos_search_projection(self) -> Dict[str, Any]:
+        projection = {
+            "similarityScore": {"$meta": "searchScore"},
+            "_id": 1,
+            "name": 1,
+            "content": 1,
+            "meta_data": 1,
+            "content_id": 1,
+        }
+        if self.search_projection:
+            projection.update(self.search_projection)
+        return projection
+
+    def _set_embedding(self, doc_data: Dict[str, Any], embedding: Optional[List[float]]) -> None:
+        keys = self.embedding_path.split(".")
+        current: Dict[str, Any] = doc_data
+        for key in keys[:-1]:
+            next_value = current.setdefault(key, {})
+            if not isinstance(next_value, dict):
+                raise ValueError(f"Cannot store embedding at nested path '{self.embedding_path}'")
+            current = next_value
+        current[keys[-1]] = embedding
 
     def _convert_objectids_to_strings(self, obj: Any) -> Any:
         """
