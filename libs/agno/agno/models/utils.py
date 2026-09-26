@@ -77,6 +77,7 @@ _PROVIDERS: Dict[str, Tuple[str, str, str, str]] = {
     "tokenlab": ("agno.models.tokenlab", "TokenLab", "TokenLab", "tokenlab"),
     "trustedrouter": ("agno.models.trustedrouter", "TrustedRouter", "TrustedRouter", "trustedrouter"),
     "tuning-engines": ("agno.models.tuning_engines", "TuningEngines", "Tuning Engines", "tuning engines"),
+    "typesafe": ("agno.models.typesafe", "Jev", "Jev", "typesafe"),
     "vercel": ("agno.models.vercel", "V0", "v0", "vercel"),
     "vertexai-claude": ("agno.models.vertexai.claude", "Claude", "Claude", "vertexai"),
     "vllm": ("agno.models.vllm", "VLLM", "VLLM", "vllm"),
@@ -217,6 +218,10 @@ def get_model_from_dict(model_data: Dict[str, Any]) -> Optional[Model]:
         raise ValueError(f"Model data is missing an 'id': {model_data}")
 
     provider_key = _resolve_provider_key(model_data.get("provider"), model_data.get("name"))
+    if provider_key == "typesafe":
+        from agno.models.typesafe import Jev
+
+        return Jev.from_dict(model_data)
     return _get_model_class(model_id, provider_key)
 
 

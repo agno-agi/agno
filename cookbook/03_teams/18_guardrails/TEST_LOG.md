@@ -91,3 +91,14 @@ DEBUG <description>
 
 ---
 
+## Jev integration — 2026-09-21
+
+Validation used `.venv/Scripts/python.exe` with mocked providers. No live API quality or latency claims are established.
+
+### jev_guardrail.py
+
+**Status:** PASS (mocked)
+
+**Description:** Mocked async team pre-hooks using batched preset checks.
+
+**Result:** Cookbook smoke test passed.

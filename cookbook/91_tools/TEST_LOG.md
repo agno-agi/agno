@@ -116,3 +116,28 @@
 **Result:** Both examples completed without errors. Domain-restricted search returned arxiv-sourced MoE papers, and the news agent returned items from the last few days. Note: answer text is model-composed; the domain restriction applies to the search results feeding it.
 
 ---
+
+## Jev integration — 2026-09-21
+
+Validation used `.venv/Scripts/python.exe` with mocked providers. No live API quality or latency claims are established.
+
+### jev_tools.py
+
+**Status:** PASS (mocked)
+
+**Description:** Stream the feature-discovery response through `agent.print_response`, retrieve the cached run, and display each `ask_jev` call's arguments and decoded JSON result with Rich `pprint`.
+
+**Result:** Both Jev tool cookbook smoke tests pass. An additional mocked streaming
+check confirms one Jev call, the generation/tool/final-answer cycle, and one decoded
+result printed from the same saved run. Lint and formatting pass. No live API calls.
+
+### jev_tools_fixed_schema.py
+
+**Status:** PASS (mocked)
+
+**Description:** Stream the draft-checking reply through `agent.print_response`, retrieve the cached run, and display each `evaluate` call's arguments and decoded result with Rich `pprint`.
+
+**Result:** Both Jev tool cookbook smoke tests pass. An additional mocked streaming
+check confirms one Jev evaluation, the generation/tool/final-answer cycle, and
+decoded boolean results displayed from the same saved run. Lint and formatting
+pass. No live API calls.

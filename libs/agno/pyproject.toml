@@ -108,6 +108,7 @@ mistral = ["mistralai>=2.0.0"]
 ollama = ["ollama"]
 openai = ["openai>=1.106.0"]  # >=1.106.0: callable api_key (sync+async token provider), openai/openai-python#2588
 portkey = ["portkey-ai"]
+typesafe = ["typesafe-sdk>=0.7.0; python_version >= '3.10'", "jsonschema>=4.18"]
 
 # Dependencies for Token Counting
 tokenizers = ["tiktoken", "tokenizers"]
@@ -288,6 +289,7 @@ models = [
   "agno[ollama]",
   "agno[openai]",
   "agno[portkey]",
+  "agno[typesafe]",
 ]
 
 # All tools
@@ -608,6 +610,7 @@ module = [
   "infinity_client.*",
   "jira.*",
   "jsonpatch.*",
+  "jsonschema.*",
   "jwt.*",
   "kubernetes.*",
   "lancedb.*",
@@ -678,6 +681,7 @@ module = [
   "tweepy.*",
   "twelvelabs.*",
   "twilio.*",
+  "typesafe_sdk.*",
   "tzlocal.*",
   "upstash_vector.*",
   "urllib3.*",
