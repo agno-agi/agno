@@ -145,6 +145,35 @@ METRICS_TABLE_SCHEMA = {
     ],
 }
 
+OS_METRICS_TABLE_SCHEMA = {
+    "id": {"type": String, "primary_key": True, "nullable": False},
+    "date": {"type": Date, "nullable": False, "index": True},
+    "aggregation_period": {"type": String, "nullable": False},
+    # Owner and component of this row, each an empty string when there is none, since Postgres treats
+    # NULLs as distinct. Only the id matching the component's type is set.
+    "user_id": {"type": String, "nullable": False, "default": ""},
+    "agent_id": {"type": String, "nullable": False, "default": ""},
+    "team_id": {"type": String, "nullable": False, "default": ""},
+    "workflow_id": {"type": String, "nullable": False, "default": ""},
+    "sessions_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "runs_count": {"type": BigInteger, "nullable": False, "default": 0},
+    # Counts keyed by name, so a new run status, token kind or timing needs no new column
+    "status_metrics": {"type": JSONB, "nullable": False, "default": {}},
+    "token_metrics": {"type": JSONB, "nullable": False, "default": {}},
+    "duration_metrics": {"type": JSONB, "nullable": False, "default": {}},
+    "model_metrics": {"type": JSONB, "nullable": False, "default": []},
+    "metadata": {"type": JSONB, "nullable": True},
+    "created_at": {"type": BigInteger, "nullable": False},
+    "updated_at": {"type": BigInteger, "nullable": True},
+    "completed": {"type": Boolean, "nullable": False, "default": False},
+    "_unique_constraints": [
+        {
+            "name": "uq_os_metrics_user_date_period_component",
+            "columns": ["user_id", "date", "aggregation_period", "agent_id", "team_id", "workflow_id"],
+        }
+    ],
+}
+
 VERSIONS_TABLE_SCHEMA = {
     "table_name": {"type": String, "nullable": False, "primary_key": True},
     "version": {"type": String, "nullable": False},
@@ -514,6 +543,7 @@ def get_table_schema_definition(
         # "runs" is handled by _get_run_table_schema above (needs session_table_name)
         "evals": EVAL_TABLE_SCHEMA,
         "metrics": METRICS_TABLE_SCHEMA,
+        "os_metrics": OS_METRICS_TABLE_SCHEMA,
         "memories": MEMORY_TABLE_SCHEMA,
         "knowledge": KNOWLEDGE_TABLE_SCHEMA,
         "versions": VERSIONS_TABLE_SCHEMA,

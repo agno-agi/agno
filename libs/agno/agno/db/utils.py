@@ -3,13 +3,14 @@
 import json
 import time
 from datetime import date, datetime, timedelta, timezone
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Tuple, Union
-from uuid import UUID
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Set, Tuple, Union
+from uuid import UUID, uuid4
 
 from agno.exceptions import MigrationRequiredError, SchemaMismatchError
 from agno.metrics import ModelMetrics, RunMetrics, SessionMetrics
 from agno.models.message import Message
 from agno.run.base import HISTORY_SKIP_STATUSES as _RUN_HISTORY_SKIP_STATUSES
+from agno.run.base import RunStatus
 from agno.utils.log import log_error, log_warning
 
 if TYPE_CHECKING:
@@ -27,6 +28,7 @@ DB_TABLE_NAME_KEYS: frozenset = frozenset(
         "runs_table",
         "memory_table",
         "metrics_table",
+        "os_metrics_table",
         "eval_table",
         "knowledge_table",
         "traces_table",
@@ -833,6 +835,429 @@ def identify_metrics_by_owner(rows: Sequence[Dict[str, Any]], user_id: str) -> L
         day_key, period = bucket
         identified.append({**row, "id": f"{day_key}_{user_id}_{period}"})
     return identified
+
+
+# The token counts an OS metrics row keeps in token_metrics, the same ones agno_metrics keeps
+_OS_METRICS_TOKEN_FIELDS = (
+    "input_tokens",
+    "output_tokens",
+    "total_tokens",
+    "audio_input_tokens",
+    "audio_output_tokens",
+    "audio_total_tokens",
+    "cache_read_tokens",
+    "cache_write_tokens",
+    "reasoning_tokens",
+)
+
+# The upper bounds, in milliseconds, of the buckets each timing is counted into. Changing a bound makes
+# stored rows disagree with new ones.
+_OS_METRICS_BUCKET_BOUNDS_MS = (
+    10,
+    12,
+    15,
+    20,
+    25,
+    30,
+    40,
+    50,
+    60,
+    80,
+    100,
+    120,
+    150,
+    200,
+    250,
+    300,
+    400,
+    500,
+    600,
+    800,
+    1000,
+    1200,
+    1500,
+    2000,
+    2500,
+    3000,
+    4000,
+    5000,
+    6000,
+    8000,
+    10000,
+    12000,
+    15000,
+    20000,
+    25000,
+    30000,
+    40000,
+    50000,
+    60000,
+    80000,
+    100000,
+    120000,
+    150000,
+    200000,
+    250000,
+    300000,
+    400000,
+    500000,
+    600000,
+    800000,
+    1000000,
+    1200000,
+    1500000,
+    2000000,
+    2500000,
+    3000000,
+    4000000,
+    5000000,
+    6000000,
+    8000000,
+)
+
+# The keys of each JSON column, so a backend can total each key directly
+OS_METRICS_FIXED_KEYS = {
+    "status_metrics": tuple(status.value for status in RunStatus),
+    "token_metrics": _OS_METRICS_TOKEN_FIELDS,
+    "duration_metrics": (
+        "duration_runs_count",
+        "total_duration_ms",
+        "max_duration_ms",
+        "time_to_first_token_runs_count",
+        "total_time_to_first_token_ms",
+        "max_time_to_first_token_ms",
+        "model_calls_count",
+        "total_model_call_ms",
+        "max_model_call_ms",
+    ),
+}
+
+# What get_os_metrics can total, and totals when the caller names none. duration_buckets is the bucket
+# objects inside duration_metrics, which only a median or p95 needs
+OS_METRICS_FIELDS = (
+    "sessions_count",
+    "runs_count",
+    "status_metrics",
+    "token_metrics",
+    "duration_metrics",
+    "model_metrics",
+    "duration_buckets",
+)
+
+
+def resolve_os_metrics_fields(fields: Optional[Sequence[str]]) -> List[str]:
+    """The columns a get_os_metrics call totals, rejecting any the table does not have."""
+    if fields is None:
+        return list(OS_METRICS_FIELDS)
+    unknown = [field for field in fields if field not in OS_METRICS_FIELDS]
+    if unknown:
+        raise ValueError(f"Unknown OS metrics fields: {unknown}")
+    return list(fields)
+
+
+def _os_metrics_row_key(row: Dict[str, Any]) -> Tuple[str, str, str, str]:
+    """The owner and component a row is unique by within its day."""
+    return (row.get("user_id") or "", row.get("agent_id") or "", row.get("team_id") or "", row.get("workflow_id") or "")
+
+
+def _os_metrics_component(record: Dict[str, Any]) -> Tuple[str, str, str]:
+    """The (agent_id, team_id, workflow_id) a session or run is counted under, by its type."""
+    kind = record.get("session_type") or record.get("run_type")
+    return (
+        (record.get("agent_id") or "") if kind == "agent" else "",
+        (record.get("team_id") or "") if kind == "team" else "",
+        (record.get("workflow_id") or "") if kind == "workflow" else "",
+    )
+
+
+def _os_metrics_nested_runs(run_data: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """The runs nested inside a stored run: its workflow steps' runs and its team members' runs."""
+    return (run_data.get("step_executor_runs") or []) + (run_data.get("member_responses") or [])
+
+
+def _add_os_metrics_nested_run_ids(run_data: Dict[str, Any], nested_run_ids: Set[str]) -> None:
+    """Add the ids of every run nested inside run_data, at any depth, to nested_run_ids."""
+    for nested_run in _os_metrics_nested_runs(run_data):
+        if nested_run.get("run_id"):
+            nested_run_ids.add(nested_run["run_id"])
+        _add_os_metrics_nested_run_ids(nested_run, nested_run_ids)
+
+
+def os_metrics_nested_run_ids(runs: Sequence[Dict[str, Any]]) -> Set[str]:
+    """The ids of every run nested inside a day's stored runs, at any depth.
+
+    A nested run ending after midnight is stored on the next day, so the rollup asks the runs table
+    which of these ids exist before it walks the nested runs.
+    """
+    nested_run_ids: Set[str] = set()
+    for run in runs:
+        _add_os_metrics_nested_run_ids(run.get("run_data") or {}, nested_run_ids)
+    return nested_run_ids
+
+
+def _os_metrics_model_calls(
+    run_data: Dict[str, Any], component: Tuple[str, str, str], seen_run_ids: Set[str]
+) -> List[Tuple[Dict[str, Any], Tuple[str, str, str]]]:
+    """Every model call a stored run holds, with the agent or team that made it, skipping nested runs already counted."""
+    calls = [(run_data, component)] if run_data.get("model") else []
+    for nested_run in _os_metrics_nested_runs(run_data):
+        run_id = nested_run.get("run_id")
+        if run_id in seen_run_ids:
+            continue
+        if run_id:
+            seen_run_ids.add(run_id)
+        nested_component = (nested_run.get("agent_id") or "", nested_run.get("team_id") or "", "")
+        calls.extend(
+            _os_metrics_model_calls(nested_run, nested_component if any(nested_component) else component, seen_run_ids)
+        )
+    return calls
+
+
+def _os_metrics_call_durations(call: Dict[str, Any]) -> List[float]:
+    """How long each request of a model call took, in seconds, skipping messages carried over from an earlier run."""
+    return [
+        message["metrics"]["duration"]
+        for message in call.get("messages") or []
+        if message.get("role") == "assistant"
+        and not message.get("from_history")
+        and (message.get("metrics") or {}).get("duration") is not None
+    ]
+
+
+def _os_metrics_bucket(milliseconds: int) -> str:
+    """The bucket a timing is counted into."""
+    for bound in _OS_METRICS_BUCKET_BOUNDS_MS:
+        if milliseconds <= bound:
+            return f"le_{bound}"
+    return f"gt_{_OS_METRICS_BUCKET_BOUNDS_MS[-1]}"
+
+
+def _add_os_metrics_timing(
+    duration_metrics: Dict[str, Any],
+    count_key: str,
+    total_key: str,
+    max_key: str,
+    buckets_key: str,
+    seconds: Optional[float],
+) -> None:
+    """Add one timing to a row's duration_metrics: a count, a total and a maximum in milliseconds, and its bucket."""
+    if seconds is None:
+        return
+    milliseconds = int(round(seconds * 1000))
+    duration_metrics[count_key] = duration_metrics.get(count_key, 0) + 1
+    duration_metrics[total_key] = duration_metrics.get(total_key, 0) + milliseconds
+    duration_metrics[max_key] = max(duration_metrics.get(max_key, 0), milliseconds)
+    buckets = duration_metrics.setdefault(buckets_key, {})
+    bucket = _os_metrics_bucket(milliseconds)
+    buckets[bucket] = buckets.get(bucket, 0) + 1
+
+
+def calculate_date_os_metrics(
+    date_to_process: date,
+    sessions: List[Dict[str, Any]],
+    runs: List[Dict[str, Any]],
+    stored_run_ids: Set[str],
+) -> List[Dict[str, Any]]:
+    """Calculate OS metrics for the given single date, one record per user and agent, team or workflow.
+
+    Args:
+        date_to_process (date): The date to calculate OS metrics for.
+        sessions (List[Dict[str, Any]]): The sessions created on that date.
+        runs (List[Dict[str, Any]]): The runs created on that date, as stored.
+        stored_run_ids (Set[str]): The ids of the nested runs of that date that are stored as runs of their
+            own, on any date. Those are counted where they are stored.
+
+    Returns:
+        List[Dict[str, Any]]: The calculated OS metrics, one record per user and agent, team or workflow.
+    """
+
+    def _empty_os_metrics_record() -> Dict[str, Any]:
+        return {
+            "sessions_count": 0,
+            "runs_count": 0,
+            "status_metrics": {},
+            "token_metrics": {},
+            "duration_metrics": {},
+            "model_counts": {},
+        }
+
+    per_owner: Dict[Tuple[str, str, str, str], Dict[str, Any]] = {}
+
+    for session in sessions:
+        agent_id, team_id, workflow_id = _os_metrics_component(session)
+        bucket_key = (session.get("user_id") or "", agent_id, team_id, workflow_id)
+        bucket = per_owner.setdefault(bucket_key, _empty_os_metrics_record())
+        bucket["sessions_count"] += 1
+
+    seen_run_ids = {run["run_id"] for run in runs if run.get("run_id")} | stored_run_ids
+    for run in runs:
+        component = _os_metrics_component(run)
+        agent_id, team_id, workflow_id = component
+        bucket_key = (run.get("user_id") or "", agent_id, team_id, workflow_id)
+        bucket = per_owner.setdefault(bucket_key, _empty_os_metrics_record())
+        status = run.get("status")
+        run_data = run.get("run_data") or {}
+        run_metrics = run_data.get("metrics") or {}
+
+        # A regenerated run sits beside the run that replaced it, but the model calls it made were made
+        if status != RunStatus.regenerated.value:
+            bucket["runs_count"] += 1
+            if status:
+                bucket["status_metrics"][status] = bucket["status_metrics"].get(status, 0) + 1
+        if status == RunStatus.completed.value:
+            _add_os_metrics_timing(
+                bucket["duration_metrics"],
+                "duration_runs_count",
+                "total_duration_ms",
+                "max_duration_ms",
+                "duration_ms_buckets",
+                run_metrics.get("duration"),
+            )
+            _add_os_metrics_timing(
+                bucket["duration_metrics"],
+                "time_to_first_token_runs_count",
+                "total_time_to_first_token_ms",
+                "max_time_to_first_token_ms",
+                "time_to_first_token_ms_buckets",
+                run_metrics.get("time_to_first_token"),
+            )
+
+        for call, call_component in _os_metrics_model_calls(run_data, component, seen_run_ids):
+            call_metrics = call.get("metrics") or {}
+            for field in _OS_METRICS_TOKEN_FIELDS:
+                if value := call_metrics.get(field):
+                    bucket["token_metrics"][field] = bucket["token_metrics"].get(field, 0) + value
+            for seconds in _os_metrics_call_durations(call):
+                _add_os_metrics_timing(
+                    bucket["duration_metrics"],
+                    "model_calls_count",
+                    "total_model_call_ms",
+                    "max_model_call_ms",
+                    "model_call_ms_buckets",
+                    seconds,
+                )
+
+            # A model that failed before answering reports no details, so it served nothing
+            if call_metrics.get("details"):
+                model_key = (call["model"], call.get("model_provider") or "", *call_component)
+                bucket["model_counts"][model_key] = bucket["model_counts"].get(model_key, 0) + 1
+
+    current_time = int(time.time())
+    completed = date_to_process < datetime.now(timezone.utc).date()
+
+    records: List[Dict[str, Any]] = []
+    for (user_id, agent_id, team_id, workflow_id), bucket in per_owner.items():
+        model_metrics = []
+        # Sorted so an unchanged day rebuilds to the same list
+        for (model_id, model_provider, model_agent_id, model_team_id, model_workflow_id), count in sorted(
+            bucket["model_counts"].items()
+        ):
+            model_metric: Dict[str, Any] = {"model_id": model_id, "model_provider": model_provider, "count": count}
+            if model_agent_id:
+                model_metric["agent_id"] = model_agent_id
+            if model_team_id:
+                model_metric["team_id"] = model_team_id
+            if model_workflow_id:
+                model_metric["workflow_id"] = model_workflow_id
+            model_metrics.append(model_metric)
+
+        records.append(
+            {
+                "id": str(uuid4()),
+                "date": date_to_process,
+                "completed": completed,
+                "created_at": current_time,
+                "updated_at": current_time,
+                "aggregation_period": "daily",
+                "user_id": user_id,
+                "agent_id": agent_id,
+                "team_id": team_id,
+                "workflow_id": workflow_id,
+                "sessions_count": bucket["sessions_count"],
+                "runs_count": bucket["runs_count"],
+                "status_metrics": bucket["status_metrics"],
+                "token_metrics": bucket["token_metrics"],
+                "duration_metrics": bucket["duration_metrics"],
+                "model_metrics": model_metrics,
+                "metadata": None,
+            }
+        )
+
+    return records
+
+
+def os_metrics_rows_to_write(
+    computed_rows: Sequence[Dict[str, Any]], stored_rows: Sequence[Dict[str, Any]]
+) -> Tuple[List[Dict[str, Any]], List[str]]:
+    """Compare a day's rebuilt rows with the rows stored for it.
+
+    Returns the rows that are new or changed, in key order so no two writers lock rows in opposite orders,
+    and the ids of stored rows the day no longer has. Only rows that were read are ever deleted.
+    """
+    stored_by_key = {_os_metrics_row_key(row): row for row in stored_rows}
+    changed_rows = []
+    for row in sorted(computed_rows, key=_os_metrics_row_key):
+        stored = stored_by_key.pop(_os_metrics_row_key(row), None)
+        # A rebuild gives every row a new id and timestamps, so those are not compared
+        if stored is None or any(
+            value != stored.get(column)
+            for column, value in row.items()
+            if column not in ["id", "created_at", "updated_at"]
+        ):
+            changed_rows.append(row)
+    return changed_rows, sorted(row["id"] for row in stored_by_key.values())
+
+
+def merge_os_metrics_json(target: Dict[str, Any], extra: Optional[Dict[str, Any]]) -> None:
+    """Merge extra OS metrics counts into target in place: max_ keys keep the larger value, the rest are summed."""
+    for key, value in (extra or {}).items():
+        if isinstance(value, dict):
+            buckets = target.setdefault(key, {})
+            for bucket, count in value.items():
+                buckets[bucket] = (buckets.get(bucket) or 0) + (count or 0)
+        elif key in ["max_duration_ms", "max_time_to_first_token_ms", "max_model_call_ms"]:
+            target[key] = max(target.get(key) or 0, value or 0)
+        else:
+            target[key] = (target.get(key) or 0) + (value or 0)
+
+
+def merge_os_model_metrics(target: List[Dict[str, Any]], extra: List[Dict[str, Any]]) -> None:
+    """Merge extra OS model_metrics into target in place, summing counts per model and caller."""
+    index: Dict[Any, Dict[str, Any]] = {}
+    for m in [*target, *extra]:
+        key = (m.get("model_id"), m.get("model_provider"), m.get("agent_id"), m.get("team_id"), m.get("workflow_id"))
+        entry = index.get(key)
+        if entry is None:
+            index[key] = dict(m)
+        else:
+            entry["count"] = (entry.get("count") or 0) + (m.get("count") or 0)
+    target[:] = list(index.values())
+
+
+def os_metrics_percentile(buckets: Dict[str, int], fraction: float, max_ms: Optional[int] = None) -> Optional[int]:
+    """The timing, in milliseconds, below which a fraction of the counted timings fall, read from bucket counts.
+
+    The answer is placed inside its bucket in proportion to where the fraction lands, so it is approximate,
+    and it never exceeds max_ms, the slowest timing counted.
+    """
+    total = sum(buckets.values())
+    if not total:
+        return None
+    # One timing is its own median and p95, and the slowest timing recorded is exactly it
+    if total == 1 and max_ms is not None:
+        return max_ms
+    target = fraction * total
+    lower_bound = 0
+    counted = 0
+    for bound in _OS_METRICS_BUCKET_BOUNDS_MS:
+        count = buckets.get(f"le_{bound}", 0)
+        if count and counted + count >= target:
+            value = round(lower_bound + (bound - lower_bound) * (target - counted) / count)
+            return value if max_ms is None else min(value, max_ms)
+        counted += count
+        lower_bound = bound
+    # Past the last bound only the slowest timing recorded says how far the tail goes
+    return _OS_METRICS_BUCKET_BOUNDS_MS[-1] if max_ms is None else max(max_ms, _OS_METRICS_BUCKET_BOUNDS_MS[-1])
 
 
 def owner_key(user_id: Any) -> Optional[str]:
