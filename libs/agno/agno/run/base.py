@@ -289,6 +289,10 @@ class BaseRunOutputEvent(_EventIndexCarrier):
         if image:
             data["image"] = Image.model_validate(image)
 
+        citations = data.pop("citations", None)
+        if citations:
+            data["citations"] = Citations.model_validate(citations)
+
         additional_input = data.pop("additional_input", None)
         if additional_input is not None:
             data["additional_input"] = [Message.model_validate(message) for message in additional_input]
