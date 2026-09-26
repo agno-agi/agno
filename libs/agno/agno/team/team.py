@@ -1909,7 +1909,8 @@ def get_team_by_id(
         Team instance or None.
 
     Raises:
-        ComponentRehydrationError: If strict and a member or registry reference cannot be resolved.
+        ComponentRehydrationError: If a stored config cannot be reconstructed. In
+            strict mode, this also includes unresolvable members and registry references.
     """
     from agno.exceptions import ComponentRehydrationError
 
@@ -1937,7 +1938,7 @@ def get_team_by_id(
 
         cfg = row.get("config") if isinstance(row, dict) else None
         if cfg is None:
-            raise ValueError(f"Invalid config found for team {id}")
+            raise ComponentRehydrationError(f"Invalid config found for team '{id}'")
 
         # Links for this config version carry the member versions pinned at
         # save time, so members load at those versions like the graph loader.
@@ -1948,19 +1949,26 @@ def get_team_by_id(
         except NotImplementedError:
             links = []
 
-        # Resolve DB-backed members under the same owner scope as the team.
-        with component_owner_scope(user_id):
-            team = Team.from_dict(cfg, db=db, registry=registry, links=links, strict=strict)
-        # Ensure team.id is set to the component_id
-        team.id = id
-        # Only fall back to the caller-provided db if the config didn't
-        # reconstruct one, matching Team.load.
-        if team.db is None:
-            if strict:
-                from agno.utils.db_fallback import require_db_fallback_matches
+        try:
+            # Resolve DB-backed members under the same owner scope as the team.
+            with component_owner_scope(user_id):
+                team = Team.from_dict(cfg, db=db, registry=registry, links=links, strict=strict)
+            # Ensure team.id is set to the component_id
+            team.id = id
+            # Only fall back to the caller-provided db if the config didn't
+            # reconstruct one, matching Team.load.
+            if team.db is None:
+                if strict:
+                    from agno.utils.db_fallback import require_db_fallback_matches
 
-                require_db_fallback_matches(cfg, db, "team", id)
-            team.db = db
+                    require_db_fallback_matches(cfg, db, "team", id)
+                team.db = db
+        except ComponentRehydrationError:
+            raise
+        except Exception as e:
+            raise ComponentRehydrationError(
+                f"Failed to reconstruct team '{id}' from stored config: {type(e).__name__}: {e}"
+            ) from e
 
         return team
 
