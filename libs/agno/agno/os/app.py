@@ -95,6 +95,11 @@ if TYPE_CHECKING:
     # runtime here would break `import agno.os` when the extra is not installed.
     from fastmcp.server.auth import AuthProvider
 
+    from agno.os.authz.audit import AuditSink
+    from agno.os.authz.authorization import Authorization
+    from agno.os.authz.provider import AuthorizationProvider
+    from agno.os.authz.user_directory import UserDirectory
+
 
 @asynccontextmanager
 async def mcp_lifespan(_, mcp_tools):
@@ -289,8 +294,10 @@ class AgentOS:
         knowledge: Optional[List[Knowledge]] = None,
         interfaces: Optional[List[BaseInterface]] = None,
         a2a_interface: bool = False,
-        authorization: bool = False,
+        authorization: Union[bool, "Authorization"] = False,
         authorization_config: Optional[AuthorizationConfig] = None,
+        user_isolation: bool = False,
+        user_directory: Optional[Union[bool, "UserDirectory"]] = None,
         cors_allowed_origins: Optional[List[str]] = None,
         media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None,
         config: Optional[Union[str, AgentOSConfig]] = None,
@@ -357,8 +364,21 @@ class AgentOS:
             base_app: Optional base FastAPI app to use for the AgentOS. All routes and middleware will be added to this app.
             on_route_conflict: What to do when a route conflict is detected in case a custom base_app is provided.
             auto_provision_dbs: Whether to automatically provision databases
-            authorization: Whether to enable authorization
-            authorization_config: Configuration for the authorization middleware
+            authorization: The authorization setup. Prefer ``Authorization(...)`` -- one object for
+                verification, roles, the user directory, audit, and the admin API (see
+                ``agno.os.authz.Authorization``). ``True`` keeps today's scope RBAC from token
+                scopes, verifying with ``authorization_config`` or the JWT_* environment variables.
+            authorization_config: Deprecated. Move its fields onto ``Authorization(...)`` and pass
+                that as ``authorization=``. Still honoured with ``authorization=True`` so existing
+                deployments keep booting; logs a warning once at construction.
+            user_isolation: Opt in to per-user data isolation (each caller sees only their own
+                sessions/memories). Enforced under authorization=True; advisory without auth.
+            user_directory: A credential-less user directory (roster + disabled kill switch), a
+                peer of authorization that works with or without it. ``True`` builds a UserDirectory
+                from the OS db with auto-provision on; pass a ``UserDirectory`` (from
+                ``agno.os.authz``) for control. Audit is not configured here: it lives on
+                ``Authorization(audit=...)``, since a change trail without a verified identity has
+                no actor to record.
             cors_allowed_origins: List of allowed CORS origins (will be merged with default Agno domains)
             media_storage: Backend the media routes read stored media from. Defaults to the first
                 one configured on an agent, team or workflow.
@@ -452,9 +472,76 @@ class AgentOS:
         # between AgentOS instances: another OS's mirror must not look
         # user-registered here.
 
-        # RBAC
+        # RBAC. Authentication (verify WHO the caller is) is separable from authorization (decide
+        # what they may DO).
+        #
+        # The Authorization object (agno.os.authz.Authorization) owns token verification, managed
+        # roles, audit, and the /authz admin API. Expand it here into the authorization_config the
+        # pipeline below already understands, and record what it hands over: its role store
+        # (provisioning + the /authz API), the provider it composed, the pinned issuer, and its
+        # audit sink. It adopts this OS db so role definitions persist alongside agent data.
+        self._authz_role_store: Any = None
+        self._authz_provider: Any = None
+        self._authz_issuer: Optional[str] = None
+
+        # authorization= takes the switch or the object, never the low-level config: one spelling
+        # for the deprecated type is enough, and it is the keyword that already exists.
+        if isinstance(authorization, AuthorizationConfig):
+            raise TypeError(
+                "AgentOS(authorization=) takes True/False or an Authorization object. Pass an "
+                "AuthorizationConfig as authorization_config= (deprecated), or move its fields onto "
+                "Authorization(...) and pass that as authorization=."
+            )
+        if authorization_config is not None:
+            log_warning(
+                "AgentOS(authorization_config=...) is deprecated: move its fields onto "
+                "Authorization(...) from agno.os.authz and pass it as AgentOS(authorization=...). "
+                "The config still works with authorization=True for now."
+            )
+
+        from agno.os.authz.authorization import Authorization as _Authorization
+
+        # The audit sink comes only from the Authorization object; a bare switch or no auth has none.
+        audit: Optional["AuditSink"] = None
+        if isinstance(authorization, _Authorization):
+            # The object owns verification, so a config next to it would silently pick one and
+            # drop the other. Fail loudly. The user directory is NOT owned by the object: it stays
+            # a top-level AgentOS(user_directory=...) concern, a peer of user_isolation.
+            if authorization_config is not None:
+                raise ValueError(
+                    "AgentOS(authorization=Authorization(...)) already owns authorization_config; "
+                    "configure verification on the Authorization object, not on AgentOS."
+                )
+            authorization._wire(self.db)
+            authorization_config = authorization.authorization_config()
+            audit = authorization.audit_sink
+            self._authz_role_store = authorization if authorization.uses_roles else None
+            self._authz_provider = authorization.provider
+            self._authz_issuer = authorization.issuer
+            authorization = True
+
         self.authorization = authorization
         self.authorization_config = authorization_config
+        # Per-user data isolation is a top-level opt-in (each caller sees only their own
+        # sessions/memories). It ENFORCES under a verified identity (authorization=True); without
+        # auth it is advisory -- the user_id is self-asserted, so it scopes a run's own writes but
+        # is not a boundary. Kept as a peer of the directory: both key off identity, not roles.
+        self.user_isolation = user_isolation
+        # One audit switch, on the Authorization object, for BOTH trails: the CHANGE log (who
+        # edited roles/users -> authz_audit) and the DECISION log (every allow/deny ->
+        # authz_decisions). It is an authorization concern because a trail is only accountability
+        # under a verified identity; without one there is no actor to record. The sink is also
+        # attached to the directory store below, so "audit on" means everything is logged. A sink
+        # passed directly to a store of your own still wins there.
+        self.audit: Optional["AuditSink"] = audit
+        # The credential-less user directory is a PEER of authorization (who the users are +
+        # the disabled kill-switch). ``user_directory=True`` is a shorthand: AgentOS builds the
+        # UserDirectory on its own db, so callers avoid the manual wiring.
+        self.user_directory = self._resolve_user_directory(user_directory)
+        # The /users directory API is served whenever a directory is configured. It is admin-gated
+        # whenever an auth middleware runs (so callers have a verified identity to gate on) and
+        # open only on a no-auth OS, where every route is open. See _admin_api_routers, which
+        # passes auth_enabled so the gate knows which mode it is in.
 
         # CORS configuration - merge user-provided origins with defaults from settings
         self.cors_allowed_origins = resolve_origins(cors_allowed_origins, self.settings.cors_origin_list)
@@ -642,10 +729,39 @@ class AgentOS:
 
         self._reprovision_routers(app=app)
 
+    def _mirror_authz_state_to_mcp_app(self, app: FastAPI) -> None:
+        """Copy the authz state the MCP tool gate reads onto the mounted sub-app.
+
+        The MCP tools are a mounted sub-app, so ``request.app`` inside the tool gate is
+        that sub-app, not this AgentOS's app -- ``request.state`` crosses the mount
+        boundary but ``request.app`` does not. Anything the gate resolves off
+        ``app.state`` therefore has to be mirrored here, or it silently degrades: a
+        missing provider drops managed-role/composite/FGA policy to scope-only, and a
+        missing sink drops every MCP decision from the access trail.
+
+        Kept next to the mount (and called from there as well as from seeding) so that
+        ANY future rebuild or re-mount of ``_mcp_app`` re-applies it. Today the sub-app
+        is built once, which is the only reason a seed-time-only mirror was correct --
+        an implicit dependency worth not relying on.
+        """
+        if self._mcp_app is None or not hasattr(self._mcp_app, "state"):
+            return
+        parent = getattr(app, "state", None)
+        if parent is None:
+            return
+        for attr in ("authorization_provider", "authz_audit"):
+            value = getattr(parent, attr, None)
+            if value is not None:
+                setattr(self._mcp_app.state, attr, value)
+
     def _mount_mcp_app(self, app: FastAPI) -> None:
         """Mount the MCP app at root exactly once (idempotent across get_app/resync calls)."""
         if self._mcp_app is None:
             return
+        # Re-apply on every mount, so a rebuilt sub-app can't silently lose the authz
+        # state (on the first get_app() this is a no-op: seeding runs after the mount
+        # and does the mirror itself).
+        self._mirror_authz_state_to_mcp_app(app)
         if any(getattr(route, "app", None) is self._mcp_app for route in app.router.routes):
             return
         app.mount("/", self._mcp_app)
@@ -686,6 +802,7 @@ class AgentOS:
             )
             updated_routers.append(get_approval_router(os_db=self.db, settings=self.settings))
             updated_routers.append(get_service_accounts_router(os_db=self.db, settings=self.settings))
+            updated_routers.extend(self._admin_api_routers())
         else:
             for prefix, tag in [
                 ("/components", "Components"),
@@ -1464,6 +1581,13 @@ class AgentOS:
             log_debug("Registry router not enabled: requires a registry to be provided to AgentOS")
             routers.append(_get_disabled_feature_router("/registry", "Registry", "registry"))
 
+        # Roles admin API (/authz, from an Authorization object) and the user directory API (/users,
+        # from a top-level user_directory; open on a no-auth OS). Registered HERE, with the other
+        # built-in routers, so it lands ahead of the MCP catch-all mount added just below: a router
+        # included after get_app() returns sits behind that mount and 404s on any OS with
+        # mcp_server=True.
+        routers.extend(self._admin_api_routers())
+
         for router in routers:
             self._add_router(fastapi_app, router)
 
@@ -1537,6 +1661,19 @@ class AgentOS:
         # the parent app), so the mounted sub-app carries no auth code of its own.
         security_key = self.settings.os_security_key if self.settings else None
         jwt_env_configured = bool(getenv("JWT_VERIFICATION_KEY") or getenv("JWT_JWKS_FILE"))
+        if not self.authorization and (self.user_directory is not None or self.user_isolation):
+            # A user directory or per-user isolation without authorization is a valid, intentional
+            # shape for local/demo use: a run's user_id registers the person (a roster fills in) and
+            # scopes that run's own data. What it is NOT, without a verified identity, is a security
+            # boundary -- the caller asserts their own user_id, so the directory's `disabled` flag and
+            # isolation are ADVISORY here, not enforced. Warn (don't raise) so an operator who expected
+            # enforcement knows to add authorization.
+            log_warning(
+                "AgentOS is configured with a user directory / per-user isolation but no authorization. "
+                "They work off the run's user_id for local/demo use (a roster fills in, a run scopes its "
+                "own data), but that id is self-asserted -- so the disabled kill-switch and isolation are "
+                "ADVISORY, not enforced. Add AgentOS(authorization=True) with a verification key to enforce."
+            )
         if self.authorization:
             # Set authorization_enabled flag on settings so security key validation is skipped
             self.settings.authorization_enabled = True
@@ -1580,12 +1717,25 @@ class AgentOS:
                 PublicMiddleware, surface=self.public, agent_os=self, policy=fastapi_app.state.public_route_policy
             )
 
-        auth_configured = bool(self.authorization or jwt_env_configured or security_key)
+        auth_configured = self._auth_configured()
         if auth_configured:
             # In JWT mode the security key is ignored (JWT takes precedence), matching
             # get_effective_auth_mode; pass None so the middleware doesn't fall back to it.
             effective_key = None if (self.authorization or jwt_env_configured) else security_key
             self._add_auth_middleware(fastapi_app, security_key=effective_key)
+        elif self.user_directory is not None or self.user_isolation:
+            # No auth middleware is installed (that path seeds identity as a side effect), but a
+            # no-auth directory / isolation still key off the request's self-asserted user_id. Seed
+            # the directory store, record the isolation flag, and install a lightweight middleware
+            # that resolves the user_id (query string, never the body) to provision the directory
+            # and enable isolation scoping on any endpoint -- matching the authenticated path.
+            if self.user_directory is not None:
+                self._seed_user_directory(fastapi_app)
+            fastapi_app.state.user_isolation_enabled = self.user_isolation
+
+            from agno.os.middleware.no_auth_identity import NoAuthIdentityMiddleware
+
+            fastapi_app.add_middleware(NoAuthIdentityMiddleware, user_isolation=self.user_isolation)
 
         # Under mcp_auth, the OAuth flow routes must be reachable without an agno bearer.
         # AgentOS exempts them on the AuthMiddleware it installs itself, but an agno
@@ -1737,7 +1887,12 @@ class AgentOS:
             self.authorization_config,
             authorization=self.authorization,
             service_account_verifier=self._get_service_account_verifier(),
+            issuer=self._authz_issuer,
         )
+        # The top-level user_isolation flag is the primary spelling; OR it with the legacy
+        # AuthorizationConfig(user_isolation=...) so either turns per-user scoping on.
+        if self.user_isolation:
+            middleware_kwargs["user_isolation"] = True
         middleware_kwargs["security_key"] = security_key
         algorithm = middleware_kwargs["algorithm"]
         verification_keys = middleware_kwargs["verification_keys"]
@@ -1756,10 +1911,10 @@ class AgentOS:
         # the same invariant as a backstop for the manual add_middleware path.
         if self.authorization and not jwt_configured:
             raise ValueError(
-                "AgentOS(authorization=True) requires a JWT verification key: set JWT_VERIFICATION_KEY or "
-                "JWT_JWKS_FILE (or pass verification_keys / jwks_file via authorization_config). Without one, "
-                "JWT and anonymous requests are not authenticated and RBAC is not enforced. For "
-                "service-account-only enforcement, use a db without authorization=True."
+                "AgentOS(authorization=True) requires a JWT verification key: set "
+                "JWT_VERIFICATION_KEY or JWT_JWKS_FILE (or pass verification_keys / jwks_file via "
+                "authorization_config). Without one, tokens cannot be verified so no identity is established "
+                "and RBAC is not enforced. For service-account-only enforcement, use a db without either flag."
             )
         log_info("Adding AgentOS auth middleware" + (f" (JWT algorithm: {algorithm})" if jwt_configured else ""))
 
@@ -1770,6 +1925,7 @@ class AgentOS:
                 verification_keys=verification_keys,
                 jwks_file=jwks_file,
                 algorithm=algorithm,
+                issuer=middleware_kwargs.get("issuer"),
             )
         # Expose audience config + admin scope on app.state so WebSocket auth
         # (which does not flow through HTTP middleware) can honour them.
@@ -1780,6 +1936,17 @@ class AgentOS:
         # JWT/RBAC still apply but the per-user DB wrapper and ownership gates
         # added by the user-scoped-DB work stay dormant.
         fastapi_app.state.user_isolation_enabled = user_isolation
+
+        # Seed the pluggable AuthorizationProvider that the REST route gate, per-resource
+        # gate, WebSocket gates, and MCP tool gate all resolve through. When nothing is
+        # configured we leave app.state.authorization_provider unset and the resolver
+        # falls back to the default ScopeAuthorizationProvider — so behaviour is exactly
+        # v2.7's scope RBAC. A role_store or a custom provider is enforced at the SAME
+        # four points instead.
+        self._seed_authorization_provider(fastapi_app)
+        # The user directory is a peer of the provider and seeded independently (it can be
+        # used with plain scope RBAC and no managed roles).
+        self._seed_user_directory(fastapi_app)
 
         # Only interfaces that verify the authenticity of their own inbound requests
         # (Slack HMAC, Telegram/WhatsApp webhook secrets -- see
@@ -1854,6 +2021,166 @@ class AgentOS:
             middleware_kwargs["scope_mappings"] = interface_mappings
 
         fastapi_app.add_middleware(AuthMiddleware, **middleware_kwargs)
+
+    def _admin_api_routers(self) -> List[Any]:
+        """The admin-API routers to mount, so there is never a manual ``include_router``.
+
+        ``/authz`` (roles) mounts from an ``Authorization`` object's role store, so it always runs
+        under authorization and stays admin-gated. ``/users`` (directory) mounts from the top-level
+        ``AgentOS(user_directory=...)``, with or without authorization: it is admin-gated when
+        authorization is on, and open on a no-auth OS (where every route is open and the roster is
+        already writable via auto-provision), passed through as ``auth_enabled``."""
+        routers: List[Any] = []
+        # /users mounts whenever a directory is configured; the router gates on admin under
+        # authorization and is open on a no-auth OS (every route is open there).
+        served_directory = self.user_directory
+        if self._authz_role_store is not None or served_directory is not None:
+            from agno.os.authz.admin_router import get_roles_router, get_users_router
+
+            if self._authz_role_store is not None:
+                routers.append(get_roles_router(self._authz_role_store))
+            if served_directory is not None:
+                # /users mounts open only on a no-auth OS, where every route is open (the whole OS
+                # serves anonymous callers, and the roster is already writable via auto-provision).
+                # Whenever an auth middleware runs -- authorization on, a JWT key from the
+                # environment, or a security key -- callers carry a verified identity and the gate
+                # requires an admin. Keying this on ``self.authorization`` alone left the router open
+                # to every signed token when a JWT key came from the environment with
+                # authorization off: anonymous callers got 401, any token could disable anyone. The
+                # roles router stays gated: it exists only with an Authorization object.
+                routers.append(
+                    get_users_router(
+                        served_directory,
+                        role_store=self._authz_role_store,
+                        auth_enabled=self._auth_configured(),
+                    )
+                )
+        return routers
+
+    def _auth_configured(self) -> bool:
+        """Whether an auth middleware runs on this OS: ``authorization`` is on, a JWT key comes from
+        the environment, or a security key is set. The single definition both the middleware
+        install and the ``/users`` gate read, so they cannot disagree about whether a caller has
+        a verified identity."""
+        security_key = self.settings.os_security_key if self.settings else None
+        jwt_env_configured = bool(getenv("JWT_VERIFICATION_KEY") or getenv("JWT_JWKS_FILE"))
+        return bool(self.authorization or jwt_env_configured or security_key)
+
+    def _seed_authorization_provider(self, fastapi_app: FastAPI) -> None:
+        """Seed ``app.state.authorization_provider`` (and ``authz_audit``) from the Authorization
+        object, so the four choke points resolve the right enforcer.
+
+        - the object composed a provider (its role store's, with the scope plane alongside under
+          ``trust_token_scopes``, or the caller's override): use it.
+        - none: leave the state unset; the resolver defaults to ScopeAuthorizationProvider
+          (v2.7 behaviour), which is also what ``authorization=True`` means.
+        """
+        # Decision trail: the audit switch (Authorization(audit=...)) also
+        # feeds the decision log (authz_decisions). Seeded even for plain scope RBAC, since the
+        # default scope plane still records decisions.
+        if self.audit is not None:
+            fastapi_app.state.authz_audit = self.audit
+
+        provider = self._authz_provider
+
+        resolved_provider: Optional[AuthorizationProvider] = None
+        if provider is not None:
+            # A list/tuple of providers means "run several authz planes at once"
+            # (e.g. token scopes for operators + a managed role store for end users):
+            # compose them with an OR — a request is allowed if any plane allows it.
+            # The provider used to be a typed pydantic field, which rejected anything that was not
+            # an AuthorizationProvider instance at construction. It now travels as a plain
+            # attribute, so check here: a class passed instead of an instance, a string, or a
+            # list with a stray element would otherwise be seeded and fail on the first request.
+            from agno.os.authz.provider import AuthorizationProvider as _Provider
+
+            candidates = list(provider) if isinstance(provider, (list, tuple)) else [provider]
+            for candidate in candidates:
+                if not isinstance(candidate, _Provider):
+                    if isinstance(candidate, type):
+                        shown = f"the class {candidate.__name__} (pass an instance: {candidate.__name__}())"
+                    elif isinstance(candidate, str):
+                        shown = f"the string {candidate!r}"
+                    else:
+                        shown = f"a {type(candidate).__name__}"
+                    raise ValueError(
+                        "authorization_provider must be an AuthorizationProvider instance (or a list of them); "
+                        f"got {shown}."
+                    )
+            if isinstance(provider, (list, tuple)):
+                from agno.os.authz._composite import CompositeAuthorizationProvider
+
+                resolved_provider = CompositeAuthorizationProvider(candidates)
+            else:
+                resolved_provider = provider
+
+        if resolved_provider is not None:
+            fastapi_app.state.authorization_provider = resolved_provider
+
+        # The MCP tools run in a mounted sub-app whose ``request.app`` is NOT this app,
+        # so everything the tool gate resolves off ``app.state`` (the provider, the audit
+        # sink) must be mirrored onto it -- see _mirror_authz_state_to_mcp_app. Seeding
+        # runs after the mount, so this is where the first mirror happens.
+        self._mirror_authz_state_to_mcp_app(fastapi_app)
+
+    def _resolve_user_directory(
+        self, user_directory: Optional[Union[bool, "UserDirectory"]]
+    ) -> Optional["UserDirectory"]:
+        """Normalise the ``user_directory`` shorthand into a bound ``UserDirectory``.
+
+        ``True`` means "build the UserDirectory on the OS db with JIT provisioning on", so a caller
+        gets a working directory with zero store wiring. ``False`` / ``None`` means no directory.
+        A ``UserDirectory`` is bound to the OS db (a store of its own is kept; one created without
+        a db adopts the OS db) and refused if it still cannot persist.
+        """
+        if not user_directory:  # None or False
+            return None
+        from agno.os.authz.user_directory import UserDirectory
+
+        if user_directory is True:
+            user_directory = UserDirectory()
+        elif not isinstance(user_directory, UserDirectory):
+            raise TypeError(
+                "AgentOS(user_directory=) takes True/False or a UserDirectory (from agno.os.authz); "
+                f"got {type(user_directory).__name__}."
+            )
+        return user_directory._bind(self.db)
+
+    def _seed_user_directory(self, fastapi_app: FastAPI) -> None:
+        """Seed the credential-less user directory onto ``app.state`` from
+        ``AgentOS(user_directory=...)``.
+
+        A PEER of the authorization provider (who the users are + the disabled kill-switch,
+        not policy), so it is seeded independently of ``authorization_config`` -- a directory
+        can be adopted with plain scope RBAC and no managed roles. The middleware, the
+        WebSocket connect path and the MCP bridge all read these ``app.state`` fields to
+        deny disabled users and (when auto_provision is on) create a row from token claims.
+        """
+        directory = self.user_directory
+        user_store = directory  # the directory is the roster store
+        if user_store is not None:
+            # Change trail: the directory records its changes (user.created/disabled, ...) through
+            # the Authorization object's audit sink, so one switch covers both trails.
+            user_store._attach_audit(self.audit)
+        fastapi_app.state.user_store = user_store
+        fastapi_app.state.user_auto_provision = directory.auto_provision if directory is not None else False
+        fastapi_app.state.user_email_claim = directory.email_claim if directory is not None else "email"
+        fastapi_app.state.user_name_claim = directory.name_claim if directory is not None else "name"
+        fastapi_app.state.user_directory_fail_closed = directory.fail_closed if directory is not None else False
+        # The managed role store comes only from the Authorization object (it wires roles as a
+        # provider, and hands the store over for provisioning and the /authz API). This is what the
+        # provisioning choke points read to grant the default role on first login, and the signal
+        # for whether managed roles / the /authz API are active.
+        fastapi_app.state.role_store = self._authz_role_store
+        if fastapi_app.state.role_store is None and directory is not None:
+            # A directory with no role store is valid (a pure roster), but say so once at boot: no
+            # roles apply, provisioned users get none, and the /authz roles API is not mounted. This
+            # is the signal a UI uses to hide role management for this deployment.
+            log_info(
+                "The user directory is configured without managed roles. It works as a roster; roles "
+                "are not available and provisioned users get none. Define roles on Authorization(...) "
+                "to enable roles and the /authz API."
+            )
 
     def get_routes(self) -> List[Any]:
         """Retrieve all routes from the FastAPI app.
