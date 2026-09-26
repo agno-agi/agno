@@ -20,6 +20,8 @@ class Timer:
 
     def start(self) -> float:
         self.start_time = perf_counter()
+        self.end_time = None
+        self.elapsed_time = None
         return self.start_time
 
     def stop(self) -> float:
@@ -29,7 +31,7 @@ class Timer:
         return self.end_time
 
     def __enter__(self) -> "Timer":
-        self.start_time = perf_counter()
+        self.start()
         return self
 
     def __exit__(self, *args) -> None:
