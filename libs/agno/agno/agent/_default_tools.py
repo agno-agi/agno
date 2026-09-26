@@ -672,3 +672,69 @@ async def aget_read_past_session_function(
         return "\n".join(lines) if lines else "No messages found in session."
 
     return Function.from_callable(read_past_session, name="read_past_session")
+
+
+def make_activate_skill_entrypoint(agent: "Agent") -> Callable:
+    """Create a closure that activates a named skill in the session state."""
+
+    def _entrypoint(run_context: RunContext, skill_name: str) -> str:
+        """
+        Activate a skill by name to load its associated tools for this session.
+        Call this when you need to use tools provided by a specific skill.
+
+        Args:
+            skill_name (str): The name of the skill to activate.
+
+        Returns:
+            str: A message confirming activation or reporting an error.
+        """
+        if agent.skills is None:
+            return f"Error: No skills configured on this agent."
+
+        skill = agent.skills.get_skill(skill_name)
+        if skill is None:
+            available = ", ".join(agent.skills.get_skill_names())
+            return f"Error: Skill '{skill_name}' not found. Available skills: {available}"
+
+        if run_context.session_state is None:
+            run_context.session_state = {}
+
+        active_skills: List[str] = run_context.session_state.get("active_skills", [])
+        if skill_name not in active_skills:
+            active_skills = list(active_skills)
+            active_skills.append(skill_name)
+            run_context.session_state["active_skills"] = active_skills
+
+        log_debug(f"Activated skill '{skill_name}'. Active skills: {active_skills}")
+        return f"Skill '{skill_name}' activated. Its tools are now available for the next interaction."
+
+    return _entrypoint
+
+
+def make_deactivate_skill_entrypoint(agent: "Agent") -> Callable:
+    """Create a closure that deactivates a named skill in the session state."""
+
+    def _entrypoint(run_context: RunContext, skill_name: str) -> str:
+        """
+        Deactivate a skill by name to remove its tools from future interactions.
+
+        Args:
+            skill_name (str): The name of the skill to deactivate.
+
+        Returns:
+            str: A message confirming deactivation.
+        """
+        if run_context.session_state is None:
+            run_context.session_state = {}
+
+        active_skills: List[str] = run_context.session_state.get("active_skills", [])
+        if skill_name in active_skills:
+            active_skills = [s for s in active_skills if s != skill_name]
+            run_context.session_state["active_skills"] = active_skills
+            log_debug(f"Deactivated skill '{skill_name}'. Active skills: {active_skills}")
+            return f"Skill '{skill_name}' deactivated."
+
+        return f"Skill '{skill_name}' was not active."
+
+    return _entrypoint
+
