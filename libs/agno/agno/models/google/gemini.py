@@ -1300,11 +1300,14 @@ class Gemini(Model):
                     # Handle audio responses (for TTS models)
                     if part.inline_data.mime_type and part.inline_data.mime_type.startswith("audio/"):
                         # Store raw bytes data
-                        model_response.audio = Audio(
-                            id=str(uuid4()),
-                            content=part.inline_data.data,
-                            mime_type=part.inline_data.mime_type,
-                        )
+                        if model_response.audio is not None and model_response.audio.content is not None:
+                            model_response.audio.content += part.inline_data.data or b""
+                        else:
+                            model_response.audio = Audio(
+                                id=str(uuid4()),
+                                content=part.inline_data.data,
+                                mime_type=part.inline_data.mime_type,
+                            )
                     # Image responses
                     else:
                         if model_response.images is None:
@@ -1449,11 +1452,14 @@ class Gemini(Model):
                         # Audio responses
                         if part.inline_data.mime_type and part.inline_data.mime_type.startswith("audio/"):
                             # Store raw bytes audio data
-                            model_response.audio = Audio(
-                                id=str(uuid4()),
-                                content=part.inline_data.data,
-                                mime_type=part.inline_data.mime_type,
-                            )
+                            if model_response.audio is not None and model_response.audio.content is not None:
+                                model_response.audio.content += part.inline_data.data or b""
+                            else:
+                                model_response.audio = Audio(
+                                    id=str(uuid4()),
+                                    content=part.inline_data.data,
+                                    mime_type=part.inline_data.mime_type,
+                                )
                         # Image responses
                         else:
                             if model_response.images is None:
