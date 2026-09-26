@@ -59,6 +59,7 @@ def attach_routes(
     markdown: bool = True,
     unfurl_links: bool = True,
     unfurl_media: bool = True,
+    reply_to_thread_after_mention: bool = False,
 ) -> APIRouter:
     # Inner functions capture config via closure to keep each instance isolated
     entity = agent or team or workflow
@@ -127,6 +128,7 @@ def attach_routes(
         unfurl_links=unfurl_links,
         unfurl_media=unfurl_media,
         markdown=markdown,
+        reply_to_thread_after_mention=reply_to_thread_after_mention,
     )
 
     @router.post(
