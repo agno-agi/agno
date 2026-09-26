@@ -3304,6 +3304,26 @@ def _apply_requirement_tools(run_response: RunOutput, requirements: List[Any]) -
         run_response.tools = updated_tools
 
 
+def _reject_unmatched_continuation_tools(run_response: RunOutput, updated_tools: List[Any]) -> None:
+    """Reject client-supplied tool executions for tool calls the run never issued.
+
+    The continue path with `requirements` overwrites the run's tool list with
+    client-provided ToolExecutions. Without this check a caller can fabricate a
+    tool call (any tool_call_id the model never produced) and have it executed —
+    including on a COMPLETED run that never paused. Every submitted execution
+    must therefore match a tool_call_id the run itself recorded.
+    """
+    if not updated_tools:
+        return
+    known_tool_call_ids = {t.tool_call_id for t in (run_response.tools or []) if t.tool_call_id}
+    for tool in updated_tools:
+        if tool.tool_call_id not in known_tool_call_ids:
+            raise ValueError(
+                f"Tool call '{tool.tool_call_id}' does not match any pending requirement for this run. "
+                "Only tool calls issued by the run can be continued."
+            )
+
+
 def continue_run_dispatch(
     agent: Agent,
     run_response: Optional[RunOutput] = None,
@@ -3547,7 +3567,21 @@ def continue_run_dispatch(
 
         # If we have requirements, get the updated tools and set them in the run_response
         if requirements is not None:
+            updated_tools = [req.tool_execution for req in requirements if req.tool_execution is not None]
+            # Reject client-supplied executions for calls this run never issued before merging them in
+            _reject_unmatched_continuation_tools(run_response, updated_tools)
             _apply_requirement_tools(run_response, requirements)
+
+            # Approval gate: the tools-supplied path must honor the same
+            # server-side approval state as the no-tools path below, so a
+            # client-set `confirmed` on an approval_type="required" tool cannot
+            # bypass a pending admin approval.
+            from agno.run.approval import check_and_apply_approval_resolution
+
+            try:
+                check_and_apply_approval_resolution(agent.db, run_id, run_response)
+            except RuntimeError as e:
+                raise ValueError(str(e))
 
         else:
             # No tools / requirements in the body. Two cases:
@@ -4892,7 +4926,21 @@ async def _acontinue_run(
 
                     # If we have requirements, get the updated tools and set them in the run_response
                     if requirements is not None:
+                        updated_tools = [req.tool_execution for req in requirements if req.tool_execution is not None]
+                        # Reject client-supplied executions for calls this run never issued before merging them in
+                        _reject_unmatched_continuation_tools(run_response, updated_tools)
                         _apply_requirement_tools(run_response, requirements)
+
+                        # Approval gate: the tools-supplied path must honor the same
+                        # server-side approval state as the no-tools path below, so a
+                        # client-set `confirmed` on an approval_type="required" tool cannot
+                        # bypass a pending admin approval.
+                        from agno.run.approval import acheck_and_apply_approval_resolution
+
+                        try:
+                            await acheck_and_apply_approval_resolution(agent.db, run_id, run_response)
+                        except RuntimeError as e:
+                            raise ValueError(str(e))
 
                     else:
                         # No tools / requirements in the body. Two cases:
@@ -5415,7 +5463,21 @@ async def _acontinue_run_stream(
 
                     # If we have requirements, get the updated tools and set them in the run_response
                     if requirements is not None:
+                        updated_tools = [req.tool_execution for req in requirements if req.tool_execution is not None]
+                        # Reject client-supplied executions for calls this run never issued before merging them in
+                        _reject_unmatched_continuation_tools(run_response, updated_tools)
                         _apply_requirement_tools(run_response, requirements)
+
+                        # Approval gate: the tools-supplied path must honor the same
+                        # server-side approval state as the no-tools path below, so a
+                        # client-set `confirmed` on an approval_type="required" tool cannot
+                        # bypass a pending admin approval.
+                        from agno.run.approval import acheck_and_apply_approval_resolution
+
+                        try:
+                            await acheck_and_apply_approval_resolution(agent.db, run_id, run_response)
+                        except RuntimeError as e:
+                            raise ValueError(str(e))
 
                     else:
                         # No tools / requirements in the body. Two cases:
