@@ -1,8 +1,29 @@
+import collections.abc
+import datetime
+import pathlib
+import uuid
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Literal, Optional, Union
+from typing import (
+    AbstractSet,
+    Any,
+    Collection,
+    Dict,
+    Iterable,
+    List,
+    Literal,
+    Mapping,
+    MutableMapping,
+    MutableSequence,
+    MutableSet,
+    Optional,
+    Sequence,
+    Union,
+)
 
+import pytest
 from pydantic import BaseModel
 
+from agno.tools.function import Function, FunctionCall
 from agno.utils.json_schema import (
     get_json_schema,
     get_json_schema_for_arg,
@@ -452,3 +473,138 @@ def test_get_json_schema_with_mixed_nested_structures():
     assert "contact_info" in dataclass_schema["properties"]
     assert "address" in pydantic_schema["properties"]["contact_info"]["properties"]
     assert "address" in dataclass_schema["properties"]["contact_info"]["properties"]
+
+
+def test_get_json_schema_for_arg_any_is_unconstrained():
+    """Any/object must not fall through to an object schema that only `{}` satisfies."""
+    assert get_json_schema_for_arg(Any) == {}
+    assert get_json_schema_for_arg(object) == {}
+
+    assert get_json_schema_for_arg(Dict[str, Any]) == {
+        "type": "object",
+        "propertyNames": {"type": "string"},
+        "additionalProperties": {},
+    }
+    assert get_json_schema_for_arg(List[Any]) == {"type": "array", "items": {}}
+
+    # `{}` is a real (unconstrained) member of a union, not an absent one
+    assert get_json_schema_for_arg(Union[Any, int]) == {"anyOf": [{}, {"type": "integer"}]}
+
+
+def test_get_json_schema_any_parameter_is_kept():
+    schema = get_json_schema({"payload": Any, "maybe": Optional[Any]}, {"payload": "Anything"})
+
+    assert schema["properties"]["payload"] == {"description": "Anything"}
+    assert schema["properties"]["maybe"] == {}
+
+
+def test_get_json_schema_dataclass_any_field_stays_in_properties():
+    """An Any field must not be listed in `required` while missing from `properties`."""
+
+    @dataclass
+    class Envelope:
+        payload: Any
+        name: str
+
+    schema = get_json_schema_for_arg(Envelope)
+
+    assert schema["properties"] == {"payload": {}, "name": {"type": "string"}}
+    assert schema["required"] == ["payload", "name"]
+
+
+@pytest.mark.parametrize(
+    "hint, item_type",
+    [
+        (Sequence[str], "string"),
+        (MutableSequence[int], "integer"),
+        (Collection[float], "number"),
+        (Iterable[bool], "boolean"),
+        (AbstractSet[str], "string"),
+        (MutableSet[int], "integer"),
+        (collections.abc.Sequence[str], "string"),
+    ],
+)
+def test_get_json_schema_for_arg_abstract_collections(hint, item_type):
+    assert get_json_schema_for_arg(hint) == {"type": "array", "items": {"type": item_type}}
+
+
+@pytest.mark.parametrize("hint", [Mapping[str, int], MutableMapping[str, int], collections.abc.Mapping[str, int]])
+def test_get_json_schema_for_arg_abstract_mappings(hint):
+    assert get_json_schema_for_arg(hint) == {
+        "type": "object",
+        "propertyNames": {"type": "string"},
+        "additionalProperties": {"type": "integer"},
+    }
+
+
+def test_get_json_schema_for_arg_bare_abstract_types():
+    # Same shape as their concrete counterparts (bare list / bare dict)
+    assert get_json_schema_for_arg(collections.abc.Sequence) == {"type": "array"}
+    assert get_json_schema_for_arg(collections.abc.Iterable) == {"type": "array"}
+    assert get_json_schema_for_arg(collections.abc.Mapping) == {"type": "object", "additionalProperties": True}
+    assert get_json_schema_for_arg(collections.abc.MutableMapping) == {"type": "object", "additionalProperties": True}
+
+
+def test_get_json_schema_for_arg_string_serialized_types():
+    # Only date-time carries a `format`; the rest stay plain strings
+    assert get_json_schema_for_arg(datetime.datetime) == {"type": "string", "format": "date-time"}
+    assert get_json_schema_for_arg(datetime.date) == {"type": "string"}
+    assert get_json_schema_for_arg(datetime.time) == {"type": "string"}
+    assert get_json_schema_for_arg(uuid.UUID) == {"type": "string"}
+    assert get_json_schema_for_arg(pathlib.Path) == {"type": "string"}
+    assert get_json_schema_for_arg(pathlib.PurePosixPath) == {"type": "string"}
+
+    assert get_json_schema_for_arg(List[datetime.datetime]) == {
+        "type": "array",
+        "items": {"type": "string", "format": "date-time"},
+    }
+    assert get_json_schema({"day": Optional[datetime.date]})["properties"]["day"] == {"type": "string"}
+
+
+def test_function_from_callable_round_trips_abstract_and_string_types():
+    """The generated schema and the call path agree: model-side JSON in, typed Python values out."""
+
+    def book(
+        day: datetime.date,
+        at: datetime.datetime,
+        ref: uuid.UUID,
+        tags: Sequence[str],
+        meta: Mapping[str, Any],
+    ) -> str:
+        """Book a slot.
+
+        Args:
+            day: The day.
+            at: The start.
+            ref: Reference id.
+            tags: Tags.
+            meta: Free-form metadata.
+        """
+        assert isinstance(day, datetime.date) and not isinstance(day, datetime.datetime)
+        assert isinstance(at, datetime.datetime)
+        assert isinstance(ref, uuid.UUID)
+        return f"{list(tags)} {dict(meta)}"
+
+    function = Function.from_callable(book)
+    properties = function.parameters["properties"]
+
+    assert properties["tags"]["type"] == "array"
+    assert properties["meta"]["type"] == "object"
+    assert properties["meta"]["additionalProperties"] == {}
+    assert properties["day"]["type"] == "string"
+    assert properties["at"]["format"] == "date-time"
+
+    call = FunctionCall(
+        function=function,
+        arguments={
+            "day": "2026-01-02",
+            "at": "2026-01-02T03:04:05Z",
+            "ref": str(uuid.uuid4()),
+            "tags": ["a", "b"],
+            "meta": {"k": [1, {"z": 2}]},
+        },
+    )
+    result = call.execute()
+
+    assert result.status == "success", result.error
+    assert result.result == "['a', 'b'] {'k': [1, {'z': 2}]}"
