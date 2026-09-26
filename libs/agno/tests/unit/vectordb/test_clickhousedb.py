@@ -638,3 +638,16 @@ async def test_async_search_raises_when_the_table_is_there(mock_clickhouse, mock
             await mock_clickhouse.async_search("test query")
 
         mock_create.assert_not_called()
+
+
+def test_search_raises_the_query_error_when_create_also_fails(mock_clickhouse, mock_embedder):
+    """The clickhouse half of @VANDRANKI's case."""
+    mock_embedder.get_embedding.return_value = [0.1] * 1024
+    mock_clickhouse.client.query.side_effect = Exception("connection refused during search")
+
+    with (
+        patch.object(mock_clickhouse, "table_exists", return_value=False),
+        patch.object(mock_clickhouse, "create", side_effect=Exception("connection refused during create")),
+    ):
+        with pytest.raises(Exception, match="during search"):
+            mock_clickhouse.search("test query")

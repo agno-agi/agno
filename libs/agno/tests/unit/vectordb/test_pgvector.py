@@ -416,6 +416,25 @@ def test_hybrid_search_raises_when_the_table_is_there(mock_pgvector, mock_embedd
         mock_create.assert_not_called()
 
 
+def test_search_raises_the_query_error_when_create_also_fails(mock_pgvector, mock_embedder):
+    """Raised by @VANDRANKI in review of #10545.
+
+    table_exists() swallows its own errors and answers False, so a dead connection takes the
+    "table missing" branch and create() fails against the same connection. The caller must see the
+    ORIGINAL query failure - a create error in its place misdirects diagnosis.
+    """
+    mock_embedder.get_embedding.return_value = [0.1] * 1024
+    mock_pgvector.Session.side_effect = Exception("connection refused during search")
+
+    with (
+        patch("agno.vectordb.pgvector.pgvector.select"),
+        patch.object(mock_pgvector, "table_exists", return_value=False),
+        patch.object(mock_pgvector, "create", side_effect=Exception("connection refused during create")),
+    ):
+        with pytest.raises(Exception, match="during search"):
+            mock_pgvector.vector_search("test query")
+
+
 def test_drop(mock_pgvector):
     """Test drop method."""
     with patch.object(mock_pgvector, "table_exists", return_value=True):
