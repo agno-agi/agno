@@ -184,7 +184,10 @@ class OpenAIEmbedder(Embedder):
             try:
                 response: CreateEmbeddingResponse = await self.aclient.embeddings.create(**req)
                 batch_embeddings = pad_batch_embeddings(
-                    [data.embedding for data in response.data], batch_texts, "OpenAI"
+                    [data.embedding for data in response.data],
+                    batch_texts,
+                    "OpenAI",
+                    indices=[data.index for data in response.data],
                 )
                 all_embeddings.extend(batch_embeddings)
 

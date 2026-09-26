@@ -45,13 +45,30 @@ def pad_batch_embeddings(
     embeddings: List[List[float]],
     batch_texts: List[str],
     provider: Optional[str] = None,
+    *,
+    indices: Optional[List[int]] = None,
 ) -> List[List[float]]:
     """Pad a short batch response so every text keeps its own slot.
 
     Callers pair embeddings with documents by position, so a response carrying fewer
     embeddings than texts would shift every later text onto the wrong vector. Missing
     entries become empty vectors, which ingestion counts and reports as a shortfall.
+    When the provider supplies indices, use those positions rather than response order.
     """
+    if indices is not None:
+        aligned: List[List[float]] = [[] for _ in batch_texts]
+        seen = set()
+        for index, embedding in zip(indices, embeddings):
+            if not isinstance(index, int) or not 0 <= index < len(batch_texts) or index in seen:
+                raise ValueError(f"{provider or 'Embedder'} returned an invalid embedding index: {index}")
+            seen.add(index)
+            aligned[index] = embedding
+        if len(embeddings) < len(batch_texts):
+            log_warning(
+                f"{provider or 'Embedder'} batch response returned {len(embeddings)} of "
+                f"{len(batch_texts)} embeddings; missing indices are recorded as unembedded"
+            )
+        return aligned
     if len(embeddings) >= len(batch_texts):
         return embeddings
     log_warning(
