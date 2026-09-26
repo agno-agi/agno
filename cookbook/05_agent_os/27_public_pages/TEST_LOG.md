@@ -237,3 +237,180 @@ unrelated modules, identical on the PR base and head; no new diagnostics.
 - PASS: full format and validation scripts.
 - FIXED: an empty page index returned before command validation, so invalid syntax, unsupported commands, pipes and missing paths all reported `is_error=False` and MCP saw success. The empty-index message now follows validation; malformed input stays an error and a valid command against an empty index still reports it.
 - Existing chat command tools retain their character-bound text contract. Direct typed/MCP command results additionally bound the complete result JSON; MCP envelope overhead remains under the transport's own limits. No product feedback or score-interpretation policy moved upstream.
+
+---
+
+### public_pages.py sync-docs and page_sync_progress.py (2026-09-21)
+
+**Status:** PASS offline and live. The live sync reported `partial` twice before
+`unchanged`; see the live results.
+
+**Description:** Page sync progress from Knowledge, through the `sync-docs` workflow
+function step, over the AgentOS REST/SSE workflow route, to `AgentOSClient`.
+Python 3.12.13, pytest 9.1.1, httpx-based `AgentOSClient`, PostgreSQL 18.1 with
+pgvector 0.8.1. All commands ran with `PYTHONPATH=libs/agno`.
+
+**Result:**
+- `pytest libs/agno/tests/unit/os/test_client.py libs/agno/tests/unit/knowledge/test_page_contract.py
+  libs/agno/tests/unit/workflow/test_function_progress.py
+  libs/agno/tests/unit/workflow/test_workflow_event_stream.py
+  libs/agno/tests/unit/knowledge/test_sync_progress_workers.py
+  libs/agno/tests/unit/test_py39_compat.py`: 107 passed, 2 skipped, twice with
+  identical results. The skips are sync execution with an async executor, which
+  sync execution rejects by design.
+- `AgentOSClient.run_workflow_stream()` parses a `StepProgress` SSE event into
+  `StepProgressEvent` with its content, data, run, session, step and attempt, and
+  forwards the `Authorization` header. Without the event's registry entry the
+  client drops it and these tests fail.
+- `pytest libs/agno/tests/integration/os/test_workflow_runs.py`: 19 passed, twice. A
+  function step's progress reaches the real client through the real route before
+  `StepCompleted` and `WorkflowCompleted`; the final content stays the report; a
+  second run carries nothing over from the first.
+- The cookbook step yields `Waiting to synchronize pages`, `Discovered 2 pages`,
+  `Processed 2 of 2 pages (1 updated, 1 failed)`, `Pruned 3 stale pages`, the full
+  snapshot in `data`, then the `SyncReport`; a `partial` report marks the step
+  unsuccessful, and a request the schema rejects never reaches the page source.
+- The `sync-docs` workflow streams every `StepProgress` and saves none of them with
+  the run: AgentOS stores run events, and the workflow skips this one because there
+  is one per page. The saved run keeps `StepCompleted`, `WorkflowCompleted` and the
+  report, on a first and a second run.
+- `page_sync_progress.py` prints progress in order and then the report, exit 0. It
+  exits non-zero on a workflow error, a cancellation, no progress, no report and a
+  `partial` report, and exits 2 without calling the server when
+  `PAGE_DEMO_SYNC_TOKEN` is unset. The token never appears in its output. It sends
+  only `message` and `stream`; the request holds `reason` and `reindex`.
+- Security, `AGNO_PAGE_TEST_DB_URL=... pytest libs/agno/tests/integration/os/test_public_surface.py`:
+  7 passed, twice. An anonymous streaming request to `sync-docs` returns 401; the
+  trusted token receives `StepProgress` before `WorkflowCompleted` and the report
+  as final content.
+- `pytest libs/agno/tests/unit/workflow`: 795 passed, 9 skipped.
+  `pytest libs/agno/tests/unit/knowledge`: 1105 passed, 13 skipped.
+- `AGNO_PAGE_TEST_DB_URL=... pytest libs/agno/tests/integration/knowledge/test_page_storage.py`:
+  159 passed, none skipped, including sync/async progress counts, terminal partial
+  status and observer failure isolation on both `sync_pages` and `async_sync_pages`.
+  The progress tests ran twice in separate temporary databases; none were left behind.
+- On Python 3.9.6 with the storage coordinator stubbed, `astream_sync_pages`
+  iterates to the terminal result; `contextlib.aclosing` does not exist there.
+- `ruff check` and `ruff format --check` passed for every changed file. `validate.sh`
+  reports the same 53 `mypy` errors as main, no new diagnostics. The cookbook
+  pattern check reports `missing_sections` for `page_sync_progress.py`, as it does
+  for the other nine files in this folder on main.
+
+**Live results (2026-09-21):** `public_pages.py serve` on `127.0.0.1:7777` with a new
+`page_demo` database, `text-embedding-3-small` embeddings and `gpt-5.6-luna`
+responses. Source `https://llmstxt.org/llms.txt`: HTTP 200, three links, all on
+`llmstxt.org` (`index.md`, `intro.html.md`, `ed.md`).
+- Startup was clean. The only listening socket was `127.0.0.1:7777`. `/health` 200;
+  `/readyz` `{"status":"ok","database":"ok","request_limits":"ok"}`; `/agents` listed
+  only `docs`; `/config`, `/docs` and `/workflows` returned 404, as this public
+  surface intends.
+- Anonymous and wrong-token requests to `/workflows/sync-docs/runs` returned 401.
+- `page_sync_progress.py`, run three times with the trusted token. Progress lines
+  preceded the report every time, and neither the token nor the key was printed.
+  1. `Waiting to synchronize pages` twice, `Discovered 3 pages`, `Processed 1 of 3
+     pages (1 updated, 0 failed)`, `Processed 2 of 3 pages (2 updated, 0 failed)`,
+     `Processed 3 of 3 pages (2 updated, 1 failed)`. Report `partial`: updated 2,
+     failed 1, `page_sync_failed`. The server logged `Step reconcile failed (attempt 1):
+     sync_failed`, so the step retried and each attempt reported `Waiting`.
+  2. `Processed 1 of 3 pages (0 updated, 0 failed)`, `Processed 2 of 3 pages (0
+     updated, 1 failed)`, `Processed 3 of 3 pages (1 updated, 1 failed)`. Report
+     `partial`: updated 1, failed 1. The page that failed in run 1 published; an
+     already published, unchanged page failed its refresh and kept its revision.
+  3. Three lines with `0 updated, 0 failed`, then `Pruned 0 stale pages`. Report
+     `unchanged`, no failures. Unchanged pages were not embedded again.
+- Each failure was `Page sync failed (SyncFailed)` on a different page. All three
+  pages returned 200 to `curl` in under a second. Forty direct calls to the existing
+  page fetcher against this source all succeeded but took 0.5 to 19 seconds per
+  page, against its 30 second limit. The failures were not reproduced outside a
+  sync.
+- `page_filesystem.py "ls /"` listed `ed.md`, `index.md` and `intro.html.md`.
+- The server's `search_docs` tool, queried for `purpose of llms.txt proposal`,
+  returned nine results across the three pages, the `Proposal` section first with
+  score 0.80, every URL on `llmstxt.org`, `partial` false.
+- The `docs` agent streamed an answer to "What does the llms.txt proposal
+  recommend, and which documents are linked from its index? Cite the source URLs."
+  with two tool calls and citations to `https://llmstxt.org/`. All 30 links it
+  listed are present in the source page.
+- `page_demo` stored three workflow sessions and one agent session. No temporary
+  database was created and every table the demo made is inside `page_demo`.
+- The server stopped on interrupt and port 7777 closed. `page_demo` was kept.
+  `git status` was identical before and after the live run.
+- NOT RUN: `--reindex`. MCP delivery and Control Plane or AG-UI rendering are not
+  part of this example and were not exercised.
+
+---
+
+### Cancellation, reindex and saved events (2026-09-22)
+
+**Status:** PASS offline and live.
+
+**Description:** The tree of this commit series: cancelling a workflow stops a
+function step at its next yield (`Step._function_events` / `_afunction_events`),
+`BoundedWorkers.stream`/`astream` deliver a finished worker's buffered snapshots
+and result however late the consumer resumes, and `astream_sync_pages` documents
+`aclose()` for Python 3.9. Environment: Python 3.12.13, pytest 9.1.1, PostgreSQL 18.1
+with pgvector 0.8.1 on port 5532, `PYTHONPATH=libs/agno`, `AGNO_TELEMETRY=false`.
+Every test written for a fix was seen failing first; stateful suites ran twice.
+
+**Result:**
+- `pytest libs/agno/tests/unit/knowledge/test_sync_progress_workers.py`: 11 passed,
+  twice. A worker that emits two snapshots and finishes inside a 0.2 s budget still
+  delivers both and its result to a consumer that resumes after 0.35 s; an unfinished
+  worker still raises `operation_deadline`; sync and async.
+- `pytest libs/agno/tests/integration/workflows/test_workflow_cancellation.py
+  -k TestFunctionStepCancellationStopsTheFunction`: 4 passed, twice. A function step
+  yielding ten pages, cancelled after the first, works on no further page, its
+  `finally` runs before the stream ends, exactly one `WorkflowCancelled` then
+  `WorkflowCompleted`, the run is stored as cancelled with the events streamed
+  before the cancel and no step result; sync and async, streaming and not, two
+  runs each.
+- `pytest libs/agno/tests/integration/os/test_workflow_runs.py`: 20 passed, twice.
+  A cancel through `POST /workflows/sync-docs/runs/{run_id}/cancel` while the step is
+  between pages stops it the same way, twice in one process.
+- `pytest libs/agno/tests/unit/knowledge/test_page_contract.py`: cancelling the
+  cookbook's `sync-docs` run cancels the page worker's budget, the worker ends and
+  its capacity returns, twice. Focused set (client, page contract, function
+  progress, event stream, sync workers, Python 3.9 compatibility): 112 passed,
+  2 skipped by design, twice.
+- `pytest libs/agno/tests/unit/workflow`: 795 passed, 9 skipped.
+  `pytest libs/agno/tests/unit/knowledge`: 1110 passed, 13 skipped.
+  `pytest libs/agno/tests/unit/os`: 3331 passed, 26 skipped.
+  `pytest libs/agno/tests/integration/workflows`: 470 passed, 42 skipped; the 41
+  failures need `OPENAI_API_KEY` and fail the same way on main.
+- `AGNO_PAGE_TEST_DB_URL=... pytest libs/agno/tests/integration/os/test_public_surface.py`:
+  7 passed, twice. `... test_page_storage.py`: 159 passed, progress tests twice;
+  no temporary database left behind.
+- Python 3.9.6: every changed file parses; `utils/bounded.py` runs the late-consumer
+  scenario there. `ruff check` and `ruff format --check` clean on every changed
+  file. `validate.sh`: 53 mypy diagnostics, identical to main.
+
+**Live results (2026-09-22):** `public_pages.py serve` on `127.0.0.1:7777`, database
+`page_demo` (kept from the previous entry), `text-embedding-3-small`, source
+`https://llmstxt.org/llms.txt` (three pages). Commands ran with
+`PAGE_DEMO_DB_URL=postgresql+psycopg://ai:<password>@localhost:5532/page_demo`,
+`PAGE_DEMO_SYNC_TOKEN=<token>` and `OPENAI_API_KEY=<key>` in the environment only.
+- Startup clean; the only listening socket was `127.0.0.1:7777`; `/health` 200,
+  `/readyz` all `ok`; `/config` and `/sessions` 404; anonymous and wrong-token
+  `POST /workflows/sync-docs/runs` returned 401.
+- `page_sync_progress.py`: six progress lines, report `unchanged`, exit 0.
+- `page_sync_progress.py --reindex`: `Processed n of 3 pages (n updated, 0 failed)`,
+  report `completed`, updated 3, exit 0; binding revision 3 to 6. Both saved runs
+  hold exactly `WorkflowStarted > StepStarted > StepCompleted > WorkflowCompleted`;
+  no `StepProgress` is stored.
+- Cancellation, twice: a client started `--reindex` through `AgentOSClient` and
+  called `cancel_workflow_run` after `Discovered 3 pages`. Each time: no progress
+  after the cancel, then `WorkflowCancelled` and `WorkflowCompleted`; the server
+  logged the cancel at the workflow and the step; the run was stored `CANCELLED`
+  with `WorkflowStarted > StepStarted`; `pg_locks` held no advisory lock; the
+  binding revision moved 6 to 7, then 7 to 9: one page, then two pages, completed
+  after the request and the third never started; nothing was pruned. A normal sync
+  straight after each cancel acquired the writer lock and reported `unchanged`,
+  the second one after both cancels, so the two-slot sync pool had lost no worker.
+- Shutdown on interrupt completed promptly. Afterwards: port 7777 closed, no demo
+  process, no advisory lock, no temporary database, the token in no repository
+  file; the token file and Keychain entry were removed. `git status` unchanged.
+- Known limitation: cancellation is cooperative. It is observed at the next
+  progress snapshot, which reports a page already published, and the page in
+  progress finishes its transaction; a function step that never yields cannot be
+  stopped. NOT RUN: MCP delivery and Control Plane or AG-UI rendering, which are
+  not part of this example.

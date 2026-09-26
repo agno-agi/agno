@@ -10,7 +10,21 @@ from enum import Enum
 from io import BytesIO
 from os.path import basename
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Literal, Optional, Set, Tuple, Union, cast, overload
+from typing import (
+    Any,
+    AsyncIterator,
+    Callable,
+    Dict,
+    Iterator,
+    List,
+    Literal,
+    Optional,
+    Set,
+    Tuple,
+    Union,
+    cast,
+    overload,
+)
 
 from httpx import AsyncClient
 
@@ -27,6 +41,7 @@ from agno.knowledge.page import (
     PageSearchConfig,
     PageSourceBinding,
     PageSourceMigration,
+    PageSyncProgress,
     SearchResult,
     SyncReport,
 )
@@ -283,12 +298,15 @@ class Knowledge(RemoteKnowledge):
         index_version: str = "1",
         reindex: bool = False,
         validate_discovery: Optional[Callable[[int, int], None]] = None,
+        on_progress: Optional[Callable[[PageSyncProgress], None]] = None,
     ) -> SyncReport:
         """Reconcile an llms.txt source, publishing each page atomically.
 
         validate_discovery receives (discovered_count, published_count) under the
         namespace sync lock, before fetching or publishing pages. Supply a fast,
         synchronous check that returns None to accept or raises ValueError to abort.
+        on_progress is a short synchronous observer; failures disable observation
+        without failing publication. Use stream_sync_pages for bounded iteration.
         """
         return self._pages().sync(
             url=url,
@@ -297,6 +315,7 @@ class Knowledge(RemoteKnowledge):
             index_version=index_version,
             reindex=reindex,
             validate_discovery=validate_discovery,
+            on_progress=on_progress,
         )
 
     async def async_sync_pages(
@@ -308,6 +327,7 @@ class Knowledge(RemoteKnowledge):
         index_version: str = "1",
         reindex: bool = False,
         validate_discovery: Optional[Callable[[int, int], None]] = None,
+        on_progress: Optional[Callable[[PageSyncProgress], None]] = None,
     ) -> SyncReport:
         """Reconcile pages off the event loop with retained capacity on cancellation.
 
@@ -324,8 +344,38 @@ class Knowledge(RemoteKnowledge):
             index_version=index_version,
             reindex=reindex,
             validate_discovery=validate_discovery,
+            on_progress=on_progress,
             seconds=3900,
         )
+
+    def stream_sync_pages(self, **kwargs: Any) -> Iterator[Union[PageSyncProgress, SyncReport]]:
+        """Sync pages yielding bounded observer snapshots, then one terminal SyncReport.
+
+        Accepts sync_pages arguments except on_progress. Slow consumers may skip
+        intermediate snapshots; absolute counts and the terminal result stay valid.
+        Errors propagate and never masquerade as successful reports. Close the
+        iterator to cancel; worker capacity remains held during resource cleanup.
+        """
+        from agno.knowledge.page._coordinator import SYNC_WORKERS
+
+        if "on_progress" in kwargs:
+            raise ValueError("stream_sync_pages manages its own progress observer")
+        yield from SYNC_WORKERS.stream(self._pages().sync, seconds=3900, **kwargs)
+
+    async def astream_sync_pages(self, **kwargs: Any) -> AsyncIterator[Union[PageSyncProgress, SyncReport]]:
+        """Async stream_sync_pages. To stop early, await the iterator's aclose() in a
+        finally; contextlib.aclosing does the same but only exists on Python 3.10+."""
+        from agno.knowledge.page._coordinator import SYNC_WORKERS
+
+        if "on_progress" in kwargs:
+            raise ValueError("astream_sync_pages manages its own progress observer")
+        events = SYNC_WORKERS.astream(self._pages().sync, seconds=3900, **kwargs)
+        # try/finally rather than contextlib.aclosing, which does not exist on Python 3.9.
+        try:
+            async for event in events:
+                yield event
+        finally:
+            await events.aclose()
 
     def inspect_page_source(self) -> PageSourceBinding:
         """Inspect the namespace's current storage/source binding without mutations."""
