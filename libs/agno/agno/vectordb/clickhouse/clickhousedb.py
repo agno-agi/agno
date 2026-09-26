@@ -618,8 +618,17 @@ class Clickhouse(VectorDb):
             )
         except Exception as e:
             logger.exception("Error searching for documents")
-            log_error(f"Table might not exist, creating for future use: {str(e)}")
-            self.create()
+            if self.table_exists():
+                raise
+            log_error(f"Table does not exist, creating for future use: {str(e)}")
+            try:
+                self.create()
+            except Exception:
+                # table_exists() swallows its own errors and answers False, so a dead connection lands
+                # here too and create() fails against the same connection. Raised by @VANDRANKI in review:
+                # the caller should see the ORIGINAL query failure, not a create error that misdirects
+                # diagnosis. The create failure stays attached as context.
+                raise e
             return []
 
         # Build search results
@@ -686,8 +695,17 @@ class Clickhouse(VectorDb):
             )
         except Exception as e:
             logger.exception("Async error searching for documents")
-            log_error(f"Table might not exist, creating for future use: {str(e)}")
-            await self.async_create()
+            if await self.async_table_exists():
+                raise
+            log_error(f"Table does not exist, creating for future use: {str(e)}")
+            try:
+                await self.async_create()
+            except Exception:
+                # table_exists() swallows its own errors and answers False, so a dead connection lands
+                # here too and create() fails against the same connection. Raised by @VANDRANKI in review:
+                # the caller should see the ORIGINAL query failure, not a create error that misdirects
+                # diagnosis. The create failure stays attached as context.
+                raise e
             return []
 
         # Build search results
