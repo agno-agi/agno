@@ -6,6 +6,7 @@ from typing_extensions import Literal
 from agno.knowledge.embedder.base import (
     Embedder,
     aembed_texts_individually,
+    decode_embedding,
     first_embedding,
     pad_batch_embeddings,
     raise_embedding_error,
@@ -24,6 +25,7 @@ except ImportError:
 class OpenAIEmbedder(Embedder):
     id: str = "text-embedding-3-small"
     dimensions: Optional[int] = None
+    # Wire format; embedding methods always return float vectors.
     encoding_format: Literal["float", "base64"] = "float"
     user: Optional[str] = None
     api_key: Optional[str] = None
@@ -88,7 +90,7 @@ class OpenAIEmbedder(Embedder):
         try:
             response: CreateEmbeddingResponse = self.response(text=text)
             entry = first_embedding(response.data, "OpenAI")
-            return entry.embedding if entry else []
+            return decode_embedding(entry.embedding) if entry else []
         except Exception as e:
             raise_embedding_error(e, model_id=self.id, provider="OpenAI")
 
@@ -97,7 +99,7 @@ class OpenAIEmbedder(Embedder):
             response: CreateEmbeddingResponse = self.response(text=text)
 
             entry = first_embedding(response.data, "OpenAI")
-            embedding = entry.embedding if entry else []
+            embedding = decode_embedding(entry.embedding) if entry else []
             usage = response.usage
             if usage:
                 return embedding, usage.model_dump()
@@ -122,7 +124,7 @@ class OpenAIEmbedder(Embedder):
         try:
             response: CreateEmbeddingResponse = await self.aclient.embeddings.create(**req)
             entry = first_embedding(response.data, "OpenAI")
-            return entry.embedding if entry else []
+            return decode_embedding(entry.embedding) if entry else []
         except Exception as e:
             raise_embedding_error(e, model_id=self.id, provider="OpenAI")
 
@@ -143,7 +145,7 @@ class OpenAIEmbedder(Embedder):
         try:
             response = await self.aclient.embeddings.create(**req)
             entry = first_embedding(response.data, "OpenAI")
-            embedding = entry.embedding if entry else []
+            embedding = decode_embedding(entry.embedding) if entry else []
             usage = response.usage
             return embedding, usage.model_dump() if usage else None
         except Exception as e:
@@ -184,7 +186,7 @@ class OpenAIEmbedder(Embedder):
             try:
                 response: CreateEmbeddingResponse = await self.aclient.embeddings.create(**req)
                 batch_embeddings = pad_batch_embeddings(
-                    [data.embedding for data in response.data], batch_texts, "OpenAI"
+                    [decode_embedding(data.embedding) for data in response.data], batch_texts, "OpenAI"
                 )
                 all_embeddings.extend(batch_embeddings)
 
