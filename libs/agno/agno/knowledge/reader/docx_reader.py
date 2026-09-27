@@ -39,7 +39,9 @@ class DocxReader(Reader):
 
     @classmethod
     def get_supported_content_types(cls) -> List[ContentType]:
-        return [ContentType.DOCX, ContentType.DOC]
+        # .doc is deliberately absent: python-docx reads the Open XML package only, and a
+        # legacy OLE2 .doc fails to open, so advertising it offers a format that never reads.
+        return [ContentType.DOCX]
 
     def read(self, file: Union[Path, IO[Any]], name: Optional[str] = None) -> List[Document]:
         """Read a docx file and return a list of documents"""

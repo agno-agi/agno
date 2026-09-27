@@ -13,7 +13,7 @@ from agno.run.workflow import (
 )
 from agno.workflow import Condition, Parallel, Workflow
 from agno.workflow.cel import CEL_AVAILABLE
-from agno.workflow.types import OnError, StepInput, StepOutput
+from agno.workflow.types import HumanReview, OnError, StepInput, StepOutput
 
 
 # Helper functions
@@ -265,7 +265,7 @@ def test_condition_error_handling(shared_db):
                 name="failing_check",
                 evaluator=failing_evaluator,
                 steps=[research_step],
-                on_error=OnError.fail,  # Ensure exception propagates
+                human_review=HumanReview(on_error=OnError.fail),  # Ensure exception propagates
             )
         ],
     )
@@ -982,7 +982,7 @@ def test_condition_on_error_fail_raises_exception():
         name="ConditionalStep",
         evaluator=True,
         steps=[failing_step, success_step],
-        on_error=OnError.fail,
+        human_review=HumanReview(on_error=OnError.fail),
     )
     step_input = StepInput(input="test")
 
@@ -1000,7 +1000,7 @@ def test_condition_on_error_skip_in_workflow(shared_db):
                 name="ConditionalStep",
                 evaluator=True,
                 steps=[failing_step, success_step],
-                on_error="skip",  # Test string value
+                human_review=HumanReview(on_error="skip"),  # Test string value
             ),
             success_step,  # This should still execute
         ],
@@ -1030,7 +1030,7 @@ def test_condition_on_error_fail_in_workflow(shared_db):
                 name="ConditionalStep",
                 evaluator=True,
                 steps=[failing_step, success_step],
-                on_error=OnError.fail,
+                human_review=HumanReview(on_error=OnError.fail),
             ),
             success_step,  # This should not execute
         ],
@@ -1047,7 +1047,7 @@ async def test_condition_on_error_skip_async():
         name="ConditionalStep",
         evaluator=True,
         steps=[failing_step, success_step],
-        on_error="skip",
+        human_review=HumanReview(on_error="skip"),
     )
     step_input = StepInput(input="test")
 
@@ -1068,7 +1068,7 @@ async def test_condition_on_error_fail_async():
         name="ConditionalStep",
         evaluator=True,
         steps=[failing_step, success_step],
-        on_error=OnError.fail,
+        human_review=HumanReview(on_error=OnError.fail),
     )
     step_input = StepInput(input="test")
 
@@ -1084,7 +1084,7 @@ def test_condition_on_error_skip_streaming():
         name="ConditionalStep",
         evaluator=True,
         steps=[failing_step, success_step],
-        on_error="skip",
+        human_review=HumanReview(on_error="skip"),
     )
     step_input = StepInput(input="test")
 
@@ -1118,7 +1118,7 @@ async def test_condition_on_error_skip_async_streaming():
         name="ConditionalStep",
         evaluator=True,
         steps=[failing_step, success_step],
-        on_error="skip",
+        human_review=HumanReview(on_error="skip"),
     )
     step_input = StepInput(input="test")
 
@@ -1153,7 +1153,7 @@ def test_condition_on_error_applies_to_all_execution_methods():
         name="FailCondition",
         evaluator=True,
         steps=[failing_step],
-        on_error=OnError.fail,
+        human_review=HumanReview(on_error=OnError.fail),
     )
     step_input = StepInput(input="test")
 
@@ -1184,7 +1184,7 @@ def test_condition_on_error_in_else_branch():
         evaluator=False,  # Trigger else branch
         steps=[success_step],
         else_steps=[failing_step, success_step],
-        on_error=OnError.skip,
+        human_review=HumanReview(on_error=OnError.skip),
     )
     step_input = StepInput(input="test")
 
@@ -1210,7 +1210,7 @@ def test_condition_on_error_pause_in_workflow(shared_db):
                 name="ConditionalStep",
                 evaluator=True,
                 steps=[failing_step, success_step],
-                on_error=OnError.pause,
+                human_review=HumanReview(on_error=OnError.pause),
             ),
             success_step,  # This should not execute
         ],
@@ -1234,7 +1234,7 @@ def test_condition_on_error_pause_direct():
         name="ConditionalStep",
         evaluator=True,
         steps=[failing_step, success_step],
-        on_error=OnError.pause,
+        human_review=HumanReview(on_error=OnError.pause),
     )
     step_input = StepInput(input="test")
 
@@ -1251,7 +1251,7 @@ async def test_condition_on_error_pause_async():
         name="ConditionalStep",
         evaluator=True,
         steps=[failing_step, success_step],
-        on_error=OnError.pause,
+        human_review=HumanReview(on_error=OnError.pause),
     )
     step_input = StepInput(input="test")
 
@@ -1269,7 +1269,7 @@ async def test_condition_on_error_fail_async_streaming():
         name="ConditionalStep",
         evaluator=True,
         steps=[failing_step, success_step],
-        on_error=OnError.fail,
+        human_review=HumanReview(on_error=OnError.fail),
     )
     step_input = StepInput(input="test")
 
@@ -1295,7 +1295,7 @@ async def test_condition_on_error_pause_async_streaming():
         name="ConditionalStep",
         evaluator=True,
         steps=[failing_step, success_step],
-        on_error=OnError.pause,
+        human_review=HumanReview(on_error=OnError.pause),
     )
     step_input = StepInput(input="test")
 
@@ -1320,14 +1320,15 @@ def test_condition_on_error_serialization_roundtrip():
             name="roundtrip_test",
             evaluator=True,
             steps=[success_step],
-            on_error=on_error_value,
+            human_review=HumanReview(on_error=on_error_value),
         )
 
         data = condition.to_dict()
         restored = Condition.from_dict(data)
 
-        restored_value = restored.on_error.value if isinstance(restored.on_error, OnError) else restored.on_error
+        restored_on_error = restored.human_review.on_error
+        restored_value = restored_on_error.value if isinstance(restored_on_error, OnError) else restored_on_error
         expected_value = on_error_value.value if isinstance(on_error_value, OnError) else on_error_value
         assert restored_value == expected_value, (
-            f"on_error={on_error_value} did not survive roundtrip: got {restored.on_error}"
+            f"on_error={on_error_value} did not survive roundtrip: got {restored_on_error}"
         )

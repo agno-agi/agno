@@ -113,17 +113,6 @@ def test_search_uses_toolkit_default_max_results(mock_seltz_client):
     mock_seltz_client.search.assert_called_with(query="test query", max_results=4)
 
 
-def test_search_accepts_legacy_max_documents_alias(seltz_tools, mock_seltz_client):
-    """Test search accepts legacy max_documents alias."""
-    mock_response = Mock()
-    mock_response.documents = [create_mock_document(url="https://example.com")]
-    mock_seltz_client.search.return_value = mock_response
-
-    seltz_tools.search_seltz("test query", max_documents=3)
-
-    mock_seltz_client.search.assert_called_with(query="test query", max_results=3)
-
-
 def test_parse_documents_with_missing_fields(seltz_tools):
     """Test parsing documents with missing optional fields."""
     mock_doc = create_mock_document(url="https://example.com")
@@ -153,7 +142,6 @@ def test_search_without_api_key():
                 tools = SeltzTools()
                 tools.client = None
                 tools.max_results = 10
-                tools.max_documents = 10
                 tools.context = None
                 tools.profile = None
                 tools.show_results = False
@@ -166,20 +154,6 @@ def test_init_invalid_max_results():
     with patch.dict("os.environ", {"SELTZ_API_KEY": "test_key"}):
         with pytest.raises(ValueError, match="max_results must be greater than 0"):
             SeltzTools(max_results=0)
-
-
-def test_init_invalid_max_documents():
-    """Test initialization with invalid max_documents alias raises error."""
-    with patch.dict("os.environ", {"SELTZ_API_KEY": "test_key"}):
-        with pytest.raises(ValueError, match="max_documents must be greater than 0"):
-            SeltzTools(max_documents=0)
-
-
-def test_search_invalid_max_documents(seltz_tools):
-    """Test search with invalid max_documents returns error."""
-    result = seltz_tools.search_seltz("test query", max_documents=0)
-    assert "Error" in result
-    assert "max_documents must be greater than 0" in result
 
 
 def test_search_invalid_max_results(seltz_tools):
@@ -280,7 +254,7 @@ def test_search_with_legacy_sdk_uses_includes_and_context(seltz_tools):
         mock_includes_instance = Mock()
         mock_includes.return_value = mock_includes_instance
 
-        result = seltz_tools.search_seltz("test query", max_documents=3, context="search context")
+        result = seltz_tools.search_seltz("test query", max_results=3, context="search context")
 
         assert len(json.loads(result)) == 1
         mock_includes.assert_called_once_with(max_documents=3)

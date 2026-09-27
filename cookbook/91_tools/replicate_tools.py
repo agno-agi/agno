@@ -19,7 +19,7 @@ from agno.tools.replicate import ReplicateTools
 # Example 1: Enable specific Replicate functions
 image_agent = Agent(
     name="Image Generator Agent",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[ReplicateTools(model="luma/photon-flash", enable_generate_media=True)],
     description="You are an AI agent that can generate images using the Replicate API.",
     instructions=[
@@ -33,7 +33,7 @@ image_agent = Agent(
 # Example 2: Enable all Replicate functions
 full_agent = Agent(
     name="Full Replicate Agent",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[ReplicateTools(model="minimax/video-01", all=True)],
     description="You are an AI agent that can generate various media using Replicate models.",
     instructions=[

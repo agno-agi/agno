@@ -67,44 +67,131 @@ class LightRag(VectorDb):
         """Check if a document with the given ID exists"""
         return False
 
-    def content_hash_exists(self, content_hash: str) -> bool:
-        """Check if content with the given hash exists"""
+    def content_hash_exists(self, content_hash: str, user_id: Optional[str] = None) -> bool:
+        """Check if content with the given hash exists.
+
+        Always False: returning True would block the ``insert_file_bytes`` / ``insert_text`` upload path.
+        """
+        if user_id is not None:
+            log_warning(
+                "Per-user isolation is not supported in LightRAG. The LightRAG server owns these chunks, "
+                "so user_id is ignored."
+            )
         return False
 
-    def insert(self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    def insert(
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
+    ) -> None:
         """Insert documents into the vector database"""
-        pass
+        if user_id is not None:
+            log_warning(
+                "Per-user isolation is not supported in LightRAG. The LightRAG server owns these chunks, "
+                "so user_id is ignored."
+            )
 
     async def async_insert(
-        self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
     ) -> None:
         """Async insert documents into the vector database"""
-        pass
+        if user_id is not None:
+            log_warning(
+                "Per-user isolation is not supported in LightRAG. The LightRAG server owns these chunks, "
+                "so user_id is ignored."
+            )
 
-    def upsert(self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    def upsert(
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
+    ) -> None:
         """Upsert documents into the vector database"""
-        pass
+        if user_id is not None:
+            log_warning(
+                "Per-user isolation is not supported in LightRAG. The LightRAG server owns these chunks, "
+                "so user_id is ignored."
+            )
 
-    def delete_by_content_id(self, content_id: str) -> None:
-        """Delete documents by content ID"""
-        pass
+    def delete_by_content_id(self, content_id: str, user_id: Optional[str] = None) -> bool:
+        """
+        Delete documents by content ID. Not supported for LightRag - use ``delete_by_external_id``.
 
-    async def async_upsert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+        Args:
+            content_id (str): The content ID to delete
+            user_id (Optional[str]): Ignored - LightRAG does not support per-user isolation.
+
+        Returns:
+            bool: False as this operation is not supported
+        """
+        if user_id is not None:
+            log_warning(
+                "Per-user isolation is not supported in LightRAG. The LightRAG server owns these chunks, "
+                "so user_id is ignored."
+            )
+        log_warning("LightRag.delete_by_content_id() not supported - use delete_by_external_id instead.")
+        return False
+
+    async def async_upsert(
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
+    ) -> None:
         """Async upsert documents into the vector database"""
-        pass
+        if user_id is not None:
+            log_warning(
+                "Per-user isolation is not supported in LightRAG. The LightRAG server owns these chunks, "
+                "so user_id is ignored."
+            )
 
     def search(
-        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+        self,
+        query: str,
+        limit: int = 5,
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        user_id: Optional[str] = None,
     ) -> List[Document]:
-        result = asyncio.run(self.async_search(query, limit=limit, filters=filters))
+        """
+        Returns relevant documents matching the query.
+
+        Args:
+            query (str): The query string to search for.
+            limit (int): The maximum number of documents to return. Defaults to 5.
+            filters (Optional[Dict[str, Any]]): Filters to apply to the search. Defaults to None.
+            user_id (Optional[str]): Ignored - LightRAG does not support per-user isolation.
+
+        Returns:
+            List[Document]: A list of relevant documents matching the query.
+        """
+        result = asyncio.run(self.async_search(query, limit=limit, filters=filters, user_id=user_id))
         return result if result is not None else []
 
     async def async_search(
-        self, query: str, limit: Optional[int] = None, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+        self,
+        query: str,
+        limit: Optional[int] = None,
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        user_id: Optional[str] = None,
     ) -> Optional[List[Document]]:
         mode: str = "hybrid"  # Default mode, can be "local", "global", or "hybrid"
         if filters is not None:
             log_warning("Filters are not supported in LightRAG. No filters will be applied.")
+
+        if user_id is not None:
+            log_warning(
+                "Per-user isolation is not supported in LightRAG. The LightRAG server owns these chunks, "
+                "so results are not scoped to the caller."
+            )
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.post(

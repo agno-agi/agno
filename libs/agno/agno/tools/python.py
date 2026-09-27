@@ -9,10 +9,39 @@ from agno.utils.log import log_debug, log_error, log_info, logger
 
 @functools.lru_cache(maxsize=None)
 def warn() -> None:
-    logger.warning("PythonTools can run arbitrary code, please provide human supervision.")
+    logger.warning(
+        "PythonTools executes arbitrary Python in this process. Provide human supervision and never "
+        "expose it to untrusted input; safe_globals/safe_locals and restrict_to_base_dir are not a sandbox."
+    )
 
 
 class PythonTools(Toolkit):
+    """Tools for generating, saving, and executing Python code in the current process.
+
+    .. warning::
+        ``run_python_code`` and ``save_to_file_and_run`` execute model-generated
+        Python in this process via ``exec``/``runpy`` with full builtins, imports,
+        filesystem, and network access. There is no sandbox: an RCE sink if the
+        agent is prompt-injected.
+
+        ``safe_globals`` / ``safe_locals`` are NOT a security boundary despite the
+        name: they default to this module's real namespaces and only seed the
+        execution scope. ``restrict_to_base_dir`` constrains the *path arguments*
+        of the file helpers (read_file, save_to_file_and_run, ...) but does nothing
+        to code once it runs: executed code can read ``/etc/passwd``, dump
+        ``os.environ``, or reach the network regardless of that flag.
+
+        To require human approval before code runs, gate the tools through the
+        toolkit's confirmation mechanism::
+
+            PythonTools(requires_confirmation_tools=["run_python_code", "save_to_file_and_run"])
+
+        To drop the execution tools entirely, use ``exclude_tools=[...]``. For
+        untrusted input, run code in a real sandbox (separate process or container
+        with a scrubbed environment, no network, and a read-only mount). See
+        DaytonaTools for a remote-sandbox alternative.
+    """
+
     def __init__(
         self,
         base_dir: Optional[Path] = None,
@@ -21,10 +50,24 @@ class PythonTools(Toolkit):
         restrict_to_base_dir: bool = True,
         **kwargs,
     ):
+        """Initialize PythonTools.
+
+        Args:
+            base_dir: Root directory for file operations. Defaults to cwd.
+            safe_globals: Globals namespace seeded into executed code. NOT a
+                sandbox; defaults to this module's globals. Does not limit what
+                executed code can import or access.
+            safe_locals: Locals namespace seeded into executed code. NOT a sandbox;
+                see safe_globals.
+            restrict_to_base_dir: If True, confine the *path arguments* of the file
+                helpers to base_dir. This does not sandbox executed code, which can
+                still touch any path the process can. Do not rely on it for
+                untrusted input.
+        """
         self.base_dir: Path = (base_dir or Path.cwd()).resolve()
         self.restrict_to_base_dir = restrict_to_base_dir
 
-        # Restricted global and local scope
+        # Execution namespaces seeded into exec()/runpy. Not a security boundary.
         self.safe_globals: dict = safe_globals or globals()
         self.safe_locals: dict = safe_locals or locals()
 

@@ -16,7 +16,7 @@ from unittest.mock import MagicMock
 import pytest
 from pydantic import BaseModel
 
-from agno.registry.registry import Registry
+from agno.registry.registry import Registry, ToolSource
 from agno.tools.function import RUNTIME_ONLY_FIELDS, SERIALIZED_FIELDS, Function
 from agno.tools.toolkit import Toolkit
 
@@ -1741,6 +1741,82 @@ class TestGetKnowledge:
 
 
 # =============================================================================
+# Learning machine Tests
+# =============================================================================
+
+
+class TestGetLearning:
+    """Registry.learning resolves by name, the way knowledge does: a stored
+    component carries {"name": ...} and the registry supplies the machine."""
+
+    def test_init_with_learning(self):
+        from agno.learn import LearningMachine
+
+        machine = LearningMachine(name="shared-brain", user_memory=True)
+        reg = Registry(learning=[machine])
+
+        assert reg.learning == [machine]
+        assert reg.get_learning("shared-brain") is machine
+        assert reg.get_learning_names() == {"shared-brain"}
+
+    def test_get_learning_not_found_and_empty(self, basic_registry):
+        from agno.learn import LearningMachine
+
+        reg = Registry(learning=[LearningMachine(name="shared-brain")])
+        assert reg.get_learning("ghost") is None
+        assert basic_registry.get_learning("any") is None
+        assert basic_registry.get_learning_names() == set()
+
+    def test_add_learning_registers_named_machines_only(self):
+        from agno.learn import LearningMachine
+
+        reg = Registry()
+        named = LearningMachine(name="shared-brain")
+        reg.add_learning(named)
+        reg.add_learning(LearningMachine())  # unnamed: nothing to resolve by
+        reg.add_learning(None)
+
+        assert reg.learning == [named]
+        assert reg.get_learning_names() == {"shared-brain"}
+
+    def test_add_learning_same_instance_twice_is_idempotent(self):
+        from agno.learn import LearningMachine
+
+        reg = Registry()
+        machine = LearningMachine(name="shared-brain")
+        reg.add_learning(machine)
+        reg.add_learning(machine)
+
+        assert reg.learning == [machine]
+        assert reg.learning_name_is_ambiguous("shared-brain") is False
+
+    def test_distinct_machines_sharing_a_name_are_ambiguous(self, caplog):
+        """Lenient resolution keeps the first and says so; strict callers ask
+        learning_name_is_ambiguous and refuse."""
+        import logging
+
+        from agno.learn import LearningMachine
+
+        first = LearningMachine(name="shared-brain", user_memory=True)
+        second = LearningMachine(name="shared-brain", entity_memory=True)
+
+        reg = Registry()
+        reg.add_learning(first)
+        with caplog.at_level(logging.WARNING, logger="agno"):
+            reg.add_learning(second)
+
+        assert reg.get_learning("shared-brain") is first
+        assert reg.learning_name_is_ambiguous("shared-brain") is True
+        assert any("share name 'shared-brain'" in record.message for record in caplog.records)
+
+        # Constructor path: both handed in up front, no add_* call to record it.
+        via_init = Registry(learning=[first, second])
+        assert via_init.get_learning("shared-brain") is first
+        assert via_init.learning_name_is_ambiguous("shared-brain") is True
+        assert via_init.learning_name_is_ambiguous("other") is False
+
+
+# =============================================================================
 # get_memory_manager() / get_session_summary_manager() Tests
 # =============================================================================
 
@@ -2243,3 +2319,24 @@ class TestEntrypointLookupCollisionWarning:
         _ = reg._entrypoint_lookup
 
         assert warnings == []
+
+
+class TestAddToolSource:
+    """add_tool's source parameter feeds the undeclared-tool set the palette policy reads."""
+
+    def test_enum_folded_marks_the_tool_folded(self):
+        registry = Registry()
+        registry.add_tool(Toolkit(name="folded_kit", tools=[sample_function]), source=ToolSource.DISCOVERED)
+        assert "folded_kit" in registry.undeclared_tool_names
+
+    def test_declared_default_is_not_folded(self):
+        registry = Registry()
+        registry.add_tool(Toolkit(name="declared_kit", tools=[sample_function]))
+        assert "declared_kit" not in registry.undeclared_tool_names
+
+    def test_legacy_string_folded_still_marks_folded(self):
+        # Callers that predate ToolSource pass the plain string; the str-enum
+        # comparison keeps them working.
+        registry = Registry()
+        registry.add_tool(Toolkit(name="legacy_kit", tools=[sample_function]), source="discovered")
+        assert "legacy_kit" in registry.undeclared_tool_names

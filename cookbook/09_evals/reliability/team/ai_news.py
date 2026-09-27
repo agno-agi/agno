@@ -19,13 +19,13 @@ from agno.tools.websearch import WebSearchTools
 # ---------------------------------------------------------------------------
 team_member = Agent(
     name="News Searcher",
-    model=OpenAIChat("gpt-4o"),
+    model=OpenAIChat("gpt-5.6-luna"),
     role="Searches the web for the latest news.",
     tools=[WebSearchTools(enable_news=True)],
 )
 team = Team(
     name="News Research Team",
-    model=OpenAIChat("gpt-4o"),
+    model=OpenAIChat("gpt-5.6-luna"),
     members=[team_member],
     markdown=True,
     show_members_responses=True,

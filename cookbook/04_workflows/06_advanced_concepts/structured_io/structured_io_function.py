@@ -273,7 +273,7 @@ def simple_data_processor(step_input: StepInput) -> StepOutput:
 # ---------------------------------------------------------------------------
 research_agent = Agent(
     name="AI Research Specialist",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[HackerNewsTools(), WebSearchTools()],
     role="Research AI trends and extract structured insights",
     output_schema=ResearchFindings,
@@ -287,7 +287,7 @@ research_agent = Agent(
 
 strategy_agent = Agent(
     name="Content Strategy Expert",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     role="Create content strategies based on research findings",
     output_schema=ContentStrategy,
     instructions=[
@@ -300,7 +300,7 @@ strategy_agent = Agent(
 
 planning_agent = Agent(
     name="Content Planning Specialist",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     role="Create detailed content plans and calendars",
     output_schema=FinalContentPlan,
     instructions=[

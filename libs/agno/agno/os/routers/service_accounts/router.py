@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.concurrency import run_in_threadpool
 
 from agno.db.schemas.service_accounts import ServiceAccount
+from agno.os.middleware.user_scope import get_scoped_user_id
 from agno.os.routers.service_accounts.schema import (
     ServiceAccountCreate,
     ServiceAccountCreateResponse,
@@ -205,6 +206,7 @@ def get_service_accounts_router(os_db: Any, settings: Any) -> APIRouter:
 
     @router.get("/service-accounts", response_model=PaginatedResponse[ServiceAccountResponse])
     async def list_service_accounts(
+        request: Request,
         include_revoked: bool = Query(True),
         limit: int = Query(20, ge=1, le=100),
         page: int = Query(1, ge=1),
@@ -220,6 +222,7 @@ def get_service_accounts_router(os_db: Any, settings: Any) -> APIRouter:
             page=page,
             sort_by=sort_by,
             sort_order=sort_order,
+            user_id=get_scoped_user_id(request),
         )
         total_pages = (total_count + limit - 1) // limit if total_count > 0 else 0
         return PaginatedResponse(
@@ -243,9 +246,13 @@ def get_service_accounts_router(os_db: Any, settings: Any) -> APIRouter:
         Takes effect immediately on this worker (the local verification cache entry is
         evicted) and within the cache TTL on other workers.
         """
-        existing = await _db_call("get_service_account", service_account_id)
+        scoped_user_id = get_scoped_user_id(request)
+        existing = await _db_call("get_service_account", service_account_id, user_id=scoped_user_id)
         if existing is None:
             raise HTTPException(status_code=404, detail=f"Service account '{service_account_id}' not found")
+        # The scoped read also returns unowned workspace-level accounts, which no single caller may revoke.
+        if scoped_user_id is not None and existing.get("user_id") is None:
+            raise HTTPException(status_code=403, detail="Cannot revoke a workspace-level service account")
         if existing.get("revoked_at") is None:
             updated = await _db_call("update_service_account", service_account_id, revoked_at=int(time.time()))
             if updated is None:

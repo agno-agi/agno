@@ -33,7 +33,7 @@ async def run_agent(message: str) -> None:
         ) as fs_tools,
     ):
         agent = Agent(
-            model=Groq(id="llama-3.3-70b-versatile"),
+            model=Groq(id="openai/gpt-oss-120b"),
             tools=[fs_tools],
             instructions=dedent("""\
                 - First, ALWAYS use the list_allowed_directories tool to find directories that you can access

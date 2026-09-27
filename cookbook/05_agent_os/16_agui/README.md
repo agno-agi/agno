@@ -23,6 +23,7 @@ default empty prefix those routes are `POST /agui` and `GET /status`.
 | `human_in_the_loop.py` | Pause and resume a real backend tool that uses `requires_confirmation`. |
 | `research_team.py` | Stream a coordinated Team and its member activity over AG-UI. |
 | `multiple_instances.py` | Mount two independent AG-UI interfaces on one AgentOS. |
+| `openui/` | Render an Agent as streaming charts, follow-ups, and validated forms with OpenUI. |
 
 ## Prerequisites
 
@@ -52,6 +53,10 @@ Start one example at a time; every standalone server uses port 7777:
 .venvs/demo/bin/python cookbook/05_agent_os/16_agui/multiple_instances.py
 ```
 
+The [`openui/`](openui/) example includes its own React client. Follow its
+README to generate the OpenUI component prompt, run `openui/server.py`, and
+start the frontend.
+
 Point an AG-UI client such as CopilotKit or the AG-UI Dojo at the matching
 endpoint:
 
@@ -66,6 +71,7 @@ endpoint:
 | `human_in_the_loop.py` | `http://localhost:7777/human-in-the-loop/agui` | `http://localhost:7777/human-in-the-loop/status` |
 | `research_team.py` | `http://localhost:7777/research-team/agui` | `http://localhost:7777/research-team/status` |
 | `multiple_instances.py` | `http://localhost:7777/chat/agui` and `http://localhost:7777/analyst/agui` | `/chat/status` and `/analyst/status` |
+| `openui/server.py` | `http://localhost:7777/agui` | `http://localhost:7777/status` |
 
 The old all-in-one showcase is intentionally gone: starting the file you are
 learning makes its endpoint available directly, without import-only support

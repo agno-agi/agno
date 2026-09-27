@@ -34,5 +34,5 @@ You can also use the string syntax:
 ```python
 from agno.agent import Agent
 
-agent = Agent(model="tokenlab:gpt-5.4-mini")
+agent = Agent(model="tokenlab:gpt-5.6-luna")
 ```

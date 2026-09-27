@@ -5,8 +5,8 @@ from typing import Any, Dict, Optional, Type, Union
 from pydantic import BaseModel
 
 from agno.exceptions import ModelAuthenticationError, ModelProviderError
+from agno.metrics import MessageMetrics
 from agno.models.message import Citations, UrlCitation
-from agno.models.metrics import MessageMetrics
 from agno.models.response import ModelResponse
 from agno.utils.log import log_debug, log_warning
 
@@ -34,7 +34,7 @@ class Perplexity(OpenAILike):
         name (str): The model name. Defaults to "Perplexity".
         provider (str): The provider name. Defaults to "Perplexity".
         api_key (Optional[str]): The API key.
-        base_url (str): The base URL. Defaults to "https://api.perplexity.ai/chat/completions".
+        base_url (str): The base URL. Defaults to "https://api.perplexity.ai/".
         max_tokens (int): The maximum number of tokens. Defaults to 1024.
     """
 

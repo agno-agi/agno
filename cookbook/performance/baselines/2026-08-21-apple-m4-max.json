@@ -1,0 +1,634 @@
+{
+  "machine": {
+    "platform": "macOS-15.7.7-arm64-arm-64bit",
+    "machine": "arm64",
+    "cpu_count": 16,
+    "python_version": "3.12.8",
+    "agno_version": "3.0.0a2",
+    "git_commit": "e86fff58d",
+    "measured_at": "2026-08-21T12:39:22.240472+00:00",
+    "processor": "Apple M4 Max"
+  },
+  "quick": false,
+  "failures": [],
+  "benchmarks": {
+    "arun_agent": {
+      "name": "arun_agent",
+      "group": "run",
+      "num_iterations": 500,
+      "warmup_runs": 10,
+      "agno_version": "3.0.0a2",
+      "measured_at": "2026-08-21T12:38:52.769142+00:00",
+      "result": {
+        "avg_run_time": 9.382383897900582e-05,
+        "min_run_time": 8.545815944671631e-05,
+        "max_run_time": 0.00020179199054837227,
+        "std_dev_run_time": 1.0465103961008477e-05,
+        "median_run_time": 9.064562618732452e-05,
+        "p95_run_time": 0.00010954707395285367,
+        "avg_memory_usage": 0.017635345458984375,
+        "min_memory_usage": 0.017635345458984375,
+        "max_memory_usage": 0.017635345458984375,
+        "std_dev_memory_usage": 0.0,
+        "median_memory_usage": 0.017635345458984375,
+        "p95_memory_usage": 0.017635345458984375
+      }
+    },
+    "arun_agent_streaming": {
+      "name": "arun_agent_streaming",
+      "group": "run",
+      "num_iterations": 500,
+      "warmup_runs": 10,
+      "agno_version": "3.0.0a2",
+      "measured_at": "2026-08-21T12:39:00.617363+00:00",
+      "result": {
+        "avg_run_time": 0.0001191331446170807,
+        "min_run_time": 0.00010620942339301109,
+        "max_run_time": 0.00032841693609952927,
+        "std_dev_run_time": 2.419601342827631e-05,
+        "median_run_time": 0.00011222879402339458,
+        "p95_run_time": 0.00016039430629462005,
+        "avg_memory_usage": 0.020908905029296876,
+        "min_memory_usage": 0.020885467529296875,
+        "max_memory_usage": 0.021373748779296875,
+        "std_dev_memory_usage": 0.00010448257561833303,
+        "median_memory_usage": 0.020885467529296875,
+        "p95_memory_usage": 0.020885467529296875
+      }
+    },
+    "arun_agent_with_storage": {
+      "name": "arun_agent_with_storage",
+      "group": "run",
+      "num_iterations": 500,
+      "warmup_runs": 10,
+      "agno_version": "3.0.0a2",
+      "measured_at": "2026-08-21T12:39:21.506760+00:00",
+      "result": {
+        "avg_run_time": 0.00034425041917711494,
+        "min_run_time": 0.0003077918663620949,
+        "max_run_time": 0.0006062500178813934,
+        "std_dev_run_time": 4.596927968528751e-05,
+        "median_run_time": 0.0003259172663092613,
+        "p95_run_time": 0.00046319500543177126,
+        "avg_memory_usage": 0.040757179260253906,
+        "min_memory_usage": 0.040757179260253906,
+        "max_memory_usage": 0.040757179260253906,
+        "std_dev_memory_usage": 0.0,
+        "median_memory_usage": 0.040757179260253906,
+        "p95_memory_usage": 0.040757179260253906
+      }
+    },
+    "arun_agent_with_tools": {
+      "name": "arun_agent_with_tools",
+      "group": "run",
+      "num_iterations": 500,
+      "warmup_runs": 10,
+      "agno_version": "3.0.0a2",
+      "measured_at": "2026-08-21T12:39:11.730193+00:00",
+      "result": {
+        "avg_run_time": 0.0006471678707748651,
+        "min_run_time": 0.0004647918976843357,
+        "max_run_time": 0.0019811661913990974,
+        "std_dev_run_time": 0.0001487533081854923,
+        "median_run_time": 0.0006181045901030302,
+        "p95_run_time": 0.0008368648355826736,
+        "avg_memory_usage": 0.03931318855285645,
+        "min_memory_usage": 0.03913593292236328,
+        "max_memory_usage": 0.03960227966308594,
+        "std_dev_memory_usage": 8.119611235765036e-05,
+        "median_memory_usage": 0.039315223693847656,
+        "p95_memory_usage": 0.039467811584472656
+      }
+    },
+    "import_agno": {
+      "name": "import_agno",
+      "group": "import",
+      "num_iterations": 15,
+      "warmup_runs": 0,
+      "agno_version": "3.0.0a2",
+      "measured_at": "2026-08-21T12:38:12.114541+00:00",
+      "result": {
+        "avg_run_time": 0.018093030123660963,
+        "min_run_time": 0.01647383300587535,
+        "max_run_time": 0.019659833051264286,
+        "std_dev_run_time": 0.001079542125861505,
+        "median_run_time": 0.01818149909377098,
+        "p95_run_time": 0.019601937476545574,
+        "avg_memory_usage": 0,
+        "min_memory_usage": 0,
+        "max_memory_usage": 0,
+        "std_dev_memory_usage": 0,
+        "median_memory_usage": 0,
+        "p95_memory_usage": 0
+      },
+      "extra": {
+        "interpreter_startup_median_s": 0.017864542081952095,
+        "importtime_top": [
+          {
+            "self_us": 1563,
+            "cumulative_us": 14714,
+            "module": "agno"
+          },
+          {
+            "self_us": 958,
+            "cumulative_us": 970,
+            "module": "typing"
+          },
+          {
+            "self_us": 859,
+            "cumulative_us": 3211,
+            "module": "inspect"
+          },
+          {
+            "self_us": 796,
+            "cumulative_us": 1360,
+            "module": "urllib.parse"
+          },
+          {
+            "self_us": 786,
+            "cumulative_us": 6495,
+            "module": "site"
+          },
+          {
+            "self_us": 651,
+            "cumulative_us": 1020,
+            "module": "calendar"
+          },
+          {
+            "self_us": 535,
+            "cumulative_us": 1406,
+            "module": "enum"
+          },
+          {
+            "self_us": 509,
+            "cumulative_us": 12874,
+            "module": "importlib.metadata"
+          },
+          {
+            "self_us": 488,
+            "cumulative_us": 488,
+            "module": "ipaddress"
+          },
+          {
+            "self_us": 446,
+            "cumulative_us": 815,
+            "module": "socket"
+          },
+          {
+            "self_us": 441,
+            "cumulative_us": 849,
+            "module": "ast"
+          },
+          {
+            "self_us": 408,
+            "cumulative_us": 408,
+            "module": "_ast"
+          },
+          {
+            "self_us": 407,
+            "cumulative_us": 601,
+            "module": "dis"
+          },
+          {
+            "self_us": 398,
+            "cumulative_us": 398,
+            "module": "time"
+          },
+          {
+            "self_us": 383,
+            "cumulative_us": 525,
+            "module": "tokenize"
+          },
+          {
+            "self_us": 359,
+            "cumulative_us": 359,
+            "module": "textwrap"
+          },
+          {
+            "self_us": 345,
+            "cumulative_us": 369,
+            "module": "locale"
+          },
+          {
+            "self_us": 341,
+            "cumulative_us": 1937,
+            "module": "zipfile"
+          },
+          {
+            "self_us": 326,
+            "cumulative_us": 467,
+            "module": "collections"
+          },
+          {
+            "self_us": 309,
+            "cumulative_us": 4946,
+            "module": "__editable___agno_3_0_0a2_finder"
+          },
+          {
+            "self_us": 296,
+            "cumulative_us": 296,
+            "module": "_collections_abc"
+          },
+          {
+            "self_us": 295,
+            "cumulative_us": 659,
+            "module": "shutil"
+          },
+          {
+            "self_us": 279,
+            "cumulative_us": 4066,
+            "module": "pathlib"
+          },
+          {
+            "self_us": 279,
+            "cumulative_us": 361,
+            "module": "threading"
+          },
+          {
+            "self_us": 278,
+            "cumulative_us": 4210,
+            "module": "email.message"
+          }
+        ]
+      }
+    },
+    "import_agno_agent": {
+      "name": "import_agno_agent",
+      "group": "import",
+      "num_iterations": 15,
+      "warmup_runs": 0,
+      "agno_version": "3.0.0a2",
+      "measured_at": "2026-08-21T12:38:16.335932+00:00",
+      "result": {
+        "avg_run_time": 0.2453417523143192,
+        "min_run_time": 0.23201599949970841,
+        "max_run_time": 0.2877107076346874,
+        "std_dev_run_time": 0.013410608243284394,
+        "median_run_time": 0.24168104073032737,
+        "p95_run_time": 0.26234941608272494,
+        "avg_memory_usage": 0,
+        "min_memory_usage": 0,
+        "max_memory_usage": 0,
+        "std_dev_memory_usage": 0,
+        "median_memory_usage": 0,
+        "p95_memory_usage": 0
+      },
+      "extra": {
+        "interpreter_startup_median_s": 0.017864542081952095,
+        "importtime_top": [
+          {
+            "self_us": 12779,
+            "cumulative_us": 12779,
+            "module": "agno.run.team"
+          },
+          {
+            "self_us": 12660,
+            "cumulative_us": 74567,
+            "module": "agno.run.agent"
+          },
+          {
+            "self_us": 8275,
+            "cumulative_us": 8275,
+            "module": "agno.run.workflow"
+          },
+          {
+            "self_us": 5900,
+            "cumulative_us": 6835,
+            "module": "click.types"
+          },
+          {
+            "self_us": 4763,
+            "cumulative_us": 26361,
+            "module": "agno.media"
+          },
+          {
+            "self_us": 3742,
+            "cumulative_us": 4141,
+            "module": "pydantic_core.core_schema"
+          },
+          {
+            "self_us": 3259,
+            "cumulative_us": 6110,
+            "module": "agno.tools.function"
+          },
+          {
+            "self_us": 2953,
+            "cumulative_us": 6294,
+            "module": "agno.models.message"
+          },
+          {
+            "self_us": 2808,
+            "cumulative_us": 4325,
+            "module": "opentelemetry.sdk.metrics._internal.point"
+          },
+          {
+            "self_us": 2679,
+            "cumulative_us": 2679,
+            "module": "annotated_types"
+          },
+          {
+            "self_us": 2304,
+            "cumulative_us": 3069,
+            "module": "redis.commands.core"
+          },
+          {
+            "self_us": 2270,
+            "cumulative_us": 2270,
+            "module": "pydantic.types"
+          },
+          {
+            "self_us": 2180,
+            "cumulative_us": 2235,
+            "module": "agno.metrics"
+          },
+          {
+            "self_us": 2162,
+            "cumulative_us": 2257,
+            "module": "agno.learn.schemas"
+          },
+          {
+            "self_us": 1635,
+            "cumulative_us": 1635,
+            "module": "agno.learn.config"
+          },
+          {
+            "self_us": 1587,
+            "cumulative_us": 199810,
+            "module": "agno.agent.agent"
+          },
+          {
+            "self_us": 1560,
+            "cumulative_us": 15462,
+            "module": "agno"
+          },
+          {
+            "self_us": 1480,
+            "cumulative_us": 2013,
+            "module": "pydantic._internal._decorators"
+          },
+          {
+            "self_us": 1442,
+            "cumulative_us": 2432,
+            "module": "rich.console"
+          },
+          {
+            "self_us": 1386,
+            "cumulative_us": 1386,
+            "module": "agno.remote.base"
+          },
+          {
+            "self_us": 1358,
+            "cumulative_us": 1496,
+            "module": "agno.models.base"
+          },
+          {
+            "self_us": 1273,
+            "cumulative_us": 1753,
+            "module": "agno.memory.manager"
+          },
+          {
+            "self_us": 1263,
+            "cumulative_us": 8381,
+            "module": "agno.models.response"
+          },
+          {
+            "self_us": 1231,
+            "cumulative_us": 1231,
+            "module": "pydantic.functional_validators"
+          },
+          {
+            "self_us": 1182,
+            "cumulative_us": 1248,
+            "module": "packaging.version"
+          }
+        ]
+      }
+    },
+    "instantiate_agent": {
+      "name": "instantiate_agent",
+      "group": "instantiation",
+      "num_iterations": 1000,
+      "warmup_runs": 10,
+      "agno_version": "3.0.0a2",
+      "measured_at": "2026-08-21T12:38:22.540928+00:00",
+      "result": {
+        "avg_run_time": 3.0230889096856116e-06,
+        "min_run_time": 2.5420449674129486e-06,
+        "max_run_time": 4.5457854866981506e-05,
+        "std_dev_run_time": 1.504980554052738e-06,
+        "median_run_time": 2.9159709811210632e-06,
+        "p95_run_time": 3.16607765853405e-06,
+        "avg_memory_usage": 0.00498199462890625,
+        "min_memory_usage": 0.00498199462890625,
+        "max_memory_usage": 0.00498199462890625,
+        "std_dev_memory_usage": 0.0,
+        "median_memory_usage": 0.00498199462890625,
+        "p95_memory_usage": 0.00498199462890625
+      }
+    },
+    "instantiate_agent_with_tools": {
+      "name": "instantiate_agent_with_tools",
+      "group": "instantiation",
+      "num_iterations": 1000,
+      "warmup_runs": 10,
+      "agno_version": "3.0.0a2",
+      "measured_at": "2026-08-21T12:38:28.687817+00:00",
+      "result": {
+        "avg_run_time": 3.41299781575799e-06,
+        "min_run_time": 2.9997900128364563e-06,
+        "max_run_time": 5.141599103808403e-05,
+        "std_dev_run_time": 1.8703913479816078e-06,
+        "median_run_time": 3.1660310924053192e-06,
+        "p95_run_time": 4.083849489688873e-06,
+        "avg_memory_usage": 0.00518798828125,
+        "min_memory_usage": 0.00518798828125,
+        "max_memory_usage": 0.00518798828125,
+        "std_dev_memory_usage": 0.0,
+        "median_memory_usage": 0.00518798828125,
+        "p95_memory_usage": 0.00518798828125
+      }
+    },
+    "instantiate_team": {
+      "name": "instantiate_team",
+      "group": "instantiation",
+      "num_iterations": 1000,
+      "warmup_runs": 10,
+      "agno_version": "3.0.0a2",
+      "measured_at": "2026-08-21T12:38:35.654175+00:00",
+      "result": {
+        "avg_run_time": 1.6220326535403728e-05,
+        "min_run_time": 1.5334226191043854e-05,
+        "max_run_time": 6.862496957182884e-05,
+        "std_dev_run_time": 2.478175208694e-06,
+        "median_run_time": 1.579197123646736e-05,
+        "p95_run_time": 1.87084311619401e-05,
+        "avg_memory_usage": 0.01651763916015625,
+        "min_memory_usage": 0.01651763916015625,
+        "max_memory_usage": 0.01651763916015625,
+        "std_dev_memory_usage": 0.0,
+        "median_memory_usage": 0.01651763916015625,
+        "p95_memory_usage": 0.01651763916015625
+      }
+    },
+    "instantiate_workflow": {
+      "name": "instantiate_workflow",
+      "group": "instantiation",
+      "num_iterations": 1000,
+      "warmup_runs": 10,
+      "agno_version": "3.0.0a2",
+      "measured_at": "2026-08-21T12:38:45.040440+00:00",
+      "result": {
+        "avg_run_time": 6.917144637554884e-06,
+        "min_run_time": 5.749985575675964e-06,
+        "max_run_time": 0.00011979229748249054,
+        "std_dev_run_time": 5.015234749263465e-06,
+        "median_run_time": 6.542075425386429e-06,
+        "p95_run_time": 7.083662785589695e-06,
+        "avg_memory_usage": 0.0033893585205078125,
+        "min_memory_usage": 0.0033893585205078125,
+        "max_memory_usage": 0.0033893585205078125,
+        "std_dev_memory_usage": 0.0,
+        "median_memory_usage": 0.0033893585205078125,
+        "p95_memory_usage": 0.0033893585205078125
+      }
+    },
+    "memory_per_agent": {
+      "name": "memory_per_agent",
+      "group": "memory",
+      "num_iterations": 5,
+      "warmup_runs": 0,
+      "agno_version": "3.0.0a2",
+      "measured_at": "2026-08-21T12:39:21.977451+00:00",
+      "result": {
+        "avg_run_time": 0,
+        "min_run_time": 0,
+        "max_run_time": 0,
+        "std_dev_run_time": 0,
+        "median_run_time": 0,
+        "p95_run_time": 0,
+        "avg_memory_usage": 0.003577838134765625,
+        "min_memory_usage": 0.003571372985839844,
+        "max_memory_usage": 0.00360369873046875,
+        "std_dev_memory_usage": 1.4456512482706503e-05,
+        "median_memory_usage": 0.003571372985839844,
+        "p95_memory_usage": 0.0035972335815429683
+      },
+      "extra": {
+        "agents_per_sample": 1000
+      }
+    },
+    "memory_per_agent_with_tools": {
+      "name": "memory_per_agent_with_tools",
+      "group": "memory",
+      "num_iterations": 5,
+      "warmup_runs": 0,
+      "agno_version": "3.0.0a2",
+      "measured_at": "2026-08-21T12:39:22.171172+00:00",
+      "result": {
+        "avg_run_time": 0,
+        "min_run_time": 0,
+        "max_run_time": 0,
+        "std_dev_run_time": 0,
+        "median_run_time": 0,
+        "p95_run_time": 0,
+        "avg_memory_usage": 0.003586631774902344,
+        "min_memory_usage": 0.003586631774902344,
+        "max_memory_usage": 0.003586631774902344,
+        "std_dev_memory_usage": 0.0,
+        "median_memory_usage": 0.003586631774902344,
+        "p95_memory_usage": 0.003586631774902344
+      },
+      "extra": {
+        "agents_per_sample": 1000
+      }
+    },
+    "run_agent": {
+      "name": "run_agent",
+      "group": "run",
+      "num_iterations": 500,
+      "warmup_runs": 10,
+      "agno_version": "3.0.0a2",
+      "measured_at": "2026-08-21T12:38:49.290502+00:00",
+      "result": {
+        "avg_run_time": 9.247191902250052e-05,
+        "min_run_time": 8.158385753631592e-05,
+        "max_run_time": 0.00022566691040992737,
+        "std_dev_run_time": 1.7406277372558192e-05,
+        "median_run_time": 8.79787839949131e-05,
+        "p95_run_time": 0.00011946840677410365,
+        "avg_memory_usage": 0.016643524169921875,
+        "min_memory_usage": 0.016643524169921875,
+        "max_memory_usage": 0.016643524169921875,
+        "std_dev_memory_usage": 0.0,
+        "median_memory_usage": 0.016643524169921875,
+        "p95_memory_usage": 0.016643524169921875
+      }
+    },
+    "run_agent_streaming": {
+      "name": "run_agent_streaming",
+      "group": "run",
+      "num_iterations": 500,
+      "warmup_runs": 10,
+      "agno_version": "3.0.0a2",
+      "measured_at": "2026-08-21T12:38:56.710963+00:00",
+      "result": {
+        "avg_run_time": 0.00010161899030208587,
+        "min_run_time": 9.516719728708267e-05,
+        "max_run_time": 0.00012250011786818504,
+        "std_dev_run_time": 4.8223650499239e-06,
+        "median_run_time": 0.00010016700252890587,
+        "p95_run_time": 0.00011216914281249046,
+        "avg_memory_usage": 0.019031524658203125,
+        "min_memory_usage": 0.019031524658203125,
+        "max_memory_usage": 0.019031524658203125,
+        "std_dev_memory_usage": 0.0,
+        "median_memory_usage": 0.019031524658203125,
+        "p95_memory_usage": 0.019031524658203125
+      }
+    },
+    "run_agent_with_storage": {
+      "name": "run_agent_with_storage",
+      "group": "run",
+      "num_iterations": 500,
+      "warmup_runs": 10,
+      "agno_version": "3.0.0a2",
+      "measured_at": "2026-08-21T12:39:16.730807+00:00",
+      "result": {
+        "avg_run_time": 0.0003408191734924912,
+        "min_run_time": 0.000305958092212677,
+        "max_run_time": 0.0007904162630438805,
+        "std_dev_run_time": 5.400869854064986e-05,
+        "median_run_time": 0.0003222706727683544,
+        "p95_run_time": 0.0004597064340487123,
+        "avg_memory_usage": 0.039536476135253906,
+        "min_memory_usage": 0.039536476135253906,
+        "max_memory_usage": 0.039536476135253906,
+        "std_dev_memory_usage": 0.0,
+        "median_memory_usage": 0.039536476135253906,
+        "p95_memory_usage": 0.039536476135253906
+      }
+    },
+    "run_agent_with_tools": {
+      "name": "run_agent_with_tools",
+      "group": "run",
+      "num_iterations": 500,
+      "warmup_runs": 10,
+      "agno_version": "3.0.0a2",
+      "measured_at": "2026-08-21T12:39:06.070327+00:00",
+      "result": {
+        "avg_run_time": 0.0003965130038559437,
+        "min_run_time": 0.00034970883280038834,
+        "max_run_time": 0.0008147908374667168,
+        "std_dev_run_time": 6.920042922447687e-05,
+        "median_run_time": 0.00037031248211860657,
+        "p95_run_time": 0.0005522208753973246,
+        "avg_memory_usage": 0.034752777099609375,
+        "min_memory_usage": 0.03459930419921875,
+        "max_memory_usage": 0.0349578857421875,
+        "std_dev_memory_usage": 6.126066704935871e-05,
+        "median_memory_usage": 0.03473377227783203,
+        "p95_memory_usage": 0.03486824035644531
+      }
+    }
+  }
+}

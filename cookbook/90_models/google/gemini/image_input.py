@@ -15,7 +15,7 @@ from agno.tools.websearch import WebSearchTools
 # ---------------------------------------------------------------------------
 
 agent = Agent(
-    model=Gemini(id="gemini-2.0-flash-exp"),
+    model=Gemini(id="gemini-3.7-flash"),
     tools=[WebSearchTools()],
     markdown=True,
 )

@@ -2,7 +2,7 @@
 Reasoning Agent Events
 =============================
 
-Reasoning Agent Events.
+Demonstrates how to capture reasoning events during streaming.
 """
 
 import asyncio
@@ -15,8 +15,8 @@ from agno.models.openai import OpenAIResponses
 # Create Agent
 # ---------------------------------------------------------------------------
 finance_agent = Agent(
-    model=OpenAIResponses(id="gpt-5.2"),
-    reasoning=True,
+    model=OpenAIResponses(id="gpt-5.6"),
+    reasoning_model=OpenAIResponses(id="o3-mini"),
 )
 
 

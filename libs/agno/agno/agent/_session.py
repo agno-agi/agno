@@ -76,12 +76,17 @@ def get_session(
     agent: Agent,
     session_id: Optional[str] = None,
     user_id: Optional[str] = None,
+    runs_limit: Optional[int] = None,
 ) -> Optional[Union[AgentSession, TeamSession, WorkflowSession]]:
     """Load an AgentSession from database or cache.
 
     Args:
         agent: The Agent instance.
         session_id: The session_id to load from storage.
+        runs_limit: If set, load only the most recent ``runs_limit`` context-relevant
+            runs (a bounded read for history). Only applied for a standalone agent
+            (an AgentSession); the bounded session is neither served from nor written
+            to the cache, since it holds a partial run list.
 
     Returns:
         AgentSession: The AgentSession loaded from the database/cache or None if not found.
@@ -93,12 +98,11 @@ def get_session(
 
     session_id_to_load: str = session_id or agent.session_id  # type: ignore[assignment]
 
-    # If there is a cached session, return it
-    if agent.cache_session and hasattr(agent, "_cached_session") and agent._cached_session is not None:
-        if agent._cached_session.session_id == session_id_to_load and (
-            user_id is None or agent._cached_session.user_id == user_id
-        ):
-            return agent._cached_session
+    # If there is a cached session, return it (never for a bounded/partial read).
+    if runs_limit is None and agent.cache_session:
+        cached_session = agent._get_cached_session(session_id_to_load, user_id=user_id)
+        if cached_session is not None:
+            return cached_session
 
     if _init.has_async_db(agent):
         raise ValueError("Cannot use sync get_session() with an async database. Use aget_session() instead.")
@@ -112,7 +116,11 @@ def get_session(
             loaded_session = cast(
                 AgentSession,
                 _storage.read_session(
-                    agent, session_id=session_id_to_load, session_type=SessionType.AGENT, user_id=user_id
+                    agent,
+                    session_id=session_id_to_load,
+                    session_type=SessionType.AGENT,
+                    user_id=user_id,
+                    runs_limit=runs_limit,
                 ),  # type: ignore[arg-type]
             )
 
@@ -134,9 +142,9 @@ def get_session(
                 ),  # type: ignore[arg-type]
             )
 
-        # Cache the session if relevant
-        if loaded_session is not None and agent.cache_session:
-            agent._cached_session = loaded_session  # type: ignore
+        # Cache the session if relevant (never cache a bounded/partial read).
+        if loaded_session is not None and agent.cache_session and runs_limit is None:
+            agent._set_cached_session(loaded_session)  # type: ignore[arg-type]
 
         return loaded_session
 
@@ -148,12 +156,16 @@ async def aget_session(
     agent: Agent,
     session_id: Optional[str] = None,
     user_id: Optional[str] = None,
+    runs_limit: Optional[int] = None,
 ) -> Optional[Union[AgentSession, TeamSession, WorkflowSession]]:
     """Load an AgentSession from database or cache.
 
     Args:
         agent: The Agent instance.
         session_id: The session_id to load from storage.
+        runs_limit: If set, load only the most recent ``runs_limit`` context-relevant
+            runs (a bounded read for history). Only applied for a standalone agent;
+            the bounded session is neither served from nor written to the cache.
 
     Returns:
         AgentSession: The AgentSession loaded from the database/cache or None if not found.
@@ -165,12 +177,11 @@ async def aget_session(
 
     session_id_to_load: str = session_id or agent.session_id  # type: ignore[assignment]
 
-    # If there is a cached session, return it
-    if agent.cache_session and hasattr(agent, "_cached_session") and agent._cached_session is not None:
-        if agent._cached_session.session_id == session_id_to_load and (
-            user_id is None or agent._cached_session.user_id == user_id
-        ):
-            return agent._cached_session
+    # If there is a cached session, return it (never for a bounded/partial read).
+    if runs_limit is None and agent.cache_session:
+        cached_session = agent._get_cached_session(session_id_to_load, user_id=user_id)
+        if cached_session is not None:
+            return cached_session
 
     # Load and return the session from the database
     if agent.db is not None:
@@ -181,7 +192,11 @@ async def aget_session(
             loaded_session = cast(
                 AgentSession,
                 await _storage.aread_session(
-                    agent, session_id=session_id_to_load, session_type=SessionType.AGENT, user_id=user_id
+                    agent,
+                    session_id=session_id_to_load,
+                    session_type=SessionType.AGENT,
+                    user_id=user_id,
+                    runs_limit=runs_limit,
                 ),  # type: ignore[arg-type]
             )
 
@@ -203,9 +218,9 @@ async def aget_session(
                 ),  # type: ignore[arg-type]
             )
 
-        # Cache the session if relevant
-        if loaded_session is not None and agent.cache_session:
-            agent._cached_session = loaded_session  # type: ignore
+        # Cache the session if relevant (never cache a bounded/partial read).
+        if loaded_session is not None and agent.cache_session and runs_limit is None:
+            agent._set_cached_session(loaded_session)  # type: ignore[arg-type]
 
         return loaded_session
 
@@ -215,7 +230,14 @@ async def aget_session(
 
 def save_session(agent: Agent, session: Union[AgentSession, TeamSession, WorkflowSession]) -> None:
     """
-    Save the AgentSession to storage
+    Save the session row to storage.
+
+    Runs are persisted separately via ``save_run()``. This function writes
+    only the session row.
+
+    Args:
+        agent: The Agent instance.
+        session: The session to save.
     """
     from agno.agent import _init, _storage
 
@@ -239,7 +261,14 @@ def save_session(agent: Agent, session: Union[AgentSession, TeamSession, Workflo
 
 async def asave_session(agent: Agent, session: Union[AgentSession, TeamSession, WorkflowSession]) -> None:
     """
-    Save the AgentSession to storage
+    Save the session row to storage.
+
+    Runs are persisted separately via ``asave_run()``. This function writes
+    only the session row.
+
+    Args:
+        agent: The Agent instance.
+        session: The session to save.
     """
     from agno.agent import _init, _storage
 
@@ -261,27 +290,152 @@ async def asave_session(agent: Agent, session: Union[AgentSession, TeamSession, 
         log_debug(f"Created or updated AgentSession record: {session.session_id}")
 
 
-def delete_session(agent: Agent, session_id: str, user_id: Optional[str] = None):
-    """Delete the current session and save to storage"""
+def save_run(
+    agent: Agent,
+    run: RunOutput,
+    session_id: str,
+    user_id: Optional[str] = None,
+    run_index: Optional[int] = None,
+) -> None:
+    """Save a single run to the database (O(1) operation).
+
+    This is optimized for updating existing runs (e.g., status changes in HITL
+    or background mode) without re-upserting all runs in the session.
+
+    Use this instead of save_session() when only a single run has changed.
+
+    Args:
+        agent: The Agent instance.
+        run: The run to save.
+        session_id: The session ID this run belongs to.
+        user_id: Optional user ID to associate with the run.
+        run_index: Position of the run within the session. **Required for the
+            first save of a given run_id** (INSERT path) — compute via
+            ``resolve_run_index(session, run)``. May be omitted only for
+            subsequent status-transition saves of an already-persisted run:
+            every adapter's upsert excludes ``run_index`` from the UPDATE set
+            to preserve ordering. Omitting on INSERT silently writes NULL.
+    """
+    from agno.agent import _init, _storage
+
+    if _init.has_async_db(agent):
+        raise ValueError("Cannot use sync save_run() with an async database. Use asave_run() instead.")
+
+    if agent.db is not None and agent.team_id is None and agent.workflow_id is None:
+        _storage.upsert_run(agent, run=run, session_id=session_id, user_id=user_id, run_index=run_index)
+        log_debug(f"Saved run {run.run_id} to session {session_id}")
+
+
+async def asave_run(
+    agent: Agent,
+    run: RunOutput,
+    session_id: str,
+    user_id: Optional[str] = None,
+    run_index: Optional[int] = None,
+) -> None:
+    """Save a single run to the database (O(1) operation).
+
+    This is the async version of save_run(). Optimized for updating existing runs
+    (e.g., status changes in HITL or background mode) without re-upserting all
+    runs in the session.
+
+    Use this instead of asave_session() when only a single run has changed.
+
+    Args:
+        agent: The Agent instance.
+        run: The run to save.
+        session_id: The session ID this run belongs to.
+        user_id: Optional user ID to associate with the run.
+        run_index: Optional run index for new runs.
+    """
+    from agno.agent import _storage
+
+    if agent.db is not None and agent.team_id is None and agent.workflow_id is None:
+        await _storage.aupsert_run(agent, run=run, session_id=session_id, user_id=user_id, run_index=run_index)
+        log_debug(f"Saved run {run.run_id} to session {session_id}")
+
+
+def delete_session(agent: Agent, session_id: str, user_id: Optional[str] = None, delete_media: bool = False):
+    """Delete the current session and save to storage.
+
+    ``delete_media`` deletes the session's offloaded objects along with it.
+    """
     from agno.agent import _init
 
     if agent.db is None:
         return
     if _init.has_async_db(agent):
         raise ValueError("Cannot use sync delete_session() with an async database. Use adelete_session() instead.")
+
+    keys: List[str] = []
+    storage = agent.media_storage
+    if delete_media:
+        from agno.media.storage.base import AsyncMediaStorage
+        from agno.utils.media_offload import session_media_keys
+
+        if storage is None:
+            log_warning("delete_media=True but no media_storage is configured, skipping media deletion")
+        else:
+            # Refused before the row is deleted: afterwards nothing would be left pointing at the object.
+            if isinstance(storage, AsyncMediaStorage):
+                raise ValueError(
+                    "Cannot use sync delete_session() with an AsyncMediaStorage. Use adelete_session() instead."
+                )
+            try:
+                session = agent.db.get_session(session_id=session_id, user_id=user_id)
+            except Exception as e:
+                log_warning(f"Could not read session {session_id} for media deletion: {e}")
+                session = None
+            if session is not None:
+                keys = session_media_keys(session, [session_id], storage)
+    elif storage is not None:
+        log_debug("delete_media=False, keeping any offloaded media, pass delete_media=True to delete it too")
+
     agent.db.delete_session(session_id=session_id, user_id=user_id)
 
+    if keys and storage is not None:
+        from agno.utils.media_offload import delete_media_keys
 
-async def adelete_session(agent: Agent, session_id: str, user_id: Optional[str] = None):
-    """Delete the current session and save to storage"""
+        delete_media_keys(keys, storage)  # type: ignore[arg-type]
+
+
+async def adelete_session(agent: Agent, session_id: str, user_id: Optional[str] = None, delete_media: bool = False):
+    """Async variant of :func:`delete_session`."""
     from agno.agent import _init
 
     if agent.db is None:
         return
+
+    keys: List[str] = []
+    storage = agent.media_storage
+    if delete_media:
+        from agno.utils.media_offload import session_media_keys
+
+        if storage is None:
+            log_warning("delete_media=True but no media_storage is configured, skipping media deletion")
+        else:
+            try:
+                if _init.has_async_db(agent):
+                    session = await agent.db.get_session(session_id=session_id, user_id=user_id)  # type: ignore
+                else:
+                    session = agent.db.get_session(session_id=session_id, user_id=user_id)
+            except Exception as e:
+                log_warning(f"Could not read session {session_id} for media deletion: {e}")
+                session = None
+            if session is not None:
+                keys = session_media_keys(session, [session_id], storage)
+    elif storage is not None:
+        log_debug("delete_media=False, keeping any offloaded media, pass delete_media=True to delete it too")
+
     if _init.has_async_db(agent):
         await agent.db.delete_session(session_id=session_id, user_id=user_id)  # type: ignore
     else:
         agent.db.delete_session(session_id=session_id, user_id=user_id)
+
+    if keys and storage is not None:
+        from agno.utils.media_offload import adelete_media_keys
+
+        await adelete_media_keys(keys, storage)
 
 
 # ---------------------------------------------------------------------------
@@ -588,6 +742,32 @@ def update_session_metrics(agent: Agent, session: AgentSession, run_response: Ru
 # ---------------------------------------------------------------------------
 
 
+def _bounded_history_runs_limit(
+    agent: Agent, last_n_runs: Optional[int], skip_statuses: Optional[List[RunStatus]]
+) -> Optional[int]:
+    """The ``runs_limit`` to push down for a history read, or None to full-load.
+
+    Only bound when there is a DB, a *positive* run count is requested with
+    default status filtering, on a standalone agent (an AgentSession, so the
+    DB-side filter matches get_messages). Otherwise return None so the caller
+    full-loads -- which preserves the in-memory cache path when there is no DB,
+    and lets get_messages handle ``last_n_runs <= 0`` (it returns []) rather
+    than pushing a bad LIMIT to the DB.
+
+    Every adapter accepts ``runs_limit``; adapters that don't optimize it load
+    the full history, so no capability check is needed here.
+    """
+    if (
+        agent.db is not None
+        and last_n_runs is not None
+        and last_n_runs > 0
+        and skip_statuses is None
+        and agent.team_id is None
+    ):
+        return last_n_runs
+    return None
+
+
 def get_session_messages(
     agent: Agent,
     session_id: Optional[str] = None,
@@ -616,7 +796,9 @@ def get_session_messages(
         log_warning("Session ID is not set, cannot get messages for session")
         return []
 
-    session = get_session(agent, session_id=session_id)
+    runs_limit = _bounded_history_runs_limit(agent, last_n_runs, skip_statuses)
+
+    session = get_session(agent, session_id=session_id, runs_limit=runs_limit)
     if session is None:
         raise Exception("Session not found")
 
@@ -670,7 +852,9 @@ async def aget_session_messages(
         log_warning("Session ID is not set, cannot get messages for session")
         return []
 
-    session = await aget_session(agent, session_id=session_id)
+    runs_limit = _bounded_history_runs_limit(agent, last_n_runs, skip_statuses)
+
+    session = await aget_session(agent, session_id=session_id, runs_limit=runs_limit)
     if session is None:
         raise Exception("Session not found")
 

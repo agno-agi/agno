@@ -4,6 +4,7 @@ Examples for input/output safety checks and policy enforcement.
 
 ## Files
 - `custom_guardrail.py` - Demonstrates custom guardrail.
+- `deepkeep_ai_firewall.py` - Demonstrates DeepKeep AI Firewall guardrails.
 - `openai_moderation.py` - Demonstrates openai moderation.
 - `output_guardrail.py` - Demonstrates output guardrail.
 - `pii_detection.py` - Demonstrates pii detection.

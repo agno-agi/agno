@@ -103,21 +103,6 @@ class DummySyncMemoryDb(BaseDb):
     def rename_eval_run(self, *args, **kwargs):
         raise NotImplementedError
 
-    def clear_cultural_knowledge(self, *args, **kwargs):
-        raise NotImplementedError
-
-    def delete_cultural_knowledge(self, *args, **kwargs):
-        raise NotImplementedError
-
-    def get_cultural_knowledge(self, *args, **kwargs):
-        raise NotImplementedError
-
-    def get_all_cultural_knowledge(self, *args, **kwargs):
-        raise NotImplementedError
-
-    def upsert_cultural_knowledge(self, *args, **kwargs):
-        raise NotImplementedError
-
     def upsert_trace(self, *args, **kwargs):
         raise NotImplementedError
 
@@ -250,21 +235,6 @@ class DummyAsyncMemoryDb(AsyncBaseDb):
         raise NotImplementedError
 
     async def rename_eval_run(self, *args, **kwargs):
-        raise NotImplementedError
-
-    async def clear_cultural_knowledge(self, *args, **kwargs):
-        raise NotImplementedError
-
-    async def delete_cultural_knowledge(self, *args, **kwargs):
-        raise NotImplementedError
-
-    async def get_cultural_knowledge(self, *args, **kwargs):
-        raise NotImplementedError
-
-    async def get_all_cultural_knowledge(self, *args, **kwargs):
-        raise NotImplementedError
-
-    async def upsert_cultural_knowledge(self, *args, **kwargs):
         raise NotImplementedError
 
     async def upsert_trace(self, *args, **kwargs):

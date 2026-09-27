@@ -10,9 +10,25 @@ from pathlib import Path
 from typing import Any, Dict
 
 from rich.console import Console
+from rich.text import Text
+
+BRAND_COLOR = "color(208)"
+MUTED_COLOR = "grey74"
 
 console = Console()
 err_console = Console(stderr=True)
+
+
+def sanitize_terminal_text(text: str) -> str:
+    """Make untrusted text inert while keeping ordinary whitespace readable."""
+    safe_characters = []
+    for character in text:
+        codepoint = ord(character)
+        if character in {"\n", "\t"} or (codepoint >= 32 and not 127 <= codepoint <= 159):
+            safe_characters.append(character)
+        else:
+            safe_characters.append("\\x" + format(codepoint, "02x"))
+    return "".join(safe_characters)
 
 
 def shorten_home(text: str) -> str:
@@ -24,23 +40,23 @@ def shorten_home(text: str) -> str:
 
 
 def print_heading(msg: str) -> None:
-    console.print(msg, style="green bold")
+    console.print(Text(sanitize_terminal_text(msg), style="green bold"))
 
 
 def print_info(msg: str) -> None:
-    console.print(msg)
+    console.print(Text(sanitize_terminal_text(msg)))
 
 
 def print_success(msg: str) -> None:
-    console.print(msg, style="chartreuse3")
+    console.print(Text(sanitize_terminal_text(msg), style="chartreuse3"))
 
 
 def print_warning(msg: str) -> None:
-    err_console.print(msg, style="magenta")
+    err_console.print(Text(sanitize_terminal_text(msg), style="magenta"))
 
 
 def print_error(msg: str) -> None:
-    err_console.print(msg, style="red")
+    err_console.print(Text(sanitize_terminal_text(msg), style="red"))
 
 
 def emit_json(payload: Dict[str, Any]) -> None:

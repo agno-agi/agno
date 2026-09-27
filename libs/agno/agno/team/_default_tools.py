@@ -69,7 +69,7 @@ from agno.run.team import (
 )
 from agno.session import TeamSession
 from agno.tools.function import Function
-from agno.utils.knowledge import get_agentic_or_user_search_filters
+from agno.utils.knowledge import get_agentic_or_user_search_filters, get_user_id_kwarg
 from agno.utils.log import (
     log_debug,
     log_info,
@@ -459,7 +459,7 @@ def _get_delegate_task_function(
     debug_mode: Optional[bool] = None,
 ) -> Function:
     from agno.team._init import _initialize_member
-    from agno.team._run import _update_team_media
+    from agno.team._run import _record_opted_out_media, _update_team_media
     from agno.team._tools import (
         _determine_team_member_interactions,
         _find_member_by_id,
@@ -545,7 +545,7 @@ def _get_delegate_task_function(
     def _process_delegate_task_to_member(
         member_agent_run_response: Optional[Union[TeamRunOutput, RunOutput]],
         member_agent: Union[Agent, "Team"],
-        member_agent_task: Union[str, Message],
+        delegated_task: Union[str, Message],
         member_session_state_copy: Dict[str, Any],
     ):
         # Add team run id to the member run
@@ -561,10 +561,13 @@ def _get_delegate_task_function(
 
         # Update the team run context
         member_name = member_agent.name if member_agent.name else member_agent.id if member_agent.id else "Unknown"
-        if isinstance(member_agent_task, str):
-            normalized_task = member_agent_task
-        elif member_agent_task.content:
-            normalized_task = str(member_agent_task.content)
+        # The task the leader asked for, never the prompt assembled from it.
+        # That prompt already contains every earlier interaction, so recording
+        # it here would nest each block inside the next one.
+        if isinstance(delegated_task, str):
+            normalized_task = delegated_task
+        elif delegated_task.content:
+            normalized_task = str(delegated_task.content)
         else:
             normalized_task = ""
         add_interaction_to_team_run_context(
@@ -587,10 +590,95 @@ def _get_delegate_task_function(
             ):
                 from agno.agent._run import scrub_run_output_for_storage
 
+                # Recorded before the scrub: by here the ids exist nowhere else.
+                if not member_agent.store_media:
+                    _record_opted_out_media(run_response, member_agent_run_response)
                 scrub_run_output_for_storage(member_agent, run_response=member_agent_run_response)  # type: ignore[arg-type]
 
-            # Add the member run to the team session
-            session.upsert_run(member_agent_run_response)
+            # Add the member run to the team session. The session copy is what
+            # the member replays as its own history, so it holds envelopes from
+            # the moment the run lands, not only once it is read back from the
+            # database. The live object still goes to the caller whole.
+            from agno.team._run import _member_run_for_storage
+
+            session.upsert_run(_member_run_for_storage(team, session, member_agent_run_response))
+
+        # Update team session state
+        merge_dictionaries(run_context.session_state, member_session_state_copy)  # type: ignore
+
+        # Update the team media
+        if member_agent_run_response is not None:
+            _update_team_media(team, member_agent_run_response)  # type: ignore
+
+    async def _aprocess_delegate_task_to_member(
+        member_agent_run_response: Optional[Union[TeamRunOutput, RunOutput]],
+        member_agent: Union[Agent, "Team"],
+        delegated_task: Union[str, Message],
+        member_session_state_copy: Dict[str, Any],
+    ):
+        """Async twin of the sync post-processor above.
+
+        Shared team state (the run context interactions, the session's runs,
+        the team media, the session-state merge) is mutated on the event loop,
+        so concurrent member fan-outs stay serialized the way the sync path's
+        single thread serializes them. Only the storage step, which may write
+        an offloaded payload, runs off the loop, inside the a-variant of the
+        storage helper.
+        """
+        # Add team run id to the member run
+
+        if member_agent_run_response is not None:
+            member_agent_run_response.parent_run_id = run_response.run_id  # type: ignore
+
+        # Update the top-level team run_response tool call to have the run_id of the member run
+        if run_response.tools is not None and member_agent_run_response is not None:
+            for tool in run_response.tools:
+                if tool.tool_name and tool.tool_name.lower() == "delegate_task_to_member":
+                    tool.child_run_id = member_agent_run_response.run_id  # type: ignore
+
+        # Update the team run context
+        member_name = member_agent.name if member_agent.name else member_agent.id if member_agent.id else "Unknown"
+        # The task the leader asked for, never the prompt assembled from it.
+        # That prompt already contains every earlier interaction, so recording
+        # it here would nest each block inside the next one.
+        if isinstance(delegated_task, str):
+            normalized_task = delegated_task
+        elif delegated_task.content:
+            normalized_task = str(delegated_task.content)
+        else:
+            normalized_task = ""
+        add_interaction_to_team_run_context(
+            team_run_context=team_run_context,
+            member_name=member_name,
+            task=normalized_task,
+            run_response=member_agent_run_response,  # type: ignore
+        )
+
+        # Add the member run to the team run response if enabled
+        if run_response and member_agent_run_response:
+            run_response.add_member_run(member_agent_run_response)
+
+        # Scrub the member run based on that member's storage flags before storing
+        if member_agent_run_response:
+            if (
+                not member_agent.store_media
+                or not member_agent.store_tool_messages
+                or not member_agent.store_history_messages
+            ):
+                from agno.agent._run import scrub_run_output_for_storage
+
+                # Recorded before the scrub: by here the ids exist nowhere else.
+                if not member_agent.store_media:
+                    _record_opted_out_media(run_response, member_agent_run_response)
+                scrub_run_output_for_storage(member_agent, run_response=member_agent_run_response)  # type: ignore[arg-type]
+
+            # Add the member run to the team session. The session copy is what
+            # the member replays as its own history, so it holds envelopes from
+            # the moment the run lands, not only once it is read back from the
+            # database. The live object still goes to the caller whole.
+            from agno.team._run import _amember_run_for_storage
+
+            session.upsert_run(await _amember_run_for_storage(team, session, member_agent_run_response))
 
         # Update team session state
         merge_dictionaries(run_context.session_state, member_session_state_copy)  # type: ignore
@@ -601,11 +689,10 @@ def _get_delegate_task_function(
 
     def delegate_task_to_member(member_id: str, task: str) -> Iterator[Union[RunOutputEvent, TeamRunOutputEvent, str]]:
         """Use this function to delegate a task to the selected team member.
-        You must provide a clear and concise description of the task the member should achieve AND the expected output.
 
         Args:
-            member_id (str): The ID of the member to delegate the task to. Use only the ID of the member, not the ID of the team followed by the ID of the member.
-            task (str): A clear and concise description of the task the member should achieve.
+            member_id (str): The ID of the member to delegate the task to, exactly as it appears in <team_members>.
+            task (str): A clear and concise description of the task the member should achieve, including what a good result looks like.
         Returns:
             str: The result of the delegated task.
         """
@@ -722,7 +809,7 @@ def _get_delegate_task_function(
             _process_delegate_task_to_member(
                 member_agent_run_response,
                 member_agent,
-                member_agent_task,  # type: ignore
+                task,  # type: ignore
                 member_session_state_copy,  # type: ignore
             )
             raise
@@ -734,7 +821,7 @@ def _get_delegate_task_function(
             _process_delegate_task_to_member(
                 member_agent_run_response,
                 member_agent,
-                member_agent_task,  # type: ignore
+                task,  # type: ignore
                 member_session_state_copy,  # type: ignore
             )
             yield f"Member '{member_agent.name}' requires human input before continuing."
@@ -774,7 +861,7 @@ def _get_delegate_task_function(
         _process_delegate_task_to_member(
             member_agent_run_response,
             member_agent,
-            member_agent_task,  # type: ignore
+            task,  # type: ignore
             member_session_state_copy,  # type: ignore
         )
 
@@ -782,11 +869,10 @@ def _get_delegate_task_function(
         member_id: str, task: str
     ) -> AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent, str]]:
         """Use this function to delegate a task to the selected team member.
-        You must provide a clear and concise description of the task the member should achieve AND the expected output.
 
         Args:
-            member_id (str): The ID of the member to delegate the task to. Use only the ID of the member, not the ID of the team followed by the ID of the member.
-            task (str): A clear and concise description of the task the member should achieve.
+            member_id (str): The ID of the member to delegate the task to, exactly as it appears in <team_members>.
+            task (str): A clear and concise description of the task the member should achieve, including what a good result looks like.
         Returns:
             str: The result of the delegated task.
         """
@@ -905,10 +991,10 @@ def _get_delegate_task_function(
                     await araise_if_cancelled(run_response.run_id)
         except RunCancelledException:
             use_team_logger()
-            _process_delegate_task_to_member(
+            await _aprocess_delegate_task_to_member(
                 member_agent_run_response,
                 member_agent,
-                member_agent_task,  # type: ignore
+                task,  # type: ignore
                 member_session_state_copy,  # type: ignore
             )
             raise
@@ -917,10 +1003,10 @@ def _get_delegate_task_function(
         if member_agent_run_response is not None and member_agent_run_response.is_paused:
             _propagate_member_pause(run_response, member_agent, member_agent_run_response)
             use_team_logger()
-            _process_delegate_task_to_member(
+            await _aprocess_delegate_task_to_member(
                 member_agent_run_response,
                 member_agent,
-                member_agent_task,  # type: ignore
+                task,  # type: ignore
                 member_session_state_copy,  # type: ignore
             )
             yield f"Member '{member_agent.name}' requires human input before continuing."
@@ -954,21 +1040,21 @@ def _get_delegate_task_function(
         # Afterward, switch back to the team logger
         use_team_logger()
 
-        _process_delegate_task_to_member(
+        await _aprocess_delegate_task_to_member(
             member_agent_run_response,
             member_agent,
-            member_agent_task,  # type: ignore
+            task,  # type: ignore
             member_session_state_copy,  # type: ignore
         )
 
     # When the task should be delegated to all members
     def delegate_task_to_members(task: str) -> Iterator[Union[RunOutputEvent, TeamRunOutputEvent, str]]:
         """
-        Use this function to delegate a task to all the member agents and return a response.
-        You must provide a clear and concise description of the task the member should achieve AND the expected output.
+        Use this function to send one task to every member agent and return their responses.
+        One call reaches all members; do not call it once per member.
 
         Args:
-            task (str): A clear and concise description of the task to send to member agents.
+            task (str): A clear and concise description of the task to send to member agents, including what a good result looks like.
         Returns:
             str: The result of the delegated task.
         """
@@ -1080,7 +1166,7 @@ def _get_delegate_task_function(
                 _process_delegate_task_to_member(
                     member_agent_run_response,
                     member_agent,
-                    member_agent_task,  # type: ignore
+                    task,  # type: ignore
                     member_session_state_copy,  # type: ignore
                 )
                 raise
@@ -1092,7 +1178,7 @@ def _get_delegate_task_function(
                 _process_delegate_task_to_member(
                     member_agent_run_response,
                     member_agent,
-                    member_agent_task,  # type: ignore
+                    task,  # type: ignore
                     member_session_state_copy,  # type: ignore
                 )
                 yield f"Agent {member_agent.name}: Requires human input before continuing."
@@ -1123,7 +1209,7 @@ def _get_delegate_task_function(
             _process_delegate_task_to_member(
                 member_agent_run_response,
                 member_agent,
-                member_agent_task,  # type: ignore
+                task,  # type: ignore
                 member_session_state_copy,  # type: ignore
             )
 
@@ -1132,11 +1218,11 @@ def _get_delegate_task_function(
 
     # When the task should be delegated to all members
     async def adelegate_task_to_members(task: str) -> AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent, str]]:
-        """Use this function to delegate a task to all the member agents and return a response.
-        You must provide a clear and concise description of the task to send to member agents.
+        """Use this function to send one task to every member agent and return their responses.
+        One call reaches all members; do not call it once per member.
 
         Args:
-            task (str): A clear and concise description of the task to send to member agents.
+            task (str): A clear and concise description of the task to send to member agents, including what a good result looks like.
         Returns:
             str: The result of the delegated task.
         """
@@ -1228,18 +1314,18 @@ def _get_delegate_task_function(
                         # Check if the member run is paused (HITL)
                         if member_agent_run_response is not None and member_agent_run_response.is_paused:
                             _propagate_member_pause(run_response, agent, member_agent_run_response)
-                            _process_delegate_task_to_member(
+                            await _aprocess_delegate_task_to_member(
                                 member_agent_run_response,
                                 agent,
-                                member_agent_task,  # type: ignore
+                                task,  # type: ignore
                                 member_session_state_copy,  # type: ignore
                             )
                             await queue.put(f"Agent {agent.name}: Requires human input before continuing.")
                         else:
-                            _process_delegate_task_to_member(
+                            await _aprocess_delegate_task_to_member(
                                 member_agent_run_response,
                                 agent,
-                                member_agent_task,  # type: ignore
+                                task,  # type: ignore
                                 member_session_state_copy,  # type: ignore
                             )
                 finally:
@@ -1322,10 +1408,10 @@ def _get_delegate_task_function(
                         if run_response.run_id is not None:
                             await araise_if_cancelled(run_response.run_id)
                     except RunCancelledException:
-                        _process_delegate_task_to_member(
+                        await _aprocess_delegate_task_to_member(
                             member_agent_run_response,
                             member_agent,
-                            member_agent_task,  # type: ignore
+                            task,  # type: ignore
                             member_session_state_copy,  # type: ignore
                         )
                         raise
@@ -1334,10 +1420,10 @@ def _get_delegate_task_function(
 
                     # Check if the member run is paused (HITL) before processing
                     if member_agent_run_response is not None and member_agent_run_response.is_paused:
-                        _process_delegate_task_to_member(
+                        await _aprocess_delegate_task_to_member(
                             member_agent_run_response,
                             member_agent,
-                            member_agent_task,  # type: ignore
+                            task,  # type: ignore
                             member_session_state_copy,  # type: ignore
                         )
                         return (
@@ -1346,10 +1432,10 @@ def _get_delegate_task_function(
                             member_agent_run_response,
                         )
 
-                    _process_delegate_task_to_member(
+                    await _aprocess_delegate_task_to_member(
                         member_agent_run_response,
                         member_agent,
-                        member_agent_task,  # type: ignore
+                        task,  # type: ignore
                         member_session_state_copy,  # type: ignore
                     )
 
@@ -1433,12 +1519,13 @@ def _get_delegate_task_function(
     return delegate_func
 
 
-def add_to_knowledge(team: "Team", query: str, result: str) -> str:
+def add_to_knowledge(team: "Team", query: str, result: str, user_id: Optional[str] = None) -> str:
     """Use this function to add information to the knowledge base for future use.
 
     Args:
         query (str): The query or topic to add.
         result (str): The actual content or information to store.
+        user_id (Optional[str]): The owner to store the document under. None writes to the shared bucket.
 
     Returns:
         str: A string indicating the status of the addition.
@@ -1460,8 +1547,38 @@ def add_to_knowledge(team: "Team", query: str, result: str) -> str:
     log_info(f"Adding document to Knowledge: {document_name}: {document_content}")
     from agno.knowledge.reader.text_reader import TextReader
 
-    insert_method(name=document_name, text_content=document_content, reader=TextReader())
+    insert_kwargs: Dict[str, Any] = {
+        "name": document_name,
+        "text_content": document_content,
+        "reader": TextReader(),
+    }
+    insert_kwargs.update(get_user_id_kwarg(insert_method, user_id, required=True))
+    insert_method(**insert_kwargs)
     return "Successfully added to knowledge base"
+
+
+def create_add_to_knowledge_tool(team: "Team", run_context: Optional[RunContext] = None) -> Function:
+    """Create a closure that binds the run's owner to the add_to_knowledge tool."""
+
+    def add_to_knowledge_base(query: str, result: str) -> str:
+        """Use this function to add information to the knowledge base for future use.
+
+        Args:
+            query (str): The query or topic to add.
+            result (str): The actual content or information to store.
+
+        Returns:
+            str: A string indicating the status of the addition.
+        """
+        try:
+            return add_to_knowledge(
+                team, query=query, result=result, user_id=run_context.user_id if run_context else team.user_id
+            )
+        except Exception as e:
+            log_warning(f"Adding to knowledge base failed: {str(e)}")
+            return f"Error adding to knowledge base: {type(e).__name__}"
+
+    return Function.from_callable(add_to_knowledge_base, name="add_to_knowledge")
 
 
 def create_knowledge_search_tool(
@@ -1691,6 +1808,13 @@ def get_relevant_docs_from_knowledge(
                 # Backward compatibility: support dependencies parameter
                 knowledge_retriever_kwargs["dependencies"] = dependencies
             knowledge_retriever_kwargs.update({"query": query, "num_documents": num_documents, **kwargs})
+            # After the **kwargs merge so caller kwargs cannot override the run's owner
+            knowledge_retriever_kwargs.update(
+                get_user_id_kwarg(
+                    team.knowledge_retriever,
+                    run_context.user_id if run_context else team.user_id,
+                )
+            )
             return team.knowledge_retriever(**knowledge_retriever_kwargs)
         except Exception as e:
             log_warning(f"Knowledge retriever failed: {str(e)}")
@@ -1710,7 +1834,13 @@ def get_relevant_docs_from_knowledge(
             num_documents = getattr(knowledge, "max_results", 10)
 
         log_debug(f"Retrieving from knowledge base with filters: {filters}")
-        relevant_docs: List[Document] = retrieve_fn(query=query, max_results=num_documents, filters=filters)
+        retrieve_kwargs: Dict[str, Any] = {
+            "query": query,
+            "max_results": num_documents,
+            "filters": filters,
+        }
+        retrieve_kwargs.update(get_user_id_kwarg(retrieve_fn, run_context.user_id if run_context else team.user_id))
+        relevant_docs: List[Document] = retrieve_fn(**retrieve_kwargs)
 
         if not relevant_docs or len(relevant_docs) == 0:
             log_debug("No relevant documents found for query")
@@ -1778,6 +1908,13 @@ async def aget_relevant_docs_from_knowledge(
                 # Backward compatibility: support dependencies parameter
                 knowledge_retriever_kwargs["dependencies"] = dependencies
             knowledge_retriever_kwargs.update({"query": query, "num_documents": num_documents, **kwargs})
+            # After the **kwargs merge so caller kwargs cannot override the run's owner
+            knowledge_retriever_kwargs.update(
+                get_user_id_kwarg(
+                    team.knowledge_retriever,
+                    run_context.user_id if run_context else team.user_id,
+                )
+            )
 
             result = team.knowledge_retriever(**knowledge_retriever_kwargs)
 
@@ -1807,10 +1944,19 @@ async def aget_relevant_docs_from_knowledge(
 
         log_debug(f"Retrieving from knowledge base with filters: {filters}")
 
+        scope_user_id = run_context.user_id if run_context else team.user_id
+        retrieve_kwargs: Dict[str, Any] = {
+            "query": query,
+            "max_results": num_documents,
+            "filters": filters,
+        }
+
         if callable(aretrieve_fn):
-            relevant_docs: List[Document] = await aretrieve_fn(query=query, max_results=num_documents, filters=filters)
+            retrieve_kwargs.update(get_user_id_kwarg(aretrieve_fn, scope_user_id))
+            relevant_docs: List[Document] = await aretrieve_fn(**retrieve_kwargs)
         elif callable(retrieve_fn):
-            relevant_docs = retrieve_fn(query=query, max_results=num_documents, filters=filters)
+            retrieve_kwargs.update(get_user_id_kwarg(retrieve_fn, scope_user_id))
+            relevant_docs = retrieve_fn(**retrieve_kwargs)
         else:
             return None
 

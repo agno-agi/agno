@@ -58,7 +58,7 @@ def run_detailed_analysis(topic: str) -> str:
 
 analysis_agent = Agent(
     name="AnalysisAgent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[run_detailed_analysis],
     instructions=(
         "You perform detailed data analysis. "

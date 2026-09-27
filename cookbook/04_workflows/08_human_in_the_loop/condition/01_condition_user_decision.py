@@ -20,7 +20,7 @@ This is useful for:
 from agno.db.sqlite import SqliteDb
 from agno.workflow.condition import Condition
 from agno.workflow.step import Step
-from agno.workflow.types import OnReject, StepInput, StepOutput
+from agno.workflow.types import HumanReview, OnReject, StepInput, StepOutput
 from agno.workflow.workflow import Workflow
 
 
@@ -86,9 +86,11 @@ def run_demo(on_reject_mode: OnReject, demo_name: str):
         name="analysis_depth_decision",
         steps=[Step(name="detailed_analysis", executor=detailed_analysis)],
         else_steps=[Step(name="quick_summary", executor=quick_summary)],
-        requires_confirmation=True,
-        confirmation_message="Would you like to perform detailed analysis?",
-        on_reject=on_reject_mode,
+        human_review=HumanReview(
+            requires_confirmation=True,
+            confirmation_message="Would you like to perform detailed analysis?",
+            on_reject=on_reject_mode,
+        ),
     )
 
     report_step = Step(name="generate_report", executor=generate_report)
@@ -178,9 +180,11 @@ if __name__ == "__main__":
                 evaluator=True,
                 steps=[Step(name="detailed_analysis", executor=detailed_analysis)],
                 else_steps=[Step(name="quick_summary", executor=quick_summary)],
-                requires_confirmation=True,
-                confirmation_message="Would you like to perform detailed analysis?",
-                on_reject=mode,
+                human_review=HumanReview(
+                    requires_confirmation=True,
+                    confirmation_message="Would you like to perform detailed analysis?",
+                    on_reject=mode,
+                ),
             )
             report_step = Step(name="generate_report", executor=generate_report)
 

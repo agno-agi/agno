@@ -145,8 +145,9 @@ def test_condition_with_session_state(shared_db):
     # Track if condition was called with session_state
     condition_calls = []
 
-    def condition_evaluator(step_input: StepInput, session_state: Dict[str, Any]) -> bool:
+    def condition_evaluator(step_input: StepInput, run_context: RunContext) -> bool:
         """Condition evaluator that uses session_state."""
+        session_state = run_context.session_state
         condition_calls.append(
             {
                 "user_id": session_state.get("current_user_id"),
@@ -216,8 +217,9 @@ def test_router_with_session_state(shared_db):
     # Track router calls
     router_calls = []
 
-    def router_selector(step_input: StepInput, session_state: Dict[str, Any]) -> Step:
+    def router_selector(step_input: StepInput, run_context: RunContext) -> Step:
         """Router selector that uses session_state."""
+        session_state = run_context.session_state
         router_calls.append(
             {
                 "user_id": session_state.get("current_user_id"),
@@ -361,8 +363,9 @@ async def test_async_condition_with_session_state(async_shared_db):
 
     condition_calls = []
 
-    async def async_condition_evaluator(step_input: StepInput, session_state: Dict[str, Any]) -> bool:
+    async def async_condition_evaluator(step_input: StepInput, run_context: RunContext) -> bool:
         """Async condition evaluator that uses session_state."""
+        session_state = run_context.session_state
         condition_calls.append(
             {
                 "session_id": session_state.get("current_session_id"),
@@ -414,8 +417,9 @@ async def test_async_router_with_session_state(async_shared_db):
 
     router_calls = []
 
-    async def async_router_selector(step_input: StepInput, session_state: Dict[str, Any]) -> Step:
+    async def async_router_selector(step_input: StepInput, run_context: RunContext) -> Step:
         """Async router selector that uses session_state."""
+        session_state = run_context.session_state
         router_calls.append(
             {
                 "session_id": session_state.get("current_session_id"),

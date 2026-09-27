@@ -125,8 +125,16 @@ Guidelines:
             else:
                 log_debug(f"Reloaded session before tool execution: {len(session_from_db.runs or [])} runs")
 
-            # Create a new run ID for this execution
-            run_id = str(uuid4())
+            # Reuse the caller's run id so the workflow execution IS the run the
+            # client polls, rather than a second one. The background path
+            # pre-persists a PENDING placeholder under this id (see
+            # Workflow._arun_background) so the run is poll- and cancel-visible
+            # before execution starts writing; this run replaces it via
+            # upsert-by-run_id. Id-reuse is what retired the old "0 out of 4
+            # steps done" duplicate and the workflow_agent_run
+            # cross-contamination. Falls back to a fresh id when there is no
+            # run context (e.g. direct library use).
+            run_id = run_context.run_id or str(uuid4())
 
             workflow_run_response = WorkflowRunOutput(
                 run_id=run_id,
@@ -240,8 +248,16 @@ Guidelines:
             else:
                 log_debug(f"Reloaded session before async tool execution: {len(session_from_db.runs or [])} runs")
 
-            # Create a new run ID for this execution
-            run_id = str(uuid4())
+            # Reuse the caller's run id so the workflow execution IS the run the
+            # client polls, rather than a second one. The background path
+            # pre-persists a PENDING placeholder under this id (see
+            # Workflow._arun_background) so the run is poll- and cancel-visible
+            # before execution starts writing; this run replaces it via
+            # upsert-by-run_id. Id-reuse is what retired the old "0 out of 4
+            # steps done" duplicate and the workflow_agent_run
+            # cross-contamination. Falls back to a fresh id when there is no
+            # run context (e.g. direct library use).
+            run_id = run_context.run_id or str(uuid4())
 
             workflow_run_response = WorkflowRunOutput(
                 run_id=run_id,

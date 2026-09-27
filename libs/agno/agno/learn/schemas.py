@@ -1157,7 +1157,3 @@ class DecisionLog:
 
     def __repr__(self) -> str:
         return f"DecisionLog(id={self.id}, decision={self.decision[:50]}...)"
-
-
-# Backwards compatibility alias
-Decision = DecisionLog

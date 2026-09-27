@@ -1,9 +1,11 @@
+import json
 import time
 from datetime import date, datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple, Union
 from uuid import uuid4
 
 if TYPE_CHECKING:
+    from agno.db.schemas.jobs import QueueWriteOutcome
     from agno.tracing.schemas import Span, Trace
 
 from agno.db.base import BaseDb, SessionType
@@ -13,23 +15,34 @@ from agno.db.redis.utils import (
     apply_sorting,
     calculate_date_metrics,
     create_index_entries,
-    deserialize_cultural_knowledge_from_db,
     deserialize_data,
     fetch_all_sessions_data,
     generate_redis_key,
     get_all_keys_for_table,
     get_dates_to_calculate_metrics_for,
     remove_index_entries,
-    serialize_cultural_knowledge_for_db,
     serialize_data,
 )
-from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
-from agno.db.utils import deserialize_session, deserialize_sessions
+from agno.db.utils import (
+    build_single_run_row,
+    deserialize_run,
+    deserialize_session,
+    deserialize_sessions,
+    drop_legacy_metrics,
+    filter_context_runs,
+    merge_runs_table_with_legacy_blob,
+    metric_record_day,
+    metrics_starting_date_from_records,
+)
+from agno.run.agent import RunOutput
+from agno.run.base import RunStatus
+from agno.run.team import TeamRunOutput
+from agno.run.workflow import WorkflowRunOutput
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
-from agno.utils.log import log_debug, log_error, log_info
+from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id
 
 try:
@@ -47,11 +60,11 @@ class RedisDb(BaseDb):
         db_prefix: str = "agno",
         expire: Optional[int] = None,
         session_table: Optional[str] = None,
+        runs_table: Optional[str] = None,
         memory_table: Optional[str] = None,
         metrics_table: Optional[str] = None,
         eval_table: Optional[str] = None,
         knowledge_table: Optional[str] = None,
-        culture_table: Optional[str] = None,
         traces_table: Optional[str] = None,
         spans_table: Optional[str] = None,
     ):
@@ -72,11 +85,11 @@ class RedisDb(BaseDb):
             db_prefix (str): Prefix for all Redis keys
             expire (Optional[int]): TTL for Redis keys in seconds
             session_table (Optional[str]): Name of the table to store sessions
+            runs_table (Optional[str]): Name of the table to store runs (one key per run)
             memory_table (Optional[str]): Name of the table to store memories
             metrics_table (Optional[str]): Name of the table to store metrics
             eval_table (Optional[str]): Name of the table to store evaluation runs
             knowledge_table (Optional[str]): Name of the table to store knowledge documents
-            culture_table (Optional[str]): Name of the table to store cultural knowledge
             traces_table (Optional[str]): Name of the table to store traces
             spans_table (Optional[str]): Name of the table to store spans
 
@@ -91,11 +104,11 @@ class RedisDb(BaseDb):
         super().__init__(
             id=id,
             session_table=session_table,
+            runs_table=runs_table,
             memory_table=memory_table,
             metrics_table=metrics_table,
             eval_table=eval_table,
             knowledge_table=knowledge_table,
-            culture_table=culture_table,
             traces_table=traces_table,
             spans_table=spans_table,
         )
@@ -121,6 +134,9 @@ class RedisDb(BaseDb):
         if table_type == "sessions":
             return self.session_table_name
 
+        elif table_type == "runs":
+            return self.runs_table_name
+
         elif table_type == "memories":
             return self.memory_table_name
 
@@ -132,9 +148,6 @@ class RedisDb(BaseDb):
 
         elif table_type == "knowledge":
             return self.knowledge_table_name
-
-        elif table_type == "culture":
-            return self.culture_table_name
 
         elif table_type == "traces":
             return self.trace_table_name
@@ -270,13 +283,316 @@ class RedisDb(BaseDb):
             log_error(f"Error getting all records for {table_type}: {str(e)}")
             return []
 
-    def get_latest_schema_version(self):
-        """Get the latest version of the database schema."""
-        pass
+    def _schema_version_key(self, table_name: str) -> str:
+        """Key holding the schema version stamp for the given table."""
+        return f"{self.db_prefix}:{self.versions_table_name}:{table_name}"
 
-    def upsert_schema_version(self, version: str) -> None:
-        """Upsert the schema version into the database."""
-        pass
+    def get_latest_schema_version(self, table_name: str = "") -> Optional[str]:
+        """Get the schema version stamped for the given table.
+
+        Defaults to "2.0.0" when nothing is stamped so the MigrationManager
+        runs migrations instead of skipping the table.
+        """
+        value = self.redis_client.get(self._schema_version_key(table_name))
+        if value is None:
+            return "2.0.0"
+        return value.decode() if isinstance(value, bytes) else str(value)
+
+    def upsert_schema_version(self, table_name: str = "", version: str = "") -> None:
+        """Record the schema version stamp for the given table.
+
+        No TTL: the stamp must outlive ``self.expire``.
+        """
+        self.redis_client.set(self._schema_version_key(table_name), version)
+
+    # -- Run methods --
+
+    _RUNS_BY_SESSION_INDEX_PATTERN = "{prefix}:runs:by_session:{session_id}"
+
+    def _runs_by_session_index_key(self, session_id: str) -> str:
+        """Sorted-set key listing run_ids for a session, scored by run_index."""
+        return self._RUNS_BY_SESSION_INDEX_PATTERN.format(prefix=self.db_prefix, session_id=session_id)
+
+    def upsert_run(
+        self,
+        run: Union[RunOutput, TeamRunOutput, WorkflowRunOutput, Dict[str, Any]],
+        session_id: str,
+        user_id: Optional[str] = None,
+        run_index: Optional[int] = None,
+    ) -> None:
+        """Upsert a single run as its own Redis key + maintain the session index (O(1)).
+
+        Optimized for updating existing runs (e.g., status changes in HITL or
+        background mode) without re-upserting all runs in the session.
+
+        For new runs, ``run_index`` should be provided or will be read from
+        ``run_data``. For updates to existing runs, ``run_index`` is preserved
+        from the original insert.
+
+        Args:
+            run: The run object or dictionary to upsert.
+            session_id: The session ID this run belongs to.
+            user_id: Optional user ID to associate with the run.
+            run_index: Optional run index for new runs.
+
+        Raises:
+            ValueError: If the run has no run_id.
+            Exception: If an error occurs during upsert.
+        """
+        try:
+            row = build_single_run_row(
+                run=run,
+                session_id=session_id,
+                user_id=user_id,
+                run_index=run_index,
+            )
+
+            # Preserve the original run_index if the row already exists
+            existing = self._get_record("runs", row["run_id"])
+            if existing is not None and "run_index" in existing:
+                row["run_index"] = existing["run_index"]
+
+            index_key = self._runs_by_session_index_key(session_id)
+            run_key = generate_redis_key(prefix=self.db_prefix, table_type="runs", key_id=row["run_id"])
+
+            pipe = self.redis_client.pipeline()
+            pipe.set(run_key, serialize_data(row), ex=self.expire)
+            pipe.zadd(index_key, {row["run_id"]: float(row.get("run_index") or 0)})
+            if self.expire is not None:
+                pipe.expire(index_key, self.expire)
+            pipe.execute()
+
+            # Maintain field indexes for cross-session run queries
+            create_index_entries(
+                redis_client=self.redis_client,
+                prefix=self.db_prefix,
+                table_type="runs",
+                record_id=row["run_id"],
+                record_data=row,
+                index_fields=["session_id", "user_id", "agent_id", "team_id", "workflow_id", "run_type", "status"],
+            )
+        except Exception as e:
+            log_error(f"Exception upserting run into Redis: {str(e)}")
+            raise e
+
+    def _get_session_runs_data(self, session_id: str) -> List[Dict[str, Any]]:
+        """Get raw run_data dicts for a session, ordered by run_index."""
+        index_key = self._runs_by_session_index_key(session_id)
+        try:
+            run_ids: List[Any] = list(self.redis_client.zrange(index_key, 0, -1))  # type: ignore[arg-type]
+        except Exception:
+            run_ids = []
+
+        if not run_ids:
+            return []
+
+        ordered: List[Dict[str, Any]] = []
+        for rid in run_ids:
+            run_id = rid.decode() if isinstance(rid, bytes) else str(rid)
+            row = self._get_record("runs", run_id)
+            if not row:
+                continue
+            run_data = row.get("run_data")
+            if run_data is not None:
+                ordered.append(run_data)
+        return ordered
+
+    def _get_sessions_runs_data(self, session_ids: List[str]) -> Dict[str, List[Dict[str, Any]]]:
+        """Get raw run_data dicts for several sessions, grouped by session_id."""
+        return {sid: self._get_session_runs_data(sid) for sid in session_ids}
+
+    def _delete_session_runs(self, session_id: str) -> int:
+        """Delete every run row associated with a session (and the session's run index)."""
+        index_key = self._runs_by_session_index_key(session_id)
+        try:
+            run_ids: List[Any] = list(self.redis_client.zrange(index_key, 0, -1))  # type: ignore[arg-type]
+        except Exception:
+            run_ids = []
+
+        deleted = 0
+        for rid in run_ids or []:
+            run_id = rid.decode() if isinstance(rid, bytes) else str(rid)
+            if self._delete_record(
+                table_type="runs",
+                record_id=run_id,
+                index_fields=["session_id", "user_id", "agent_id", "team_id", "workflow_id", "run_type", "status"],
+            ):
+                deleted += 1
+        # Drop the sorted-set itself
+        try:
+            self.redis_client.delete(index_key)
+        except Exception:
+            pass
+        return deleted
+
+    def cleanup_legacy_runs_field(self, force: bool = False) -> bool:
+        """Unset the legacy ``runs`` field from session records in Redis.
+
+        The v3.0.0 migration intentionally leaves the legacy ``runs`` field in
+        place on the session record as a backup. Call this once you have
+        verified the migration to reclaim the storage.
+
+        Args:
+            force: If True, unset the field even on sessions that still hold
+                non-null ``runs`` content (a sign that they were not migrated).
+                Defaults to False.
+
+        Returns:
+            True if any sessions were touched, False otherwise.
+        """
+        sessions = self._get_all_records("sessions")
+
+        if not force:
+            pending = sum(1 for s in sessions if s.get("runs"))
+            if pending > 0:
+                raise RuntimeError(
+                    f"Refusing to unset {self.session_table_name}.runs: {pending} session(s) still have "
+                    "non-null `runs` content. Run MigrationManager(db).up() first, or pass force=True."
+                )
+
+        touched = 0
+        for session in sessions:
+            if "runs" not in session:
+                continue
+            session.pop("runs", None)
+            self._store_record(
+                table_type="sessions",
+                record_id=session["session_id"],
+                data=session,
+            )
+            touched += 1
+        log_info(f"Unset runs on {touched} session record(s)")
+        return touched > 0
+
+    def get_run(
+        self, run_id: str, deserialize: Optional[bool] = True
+    ) -> Optional[Union[RunOutput, TeamRunOutput, WorkflowRunOutput, Dict[str, Any]]]:
+        """Read a single run from Redis."""
+        try:
+            row = self._get_record("runs", run_id)
+            if row is None:
+                return None
+            if not deserialize:
+                return row
+            return deserialize_run(row.get("run_type"), row["run_data"])
+        except Exception as e:
+            log_error(f"Exception reading run: {str(e)}")
+            raise e
+
+    def get_runs(
+        self,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+        status: Optional[RunStatus] = None,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+        deserialize: Optional[bool] = True,
+    ) -> Union[List[Union[RunOutput, TeamRunOutput, WorkflowRunOutput]], Tuple[List[Dict[str, Any]], int]]:
+        """Get all runs matching the given filters.
+
+        Filters are applied in-memory after fetching candidate rows. When ``session_id``
+        is provided, only that session's runs are fetched (cheap, indexed by sorted set).
+        """
+        try:
+            # Fast path: filter by session_id uses the index
+            if session_id is not None:
+                index_key = self._runs_by_session_index_key(session_id)
+                try:
+                    run_ids: List[Any] = list(self.redis_client.zrange(index_key, 0, -1))  # type: ignore[arg-type]
+                except Exception:
+                    run_ids = []
+                rows: List[Dict[str, Any]] = []
+                for rid in run_ids or []:
+                    run_id = rid.decode() if isinstance(rid, bytes) else str(rid)
+                    row = self._get_record("runs", run_id)
+                    if row is not None:
+                        rows.append(row)
+            else:
+                rows = self._get_all_records("runs")
+
+            conditions: Dict[str, Any] = {}
+            if user_id is not None:
+                conditions["user_id"] = user_id
+            if agent_id is not None:
+                conditions["agent_id"] = agent_id
+            if team_id is not None:
+                conditions["team_id"] = team_id
+            if workflow_id is not None:
+                conditions["workflow_id"] = workflow_id
+            if status is not None:
+                conditions["status"] = status.value if isinstance(status, RunStatus) else status
+            rows = apply_filters(records=rows, conditions=conditions)
+            total_count = len(rows)
+
+            if sort_by is None:
+                # Default: ordered by run_index then created_at
+                rows = sorted(rows, key=lambda r: (r.get("run_index") or 0, r.get("created_at") or 0))
+            else:
+                rows = apply_sorting(records=rows, sort_by=sort_by, sort_order=sort_order)
+
+            rows = apply_pagination(records=rows, limit=limit, page=page)
+
+            if not deserialize:
+                return rows, total_count
+            return [deserialize_run(r.get("run_type"), r["run_data"]) for r in rows]
+        except Exception as e:
+            log_error(f"Exception reading runs: {str(e)}")
+            raise e
+
+    def _scrub_run_ids_from_session_legacy_blob(self, session_id: str, run_ids: set) -> None:
+        """Remove ``run_ids`` from the given session's legacy ``runs`` field.
+
+        Partial-migration state: v3 migration copied runs into per-run keys but
+        preserved the legacy embedded blob as a backup. Deleting a run row
+        alone leaves the blob intact and ``merge_runs_table_with_legacy_blob``
+        resurrects it on the next read.
+        """
+        if not run_ids:
+            return
+        session = self._get_record("sessions", session_id)
+        if session is None:
+            return
+        legacy = session.get("runs")
+        if not isinstance(legacy, list):
+            return
+        kept = [r for r in legacy if not (isinstance(r, dict) and r.get("run_id") in run_ids)]
+        if len(kept) == len(legacy):
+            return
+        session["runs"] = kept
+        self._store_record("sessions", session_id, session)
+
+    def delete_run(self, run_id: str) -> bool:
+        """Delete a single run from Redis (and its entry in the session's run index)."""
+        try:
+            row = self._get_record("runs", run_id)
+            if row is None:
+                return False
+            sid = row.get("session_id")
+            ok = self._delete_record(
+                table_type="runs",
+                record_id=run_id,
+                index_fields=["session_id", "user_id", "agent_id", "team_id", "workflow_id", "run_type", "status"],
+            )
+            if ok and sid:
+                try:
+                    self.redis_client.zrem(self._runs_by_session_index_key(sid), run_id)
+                except Exception:
+                    pass
+                self._scrub_run_ids_from_session_legacy_blob(sid, {run_id})
+            return ok
+        except Exception as e:
+            log_error(f"Error deleting run: {str(e)}")
+            raise e
+
+    def delete_runs(self, run_ids: List[str]) -> None:
+        """Delete all given runs."""
+        for run_id in run_ids:
+            self.delete_run(run_id)
 
     # -- Session methods --
 
@@ -301,6 +617,8 @@ class RedisDb(BaseDb):
                 record_id=session_id,
                 index_fields=["user_id", "agent_id", "team_id", "workflow_id", "session_type"],
             ):
+                # Cascade-delete runs
+                self._delete_session_runs(session_id)
                 log_debug(f"Successfully deleted session: {session_id}")
                 return True
             else:
@@ -333,6 +651,7 @@ class RedisDb(BaseDb):
                     session_id,
                     index_fields=["user_id", "agent_id", "team_id", "workflow_id", "session_type"],
                 ):
+                    self._delete_session_runs(session_id)
                     deleted_count += 1
             log_debug(f"Successfully deleted {deleted_count} sessions")
 
@@ -346,6 +665,7 @@ class RedisDb(BaseDb):
         session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        runs_limit: Optional[int] = None,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
         """Read a session from Redis.
 
@@ -368,6 +688,13 @@ class RedisDb(BaseDb):
             # Apply filters
             if user_id is not None and session.get("user_id") != user_id:
                 return None
+
+            # Attach runs from the runs keys, merged with any legacy `runs` blob
+            runs_data = self._get_session_runs_data(session_id)
+            session["runs"] = merge_runs_table_with_legacy_blob(runs_data, session.get("runs"))
+
+            if runs_limit is not None:
+                session["runs"] = filter_context_runs(session.get("runs") or [])[-runs_limit:]
 
             if not deserialize:
                 return session
@@ -451,6 +778,11 @@ class RedisDb(BaseDb):
             sessions = apply_pagination(records=sorted_sessions, limit=limit, page=page)
             sessions = [record for record in sessions]
 
+            # Attach runs from the runs keys, merged with any legacy `runs` blob
+            for s in sessions:
+                runs_data = self._get_session_runs_data(s["session_id"])
+                s["runs"] = merge_runs_table_with_legacy_blob(runs_data, s.get("runs"))
+
             if not deserialize:
                 return sessions, len(filtered_sessions)
 
@@ -499,12 +831,17 @@ class RedisDb(BaseDb):
             session["session_data"]["session_name"] = session_name
             session["updated_at"] = int(time.time())
 
-            # Store updated session
-            success = self._store_record("sessions", session_id, session)
+            # Don't drop the runs field on rename; if it existed it stays. Persist without runs in v3 shape.
+            session_to_store = {k: v for k, v in session.items() if k != "runs"}
+            success = self._store_record("sessions", session_id, session_to_store)
             if not success:
                 return None
 
             log_debug(f"Renamed session with id '{session_id}' to '{session_name}'")
+
+            # Attach runs from the runs keys for the returned object
+            runs_data = self._get_session_runs_data(session_id)
+            session["runs"] = merge_runs_table_with_legacy_blob(runs_data, session.get("runs"))
 
             if not deserialize:
                 return session
@@ -530,7 +867,7 @@ class RedisDb(BaseDb):
             Exception: If any error occurs while upserting the session.
         """
         try:
-            session_dict = session.to_dict()
+            session_dict = session.to_dict(include_runs=False)
 
             existing = self._get_record(table_type="sessions", record_id=session.session_id)
             if (
@@ -548,7 +885,6 @@ class RedisDb(BaseDb):
                     "team_id": session_dict.get("team_id"),
                     "workflow_id": session_dict.get("workflow_id"),
                     "user_id": session_dict.get("user_id"),
-                    "runs": session_dict.get("runs"),
                     "agent_data": session_dict.get("agent_data"),
                     "team_data": session_dict.get("team_data"),
                     "workflow_data": session_dict.get("workflow_data"),
@@ -558,21 +894,7 @@ class RedisDb(BaseDb):
                     "created_at": session_dict.get("created_at") or int(time.time()),
                     "updated_at": int(time.time()),
                 }
-
-                success = self._store_record(
-                    table_type="sessions",
-                    record_id=session.session_id,
-                    data=data,
-                    index_fields=["user_id", "agent_id", "session_type"],
-                )
-                if not success:
-                    return None
-
-                if not deserialize:
-                    return data
-
-                return AgentSession.from_dict(data)
-
+                index_fields = ["user_id", "agent_id", "session_type"]
             elif isinstance(session, TeamSession):
                 data = {
                     "session_id": session_dict.get("session_id"),
@@ -581,7 +903,6 @@ class RedisDb(BaseDb):
                     "team_id": session_dict.get("team_id"),
                     "workflow_id": None,
                     "user_id": session_dict.get("user_id"),
-                    "runs": session_dict.get("runs"),
                     "team_data": session_dict.get("team_data"),
                     "agent_data": None,
                     "workflow_data": None,
@@ -591,28 +912,13 @@ class RedisDb(BaseDb):
                     "created_at": session_dict.get("created_at") or int(time.time()),
                     "updated_at": int(time.time()),
                 }
-
-                success = self._store_record(
-                    table_type="sessions",
-                    record_id=session.session_id,
-                    data=data,
-                    index_fields=["user_id", "team_id", "session_type"],
-                )
-                if not success:
-                    return None
-
-                if not deserialize:
-                    return data
-
-                return TeamSession.from_dict(data)
-
-            else:
+                index_fields = ["user_id", "team_id", "session_type"]
+            elif isinstance(session, WorkflowSession):
                 data = {
                     "session_id": session_dict.get("session_id"),
                     "session_type": SessionType.WORKFLOW.value,
                     "workflow_id": session_dict.get("workflow_id"),
                     "user_id": session_dict.get("user_id"),
-                    "runs": session_dict.get("runs"),
                     "workflow_data": session_dict.get("workflow_data"),
                     "session_data": session_dict.get("session_data"),
                     "metadata": session_dict.get("metadata"),
@@ -624,20 +930,34 @@ class RedisDb(BaseDb):
                     "team_data": None,
                     "summary": None,
                 }
+                index_fields = ["user_id", "workflow_id", "session_type"]
+            else:
+                raise ValueError(f"Invalid session type: {session.session_type}")
 
-                success = self._store_record(
-                    table_type="sessions",
-                    record_id=session.session_id,
-                    data=data,
-                    index_fields=["user_id", "workflow_id", "session_type"],
-                )
-                if not success:
-                    return None
+            # Preserve the legacy `runs` field as a frozen backup. _store_record replaces
+            # the whole record, so carry any existing legacy blob forward; runs now live in
+            # their own keys. Only cleanup_legacy_runs_field() reclaims it. Dropping it here
+            # would lose history for sessions not yet migrated.
+            if existing and existing.get("runs") is not None:
+                data["runs"] = existing["runs"]
 
-                if not deserialize:
-                    return data
+            success = self._store_record(
+                table_type="sessions",
+                record_id=session.session_id,
+                data=data,
+                index_fields=index_fields,
+            )
+            if not success:
+                return None
 
-                return WorkflowSession.from_dict(data)
+            # Runs are persisted separately via upsert_run by the caller (agent loop).
+            # Attach the in-memory runs for callers.
+            data["runs"] = [run if isinstance(run, dict) else run.to_dict() for run in session.runs or []]
+
+            if not deserialize:
+                return data
+
+            return deserialize_session(None, data)
 
         except Exception as e:
             log_error(f"Error upserting session: {str(e)}")
@@ -1064,7 +1384,22 @@ class RedisDb(BaseDb):
                     if end_timestamp is not None and created_at > end_timestamp:
                         continue
                     filtered_sessions.append(session)
-                return filtered_sessions
+                all_sessions = filtered_sessions
+
+            # Attach lightweight run info (model + provider) per session. For Redis, we
+            # walk the per-session sorted-set index and read each run row — cheap for
+            # typical session sizes, and `calculate_date_metrics` only needs len(runs)
+            # plus run["model"] / run["model_provider"].
+            for session in all_sessions:
+                sid = session.get("session_id")
+                if not sid:
+                    continue
+                runs_data = self._get_session_runs_data(sid)
+                lightweight = [
+                    {"model": rd.get("model"), "model_provider": rd.get("model_provider")} for rd in runs_data
+                ]
+                if lightweight or not session.get("runs"):
+                    session["runs"] = lightweight
 
             return all_sessions
 
@@ -1084,18 +1419,9 @@ class RedisDb(BaseDb):
         try:
             all_metrics = self._get_all_records("metrics")
 
-            if all_metrics:
-                # Find the latest completed metric
-                completed_metrics = [m for m in all_metrics if m.get("completed", False)]
-                if completed_metrics:
-                    latest_completed = max(completed_metrics, key=lambda x: x.get("date", ""))
-                    return datetime.fromisoformat(latest_completed["date"]).date() + timedelta(days=1)
-                else:
-                    # Find the earliest incomplete metric
-                    incomplete_metrics = [m for m in all_metrics if not m.get("completed", False)]
-                    if incomplete_metrics:
-                        earliest_incomplete = min(incomplete_metrics, key=lambda x: x.get("date", ""))
-                        return datetime.fromisoformat(earliest_incomplete["date"]).date()
+            resume_date = metrics_starting_date_from_records(all_metrics)
+            if resume_date is not None:
+                return resume_date
 
             # No metrics records, find first session
             sessions_raw, _ = self.get_sessions(sort_by="created_at", sort_order="asc", limit=1, deserialize=False)
@@ -1129,9 +1455,13 @@ class RedisDb(BaseDb):
                 log_info("Metrics already calculated for all relevant dates.")
                 return None
 
-            start_timestamp = int(datetime.combine(dates_to_process[0], datetime.min.time()).timestamp())
+            start_timestamp = int(
+                datetime.combine(dates_to_process[0], datetime.min.time()).replace(tzinfo=timezone.utc).timestamp()
+            )
             end_timestamp = int(
-                datetime.combine(dates_to_process[-1] + timedelta(days=1), datetime.min.time()).timestamp()
+                datetime.combine(dates_to_process[-1] + timedelta(days=1), datetime.min.time())
+                .replace(tzinfo=timezone.utc)
+                .timestamp()
             )
 
             sessions = self._get_all_sessions_for_metrics_calculation(
@@ -1153,17 +1483,16 @@ class RedisDb(BaseDb):
                 if not any(len(sessions) > 0 for sessions in sessions_for_date.values()):
                     continue
 
-                metrics_record = calculate_date_metrics(date_to_process, sessions_for_date)
-
-                # Check if a record already exists for this date and aggregation period
-                existing_record = self._get_record("metrics", metrics_record["id"])
-                if existing_record:
+                # One record per distinct user_id, plus the empty-string bucket for unowned sessions
+                for metrics_record in calculate_date_metrics(date_to_process, sessions_for_date):
                     # Update the existing record while preserving created_at
-                    metrics_record["created_at"] = existing_record.get("created_at", metrics_record["created_at"])
+                    existing_record = self._get_record("metrics", metrics_record["id"])
+                    if existing_record:
+                        metrics_record["created_at"] = existing_record.get("created_at", metrics_record["created_at"])
 
-                success = self._store_record("metrics", metrics_record["id"], metrics_record)
-                if success:
-                    results.append(metrics_record)
+                    success = self._store_record("metrics", metrics_record["id"], metrics_record)
+                    if success:
+                        results.append(metrics_record)
 
             log_debug("Updated metrics calculations")
 
@@ -1177,12 +1506,14 @@ class RedisDb(BaseDb):
         self,
         starting_date: Optional[date] = None,
         ending_date: Optional[date] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[dict], Optional[int]]:
         """Get all metrics matching the given date range.
 
         Args:
             starting_date (Optional[date]): The starting date to filter by.
             ending_date (Optional[date]): The ending date to filter by.
+            user_id (Optional[str]): The ID of the user to filter by. When None, all buckets are returned.
 
         Returns:
             Tuple[List[dict], Optional[int]]: A tuple containing the list of metrics and the latest updated_at.
@@ -1197,7 +1528,9 @@ class RedisDb(BaseDb):
             if starting_date is not None or ending_date is not None:
                 filtered_metrics = []
                 for metric in all_metrics:
-                    metric_date = datetime.fromisoformat(metric.get("date", "")).date()
+                    metric_date = metric_record_day(metric)
+                    if metric_date is None:
+                        continue
                     if starting_date is not None and metric_date < starting_date:
                         continue
                     if ending_date is not None and metric_date > ending_date:
@@ -1205,12 +1538,27 @@ class RedisDb(BaseDb):
                     filtered_metrics.append(metric)
                 all_metrics = filtered_metrics
 
+            # Filter by user_id
+            if user_id is not None:
+                all_metrics = [m for m in all_metrics if m.get("user_id") == user_id]
+            else:
+                # Records written before ownership existed hold a whole day, and only an
+                # unscoped read sees them: an owner filter excludes them already
+                all_metrics = drop_legacy_metrics(all_metrics)
+
             # Get latest updated_at
             latest_updated_at = None
             if all_metrics:
                 latest_updated_at = max(metric.get("updated_at", 0) for metric in all_metrics)
 
-            return all_metrics, latest_updated_at
+            # Map the sentinel empty-string user_id back to None
+            cleaned: List[dict] = []
+            for metric in all_metrics:
+                row = dict(metric)
+                if row.get("user_id") == "":
+                    row["user_id"] = None
+                cleaned.append(row)
+            return cleaned, latest_updated_at
 
         except Exception as e:
             log_error(f"Error getting metrics: {str(e)}")
@@ -1218,27 +1566,42 @@ class RedisDb(BaseDb):
 
     # -- Knowledge methods --
 
-    def delete_knowledge_content(self, id: str):
+    @staticmethod
+    def _knowledge_doc_is_visible(doc: Dict[str, Any], user_id: Optional[str]) -> bool:
+        """Whether the given knowledge row is owned by ``user_id`` or unowned. Unscoped callers see everything."""
+        if user_id is None:
+            return True
+        owner = doc.get("user_id")
+        return owner is None or owner == user_id
+
+    def delete_knowledge_content(self, id: str, user_id: Optional[str] = None):
         """Delete a knowledge row from the database.
 
         Args:
             id (str): The ID of the knowledge row to delete.
+            user_id (Optional[str]): The ID of the user. If provided, only deletes the row if it belongs to this user.
 
         Raises:
             Exception: If any error occurs while deleting the knowledge content.
         """
         try:
+            if user_id is not None:
+                existing = self._get_record("knowledge", id)
+                if existing is None or existing.get("user_id") != user_id:
+                    log_debug(f"Skipping delete of knowledge content {id}: not owned by {user_id}")
+                    return
             self._delete_record("knowledge", id)
 
         except Exception as e:
             log_error(f"Error deleting knowledge content: {str(e)}")
             raise e
 
-    def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
+    def get_knowledge_content(self, id: str, user_id: Optional[str] = None) -> Optional[KnowledgeRow]:
         """Get a knowledge row from the database.
 
         Args:
             id (str): The ID of the knowledge row to get.
+            user_id (Optional[str]): The ID of the user. If provided, only returns rows owned by this user or unowned.
 
         Returns:
             Optional[KnowledgeRow]: The knowledge row, or None if it doesn't exist.
@@ -1249,6 +1612,8 @@ class RedisDb(BaseDb):
         try:
             document_raw = self._get_record("knowledge", id)
             if document_raw is None:
+                return None
+            if not self._knowledge_doc_is_visible(document_raw, user_id):
                 return None
 
             return KnowledgeRow.model_validate(document_raw)
@@ -1264,6 +1629,7 @@ class RedisDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         linked_to: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[KnowledgeRow], int]:
         """Get all knowledge contents from the database.
 
@@ -1273,6 +1639,7 @@ class RedisDb(BaseDb):
             sort_by (Optional[str]): The column to sort by.
             sort_order (Optional[str]): The order to sort by.
             linked_to (Optional[str]): Filter by linked_to value (knowledge instance name).
+            user_id (Optional[str]): The ID of the user. If provided, only returns rows owned by this user or unowned.
 
         Returns:
             Tuple[List[KnowledgeRow], int]: The knowledge contents and total count.
@@ -1288,6 +1655,10 @@ class RedisDb(BaseDb):
             # Apply linked_to filter if provided
             if linked_to is not None:
                 all_documents = [doc for doc in all_documents if doc.get("linked_to") == linked_to]
+
+            # Apply owner filter if provided
+            if user_id is not None:
+                all_documents = [doc for doc in all_documents if self._knowledge_doc_is_visible(doc, user_id)]
 
             total_count = len(all_documents)
 
@@ -1316,6 +1687,12 @@ class RedisDb(BaseDb):
             Exception: If any error occurs while upserting the knowledge content.
         """
         try:
+            # A scoped write must not overwrite a record it does not own
+            if knowledge_row.user_id is not None and knowledge_row.id:
+                stored = self._get_record("knowledge", knowledge_row.id)
+                if stored is not None and stored.get("user_id") != knowledge_row.user_id:
+                    raise ValueError(f"Knowledge content {knowledge_row.id} not found")
+
             data = knowledge_row.model_dump()
             success = self._store_record("knowledge", knowledge_row.id, data)  # type: ignore
 
@@ -1379,11 +1756,12 @@ class RedisDb(BaseDb):
             log_error(f"Error deleting eval run {eval_run_id}: {str(e)}")
             raise
 
-    def delete_eval_runs(self, eval_run_ids: List[str]) -> None:
+    def delete_eval_runs(self, eval_run_ids: List[str], user_id: Optional[str] = None) -> None:
         """Delete multiple eval runs from Redis.
 
         Args:
             eval_run_ids (List[str]): The IDs of the eval runs to delete.
+            user_id (Optional[str]): If set, only delete runs owned by this user.
 
         Raises:
             Exception: If any error occurs while deleting the eval runs.
@@ -1391,6 +1769,10 @@ class RedisDb(BaseDb):
         try:
             deleted_count = 0
             for eval_run_id in eval_run_ids:
+                if user_id is not None:
+                    existing = self._get_record("evals", eval_run_id)
+                    if existing is None or existing.get("user_id") != user_id:
+                        continue
                 if self._delete_record(
                     "evals", eval_run_id, index_fields=["agent_id", "team_id", "workflow_id", "model_id", "eval_type"]
                 ):
@@ -1406,12 +1788,13 @@ class RedisDb(BaseDb):
             raise
 
     def get_eval_run(
-        self, eval_run_id: str, deserialize: Optional[bool] = True
+        self, eval_run_id: str, deserialize: Optional[bool] = True, user_id: Optional[str] = None
     ) -> Optional[Union[EvalRunRecord, Dict[str, Any]]]:
         """Get an eval run from Redis.
 
         Args:
             eval_run_id (str): The ID of the eval run to get.
+            user_id (Optional[str]): If set, only return the run if owned by this user.
 
         Returns:
             Optional[EvalRunRecord]: The eval run if found, None otherwise.
@@ -1422,6 +1805,9 @@ class RedisDb(BaseDb):
         try:
             eval_run_raw = self._get_record("evals", eval_run_id)
             if eval_run_raw is None:
+                return None
+
+            if user_id is not None and eval_run_raw.get("user_id") != user_id:
                 return None
 
             if not deserialize:
@@ -1446,6 +1832,7 @@ class RedisDb(BaseDb):
         filter_type: Optional[EvalFilterType] = None,
         eval_type: Optional[List[EvalType]] = None,
         deserialize: Optional[bool] = True,
+        user_id: Optional[str] = None,
     ) -> Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
         """Get all eval runs from Redis.
 
@@ -1475,6 +1862,8 @@ class RedisDb(BaseDb):
                 if workflow_id is not None and run.get("workflow_id") != workflow_id:
                     continue
                 if model_id is not None and run.get("model_id") != model_id:
+                    continue
+                if user_id is not None and run.get("user_id") != user_id:
                     continue
 
                 # Eval type filter
@@ -1510,13 +1899,14 @@ class RedisDb(BaseDb):
             raise e
 
     def rename_eval_run(
-        self, eval_run_id: str, name: str, deserialize: Optional[bool] = True
+        self, eval_run_id: str, name: str, deserialize: Optional[bool] = True, user_id: Optional[str] = None
     ) -> Optional[Union[EvalRunRecord, Dict[str, Any]]]:
         """Update the name of an eval run in Redis.
 
         Args:
             eval_run_id (str): The ID of the eval run to rename.
             name (str): The new name of the eval run.
+            user_id (Optional[str]): If set, only rename the run if owned by this user.
 
         Returns:
             Optional[Dict[str, Any]]: The updated eval run data if successful, None otherwise.
@@ -1527,6 +1917,9 @@ class RedisDb(BaseDb):
         try:
             eval_run_data = self._get_record("evals", eval_run_id)
             if eval_run_data is None:
+                return None
+
+            if user_id is not None and eval_run_data.get("user_id") != user_id:
                 return None
 
             eval_run_data["name"] = name
@@ -1547,177 +1940,24 @@ class RedisDb(BaseDb):
             log_error(f"Error updating eval run name {eval_run_id}: {str(e)}")
             raise
 
-    # -- Cultural Knowledge methods --
-    def clear_cultural_knowledge(self) -> None:
-        """Delete all cultural knowledge from the database.
-
-        Raises:
-            Exception: If an error occurs during deletion.
-        """
-        try:
-            keys = get_all_keys_for_table(redis_client=self.redis_client, prefix=self.db_prefix, table_type="culture")
-
-            if keys:
-                self.redis_client.delete(*keys)
-
-        except Exception as e:
-            log_error(f"Exception deleting all cultural knowledge: {str(e)}")
-            raise e
-
-    def delete_cultural_knowledge(self, id: str) -> None:
-        """Delete cultural knowledge by ID.
+    def update_eval_run_user_id(self, eval_run_id: str, user_id: str) -> None:
+        """Set the owner (user_id) on an existing eval run.
 
         Args:
-            id (str): The ID of the cultural knowledge to delete.
-
-        Raises:
-            Exception: If an error occurs during deletion.
+            eval_run_id (str): The ID of the eval run to update.
+            user_id (str): The owner to set.
         """
         try:
-            if self._delete_record("culture", id, index_fields=["name", "agent_id", "team_id"]):
-                log_debug(f"Successfully deleted cultural knowledge id: {id}")
-            else:
-                log_debug(f"No cultural knowledge found with id: {id}")
+            eval_run_data = self._get_record("evals", eval_run_id)
+            if eval_run_data is None:
+                return
+
+            eval_run_data["user_id"] = user_id
+            self._store_record("evals", eval_run_id, eval_run_data)
 
         except Exception as e:
-            log_error(f"Error deleting cultural knowledge: {str(e)}")
-            raise e
-
-    def get_cultural_knowledge(
-        self, id: str, deserialize: Optional[bool] = True
-    ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
-        """Get cultural knowledge by ID.
-
-        Args:
-            id (str): The ID of the cultural knowledge to retrieve.
-            deserialize (Optional[bool]): Whether to deserialize to CulturalKnowledge object. Defaults to True.
-
-        Returns:
-            Optional[Union[CulturalKnowledge, Dict[str, Any]]]: The cultural knowledge if found, None otherwise.
-
-        Raises:
-            Exception: If an error occurs during retrieval.
-        """
-        try:
-            cultural_knowledge = self._get_record("culture", id)
-
-            if cultural_knowledge is None:
-                return None
-
-            if not deserialize:
-                return cultural_knowledge
-
-            return deserialize_cultural_knowledge_from_db(cultural_knowledge)
-
-        except Exception as e:
-            log_error(f"Error getting cultural knowledge: {str(e)}")
-            raise e
-
-    def get_all_cultural_knowledge(
-        self,
-        agent_id: Optional[str] = None,
-        team_id: Optional[str] = None,
-        name: Optional[str] = None,
-        limit: Optional[int] = None,
-        page: Optional[int] = None,
-        sort_by: Optional[str] = None,
-        sort_order: Optional[str] = None,
-        deserialize: Optional[bool] = True,
-    ) -> Union[List[CulturalKnowledge], Tuple[List[Dict[str, Any]], int]]:
-        """Get all cultural knowledge with filtering and pagination.
-
-        Args:
-            agent_id (Optional[str]): Filter by agent ID.
-            team_id (Optional[str]): Filter by team ID.
-            name (Optional[str]): Filter by name (case-insensitive partial match).
-            limit (Optional[int]): Maximum number of results to return.
-            page (Optional[int]): Page number for pagination.
-            sort_by (Optional[str]): Field to sort by.
-            sort_order (Optional[str]): Sort order ('asc' or 'desc').
-            deserialize (Optional[bool]): Whether to deserialize to CulturalKnowledge objects. Defaults to True.
-
-        Returns:
-            Union[List[CulturalKnowledge], Tuple[List[Dict[str, Any]], int]]:
-                - When deserialize=True: List of CulturalKnowledge objects
-                - When deserialize=False: Tuple with list of dictionaries and total count
-
-        Raises:
-            Exception: If an error occurs during retrieval.
-        """
-        try:
-            all_cultural_knowledge = self._get_all_records("culture")
-
-            # Apply filters
-            filtered_items = []
-            for item in all_cultural_knowledge:
-                if agent_id is not None and item.get("agent_id") != agent_id:
-                    continue
-                if team_id is not None and item.get("team_id") != team_id:
-                    continue
-                if name is not None and name.lower() not in item.get("name", "").lower():
-                    continue
-
-                filtered_items.append(item)
-
-            sorted_items = apply_sorting(records=filtered_items, sort_by=sort_by, sort_order=sort_order)
-            paginated_items = apply_pagination(records=sorted_items, limit=limit, page=page)
-
-            if not deserialize:
-                return paginated_items, len(filtered_items)
-
-            return [deserialize_cultural_knowledge_from_db(item) for item in paginated_items]
-
-        except Exception as e:
-            log_error(f"Error getting all cultural knowledge: {str(e)}")
-            raise e
-
-    def upsert_cultural_knowledge(
-        self, cultural_knowledge: CulturalKnowledge, deserialize: Optional[bool] = True
-    ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
-        """Upsert cultural knowledge in Redis.
-
-        Args:
-            cultural_knowledge (CulturalKnowledge): The cultural knowledge to upsert.
-            deserialize (Optional[bool]): Whether to deserialize the result. Defaults to True.
-
-        Returns:
-            Optional[Union[CulturalKnowledge, Dict[str, Any]]]: The upserted cultural knowledge.
-
-        Raises:
-            Exception: If an error occurs during upsert.
-        """
-        try:
-            # Serialize content, categories, and notes into a dict for DB storage
-            content_dict = serialize_cultural_knowledge_for_db(cultural_knowledge)
-            item_id = cultural_knowledge.id or str(uuid4())
-
-            # Create the item dict with serialized content
-            data = {
-                "id": item_id,
-                "name": cultural_knowledge.name,
-                "summary": cultural_knowledge.summary,
-                "content": content_dict if content_dict else None,
-                "metadata": cultural_knowledge.metadata,
-                "input": cultural_knowledge.input,
-                "created_at": cultural_knowledge.created_at,
-                "updated_at": int(time.time()),
-                "agent_id": cultural_knowledge.agent_id,
-                "team_id": cultural_knowledge.team_id,
-            }
-
-            success = self._store_record("culture", item_id, data, index_fields=["name", "agent_id", "team_id"])
-
-            if not success:
-                return None
-
-            if not deserialize:
-                return data
-
-            return deserialize_cultural_knowledge_from_db(data)
-
-        except Exception as e:
-            log_error(f"Error upserting cultural knowledge: {str(e)}")
-            raise e
+            log_error(f"Error setting owner on eval run {eval_run_id}: {str(e)}")
+            raise
 
     # --- Traces ---
     def upsert_trace(self, trace: "Trace") -> None:
@@ -2224,3 +2464,726 @@ class RedisDb(BaseDb):
         limit: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
         raise NotImplementedError("Learning methods not yet implemented for RedisDb")
+
+    # -- Job queue (durable background runs) --------------------------------
+    # The queue contract, matching the Postgres adapters method-for-method
+    # (see agno.job_queue.store.InMemoryQueueStore for the reference). Sync,
+    # like every other method on this adapter; the queue worker wraps sync
+    # stores in a thread adapter. Claims and fenced writes use optimistic
+    # WATCH/MULTI on the job key - the SKIP LOCKED equivalent.
+    #
+    # Durability caveat: Redis acceptance durability depends on persistence
+    # configuration (use AOF appendfsync everysec/always for Postgres-grade
+    # guarantees; default RDB snapshotting can lose recently accepted jobs).
+
+    def _q_key(self, suffix: str) -> str:
+        return f"{self.db_prefix}:jobs:{suffix}"
+
+    def _q_job_key(self, job_id: str) -> str:
+        return self._q_key(f"job:{job_id}")
+
+    def _q_server_now(self) -> int:
+        """Redis server time as an integer epoch, for LEASE math.
+
+        Lease decisions must be anchored to ONE clock (the Postgres store
+        anchors to the database's NOW() for exactly this reason). With
+        worker wall clocks, a replica whose clock runs fast sees healthy
+        leases as expired and sweeps live runs - and since the sweep steals
+        the lock, the victim's own completion is fenced out and its run is
+        reported failed despite having finished; with multi-attempt budgets
+        that skew-triggered false sweep means duplicate side-effect
+        execution. TIME is the Redis server's clock, identical for every
+        worker on the shared store, so claim/heartbeat/sweep all agree.
+
+        Not applied to queue_stats' age arithmetic or the retention
+        cleanup cutoff; those only shift reporting/retention by the skew,
+        never ownership (mirroring the Postgres store's scope).
+        """
+        seconds, _microseconds = self.redis_client.time()
+        return int(seconds)
+
+    def _q_idem_key(self, user_id: Optional[str], idempotency_key: str) -> str:
+        """Collision-free dedup key for the (user, idempotency-key) tuple.
+
+        The user segment is length-prefixed so the tuple boundary is
+        unambiguous: (user="a", key="b:c") encodes to "u1:a:b:c" while
+        (user="a:b", key="c") encodes to "u3:a:b:c" - a plain ':' join
+        aliases both. Anonymous submits encode as "u0::{key}", which no
+        literal user id (including "-") can produce."""
+        user = user_id or ""
+        return self._q_key(f"idem:u{len(user)}:{user}:{idempotency_key}")
+
+    def _q_load_job(self, job_id: str) -> Optional[Dict[str, Any]]:
+        raw = self.redis_client.get(self._q_job_key(job_id))
+        if raw is None:
+            return None
+        return json.loads(raw if isinstance(raw, str) else raw.decode())
+
+    def _q_save_job_in_pipe(self, pipe: Any, job: Dict[str, Any]) -> None:
+        pipe.set(self._q_job_key(job["id"]), json.dumps(job))
+
+    def enqueue_job(self, job: Dict[str, Any], max_depth: int = 0) -> Dict[str, Any]:
+        """Insert an accepted run job (idempotency-first, then depth gate).
+
+        The idempotency key and the job document commit in ONE MULTI under
+        WATCH: a crash can no longer leave a dangling key that 409-wedges the
+        idempotency key until its TTL. A dangling key from a pre-fix crash is
+        self-healed: a key whose job document is missing is treated as
+        orphaned and taken over (WATCH arbitrates racing takeovers)."""
+        from redis.exceptions import WatchError
+
+        # Falsy ("" or None) means no dedup - matching the Postgres store, which
+        # treats an empty header as no key (an "" key would otherwise wedge
+        # every later empty-header submit onto one job). The STORED document
+        # normalizes too (Postgres parity: the column reads NULL, never '')
+        # so get_job consumers need no per-store knowledge.
+        if not job.get("idempotency_key"):
+            job = {**job, "idempotency_key": None}
+        idem = job.get("idempotency_key")
+        # user_id scopes the dedup namespace (cross-tenant key reuse must not
+        # attach to another tenant's run) - mirrors the Postgres index
+        idem_key = self._q_idem_key(job.get("user_id"), idem) if idem is not None else None
+
+        job_key = self._q_job_key(job["id"])
+
+        for _ in range(10):
+            with self.redis_client.pipeline() as pipe:
+                try:
+                    # The job key is always WATCHed: the MULTI below SETs it,
+                    # and a racing enqueue of the same id must not silently
+                    # overwrite (see the existence check further down).
+                    if idem_key is not None:
+                        pipe.watch(job_key, idem_key)
+                        existing_id = pipe.get(idem_key)
+                        if existing_id is not None:
+                            existing_id = existing_id if isinstance(existing_id, str) else existing_id.decode()
+                            existing = self._q_load_job(existing_id)
+                            if existing is not None and existing.get("user_id") == job.get("user_id"):
+                                pipe.unwatch()
+                                return {"accepted": False, "reason": "duplicate", "job": existing}
+                            # Orphaned key (dual-write crash before this fix)
+                            # OR a legacy/aliased key pointing at another
+                            # tenant's job (defense-in-depth: a duplicate
+                            # attach hands the caller that job's identifiers
+                            # and live event stream) - never attach; fall
+                            # through and take the key over inside the MULTI
+                    else:
+                        pipe.watch(job_key)
+
+                    if max_depth and max_depth > 0:
+                        queued = int(self.redis_client.zcard(self._q_key("queued")))
+                        if queued >= max_depth:
+                            pipe.unwatch()
+                            return {"accepted": False, "reason": "queue_full", "job": None}
+
+                    # Existing document under this id: mirror Postgres, where
+                    # id is the primary key - a collision is a programming
+                    # error (ids are server-minted uuid4), never a client
+                    # dedup. Silently SETting would reset a live ticket to
+                    # queued/attempt-0 - two executors, the first one's
+                    # completion fenced out.
+                    if pipe.exists(job_key):
+                        pipe.unwatch()
+                        raise RuntimeError(f"enqueue_job: job {job['id']} already exists; ids are never reused")
+
+                    pipe.multi()
+                    if idem_key is not None:
+                        pipe.set(idem_key, job["id"])
+                    self._q_save_job_in_pipe(pipe, job)
+                    pipe.zadd(self._q_key("queued"), {job["id"]: job["available_at"]})
+                    pipe.zadd(self._q_key("all"), {job["id"]: job["created_at"]})
+                    pipe.execute()
+                    return {"accepted": True, "reason": None, "job": dict(job)}
+                except WatchError:
+                    continue  # another submitter raced this key; re-evaluate
+        raise RuntimeError("enqueue_job: idempotency-key contention did not settle after 10 attempts")
+
+    def claim_job(
+        self, worker_id: str, lock_grace_seconds: int = 60, deployment_id: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        """Atomically claim the oldest executable job (queued, or stale-running
+        within the attempt budget). WATCH/MULTI CAS; a raced claim moves on.
+        Deployment affinity filters BOTH branches (a reclaim executes too):
+        NULL rides anywhere, stamped jobs only on matching workers;
+        deployment_id=None degenerates to claiming only unstamped jobs.
+
+        The scan PAGES past affinity mismatches: a fixed window would let a
+        head of foreign-deployment jobs starve matching jobs sitting behind
+        them indefinitely (foreign entries stay queued at the front). Each
+        page is pre-filtered with one pipelined MGET; the CAS inside
+        _q_try_claim remains the only authority."""
+        now = self._q_server_now()
+        stale = now - lock_grace_seconds
+
+        job = self._q_scan_claim(
+            self._q_key("queued"), now, worker_id, now, expect_status="queued", deployment_id=deployment_id
+        )
+        if job is not None:
+            return job
+        return self._q_scan_claim(
+            self._q_key("running"),
+            stale,
+            worker_id,
+            now,
+            expect_status="running",
+            stale_before=stale,
+            deployment_id=deployment_id,
+        )
+
+    def _q_scan_claim(
+        self,
+        zset_key: str,
+        max_score: int,
+        worker_id: str,
+        now: int,
+        expect_status: str,
+        stale_before: Optional[int] = None,
+        deployment_id: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Page through ready jobs oldest-first, cheaply pre-filter each page
+        by deployment affinity (MGET, advisory only), and CAS-claim the first
+        match. Ends when a page comes back empty - worst case one MGET per
+        page of foreign jobs, the same order of work as Postgres's index
+        scan over the same rows.
+
+        Offset pagination under concurrent claimers can skip entries whose
+        rank shifted mid-scan (a peer claimed something on an earlier page).
+        That only ends THIS burst early - every poll tick rescans from rank
+        0, so a skipped job is picked up next tick; no starvation."""
+        page_size = 64
+        offset = 0
+        while True:
+            raw_ids = self.redis_client.zrangebyscore(zset_key, "-inf", max_score, start=offset, num=page_size)
+            if not raw_ids:
+                return None
+            job_ids = [_q_to_str(raw_id) for raw_id in raw_ids]
+            raw_jobs = self.redis_client.mget([self._q_job_key(job_id) for job_id in job_ids])
+            for job_id, raw in zip(job_ids, raw_jobs):
+                if raw is None:
+                    continue
+                try:
+                    candidate = json.loads(raw if isinstance(raw, str) else raw.decode())
+                except (ValueError, AttributeError):
+                    continue
+                if candidate.get("deployment_id") is not None and candidate.get("deployment_id") != deployment_id:
+                    continue
+                job = self._q_try_claim(
+                    job_id,
+                    worker_id,
+                    now,
+                    expect_status=expect_status,
+                    stale_before=stale_before,
+                    deployment_id=deployment_id,
+                )
+                if job is not None:
+                    return job
+            offset += page_size
+
+    def _q_try_claim(
+        self,
+        job_id: str,
+        worker_id: str,
+        now: int,
+        expect_status: str,
+        stale_before: Optional[int] = None,
+        deployment_id: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        from redis.exceptions import WatchError
+
+        job_key = self._q_job_key(job_id)
+        try:
+            with self.redis_client.pipeline() as pipe:
+                pipe.watch(job_key)
+                raw = pipe.get(job_key)
+                if raw is None:
+                    pipe.unwatch()
+                    return None
+                job = json.loads(raw if isinstance(raw, str) else raw.decode())
+                claimable = (
+                    job["status"] == expect_status
+                    and job["available_at"] <= now
+                    and (job.get("deployment_id") is None or job.get("deployment_id") == deployment_id)
+                    and (
+                        expect_status == "queued"
+                        or (
+                            job.get("locked_at") is not None
+                            and stale_before is not None
+                            and job["locked_at"] <= stale_before
+                            and job["attempt"] < job["max_attempts"]
+                        )
+                    )
+                )
+                if not claimable:
+                    pipe.unwatch()
+                    return None
+                job.update(
+                    status="running", locked_by=worker_id, locked_at=now, attempt=job["attempt"] + 1, updated_at=now
+                )
+                pipe.multi()
+                self._q_save_job_in_pipe(pipe, job)
+                pipe.zrem(self._q_key("queued"), job_id)
+                pipe.zadd(self._q_key("running"), {job_id: now})
+                pipe.execute()
+                return job
+        except WatchError:
+            return None
+
+    def _q_fenced_update(
+        self, job_id: str, worker_id: str, attempt: int, mutate: Any
+    ) -> Tuple["QueueWriteOutcome", Optional[Dict[str, Any]]]:
+        """CAS update allowed only for the claim holder of this attempt.
+
+        WatchError means the record changed under us - a CONCURRENT WRITER,
+        not a verdict. The single-shot version returned "no" for it, which is
+        indistinguishable from a fence rejection: a final heartbeat racing the
+        completion could make the completion look fenced, leaving the ticket
+        RUNNING with the worker convinced it had settled. Retry the read-CAS
+        a bounded number of times and report what actually happened.
+        """
+        from redis.exceptions import WatchError
+
+        from agno.db.schemas.jobs import QueueWriteOutcome
+
+        job_key = self._q_job_key(job_id)
+        for _ in range(10):
+            try:
+                with self.redis_client.pipeline() as pipe:
+                    pipe.watch(job_key)
+                    raw = pipe.get(job_key)
+                    if raw is None:
+                        pipe.unwatch()
+                        return QueueWriteOutcome.MISSING, None
+                    job = json.loads(raw if isinstance(raw, str) else raw.decode())
+                    if job.get("locked_by") != worker_id or job["attempt"] != attempt or job["status"] != "running":
+                        pipe.unwatch()
+                        return QueueWriteOutcome.FENCED, job
+                    mutate(job)
+                    pipe.multi()
+                    self._q_save_job_in_pipe(pipe, job)
+                    # Zset membership is decided ENTIRELY inside this MULTI from
+                    # the post-mutate status. A running job keeps (or refreshes)
+                    # its running-zset entry in the same transaction - the old
+                    # post-EXEC zadd left a crash window where a heartbeaten job
+                    # was status="running" but in NO zset: invisible to reclaim
+                    # and sweep alike, a permanent zombie.
+                    if job["status"] == "running":
+                        pipe.zadd(self._q_key("running"), {job_id: job.get("locked_at") or self._q_server_now()})
+                    else:
+                        pipe.zrem(self._q_key("running"), job_id)
+                    if job["status"] == "queued":
+                        pipe.zadd(self._q_key("queued"), {job_id: job["available_at"]})
+                    pipe.execute()
+                    return QueueWriteOutcome.APPLIED, job
+            except WatchError:
+                continue  # the record changed under us; re-read and re-evaluate
+        log_warning(f"Job queue: fenced update for job {job_id} did not settle after 10 attempts (contention)")
+        return QueueWriteOutcome.CONTENDED, None
+
+    def heartbeat_jobs(self, worker_id: str, job_ids: List[str]) -> int:
+        from agno.db.schemas.jobs import QueueWriteOutcome
+
+        count = 0
+        now = self._q_server_now()
+        for job_id in job_ids:
+            job = self._q_load_job(job_id)
+            if job is None:
+                continue
+
+            def _beat(j: Dict[str, Any]) -> None:
+                j["locked_at"] = now
+
+            outcome, _ = self._q_fenced_update(job_id, worker_id, job["attempt"], _beat)
+            if outcome == QueueWriteOutcome.APPLIED:
+                count += 1
+        return count
+
+    def complete_job(self, job_id: str, worker_id: str, attempt: int, status: str, error: Optional[str] = None) -> bool:
+        from agno.db.schemas.jobs import QueueWriteOutcome
+
+        now = self._q_server_now()
+
+        def _complete(job: Dict[str, Any]) -> None:
+            job.update(status=status, error=error, locked_by=None, locked_at=None, completed_at=now, updated_at=now)
+
+        outcome, _ = self._q_fenced_update(job_id, worker_id, attempt, _complete)
+        return outcome == QueueWriteOutcome.APPLIED
+
+    def retry_or_fail_job(
+        self, job_id: str, worker_id: str, attempt: int, error: str, retry_delay_seconds: int = 30
+    ) -> Optional[str]:
+        from agno.db.schemas.jobs import QueueWriteOutcome
+
+        now = self._q_server_now()
+        outcome_status: Dict[str, str] = {}
+
+        def _retry(job: Dict[str, Any]) -> None:
+            if job["attempt"] < job["max_attempts"]:
+                job.update(
+                    status="queued",
+                    error=error,
+                    locked_by=None,
+                    locked_at=None,
+                    available_at=now + retry_delay_seconds,
+                    updated_at=now,
+                )
+                outcome_status["status"] = "queued"
+            else:
+                job.update(
+                    status="failed", error=error, locked_by=None, locked_at=None, completed_at=now, updated_at=now
+                )
+                outcome_status["status"] = "failed"
+
+        outcome, _ = self._q_fenced_update(job_id, worker_id, attempt, _retry)
+        return outcome_status.get("status") if outcome == QueueWriteOutcome.APPLIED else None
+
+    def settle_paused_job(self, job_id: str, status: str, error: Optional[str] = None) -> bool:
+        """Terminalize a PAUSED ticket whose continue ran INLINE, outside the
+        queue (see InMemoryQueueStore.settle_paused_job). WATCH/MULTI CAS on
+        status='paused'; a queued/claimed continuation owns the ticket and is
+        never clobbered. (Paused jobs are in no queued/running zset.)"""
+        from redis.exceptions import WatchError
+
+        if status not in ("completed", "cancelled", "failed"):
+            return False
+        job_key = self._q_job_key(job_id)
+        now = self._q_server_now()
+        try:
+            with self.redis_client.pipeline() as pipe:
+                pipe.watch(job_key)
+                raw = pipe.get(job_key)
+                if raw is None:
+                    pipe.unwatch()
+                    return False
+                job = json.loads(raw if isinstance(raw, str) else raw.decode())
+                if job["status"] != "paused":
+                    pipe.unwatch()
+                    return False
+                job.update(status=status, error=error, locked_by=None, locked_at=None, completed_at=now, updated_at=now)
+                pipe.multi()
+                self._q_save_job_in_pipe(pipe, job)
+                pipe.execute()
+                return True
+        except WatchError:
+            return False
+
+    def cancel_job(self, job_id: str) -> bool:
+        # Paused tickets count as waiting: nothing is executing them, and
+        # without this a cancelled paused run stayed a paused ticket forever,
+        # resurrectable by a later continue. (Paused jobs are in no
+        # queued/running zset; the zrem below is a harmless no-op for them.)
+        from redis.exceptions import WatchError
+
+        job_key = self._q_job_key(job_id)
+        now = self._q_server_now()
+        try:
+            with self.redis_client.pipeline() as pipe:
+                pipe.watch(job_key)
+                raw = pipe.get(job_key)
+                if raw is None:
+                    pipe.unwatch()
+                    return False
+                job = json.loads(raw if isinstance(raw, str) else raw.decode())
+                if job["status"] not in ("queued", "paused"):
+                    pipe.unwatch()
+                    return False
+                job.update(status="cancelled", completed_at=now, updated_at=now)
+                pipe.multi()
+                self._q_save_job_in_pipe(pipe, job)
+                pipe.zrem(self._q_key("queued"), job_id)
+                pipe.execute()
+                return True
+        except WatchError:
+            return False
+
+    def sweep_exhausted_jobs(self, lock_grace_seconds: int = 60, limit: int = 20) -> List[Dict[str, Any]]:
+        stale = self._q_server_now() - lock_grace_seconds
+        exhausted: List[Dict[str, Any]] = []
+        # PAGE through the whole stale range: a fixed window (the old
+        # num=limit*2) made exhausted jobs sitting behind that many
+        # stale-but-reclaimable ones invisible on every tick - after a mass
+        # crash under a retry budget, terminal failures were starved
+        # indefinitely by the reclaim queue ahead of them. The stale range is
+        # finite and normally tiny (live jobs' heartbeats advance their zset
+        # score out of it), so walking it fully is bounded by the size of the
+        # very backlog the sweep exists to clear.
+        start = 0
+        page = max(limit * 2, 50)
+        while len(exhausted) < limit:
+            raw_ids = self.redis_client.zrangebyscore(self._q_key("running"), "-inf", stale, start=start, num=page)
+            if not raw_ids:
+                break
+            for raw_id in raw_ids:
+                job = self._q_load_job(_q_to_str(raw_id))
+                if (
+                    job is not None
+                    and job["status"] == "running"
+                    and job.get("locked_at") is not None
+                    and job["locked_at"] <= stale
+                    and job["attempt"] >= job["max_attempts"]
+                ):
+                    exhausted.append(job)
+                    if len(exhausted) >= limit:
+                        break
+            start += len(raw_ids)
+        return exhausted
+
+    def acquire_sweep(self, job_id: str, worker_id: str, lock_grace_seconds: int = 60) -> bool:
+        """Take ownership of a stale, budget-exhausted running job BEFORE any
+        run-row write (WATCH/MULTI CAS). A live heartbeat between the sweep's
+        scan and this acquisition wins here, with the run row still
+        untouched. Refreshing locked_at doubles as the retry backoff for a
+        failing terminalization."""
+        from redis.exceptions import WatchError
+
+        job_key = self._q_job_key(job_id)
+        now = self._q_server_now()
+        stale = now - lock_grace_seconds
+        try:
+            with self.redis_client.pipeline() as pipe:
+                pipe.watch(job_key)
+                raw = pipe.get(job_key)
+                if raw is None:
+                    pipe.unwatch()
+                    return False
+                job = json.loads(raw if isinstance(raw, str) else raw.decode())
+                if (
+                    job["status"] != "running"
+                    or job.get("locked_at") is None
+                    or job["locked_at"] > stale
+                    or job["attempt"] < job["max_attempts"]
+                ):
+                    pipe.unwatch()
+                    return False
+                job.update(locked_by=worker_id, locked_at=now, updated_at=now)
+                pipe.multi()
+                self._q_save_job_in_pipe(pipe, job)
+                # Keep running-zset membership in the same transaction with
+                # the refreshed score (the sweep scan keys on this score)
+                pipe.zadd(self._q_key("running"), {job_id: now})
+                pipe.execute()
+                return True
+        except WatchError:
+            return False
+
+    def settle_swept_job(self, job_id: str, worker_id: str, status: str, error: Optional[str] = None) -> bool:
+        """Ownership-keyed settle for the sweeper - see the in-memory store's
+        docstring: the sweep reconciles the ticket with what the run row
+        says (completed/cancelled/paused/failed), never blind-fails it."""
+        from redis.exceptions import WatchError
+
+        if status not in ("completed", "cancelled", "paused", "failed"):
+            return False
+        job_key = self._q_job_key(job_id)
+        now = self._q_server_now()
+        try:
+            with self.redis_client.pipeline() as pipe:
+                pipe.watch(job_key)
+                raw = pipe.get(job_key)
+                if raw is None:
+                    pipe.unwatch()
+                    return False
+                job = json.loads(raw if isinstance(raw, str) else raw.decode())
+                if job["status"] != "running" or job.get("locked_by") != worker_id:
+                    pipe.unwatch()
+                    return False
+                job.update(status=status, error=error, locked_by=None, locked_at=None, completed_at=now, updated_at=now)
+                pipe.multi()
+                self._q_save_job_in_pipe(pipe, job)
+                pipe.zrem(self._q_key("running"), job_id)
+                pipe.execute()
+                return True
+        except WatchError:
+            return False
+
+    def get_job(self, job_id: str, strict: bool = False) -> Optional[Dict[str, Any]]:
+        """Look up a ticket. strict=True demands failure-propagating
+        semantics for fail-closed consumers (see the in-memory store's
+        docstring); this load propagates Redis errors in both modes."""
+        return self._q_load_job(job_id)
+
+    def count_queued_jobs(self) -> int:
+        return int(self.redis_client.zcard(self._q_key("queued")))
+
+    def list_jobs(
+        self,
+        status: Optional[Union[str, List[str]]] = None,
+        limit: int = 20,
+        page: int = 1,
+        sort_by: Optional[str] = "created_at",
+        sort_order: Optional[str] = "desc",
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """Paginated job listing: (page of jobs, total matching count).
+
+        status accepts one value or a list (match any). Loads the full index
+        and filters/sorts in Python, like the other Redis list APIs -
+        total_count and arbitrary sort fields need the whole set anyway, and
+        the index stays small by construction (bounded by max_queue_depth
+        plus the retention sweep)."""
+        statuses = [status] if isinstance(status, str) else status
+        jobs: List[Dict[str, Any]] = []
+        raw_ids = self.redis_client.zrevrange(self._q_key("all"), 0, -1)
+        for raw_id in raw_ids:
+            job = self._q_load_job(_q_to_str(raw_id))
+            if job is not None and (statuses is None or job["status"] in statuses):
+                jobs.append(job)
+        total_count = len(jobs)
+        jobs = apply_sorting(records=jobs, sort_by=sort_by, sort_order=sort_order)
+        start = max(page - 1, 0) * limit
+        return jobs[start : start + limit], total_count
+
+    def requeue_job(self, job_id: str) -> bool:
+        """Operator requeue for a terminally failed/cancelled job: grants
+        exactly one more execution by raising max_attempts to attempt + 1."""
+        from redis.exceptions import WatchError
+
+        job_key = self._q_job_key(job_id)
+        now = self._q_server_now()
+        try:
+            with self.redis_client.pipeline() as pipe:
+                pipe.watch(job_key)
+                raw = pipe.get(job_key)
+                if raw is None:
+                    pipe.unwatch()
+                    return False
+                job = json.loads(raw if isinstance(raw, str) else raw.decode())
+                if job["status"] not in ("failed", "cancelled"):
+                    pipe.unwatch()
+                    return False
+                job.update(
+                    status="queued",
+                    max_attempts=job["attempt"] + 1,
+                    available_at=now,
+                    locked_by=None,
+                    locked_at=None,
+                    completed_at=None,
+                    updated_at=now,
+                )
+                pipe.multi()
+                self._q_save_job_in_pipe(pipe, job)
+                pipe.zadd(self._q_key("queued"), {job_id: now})
+                pipe.execute()
+                return True
+        except WatchError:
+            return False
+
+    def continue_job(self, job_id: str, continue_payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Continuation CAS: flip the EXISTING paused ticket back to queued,
+        mirroring requeue_job's WATCH/MULTI transition. No new rows, ever -
+        id == run_id is load-bearing. Submit-time payload fields are kept;
+        payload["continue"] is REPLACED WHOLESALE with this continue's inputs
+        (never accumulated across pause cycles). Budget grant: max_attempts =
+        attempt + 1 - exactly one more execution, regardless of the configured
+        retry budget.
+
+        Returns {"outcome": "queued" | "attach" | "conflict", "job": row}:
+        queued = CAS won; attach = ticket already queued/running (double-click
+        idempotency - the caller attaches, this click's inputs are discarded);
+        conflict = terminal ticket or no ticket (job is the row or None).
+
+        A WatchError means the ticket changed under us (e.g. the raced
+        double-click's CAS won): re-evaluate rather than failing, so the
+        second click resolves to attach. Exceptions propagate (like
+        enqueue_job): this CAS is the durable acceptance of the continue.
+        """
+        from redis.exceptions import WatchError
+
+        job_key = self._q_job_key(job_id)
+        for _ in range(10):
+            now = self._q_server_now()
+            try:
+                with self.redis_client.pipeline() as pipe:
+                    pipe.watch(job_key)
+                    raw = pipe.get(job_key)
+                    if raw is None:
+                        pipe.unwatch()
+                        return {"outcome": "conflict", "job": None}
+                    job = json.loads(raw if isinstance(raw, str) else raw.decode())
+                    if job["status"] in ("completed", "failed", "cancelled"):
+                        pipe.unwatch()
+                        return {"outcome": "conflict", "job": job}
+                    if job["status"] in ("queued", "running"):
+                        pipe.unwatch()
+                        return {"outcome": "attach", "job": job}
+                    payload = dict(job.get("payload") or {})
+                    payload["continue"] = dict(continue_payload)
+                    job.update(
+                        status="queued",
+                        payload=payload,
+                        max_attempts=job["attempt"] + 1,
+                        available_at=now,
+                        locked_by=None,
+                        locked_at=None,
+                        completed_at=None,
+                        updated_at=now,
+                    )
+                    pipe.multi()
+                    self._q_save_job_in_pipe(pipe, job)
+                    pipe.zadd(self._q_key("queued"), {job_id: now})
+                    pipe.execute()
+                    return {"outcome": "queued", "job": job}
+            except WatchError:
+                continue  # ticket changed under us; re-evaluate its new status
+        raise RuntimeError("continue_job: ticket contention did not settle after 10 attempts")
+
+    def queue_stats(self) -> Dict[str, Any]:
+        now = int(time.time())
+        counts: Dict[str, int] = {}
+        oldest_queued: Optional[int] = None
+        for raw_id in self.redis_client.zrange(self._q_key("all"), 0, -1):
+            job = self._q_load_job(_q_to_str(raw_id))
+            if job is None:
+                continue
+            counts[job["status"]] = counts.get(job["status"], 0) + 1
+            if job["status"] == "queued":
+                age = now - job["created_at"]
+                oldest_queued = age if oldest_queued is None else max(oldest_queued, age)
+        return {"counts": counts, "oldest_queued_age_seconds": oldest_queued}
+
+    def cleanup_jobs(self, older_than_seconds: int = 86400) -> int:
+        """Retention sweep. The delete is CAS-guarded: an operator requeue can
+        flip failed->queued between our read and the delete, and an
+        unconditional delete would silently vanish the requeued (accepted!)
+        run. WATCH + re-check inside the transaction = Postgres's atomic
+        DELETE ... WHERE status IN (terminal). Paused tickets are deliberately
+        EXEMPT: they must outlive arbitrary human latency to stay continuable;
+        cancelling the run is the remedy for abandoned ones."""
+        from redis.exceptions import WatchError
+
+        cutoff = int(time.time()) - older_than_seconds
+        removed = 0
+        for raw_id in self.redis_client.zrange(self._q_key("all"), 0, -1):
+            job_id = _q_to_str(raw_id)
+            job_key = self._q_job_key(job_id)
+            try:
+                with self.redis_client.pipeline() as pipe:
+                    pipe.watch(job_key)
+                    raw = pipe.get(job_key)
+                    if raw is None:
+                        pipe.unwatch()
+                        continue
+                    job = json.loads(raw if isinstance(raw, str) else raw.decode())
+                    if not (
+                        job["status"] in ("completed", "failed", "cancelled")
+                        and job.get("completed_at") is not None
+                        and job["completed_at"] <= cutoff
+                    ):
+                        pipe.unwatch()
+                        continue
+                    pipe.multi()
+                    pipe.delete(job_key)
+                    # Dedup key dies with the job record (Postgres parity: the
+                    # partial-unique index lives exactly as long as the row)
+                    if job.get("idempotency_key"):
+                        pipe.delete(self._q_idem_key(job.get("user_id"), job["idempotency_key"]))
+                    pipe.zrem(self._q_key("all"), job_id)
+                    pipe.zrem(self._q_key("queued"), job_id)
+                    pipe.zrem(self._q_key("running"), job_id)
+                    pipe.execute()
+                    removed += 1
+            except WatchError:
+                continue  # job changed under us (e.g. requeued): leave it alone
+        return removed
+
+
+def _q_to_str(value: Any) -> str:
+    return value.decode() if isinstance(value, bytes) else str(value)

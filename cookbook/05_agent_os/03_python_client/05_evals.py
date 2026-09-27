@@ -55,8 +55,8 @@ async def run_evaluations() -> None:
     )
     print(f"Stored evaluations: {len(eval_runs.data)}")
 
-    for eval_id in (accuracy.id, reliability.id):
-        detail = await client.get_eval_run(eval_id)
+    for run_id in (accuracy.id, reliability.id):
+        detail = await client.get_eval_run(run_id)
         print(f"Fetched {detail.id}: {detail.eval_type.value}")
 
 

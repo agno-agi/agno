@@ -24,21 +24,21 @@ if not CEL_AVAILABLE:
 # ---------------------------------------------------------------------------
 researcher = Agent(
     name="Researcher",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     instructions="Research the topic. If the topic involves safety risks, include SAFETY_REVIEW_NEEDED in your response.",
     markdown=True,
 )
 
 safety_reviewer = Agent(
     name="Safety Reviewer",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     instructions="Review the research for safety concerns and provide recommendations.",
     markdown=True,
 )
 
 publisher = Agent(
     name="Publisher",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     instructions="Prepare the research for publication.",
     markdown=True,
 )

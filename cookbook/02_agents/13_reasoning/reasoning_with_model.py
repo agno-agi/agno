@@ -2,7 +2,7 @@
 Reasoning With Model
 =============================
 
-Use a separate reasoning model with configurable step limits.
+Use a separate native reasoning model (o1, o3, DeepSeek-R1, etc.) for thinking.
 """
 
 from agno.agent import Agent
@@ -12,12 +12,9 @@ from agno.models.openai import OpenAIResponses
 # Create Agent
 # ---------------------------------------------------------------------------
 agent = Agent(
-    model=OpenAIResponses(id="gpt-5.2"),
-    # Use a separate model for the reasoning/thinking step
-    reasoning_model=OpenAIResponses(id="gpt-5-mini"),
-    reasoning=True,
-    reasoning_min_steps=2,
-    reasoning_max_steps=5,
+    model=OpenAIResponses(id="gpt-5.6"),
+    # Use a native reasoning model for the thinking step
+    reasoning_model=OpenAIResponses(id="o3-mini"),
     markdown=True,
 )
 

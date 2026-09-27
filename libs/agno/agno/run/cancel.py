@@ -9,6 +9,12 @@ from agno.utils.log import logger
 
 # Global cancellation manager instance
 _cancellation_manager: BaseRunCancellationManager = InMemoryRunCancellationManager()
+# True once set_cancellation_manager() has been called. The import-time
+# in-memory default does NOT set this - it is what lets queue wiring
+# distinguish the default nobody chose (replaceable) from an explicitly
+# configured manager (never replaced). An isinstance check cannot make that
+# distinction for in-memory managers and their subclasses.
+_cancellation_manager_explicitly_set: bool = False
 
 # Per team run_id, the async delegate tasks the model spawned. The team's cancel
 # handler awaits these before persisting so each member's post-cancel
@@ -30,14 +36,24 @@ def set_cancellation_manager(manager: BaseRunCancellationManager) -> None:
         set_cancellation_manager(MyCustomManager())
         ```
     """
-    global _cancellation_manager
+    global _cancellation_manager, _cancellation_manager_explicitly_set
     _cancellation_manager = manager
+    _cancellation_manager_explicitly_set = True
     logger.info(f"Cancellation manager set to {type(manager).__name__}")
 
 
 def get_cancellation_manager() -> BaseRunCancellationManager:
     """Get the current cancellation manager instance."""
     return _cancellation_manager
+
+
+def cancellation_manager_explicitly_set() -> bool:
+    """Whether a manager was ever installed via ``set_cancellation_manager()``.
+
+    False means the process is running on the import-time in-memory default,
+    which coordination wiring may replace.
+    """
+    return _cancellation_manager_explicitly_set
 
 
 def register_run(run_id: str) -> None:

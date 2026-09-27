@@ -34,3 +34,10 @@ def test_generate_human_readable_id_uniqueness():
     """1000 generated IDs should all be unique"""
     ids = {generate_human_readable_id() for _ in range(1000)}
     assert len(ids) == 1000
+
+
+def test_generate_human_readable_id_documents_compact_entropy():
+    """The public contract must not promise UUID4-equivalent uniqueness."""
+    doc = " ".join((generate_human_readable_id.__doc__ or "").split())
+    assert "roughly 44 bits of distinguishing entropy" in doc
+    assert "not collision-resistant to the same degree as a full UUID4" in doc

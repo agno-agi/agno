@@ -37,6 +37,7 @@ agent = Agent(tools=[tools])
 
 ## Folders
 
+- `finance/` - FinanceTools: one finance toolkit, swappable data providers (yfinance, financialdatasets.ai)
 - `mcp/` - MCP server examples
 - `tool_decorator/` - Custom tool patterns
 - `tool_hooks/` - Pre/post processing

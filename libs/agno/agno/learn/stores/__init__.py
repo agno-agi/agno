@@ -23,14 +23,13 @@ from agno.learn.stores.entity_memory import EntityMemoryStore
 from agno.learn.stores.learned_knowledge import LearnedKnowledgeStore
 from agno.learn.stores.protocol import LearningStore
 from agno.learn.stores.session_context import SessionContextStore
-from agno.learn.stores.user_memory import MemoriesStore, UserMemoryStore
+from agno.learn.stores.user_memory import UserMemoryStore
 from agno.learn.stores.user_profile import UserProfileStore
 
 __all__ = [
     "LearningStore",
     "UserProfileStore",
     "UserMemoryStore",
-    "MemoriesStore",  # Backwards compatibility alias
     "SessionContextStore",
     "LearnedKnowledgeStore",
     "EntityMemoryStore",

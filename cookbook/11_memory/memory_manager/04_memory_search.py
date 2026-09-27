@@ -20,7 +20,7 @@ memory_db = PostgresDb(db_url=db_url)
 # ---------------------------------------------------------------------------
 # Create Memory Manager
 # ---------------------------------------------------------------------------
-memory = MemoryManager(model=OpenAIChat(id="gpt-4o"), db=memory_db)
+memory = MemoryManager(model=OpenAIChat(id="gpt-5.6-luna"), db=memory_db)
 
 # ---------------------------------------------------------------------------
 # Run Memory Search

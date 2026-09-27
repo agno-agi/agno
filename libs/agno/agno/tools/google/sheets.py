@@ -42,6 +42,8 @@ Alternatively, follow the instructions in the Google Sheets API Quickstart guide
 
 Note: The first time you run the application, it will open a browser window for OAuth authentication.
 A token.json file will be created to store the authentication credentials for future use.
+On headless servers pass auth=AuthConfig(interactive=False) (or set GOOGLE_OAUTH_NONINTERACTIVE=1):
+expired credentials then raise a clear error instead of blocking on a browser that never opens.
 """
 
 import json
@@ -81,8 +83,6 @@ class GoogleSheetsTools(GoogleToolkit):
         token_path: Optional[str] = None,
         service_account_path: Optional[str] = None,
         oauth_port: int = 0,
-        # Deprecated alias (use credentials_path instead)
-        creds_path: Optional[str] = None,
         read_sheet: bool = True,
         create_sheet: bool = False,
         update_sheet: bool = False,
@@ -127,14 +127,6 @@ class GoogleSheetsTools(GoogleToolkit):
         self.spreadsheet_id = spreadsheet_id
         self.spreadsheet_range = spreadsheet_range
         # Determine required scopes based on operations if no custom scopes provided
-        # Handle deprecated alias
-        if creds_path is not None:
-            from agno.utils.log import log_warning
-
-            log_warning("creds_path is deprecated, use credentials_path instead")
-            if credentials_path is None:
-                credentials_path = creds_path
-
         if scopes is None:
             self.scopes = []
             if _read_sheet:

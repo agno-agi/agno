@@ -30,16 +30,16 @@ agent_as_judge_eval = AgentAsJudgeEval(
 researcher = Agent(
     name="Researcher",
     role="Research and gather information",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
 )
 writer = Agent(
     name="Writer",
     role="Write clear and concise summaries",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
 )
 research_team = Team(
     name="Research Team",
-    model=OpenAIChat("gpt-4o"),
+    model=OpenAIChat("gpt-5.6-luna"),
     members=[researcher, writer],
     instructions=["First research the topic thoroughly, then write a clear summary."],
     post_hooks=[agent_as_judge_eval],
@@ -56,7 +56,7 @@ if __name__ == "__main__":
     print("Evaluation Results:")
     eval_runs = db.get_eval_runs()
     if eval_runs:
-        latest = eval_runs[-1]
+        latest = eval_runs[0]
         if latest.eval_data and "results" in latest.eval_data:
             result = latest.eval_data["results"][0]
             print(f"Score: {result.get('score', 'N/A')}/10")

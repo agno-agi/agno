@@ -23,16 +23,8 @@ uv pip install -U huggingface_hub agno
 
 ### 4. Run basic Agent
 
-- Streaming on
-
 ```shell
-python cookbook/92_models/huggingface/basic_stream.py
-```
-
-- Streaming off
-
-```shell
-python cookbook/92_models/huggingface/basic.py
+python cookbook/90_models/huggingface/basic.py
 ```
 
 ### 5. Run agent with tools
@@ -40,5 +32,5 @@ python cookbook/92_models/huggingface/basic.py
 - An essay writer using Llama model
 
 ```shell
-python cookbook/92_models/huggingface/llama_essay_writer.py
+python cookbook/90_models/huggingface/llama_essay_writer.py
 ```

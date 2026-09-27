@@ -403,7 +403,7 @@ def test_agent_groq_reasoning_non_streaming():
     """Test that Agent reasoning works with Groq reasoning models (deepseek variants) in non-streaming mode."""
     # Create an Agent with Groq reasoning model
     agent = Agent(
-        model=Groq(id="llama-3.3-70b-versatile"),
+        model=Groq(id="openai/gpt-oss-120b"),
         reasoning_model=Groq(id="deepseek-r1-distill-llama-70b"),
         instructions=dedent("""\
             You are an expert problem-solving assistant with strong analytical skills! 🧠
@@ -433,7 +433,7 @@ def test_agent_groq_reasoning_streaming(shared_db):
     """Test that Agent reasoning works with Groq reasoning models (deepseek variants) in streaming mode."""
     # Create an Agent with Groq reasoning model
     agent = Agent(
-        model=Groq(id="llama-3.3-70b-versatile"),
+        model=Groq(id="openai/gpt-oss-120b"),
         reasoning_model=Groq(id="deepseek-r1-distill-llama-70b"),
         db=shared_db,
         instructions=dedent("""\
@@ -677,7 +677,7 @@ def test_agent_accepts_groq_reasoning_model():
     """Test that Agent can be instantiated with Groq reasoning model."""
     try:
         agent = Agent(
-            model=Groq(id="llama-3.3-70b-versatile"),
+            model=Groq(id="openai/gpt-oss-120b"),
             reasoning_model=Groq(id="deepseek-r1-distill-llama-70b"),
         )
         assert agent.reasoning_model is not None

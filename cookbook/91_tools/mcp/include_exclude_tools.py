@@ -1,5 +1,6 @@
 """
-This example demonstrates how to use multiple MCP servers in a single agent.
+This example demonstrates how to use multiple MCP servers in a single agent,
+filtering the tools each server exposes.
 
 Prerequisites:
 - Google Maps:
@@ -14,7 +15,7 @@ Prerequisites:
 import asyncio
 
 from agno.agent import Agent
-from agno.tools.mcp import MultiMCPTools
+from agno.tools.mcp import MCPTools
 
 # ---------------------------------------------------------------------------
 # Create Agent
@@ -22,22 +23,24 @@ from agno.tools.mcp import MultiMCPTools
 
 
 async def run_agent(message: str) -> None:
-    """Run the GitHub agent with the given message.
+    """Run the agent with the given message.
 
     Remember to set the environment variable `GOOGLE_MAPS_API_KEY` with your Google Maps API key.
     """
 
-    # Initialize the MCP server
-    async with MultiMCPTools(
-        [
-            "npx -y @openbnb/mcp-server-airbnb --ignore-robots-txt",
-            "npx -y @modelcontextprotocol/server-google-maps",
-        ],
-        include_tools=["airbnb_search"],
-        exclude_tools=["maps_place_details"],
-    ) as mcp_tools:
+    # Initialize one MCPTools instance per server, filtering tools per server
+    async with (
+        MCPTools(
+            command="npx -y @openbnb/mcp-server-airbnb --ignore-robots-txt",
+            include_tools=["airbnb_search"],
+        ) as airbnb_tools,
+        MCPTools(
+            command="npx -y @modelcontextprotocol/server-google-maps",
+            exclude_tools=["maps_place_details"],
+        ) as maps_tools,
+    ):
         agent = Agent(
-            tools=[mcp_tools],
+            tools=[airbnb_tools, maps_tools],
             markdown=True,
         )
 

@@ -202,13 +202,10 @@ class E2BTools(Toolkit):
             with fdopen(fd, "wb") as tmp:
                 tmp.write(png_data)
 
-            # Generate a file:// URL for the temp file
-            file_url = f"file://{temp_path}"
-
-            # Create Image object
+            # A local path belongs in filepath, not a file:// url: url is fetched over http(s).
             image_id = str(uuid4())
             image_artifact = Image(
-                id=image_id, url=file_url, original_prompt=f"Generated from code execution result {result_index}"
+                id=image_id, filepath=temp_path, original_prompt=f"Generated from code execution result {result_index}"
             )
 
             if output_path:
@@ -289,13 +286,12 @@ class E2BTools(Toolkit):
                 with os.fdopen(fd, "wb") as tmp:
                     tmp.write(png_data)
 
-                # Generate a file:// URL for the temp file
-                file_url = f"file://{temp_path}"
-
-                # Create Image object
+                # A local path belongs in filepath, not a file:// url: url is fetched over http(s).
                 image_id = str(uuid4())
                 image_artifact = Image(
-                    id=image_id, url=file_url, original_prompt=f"Interactive {chart_type} chart from code execution"
+                    id=image_id,
+                    filepath=temp_path,
+                    original_prompt=f"Interactive {chart_type} chart from code execution",
                 )
 
                 summary += f"\nChart image added as artifact with ID {image_id}"

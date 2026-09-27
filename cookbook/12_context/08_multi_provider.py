@@ -31,7 +31,7 @@ from agno.models.openai import OpenAIResponses
 from sqlalchemy import create_engine, text
 
 # Every provider sub-agent in this cookbook shares the same small model.
-provider_model = OpenAIResponses(id="gpt-5.4-mini")
+provider_model = OpenAIResponses(id="gpt-5.6-luna")
 
 # ---------------------------------------------------------------------------
 # Provider 1: filesystem (this cookbook's directory)

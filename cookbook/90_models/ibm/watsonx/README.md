@@ -41,16 +41,8 @@ uv pip install -U ibm-watsonx-ai ddgs agno
 
 ### 4. Run basic agent
 
-- Streaming on
-
 ```shell
-python cookbook/92_models/ibm/watsonx/basic_stream.py
-```
-
-- Streaming off
-
-```shell
-python cookbook/92_models/ibm/watsonx/basic.py
+python cookbook/90_models/ibm/watsonx/basic.py
 ```
 
 ### 5. Run Agent with Tools
@@ -58,29 +50,29 @@ python cookbook/92_models/ibm/watsonx/basic.py
 - DuckDuckGo Search
 
 ```shell
-python cookbook/92_models/ibm/watsonx/tool_use.py
+python cookbook/90_models/ibm/watsonx/tool_use.py
 ```
 
 ### 6. Run Agent that returns structured output
 
 ```shell
-python cookbook/92_models/ibm/watsonx/structured_output.py
+python cookbook/90_models/ibm/watsonx/structured_output.py
 ```
 
 ### 7. Run Agent that uses storage
 
 ```shell
-python cookbook/92_models/ibm/watsonx/storage.py
+python cookbook/90_models/ibm/watsonx/db.py
 ```
 
 ### 8. Run Agent that uses knowledge
 
 ```shell
-python cookbook/92_models/ibm/watsonx/knowledge.py
+python cookbook/90_models/ibm/watsonx/knowledge.py
 ```
 
 ### 9. Run Agent that uses images
 
 ```shell
-python cookbook/92_models/ibm/watsonx/image_agent.py
+python cookbook/90_models/ibm/watsonx/image_agent_bytes.py
 ```

@@ -494,6 +494,14 @@ def _reload_runs(db_file: str, session_id: str):
     return session.runs or []
 
 
+def _set_stored_team_run_status(db: SqliteDb, session_id: str, run_id: str, status: RunStatus) -> None:
+    """Persist a test status mutation through v3's dedicated run row."""
+    stored_run = db.get_run(run_id)
+    assert isinstance(stored_run, TeamRunOutput)
+    stored_run.status = status
+    db.upsert_run(run=stored_run, session_id=session_id, user_id=stored_run.user_id)
+
+
 def test_flat_member_pause_survives_fresh_process_continue(tmp_path):
     _EXECUTED.clear()
     db_file = str(tmp_path / "flat.db")
@@ -4514,11 +4522,7 @@ async def test_a_stale_run_response_cannot_resurrect_a_cancelled_run(tmp_path):
     assert run1.is_paused
 
     db = SqliteDb(db_file=db_file)
-    session = db.get_session(session_id=session_id, session_type="team")
-    for r in session.runs or []:
-        if r.run_id == run1.run_id:
-            r.status = RunStatus.cancelled
-    db.upsert_session(session)
+    _set_stored_team_run_status(db, session_id, run1.run_id, RunStatus.cancelled)
 
     # The caller still holds the paused object from before the cancellation and
     # sends a payload that would bind.
@@ -4559,11 +4563,7 @@ async def test_a_refused_continue_restores_the_status_it_replaced(tmp_path):
     assert run1.is_paused
 
     db = SqliteDb(db_file=db_file)
-    session = db.get_session(session_id=session_id, session_type="team")
-    for r in session.runs or []:
-        if r.run_id == run1.run_id:
-            r.status = RunStatus.error
-    db.upsert_session(session)
+    _set_stored_team_run_status(db, session_id, run1.run_id, RunStatus.error)
 
     # The caller still holds the paused object from before the failure.
     team2 = _build_flat_team(SqliteDb(db_file=db_file), resuming=True)
@@ -4606,11 +4606,7 @@ async def test_the_event_buffer_does_not_advertise_a_cancelled_run_as_paused(tmp
     assert run1.is_paused
 
     db = SqliteDb(db_file=db_file)
-    session = db.get_session(session_id=session_id, session_type="team")
-    for r in session.runs or []:
-        if r.run_id == run1.run_id:
-            r.status = RunStatus.cancelled
-    db.upsert_session(session)
+    _set_stored_team_run_status(db, session_id, run1.run_id, RunStatus.cancelled)
 
     team2 = _build_flat_team(SqliteDb(db_file=db_file), resuming=True)
     async for _ in team2.acontinue_run(
@@ -4652,11 +4648,7 @@ async def test_a_refusal_over_a_running_run_never_advertises_running(tmp_path):
     assert run1.is_paused
 
     db = SqliteDb(db_file=db_file)
-    session = db.get_session(session_id=session_id, session_type="team")
-    for r in session.runs or []:
-        if r.run_id == run1.run_id:
-            r.status = RunStatus.running
-    db.upsert_session(session)
+    _set_stored_team_run_status(db, session_id, run1.run_id, RunStatus.running)
 
     team2 = _build_flat_team(SqliteDb(db_file=db_file), resuming=True)
     async for _ in team2.acontinue_run(
@@ -4694,9 +4686,7 @@ async def test_a_refused_continue_of_a_run_missing_from_the_session_stays_resuma
     assert run1.is_paused
 
     db = SqliteDb(db_file=db_file)
-    session = db.get_session(session_id=session_id, session_type="team")
-    session.runs = [r for r in session.runs or [] if r.run_id != run1.run_id]
-    db.upsert_session(session)
+    assert db.delete_run(run1.run_id)
 
     team2 = _build_flat_team(SqliteDb(db_file=db_file), resuming=True)
     async for _ in team2.acontinue_run(
@@ -5186,11 +5176,7 @@ async def test_a_reread_cancelled_run_is_refused_too(tmp_path):
     assert run1.is_paused
 
     db = SqliteDb(db_file=db_file)
-    session = db.get_session(session_id=session_id, session_type="team")
-    for r in session.runs or []:
-        if r.run_id == run1.run_id:
-            r.status = RunStatus.cancelled
-    db.upsert_session(session)
+    _set_stored_team_run_status(db, session_id, run1.run_id, RunStatus.cancelled)
 
     fresh = [r for r in _reload_runs(db_file, session_id) if r.run_id == run1.run_id][0]
     assert fresh.is_paused is False
@@ -5434,11 +5420,7 @@ async def test_a_refusal_does_not_overwrite_a_run_another_request_finished(tmp_p
 
     async def _finish_then_refuse(*args: Any, **kwargs: Any):
         db2 = SqliteDb(db_file=db_file)
-        session = db2.get_session(session_id=session_id, session_type="team")
-        for r in session.runs or []:
-            if r.run_id == run1.run_id:
-                r.status = RunStatus.completed
-        db2.upsert_session(session)
+        _set_stored_team_run_status(db2, session_id, run1.run_id, RunStatus.completed)
         raise RunNotContinuableError("another request finished this run")
         yield
 

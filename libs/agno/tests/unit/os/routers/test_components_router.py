@@ -14,6 +14,8 @@ Tests cover:
 - PATCH /components/{component_id}/configs/{version} - Update config
 - DELETE /components/{component_id}/configs/{version} - Delete config
 - POST /components/{component_id}/configs/{version}/set-current - Set current version
+- POST /components/{component_id}/restore - Restore archived component
+- Optional guard bodies (compare-and-set) and typed catalog error mappings
 """
 
 from unittest.mock import MagicMock
@@ -22,7 +24,14 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from agno.db.base import BaseDb, ComponentType
+from agno.db.base import (
+    BaseDb,
+    ComponentArchivedError,
+    ComponentDependencyError,
+    ComponentDraftRequiredError,
+    ComponentType,
+    ComponentVersionConflictError,
+)
 from agno.os.routers.components import get_components_router
 from agno.os.settings import AgnoAPISettings
 
@@ -57,6 +66,7 @@ def mock_db():
     db.upsert_config = MagicMock()
     db.delete_config = MagicMock()
     db.set_current_version = MagicMock()
+    db.restore_component = MagicMock()
     db.to_dict = MagicMock(return_value={"type": "postgres", "id": "test-db"})
     return db
 
@@ -374,6 +384,178 @@ class TestUpdateComponent:
 
 
 # =============================================================================
+# Update Component Current-Version Pointer Tests
+# =============================================================================
+
+
+class TestUpdateComponentCurrentVersionRouting:
+    """PATCH current_version must route through set_current_version.
+
+    upsert_component writes the pointer blindly; only set_current_version
+    enforces the published-only dispatch invariant (draft and tombstoned
+    targets refused) and the CAS guard atomically.
+    """
+
+    _component = {
+        "component_id": "agent-1",
+        "name": "Agent 1",
+        "component_type": "agent",
+        "current_version": 1,
+        "created_at": 1234567890,
+    }
+
+    def test_patch_current_version_goes_through_set_current_version(self, client, mock_db):
+        """The pointer move is delegated; upsert never receives the pointer."""
+        mock_db.get_component.return_value = dict(self._component)
+        mock_db.set_current_version.return_value = True
+        mock_db.upsert_component.return_value = {**self._component, "current_version": 2}
+
+        response = client.patch("/components/agent-1", json={"current_version": 2})
+
+        assert response.status_code == 200
+        assert response.json()["current_version"] == 2
+        mock_db.set_current_version.assert_called_once_with(
+            "agent-1", version=2, expected_current_version=None, user_id=None
+        )
+        assert "current_version" not in mock_db.upsert_component.call_args.kwargs
+
+    def test_patch_current_version_to_invalid_stage_returns_400(self, client, mock_db):
+        """A draft or tombstoned target (adapter ValueError) maps to 400."""
+        mock_db.get_component.return_value = dict(self._component)
+        mock_db.set_current_version.side_effect = ValueError(
+            "Cannot set draft config agent-1 v2 as current. Only published configs can be current."
+        )
+
+        response = client.patch("/components/agent-1", json={"current_version": 2})
+
+        assert response.status_code == 400
+        mock_db.upsert_component.assert_not_called()
+
+    def test_patch_current_version_to_nonexistent_returns_404(self, client, mock_db):
+        """A version the adapter cannot find (returns False) maps to 404."""
+        mock_db.get_component.return_value = dict(self._component)
+        mock_db.set_current_version.return_value = False
+
+        response = client.patch("/components/agent-1", json={"current_version": 99})
+
+        assert response.status_code == 404
+        mock_db.upsert_component.assert_not_called()
+
+    def test_patch_current_version_threads_the_guard(self, client, mock_db):
+        """guard.current_version becomes the CAS kwarg on set_current_version."""
+        mock_db.get_component.return_value = dict(self._component)
+        mock_db.set_current_version.return_value = True
+        mock_db.upsert_component.return_value = {**self._component, "current_version": 2}
+
+        response = client.patch(
+            "/components/agent-1",
+            json={"current_version": 2, "guard": {"current_version": 1}},
+        )
+
+        assert response.status_code == 200
+        assert mock_db.set_current_version.call_args.kwargs["expected_current_version"] == 1
+
+    def test_patch_current_version_conflict_returns_409(self, client, mock_db):
+        """A CAS race inside set_current_version surfaces as 409."""
+        mock_db.get_component.return_value = dict(self._component)
+        mock_db.set_current_version.side_effect = ComponentVersionConflictError(
+            "Component agent-1 current version is 3, expected 1"
+        )
+
+        response = client.patch(
+            "/components/agent-1",
+            json={"current_version": 2, "guard": {"current_version": 1}},
+        )
+
+        assert response.status_code == 409
+        mock_db.upsert_component.assert_not_called()
+
+
+class TestUpdateComponentCurrentVersionEndToEnd:
+    """The published-only dispatch invariant, pinned over a real SqliteDb."""
+
+    @pytest.fixture
+    def real_db(self, tmp_path):
+        from agno.db.sqlite import SqliteDb
+
+        db = SqliteDb(id="router-pointer-db", db_file=str(tmp_path / "router-pointer.db"))
+        db.create_component_with_config(
+            component_id="agent-1",
+            component_type=ComponentType.AGENT,
+            name="agent-1",
+            config={"name": "agent-1"},
+            stage="published",
+        )  # v1 published, current = 1
+        db.upsert_config("agent-1", config={"name": "v2-draft"})  # v2 draft
+        db.upsert_config("agent-1", config={"name": "v3"}, stage="published")  # v3 published, current = 3
+        db.upsert_config("agent-1", config={"name": "v4"})  # v4 draft
+        db.delete_config("agent-1", 4)  # v4 tombstoned
+        return db
+
+    @pytest.fixture
+    def real_client(self, real_db, settings):
+        app = FastAPI()
+        app.include_router(get_components_router(os_db=real_db, settings=settings))
+        return TestClient(app)
+
+    def test_patch_to_a_draft_returns_400_and_pointer_stays(self, real_client, real_db):
+        response = real_client.patch("/components/agent-1", json={"current_version": 2})
+        assert response.status_code == 400
+        assert real_db.get_component("agent-1")["current_version"] == 3
+
+    def test_patch_to_a_tombstone_returns_400_and_pointer_stays(self, real_client, real_db):
+        response = real_client.patch("/components/agent-1", json={"current_version": 4})
+        assert response.status_code == 400
+        assert real_db.get_component("agent-1")["current_version"] == 3
+
+    def test_patch_to_a_nonexistent_version_returns_404_and_pointer_stays(self, real_client, real_db):
+        response = real_client.patch("/components/agent-1", json={"current_version": 99})
+        assert response.status_code == 404
+        assert real_db.get_component("agent-1")["current_version"] == 3
+
+    def test_patch_to_a_published_version_moves_the_pointer(self, real_client, real_db):
+        response = real_client.patch("/components/agent-1", json={"current_version": 1})
+        assert response.status_code == 200
+        assert response.json()["current_version"] == 1
+        assert real_db.get_component("agent-1")["current_version"] == 1
+        # Dispatch reads follow the pointer to the published payload
+        current = real_db.get_current_config("agent-1")
+        assert current is not None and current["version"] == 1 and current["stage"] == "published"
+
+    def test_patch_pointer_and_fields_together(self, real_client, real_db):
+        """The UI can move the pointer and rename in one PATCH."""
+        response = real_client.patch(
+            "/components/agent-1",
+            json={"current_version": 1, "name": "Renamed", "guard": {"current_version": 3}},
+        )
+        assert response.status_code == 200
+        row = real_db.get_component("agent-1")
+        assert row["current_version"] == 1 and row["name"] == "Renamed"
+
+    def test_patch_with_bogus_component_type_is_400_and_pointer_stays(self, real_client, real_db):
+        """A6: the PATCH is atomic. Body validation runs BEFORE the pointer
+        write, so a bad component_type 400s with the pointer untouched -
+        it must never 400 AFTER the pointer move already committed."""
+        response = real_client.patch(
+            "/components/agent-1",
+            json={"current_version": 1, "component_type": "bogus"},
+        )
+        assert response.status_code == 400
+        row = real_db.get_component("agent-1")
+        assert row["current_version"] == 3
+        assert row["component_type"] == "agent"
+
+    def test_patch_with_bogus_component_type_and_guard_is_400_and_pointer_stays(self, real_client, real_db):
+        """Same atomicity with the CAS guard present: the 400 wins before any write."""
+        response = real_client.patch(
+            "/components/agent-1",
+            json={"current_version": 1, "component_type": "bogus", "guard": {"current_version": 3}},
+        )
+        assert response.status_code == 400
+        assert real_db.get_component("agent-1")["current_version"] == 3
+
+
+# =============================================================================
 # Delete Component Tests
 # =============================================================================
 
@@ -396,6 +578,58 @@ class TestDeleteComponent:
         response = client.delete("/components/nonexistent")
 
         assert response.status_code == 404
+
+    def test_delete_component_delegates_the_cascade_to_the_adapter(self, client, mock_db):
+        """Archiving via REST must run the same cascade every other archive surface runs.
+
+        A schedule left pointing at an archived component only 404s on every tick,
+        and retries - the exact failure the cascade exists to stop. The cascade now
+        rides delete_component inside the archive's own transaction, so the route
+        must not run its own: doing so would disable twice, and a caller-side
+        cascade is precisely what let the SDK deletes bypass it. The cascade itself
+        is pinned in tests/unit/db/test_component_liveness_guards.py, which covers
+        the REST, StudioTools, SDK and hard-delete surfaces together.
+        """
+        mock_db.get_component.return_value = {"component_id": "agent-1", "component_type": "agent", "user_id": "u1"}
+        mock_db.delete_component.return_value = True
+        mock_db.disable_schedules_for_target = MagicMock(return_value=2)
+
+        response = client.delete("/components/agent-1")
+
+        assert response.status_code == 204
+        assert mock_db.delete_component.call_count == 1
+        mock_db.disable_schedules_for_target.assert_not_called()
+
+    def test_delete_component_does_not_cascade_when_the_delete_failed(self, client, mock_db):
+        """Nothing was archived, so nothing may be disabled."""
+        mock_db.get_component.return_value = {"component_id": "agent-1", "component_type": "agent", "user_id": "u1"}
+        mock_db.delete_component.return_value = False
+        mock_db.disable_schedules_for_target = MagicMock(return_value=0)
+
+        response = client.delete("/components/agent-1")
+
+        assert response.status_code == 404
+        mock_db.disable_schedules_for_target.assert_not_called()
+
+    def test_delete_component_survives_a_db_without_scheduler_support(self, client, mock_db):
+        """The component is archived; a missing scheduler primitive is not an error."""
+        mock_db.get_component.return_value = {"component_id": "agent-1", "component_type": "agent", "user_id": "u1"}
+        mock_db.delete_component.return_value = True
+        mock_db.disable_schedules_for_target = MagicMock(side_effect=NotImplementedError)
+
+        response = client.delete("/components/agent-1")
+
+        assert response.status_code == 204
+
+    def test_delete_component_survives_a_failing_cascade(self, client, mock_db):
+        """A failed cascade must not turn a successful archive into a 500."""
+        mock_db.get_component.return_value = {"component_id": "agent-1", "component_type": "agent", "user_id": "u1"}
+        mock_db.delete_component.return_value = True
+        mock_db.disable_schedules_for_target = MagicMock(side_effect=RuntimeError("db down"))
+
+        response = client.delete("/components/agent-1")
+
+        assert response.status_code == 204
 
 
 # =============================================================================
@@ -649,6 +883,496 @@ class TestSetCurrentConfig:
 
 
 # =============================================================================
+# Guard (compare-and-set) Tests
+# =============================================================================
+
+
+class TestComponentGuards:
+    """Tests for the optional guard bodies and typed catalog error mappings."""
+
+    _config_row = {
+        "component_id": "agent-1",
+        "version": 4,
+        "config": {"name": "Agent"},
+        "stage": "draft",
+        "created_at": 1234567890,
+    }
+
+    def test_create_config_with_guard_threads_expected_latest_version(self, client, mock_db):
+        """POST configs with a guard passes expected_latest_version to upsert_config."""
+        mock_db.upsert_config.return_value = self._config_row
+
+        response = client.post(
+            "/components/agent-1/configs",
+            json={"config": {"name": "Agent"}, "guard": {"latest_version": 3}},
+        )
+
+        assert response.status_code == 201
+        assert mock_db.upsert_config.call_args.kwargs["expected_latest_version"] == 3
+
+    def test_create_config_without_guard_passes_none(self, client, mock_db):
+        """The pre-guard UI shape (stage, set_current, config) still works unguarded."""
+        mock_db.upsert_config.return_value = self._config_row
+
+        response = client.post(
+            "/components/agent-1/configs",
+            json={"config": {"name": "Agent"}, "stage": "draft", "set_current": True},
+        )
+
+        assert response.status_code == 201
+        assert mock_db.upsert_config.call_args.kwargs["expected_latest_version"] is None
+
+    def test_update_config_with_guard_threads_expected_latest_version(self, client, mock_db):
+        """PATCH configs/{version} with a guard passes expected_latest_version."""
+        mock_db.upsert_config.return_value = self._config_row
+
+        response = client.patch(
+            "/components/agent-1/configs/4",
+            json={"config": {"name": "Agent"}, "guard": {"latest_version": 4}},
+        )
+
+        assert response.status_code == 200
+        assert mock_db.upsert_config.call_args.kwargs["expected_latest_version"] == 4
+
+    def test_update_config_without_guard_passes_none(self, client, mock_db):
+        """PATCH configs/{version} without a guard stays last-writer-wins."""
+        mock_db.upsert_config.return_value = self._config_row
+
+        response = client.patch(
+            "/components/agent-1/configs/4",
+            json={"config": {"name": "Agent"}},
+        )
+
+        assert response.status_code == 200
+        assert mock_db.upsert_config.call_args.kwargs["expected_latest_version"] is None
+
+    def test_set_current_with_guard_threads_expected_current_version(self, client, mock_db):
+        """set-current with a guard passes expected_current_version."""
+        mock_db.set_current_version.return_value = True
+        mock_db.get_component.return_value = {
+            "component_id": "agent-1",
+            "name": "Agent 1",
+            "component_type": "agent",
+            "current_version": 3,
+            "created_at": 1234567890,
+        }
+
+        response = client.post(
+            "/components/agent-1/configs/3/set-current",
+            json={"guard": {"current_version": 2}},
+        )
+
+        assert response.status_code == 200
+        assert mock_db.set_current_version.call_args.kwargs["expected_current_version"] == 2
+
+    def test_set_current_empty_body_still_works(self, client, mock_db):
+        """set-current with no body (the UI shape) skips the guard."""
+        mock_db.set_current_version.return_value = True
+        mock_db.get_component.return_value = {
+            "component_id": "agent-1",
+            "name": "Agent 1",
+            "component_type": "agent",
+            "current_version": 3,
+            "created_at": 1234567890,
+        }
+
+        response = client.post("/components/agent-1/configs/3/set-current")
+
+        assert response.status_code == 200
+        assert mock_db.set_current_version.call_args.kwargs["expected_current_version"] is None
+
+    def test_update_component_guard_mismatch_returns_409(self, client, mock_db):
+        """PATCH component with a stale guard.current_version is rejected before writing."""
+        mock_db.get_component.return_value = {
+            "component_id": "agent-1",
+            "name": "Agent 1",
+            "component_type": "agent",
+            "current_version": 5,
+            "created_at": 1234567890,
+        }
+
+        response = client.patch(
+            "/components/agent-1",
+            json={"name": "New Name", "guard": {"current_version": 2}},
+        )
+
+        assert response.status_code == 409
+        mock_db.upsert_component.assert_not_called()
+
+    def test_update_component_guard_zero_matches_an_unpublished_component(self, client, mock_db):
+        """guard.current_version=0 expects no live version: on a component that
+        has never been published it matches (NULL pointer) and the write lands."""
+        component = {
+            "component_id": "agent-1",
+            "name": "Agent 1",
+            "component_type": "agent",
+            "current_version": None,
+            "created_at": 1234567890,
+        }
+        mock_db.get_component.return_value = component
+        mock_db.upsert_component.return_value = {**component, "name": "New Name"}
+
+        response = client.patch(
+            "/components/agent-1",
+            json={"name": "New Name", "guard": {"current_version": 0}},
+        )
+
+        assert response.status_code == 200, response.text
+        mock_db.upsert_component.assert_called_once()
+
+    def test_update_component_guard_false_is_not_zero(self, client, mock_db):
+        """JSON false coerces to int 0 in the guard model; it must not pass as
+        the "no live version" sentinel."""
+        mock_db.get_component.return_value = {
+            "component_id": "agent-1",
+            "name": "Agent 1",
+            "component_type": "agent",
+            "current_version": None,
+            "created_at": 1234567890,
+        }
+
+        response = client.patch(
+            "/components/agent-1",
+            json={"name": "New Name", "guard": {"current_version": False}},
+        )
+
+        assert response.status_code == 422, response.text
+        mock_db.upsert_component.assert_not_called()
+
+    def test_update_component_guard_zero_conflicts_with_a_live_version(self, client, mock_db):
+        mock_db.get_component.return_value = {
+            "component_id": "agent-1",
+            "name": "Agent 1",
+            "component_type": "agent",
+            "current_version": 1,
+            "created_at": 1234567890,
+        }
+
+        response = client.patch(
+            "/components/agent-1",
+            json={"name": "New Name", "guard": {"current_version": 0}},
+        )
+
+        assert response.status_code == 409
+        mock_db.upsert_component.assert_not_called()
+
+    def test_update_component_guard_match_succeeds(self, client, mock_db):
+        """PATCH component with a matching guard.current_version writes normally."""
+        component = {
+            "component_id": "agent-1",
+            "name": "Agent 1",
+            "component_type": "agent",
+            "current_version": 5,
+            "created_at": 1234567890,
+        }
+        mock_db.get_component.return_value = component
+        mock_db.upsert_component.return_value = {**component, "name": "New Name"}
+
+        response = client.patch(
+            "/components/agent-1",
+            json={"name": "New Name", "guard": {"current_version": 5}},
+        )
+
+        assert response.status_code == 200
+        assert response.json()["name"] == "New Name"
+
+    def test_create_config_version_conflict_returns_409(self, client, mock_db):
+        """ComponentVersionConflictError maps to 409, not the generic 400."""
+        mock_db.upsert_config.side_effect = ComponentVersionConflictError("version conflict")
+
+        response = client.post("/components/agent-1/configs", json={"config": {}})
+
+        assert response.status_code == 409
+        assert response.json()["detail"] == "version conflict"
+
+    def test_create_config_archived_returns_409(self, client, mock_db):
+        """ComponentArchivedError maps to 409."""
+        mock_db.upsert_config.side_effect = ComponentArchivedError("component is archived")
+
+        response = client.post("/components/agent-1/configs", json={"config": {}})
+
+        assert response.status_code == 409
+
+    def test_create_config_draft_required_returns_400(self, client, mock_db):
+        """ComponentDraftRequiredError maps to 400."""
+        mock_db.upsert_config.side_effect = ComponentDraftRequiredError("draft required")
+
+        response = client.post("/components/agent-1/configs", json={"config": {}})
+
+        assert response.status_code == 400
+
+    def test_delete_component_dependency_returns_409(self, client, mock_db):
+        """DELETE component refused by dependents maps to 409 listing the parents."""
+        mock_db.delete_component.side_effect = ComponentDependencyError("Cannot delete agent-1: referenced by team-1")
+
+        response = client.delete("/components/agent-1")
+
+        assert response.status_code == 409
+        assert "team-1" in response.json()["detail"]
+
+    def test_delete_component_forwards_expected_current_version_query(self, client, mock_db):
+        """DELETE component forwards the optional expected_current_version query guard."""
+        mock_db.delete_component.return_value = True
+
+        response = client.delete("/components/agent-1?expected_current_version=3")
+
+        assert response.status_code == 204
+        assert mock_db.delete_component.call_args.kwargs["expected_current_version"] == 3
+
+    def test_delete_component_without_query_guard_passes_none(self, client, mock_db):
+        """DELETE component without the query guard stays unguarded."""
+        mock_db.delete_component.return_value = True
+
+        response = client.delete("/components/agent-1")
+
+        assert response.status_code == 204
+        assert mock_db.delete_component.call_args.kwargs["expected_current_version"] is None
+
+
+# =============================================================================
+# Restore Component Tests
+# =============================================================================
+
+
+class TestRestoreComponent:
+    """Tests for POST /components/{component_id}/restore endpoint."""
+
+    def test_restore_component_success(self, client, mock_db):
+        """Restore returns the restored component."""
+        mock_db.restore_component.return_value = True
+        mock_db.get_component.return_value = {
+            "component_id": "agent-1",
+            "name": "Agent 1",
+            "component_type": "agent",
+            "current_version": 2,
+            "created_at": 1234567890,
+        }
+
+        response = client.post("/components/agent-1/restore")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["component_id"] == "agent-1"
+        assert data["current_version"] == 2
+        assert mock_db.restore_component.call_args.kwargs["user_id"] is None
+
+    def test_restore_component_not_found(self, client, mock_db):
+        """Restore of a component that does not exist at all returns 404."""
+        mock_db.restore_component.return_value = False
+        mock_db.get_component.return_value = None
+
+        response = client.post("/components/nonexistent/restore")
+
+        assert response.status_code == 404
+
+    def test_restore_component_not_archived_returns_409(self, client, mock_db):
+        """Restore of a live (not archived) component returns 409."""
+        mock_db.restore_component.return_value = False
+        mock_db.get_component.return_value = {
+            "component_id": "agent-1",
+            "name": "Agent 1",
+            "component_type": "agent",
+            "created_at": 1234567890,
+            "deleted_at": None,
+        }
+
+        response = client.post("/components/agent-1/restore")
+
+        assert response.status_code == 409
+        assert response.json()["detail"] == "Component is not archived"
+
+
+class TestArchivedComponentDiscovery:
+    """Archived components must be reachable through the read routes.
+
+    Nothing else hands a client an archived component_id - POST /components
+    answers identically for a live and an archived id - so without
+    include_deleted the restore route can only be called for an id the caller
+    happened to remember."""
+
+    @pytest.fixture
+    def arch_db(self, tmp_path):
+        from agno.db.sqlite import SqliteDb
+
+        db = SqliteDb(id="archived-db", db_file=str(tmp_path / "archived.db"))
+        for component_id in ("live-1", "archived-1"):
+            db.create_component_with_config(
+                component_id=component_id,
+                component_type=ComponentType.AGENT,
+                name=component_id,
+                config={"name": component_id},
+                stage="published",
+                user_id="user-A",
+            )
+        assert db.delete_component("archived-1", user_id="user-A") is True
+        return db
+
+    @pytest.fixture
+    def arch_client(self, arch_db, settings):
+        app = FastAPI()
+        app.include_router(get_components_router(os_db=arch_db, settings=settings))
+        return TestClient(app)
+
+    def _scoped_client(self, db, settings, user_id):
+        """A client scoped to a regular (non-admin) user with isolation on."""
+        app = FastAPI()
+
+        @app.middleware("http")
+        async def add_jwt_user(request, call_next):
+            request.state.user_isolation_enabled = True
+            request.state.user_id = user_id
+            request.state.scopes = []
+            return await call_next(request)
+
+        app.include_router(get_components_router(os_db=db, settings=settings))
+        return TestClient(app)
+
+    def test_list_omits_archived_by_default(self, arch_client):
+        response = arch_client.get("/components")
+        assert response.status_code == 200
+        data = response.json()
+        assert [c["component_id"] for c in data["data"]] == ["live-1"]
+        assert data["meta"]["total_count"] == 1
+
+    def test_list_with_include_deleted_returns_archived(self, arch_client):
+        response = arch_client.get("/components?include_deleted=true")
+        assert response.status_code == 200
+        data = response.json()
+        assert {c["component_id"] for c in data["data"]} == {"live-1", "archived-1"}
+        assert data["meta"]["total_count"] == 2
+
+    def test_list_labels_archived_rows_with_deleted_at(self, arch_client):
+        response = arch_client.get("/components?include_deleted=true")
+        rows = {c["component_id"]: c for c in response.json()["data"]}
+        assert isinstance(rows["archived-1"]["deleted_at"], int)
+        # Omitted for live rows: every component route excludes None fields.
+        assert "deleted_at" not in rows["live-1"]
+
+    def test_get_one_404s_for_archived_by_default(self, arch_client):
+        assert arch_client.get("/components/archived-1").status_code == 404
+
+    def test_get_one_with_include_deleted_returns_archived(self, arch_client):
+        response = arch_client.get("/components/archived-1?include_deleted=true")
+        assert response.status_code == 200
+        body = response.json()
+        assert body["component_id"] == "archived-1"
+        assert isinstance(body["deleted_at"], int)
+
+    def test_get_one_live_component_carries_no_deleted_at(self, arch_client):
+        response = arch_client.get("/components/live-1?include_deleted=true")
+        assert response.status_code == 200
+        assert "deleted_at" not in response.json()
+
+    def test_owner_sees_own_archived_component(self, arch_db, settings):
+        """Positive control for the isolation test below."""
+        owner_client = self._scoped_client(arch_db, settings, "user-A")
+        listed = owner_client.get("/components?include_deleted=true")
+        assert "archived-1" in {c["component_id"] for c in listed.json()["data"]}
+        assert owner_client.get("/components/archived-1?include_deleted=true").status_code == 200
+
+    def test_include_deleted_does_not_widen_visibility_across_owners(self, arch_db, settings):
+        """include_deleted relaxes the tombstone filter, never the owner filter.
+
+        Both halves belong in one test: the non-owner half alone also holds
+        when include_deleted is ignored altogether and the archived row reaches
+        nobody, so it is paired with the owner who must receive that same row
+        from the same flag."""
+        owner_client = self._scoped_client(arch_db, settings, "user-A")
+        other_client = self._scoped_client(arch_db, settings, "user-B")
+
+        owner_listed = owner_client.get("/components?include_deleted=true")
+        assert owner_listed.status_code == 200
+        assert {c["component_id"] for c in owner_listed.json()["data"]} == {"live-1", "archived-1"}
+        assert owner_listed.json()["meta"]["total_count"] == 2
+        assert owner_client.get("/components/archived-1?include_deleted=true").status_code == 200
+
+        # include_deleted relaxes the tombstone filter for the OWNER's history.
+        # For everyone else archiving is the off-switch: user-B keeps the
+        # published live row and loses the archived one, flag or no flag.
+        listed = other_client.get("/components?include_deleted=true")
+        assert listed.status_code == 200
+        assert {c["component_id"] for c in listed.json()["data"]} == {"live-1"}
+        assert listed.json()["meta"]["total_count"] == 1
+
+        assert other_client.get("/components/archived-1?include_deleted=true").status_code == 404
+        assert other_client.get("/components/live-1?include_deleted=true").status_code == 200
+
+    def test_include_deleted_keeps_unowned_archived_components_shared(self, arch_db, settings):
+        """An unowned row is shared, and archiving it does not make it private.
+
+        The tombstone filter and the owner filter are independent, so a scoped
+        caller reads a shared archived row under include_deleted the same way it
+        already reads a shared live row without the flag."""
+        for component_id in ("shared-live", "shared-archived"):
+            arch_db.create_component_with_config(
+                component_id=component_id,
+                component_type=ComponentType.AGENT,
+                name=component_id,
+                config={"name": component_id},
+                stage="published",
+            )
+        assert arch_db.delete_component("shared-archived") is True
+
+        other_client = self._scoped_client(arch_db, settings, "user-B")
+
+        # The live precedent this pins against: an unowned row lists for a
+        # non-owner. user-A's published live-1 lists too -- publishing puts it on
+        # the platform -- while her archived-1 stays withdrawn.
+        default_listed = other_client.get("/components")
+        assert default_listed.status_code == 200
+        assert {c["component_id"] for c in default_listed.json()["data"]} == {"shared-live", "live-1"}
+        assert default_listed.json()["meta"]["total_count"] == 2
+        assert other_client.get("/components/shared-archived").status_code == 404
+
+        listed = other_client.get("/components?include_deleted=true")
+        assert listed.status_code == 200
+        assert {c["component_id"] for c in listed.json()["data"]} == {"shared-live", "shared-archived", "live-1"}
+        assert listed.json()["meta"]["total_count"] == 3
+        # Another owner's archived row is withdrawn from her even under the flag.
+        assert other_client.get("/components/archived-1?include_deleted=true").status_code == 404
+
+        fetched = other_client.get("/components/shared-archived?include_deleted=true")
+        assert fetched.status_code == 200
+        assert isinstance(fetched.json()["deleted_at"], int)
+
+    def test_discover_then_restore_round_trip(self, arch_client, arch_db):
+        """The full flow a frontend performs: find the archived id, restore it,
+        and read it back as a live component."""
+        listed = arch_client.get("/components?include_deleted=true")
+        archived_ids = [c["component_id"] for c in listed.json()["data"] if c.get("deleted_at") is not None]
+        assert archived_ids == ["archived-1"]
+
+        restored = arch_client.post(f"/components/{archived_ids[0]}/restore")
+        assert restored.status_code == 200
+        assert "deleted_at" not in restored.json()
+
+        assert arch_client.get("/components/archived-1").status_code == 200
+        assert arch_db.get_component("archived-1") is not None
+        relisted = arch_client.get("/components")
+        assert {c["component_id"] for c in relisted.json()["data"]} == {"live-1", "archived-1"}
+
+    def test_clickhouse_get_component_stub_accepts_include_deleted(self):
+        """The restore route calls get_component(..., include_deleted=True), so
+        every BaseDb implementation must accept it or restore raises TypeError
+        and answers 500. clickhouse-connect is an optional dependency, so the
+        stub's signature is read from source rather than imported."""
+        import ast
+        from pathlib import Path
+
+        import agno.db
+
+        source = (Path(agno.db.__file__).parent / "clickhouse" / "clickhouse.py").read_text()
+        stub = next(
+            node
+            for cls in ast.parse(source).body
+            if isinstance(cls, ast.ClassDef) and cls.name == "ClickhouseDb"
+            for node in cls.body
+            if isinstance(node, ast.FunctionDef) and node.name == "get_component"
+        )
+        assert "include_deleted" in {arg.arg for arg in stub.args.args}
+
+
+# =============================================================================
 # _resolve_db_in_config Tests
 # =============================================================================
 #
@@ -766,3 +1490,164 @@ class TestResolveDbInConfig:
 
         assert "arbitrary_extension" not in out["db"]
         assert out["db"]["session_table"] == "custom_sessions"
+
+
+class TestGuardHalfRejection:
+    """A guard half a route cannot honour is rejected, never silently ignored:
+    a caller who sent it believes it protected the write."""
+
+    @pytest.fixture
+    def guard_db(self, tmp_path):
+        from agno.db.sqlite import SqliteDb
+
+        db = SqliteDb(id="guard-half-db", db_file=str(tmp_path / "guard-half.db"))
+        db.create_component_with_config(
+            component_id="guarded",
+            component_type=ComponentType.AGENT,
+            name="guarded",
+            config={"name": "guarded"},
+            stage="published",
+        )
+        return db
+
+    @pytest.fixture
+    def guard_client(self, guard_db, settings):
+        app = FastAPI()
+        app.include_router(get_components_router(os_db=guard_db, settings=settings))
+        return TestClient(app)
+
+    def test_config_append_rejects_current_version_guard(self, guard_client):
+        response = guard_client.post(
+            "/components/guarded/configs",
+            json={"config": {"name": "guarded"}, "guard": {"current_version": 1}},
+        )
+        assert response.status_code == 400
+        assert "guard.latest_version" in response.json()["detail"]
+
+    def test_set_current_rejects_latest_version_guard(self, guard_client):
+        response = guard_client.post(
+            "/components/guarded/configs/1/set-current",
+            json={"guard": {"latest_version": 1}},
+        )
+        assert response.status_code == 400
+        assert "guard.current_version" in response.json()["detail"]
+
+
+class TestGuardHalfRejectionAllRoutes:
+    """The guard-half rejection must fire at all four guard-bearing routes,
+    not just the two previously covered."""
+
+    @pytest.fixture
+    def gr_db(self, tmp_path):
+        from agno.db.sqlite import SqliteDb
+
+        db = SqliteDb(id="ghr-all", db_file=str(tmp_path / "ghr.db"))
+        db.create_component_with_config(
+            component_id="c1",
+            component_type=ComponentType.AGENT,
+            name="c1",
+            config={"name": "c1"},
+            stage="published",
+        )
+        return db
+
+    @pytest.fixture
+    def gr_client(self, gr_db, settings):
+        app = FastAPI()
+        app.include_router(get_components_router(os_db=gr_db, settings=settings))
+        return TestClient(app)
+
+    def test_patch_component_rejects_latest_version_guard(self, gr_client):
+        r = gr_client.patch("/components/c1", json={"description": "x", "guard": {"latest_version": 1}})
+        assert r.status_code == 400
+        assert "guard.current_version" in r.json()["detail"]
+
+    def test_patch_config_rejects_current_version_guard(self, gr_client):
+        r = gr_client.patch(
+            "/components/c1/configs/1", json={"config": {"name": "c1"}, "guard": {"current_version": 1}}
+        )
+        assert r.status_code == 400
+        assert "guard.latest_version" in r.json()["detail"]
+
+
+class TestScopedWriteThreading:
+    """The write routes must hand the caller's scope to the DB writers.
+
+    The route guard alone cannot give the in-transaction guarantee: the writer
+    parameter defaults to None, so dropping the kwarg at one call site would be
+    a silent, test-green regression of the atomic refusal. These pin the
+    binding for every write call site, with the caller as the row's owner so
+    the route guard passes and the call goes through.
+    """
+
+    _row = {
+        "component_id": "agent-1",
+        "name": "Agent 1",
+        "component_type": "agent",
+        "current_version": 1,
+        "user_id": "user-x",
+        "created_at": 1234567890,
+    }
+    _config = {
+        "component_id": "agent-1",
+        "version": 1,
+        "config": {"name": "Agent 1"},
+        "stage": "draft",
+        "created_at": 1234567890,
+    }
+
+    def _client(self, mock_db, settings):
+        app = FastAPI()
+
+        @app.middleware("http")
+        async def add_jwt_user(request, call_next):
+            request.state.user_isolation_enabled = True
+            request.state.user_id = "user-x"
+            request.state.scopes = []
+            return await call_next(request)
+
+        app.include_router(get_components_router(os_db=mock_db, settings=settings))
+        return TestClient(app)
+
+    def test_create_config_threads_scope(self, mock_db, settings):
+        mock_db.get_component.return_value = dict(self._row)
+        mock_db.upsert_config.return_value = dict(self._config)
+        client = self._client(mock_db, settings)
+
+        assert client.post("/components/agent-1/configs", json={"config": {"name": "x"}}).status_code == 201
+        assert mock_db.upsert_config.call_args.kwargs["user_id"] == "user-x"
+
+    def test_update_config_threads_scope(self, mock_db, settings):
+        mock_db.get_component.return_value = dict(self._row)
+        mock_db.upsert_config.return_value = dict(self._config)
+        client = self._client(mock_db, settings)
+
+        assert client.patch("/components/agent-1/configs/1", json={"config": {"name": "x"}}).status_code == 200
+        assert mock_db.upsert_config.call_args.kwargs["user_id"] == "user-x"
+
+    def test_delete_config_threads_scope(self, mock_db, settings):
+        mock_db.get_component.return_value = dict(self._row)
+        mock_db.delete_config.return_value = True
+        client = self._client(mock_db, settings)
+
+        assert client.delete("/components/agent-1/configs/2").status_code == 204
+        assert mock_db.delete_config.call_args.kwargs["user_id"] == "user-x"
+
+    def test_set_current_threads_scope(self, mock_db, settings):
+        mock_db.get_component.return_value = dict(self._row)
+        mock_db.set_current_version.return_value = True
+        client = self._client(mock_db, settings)
+
+        assert client.post("/components/agent-1/configs/1/set-current").status_code == 200
+        assert mock_db.set_current_version.call_args.kwargs["user_id"] == "user-x"
+
+    def test_patch_pointer_move_threads_scope(self, mock_db, settings):
+        mock_db.get_component.return_value = dict(self._row)
+        mock_db.get_config.return_value = dict(self._config)
+        mock_db.set_current_version.return_value = True
+        mock_db.upsert_component.return_value = dict(self._row)
+        client = self._client(mock_db, settings)
+
+        assert client.patch("/components/agent-1", json={"current_version": 1}).status_code == 200
+        assert mock_db.set_current_version.call_args.kwargs["user_id"] == "user-x"
+        assert mock_db.upsert_component.call_args.kwargs["user_id"] == "user-x"

@@ -5,12 +5,12 @@ declared on the registry.
 MCP toolkits in ``registry.tools`` are not attached to any agent, team or
 workflow, so they are not covered by the per-component collectors. AgentOS
 must still connect them in its lifespan: components created from registry
-tools (e.g. via StudioTool) serialize a toolkit's functions at persist time,
+tools (e.g. via StudioTools) serialize a toolkit's functions at persist time,
 and an unconnected MCP toolkit has none -- its tools would be silently and
 permanently dropped from the persisted config.
 
-Detection is by class name in the MRO (``MCPTools`` / ``MultiMCPTools``), so
-the stubs below carry those names and the ``mcp`` package is not required.
+Detection is by class name in the MRO (``MCPTools``), so the stub below
+carries that name and the ``mcp`` package is not required.
 """
 
 from fastapi.testclient import TestClient
@@ -44,18 +44,6 @@ class MCPTools(Toolkit):
         self.closed = True
 
 
-class MultiMCPTools(Toolkit):
-    def __init__(self, name: str = "stub_multi_mcp"):
-        super().__init__(name=name)
-        self.connected = False
-
-    async def connect(self, force: bool = False):
-        self.connected = True
-
-    async def close(self):
-        pass
-
-
 def _agent() -> Agent:
     return Agent(name="Plain Agent", id="plain-agent", telemetry=False)
 
@@ -68,14 +56,6 @@ class TestRegistryMCPToolCollection:
         os = AgentOS(agents=[_agent()], registry=registry, telemetry=False)
 
         assert mcp_tool in os.mcp_tools
-
-    def test_multi_mcp_tools_are_collected(self):
-        multi = MultiMCPTools()
-        registry = Registry(tools=[multi])
-
-        os = AgentOS(agents=[_agent()], registry=registry, telemetry=False)
-
-        assert multi in os.mcp_tools
 
     def test_non_mcp_registry_tools_are_not_collected(self):
         plain = Toolkit(name="plain_toolkit")

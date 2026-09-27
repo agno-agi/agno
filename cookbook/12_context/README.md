@@ -28,7 +28,7 @@ Providers ship in this package:
 | `DatabaseContextProvider` | Any SQL database (SQLAlchemy) | `query_<id>`, `update_<id>` (separate read/write sub-agents) |
 | `SlackContextProvider` | A Slack workspace | `query_<id>`, `update_<id>` (separate read/write sub-agents; writer only gets `send_message` + the lookup tools it needs) |
 | `MCPContextProvider` | One MCP server | `query_<id>` (sub-agent over the server's tools) or flat tools in `mode=tools` |
-| `GDriveContextProvider` | Google Drive via service account | `query_<id>` (list / search / read sub-agent; all-drives aware) |
+| `GoogleDriveContextProvider` | Google Drive via service account | `query_<id>` (list / search / read sub-agent; all-drives aware) |
 | `WikiContextProvider` + `FileSystemBackend` | A directory of markdown files | `query_<id>`, `update_<id>` (separate read/write sub-agents over `Workspace` tools) |
 | `WikiContextProvider` + `GitBackend` | A clone of a git repo (PAT auth) | `query_<id>`, `update_<id>`; writes auto-commit, rebase, and push |
 | `WikiContextProvider` + `NotionDatabaseBackend` | A Notion database (one row per page) mirrored as flat `.md` files; `notion_page_id` / `notion_last_edited` in frontmatter | `query_<id>`, `update_<id>`; writes round-trip through Notion blocks; conflict-detected on update |

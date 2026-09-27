@@ -23,6 +23,7 @@ from typing import Annotated, Any, Literal
 
 import pytest
 from pydantic import BaseModel, Field, ValidationError
+from pydantic.errors import PydanticUndefinedAnnotation
 
 from agno.agent.agent import Agent
 from agno.team.team import Team
@@ -42,16 +43,36 @@ class FrameworkToolParams(BaseModel):
     count: int
 
 
-async def async_gen_agent_tool(agent: Any, params: FrameworkToolParams):
-    yield {"owner": agent.name, "count": params.count}
+async def async_gen_agent_tool(agent: Any, params: FrameworkToolParams, count: Annotated[int, Field(gt=0)]):
+    yield {"owner": agent.name, "params_count": params.count, "count": count}
 
 
-async def async_gen_team_tool(host_team: Team, params: FrameworkToolParams):
-    yield {"owner": host_team.name, "count": params.count}
+async def async_gen_team_tool(host_team: Team, params: FrameworkToolParams, count: Annotated[int, Field(gt=0)]):
+    yield {"owner": host_team.name, "params_count": params.count, "count": count}
 
 
-async def async_gen_agent_annotated_tool(agent: Any, count: Annotated[int, Field(gt=0)]):
-    yield {"owner": agent.name, "count": count}
+async def async_gen_unknown_user_type(value: "UnknownUserType"):  # noqa: F821
+    yield value
+
+
+class UnresolvedPayload(BaseModel):
+    item: "MissingOrdinaryFieldType"  # noqa: F821
+
+
+async def async_gen_unresolved_payload(payload: UnresolvedPayload, count: int):
+    yield {"payload": payload, "count": count}
+
+
+async def async_gen_list_agent(owners: list[Agent], count: int):
+    yield {"owners": owners, "count": count}
+
+
+async def async_gen_positional_agent(owner: Agent, /, count: int):
+    yield {"owner": owner, "count": count}
+
+
+async def async_gen_annotated_team(host_team: Annotated[Team, Field(description="Injected team")], count: int):
+    yield {"owner": host_team.name, "count": count}
 
 
 def test_async_gen_wrapped_still_reports_as_async_gen_function():
@@ -135,40 +156,58 @@ async def test_async_gen_full_dispatch_through_function_call_aexecute():
     ],
 )
 @pytest.mark.asyncio
-async def test_async_gen_with_framework_parameter_validates_user_arguments(entrypoint, framework_attr, framework_value):
-    """Framework injection must not disable Pydantic conversion for model arguments."""
+async def test_async_gen_framework_injection_preserves_user_validation(entrypoint, framework_attr, framework_value):
     func = Function.from_callable(entrypoint)
     setattr(func, framework_attr, framework_value)
-    call = FunctionCall(function=func, arguments={"params": {"count": "3"}})
+    assert isasyncgenfunction(func.entrypoint)
+    assert set(func.parameters["properties"]) == {"params", "count"}
 
-    exec_result = await call.aexecute()
-
-    assert exec_result.status == "success", f"error: {exec_result.error}"
+    call = FunctionCall(function=func, arguments={"params": {"count": "3"}, "count": "4"})
+    result = await call.aexecute()
+    assert result.status == "success", result.error
     assert isasyncgen(call.result)
-    items = [item async for item in call.result]
-    assert items == [{"owner": framework_value.name, "count": 3}]
+    assert [item async for item in call.result] == [{"owner": framework_value.name, "params_count": 3, "count": 4}]
+
+    invalid = FunctionCall(function=func, arguments={"params": {"count": "3"}, "count": "-1"})
+    result = await invalid.aexecute()
+    assert result.status == "success", result.error
+    with pytest.raises(ValidationError, match="greater_than"):
+        async for _ in invalid.result:
+            pass
+
+
+def test_async_gen_unknown_user_annotation_keeps_wrap_error():
+    with pytest.raises(NameError, match="UnknownUserType") as from_callable_error:
+        Function.from_callable(async_gen_unknown_user_type)
+    assert type(from_callable_error.value) is NameError
+
+    with pytest.raises(NameError, match="UnknownUserType") as wrap_error:
+        Function._wrap_callable_uncached(async_gen_unknown_user_type)
+    assert type(wrap_error.value) is NameError
+
+
+@pytest.mark.parametrize(
+    "entrypoint",
+    [async_gen_unresolved_payload, async_gen_list_agent, async_gen_positional_agent],
+    ids=["ordinary-model-field", "unbound-container", "positional-only-identity"],
+)
+def test_async_gen_unbindable_annotations_keep_registration_error(entrypoint):
+    with pytest.raises(PydanticUndefinedAnnotation):
+        Function._wrap_callable_uncached(entrypoint)
+    with pytest.raises(PydanticUndefinedAnnotation):
+        Function.from_callable(entrypoint)
 
 
 @pytest.mark.asyncio
-async def test_async_gen_with_framework_parameter_preserves_annotated_validation():
-    """Masking framework parameters must preserve user-facing Annotated metadata."""
-    func = Function.from_callable(async_gen_agent_annotated_tool)
-    func._agent = Agent(name="host-agent")
+async def test_async_gen_annotated_team_still_injects_and_validates_user_argument():
+    func = Function.from_callable(async_gen_annotated_team)
+    func._team = Team(name="annotated-team", members=[])
+    assert set(func.parameters["properties"]) == {"count"}
 
-    valid_call = FunctionCall(function=func, arguments={"count": "3"})
-    exec_result = await valid_call.aexecute()
-
-    assert exec_result.status == "success", f"error: {exec_result.error}"
-    items = [item async for item in valid_call.result]
-    assert items == [{"owner": "host-agent", "count": 3}]
-
-    invalid_call = FunctionCall(function=func, arguments={"count": "-1"})
-    exec_result = await invalid_call.aexecute()
-
-    assert exec_result.status == "success", f"error: {exec_result.error}"
-    with pytest.raises(ValidationError, match="greater_than"):
-        async for _ in invalid_call.result:
-            pass
+    call = FunctionCall(function=func, arguments={"count": "3"})
+    result = await call.aexecute()
+    assert result.status == "success", result.error
+    assert [item async for item in call.result] == [{"owner": "annotated-team", "count": 3}]
 
 
 @pytest.mark.asyncio
@@ -224,6 +263,8 @@ async def test_async_gen_validation_error_surfaces_on_iteration():
     This confirms the wrapping is actually doing validation, not just passing
     dicts straight through.
     """
+    from pydantic import ValidationError
+
     func = Function(name="async_gen_tool", entrypoint=async_gen_tool)
     func.process_entrypoint()
 

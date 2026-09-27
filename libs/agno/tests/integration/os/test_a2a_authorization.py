@@ -86,28 +86,6 @@ def anon_client(agent):
 
 
 @pytest.fixture
-def multi_entity_authz_client():
-    """A2A with agent + team + workflow behind authorization=True (for dynamic dispatch)."""
-    agent = Agent(id=AGENT_ID, name="Authz Agent", db=InMemoryDb())
-    team = Team(id="authz-team", name="Authz Team", members=[agent], db=InMemoryDb())
-    workflow = Workflow(id="authz-wf", name="Authz WF", steps=[Step(name="s", agent=agent)], db=InMemoryDb())
-    # Return same instance from deep_copy so arun patches work
-    agent.deep_copy = lambda **kwargs: agent
-    team.deep_copy = lambda **kwargs: team
-    workflow.deep_copy = lambda **kwargs: workflow
-    agent_os = AgentOS(
-        id="a2a-multi-os",
-        agents=[agent],
-        teams=[team],
-        workflows=[workflow],
-        a2a_interface=True,
-        authorization=True,
-        authorization_config=AuthorizationConfig(verification_keys=[JWT_SECRET], algorithm="HS256"),
-    )
-    return agent, team, workflow, TestClient(agent_os.get_app())
-
-
-@pytest.fixture
 def custom_prefix_authz_client(agent):
     """A2A mounted under a NON-default prefix, behind authorization=True."""
     from agno.os.interfaces.a2a import A2A
@@ -163,14 +141,6 @@ class TestA2AAuthorization:
             f"/a2a/agents/{AGENT_ID}/v1/tasks:cancel",
             json={"id": "r1", "params": {"id": "task-1", "contextId": "ctx-1"}},
             headers={"Authorization": f"Bearer {_token(['agents:read'])}"},
-        )
-        assert resp.status_code == 403, resp.text
-
-    def test_deprecated_send_blocked_without_run_scope(self, authz_client):
-        resp = authz_client.post(
-            "/a2a/message/send",
-            json=_message_body(),
-            headers={"X-Agent-ID": AGENT_ID, "Authorization": f"Bearer {_token(['config:read'])}"},
         )
         assert resp.status_code == 403, resp.text
 
@@ -334,48 +304,6 @@ class TestA2ARootPrefix:
                 f"/agents/{AGENT_ID}/v1/message:send",
                 json=_message_body(),
                 headers={"Authorization": f"Bearer {_token(['agents:run'])}"},
-            )
-            assert resp.status_code == 200
-            mock_arun.assert_called_once()
-
-
-# ------------------------------------------- deprecated dynamic-dispatch family gate
-
-
-class TestA2ADeprecatedDispatchFamilyScope:
-    """The deprecated /a2a/message/send route dispatches to agent/team/workflow at
-    runtime; the resolved family's run scope must be enforced in the handler, not just
-    the coarse agents:run route gate."""
-
-    def test_agents_run_cannot_execute_workflow(self, multi_entity_authz_client):
-        _agent, _team, workflow, client = multi_entity_authz_client
-        resp = client.post(
-            "/a2a/message/send",
-            json=_message_body(),
-            headers={"X-Agent-ID": workflow.id, "Authorization": f"Bearer {_token(['agents:run'])}"},
-        )
-        assert resp.status_code == 403, resp.text
-
-    def test_agents_run_cannot_execute_team(self, multi_entity_authz_client):
-        _agent, team, _workflow, client = multi_entity_authz_client
-        resp = client.post(
-            "/a2a/message/send",
-            json=_message_body(),
-            headers={"X-Agent-ID": team.id, "Authorization": f"Bearer {_token(['agents:run'])}"},
-        )
-        assert resp.status_code == 403, resp.text
-
-    def test_matching_family_scope_allowed(self, multi_entity_authz_client):
-        # The deprecated route's coarse gate requires agents:run; to run a team through it a
-        # token needs agents:run (gate) AND teams:run (resolved-family handler check). Teams-
-        # only tokens should use the typed /a2a/teams/... route instead.
-        _agent, team, _workflow, client = multi_entity_authz_client
-        with patch.object(team, "arun", new_callable=AsyncMock) as mock_arun:
-            mock_arun.return_value = RunOutput(run_id="r", session_id="ctx", content="ok")
-            resp = client.post(
-                "/a2a/message/send",
-                json=_message_body(),
-                headers={"X-Agent-ID": team.id, "Authorization": f"Bearer {_token(['agents:run', 'teams:run'])}"},
             )
             assert resp.status_code == 200
             mock_arun.assert_called_once()

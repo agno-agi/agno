@@ -36,6 +36,7 @@ from agno.fs.errors import InvalidPathError, QuotaExceededError
 from agno.fs.types import ContainsResult, FileMeta, NamespaceUsage, SearchMatch
 
 if TYPE_CHECKING:
+    from agno.db.base import BaseDb
     from agno.tools.toolkit import Toolkit
 
 DEFAULT_NAMESPACE = "default"
@@ -125,18 +126,28 @@ class FileSystem:
     arguments. A placeholder whose value is missing at call time fails closed.
     Programmatic use of a templated instance goes through ``resolve()``.
 
+    Use ``db=SqliteDb(...)`` or ``db=PostgresDb(...)`` to borrow a synchronous
+    database, or ``backend=`` for an explicit backend. Supply exactly one source.
+
     Cheap to construct and holds no connections; the backend owns the
     engine/pool and is shared across instances.
     """
 
     def __init__(
         self,
-        backend: Any,
+        backend: Any = None,
         namespace: str = DEFAULT_NAMESPACE,
         *,
+        db: Optional["BaseDb"] = None,
         max_file_bytes: int = 1_000_000,
         max_namespace_bytes: int = 20_000_000,
     ) -> None:
+        if (backend is None) == (db is None):
+            raise ValueError("Provide exactly one of backend or db")
+        if db is not None:
+            from agno.fs.db import DbFileSystem
+
+            backend = DbFileSystem(db=db)
         self.backend: BaseFS = _as_backend(backend)
         self.namespace = normalize_namespace(namespace)
         self.max_file_bytes = max_file_bytes
