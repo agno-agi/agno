@@ -265,13 +265,12 @@ class TestBorrowedRunsAreGivenBack:
         assert all(run.team_id == "middle-team" for run in session.runs)
 
     def test_a_missing_release_is_repaired_by_the_next_hand_off(self):
-        """A member run that raises something other than RunCancelledException skips the
-        release, so the next hand-off has to clean up before borrowing again."""
+        """Replacing a hand-off directly must clean up the previous borrowed runs."""
         middle = self._cached_middle_team()
 
         _hand_session_to_sub_team(middle, _root_session())
         _read_or_create_session(middle, session_id=SESSION_ID)
-        # ... delegated run blows up here, so _release_session_from_sub_team() never runs.
+        # Replace the hand-off without explicitly releasing it first.
 
         _hand_session_to_sub_team(middle, _root_session())
         _release_session_from_sub_team(middle)

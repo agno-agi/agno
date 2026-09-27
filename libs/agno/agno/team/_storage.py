@@ -324,9 +324,7 @@ def _hand_session_to_sub_team(member: Union[Any, "Team"], session: TeamSession) 
     if not isinstance(member, Team):
         return
 
-    # Release first: if a previous delegated run ended by raising something other than
-    # RunCancelledException the release below never ran, and the borrowed runs would still be
-    # sitting in this member's cached session.
+    # Clear any previous hand-off before replacing the borrowed session.
     _release_session_from_sub_team(member)
     member._delegated_session = session
 

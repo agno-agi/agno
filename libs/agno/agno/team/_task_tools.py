@@ -320,10 +320,6 @@ def _get_task_management_tools(
         """Initialize member and prepare task input. Returns (member_agent_task, history)."""
         _initialize_member(team, member_agent)
 
-        # Sub-teams skip the database read (they are not the session owner), so hand them this
-        # team's live session in-memory. Without it their own history lookups run against an
-        # empty run list and nested delegation loses multi-turn context.
-        _hand_session_to_sub_team(member_agent, session)
         if not team.send_media_to_model:
             member_agent.send_media_to_model = False
 
@@ -415,9 +411,6 @@ def _get_task_management_tools(
         if member_run_response is not None:
             _update_team_media(team, member_run_response)
 
-        # The delegated run is over: stop holding a reference to this team's session
-        _release_session_from_sub_team(member_agent)
-
     async def _apost_process_member_run(
         member_run_response: Optional[Union[TeamRunOutput, RunOutput]],
         member_agent: Union[Agent, "Team"],
@@ -485,9 +478,6 @@ def _get_task_management_tools(
         if member_run_response is not None:
             _update_team_media(team, member_run_response)
 
-        # The delegated run is over: stop holding a reference to this team's session
-        _release_session_from_sub_team(member_agent)
-
     # ------------------------------------------------------------------
     # Tool: execute_task (sync)
     # ------------------------------------------------------------------
@@ -532,6 +522,7 @@ def _get_task_management_tools(
         try:
             member_task_description = task.description or task.title
             member_agent_task, history = _setup_member_for_task(member_agent, member_task_description)
+            _hand_session_to_sub_team(member_agent, session)
 
             if stream:
                 member_run_id = str(uuid4())
@@ -613,6 +604,7 @@ def _get_task_management_tools(
                 if run_response.run_id is not None:
                     raise_if_cancelled(run_response.run_id)
         except RunCancelledException:
+            _release_session_from_sub_team(member_agent)
             use_team_logger()
             _post_process_member_run(
                 member_run_response, member_agent, member_task_description, member_session_state_copy
@@ -623,12 +615,15 @@ def _get_task_management_tools(
                 save_task_list(run_context.session_state, task_list)
             raise
         except Exception as e:
+            _release_session_from_sub_team(member_agent)
             task.status = TaskStatus.failed
             task.result = f"Member execution error: {e}"
             save_task_list(run_context.session_state, task_list)
             use_team_logger()
             yield f"Task [{task.id}] failed due to member execution error: {e}"
             return
+        finally:
+            _release_session_from_sub_team(member_agent)
 
         # Check HITL pause
         if member_run_response is not None and member_run_response.is_paused:
@@ -715,6 +710,7 @@ def _get_task_management_tools(
         try:
             member_task_description = task.description or task.title
             member_agent_task, history = _setup_member_for_task(member_agent, member_task_description)
+            _hand_session_to_sub_team(member_agent, session)
 
             if stream:
                 member_run_id = str(uuid4())
@@ -796,6 +792,7 @@ def _get_task_management_tools(
                 if run_response.run_id is not None:
                     await araise_if_cancelled(run_response.run_id)
         except RunCancelledException:
+            _release_session_from_sub_team(member_agent)
             use_team_logger()
             await _apost_process_member_run(
                 member_run_response,
@@ -809,12 +806,15 @@ def _get_task_management_tools(
                 save_task_list(run_context.session_state, task_list)
             raise
         except Exception as e:
+            _release_session_from_sub_team(member_agent)
             task.status = TaskStatus.failed
             task.result = f"Member execution error: {e}"
             save_task_list(run_context.session_state, task_list)
             use_team_logger()
             yield f"Task [{task.id}] failed due to member execution error: {e}"
             return
+        finally:
+            _release_session_from_sub_team(member_agent)
 
         if member_run_response is not None and member_run_response.is_paused:
             _propagate_member_pause(run_response, member_agent, member_run_response)
@@ -921,6 +921,7 @@ def _get_task_management_tools(
             thread_files = list(_files)
 
             try:
+                _hand_session_to_sub_team(member_agent, session)
                 member_run_id = str(uuid4())
                 if run_response.run_id is not None:
                     register_member_run(run_response.run_id, member_run_id)
@@ -949,6 +950,8 @@ def _get_task_management_tools(
                 raise
             except Exception as e:
                 return (task_obj.id, None, member_session_state_copy, member_task_description, e)
+            finally:
+                _release_session_from_sub_team(member_agent)
 
         results_text: List[str] = []
         modified_states: List[Dict[str, Any]] = []
@@ -1126,6 +1129,7 @@ def _get_task_management_tools(
             task_files = list(_files)
 
             try:
+                _hand_session_to_sub_team(member_agent, session)
                 member_run_id = str(uuid4())
                 if run_response.run_id is not None:
                     await aregister_member_run(run_response.run_id, member_run_id)
@@ -1154,6 +1158,8 @@ def _get_task_management_tools(
                 raise
             except Exception as e:
                 return (task_obj.id, None, member_session_state_copy, member_task_description, e)
+            finally:
+                _release_session_from_sub_team(member_agent)
 
         # Run all tasks concurrently
         gather_results = await asyncio.gather(
