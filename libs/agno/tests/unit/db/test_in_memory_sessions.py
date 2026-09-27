@@ -184,6 +184,18 @@ class TestGetSessionsSemantics:
         assert total == 1
         assert rows[0]["session_id"] == "s3"
 
+    def test_filter_by_session_name_skips_sessions_without_a_name(self):
+        db = InMemoryDb()
+        db.upsert_session(AgentSession(session_id="named", session_data={"session_name": "Alpha session"}))
+        db.upsert_session(AgentSession(session_id="null-name", session_data={"session_name": None}))
+        db.upsert_session(AgentSession(session_id="no-name", session_data={}))
+        db.upsert_session(AgentSession(session_id="no-data"))
+
+        rows, total = db.get_sessions(session_name="alpha", deserialize=False)
+
+        assert total == 1
+        assert [r["session_id"] for r in rows] == ["named"]
+
 
 class TestDeleteSessions:
     def test_delete_existing_returns_true(self):
