@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Literal, Optional, Union
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from agno.utils.json_schema import (
     get_json_schema,
@@ -452,3 +452,72 @@ def test_get_json_schema_with_mixed_nested_structures():
     assert "contact_info" in dataclass_schema["properties"]
     assert "address" in pydantic_schema["properties"]["contact_info"]["properties"]
     assert "address" in dataclass_schema["properties"]["contact_info"]["properties"]
+
+
+def test_inlined_model_refs_preserve_field_metadata():
+    class Address(BaseModel):
+        """An address."""
+
+        city: str
+
+    class Shipment(BaseModel):
+        origin: Address = Field(
+            default=Address(city="London"),
+            title="Collection address",
+            description="Warehouse to collect the package from",
+            examples=[{"city": "Paris"}],
+        )
+        destination: Address = Field(description="Customer address to deliver the package to")
+        fallback: Address
+
+    schema = get_json_schema_for_arg(Shipment)
+    origin = schema["properties"]["origin"]
+    destination = schema["properties"]["destination"]
+    fallback = schema["properties"]["fallback"]
+    assert origin["description"] == "Warehouse to collect the package from"
+    assert origin["title"] == "Collection address"
+    assert origin["default"] == {"city": "London"}
+    assert origin["examples"] == [{"city": "Paris"}]
+    assert destination["description"] == "Customer address to deliver the package to"
+    assert destination["title"] == "Address"
+    assert "default" not in destination
+    assert "examples" not in destination
+    assert fallback["description"] == "An address."
+    for address in (origin, destination, fallback):
+        assert "$ref" not in address
+        assert address["properties"]["city"]["type"] == "string"
+
+
+def test_recursive_model_ref_preserves_field_metadata():
+    import json
+
+    class Node(BaseModel):
+        child: "Node" = Field(description="The next node", title="Child node")
+
+    schema = get_json_schema_for_arg(Node)
+    assert schema["properties"]["child"] == {
+        "type": "object",
+        "description": "The next node",
+        "title": "Child node",
+    }
+    assert '"$ref"' not in json.dumps(schema)
+
+
+def test_inlined_enum_ref_preserves_field_metadata():
+    from enum import Enum
+
+    class Status(str, Enum):
+        OPEN = "open"
+        CLOSED = "closed"
+
+    class Ticket(BaseModel):
+        status: Status = Field(default=Status.OPEN, description="Current ticket state")
+
+    schema = get_json_schema_for_arg(Ticket)
+    assert schema["properties"]["status"] == {
+        "type": "string",
+        "title": "Status",
+        "enum": ["open", "closed"],
+        "default": "open",
+        "description": "Current ticket state",
+    }
