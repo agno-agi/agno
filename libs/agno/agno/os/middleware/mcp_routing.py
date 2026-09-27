@@ -38,15 +38,22 @@ class MCPRoutingMiddleware:
             return
         from agno.os.mcp import _mcp_request_hostname
 
+        path = get_route_path(scope).rstrip("/") or "/"
+        prefixes = self.paths
+        card_paths = tuple(prefix + "/server-card" for prefix in prefixes)
+        candidate = path in prefixes or path in card_paths or path in ("/mcp", MCP_SERVER_CARD_PATH)
+        if self.root_host is not None and path in ("/", "/server-card"):
+            candidate = True
+        if not candidate:
+            await self.app(scope, receive, send)
+            return
         headers = Headers(scope=scope)
         hosts = headers.getlist("host")
-        if len(hosts) != 1 or not re.fullmatch(r"(?:\[[0-9A-Fa-f:.]+\]|[A-Za-z0-9.-]+)(?::[0-9]{1,5})?", hosts[0]):
+        if len(hosts) != 1 or not re.fullmatch(r"(?:\[[0-9A-Fa-f:.]+\]|[A-Za-z0-9._-]+)(?::[0-9]{1,5})?", hosts[0]):
             await JSONResponse({"error": "invalid_host"}, status_code=400)(scope, receive, send)
             return
         # Forwarding headers never select the dedicated-host route.
         root = self.root_host is not None and _mcp_request_hostname(hosts[0]) == self.root_host
-        path = get_route_path(scope).rstrip("/") or "/"
-        prefixes = self.paths
         mapped = None
         if root and path in ("/", "/server-card"):
             mapped = "/mcp" if path == "/" else MCP_SERVER_CARD_PATH
