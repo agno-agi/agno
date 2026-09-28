@@ -1603,7 +1603,8 @@ class AgentOS:
         if self.mcp:
             from agno.os.middleware.mcp_routing import MCPRoutingMiddleware, validate_mcp_routes
 
-            routing_config = self.mcp_config if self.mcp_config is not None else MCPConfig()
+            # mcp=True serves the default tools; this config only carries routing settings.
+            routing_config = self.mcp_config if self.mcp_config is not None else MCPConfig(default_tools=True)
             if self.mcp_auth is not None and (
                 routing_config.path != "/mcp" or routing_config.path_aliases or routing_config.root_host
             ):
@@ -2467,7 +2468,7 @@ class AgentOS:
                     mcp_path = "/"
                 endpoint_host = f"[{host}]" if ":" in host and not host.startswith("[") else host
                 scheme = "https" if kwargs.get("ssl_certfile") else "http"
-                root_path = kwargs.get("root_path", "").rstrip("/")
+                root_path = (kwargs.get("root_path") or "").rstrip("/")
                 mcp_endpoint = f"{scheme}://{endpoint_host}:{port}{root_path}{mcp_path}"
             panel_group.append(Align.center(Text.assemble(("MCP endpoint: ", "bold dark_orange"), mcp_endpoint)))
         if self.authorization:

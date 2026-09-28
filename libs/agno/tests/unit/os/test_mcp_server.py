@@ -1930,7 +1930,9 @@ async def test_exposed_component_arguments_are_described():
     os = AgentOS(
         name="Docs AgentOS",
         agents=[_agent()],
-        mcp=MCPConfig(name="Agno Docs", default_tools=False, tools=[_agent().as_tool(name="ask")]),
+        mcp=MCPConfig(
+            name="Agno Docs", default_tools=False, lifecycle_tools=True, tools=[_agent().as_tool(name="ask")]
+        ),
     )
     async with Client(build_mcp_server(os)) as client:
         served = {t.name: t for t in await client.list_tools()}
