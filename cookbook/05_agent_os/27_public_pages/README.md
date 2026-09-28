@@ -345,3 +345,99 @@ OAuth deployments retain the native `/mcp` route; combining OAuth with custom
 routing fails at startup until protected-resource discovery supports that mapping.
 A different site's `/mcp` compatibility reverse proxy remains deployment configuration.
 No application middleware or mutation of `app.user_middleware` is needed for routing.
+### Relocating the documentation source
+
+Relocation changes which source URL a namespace is bound to. It does not move
+website files, verify that you own the target, or check that the target serves
+the same documentation; those remain the operator's responsibility. Inspect with
+`knowledge.inspect_page_source()` or `ainspect_page_source()`; relocate with
+`knowledge.migrate_page_source(expected_source=old, target_source=new)` or
+`amigrate_page_source(...)`, which is a dry run unless `dry_run=False`.
+
+Runbook:
+
+1. Verify that you own the target host and that it serves the same corpus at the
+   same discovery path; only the host may differ.
+2. Inspect the existing binding: filesystem, catalog, vector table, source URL and
+   revision.
+3. Run the guarded dry run. Its result reports the current binding twice, as
+   `before` and `after`, with `changed=False`; it does not project a future state.
+4. Apply with `dry_run=False`. Only the binding's source and revision change;
+   pages, catalog rows and stored vectors stay as they are, so citations keep
+   naming the old host until step 6.
+5. Point every sync producer at the target (for this example `PAGE_DEMO_INDEX_URL`,
+   which the `sync` mode and the `sync-docs` workflow read) and restart producers
+   that captured their configuration at startup. A sync still configured with the
+   old source is refused with "bound to another documentation source"; the
+   binding is never rewritten by sync.
+6. Run a normal sync against the target with `sync_pages` or `async_sync_pages`,
+   using the same transform and `index_version`. Unchanged pages are republished
+   with new citation URLs and their document embeddings are reused; changed
+   content, a different `index_version` or invalid stored vectors re-embed as
+   usual. An explicit `public_url` keeps deciding the citation host regardless of
+   the discovery host.
+7. If an apply fails after it started (timeout, lost connection, cancellation), do
+   not assume a rollback: inspect the binding, or repeat the same guarded request,
+   which is a no-op once the binding already names the target. Being at the target
+   does not mean step 6 has happened.
+
+Guards: HTTPS only; an unchanged discovery path, compared literally, so encoded or
+otherwise equivalent spellings are rejected; the configured catalog and vector
+tables; and a current source equal to `expected_source` or already equal to
+`target_source`. The namespace lock shared with sync rejects a relocation during
+an active sync or another relocation with `PageSourceBusy`; a sync started while a
+relocation holds the lock waits for it. Readers keep working throughout. An
+applied relocation bumps the namespace revision, so open `list_pages` cursors
+report `restart_required` and must be re-obtained.
+
+`migrate_page_source.py OLD_URL NEW_URL` calls `setup()` first, which on
+uninitialized storage creates the page schema even in dry-run mode, then prints
+the current binding, the dry-run result and what remains to be done; add
+`--apply` only after reviewing them. It uses the database configured by
+`public_pages.py`. No HTTP route or model/MCP tool is added automatically; keep
+this an operator action.
+
+### Typed page tools
+
+`PageFileSystem.run_command_result` and `arun_command_result` return a
+`PageCommandResult` with text, explicit errors, partial/truncated state, stop
+reason and an optional line-based continuation command. Error status comes from
+execution, never from matching words in documentation. Missing paths, invalid
+grammar and unavailable storage are distinguished; incomplete grep is successful
+but partial. Existing `run_command` and default chat tool text remain compatible.
+
+The typed result's `max_output_bytes` bounds its full UTF-8 JSON value, including
+metadata. Byte clipping clears line-based continuation so it cannot skip unseen
+text. Narrow the command when no continuation is available. MCP protocol envelope
+overhead is additional and remains subject to AgentOS's transport output limits.
+
+Use `files.tools(transport="mcp", tool_name=..., description=...)` for native MCP
+output schemas and `isError` failures. Successful structured results contain the
+same command text plus status metadata. Applications can use the direct typed
+result's `.text` or `.model_dump_json()` in custom chat presentation; product error
+wording stays explicit. Default chat command tools keep their existing character
+bound; typed direct/MCP results add the JSON byte bound.
+
+`knowledge.get_tools(page_results=True, tool_name=..., tool_description=...)`
+exposes native ranked SearchResult JSON through chat. Add `transport="mcp"` for
+the same search result as MCP structured content/schema and execution errors,
+and `async_mode=True` for async tools (`aget_tools` defaults to async). Both use
+public page search and preserve alternatives, revisions, completeness and supplied
+run reference tracking. Names, descriptions and score interpretation remain
+application choices. Generic results expose `score`; an existing `confidence`
+field remains a small application compatibility mapping. No feedback tool or
+business rules move into the framework.
+
+`page_tool_results.py` defaults to `check`, which validates configuration without
+IO. It needs only `./cookbook/scripts/run_pgvector.sh` and `OPENAI_API_KEY`, and
+uses the same `ai` database as the other cookbooks:
+
+```sh
+.venvs/demo/bin/python cookbook/05_agent_os/27_public_pages/page_tool_results.py
+.venvs/demo/bin/python cookbook/05_agent_os/27_public_pages/page_tool_results.py sync
+.venvs/demo/bin/python cookbook/05_agent_os/27_public_pages/page_tool_results.py run "cat /installation.md"
+```
+
+`sync` publishes the example corpus once; `run` executes one command and prints
+the typed result, then a missing path so the execution-derived error status is
+visible. No tool is exposed automatically.
