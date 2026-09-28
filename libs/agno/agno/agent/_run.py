@@ -6,6 +6,8 @@ import asyncio
 import contextlib
 import time
 from collections import deque
+from copy import deepcopy
+from dataclasses import fields
 from time import time as unix_time
 from typing import (
     TYPE_CHECKING,
@@ -3277,13 +3279,25 @@ def _sync_requirements_with_tools(run_response: RunOutput, updated_tools: List[A
                 req.tool_execution = updated_tools_map[req.tool_execution.tool_call_id]
 
 
+# The only ToolExecution fields a /continue submission owns. Everything else on
+# a recorded call (name, arguments, routing flags, approval metadata, result)
+# stays the run's decision.
+_CONTINUATION_USER_OWNED_FIELDS = frozenset(
+    {"confirmed", "confirmation_note", "user_input_schema", "user_feedback_schema"}
+)
+
+
 def _apply_requirement_tools(run_response: RunOutput, requirements: List[Any]) -> None:
     """Set the continue requirements on the run and merge their tool executions into run_response.tools.
 
-    A call that already ran keeps the run's own copy. A requirement can carry an
-    out-of-date copy of that call (confirmed, no result), for example after an
+    The run's recorded tools stay the merge base. A requirement can carry an
+    out-of-date copy of a call (confirmed, no result), for example after an
     earlier pause was resolved from the approvals table; swapping it in would
-    execute the call a second time.
+    execute the call a second time, and taking its name, arguments or approval
+    metadata would let the caller choose what runs. A submission therefore only
+    contributes the user-owned fields (see _restore_authoritative_continuation_tool).
+    Requirements are re-pointed at the merged tools so the approval gate,
+    resolution sync and execution all observe one authoritative state.
     """
     run_response.requirements = requirements
     updated_tools = [req.tool_execution for req in requirements if req.tool_execution is not None]
@@ -3297,9 +3311,12 @@ def _apply_requirement_tools(run_response: RunOutput, requirements: List[Any]) -
             if tool.result is None and tool.tool_call_id in updated_tools_map:
                 updated_tools_map[tool.tool_call_id].toolkit = tool.toolkit
         run_response.tools = [
-            updated_tools_map.get(tool.tool_call_id, tool) if tool.result is None else tool
+            _restore_authoritative_continuation_tool(tool, updated_tools_map.get(tool.tool_call_id))
+            if tool.result is None
+            else tool
             for tool in run_response.tools
         ]
+        _sync_requirements_with_tools(run_response, run_response.tools)
     else:
         run_response.tools = updated_tools
 
@@ -3322,6 +3339,56 @@ def _reject_unmatched_continuation_tools(run_response: RunOutput, updated_tools:
                 f"Tool call '{tool.tool_call_id}' does not match any pending requirement for this run. "
                 "Only tool calls issued by the run can be continued."
             )
+
+
+def _restore_authoritative_continuation_tool(recorded: Any, submitted: Any) -> Any:
+    """Make a client submission carry the run's own recorded tool state.
+
+    The run's record is authoritative: a submission must never choose the tool
+    name, arguments or approval metadata that gets executed, nor strip the flags
+    that route the resume (confirmation / user-input / external execution /
+    approval stamps). The submitted instance is the one the requirements hold,
+    so it becomes the merged tool — but every field is overwritten from the
+    record first, leaving only the user-owned ones from the caller: the
+    confirmation decision and its note, values for the user-input and
+    user-feedback fields the run itself defined, and the result a paused tool
+    resumes with. Approval-gated tools get ``confirmed`` re-stamped from the
+    approval record by the gate that runs right after.
+    """
+    if submitted is None or submitted is recorded:
+        return recorded
+
+    # Snapshot the caller-owned fields before the record is copied over them
+    confirmed = submitted.confirmed
+    confirmation_note = submitted.confirmation_note
+    submitted_values = {f.name: f.value for f in (submitted.user_input_schema or []) if f.name}
+    submitted_selections = {
+        q.question: q.selected_options for q in (submitted.user_feedback_schema or []) if q.question
+    }
+    resume_result = submitted.result
+
+    for recorded_field in fields(submitted):
+        if recorded_field.name not in _CONTINUATION_USER_OWNED_FIELDS:
+            setattr(submitted, recorded_field.name, getattr(recorded, recorded_field.name))
+
+    # The run defines which questions exist; the caller only answers them
+    submitted.confirmed = confirmed
+    submitted.confirmation_note = confirmation_note
+    submitted.user_input_schema = deepcopy(recorded.user_input_schema)
+    for input_field in submitted.user_input_schema or []:
+        if input_field.name in submitted_values:
+            input_field.value = submitted_values[input_field.name]
+    submitted.user_feedback_schema = deepcopy(recorded.user_feedback_schema)
+    for question in submitted.user_feedback_schema or []:
+        if question.question in submitted_selections:
+            question.selected_options = submitted_selections[question.question]
+    if recorded.is_paused and resume_result is not None:
+        # The result a paused tool resumes with is caller-owned: an externally
+        # executed tool consumes it verbatim, and elsewhere execution either
+        # overwrites it or a client-supplied result routes the tool to the
+        # reject lane.
+        submitted.result = resume_result
+    return submitted
 
 
 def continue_run_dispatch(
