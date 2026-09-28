@@ -9,7 +9,7 @@ client. The agent can quote any paid API, price it on every rail it offers, and 
 with Nano (XNO) at zero fee and sub-second finality.
 
 Installation: pip install "feeless402[mcp]"
-Documentation: https://feeless402.com/docs
+Documentation: https://feeless402.com
 
 First run auto-generates a wallet at ~/.nano-pay/wallet.json; a faucet claim can fund
 it with free starter XNO (nano-pay claim --auto).
