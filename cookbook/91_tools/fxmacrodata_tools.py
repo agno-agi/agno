@@ -2,13 +2,13 @@
 FXMacroData Tools - Macroeconomic, FX and Central-Bank Data
 
 FXMacroData aggregates official publishers - statistical agencies, central banks
-and exchanges - across 18 currencies behind a single contract, and stamps every
+and exchanges - across 22 currencies behind a single contract, and stamps every
 observation with the instant it was published. That publication timestamp is
 what lets an agent reason about what was knowable at a point in time, instead of
 only describing the present.
 
 USD needs no API key, so the first example below runs as-is. A key widens the
-history window and unlocks the other seventeen currencies plus FX rates, rate
+history window and unlocks the other currencies plus FX rates, rate
 differentials, COT positioning and commodities:
 
     export FXMACRODATA_API_KEY=...
