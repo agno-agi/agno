@@ -3399,6 +3399,57 @@ def _reject_unmatched_continuation_tools(run_response: RunOutput, updated_tools:
             )
 
 
+def _restore_authoritative_continuation_tool(recorded: Any, submitted: Any) -> Any:
+    """Overlay a client-submitted ToolExecution onto the run's own recorded one.
+
+    The recorded tool state is authoritative: a submission must never choose
+    the tool name, arguments or approval metadata that gets executed, nor strip
+    the flags that route the resume (confirmation / user-input / external
+    execution / approval stamps). Only user-owned fields flow from the
+    submission — the confirmation decision and its note, values for the
+    user-input and user-feedback fields the run itself defined, and the result
+    a paused tool resumes with. Approval-gated tools get ``confirmed``
+    re-stamped from the approval record by the gate that runs right after.
+    """
+    if submitted is None:
+        return recorded
+    recorded.confirmed = submitted.confirmed
+    recorded.confirmation_note = submitted.confirmation_note
+    submitted_values = {f.name: f.value for f in (submitted.user_input_schema or []) if f.name}
+    for input_field in recorded.user_input_schema or []:
+        if input_field.name in submitted_values:
+            input_field.value = submitted_values[input_field.name]
+    submitted_selections = {
+        q.question: q.selected_options for q in (submitted.user_feedback_schema or []) if q.question
+    }
+    for question in recorded.user_feedback_schema or []:
+        if question.question in submitted_selections:
+            question.selected_options = submitted_selections[question.question]
+    if recorded.is_paused and submitted.result is not None:
+        # The result a paused tool resumes with is caller-owned: an externally
+        # executed tool consumes it verbatim, and elsewhere execution either
+        # overwrites it or a client-supplied result routes the tool to the
+        # reject lane.
+        recorded.result = submitted.result
+    return recorded
+
+
+def _merge_continuation_tools(run_response: RunOutput, updated_tools: List[Any]) -> None:
+    """Apply client requirement submissions onto the run's recorded tools.
+
+    The recorded ``run_response.tools`` stay the base; a submission may only
+    carry user-owned fields (see _restore_authoritative_continuation_tool).
+    Requirements are re-pointed at the merged objects so the approval gate,
+    resolution sync and tool execution all observe one authoritative state.
+    """
+    submitted_map = {tool.tool_call_id: tool for tool in updated_tools if tool.tool_call_id}
+    run_response.tools = [
+        _restore_authoritative_continuation_tool(tool, submitted_map.get(tool.tool_call_id))
+        for tool in (run_response.tools or [])
+    ]
+    _sync_requirements_with_tools(run_response, run_response.tools)
+
+
 def continue_run_dispatch(
     agent: Agent,
     run_response: Optional[RunOutput] = None,
@@ -3646,8 +3697,11 @@ def continue_run_dispatch(
             updated_tools = [req.tool_execution for req in requirements if req.tool_execution is not None]
             _reject_unmatched_continuation_tools(run_response, updated_tools)
             if updated_tools and run_response.tools:
-                updated_tools_map = {tool.tool_call_id: tool for tool in updated_tools}
-                run_response.tools = [updated_tools_map.get(tool.tool_call_id, tool) for tool in run_response.tools]
+                # Server-authoritative merge: the recorded tools stay the base
+                # and the submission only contributes user-owned fields, so
+                # forged tool_args or approval metadata cannot ride in on a
+                # matching tool_call_id.
+                _merge_continuation_tools(run_response, updated_tools)
             else:
                 run_response.tools = updated_tools
 
@@ -4993,10 +5047,10 @@ async def _acontinue_run(
                         updated_tools = [req.tool_execution for req in requirements if req.tool_execution is not None]
                         _reject_unmatched_continuation_tools(run_response, updated_tools)
                         if updated_tools and run_response.tools:
-                            updated_tools_map = {tool.tool_call_id: tool for tool in updated_tools}
-                            run_response.tools = [
-                                updated_tools_map.get(tool.tool_call_id, tool) for tool in run_response.tools
-                            ]
+                            # Server-authoritative merge (see the sync path):
+                            # recorded tools stay the base, the submission only
+                            # contributes user-owned fields.
+                            _merge_continuation_tools(run_response, updated_tools)
                         else:
                             run_response.tools = updated_tools
 
@@ -5528,10 +5582,10 @@ async def _acontinue_run_stream(
                         updated_tools = [req.tool_execution for req in requirements if req.tool_execution is not None]
                         _reject_unmatched_continuation_tools(run_response, updated_tools)
                         if updated_tools and run_response.tools:
-                            updated_tools_map = {tool.tool_call_id: tool for tool in updated_tools}
-                            run_response.tools = [
-                                updated_tools_map.get(tool.tool_call_id, tool) for tool in run_response.tools
-                            ]
+                            # Server-authoritative merge (see the sync path):
+                            # recorded tools stay the base, the submission only
+                            # contributes user-owned fields.
+                            _merge_continuation_tools(run_response, updated_tools)
                         else:
                             run_response.tools = updated_tools
 
