@@ -2657,7 +2657,7 @@ class PostgresDb(BaseDb):
 
                 # Attach lightweight run info (model and provider) from the runs table
                 if runs_table is not None and sessions:
-                    session_ids = [s["session_id"] for s in sessions]
+                    session_ids = stmt.with_only_columns(table.c.session_id)
                     runs_stmt = select(
                         runs_table.c.session_id,
                         runs_table.c.run_data["model"].astext.label("model"),
