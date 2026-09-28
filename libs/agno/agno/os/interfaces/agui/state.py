@@ -42,8 +42,33 @@ class StreamState:
     run_id: str = ""
     run_state: Optional[Dict[str, Any]] = None
 
+    # Deterministic message ids. Left unset the ids are random, which is all a
+    # single-pass stream needs. A replayable stream sets a namespace so that
+    # re-translating the same source events mints the same ids and a client
+    # that reconnects mid-message keeps receiving events for the message it
+    # already opened. The namespace identifies the run, so every connection to
+    # one run mints the same ids while two different runs never collide.
+    id_namespace: Optional[str] = None
+    # Set by a replayable stream, which can begin in the middle of a run and so
+    # must not report the end of a tool call whose start it never saw.
+    require_started_tool_calls: bool = False
+    _id_seed: str = field(default="", repr=False)
+    _id_counter: int = field(default=0, repr=False)
+
+    def set_id_seed(self, seed: Any) -> None:
+        """Anchor the next ids to the position of the source event being translated."""
+        self._id_seed = str(seed)
+        self._id_counter = 0
+
+    def new_message_id(self) -> str:
+        if self.id_namespace is None:
+            return str(uuid.uuid4())
+        minted = self._id_counter
+        self._id_counter += 1
+        return str(uuid.uuid5(uuid.NAMESPACE_URL, f"{self.id_namespace}/{self._id_seed}/{minted}"))
+
     def open_text_message(self) -> str:
-        self.text_message_id = str(uuid.uuid4())
+        self.text_message_id = self.new_message_id()
         self.text_message_open = True
         return self.text_message_id
 
@@ -72,7 +97,7 @@ class StreamState:
         self.pending_tool_calls_parent_id = ""
 
     def start_reasoning(self) -> str:
-        self.reasoning_message_id = str(uuid.uuid4())
+        self.reasoning_message_id = self.new_message_id()
         self.reasoning_step_count = 0
         return self.reasoning_message_id
 

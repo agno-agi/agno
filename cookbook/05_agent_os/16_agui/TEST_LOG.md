@@ -6,6 +6,13 @@ Tested on 2026-07-24 against Agno source commit
 The OpenUI addition was tested on 2026-08-18 against Agno source commit
 `32e5fb9c2203fa98de19ca72750133a57a075899`.
 
+`background_run.py` was re-tested on 2026-09-04 and last re-confirmed on
+2026-09-08 against the tree of the commit that carries this entry, on a machine
+with no `OPENAI_API_KEY`. That run is scoped accordingly and its entry says what
+it could not reach. The entry was rewritten from scratch because the previous
+one, written against `8f76f52f41b4366dce9b6def7f4f687ede6c5229`, described
+paused-run continuation behavior that has since changed.
+
 Each checked-in server was first booted on its default port 7777. The sweep
 asserted `GET /health`, `GET /config`, every mounted AG-UI status route, and a
 clean shutdown. Capability-specific POST tests then used
@@ -165,6 +172,96 @@ points, and both streams closed with `RUN_FINISHED`.
 
 ---
 
+### background_run.py
+
+**Status:** PASS (routing, cursor stamping, and resume gating only; no model
+call, so this is not a full-capability PASS like the entries above)
+
+**Test mode:** LIVE SERVER, NO MODEL KEY
+
+**Description:** Booted the checked-in server on its default port 7777 with no
+`OPENAI_API_KEY` in the environment, and with `PYTHONPATH` pointed at this
+worktree's `libs/agno` so the AG-UI interface under test is this tree's and not
+another checkout's editable install. Checked `/health`, `/config`, and
+`/background/status`, then sent ten `POST /background/agui` requests: a
+background opt-in, two reconnections with the same `runId` from different
+resume positions, a reconnection naming a `runId` no run uses, a second
+background run seeded on a different thread plus a cross-thread reconnection to
+it, a resume position with `enabled` set to `false`, two paused-run
+continuations echoing a resume position, and a plain foreground run.
+
+**Result:** Health returned `ok`; config returned OS `agui-background-os`,
+agent `agui-background-agent`, model `gpt-5.6-luna`, database
+`agui-background-db`, and one AG-UI interface at route `/background`;
+`/background/status` returned `available`.
+
+The background opt-in, sent as `forwardedProps.agnoBackground` set to the
+boolean `true` shorthand rather than the `{"enabled": true}` form the README
+documents, streamed five events. Both spellings are accepted. `RUN_STARTED` and `STATE_SNAPSHOT` came at cursors
+`{"eventIndex": -1, "subIndex": 0}` and `{"eventIndex": -1, "subIndex": 1}`,
+the snapshot carrying the submitted state. Two buffered Agno events with no
+AG-UI handler arrived as `RAW` at cursors 0 and 1, wrapping `RunStarted` and
+`ModelRequestStarted`. The stream ended at cursor 2 with a `RUN_ERROR` reading
+`OPENAI_API_KEY not set. Please set the OPENAI_API_KEY environment variable.`
+
+Reconnecting with the same `runId` and `lastEventIndex` 1 replayed exactly one
+event, the `RUN_ERROR` at cursor 2. Reconnecting with the same `runId` at
+`lastEventIndex` -1 and `lastSubIndex` 0 replayed four events, everything from
+the `STATE_SNAPSHOT` at cursor -1/1 onward, dropping only the `RUN_STARTED` at
+-1/0. The cursor filter therefore discriminates within one event index as well
+as across indices.
+
+A reconnection sending `lastEventIndex` 1 with `runId` `agui-bg-run-other`,
+which no run uses, was refused with `Run agui-bg-run-other not found in this
+session`, and that refusal was itself stamped at cursor 2, one past the
+position the client sent. A second background run `agui-bg-run-2` was then
+started on thread `agui-bg-thread-2`; reconnecting to it from thread
+`agui-bg-thread-1` with `lastEventIndex` 0 was refused the same way, with
+`Run agui-bg-run-2 not found in this session` stamped at cursor 1. Every
+refusal observed carried a resume marker one event index past the client's own.
+
+A resume position sent as
+`{"enabled": false, "lastEventIndex": 1, "lastSubIndex": 0}` was refused before
+anything ran, with `A resume position was sent with background execution
+disabled` stamped at cursor 2.
+
+A paused-run continuation, meaning a request carrying a trailing AG-UI tool
+message, was not refused. With `agnoBackground` carrying `lastEventIndex` 1 the
+server logged the warning `Background execution does not apply to a paused-run
+continuation; continuing in the foreground` and took the foreground
+continuation path, emitting `RUN_STARTED`, `STATE_SNAPSHOT`, and then
+`RUN_ERROR` reading `No paused run matching the provided tool results found in
+session agui-bg-thread-1`. None of those three events carried any
+`agnoBackground` metadata. The same continuation with `agnoBackground` set to
+`true` and no resume position behaved identically. That terminal error is the
+continuation finding no paused run to resume in this key-less environment, not
+a background refusal.
+
+A plain foreground run with empty `forwardedProps` produced the same five-event
+shape as the opt-in run, but with no `agnoBackground` key on any event, so the
+resume marker appears only on background responses.
+
+The server shut down cleanly on SIGINT.
+
+**Changed since the previous entry:** the previous version of this entry
+recorded a paused-run continuation carrying a resume position as being refused
+with `Background execution does not apply to a paused-run continuation` and
+starting nothing. At this commit it is not refused. The router decides the
+continuation downgrade before it decides the resume gate, so that sentence is
+now only a server-side warning and the continuation proceeds in the foreground.
+
+**Not verified:** everything that needs a model call. No assistant text was
+produced, so no long-running stream was disconnected and resumed mid-run, no
+`TEXT_MESSAGE_*` or tool-call events were ever buffered or replayed, the
+terminal `STATE_SNAPSHOT` and the absence of mid-run `STATE_DELTA` events were
+not observed, and the buffer-overflow replay refusal was never reached. Those
+behaviors are read from `agno/os/interfaces/agui/background.py` rather than
+witnessed here. A genuinely paused run was also never reached, so the
+foreground continuation path was observed only as far as its "no paused run"
+rejection.
+
+---
+
 ### openui/server.py and frontend
 
 **Status:** PASS
@@ -190,11 +287,13 @@ TypeScript compilation, and the Vite production build passed.
 
 ## Validation
 
-- All 9 standalone files booted, exposed their expected `/status` route, and
+- All 10 standalone files booted, exposed their expected `/status` route, and
   shut down cleanly.
-- All 9 files completed a real capability-specific AG-UI POST flow.
-- Recursive pattern validation checked exactly 9 Python files with 0
-  violations.
+- 9 of the 10 completed a real capability-specific AG-UI POST flow. The
+  exception is `background_run.py`, whose entry records what was verified
+  without a model call.
+- Recursive pattern validation checked all 11 Python files in the folder, the
+  10 standalone servers plus `openui/server.py`, with 0 violations.
 - Targeted Ruff format and check passed.
 - Python compilation, banned-model, stale-route, scope, Unicode/emoji,
   non-PASS status, and `git diff --check` gates passed.
@@ -204,5 +303,5 @@ TypeScript compilation, and the Vite production build passed.
   check. Its frontend passed five tests, TypeScript compilation, and a
   production build.
 - Repository-wide Ruff, agnoctl mypy, and cookbook pattern checks passed. The
-  core Agno mypy step reported 27 existing errors in six files outside this
-  integration's diff.
+  core Agno mypy step now reports no issues across 1034 source files, so the 27
+  pre-existing errors this section previously recorded are no longer present.
