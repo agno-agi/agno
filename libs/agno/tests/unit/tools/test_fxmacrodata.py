@@ -108,7 +108,7 @@ def test_none_parameters_are_dropped(fxmacrodata_tools, mock_response):
         fxmacrodata_tools.get_indicator_history(currency="USD", indicator="gdp", limit=5)
 
     _, kwargs = mock_get.call_args
-    assert kwargs["params"] == {"limit": 5}
+    assert kwargs["params"] == {"limit": 5, "offset": 0}
 
 
 def test_pair_endpoints_build_both_sides(fxmacrodata_tools, mock_response):

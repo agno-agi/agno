@@ -8,22 +8,23 @@ from agno.utils.log import log_error
 
 
 class FXMacroDataTools(Toolkit):
-    """Official-source macroeconomic, FX and central-bank data across 18 currencies.
+    """Official-source macroeconomic, FX and central-bank data across 22 currencies.
 
     FXMacroData aggregates official publishers - statistical agencies, central
     banks and exchanges - behind one contract, so an agent can ask "what did US
     core inflation print at, and when is the next release" without knowing which
-    of eighteen publishers to call or how each one formats its data.
+    publisher to call or how each one formats its data.
 
     Every observation carries the instant it was published
-    (announcement_datetime), which is what makes the data usable for
-    point-in-time reasoning rather than only for describing the present.
+    (announcement_datetime), and each row reports whether that time is
+    confirmed, so the history can be checked before it is used for
+    point-in-time reasoning.
 
     USD works without an API key: the catalogue, announcement history, the
     release calendar, central-bank headlines, market sessions and risk sentiment
     are all reachable anonymously, with announcement history limited to the most
-    recent 90 days. A key lifts that window and unlocks the other seventeen
-    currencies plus FX rates, rate differentials, COT positioning and
+    recent 90 days and delayed 15 minutes. A key lifts both limits and unlocks
+    the other currencies plus FX rates, rate differentials, COT positioning and
     commodities.
     """
 
@@ -148,6 +149,7 @@ class FXMacroDataTools(Toolkit):
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
         limit: int = 20,
+        offset: int = 0,
     ) -> str:
         """Get the published history of one macroeconomic indicator.
 
@@ -162,11 +164,13 @@ class FXMacroDataTools(Toolkit):
             start_date: Optional ISO start date, for example '2024-01-01'.
             end_date: Optional ISO end date.
             limit: Maximum rows to return. Caps at 100.
+            offset: Rows to skip, for paging further back. When the response
+                pagination block shows has_more, call again with its next_offset.
 
         Returns:
             JSON observations, newest first, with publication timestamps.
         """
-        params = {"start_date": start_date, "end_date": end_date, "limit": limit}
+        params = {"start_date": start_date, "end_date": end_date, "limit": limit, "offset": offset}
         return self._make_request(f"announcements/{currency.lower()}/{indicator}", params)
 
     def get_release_calendar(self, currency: str = "USD", limit: int = 20) -> str:
@@ -199,7 +203,7 @@ class FXMacroDataTools(Toolkit):
 
     # FX and rates
 
-    def get_fx_rate(self, base: str = "EUR", quote: str = "USD", limit: int = 10) -> str:
+    def get_fx_rate(self, base: str = "EUR", quote: str = "USD", limit: int = 10, offset: int = 0) -> str:
         """Get official reference exchange rates for a currency pair.
 
         Rates come from official publishers such as the ECB and the Federal
@@ -208,14 +212,15 @@ class FXMacroDataTools(Toolkit):
         Args:
             base: Three-letter base currency code, for example 'EUR'.
             quote: Three-letter quote currency code, for example 'USD'.
-            limit: Maximum observations to return, newest first.
+            limit: Maximum observations to return, newest first. Caps at 100.
+            offset: Rows to skip, for paging further back (see next_offset).
 
         Returns:
             JSON dated reference rates for the pair.
         """
-        return self._make_request(f"forex/{base.lower()}/{quote.lower()}", {"limit": limit})
+        return self._make_request(f"forex/{base.lower()}/{quote.lower()}", {"limit": limit, "offset": offset})
 
-    def get_rate_differential(self, base: str = "USD", quote: str = "JPY", limit: int = 10) -> str:
+    def get_rate_differential(self, base: str = "USD", quote: str = "JPY", limit: int = 10, offset: int = 0) -> str:
         """Get the policy rate differential between two currencies.
 
         The rate differential is the standard first look at carry for a pair.
@@ -224,16 +229,19 @@ class FXMacroDataTools(Toolkit):
         Args:
             base: Three-letter base currency code, for example 'USD'.
             quote: Three-letter quote currency code, for example 'JPY'.
-            limit: Maximum observations to return, newest first.
+            limit: Maximum observations to return, newest first. Caps at 100.
+            offset: Rows to skip, for paging further back (see next_offset).
 
         Returns:
             JSON dated policy rate differentials.
         """
-        return self._make_request(f"rate_differentials/{base.lower()}/{quote.lower()}", {"limit": limit})
+        return self._make_request(
+            f"rate_differentials/{base.lower()}/{quote.lower()}", {"limit": limit, "offset": offset}
+        )
 
     # Positioning, commodities and market context
 
-    def get_cot_positioning(self, currency: str = "USD", limit: int = 10) -> str:
+    def get_cot_positioning(self, currency: str = "USD", limit: int = 10, offset: int = 0) -> str:
         """Get CFTC Commitment of Traders positioning for a currency.
 
         Shows how speculative and commercial participants are positioned, which
@@ -241,12 +249,13 @@ class FXMacroDataTools(Toolkit):
 
         Args:
             currency: Three-letter currency code, for example 'GBP'.
-            limit: Maximum weekly reports to return, newest first.
+            limit: Maximum weekly reports to return, newest first. Caps at 100.
+            offset: Reports to skip, for paging further back (see next_offset).
 
         Returns:
             JSON COT reports with positioning by participant category.
         """
-        return self._make_request(f"cot/{currency.lower()}", {"limit": limit})
+        return self._make_request(f"cot/{currency.lower()}", {"limit": limit, "offset": offset})
 
     def get_commodity_prices(self) -> str:
         """Get the latest official prices for tracked commodities.
