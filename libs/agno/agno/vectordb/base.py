@@ -1,5 +1,7 @@
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional
+from contextlib import contextmanager
+from contextvars import ContextVar
+from typing import Any, Dict, Iterator, List, Optional
 
 from agno.exceptions import EmbeddingError
 from agno.knowledge.document import Document
@@ -92,8 +94,47 @@ def is_rate_limit_error(error: BaseException) -> bool:
     )
 
 
+# Set for the duration of one search whose caller applies its own reranker. A ContextVar
+# keeps the suspension local to that call, including across awaits and worker threads.
+_RERANKER_SUPPRESSED: ContextVar[bool] = ContextVar("agno_reranker_suppressed", default=False)
+
+
+@contextmanager
+def suppress_reranker() -> Iterator[None]:
+    """Hide the store's own reranker from ``VectorDb.reranker`` for this call only."""
+    token = _RERANKER_SUPPRESSED.set(True)
+    try:
+        yield
+    finally:
+        _RERANKER_SUPPRESSED.reset(token)
+
+
 class VectorDb(ABC):
     """Base class for Vector Databases"""
+
+    _reranker: Optional[Any] = None
+
+    @property
+    def reranker(self) -> Optional[Any]:
+        """The configured reranker, or None while the calling search has suspended it.
+
+        Knowledge suspends it when applying its own reranker. The flag is per-search
+        rather than an attribute write, so a store shared with another Knowledge, or
+        used directly, never observes a suspended value from someone else's search.
+        """
+        if _RERANKER_SUPPRESSED.get():
+            return None
+        return self._reranker
+
+    @reranker.setter
+    def reranker(self, value: Optional[Any]) -> None:
+        if value is not None:
+            log_warning(
+                "Setting a reranker on the vector db is deprecated. Pass it to Knowledge "
+                "instead, which applies it to every vector db and can widen the candidate "
+                "pool for rerankers that need one: Knowledge(vector_db=..., reranker=...)."
+            )
+        self._reranker = value
 
     def __init__(
         self,

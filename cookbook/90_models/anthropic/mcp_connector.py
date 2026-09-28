@@ -21,7 +21,7 @@ agent = Agent(
             MCPServerConfiguration(
                 type="url",
                 name="deepwiki",
-                url="https://mcp.deepwiki.com/sse",
+                url="https://mcp.deepwiki.com/mcp",
             )
         ],
     ),

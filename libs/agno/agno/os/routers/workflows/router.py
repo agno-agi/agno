@@ -296,13 +296,30 @@ async def handle_workflow_via_websocket(
             )
             return
 
-        # Generate session_id if not provided
-        # Use workflow's default session_id if not provided in message
+        # A run must not enter a session owned by someone else: the runs table
+        # has no ownership predicate, so an unguarded write is replayed into
+        # the owner's history as their own turn. Same guard and same effective
+        # identity as the HTTP route: the caller's resolved user_id, else the
+        # workflow's own default, which is what will stamp the session row.
+        effective_user_id = user_id or getattr(workflow, "user_id", None)
+        try:
+            await assert_session_writable(
+                getattr(workflow, "db", None) or os.db,
+                session_id,
+                effective_user_id,
+                session_type=SessionType.WORKFLOW,
+                is_admin=bool(ws_auth and ws_auth.is_admin),
+            )
+        except HTTPException as e:
+            await websocket.send_text(json.dumps({"event": "error", "error": str(e.detail)}))
+            return
+
+        # A submission that names no session gets a fresh one, as over HTTP.
+        # The workflow's own session_id is not a default for clients: it
+        # would pool every client that omits the field into one session, and
+        # under per-session queueing they would all line up behind each other.
         if not session_id:
-            if workflow.session_id:
-                session_id = workflow.session_id
-            else:
-                session_id = str(uuid4())
+            session_id = str(uuid4())
 
         # Durable WS submission: the queue row is the acceptance, execution
         # happens on whichever worker claims it, and this socket becomes a
@@ -317,6 +334,10 @@ async def handle_workflow_via_websocket(
             queue_worker is not None
             and not is_factory
             and getattr(workflow, "db", None) is not None
+            # The worker resolves the registry instance, so a ticket cannot
+            # carry a version pin: a pinned submission takes the in-process
+            # path below, where the pin is stamped on the run (as over HTTP)
+            and version is None
             and payload_is_queueable(queued_ws_payload)
             and any(
                 getattr(candidate, "id", None) == workflow_id and not isinstance(candidate, WorkflowFactory)
@@ -383,8 +404,8 @@ async def handle_workflow_via_websocket(
             return
         if queue_worker is not None:
             log_warning(
-                "WS workflow submission bypasses the durable queue (factory/off-registry/no-db "
-                "workflows are not queueable): bounded and observable, but NOT durable."
+                "WS workflow submission bypasses the durable queue (factory/off-registry/no-db/"
+                "version-pinned workflows are not queueable): bounded and observable, but NOT durable."
             )
 
         # Version-stable preview: an explicitly pinned version is recorded on
