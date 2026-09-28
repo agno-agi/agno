@@ -62,8 +62,9 @@ always `{agent_id}`. Files are keyed by `(namespace, user_id, path)`: `user_id` 
 the user partition, and `""` is the shared partition.
 
 With the default `user_isolation=False`, every user of the agent works in the
-shared partition of that namespace. When `AuthorizationConfig(user_isolation=True)`
-is enabled, AgentOS marks every agent filesystem user-scoped: each run acts in the
+shared partition of that namespace. When `AgentOS(user_isolation=True)` is set
+(the legacy `AuthorizationConfig(user_isolation=True)` still works), AgentOS marks
+every agent filesystem user-scoped: each run acts in the
 partition of its verified user, a run with no user is refused, and two users of one
 agent never see each other's files. The namespace stays the same either way.
 
