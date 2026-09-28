@@ -2465,9 +2465,9 @@ class AsyncSqliteDb(AsyncBaseDb):
 
                     runs_result = await sess.execute(runs_stmt)
                     runs_by_session: Dict[str, List[Dict[str, Any]]] = {}
-                    for session_id, model, model_provider in runs_result.fetchall():
-                        runs_by_session.setdefault(session_id, []).append(
-                            {"model": model, "model_provider": model_provider}
+                    for run in runs_result.mappings().all():
+                        runs_by_session.setdefault(run["session_id"], []).append(
+                            {"model": run["model"], "model_provider": run["model_provider"]}
                         )
 
                     for s in sessions:
