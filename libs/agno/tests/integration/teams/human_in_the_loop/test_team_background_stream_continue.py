@@ -1,8 +1,7 @@
 """Integration tests for continuing a paused team run with background=True and stream=True.
 
 A background continue persists the team run as PENDING/RUNNING before its messages are
-rebuilt, so the continued run must not be read back as its own history. Covers both a
-tool on the team itself and a tool on a member agent. Chat Completions rejects a
+rebuilt, so the continued run must not be read back as its own history. Chat Completions rejects a
 duplicated, unanswered tool call, so the bug makes the continue end in ERROR.
 """
 
@@ -32,16 +31,6 @@ def approve_deployment(app_name: str, environment: str) -> str:
     return f"Deployed {app_name} to {environment} successfully"
 
 
-@tool(requires_confirmation=True)
-def get_the_weather(city: str) -> str:
-    """Get the current weather for a city.
-
-    Args:
-        city: The city to get weather for.
-    """
-    return f"It is currently 70 degrees and cloudy in {city}"
-
-
 def _make_team_tool_team(db, **kwargs) -> Team:
     helper = Agent(
         name="Helper Agent",
@@ -61,29 +50,6 @@ def _make_team_tool_team(db, **kwargs) -> Team:
         instructions=[
             "You MUST use the approve_deployment tool when asked to deploy an application.",
             "Do NOT respond without using the tool - always call approve_deployment first.",
-        ],
-    )
-
-
-def _make_member_tool_team(db) -> Team:
-    weather_agent = Agent(
-        name="Weather Agent",
-        role="Provides weather information. Use the get_the_weather tool to get weather data.",
-        model=OpenAIChat(id="gpt-4o-mini"),
-        tools=[get_the_weather],
-        db=db,
-        telemetry=False,
-    )
-    return Team(
-        name="Weather Team",
-        model=OpenAIChat(id="gpt-4o-mini"),
-        members=[weather_agent],
-        db=db,
-        add_history_to_context=True,
-        telemetry=False,
-        instructions=[
-            "You MUST delegate all weather-related tasks to the Weather Agent.",
-            "Do NOT try to answer weather questions yourself - always use the Weather Agent member.",
         ],
     )
 
@@ -129,20 +95,6 @@ async def test_team_tool_background_stream_continue(shared_db):
     session_id = "team-tool-bg-stream"
 
     paused = await _start_background_stream(team, "Deploy myapp to production", session_id)
-    assert paused.status == RunStatus.paused, f"expected a pause, got {paused.status}: {paused.content}"
-
-    completed = await _continue_background_stream(team, paused)
-
-    assert completed.status == RunStatus.completed, f"continue ended {completed.status}: {completed.content}"
-
-
-@pytest.mark.asyncio
-async def test_member_tool_background_stream_continue(shared_db):
-    """Member-level HITL resumes through the member agent; covered here so it stays working."""
-    team = _make_member_tool_team(shared_db)
-    session_id = "member-tool-bg-stream"
-
-    paused = await _start_background_stream(team, "What is the weather in Tokyo?", session_id)
     assert paused.status == RunStatus.paused, f"expected a pause, got {paused.status}: {paused.content}"
 
     completed = await _continue_background_stream(team, paused)

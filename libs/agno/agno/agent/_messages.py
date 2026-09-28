@@ -30,6 +30,7 @@ from agno.run import RunContext
 from agno.run.agent import RunOutput
 from agno.run.messages import RunMessages
 from agno.session import AgentSession
+from agno.session._utils import continue_history_session
 from agno.tools.function import Function
 from agno.utils.agent import (
     aexecute_instructions,
@@ -1561,9 +1562,7 @@ def _build_continue_run_messages(
             agent.system_message_role if agent.system_message_role not in ["user", "assistant", "tool"] else None
         )
 
-        from agno.utils.agent import _history_session
-
-        history: List[Message] = _history_session(session, run_response).get_messages(
+        history: List[Message] = continue_history_session(session, run_response).get_messages(
             last_n_runs=agent.num_history_runs,
             limit=agent.num_history_messages,
             skip_roles=[skip_role] if skip_role else None,
