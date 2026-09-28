@@ -2703,9 +2703,7 @@ def build_mcp_server(
         session_type_enum = SessionType(session_type) if session_type else None
 
         if isinstance(db, RemoteDb):
-            # This tool reads the whole session (run_id may reference any run), so it omits
-            # limit/page and the paginated endpoint returns every run as a plain list.
-            # No limit/page is passed, so the paginated endpoint returns a plain list of runs.
+            # No limit is passed (run_id may reference any run), so the endpoint returns every run as a list.
             result = await db.get_session_runs(
                 session_id=session_id,
                 session_type=session_type_enum,
@@ -2713,7 +2711,7 @@ def build_mcp_server(
                 db_id=db_id,
                 headers=_forwarded_auth_headers(),
             )
-            runs = result.data if isinstance(result, PaginatedResponse) else result
+            runs = result if isinstance(result, list) else result.data
         else:
             # SessionNotFoundError propagates as the tool error verbatim ("Session {id} not found").
             runs = await session_service.get_session_runs(

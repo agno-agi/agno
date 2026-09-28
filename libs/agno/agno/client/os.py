@@ -1,6 +1,6 @@
 import json
 from datetime import date
-from typing import Any, AsyncIterator, Callable, Dict, List, Optional, Sequence, Union
+from typing import Any, AsyncIterator, Callable, Dict, List, Optional, Sequence, Union, overload
 
 from fastapi import UploadFile
 from httpx import ConnectError, ConnectTimeout, TimeoutException
@@ -54,9 +54,12 @@ from agno.os.schema import (
     AgentSummaryResponse,
     ConfigResponse,
     CreateSessionRequest,
+    CursorPaginatedResponse,
+    CursorPaginationInfo,
     DeleteSessionRequest,
     PaginatedResponse,
     PaginationInfo,
+    RunPreview,
     RunSchema,
     SessionSchema,
     TeamRunSchema,
@@ -1814,6 +1817,7 @@ class AgentOSClient:
         else:
             raise ValueError(f"Could not determine session type for session {session_id}")
 
+    @overload
     async def get_session_runs(
         self,
         session_id: str,
@@ -1821,19 +1825,52 @@ class AgentOSClient:
         user_id: Optional[str] = None,
         created_after: Optional[int] = None,
         created_before: Optional[int] = None,
-        limit: Optional[int] = None,
-        page: Optional[int] = None,
         db_id: Optional[str] = None,
         table: Optional[str] = None,
         headers: Optional[Dict[str, str]] = None,
+        limit: None = None,
+    ) -> List[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]]: ...
+
+    @overload
+    async def get_session_runs(
+        self,
+        session_id: str,
+        session_type: Optional[SessionType] = None,
+        user_id: Optional[str] = None,
+        created_after: Optional[int] = None,
+        created_before: Optional[int] = None,
+        db_id: Optional[str] = None,
+        table: Optional[str] = None,
+        headers: Optional[Dict[str, str]] = None,
+        *,
+        limit: int,
+        before_run_index: Optional[int] = None,
+        after_run_index: Optional[int] = None,
+    ) -> CursorPaginatedResponse[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]]: ...
+
+    async def get_session_runs(
+        self,
+        session_id: str,
+        session_type: Optional[SessionType] = None,
+        user_id: Optional[str] = None,
+        created_after: Optional[int] = None,
+        created_before: Optional[int] = None,
+        db_id: Optional[str] = None,
+        table: Optional[str] = None,
+        headers: Optional[Dict[str, str]] = None,
+        limit: Optional[int] = None,
+        before_run_index: Optional[int] = None,
+        after_run_index: Optional[int] = None,
     ) -> Union[
         List[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]],
-        PaginatedResponse[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]],
+        CursorPaginatedResponse[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]],
     ]:
         """Get the runs for a specific session.
 
-        Pagination is opt-in: with neither ``limit`` nor ``page`` set the server returns every run
-        as a list. Providing either returns a :class:`PaginatedResponse` with data and metadata.
+        Pagination is opt-in: without ``limit`` the server returns every run as a list. With
+        ``limit`` it returns a :class:`CursorPaginatedResponse` holding the newest ``limit`` runs,
+        or those before ``before_run_index`` / after ``after_run_index``. Runs are always in
+        chronological order and carry their ``run_index``.
 
         Args:
             session_id: ID of the session
@@ -1841,14 +1878,15 @@ class AgentOSClient:
             user_id: Optional user ID filter
             created_after: Filter runs created after this Unix timestamp
             created_before: Filter runs created before this Unix timestamp
-            limit: Number of runs per page (enables pagination)
-            page: Page number (enables pagination)
             db_id: Optional database ID to use
             table: Optional table name to use
             headers: HTTP headers to include in the request (optional)
+            limit: Maximum number of runs to return (enables pagination)
+            before_run_index: Return the newest runs with a lower run_index (requires limit)
+            after_run_index: Return the oldest runs with a higher run_index (requires limit)
 
         Returns:
-            A list of runs, or a PaginatedResponse of runs when limit/page is provided.
+            A list of runs, or a CursorPaginatedResponse of runs when limit is provided.
 
         Raises:
             HTTPStatusError: On HTTP errors
@@ -1858,8 +1896,9 @@ class AgentOSClient:
             "user_id": user_id,
             "created_after": created_after,
             "created_before": created_before,
-            "limit": str(limit) if limit is not None else None,
-            "page": str(page) if page is not None else None,
+            "limit": limit,
+            "before_run_index": before_run_index,
+            "after_run_index": after_run_index,
             "db_id": db_id,
             "table": table,
         }
@@ -1867,7 +1906,7 @@ class AgentOSClient:
 
         response = await self._aget(f"/sessions/{session_id}/runs", params=params, headers=headers)
 
-        # The server returns a bare list unless pagination was requested, in which case it
+        # The server returns a bare list unless limit was passed, in which case it
         # returns a {"data": [...], "meta": {...}} envelope.
         raw_runs = response["data"] if isinstance(response, dict) else response
         runs: List[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]] = []
@@ -1882,11 +1921,52 @@ class AgentOSClient:
         if not isinstance(response, dict):
             return runs
 
-        pagination_info = PaginationInfo.model_validate(response.get("meta", {}))
-        return PaginatedResponse[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]](
+        return CursorPaginatedResponse[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]](
             data=runs,
-            meta=pagination_info,
+            meta=CursorPaginationInfo.model_validate(response["meta"]),
         )
+
+    async def get_session_run_previews(
+        self,
+        session_id: str,
+        session_type: Optional[SessionType] = None,
+        user_id: Optional[str] = None,
+        created_after: Optional[int] = None,
+        created_before: Optional[int] = None,
+        db_id: Optional[str] = None,
+        table: Optional[str] = None,
+        headers: Optional[Dict[str, str]] = None,
+    ) -> List[RunPreview]:
+        """Get a lightweight preview of every run in a session.
+
+        Args:
+            session_id: ID of the session
+            session_type: Type of session (agent, team, or workflow). If None, auto-detected by the server.
+            user_id: Optional user ID filter
+            created_after: Filter runs created after this Unix timestamp
+            created_before: Filter runs created before this Unix timestamp
+            db_id: Optional database ID to use
+            table: Optional table name to use
+            headers: HTTP headers to include in the request (optional)
+
+        Returns:
+            List of RunPreview, in chronological order
+
+        Raises:
+            HTTPStatusError: On HTTP errors
+        """
+        params: Dict[str, Any] = {
+            "type": session_type.value if session_type else None,
+            "user_id": user_id,
+            "created_after": created_after,
+            "created_before": created_before,
+            "db_id": db_id,
+            "table": table,
+        }
+        params = {k: v for k, v in params.items() if v is not None}
+
+        data = await self._aget(f"/sessions/{session_id}/runs/previews", params=params, headers=headers)
+        return [RunPreview.model_validate(preview) for preview in data]
 
     async def get_session_run(
         self,

@@ -38,7 +38,9 @@ if TYPE_CHECKING:
     from agno.os.schema import (
         AgentSessionDetailSchema,
         ConfigResponse,
+        CursorPaginatedResponse,
         PaginatedResponse,
+        RunPreview,
         RunSchema,
         SessionSchema,
         TeamRunSchema,
@@ -141,9 +143,12 @@ class RemoteDb:
         self, session_id: str, **kwargs: Any
     ) -> Union[
         "List[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]]",
-        "PaginatedResponse[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]]",
+        "CursorPaginatedResponse[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]]",
     ]:
         return await self.client.get_session_runs(session_id, **kwargs)
+
+    async def get_session_run_previews(self, session_id: str, **kwargs: Any) -> List["RunPreview"]:
+        return await self.client.get_session_run_previews(session_id, **kwargs)
 
     async def create_session(
         self,

@@ -20,11 +20,14 @@ from agno.os.schema import (
     AgentSessionDetailSchema,
     BadRequestResponse,
     CreateSessionRequest,
+    CursorPaginatedResponse,
+    CursorPaginationInfo,
     DeleteSessionRequest,
     InternalServerErrorResponse,
     NotFoundResponse,
     PaginatedResponse,
     PaginationInfo,
+    RunPreview,
     RunSchema,
     SessionSchema,
     SortOrder,
@@ -36,7 +39,14 @@ from agno.os.schema import (
     WorkflowRunSchema,
     WorkflowSessionDetailSchema,
 )
-from agno.os.services.sessions import SessionNotFoundError, get_session_runs_page, get_sessions_page
+from agno.os.services.sessions import (
+    InvalidRunCursorError,
+    SessionNotFoundError,
+    get_session_runs_window,
+    get_sessions_page,
+)
+from agno.os.services.sessions import get_session_run_previews as get_session_run_previews_from_service
+from agno.os.services.sessions import get_session_runs as get_session_runs_from_service
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import AgnoHTTPException
 from agno.remote.base import RemoteDb
@@ -563,7 +573,7 @@ def attach_routes(
     @router.get(
         "/sessions/{session_id}/runs",
         response_model=Union[
-            PaginatedResponse[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]],
+            CursorPaginatedResponse[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]],
             List[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]],
         ],
         status_code=200,
@@ -572,8 +582,9 @@ def attach_routes(
         description=(
             "Retrieve the runs (executions) for a specific session with optional timestamp filtering. "
             "Runs represent individual interactions or executions within a session. "
-            "By default all runs are returned as a list; pass 'limit' and/or 'page' to receive a "
-            "paginated response with data and pagination metadata instead. "
+            "By default all runs are returned as a list. Pass 'limit' to receive a cursor-paginated "
+            "response instead: the newest 'limit' runs, or those before 'before_run_index' or after "
+            "'after_run_index'. Runs are always in chronological order and carry their 'run_index'. "
             "Response schema varies based on session type."
         ),
         response_model_exclude_none=True,
@@ -588,6 +599,7 @@ def attach_routes(
                                 "value": [
                                     {
                                         "run_id": "fcdf50f0-7c32-4593-b2ef-68a558774340",
+                                        "run_index": 0,
                                         "parent_run_id": "80056af0-c7a5-4d69-b6a2-c3eba9f040e0",
                                         "agent_id": "basic-agent",
                                         "user_id": "",
@@ -685,7 +697,7 @@ def attach_routes(
                 },
             },
             404: {"description": "Session not found", "model": NotFoundResponse},
-            422: {"description": "Invalid session type", "model": ValidationErrorResponse},
+            422: {"description": "Invalid session type or pagination parameters", "model": ValidationErrorResponse},
         },
     )
     async def get_session_runs(
@@ -707,26 +719,29 @@ def attach_routes(
         ),
         limit: Optional[int] = Query(
             default=None,
-            description="Number of runs to return per page. Providing this (or 'page') returns a paginated response.",
+            description="Maximum number of runs to return. Providing this returns a cursor-paginated response.",
             ge=1,
         ),
-        page: Optional[int] = Query(
+        before_run_index: Optional[int] = Query(
             default=None,
-            description="Page number. Providing this (or 'limit') returns a paginated response.",
-            ge=1,
+            description="Return the newest runs with a run_index below this value. Requires 'limit'.",
+            ge=0,
+        ),
+        after_run_index: Optional[int] = Query(
+            default=None,
+            description="Return the oldest runs with a run_index above this value. Requires 'limit'.",
+            ge=0,
         ),
         db_id: Optional[str] = Query(default=None, description="Database ID to query runs from"),
         table: Optional[str] = Query(default=None, description="Table to query runs from"),
     ) -> Union[
-        PaginatedResponse[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]],
+        CursorPaginatedResponse[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]],
         List[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]],
     ]:
-        db, effective_user_id = await resolve_db_and_scope(request, dbs, db_id, table, fallback_user_id=user_id)
+        if limit is None and (before_run_index is not None or after_run_index is not None):
+            raise HTTPException(status_code=422, detail="before_run_index and after_run_index require limit")
 
-        # Pagination is opt-in: when neither limit nor page is provided the endpoint keeps its
-        # original behavior and returns every run as a bare list. Supplying either switches the
-        # response to a PaginatedResponse envelope (data + meta).
-        paginate = limit is not None or page is not None
+        db, effective_user_id = await resolve_db_and_scope(request, dbs, db_id, table, fallback_user_id=user_id)
 
         if isinstance(db, RemoteDb):
             auth_token = get_auth_token_from_request(request)
@@ -737,46 +752,113 @@ def attach_routes(
                 user_id=effective_user_id,
                 created_after=created_after,
                 created_before=created_before,
+                db_id=db_id,
+                table=table,
+                headers=headers,
                 limit=limit,
-                page=page,
+                before_run_index=before_run_index,
+                after_run_index=after_run_index,
+            )
+
+        # Shared with the MCP get_session_runs tool: auto-detection, timestamp
+        # filtering, per-run classification, and sync-db threadpool offload all
+        # live in the service so the two surfaces cannot drift.
+        try:
+            if limit is None:
+                return await get_session_runs_from_service(
+                    db,
+                    session_id=session_id,
+                    session_type=session_type,
+                    user_id=effective_user_id,
+                    created_after=created_after,
+                    created_before=created_before,
+                )
+            runs, total_count, has_more = await get_session_runs_window(
+                db,
+                session_id=session_id,
+                limit=limit,
+                before_run_index=before_run_index,
+                after_run_index=after_run_index,
+                session_type=session_type,
+                user_id=effective_user_id,
+                created_after=created_after,
+                created_before=created_before,
+            )
+        except SessionNotFoundError:
+            raise HTTPException(status_code=404, detail=f"Session with ID {session_id} not found")
+        except InvalidRunCursorError as e:
+            raise HTTPException(status_code=422, detail=str(e))
+
+        return CursorPaginatedResponse(
+            data=runs,
+            meta=CursorPaginationInfo(limit=limit, total_count=total_count, has_more=has_more),
+        )
+
+    # Registered before /runs/{run_id} so "previews" is not captured as a run ID.
+    @router.get(
+        "/sessions/{session_id}/runs/previews",
+        response_model=List[RunPreview],
+        status_code=200,
+        operation_id="get_session_run_previews",
+        summary="Get Session Run Previews",
+        description=(
+            "Retrieve a lightweight preview of every run in a session: run ID, run index, status, "
+            "creation time and a truncated input. Use it to list or navigate a session's runs without "
+            "loading full runs; fetch the runs themselves from the runs endpoint."
+        ),
+        response_model_exclude_none=True,
+        responses={
+            404: {"description": "Session not found", "model": NotFoundResponse},
+            422: {"description": "Invalid session type", "model": ValidationErrorResponse},
+        },
+    )
+    async def get_session_run_previews(
+        request: Request,
+        session_id: str = Path(description="Session ID to get run previews from"),
+        session_type: Optional[SessionType] = Query(
+            default=None,
+            description="Session type (agent, team, or workflow). If not provided, auto-detected from session data.",
+            alias="type",
+        ),
+        user_id: Optional[str] = Query(default=None, description="User ID to query runs from"),
+        created_after: Optional[int] = Query(
+            default=None,
+            description="Filter runs created after this Unix timestamp (epoch time in seconds)",
+        ),
+        created_before: Optional[int] = Query(
+            default=None,
+            description="Filter runs created before this Unix timestamp (epoch time in seconds)",
+        ),
+        db_id: Optional[str] = Query(default=None, description="Database ID to query runs from"),
+        table: Optional[str] = Query(default=None, description="Table to query runs from"),
+    ) -> List[RunPreview]:
+        db, effective_user_id = await resolve_db_and_scope(request, dbs, db_id, table, fallback_user_id=user_id)
+
+        if isinstance(db, RemoteDb):
+            auth_token = get_auth_token_from_request(request)
+            headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
+            return await db.get_session_run_previews(
+                session_id=session_id,
+                session_type=session_type,
+                user_id=effective_user_id,
+                created_after=created_after,
+                created_before=created_before,
                 db_id=db_id,
                 table=table,
                 headers=headers,
             )
 
-        # Shared with the MCP get_session_runs tool: auto-detection, timestamp
-        # filtering, per-run classification, and sync-db threadpool offload all
-        # live in the service so the two surfaces cannot drift. Runs are embedded in
-        # the session record, so pagination happens in memory inside the service.
-        effective_limit = limit if limit is not None else 20
-        effective_page = page if page is not None else 1
         try:
-            runs, total_count = await get_session_runs_page(
+            return await get_session_run_previews_from_service(
                 db,
                 session_id=session_id,
                 session_type=session_type,
                 user_id=effective_user_id,
                 created_after=created_after,
                 created_before=created_before,
-                limit=effective_limit if paginate else None,
-                page=effective_page,
             )
         except SessionNotFoundError:
             raise HTTPException(status_code=404, detail=f"Session with ID {session_id} not found")
-
-        if not paginate:
-            return runs
-
-        total_pages = (total_count + effective_limit - 1) // effective_limit if effective_limit > 0 else 0
-        return PaginatedResponse(
-            data=runs,
-            meta=PaginationInfo(
-                page=effective_page,
-                limit=effective_limit,
-                total_count=total_count,
-                total_pages=total_pages,
-            ),
-        )
 
     @router.get(
         "/sessions/{session_id}/runs/{run_id}",
@@ -868,21 +950,26 @@ def attach_routes(
         # Find the specific run
         # TODO: Move this filtering into the DB layer
         target_run = None
-        for run in runs:
+        target_run_index = None
+        for run_index, run in enumerate(runs):
             if run.get("run_id") == run_id:
                 target_run = run
+                target_run_index = run_index
                 break
 
         if not target_run:
             raise HTTPException(status_code=404, detail=f"Run with ID {run_id} not found in session {session_id}")
 
         # Return the appropriate schema based on run type
+        run_schema: Union[RunSchema, TeamRunSchema, WorkflowRunSchema]
         if target_run.get("workflow_id") is not None:
-            return WorkflowRunSchema.from_dict(target_run)
+            run_schema = WorkflowRunSchema.from_dict(target_run)
         elif target_run.get("team_id") is not None:
-            return TeamRunSchema.from_dict(target_run)
+            run_schema = TeamRunSchema.from_dict(target_run)
         else:
-            return RunSchema.from_dict(target_run)
+            run_schema = RunSchema.from_dict(target_run)
+        run_schema.run_index = target_run_index
+        return run_schema
 
     @router.delete(
         "/sessions/{session_id}",

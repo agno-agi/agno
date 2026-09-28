@@ -542,100 +542,206 @@ class TestRunTimestampFiltering:
         assert run_ids == ["middle"]
 
 
+def _seed_agent_session_with_runs(db: InMemoryDb, session_id: str, count: int, start_at: int = 1_700_000_000) -> None:
+    _seed_session(
+        db,
+        {
+            "session_id": session_id,
+            "agent_id": "test-agent",
+            "user_id": "user-1",
+            "session_type": "agent",
+            "session_data": {"session_name": "Paginated Runs"},
+            "created_at": start_at,
+            "updated_at": start_at,
+            "runs": [
+                {
+                    "run_id": f"run-{i}",
+                    "agent_id": "test-agent",
+                    "status": "COMPLETED",
+                    "created_at": start_at + i,
+                    "input": {"input_content": f"question {i}"},
+                }
+                for i in range(count)
+            ],
+        },
+    )
+
+
 class TestSessionRunsPagination:
-    """GET /sessions/{id}/runs pagination is opt-in via limit/page."""
+    """GET /sessions/{id}/runs pagination is opt-in via limit and pages by run_index."""
 
-    def _session_with_runs(self, db, session_id, count):
-        now = int(time.time())
-        runs = [
-            RunOutput(
-                run_id=f"run-{i}",
-                agent_id="test-agent",
-                status=RunStatus.completed,
-                messages=[],
-                created_at=now + i,
-            )
-            for i in range(count)
-        ]
-        db.upsert_session(
-            AgentSession(
-                session_id=session_id,
-                agent_id="test-agent",
-                user_id="user-1",
-                session_data={"session_name": "Paginated Runs"},
-                created_at=now,
-                updated_at=now,
-                runs=runs,
-            )
-        )
-
-    def test_no_params_returns_bare_list(self):
-        """Without limit/page the response is the original bare list of every run."""
+    @pytest.fixture
+    def client(self):
         db = InMemoryDb()
-        uid = uuid.uuid4().hex[:8]
-        self._session_with_runs(db, f"page-{uid}", count=5)
-        client = _build_client(db)
+        _seed_agent_session_with_runs(db, "paged", count=5)
+        return _build_client(db)
 
-        resp = client.get(f"/sessions/page-{uid}/runs?user_id=user-1")
+    def test_no_params_returns_bare_list_with_run_index(self, client):
+        resp = client.get("/sessions/paged/runs?user_id=user-1")
         assert resp.status_code == 200
         body = resp.json()
         assert isinstance(body, list)
-        assert [r["run_id"] for r in body] == ["run-0", "run-1", "run-2", "run-3", "run-4"]
+        assert [(r["run_id"], r["run_index"]) for r in body] == [(f"run-{i}", i) for i in range(5)]
 
-    def test_limit_returns_envelope_with_meta(self):
-        db = InMemoryDb()
-        uid = uuid.uuid4().hex[:8]
-        self._session_with_runs(db, f"page-{uid}", count=5)
-        client = _build_client(db)
-
-        resp = client.get(f"/sessions/page-{uid}/runs?user_id=user-1&limit=2")
+    def test_limit_returns_newest_runs_in_chronological_order(self, client):
+        resp = client.get("/sessions/paged/runs?user_id=user-1&limit=2")
         assert resp.status_code == 200
         body = resp.json()
-        assert isinstance(body, dict)
-        assert [r["run_id"] for r in body["data"]] == ["run-0", "run-1"]
-        assert body["meta"]["page"] == 1
-        assert body["meta"]["limit"] == 2
-        assert body["meta"]["total_count"] == 5
-        assert body["meta"]["total_pages"] == 3
+        assert [r["run_index"] for r in body["data"]] == [3, 4]
+        assert body["meta"] == {"limit": 2, "total_count": 5, "has_more": True}
 
-    def test_page_only_defaults_limit(self):
-        """Passing only page opts into pagination with the default page size."""
+    def test_before_run_index_pages_back_to_the_start(self, client):
+        resp = client.get("/sessions/paged/runs?user_id=user-1&limit=2&before_run_index=3")
+        body = resp.json()
+        assert [r["run_index"] for r in body["data"]] == [1, 2]
+        assert body["meta"]["has_more"] is True
+
+        resp = client.get("/sessions/paged/runs?user_id=user-1&limit=2&before_run_index=1")
+        body = resp.json()
+        assert [r["run_index"] for r in body["data"]] == [0]
+        assert body["meta"]["has_more"] is False
+
+    def test_after_run_index_pages_forward(self, client):
+        resp = client.get("/sessions/paged/runs?user_id=user-1&limit=2&after_run_index=0")
+        body = resp.json()
+        assert [r["run_index"] for r in body["data"]] == [1, 2]
+        assert body["meta"]["has_more"] is True
+
+        resp = client.get("/sessions/paged/runs?user_id=user-1&limit=2&after_run_index=2")
+        body = resp.json()
+        assert [r["run_index"] for r in body["data"]] == [3, 4]
+        assert body["meta"]["has_more"] is False
+
+    def test_limit_larger_than_session_has_no_more(self, client):
+        body = client.get("/sessions/paged/runs?user_id=user-1&limit=50").json()
+        assert len(body["data"]) == 5
+        assert body["meta"]["has_more"] is False
+
+    def test_both_cursors_rejected(self, client):
+        resp = client.get("/sessions/paged/runs?user_id=user-1&limit=2&before_run_index=3&after_run_index=0")
+        assert resp.status_code == 422
+
+    @pytest.mark.parametrize("cursor", ["before_run_index=3", "after_run_index=0"])
+    def test_cursor_without_limit_rejected(self, client, cursor):
+        resp = client.get(f"/sessions/paged/runs?user_id=user-1&{cursor}")
+        assert resp.status_code == 422
+
+    def test_run_index_is_stable_under_filters(self):
+        """run_index is the position in the full history, not in the filtered result."""
         db = InMemoryDb()
-        uid = uuid.uuid4().hex[:8]
-        self._session_with_runs(db, f"page-{uid}", count=3)
+        _seed_agent_session_with_runs(db, "filtered", count=5, start_at=1_700_000_000)
         client = _build_client(db)
 
-        resp = client.get(f"/sessions/page-{uid}/runs?user_id=user-1&page=1")
-        assert resp.status_code == 200
-        body = resp.json()
-        assert isinstance(body, dict)
-        assert len(body["data"]) == 3
-        assert body["meta"]["limit"] == 20
-        assert body["meta"]["total_pages"] == 1
+        body = client.get("/sessions/filtered/runs?user_id=user-1&created_after=1700000003&limit=10").json()
+        assert [r["run_index"] for r in body["data"]] == [3, 4]
+        assert body["meta"]["total_count"] == 2
 
-    def test_second_page(self):
+    def test_single_run_carries_run_index(self, client):
+        resp = client.get("/sessions/paged/runs/run-3?user_id=user-1")
+        assert resp.status_code == 200
+        assert resp.json()["run_index"] == 3
+
+    def test_missing_session_returns_404(self, client):
+        resp = client.get("/sessions/missing/runs?user_id=user-1&limit=2")
+        assert resp.status_code == 404
+
+
+class TestSessionRunPreviews:
+    """GET /sessions/{id}/runs/previews lists every run without loading full runs."""
+
+    def test_previews_list_every_run(self):
         db = InMemoryDb()
-        uid = uuid.uuid4().hex[:8]
-        self._session_with_runs(db, f"page-{uid}", count=5)
+        _seed_agent_session_with_runs(db, "previewed", count=3)
         client = _build_client(db)
 
-        resp = client.get(f"/sessions/page-{uid}/runs?user_id=user-1&limit=2&page=2")
+        resp = client.get("/sessions/previewed/runs/previews?user_id=user-1")
         assert resp.status_code == 200
         body = resp.json()
-        assert [r["run_id"] for r in body["data"]] == ["run-2", "run-3"]
-        assert body["meta"]["page"] == 2
+        assert [(p["run_id"], p["run_index"], p["input_preview"]) for p in body] == [
+            (f"run-{i}", i, f"question {i}") for i in range(3)
+        ]
+        assert body[0]["status"] == "COMPLETED"
+        assert "content" not in body[0]
+        assert "messages" not in body[0]
 
-    def test_page_beyond_range_returns_empty_data(self):
+    def test_previews_route_is_not_captured_as_a_run_id(self):
+        """A run literally named 'previews' must not shadow the previews route."""
         db = InMemoryDb()
-        uid = uuid.uuid4().hex[:8]
-        self._session_with_runs(db, f"page-{uid}", count=5)
+        _seed_session(
+            db,
+            {
+                "session_id": "shadow",
+                "agent_id": "test-agent",
+                "user_id": "user-1",
+                "session_type": "agent",
+                "created_at": 1_700_000_000,
+                "runs": [{"run_id": "previews", "agent_id": "test-agent", "created_at": 1_700_000_000}],
+            },
+        )
         client = _build_client(db)
 
-        resp = client.get(f"/sessions/page-{uid}/runs?user_id=user-1&limit=2&page=99")
-        assert resp.status_code == 200
-        body = resp.json()
-        assert body["data"] == []
-        assert body["meta"]["total_count"] == 5
+        body = client.get("/sessions/shadow/runs/previews?user_id=user-1").json()
+        assert isinstance(body, list)
+        assert body[0]["run_index"] == 0
+
+    def test_input_preview_is_truncated(self):
+        from agno.os.services.sessions import RUN_PREVIEW_INPUT_MAX_CHARS
+
+        db = InMemoryDb()
+        long_input = "x" * (RUN_PREVIEW_INPUT_MAX_CHARS + 50)
+        _seed_session(
+            db,
+            {
+                "session_id": "long",
+                "agent_id": "test-agent",
+                "user_id": "user-1",
+                "session_type": "agent",
+                "created_at": 1_700_000_000,
+                "runs": [
+                    {
+                        "run_id": "run-0",
+                        "agent_id": "test-agent",
+                        "created_at": 1_700_000_000,
+                        "input": {"input_content": long_input},
+                    }
+                ],
+            },
+        )
+        client = _build_client(db)
+
+        body = client.get("/sessions/long/runs/previews?user_id=user-1").json()
+        assert body[0]["input_preview"] == long_input[:RUN_PREVIEW_INPUT_MAX_CHARS]
+
+    def test_previews_match_runs_for_team_sessions(self):
+        """Previews list exactly the runs the runs endpoint lists, with the same run_index."""
+        db = InMemoryDb()
+        _seed_session(
+            db,
+            {
+                "session_id": "team-previews",
+                "team_id": "test-team",
+                "user_id": "user-1",
+                "session_type": "team",
+                "created_at": 1_700_000_000,
+                "runs": [
+                    {"run_id": "member-run", "agent_id": "member", "parent_run_id": "team-run", "created_at": 1},
+                    {"run_id": "unlisted-run", "created_at": 2},
+                    {"run_id": "team-run", "team_id": "test-team", "created_at": 3},
+                ],
+            },
+        )
+        client = _build_client(db)
+
+        runs = client.get("/sessions/team-previews/runs?type=team&user_id=user-1").json()
+        previews = client.get("/sessions/team-previews/runs/previews?type=team&user_id=user-1").json()
+        assert [(r["run_id"], r["run_index"]) for r in runs] == [("member-run", 0), ("team-run", 2)]
+        assert [(p["run_id"], p["run_index"]) for p in previews] == [("member-run", 0), ("team-run", 2)]
+        assert previews[0]["parent_run_id"] == "team-run"
+
+    def test_missing_session_returns_404(self):
+        client = _build_client(InMemoryDb())
+        resp = client.get("/sessions/missing/runs/previews?user_id=user-1")
+        assert resp.status_code == 404
 
 
 class TestTeamSessionRunsParsing:

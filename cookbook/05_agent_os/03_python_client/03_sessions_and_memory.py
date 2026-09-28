@@ -1,7 +1,7 @@
 """Manage AgentOS sessions and user memories with the Python client.
 
-The example creates a named agent session, runs in it, inspects its history,
-and exercises create/read/update/delete memory calls.
+The example creates a named agent session, runs in it, inspects its history
+(including run previews and paginated runs), and exercises create/read/update/delete memory calls.
 
 Prerequisites: start ``_server.py`` and set OPENAI_API_KEY.
 Run: .venvs/demo/bin/python cookbook/05_agent_os/03_python_client/03_sessions_and_memory.py
@@ -67,6 +67,27 @@ async def manage_session_and_memory() -> None:
             user_id=USER_ID,
         )
         print(f"Runs in session: {len(runs)}")
+
+        # Previews are a lightweight listing of every run, for navigating long sessions.
+        previews = await client.get_session_run_previews(
+            session_id=session_id,
+            session_type=SessionType.AGENT,
+            user_id=USER_ID,
+        )
+        for preview in previews:
+            print(f"Run {preview.run_index}: {preview.input_preview}")
+
+        # With limit, runs come back a page at a time, newest first; pass
+        # before_run_index to load older ones.
+        latest = await client.get_session_runs(
+            session_id=session_id,
+            session_type=SessionType.AGENT,
+            user_id=USER_ID,
+            limit=10,
+        )
+        print(
+            f"Latest runs: {len(latest.data)} (older runs remaining: {latest.meta.has_more})"
+        )
 
         renamed = await client.rename_session(
             session_id=session_id,
