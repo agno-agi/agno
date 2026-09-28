@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Dict, NamedTuple, Optional, Union
+from typing import TYPE_CHECKING, Any, Dict, NamedTuple, Optional, Tuple, Union
 
 from agno.models.base import Model
 from agno.utils.log import log_warning
@@ -21,6 +21,9 @@ def model_identity(model: Model) -> Dict[str, Any]:
     return {key: value for key, value in identity.items() if value is not None}
 
 
+DEFAULT_NUM_FOLLOWUPS = 3
+
+
 @dataclass
 class FollowupConfig:
     """Follow-up generation options; pass it as ``followups=FollowupConfig(...)`` on an Agent or Team.
@@ -33,14 +36,32 @@ class FollowupConfig:
     copy of this object; an unknown reference raises ValueError there.
     ``instructions`` adds domain or style constraints to the default system prompt.
     The main instructions and retrieved context are not copied into this call.
-    ``num_followups`` is a maximum (default 3); fewer or no suggestions may be returned
-    when the answer does not support a useful continuation.
+
+    ``max_followups`` (default 3) is enforced: extra suggestions are dropped.
+    ``min_followups`` (default: equal to ``max_followups``, so exactly that many) is
+    only requested from the model; fewer can come back. ``min_followups=0`` lets the
+    model return fewer or none when the answer does not support a useful
+    continuation, which best keeps suggestions within the answer's boundaries.
     """
 
     model: Optional[Union[Model, str]] = None
     instructions: Optional[str] = None
-    # Last, so FollowupConfig(model, instructions) keeps its positional meaning
-    num_followups: Optional[int] = None
+    # After model and instructions, so FollowupConfig(model, instructions) keeps its positional meaning
+    max_followups: Optional[int] = None
+    min_followups: Optional[int] = None
+
+    def __post_init__(self) -> None:
+        self.count_range()
+
+    def count_range(self) -> Tuple[int, int]:
+        """The (minimum, maximum) number of suggestions this config asks for."""
+        maximum = self.max_followups if self.max_followups is not None else DEFAULT_NUM_FOLLOWUPS
+        minimum = self.min_followups if self.min_followups is not None else maximum
+        if maximum < 1:
+            raise ValueError("max_followups must be at least 1")
+        if not 0 <= minimum <= maximum:
+            raise ValueError("min_followups must be between 0 and max_followups")
+        return minimum, maximum
 
     def to_dict(self) -> Dict[str, Any]:
         """Serialize for component storage; a model keeps only its identity (see model_identity)."""
@@ -49,8 +70,10 @@ class FollowupConfig:
             config["model"] = model_identity(self.model) if isinstance(self.model, Model) else str(self.model)
         if self.instructions is not None:
             config["instructions"] = self.instructions
-        if self.num_followups is not None:
-            config["num_followups"] = self.num_followups
+        if self.max_followups is not None:
+            config["max_followups"] = self.max_followups
+        if self.min_followups is not None:
+            config["min_followups"] = self.min_followups
         return config
 
     @classmethod
@@ -62,11 +85,9 @@ class FollowupConfig:
         return cls(
             model=resolve_model(model, registry) if model is not None else None,
             instructions=data.get("instructions"),
-            num_followups=data.get("num_followups"),
+            max_followups=data.get("max_followups"),
+            min_followups=data.get("min_followups"),
         )
-
-
-DEFAULT_NUM_FOLLOWUPS = 3
 
 
 def resolve_followup_settings(
@@ -74,13 +95,14 @@ def resolve_followup_settings(
     num_followups: Optional[int],
     followup_model: Optional[Union[Model, str]] = None,
 ) -> int:
-    """Reject a FollowupConfig combined with the top-level arguments; return the effective count."""
+    """Reject a FollowupConfig combined with the top-level arguments; return the effective maximum count."""
     if isinstance(followups, FollowupConfig):
         if num_followups is not None or followup_model is not None:
             raise ValueError(
-                "Pass num_followups and followup_model either inside FollowupConfig or as top-level arguments, not both"
+                "Pass the count and model either inside FollowupConfig or as top-level num_followups and "
+                "followup_model, not both"
             )
-        num_followups = followups.num_followups
+        return followups.count_range()[1]
     if num_followups is None:
         num_followups = DEFAULT_NUM_FOLLOWUPS
     if num_followups < 1:
@@ -99,7 +121,8 @@ def drop_derived_followup_fields(fields: Dict[str, Any], update: Optional[Dict[s
 class FollowupCall(NamedTuple):
     model: Model
     instructions: Optional[str]
-    num_followups: int
+    min_followups: int
+    max_followups: int
 
 
 def prepare_followup_call(component: Any, run_response: Any) -> Optional[FollowupCall]:
@@ -110,22 +133,24 @@ def prepare_followup_call(component: Any, run_response: Any) -> Optional[Followu
         return None
 
     config = component.followups if isinstance(component.followups, FollowupConfig) else None
-    if config is not None:
-        selected = config.model or component.model
-        count = config.num_followups if config.num_followups is not None else DEFAULT_NUM_FOLLOWUPS
-    else:
-        selected = component.followup_model or component.model
-        count = component.num_followups
+    selected = (config.model if config else component.followup_model) or component.model
     if selected is None:
         return None
     try:
         from agno.models.utils import get_model
 
-        # Strings are resolved at construction; this covers a config assigned afterwards.
+        # A config assigned after construction may still hold a model string or an invalid count.
         model = get_model(selected)
+        # num_followups is an exact count; a config can ask for a range.
+        minimum, maximum = config.count_range() if config else (component.num_followups, component.num_followups)
     except Exception as e:
-        log_warning(f"Error resolving followup model: {str(e)}")
+        log_warning(f"Error preparing followups: {str(e)}")
         return None
     if model is None:
         return None
-    return FollowupCall(model=model, instructions=config.instructions if config else None, num_followups=count)
+    return FollowupCall(
+        model=model,
+        instructions=config.instructions if config else None,
+        min_followups=minimum,
+        max_followups=maximum,
+    )

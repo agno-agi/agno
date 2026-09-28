@@ -24,7 +24,7 @@ BASE_SYSTEM_PROMPT = _build_followup_messages("Some response", 3)[0].content
 
 def test_build_followup_messages_no_custom_instructions():
     """Without followup_instructions, system prompt should be the default."""
-    messages = _build_followup_messages("Some response", num_suggestions=3)
+    messages = _build_followup_messages("Some response", max_suggestions=3)
     system_msg = messages[0]
     assert system_msg.role == "system"
     assert system_msg.content == BASE_SYSTEM_PROMPT
@@ -35,7 +35,7 @@ def test_build_followup_messages_with_custom_instructions():
     custom = "Always suggest follow-ups as formal questions ending with a question mark."
     messages = _build_followup_messages(
         "Some response",
-        num_suggestions=3,
+        max_suggestions=3,
         followup_instructions=custom,
     )
     system_msg = messages[0]
@@ -47,7 +47,7 @@ def test_build_followup_messages_empty_string_instructions():
     """An empty-string followup_instructions should not alter the system prompt."""
     messages = _build_followup_messages(
         "Some response",
-        num_suggestions=3,
+        max_suggestions=3,
         followup_instructions="",
     )
     system_msg = messages[0]
@@ -59,7 +59,7 @@ def test_build_followup_messages_user_message_included():
     """User message should appear in the user-role message content."""
     messages = _build_followup_messages(
         "Response text",
-        num_suggestions=2,
+        max_suggestions=2,
         user_message="Tell me about Python.",
     )
     user_msg = messages[1]
@@ -69,7 +69,7 @@ def test_build_followup_messages_user_message_included():
 
 def test_build_followup_messages_num_suggestions_in_user_message():
     """The requested number of suggestions should appear in the user message."""
-    messages = _build_followup_messages("Response", num_suggestions=5)
+    messages = _build_followup_messages("Response", max_suggestions=5)
     user_msg = messages[1]
     assert "5" in str(user_msg.content)
 

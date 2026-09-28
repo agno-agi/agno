@@ -116,9 +116,9 @@ PRECEDENCE = {
 
 def _followup_kwargs(case: str, models: dict) -> dict:
     if case == "config-model":
-        return {"followups": FollowupConfig(model=models["config"], instructions=INSTRUCTIONS, num_followups=2)}
+        return {"followups": FollowupConfig(model=models["config"], instructions=INSTRUCTIONS, max_followups=2)}
     if case == "config-instructions-only":
-        return {"followups": FollowupConfig(instructions=INSTRUCTIONS, num_followups=2)}
+        return {"followups": FollowupConfig(instructions=INSTRUCTIONS, max_followups=2)}
     if case == "legacy-only":
         return {"followups": True, "num_followups": 2, "followup_model": models["legacy"]}
     return {"followups": True, "num_followups": 2}
@@ -229,7 +229,7 @@ def test_reconstructed_component_keeps_followup_routing(kind):
 
     models = {name: RecordingModel(name) for name in ("main", "legacy", "config")}
     kwargs = dict(
-        followups=FollowupConfig(model=models["config"], instructions=INSTRUCTIONS, num_followups=2),
+        followups=FollowupConfig(model=models["config"], instructions=INSTRUCTIONS, max_followups=2),
         telemetry=False,
     )
     registry = Registry(models=list(models.values()))
@@ -311,7 +311,7 @@ def test_default_contract_without_config(kind, returned, expected):
     assert output.followups == expected
     assert BOUNDARY_SENTENCE in followup_model.followup_system_prompts[0]
     assert INSTRUCTIONS not in followup_model.followup_system_prompts[0]
-    assert "Generate at most 2 follow-up suggestions." in followup_model.followup_user_messages[0]
+    assert "Generate exactly 2 follow-up suggestions." in followup_model.followup_user_messages[0]
 
 
 @pytest.mark.parametrize("kind", ["agent", "team"])
@@ -330,7 +330,7 @@ def _continuation_agent():
     agent = Agent(
         model=models["main"],
         db=InMemoryDb(),
-        followups=FollowupConfig(model=models["config"], instructions=INSTRUCTIONS, num_followups=2),
+        followups=FollowupConfig(model=models["config"], instructions=INSTRUCTIONS, max_followups=2),
         telemetry=False,
     )
     return agent, models
@@ -412,7 +412,7 @@ def _tasks_team(suggestions):
         model=models["main"],
         members=[member],
         mode="tasks",
-        followups=FollowupConfig(model=models["config"], instructions=INSTRUCTIONS, num_followups=2),
+        followups=FollowupConfig(model=models["config"], instructions=INSTRUCTIONS, max_followups=2),
         telemetry=False,
     )
     return team, models
@@ -491,16 +491,16 @@ NORMALIZATION = {
     "false": (lambda: {"followups": False}, False, 3),
     "true": (lambda: {"followups": True}, True, 3),
     "empty-config": (lambda: {"followups": FollowupConfig()}, True, 3),
-    "config-count": (lambda: {"followups": FollowupConfig(num_followups=5)}, True, 5),
+    "config-count": (lambda: {"followups": FollowupConfig(max_followups=5)}, True, 5),
     "legacy-count": (lambda: {"followups": True, "num_followups": 5}, True, 5),
 }
 
 # case -> a FollowupConfig combined with a top-level argument: rejected even when the values agree
 CONFLICTS = {
-    "counts-differ": lambda: {"followups": FollowupConfig(num_followups=5), "num_followups": 2},
-    "counts-agree": lambda: {"followups": FollowupConfig(num_followups=5), "num_followups": 5},
+    "counts-differ": lambda: {"followups": FollowupConfig(max_followups=5), "num_followups": 2},
+    "counts-agree": lambda: {"followups": FollowupConfig(max_followups=5), "num_followups": 5},
     "config-without-count": lambda: {"followups": FollowupConfig(instructions=INSTRUCTIONS), "num_followups": 5},
-    "invalid-top-level-count": lambda: {"followups": FollowupConfig(num_followups=2), "num_followups": 0},
+    "invalid-top-level-count": lambda: {"followups": FollowupConfig(max_followups=2), "num_followups": 0},
     "models-differ": lambda: {
         "followups": FollowupConfig(model=RecordingModel("config")),
         "followup_model": RecordingModel("legacy"),
@@ -542,13 +542,13 @@ def test_followup_config_keyword_is_rejected(kind):
 @pytest.mark.parametrize("source", ["config", "legacy"])
 @pytest.mark.parametrize("kind", ["agent", "team"])
 def test_effective_count_below_one_is_rejected_at_construction(kind, source, count):
-    kwargs = (
-        {"followups": FollowupConfig(num_followups=count)}
-        if source == "config"
-        else {"followups": True, "num_followups": count}
-    )
-    with pytest.raises(ValueError, match="num_followups must be at least 1"):
-        _construct(kind, **kwargs)
+    # A FollowupConfig validates its own counts, so the error surfaces when it is built.
+    match = "max_followups must be at least 1" if source == "config" else "num_followups must be at least 1"
+    with pytest.raises(ValueError, match=match):
+        if source == "config":
+            _construct(kind, followups=FollowupConfig(max_followups=count))
+        else:
+            _construct(kind, followups=True, num_followups=count)
 
 
 @pytest.mark.parametrize("form", ["config", "legacy-model"])
@@ -559,7 +559,7 @@ async def test_config_reaches_every_public_path(kind, asynchronous, stream, form
     main = MainRecordingModel("main")
     configured = RecordingModel("config", suggestions=["S1", "S2", "S3"])
     if form == "config":
-        kwargs = dict(followups=FollowupConfig(model=configured, instructions=INSTRUCTIONS, num_followups=2))
+        kwargs = dict(followups=FollowupConfig(model=configured, instructions=INSTRUCTIONS, max_followups=2))
     else:
         kwargs = dict(followups=True, num_followups=2, followup_model=configured)
     if kind == "agent":
@@ -574,7 +574,7 @@ async def test_config_reaches_every_public_path(kind, asynchronous, stream, form
     assert (main.main_calls, main.followup_calls) == (1, 0)
     assert (configured.main_calls, configured.followup_calls) == (0, 1)
     assert (INSTRUCTIONS in configured.followup_system_prompts[0]) is (form == "config")
-    assert "Generate at most 2 follow-up suggestions." in configured.followup_user_messages[0]
+    assert "Generate exactly 2 follow-up suggestions." in configured.followup_user_messages[0]
     assert all(INSTRUCTIONS not in text for text in main.main_messages)
     if stream:
         name = "FollowupsCompleted" if kind == "agent" else "TeamFollowupsCompleted"
@@ -604,23 +604,23 @@ def test_boolean_and_empty_config_share_the_defaults(kind, enabled_by):
     output = component.run("Hi")
     assert output.followups == ["S1", "S2", "S3"]
     assert component.model.followup_calls == 1  # no configured model: the component model generates them
-    assert "Generate at most 3 follow-up suggestions." in component.model.followup_user_messages[0]
+    assert "Generate exactly 3 follow-up suggestions." in component.model.followup_user_messages[0]
     assert BOUNDARY_SENTENCE in component.model.followup_system_prompts[0]
 
 
 @pytest.mark.parametrize("kind", ["agent", "team"])
 def test_config_through_followups_resolves_model_strings_on_a_copy(kind):
-    shared = FollowupConfig(model=MODEL_STRING, instructions=INSTRUCTIONS, num_followups=4)
+    shared = FollowupConfig(model=MODEL_STRING, instructions=INSTRUCTIONS, max_followups=4)
     first = _construct(kind, followups=shared)
     second = _construct(kind, followups=shared)
     for component in (first, second):
         assert isinstance(component.followups, FollowupConfig)
         assert isinstance(component.followups.model, Model)
         assert component.followups.instructions == INSTRUCTIONS
-        assert component.followups.num_followups == 4  # the count survives the resolving copy
+        assert component.followups.max_followups == 4  # the count survives the resolving copy
         assert component.num_followups == 4
     # One config reused by two components is never mutated, and the resolved copies are separate.
-    assert (shared.model, shared.instructions, shared.num_followups) == (MODEL_STRING, INSTRUCTIONS, 4)
+    assert (shared.model, shared.instructions, shared.max_followups) == (MODEL_STRING, INSTRUCTIONS, 4)
     assert first.followups is not second.followups
 
 
@@ -633,21 +633,21 @@ def test_invalid_model_string_through_followups_fails_at_construction(kind):
 @pytest.mark.parametrize("kind", ["agent", "team"])
 def test_config_through_followups_survives_repeated_deep_copy(kind):
     configured = RecordingModel("config")
-    config = FollowupConfig(model=configured, instructions=INSTRUCTIONS, num_followups=5)
+    config = FollowupConfig(model=configured, instructions=INSTRUCTIONS, max_followups=5)
     component = _construct(kind, followups=config)
     first_copy = component.deep_copy()
     second_copy = first_copy.deep_copy()
     for candidate in (component, first_copy, second_copy):
         assert isinstance(candidate.followups, FollowupConfig)
         assert candidate.num_followups == 5
-        assert candidate.followups.num_followups == 5
+        assert candidate.followups.max_followups == 5
         assert candidate.followups.instructions == INSTRUCTIONS
         assert candidate.followups.model is configured
     # A top-level count next to the copied config is refused, not ignored.
     with pytest.raises(ValueError, match="not both"):
         component.deep_copy(update={"num_followups": 4})
-    assert component.deep_copy(update={"followups": FollowupConfig(num_followups=4)}).num_followups == 4
-    assert config.num_followups == 5
+    assert component.deep_copy(update={"followups": FollowupConfig(max_followups=4)}).num_followups == 4
+    assert config.max_followups == 5
     assert config.model is configured
     # A copy still generates through the configured model; a copy disabled by update does not.
     assert second_copy.run("Hi").followups == ["S1", "S2", "S3"]
@@ -669,7 +669,7 @@ def test_config_through_followups_survives_save_and_reconstruction(kind):
     from agno.registry import Registry
 
     models = {name: RecordingModel(name) for name in ("main", "config")}
-    config = FollowupConfig(model=models["config"], instructions=INSTRUCTIONS, num_followups=3)
+    config = FollowupConfig(model=models["config"], instructions=INSTRUCTIONS, max_followups=3)
     kwargs = dict(followups=config, telemetry=False)
     registry = Registry(models=list(models.values()))
     if kind == "agent":
@@ -681,13 +681,13 @@ def test_config_through_followups_survives_save_and_reconstruction(kind):
     reconstructed.telemetry = False
 
     # followups is stored as True, False or the config's fields, which carry the count.
-    assert stored["followups"]["num_followups"] == 3
+    assert stored["followups"]["max_followups"] == 3
     assert stored["followups"]["instructions"] == INSTRUCTIONS
     assert stored["followups"]["model"]["id"] == "rec-config"
     assert "followup_config" not in stored
     assert isinstance(reconstructed.followups, FollowupConfig)
     assert reconstructed.num_followups == 3  # an explicit 3 stays explicit; it is not read as unset
-    assert reconstructed.followups.num_followups == 3
+    assert reconstructed.followups.max_followups == 3
     assert reconstructed.followups.model is models["config"]
     assert reconstructed.followups.instructions == INSTRUCTIONS
 
@@ -717,7 +717,7 @@ def test_stored_config_without_a_count_still_loads(kind):
     assert isinstance(reconstructed.followups, FollowupConfig)
     assert reconstructed.num_followups == 3
     assert reconstructed.followups.instructions == INSTRUCTIONS
-    assert reconstructed.followups.num_followups is None
+    assert reconstructed.followups.max_followups is None
 
 
 def test_followup_config_positional_arguments_keep_their_meaning():
@@ -725,15 +725,19 @@ def test_followup_config_positional_arguments_keep_their_meaning():
     config = FollowupConfig(model, INSTRUCTIONS)
     assert config.model is model
     assert config.instructions == INSTRUCTIONS
-    assert config.num_followups is None
+    assert config.max_followups is None
+    assert config.min_followups is None
 
 
 def test_followup_config_count_serialization_keeps_unset_distinct_from_three():
     assert FollowupConfig().to_dict() == {}
-    assert FollowupConfig(num_followups=3).to_dict() == {"num_followups": 3}
-    assert FollowupConfig.from_dict({"num_followups": 3}).num_followups == 3
-    # A dict stored before the count existed loads as unset.
-    assert FollowupConfig.from_dict({"instructions": INSTRUCTIONS}).num_followups is None
+    assert FollowupConfig(max_followups=3).to_dict() == {"max_followups": 3}
+    assert FollowupConfig(min_followups=0).to_dict() == {"min_followups": 0}
+    assert FollowupConfig.from_dict({"max_followups": 3}).max_followups == 3
+    assert FollowupConfig.from_dict({"min_followups": 0, "max_followups": 5}).count_range() == (0, 5)
+    # A dict stored without a count loads as unset.
+    unset = FollowupConfig.from_dict({"instructions": INSTRUCTIONS})
+    assert (unset.max_followups, unset.min_followups) == (None, None)
 
 
 @pytest.mark.parametrize("kind", ["agent", "team"])
@@ -891,3 +895,102 @@ async def test_skipped_generation_clears_the_earlier_answers_suggestions(kind, a
 
     assert output.followups is None
     assert component.model.followup_calls == 0
+
+
+# --- count range: num_followups is exact, a FollowupConfig can ask for a range ----------------------
+
+RETURN_FEWER_SENTENCE = "Return fewer suggestions, including an empty list"
+
+# case -> (followups arguments, count line in the prompt, whether the prompt allows returning fewer)
+COUNT_MODES = {
+    "true": (lambda: {"followups": True}, "Generate exactly 3 follow-up suggestions.", False),
+    "top-level-count": (
+        lambda: {"followups": True, "num_followups": 2},
+        "Generate exactly 2 follow-up suggestions.",
+        False,
+    ),
+    "empty-config": (lambda: {"followups": FollowupConfig()}, "Generate exactly 3 follow-up suggestions.", False),
+    "config-max": (
+        lambda: {"followups": FollowupConfig(max_followups=2)},
+        "Generate exactly 2 follow-up suggestions.",
+        False,
+    ),
+    "config-up-to": (
+        lambda: {"followups": FollowupConfig(min_followups=0, max_followups=2)},
+        "Generate at most 2 follow-up suggestions.",
+        True,
+    ),
+    "config-range": (
+        lambda: {"followups": FollowupConfig(min_followups=1, max_followups=2)},
+        "Generate between 1 and 2 follow-up suggestions.",
+        False,
+    ),
+    "config-exact-via-min": (
+        lambda: {"followups": FollowupConfig(min_followups=2, max_followups=2)},
+        "Generate exactly 2 follow-up suggestions.",
+        False,
+    ),
+}
+
+
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.parametrize("case", list(COUNT_MODES))
+@pytest.mark.parametrize("kind", ["agent", "team"])
+async def test_count_mode_reaches_the_prompt_and_the_maximum_is_enforced(kind, case, asynchronous, stream):
+    build_kwargs, count_line, allows_fewer = COUNT_MODES[case]
+    component = _construct(kind, **build_kwargs())
+    component.model.suggestions = ["S1", "S2", "S3", "S4"]
+    maximum = int(count_line.split()[-3])
+
+    output, _ = await _run_public_path(component, asynchronous=asynchronous, stream=stream)
+
+    assert output.followups == ["S1", "S2", "S3", "S4"][:maximum]
+    assert count_line in component.model.followup_user_messages[0]
+    assert (RETURN_FEWER_SENTENCE in component.model.followup_system_prompts[0]) is allows_fewer
+    assert BOUNDARY_SENTENCE in component.model.followup_system_prompts[0]
+
+
+@pytest.mark.parametrize("kind", ["agent", "team"])
+def test_fewer_than_the_minimum_is_returned_as_is(kind):
+    component = _construct(kind, followups=FollowupConfig(min_followups=2, max_followups=3))
+    component.model.suggestions = ["S1"]
+    assert component.run("Hi").followups == ["S1"]
+
+
+@pytest.mark.parametrize(
+    "kwargs,match",
+    [
+        ({"max_followups": 0}, "max_followups must be at least 1"),
+        ({"min_followups": -1}, "min_followups must be between 0 and max_followups"),
+        ({"min_followups": 4, "max_followups": 3}, "min_followups must be between 0 and max_followups"),
+        ({"min_followups": 4}, "min_followups must be between 0 and max_followups"),
+    ],
+    ids=["max-zero", "min-negative", "min-above-max", "min-above-default-max"],
+)
+def test_invalid_count_range_is_rejected_when_the_config_is_built(kwargs, match):
+    with pytest.raises(ValueError, match=match):
+        FollowupConfig(**kwargs)
+
+
+@pytest.mark.parametrize("kind", ["agent", "team"])
+def test_count_range_broken_after_construction_skips_followups(kind):
+    component = _construct(kind, followups=FollowupConfig(max_followups=3))
+    component.followups.min_followups = 5
+    output = component.run("Hi")
+    assert output.content == "ANSWER"
+    assert output.followups is None
+    assert component.model.followup_calls == 0
+
+
+@pytest.mark.parametrize("kind", ["agent", "team"])
+def test_count_range_survives_save_and_reconstruction(kind):
+    from agno.registry import Registry
+
+    cls = Agent if kind == "agent" else Team
+    component = _construct(kind, followups=FollowupConfig(min_followups=1, max_followups=4))
+    stored = component.to_dict()
+    assert stored["followups"] == {"min_followups": 1, "max_followups": 4}
+    reconstructed = cls.from_dict(json.loads(json.dumps(stored)), registry=Registry(models=[component.model]))
+    assert reconstructed.followups.count_range() == (1, 4)
+    assert reconstructed.num_followups == 4

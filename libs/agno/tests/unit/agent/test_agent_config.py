@@ -1767,9 +1767,9 @@ class TestAgentFollowupConfigRoundtrip:
     def test_to_dict_serializes_followup_settings(self):
         from agno.agent import FollowupConfig
 
-        agent = Agent(followups=FollowupConfig(instructions="Only docs.", num_followups=2))
+        agent = Agent(followups=FollowupConfig(instructions="Only docs.", max_followups=2))
         config = agent.to_dict()
-        assert config["followups"] == {"instructions": "Only docs.", "num_followups": 2}
+        assert config["followups"] == {"instructions": "Only docs.", "max_followups": 2}
         # The config carries the count and model; the top-level keys are only for the top-level form.
         assert "num_followups" not in config
         assert "followup_model" not in config
@@ -1784,7 +1784,7 @@ class TestAgentFollowupConfigRoundtrip:
     def test_from_dict_roundtrip_preserves_followup_settings(self):
         from agno.agent import FollowupConfig
 
-        agent = Agent(followups=FollowupConfig(instructions="Only docs.", num_followups=2))
+        agent = Agent(followups=FollowupConfig(instructions="Only docs.", max_followups=2))
         reconstructed = Agent.from_dict(agent.to_dict())
         assert isinstance(reconstructed.followups, FollowupConfig)
         assert reconstructed.num_followups == 2
@@ -1863,11 +1863,11 @@ class TestAgentFollowupConfigRoundtrip:
     def test_config_count_is_stored_on_the_config(self):
         from agno.agent import FollowupConfig
 
-        config = Agent(followups=FollowupConfig(num_followups=5)).to_dict()
-        assert config["followups"] == {"num_followups": 5}
+        config = Agent(followups=FollowupConfig(max_followups=5)).to_dict()
+        assert config["followups"] == {"max_followups": 5}
         assert "num_followups" not in config  # carried by the config
         reconstructed = Agent.from_dict(config)
-        assert reconstructed.followups.num_followups == 5
+        assert reconstructed.followups.max_followups == 5
         assert reconstructed.num_followups == 5
 
     def test_dict_without_followup_keys_uses_defaults(self, sample_agent_config):

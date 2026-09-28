@@ -33,30 +33,37 @@ Advanced examples covering caching, compression, concurrency, events, retries, d
 
 `followup_instructions.py` uses `FollowupConfig` with an agent that answers only
 Python documentation questions. The same configuration works on `Team`.
+
 `followups` takes `False`, `True` for the defaults, or a `FollowupConfig` that enables
-follow-ups and carries the count, custom instructions and an optional separate model:
-`followups=FollowupConfig(num_followups=5, model=..., instructions="...")`. The
-component keeps what you pass, so `agent.followups` reads back as the bool or the
-config. The top-level arguments still work on their own: `followups=True` with
-`num_followups` or `followup_model`. Use one form or the other: passing a
-`FollowupConfig` together with `num_followups` or `followup_model` raises `ValueError`.
-Unset values use the defaults (3 suggestions, the main model). Either model slot
-accepts a `Model` object or a `provider:model_id` string, resolved when the component
-is built. Only the question, answer and follow-up instructions are
-sent to this call; the main instructions, retrieved evidence and history are not
-copied as separate context, but anything already in the user input or the answer
-still reaches the follow-up model.
+follow-ups and carries the count, custom instructions and an optional separate model.
+The top-level arguments still work on their own: `followups=True` with `num_followups`
+or `followup_model`. Use one form or the other: passing a `FollowupConfig` together
+with `num_followups` or `followup_model` raises `ValueError`.
 
-`num_followups` is a maximum: a successful result holds zero to N suggestions,
-excess suggestions are clipped, and `[]` is a valid result. The default prompt asks
-the model to respect refusals and stay within the answer's scope; this is prompt
-guidance, not enforcement, and it applies to every component with follow-ups enabled,
-with or without a `FollowupConfig`. Failed, cancelled or malformed generation produces
-`None`. Streaming completion events and persisted run output preserve the list,
-including `[]`. Consumers should hide suggestion controls for an empty list.
+| You write | You get |
+|---|---|
+| `followups=True` | exactly 3 suggestions |
+| `followups=True, num_followups=5` | exactly 5 |
+| `FollowupConfig()` | exactly 3, the same as `True` |
+| `FollowupConfig(max_followups=5)` | exactly 5 (`min_followups` defaults to `max_followups`) |
+| `FollowupConfig(min_followups=0, max_followups=3)` | up to 3, possibly none |
+| `FollowupConfig(min_followups=1, max_followups=3)` | 1 to 3 |
 
-`to_dict()` and `from_dict()` on `Agent` and `Team` keep `followups` (stored as `True`,
-`False` or the config's fields), `num_followups` and `followup_model`. A follow-up model
-is stored by identity only (`id`, `name`, `provider`), never with credentials or request
-headers; register the live model in a `Registry` to keep custom endpoints or connection
-settings when the component is recreated.
+The maximum is enforced: extra suggestions are dropped. The minimum is only requested
+from the model, so fewer can come back. `min_followups=0` gives the model room to
+return nothing when a declined request leaves no useful in-scope continuation, so
+consumers should hide suggestion controls for an empty list. Failed, cancelled or
+malformed generation produces `None`.
+
+Every component with follow-ups enabled gets a prompt that asks the model to respect
+refusals and stay within the answer's scope. This is prompt guidance, not enforcement.
+Only the question, answer and follow-up instructions are sent to this call; the main
+instructions, retrieved evidence and history are not copied as separate context.
+Either model slot accepts a `Model` object or a `provider:model_id` string, resolved
+when the component is built.
+
+`to_dict()` and `from_dict()` on `Agent` and `Team` keep the follow-up settings in
+whichever form was used. A follow-up model is stored by identity only (`id`, `name`,
+`provider`), never with credentials or request headers; register the live model in a
+`Registry` to keep custom endpoints or connection settings when the component is
+recreated.

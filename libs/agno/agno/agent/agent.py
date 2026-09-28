@@ -327,7 +327,7 @@ class Agent:
     # False, True for the defaults, or a FollowupConfig that enables followups and carries their
     # model, instructions and count. Kept as given; a string model is resolved on a copy of it.
     followups: Union[bool, FollowupConfig] = False
-    # Maximum number of followup prompts (default 3); with a FollowupConfig, its count
+    # Number of followup prompts to generate (default 3); with a FollowupConfig, its max_followups
     num_followups: int = 3
     # Optional model to use for generating followups (defaults to agent's model); with a FollowupConfig, its model
     followup_model: Optional[Model] = None

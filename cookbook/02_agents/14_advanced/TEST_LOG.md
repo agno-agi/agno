@@ -188,10 +188,10 @@
 
 ### followup_instructions.py
 
-**Status:** PASS (offline); live run not repeated on 2026-09-24
+**Status:** PASS
 
-**Description:** An agent limited to Python documentation, with `followups=FollowupConfig(...)` carrying a separate follow-up model and domain instructions, asked for a sea poem it should decline.
+**Description:** An agent limited to Python documentation, with `followups=FollowupConfig(min_followups=0, max_followups=3, ...)` carrying a separate follow-up model and domain instructions, asked for a sea poem it should decline.
 
-**Result:** 2026-09-24: the module builds the agent offline (`followups` is the config, count 3, config model resolved to `OpenAIResponses`, no `followup_model`); no API key was available, so the live call was not repeated. 2026-09-09 (reported by the PR author, earlier API): ten gpt-5.6-luna checks across refusal, greeting, missing API, prompt injection and technical answers; no poem was re-offered, and missing-API suggestions asked for sources rather than presuming the API exists.
+**Result:** 2026-09-28, three live runs with gpt-5.5: the agent declined each time, and every follow-up stayed within Python documentation (docstring conventions, documenting functions, official docs); none re-offered the poem. Separately, the prompt builder was checked live on four refusal scenarios in all three count modes (exactly 3, up to 3, 1 to 3), 5 runs each on gpt-5.6-luna and gpt-5.5: 2 to 7 of about 60 suggestions per mode pointed at the declined topic (a weather source, whether a Rust SDK is planned), against 51/60 and 26/60 with the previous prompt, and none re-offered the declined request itself.
 
 ---

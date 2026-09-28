@@ -29,7 +29,7 @@ async def test_generation_paths(kind, asynchronous, stream, source, suggestions)
     unused = MagicMock(spec=Model)
     if source == "config":
         followup_options = dict(
-            followups=FollowupConfig(model=model, instructions="Suggest only documentation questions.", num_followups=2)
+            followups=FollowupConfig(model=model, instructions="Suggest only documentation questions.", max_followups=2)
         )
     elif source == "legacy":
         followup_options = dict(followups=True, num_followups=2, followup_model=model)
@@ -67,7 +67,7 @@ async def test_generation_paths(kind, asynchronous, stream, source, suggestions)
     assert ("Suggest only documentation questions." in messages[0].content) is (source == "config")
     assert "json" in messages[0].content.lower()
     assert "Never suggest repeating or fulfilling a request the assistant declined" in messages[0].content
-    assert "Generate at most 2" in messages[1].content
+    assert "Generate exactly 2" in messages[1].content
     unused.response.assert_not_called()
 
 
