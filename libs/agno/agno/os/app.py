@@ -54,6 +54,7 @@ from agno.os.routers.approvals import get_approval_router
 from agno.os.routers.components import get_components_router
 from agno.os.routers.database import get_database_router
 from agno.os.routers.evals import get_eval_router
+from agno.os.routers.filesystem import get_filesystem_router
 from agno.os.routers.health import get_health_router
 from agno.os.routers.home import get_home_router
 from agno.os.routers.job_queue import get_queue_router
@@ -99,6 +100,7 @@ if TYPE_CHECKING:
     from agno.os.authz.authorization import Authorization
     from agno.os.authz.provider import AuthorizationProvider
     from agno.os.authz.user_directory import UserDirectory
+    from agno.os.schema import FileSystemConfig
 
 
 @asynccontextmanager
@@ -848,6 +850,7 @@ class AgentOS:
         self._add_router(app, get_health_router(health_endpoint="/health"))
         self._add_router(app, get_info_router(self))
         self._add_router(app, get_base_router(self, settings=self.settings))
+        self._add_router(app, get_filesystem_router(self, settings=self.settings))
         self._add_router(app, get_agent_router(self, settings=self.settings, registry=self.registry))
         self._add_router(app, get_team_router(self, settings=self.settings, registry=self.registry))
         self._add_router(app, get_workflow_router(self, settings=self.settings))
@@ -950,10 +953,24 @@ class AgentOS:
         if not self._agents:
             return
 
+        from agno.agent import _init as agent_init
+
+        # Same rule the auth middleware applies: the top-level flag, or the legacy
+        # AuthorizationConfig(user_isolation=True) on an authorized OS.
+        user_isolation = bool(
+            self.user_isolation
+            or (
+                self.authorization
+                and self.authorization_config is not None
+                and self.authorization_config.user_isolation
+            )
+        )
         for agent in self._agents:
             # Set the default db to agents without their own
             if self.db is not None and agent.db is None:
                 agent.db = self.db
+            if agent.filesystem or agent.tools:
+                agent_init.apply_filesystem_user_isolation(agent, user_isolation)
             # Set the default checkpoint level on agents without their own
             if self.checkpoint is not None and agent.checkpoint is None:
                 agent.checkpoint = self.checkpoint
@@ -2615,6 +2632,54 @@ class AgentOS:
                 )
 
         return learning_config
+
+    def _get_filesystem_config(
+        self, user_id: Optional[str] = None, agents: Optional[List[Any]] = None
+    ) -> "FileSystemConfig":
+        from agno.os.routers.filesystem.utils import _filesystem_backend_key
+        from agno.os.schema import FileSystemAgent, FileSystemConfig, FileSystemNamespace, _extract_filesystem
+
+        namespaces: Dict[tuple, FileSystemNamespace] = {}
+        # ``agents`` is the caller's roster when /config filters by access; the
+        # filesystem section must not describe agents the caller cannot see.
+        for entry in (self.agents if agents is None else agents) or []:
+            if not isinstance(entry, Agent) or not entry.id:
+                continue
+
+            for filesystem, read_only in entry.filesystems:
+                summary = _extract_filesystem(filesystem, entry, user_id=user_id)
+                key = (
+                    _filesystem_backend_key(filesystem),
+                    summary.namespace,
+                    summary.max_file_bytes,
+                    summary.max_namespace_bytes,
+                )
+                namespace_config = namespaces.get(key)
+                if namespace_config is None:
+                    namespace_config = namespaces[key] = FileSystemNamespace(**summary.model_dump(), agents=[])
+                linked_agent = next((agent for agent in namespace_config.agents if agent.id == entry.id), None)
+                if linked_agent is None:
+                    namespace_config.agents.append(
+                        FileSystemAgent(id=entry.id, access="read_only" if read_only else "full")
+                    )
+                elif not read_only:
+                    # A writable attachment takes precedence over a read-only one on the same store.
+                    linked_agent.access = "full"
+
+        for namespace_config in namespaces.values():
+            namespace_config.agents.sort(key=lambda agent: agent.id)
+
+        return FileSystemConfig(
+            namespaces=sorted(
+                namespaces.values(),
+                key=lambda namespace_config: (
+                    namespace_config.backend_type,
+                    namespace_config.db_id or "",
+                    namespace_config.namespace,
+                    [agent.id for agent in namespace_config.agents],
+                ),
+            )
+        )
 
     def _get_knowledge_config(self) -> KnowledgeConfig:
         knowledge_config = self.config.knowledge if self.config and self.config.knowledge else KnowledgeConfig()

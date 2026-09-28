@@ -26,6 +26,7 @@ from agno.os.middleware.jwt import _VERIFIED_API_JWT, JWTValidator, is_reserved_
 from agno.os.middleware.user_scope import (
     INSUFFICIENT_PERMISSIONS_WS_RECONNECT,
     WORKFLOW_ID_REQUIRED_RECONNECT,
+    get_scoped_user_id,
 )
 from agno.os.routers.workflows.router import (
     WebSocketAuthContext,
@@ -209,6 +210,10 @@ def get_base_router(
             session=os._get_session_config(),
             memory=os._get_memory_config(),
             learning=os._get_learning_config(),
+            filesystem=os._get_filesystem_config(
+                user_id=get_scoped_user_id(request) or getattr(request.state, "user_id", None),
+                agents=agents_in_scope,
+            ),
             knowledge=os._get_knowledge_config(),
             evals=os._get_evals_config(),
             metrics=os._get_metrics_config(),

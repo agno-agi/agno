@@ -2364,6 +2364,9 @@ def collect_components_from_agent(agent: Any, registry: Registry, visited: Set[i
     registry.add_schema(getattr(agent, "input_schema", None))
     registry.add_schema(getattr(agent, "output_schema", None))
     registry.add_db(getattr(agent, "db", None))
+    for filesystem, _read_only in getattr(agent, "filesystems", []):
+        filesystem_backend = getattr(filesystem, "backend", None)
+        registry.add_db(getattr(filesystem_backend, "db", None))
     _collect_components_from_knowledge(getattr(agent, "knowledge", None), registry)
     # A named LearningMachine on a code-defined component is a registry
     # resource: its stored config references it by name, so the registry the
@@ -2911,6 +2914,11 @@ async def resolve_agent(
 
     if agent is None:
         raise HTTPException(status_code=404, detail="Agent not found")
+    if isinstance(agent, Agent) and request is not None and (agent.filesystem or agent.tools):
+        # An agent rebuilt from the database gets the OS isolation policy like a configured one.
+        from agno.agent import _init as agent_init
+
+        agent_init.apply_filesystem_user_isolation(agent, bool(getattr(request.state, "user_isolation_enabled", False)))
     return agent
 
 
