@@ -701,8 +701,8 @@ class Clickhouse(VectorDb):
             try:
                 await self.async_create()
             except Exception:
-                # table_exists() swallows its own errors and answers False, so a dead connection lands
-                # here too and create() fails against the same connection. Raised by @VANDRANKI in review:
+                # async_table_exists() swallows its own errors and answers False, so a dead connection
+                # lands here too and async_create() fails against the same connection. Raised by @VANDRANKI in review:
                 # the caller should see the ORIGINAL query failure, not a create error that misdirects
                 # diagnosis. The create failure stays attached as context.
                 raise e
