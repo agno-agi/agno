@@ -470,23 +470,16 @@ def finalize_workflow_completion(
         workflow_run_response: The workflow run output to finalize.
         state: The execution state containing collected outputs and media.
     """
+    # Local imports to avoid a circular import (workflow.py imports from this module).
+    from agno.workflow.workflow import final_run_content, stamp_terminal_status
+
     if state.collected_step_outputs:
         if workflow_run_response.metrics:
             workflow_run_response.metrics.stop_timer()
 
         # Extract final content from last step output
         last_output = cast(StepOutput, state.collected_step_outputs[-1])
-
-        if getattr(last_output, "steps", None):
-            _cur = last_output
-            while getattr(_cur, "steps", None):
-                _steps = _cur.steps or []
-                if not _steps:
-                    break
-                _cur = _steps[-1]
-            workflow_run_response.content = _cur.content
-        else:
-            workflow_run_response.content = last_output.content
+        workflow_run_response.content = final_run_content(last_output)
     else:
         workflow_run_response.content = "No steps executed"
 
@@ -494,7 +487,7 @@ def finalize_workflow_completion(
     workflow_run_response.images = state.output_images
     workflow_run_response.videos = state.output_videos
     workflow_run_response.audio = state.output_audio
-    workflow_run_response.status = RunStatus.completed
+    stamp_terminal_status(workflow_run_response, state.collected_step_outputs)
     workflow_run_response.paused_step_index = None
     workflow_run_response.paused_step_name = None
     workflow_run_response.pause_kind = None
@@ -570,7 +563,7 @@ def resolve_executor_pause(
         workflow_run_response: The workflow run output (used to locate the
             paused executor's RunOutput).
         force_find_inner: If True (router branches), skip the ``isinstance(step, Step)``
-            short-circuit and always search via ``_find_inner_step_by_executor``,
+            short-circuit and always search via ``find_inner_step_by_executor``,
             falling back to ``step`` itself. Matches existing router behavior.
 
     Returns:
@@ -578,12 +571,12 @@ def resolve_executor_pause(
     """
     # Local imports to avoid a circular import (workflow.py imports from this module).
     from agno.workflow.step import Step
-    from agno.workflow.workflow import _find_inner_step_by_executor
+    from agno.workflow.workflow import find_inner_step_by_executor
 
     if force_find_inner:
-        inner = _find_inner_step_by_executor(step) or step
+        inner = find_inner_step_by_executor(step) or step
     else:
-        inner = step if isinstance(step, Step) else _find_inner_step_by_executor(step)
+        inner = step if isinstance(step, Step) else find_inner_step_by_executor(step)
 
     executor_run = get_last_executor_run(workflow_run_response)
     if not inner or not executor_run:
@@ -598,20 +591,24 @@ def apply_executor_pause(
     executor_response: Any,
     workflow_run_response: "WorkflowRunOutput",
     collected_step_outputs: list,
+    paused_step_output: Any = None,
 ) -> "StepRequirement":
     """Apply executor pause state to the workflow run response.
 
     Sets workflow status to paused, creates the executor StepRequirement,
-    and returns it. Callers are responsible for saving the session.
+    records the step results and returns it. Callers are responsible for
+    saving the session.
 
     Args:
         inner_step: The Step instance containing the paused executor (may be
-            resolved from a composite step via _find_inner_step_by_executor).
+            resolved from a composite step via find_inner_step_by_executor).
         step_index: Index of the top-level step in the workflow.
         step_name: Name of the top-level step.
         executor_response: The paused RunOutput/TeamRunOutput from step_executor_runs.
         workflow_run_response: The workflow run output to update.
         collected_step_outputs: Step outputs collected so far.
+        paused_step_output: The pausing step's own output, persisted after the collected
+            ones in place of a previous pause cycle's placeholder for the same step.
 
     Returns:
         The created StepRequirement for the executor pause.
@@ -623,7 +620,17 @@ def apply_executor_pause(
     workflow_run_response.pause_kind = PauseKind.EXECUTOR
     existing = workflow_run_response.step_requirements or []
     workflow_run_response.step_requirements = existing + [step_req]
-    workflow_run_response.step_results = collected_step_outputs
+    # Persist the pausing step's own output too: a composite's paused output carries the
+    # state a resume restores (the Verify record). A previous cycle's placeholder is replaced,
+    # not stacked, whichever nested name it carries.
+    if paused_step_output is not None and (
+        not collected_step_outputs or collected_step_outputs[-1] is not paused_step_output
+    ):
+        while collected_step_outputs and getattr(collected_step_outputs[-1], "is_paused", False):
+            collected_step_outputs.pop()
+        workflow_run_response.step_results = collected_step_outputs + [paused_step_output]
+    else:
+        workflow_run_response.step_results = collected_step_outputs
     return step_req
 
 

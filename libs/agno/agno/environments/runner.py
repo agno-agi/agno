@@ -493,6 +493,8 @@ _ISOLATE_FIELD_ACTIONS: Dict[str, str] = {
     "followup_model": "cache-off-copy",
     "knowledge": "shared",  # reads survive: retrieval goes through knowledge.vector_db
     "skills": "shared",  # loader-backed skill definitions: read-only, no db binding
+    "verifiers": "shared",  # checks judge the attempt's output: read-only, no db binding
+    "verification": "shared",  # loop budget and a read-only state fingerprint
     "learning": "writes-severed-copy",  # global reads keep the caller's db; every write engine cut
     "memory_manager": "fresh-db-rebind",  # per-user state: reads come from the attempt's empty db
     "session_summary_manager": "isolated-copy",  # resolution binds the attempt model on the copy

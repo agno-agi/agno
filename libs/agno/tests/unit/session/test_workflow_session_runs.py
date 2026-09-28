@@ -6,6 +6,8 @@ WorkflowRunOutput raises on its metrics (no "steps") or, when it has none, mints
 phantom workflow run carrying the member's content.
 """
 
+from agno.run.base import RunStatus
+from agno.run.workflow import WorkflowRunOutput
 from agno.session.workflow import WorkflowSession
 
 WORKFLOW_RUN = {
@@ -76,3 +78,20 @@ class TestMemberRunIdentifiedByNameAlone:
         by_name = {"run_id": "tm-2", "team_name": "Squad", "session_id": "s1"}
         session = _session([WORKFLOW_RUN, by_name])
         assert [r.run_id for r in session.runs] == ["wf-1"]
+
+
+def test_workflow_history_includes_unverified_runs():
+    """History is an include-list: completed and unverified runs both carry a real
+    transcript; error/cancelled runs stay excluded. num_runs slices the filtered list,
+    so an unverified run occupies a slot."""
+    session = WorkflowSession(
+        session_id="session-1",
+        runs=[
+            WorkflowRunOutput(input="q1", content="a1", status=RunStatus.completed),
+            WorkflowRunOutput(input="q2", content="a2", status=RunStatus.unverified),
+            WorkflowRunOutput(input="q3", content="a3", status=RunStatus.error),
+            WorkflowRunOutput(input="q4", content="a4", status=RunStatus.cancelled),
+        ],
+    )
+    assert session.get_workflow_history() == [("q1", "a1"), ("q2", "a2")]
+    assert session.get_workflow_history(num_runs=1) == [("q2", "a2")]

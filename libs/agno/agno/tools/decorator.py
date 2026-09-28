@@ -293,6 +293,10 @@ def tool(*args, **kwargs) -> Union[Function, Callable[[F], Function]]:
             if "show_result" not in kwargs or kwargs.get("show_result") is None:
                 tool_config["show_result"] = True
         function = Function(**tool_config)
+        # A verified tool refuses hooks; fail at decoration, not on the first call
+        from agno.verifiers.tools import validate_verified_tool_hooks
+
+        validate_verified_tool_hooks(function)
         # Determine parameters for the function
         function.process_entrypoint()
         return function

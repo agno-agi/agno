@@ -33,6 +33,7 @@ from agno.team import _response as team_response_mod
 from agno.team import _run as team_run
 from agno.team import _storage as team_storage
 from agno.team import _tools as team_tools
+from agno.verifiers.types import Verification
 
 # ---------------------------------------------------------------------------
 # Lineage fields round-trip
@@ -148,6 +149,24 @@ class TestTeamTruncate:
         r = TeamRunOutput(run_id="r1", messages=[Message(role="user", content="a")])
         team_run._truncate_team_run_to_checkpoint(r, message_index=10)
         assert len(r.messages) == 1
+
+    def test_truncate_drops_the_verification_record_only_on_a_real_cut(self):
+        """Verification attempts index into the transcript, so a real cut drops the record;
+        the no-op guards (index past the end, negative index) keep it."""
+        for index, expected_len, record_kept in ((1, 1, False), (3, 3, True), (-1, 3, True)):
+            r = TeamRunOutput(
+                run_id="r1",
+                messages=[
+                    Message(role="system", content="sys"),
+                    Message(role="user", content="go"),
+                    Message(role="assistant", content="answer"),
+                ],
+                verification=Verification(status="unverified"),
+            )
+            record = r.verification
+            team_run._truncate_team_run_to_checkpoint(r, message_index=index)
+            assert len(r.messages) == expected_len
+            assert (r.verification is record) is record_kept
 
     def test_checkpoint_marker_is_stored_on_message(self):
         r = TeamRunOutput(

@@ -223,6 +223,21 @@ class TestExecutorPollRun:
         assert result["error"] is None
 
     @pytest.mark.asyncio
+    async def test_poll_unverified(self, executor):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json = MagicMock(return_value={"status": "UNVERIFIED", "content": "draft"})
+
+        mock_client = AsyncMock()
+        mock_client.request = AsyncMock(return_value=mock_resp)
+
+        result = await executor._poll_run(mock_client, {}, "agents", "a1", "run-1", "sess-1", 60)
+        assert result["status"] == "unverified"
+        assert "unverified" in result["error"]
+        assert result["output"]["content"] == "draft"
+        assert mock_client.request.await_count == 1
+
+    @pytest.mark.asyncio
     async def test_poll_timeout(self, executor):
         """Polling should return failed when timeout is exceeded."""
         # Always return a non-terminal status

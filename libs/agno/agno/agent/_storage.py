@@ -43,6 +43,13 @@ from agno.utils.db_fallback import require_db_fallback_matches
 from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.merge_dict import merge_dictionaries
 from agno.utils.string import generate_id_from_name
+from agno.utils.verifiers import (
+    verification_config_from_dict,
+    verification_config_to_dict,
+    verifier_to_dict,
+    verifiers_from_dict,
+)
+from agno.verifiers.base import coerce_verifier
 
 # MemoryManager.__init__ (agno/memory/manager.py) auto-generates
 # ``memory_manager_<8 hex>`` when no id is passed. Such an id is minted fresh
@@ -1012,6 +1019,16 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
     if agent.tool_choice is not None:
         config["tool_choice"] = agent.tool_choice
 
+    # --- Verification settings ---
+    # Each check serializes as its name and policy; the callable comes back from the
+    # registry on load, like a tool. run_condition and the fingerprint never serialize.
+    if agent.verifiers:
+        config["verifiers"] = [verifier_to_dict(coerce_verifier(v)) for v in agent.verifiers]
+    if isinstance(agent.verification, bool):
+        config["verification"] = agent.verification
+    elif agent.verification is not None:
+        config["verification"] = verification_config_to_dict(agent.verification)
+
     # --- Reasoning settings ---
     if agent.reasoning_model is not None:
         if isinstance(agent.reasoning_model, Model):
@@ -1270,6 +1287,16 @@ def from_dict(
                 log_warning(f"No registry provided; these tools cannot execute: {unresolved_tools}")
             config["tools"] = rehydrated_tools
 
+    # --- Handle verifiers reconstruction ---
+    # A ShellVerifier rebuilds from its command; every other check resolves through the
+    # registry. A miss raises under strict, otherwise it loads as a fail-closed placeholder.
+    if "verifiers" in config and config["verifiers"]:
+        config["verifiers"] = verifiers_from_dict(
+            config["verifiers"], registry, strict, label=f"{component_label} verifier"
+        )
+    if "verification" in config and isinstance(config["verification"], dict):
+        config["verification"] = verification_config_from_dict(config["verification"], component_label)
+
     # --- Handle DB reconstruction ---
     if "db" in config and isinstance(config["db"], dict):
         resolved = resolve_db_from_config(config["db"], registry=registry)
@@ -1414,6 +1441,9 @@ def from_dict(
         tools=config.get("tools"),
         tool_call_limit=config.get("tool_call_limit"),
         tool_choice=config.get("tool_choice"),
+        # --- Verification settings ---
+        verifiers=config.get("verifiers"),
+        verification=config.get("verification"),
         # --- Reasoning settings ---
         reasoning_model=config.get("reasoning_model"),
         # --- Default tools settings ---

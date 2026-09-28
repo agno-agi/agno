@@ -263,7 +263,7 @@ class ScheduleRun:
     attempt: int = 1
     triggered_at: Optional[int] = None
     completed_at: Optional[int] = None
-    status: str = "running"  # running | success | failed | paused | timeout
+    status: str = "running"  # running | success | failed | paused | timeout | unverified
     status_code: Optional[int] = None
     run_id: Optional[str] = None
     session_id: Optional[str] = None

@@ -7274,6 +7274,10 @@ class PostgresDb(BaseDb):
                 incoming_status = str(fields.get("status") or "").lower()
                 if stored_status in ("completed", "cancelled") and incoming_status and incoming_status != stored_status:
                     return RunPersistOutcome.TERMINAL_REFUSED  # terminal row wins
+                if stored_status == "unverified" and incoming_status in ("error", "cancelled"):
+                    # An UNVERIFIED row is settled: a late ERROR or CANCELLED write must not overwrite it.
+                    # Every other status may still land on it (a continue re-stamps RUNNING).
+                    return RunPersistOutcome.TERMINAL_REFUSED
                 run.update(fields)
                 if content_if_absent is not None and not run.get("content"):
                     run["content"] = content_if_absent
@@ -7653,9 +7657,9 @@ class PostgresDb(BaseDb):
     def settle_paused_job(self, job_id: str, status: str, error: Optional[str] = None) -> bool:
         """Terminalize a PAUSED ticket whose continue ran INLINE, outside the
         queue (see InMemoryQueueStore.settle_paused_job). Single conditional
-        UPDATE on status='paused'; a queued/claimed continuation owns the
-        ticket and is never clobbered."""
-        if status not in ("completed", "cancelled", "failed"):
+        UPDATE on status='paused' or 'unverified'; a queued/claimed continuation
+        owns the ticket and is never clobbered."""
+        if status not in ("completed", "unverified", "cancelled", "failed"):
             return False
         try:
             table = self._get_table(table_type="jobs")
@@ -7665,7 +7669,7 @@ class PostgresDb(BaseDb):
             with self.Session() as sess, sess.begin():
                 result = sess.execute(
                     update(table)
-                    .where(table.c.id == job_id, table.c.status == "paused")
+                    .where(table.c.id == job_id, table.c.status.in_(["paused", "unverified"]))
                     .values(
                         status=status,
                         error=error,
@@ -7762,8 +7766,8 @@ class PostgresDb(BaseDb):
     def settle_swept_job(self, job_id: str, worker_id: str, status: str, error: Optional[str] = None) -> bool:
         """Ownership-keyed settle for the sweeper - see the in-memory store's
         docstring: the sweep reconciles the ticket with what the run row
-        says (completed/cancelled/paused/failed), never blind-fails it."""
-        if status not in ("completed", "cancelled", "paused", "failed"):
+        says (completed/unverified/cancelled/paused/failed), never blind-fails it."""
+        if status not in ("completed", "unverified", "cancelled", "paused", "failed"):
             return False
         try:
             table = self._get_table(table_type="jobs")
@@ -7909,7 +7913,7 @@ class PostgresDb(BaseDb):
             if row is None:
                 return {"outcome": "conflict", "job": None}
             job = dict(row._mapping)
-            if job["status"] in ("completed", "failed", "cancelled"):
+            if job["status"] in ("completed", "unverified", "failed", "cancelled"):
                 return {"outcome": "conflict", "job": job}
             if job["status"] in ("queued", "running"):
                 return {"outcome": "attach", "job": job}
@@ -7970,7 +7974,7 @@ class PostgresDb(BaseDb):
             with self.Session() as sess, sess.begin():
                 result = sess.execute(
                     table.delete().where(
-                        table.c.status.in_(["completed", "failed", "cancelled"]),
+                        table.c.status.in_(["completed", "unverified", "failed", "cancelled"]),
                         table.c.completed_at.is_not(None),
                         table.c.completed_at <= cutoff,
                     )

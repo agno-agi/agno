@@ -614,6 +614,9 @@ class RunSchema(BaseModel):
     response_audio: Optional[dict] = Field(None, description="Audio response if generated")
     input_media: Optional[Dict[str, Any]] = Field(None, description="Input media attachments")
     followups: Optional[List[str]] = Field(None, description="Followup suggestions generated after the run")
+    verification: Optional[Dict[str, Any]] = Field(
+        None, description="Verification record (status, stop_reason, attempts) when verifiers ran for this run"
+    )
     # set when the run was created via /continue (fork /
     # regenerate / time-travel) or via /sessions/{id}/branch. Client consumes
     # these to render parent → child relationships in the run timeline.
@@ -665,6 +668,7 @@ class RunSchema(BaseModel):
             response_audio=run_dict.get("response_audio", None),
             input_media=extract_input_media(run_dict),
             followups=run_dict.get("followups", None),
+            verification=run_dict.get("verification"),
             created_at=to_utc_datetime(run_dict.get("created_at")),
             forked_from_run_id=run_dict.get("forked_from_run_id"),
             forked_from_message_index=run_dict.get("forked_from_message_index"),
@@ -703,6 +707,9 @@ class TeamRunSchema(BaseModel):
     files: Optional[List[dict]] = Field(None, description="Files included in the run")
     response_audio: Optional[dict] = Field(None, description="Audio response if generated")
     followups: Optional[List[str]] = Field(None, description="Followup suggestions generated after the run")
+    verification: Optional[Dict[str, Any]] = Field(
+        None, description="Verification record (status, stop_reason, attempts) when verifiers ran for this team run"
+    )
     # set when the team run was created via /continue (fork /
     # regenerate / time-travel) or via /sessions/{id}/branch. Client consumes
     # these to render parent → child relationships in the run timeline.
@@ -753,6 +760,7 @@ class TeamRunSchema(BaseModel):
             response_audio=run_dict.get("response_audio", None),
             input_media=extract_input_media(run_dict),
             followups=run_dict.get("followups", None),
+            verification=run_dict.get("verification"),
             forked_from_run_id=run_dict.get("forked_from_run_id"),
             forked_from_message_index=run_dict.get("forked_from_message_index"),
             forked_from_session_id=run_dict.get("forked_from_session_id"),
@@ -793,6 +801,9 @@ class WorkflowRunSchema(BaseModel):
     audio: Optional[List[dict]] = Field(None, description="Audio files included in the workflow")
     files: Optional[List[dict]] = Field(None, description="Files included in the workflow")
     response_audio: Optional[dict] = Field(None, description="Audio response if generated")
+    verification: Optional[Dict[str, Any]] = Field(
+        None, description="Verification record of the gate that decided this run when a Verify step ran"
+    )
 
     @classmethod
     def from_dict(cls, run_response: Dict[str, Any]) -> "WorkflowRunSchema":
@@ -825,6 +836,7 @@ class WorkflowRunSchema(BaseModel):
             audio=run_response.get("audio", []),
             files=run_response.get("files", []),
             response_audio=run_response.get("response_audio", None),
+            verification=run_response.get("verification"),
         )
 
 

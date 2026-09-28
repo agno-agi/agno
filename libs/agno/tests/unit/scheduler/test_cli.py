@@ -48,6 +48,9 @@ class TestStatusStyle:
     def test_pending(self):
         assert _status_style("PENDING") == "bold yellow"
 
+    def test_unverified(self):
+        assert _status_style("unverified") == "bold dark_orange"
+
     def test_unknown_returns_white(self):
         assert _status_style("SOMETHING_ELSE") == "white"
 

@@ -25,6 +25,10 @@ from agno.run.workflow import (
     StepsExecutionCompletedEvent,
     StepsExecutionStartedEvent,
     StepStartedEvent,
+    VerifyAttemptCompletedEvent,
+    VerifyAttemptStartedEvent,
+    VerifyExecutionCompletedEvent,
+    VerifyExecutionStartedEvent,
     WorkflowAgentCompletedEvent,
     WorkflowAgentStartedEvent,
     WorkflowCompletedEvent,
@@ -686,6 +690,32 @@ def print_response_stream(
 
                     step_started_printed = True
 
+                elif isinstance(response, VerifyExecutionStartedEvent):
+                    current_step_name = response.step_name or "Verify"
+                    current_step_index = response.step_index or 0  # type: ignore
+                    current_step_content = ""
+                    step_started_printed = False
+                    status.update(f"Starting verify: {current_step_name} (max {response.max_attempts} attempts)...")
+                    live_log.update(status)
+
+                elif isinstance(response, VerifyAttemptStartedEvent):
+                    status.update(f"Verify attempt {response.attempt}/{response.max_attempts}: {response.step_name}...")
+                    live_log.update(status)
+
+                elif isinstance(response, VerifyAttemptCompletedEvent):
+                    outcome = "passed" if response.passed else "failed"
+                    status.update(
+                        f"Verify attempt {response.attempt}/{response.max_attempts} {outcome}: {response.step_name}"
+                    )
+
+                elif isinstance(response, VerifyExecutionCompletedEvent):
+                    step_name = response.step_name or "Verify"
+                    status.update(
+                        f"Completed verify: {step_name} ({response.status}, {response.total_attempts} attempts)"
+                    )
+                    live_log.update(status, refresh=True)
+                    step_started_printed = True
+
                 elif isinstance(response, WorkflowCompletedEvent):
                     status.update("Workflow completed!")
 
@@ -718,9 +748,9 @@ def print_response_stream(
 
                     # Show final summary (skip for agent responses)
                     if response.metadata and not is_workflow_agent_response:
-                        status = response.status
+                        run_status = response.status
                         summary_content = ""
-                        summary_content += f"""\n\n**Status:** {status}"""
+                        summary_content += f"""\n\n**Status:** {run_status}"""
                         summary_content += (
                             f"""\n\n**Steps Completed:** {len(response.step_results) if response.step_results else 0}"""
                         )
@@ -1551,6 +1581,32 @@ async def aprint_response_stream(
 
                     step_started_printed = True
 
+                elif isinstance(response, VerifyExecutionStartedEvent):
+                    current_step_name = response.step_name or "Verify"
+                    current_step_index = response.step_index or 0  # type: ignore
+                    current_step_content = ""
+                    step_started_printed = False
+                    status.update(f"Starting verify: {current_step_name} (max {response.max_attempts} attempts)...")
+                    live_log.update(status)
+
+                elif isinstance(response, VerifyAttemptStartedEvent):
+                    status.update(f"Verify attempt {response.attempt}/{response.max_attempts}: {response.step_name}...")
+                    live_log.update(status)
+
+                elif isinstance(response, VerifyAttemptCompletedEvent):
+                    outcome = "passed" if response.passed else "failed"
+                    status.update(
+                        f"Verify attempt {response.attempt}/{response.max_attempts} {outcome}: {response.step_name}"
+                    )
+
+                elif isinstance(response, VerifyExecutionCompletedEvent):
+                    step_name = response.step_name or "Verify"
+                    status.update(
+                        f"Completed verify: {step_name} ({response.status}, {response.total_attempts} attempts)"
+                    )
+                    live_log.update(status, refresh=True)
+                    step_started_printed = True
+
                 elif isinstance(response, WorkflowCompletedEvent):
                     status.update("Workflow completed!")
 
@@ -1583,9 +1639,9 @@ async def aprint_response_stream(
 
                     # Show final summary (skip for agent responses)
                     if response.metadata and not is_workflow_agent_response:
-                        status = response.status
+                        run_status = response.status
                         summary_content = ""
-                        summary_content += f"""\n\n**Status:** {status}"""
+                        summary_content += f"""\n\n**Status:** {run_status}"""
                         summary_content += (
                             f"""\n\n**Steps Completed:** {len(response.step_results) if response.step_results else 0}"""
                         )

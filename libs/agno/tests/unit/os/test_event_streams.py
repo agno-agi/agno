@@ -248,3 +248,48 @@ class TestReopenSeedsCounterFromFloor:
         assert await stream.reopen_run("r1", floor=0) is True
         idx = await stream.add_event("r1", RunContentEvent(content="d", run_id="r1"))
         assert idx == 3
+
+
+# --- event streams: UNVERIFIED is terminal for a tail and reopenable for a continue ---
+
+
+@pytest.mark.asyncio
+async def test_in_memory_tail_ends_on_unverified_run(stream):
+    # A tail attached to an already-unverified run must replay and end, not
+    # idle against the live queue as if the run were still active.
+    await stream.register_run("run-3", RunStatus.running)
+    await stream.complete_run("run-3", RunStatus.unverified)
+
+    async def drain():
+        return [item async for item in stream.tail("run-3")]
+
+    assert await asyncio.wait_for(drain(), timeout=5.0) == []
+
+
+@pytest.mark.asyncio
+async def test_in_memory_reopen_accepts_unverified(stream):
+    # Continuing an unverified run restarts its verification budget on the
+    # same stream, so the reopen must invalidate the unverified sentinel the
+    # way it invalidates a pause's; declining left the continue's tail closing
+    # empty against the stale terminal.
+    await stream.register_run("r-unv", RunStatus.pending)
+    await stream.complete_run("r-unv", RunStatus.unverified)
+    assert await stream.reopen_run("r-unv") is True
+    assert await stream.get_run_status("r-unv") == RunStatus.pending
+
+
+@pytest.mark.asyncio
+async def test_redis_reopen_accepts_unverified():
+    # The redis reopenable tuple is built from .value strings inside a CAS
+    # transaction; drive the real CAS against fakeredis.
+    fakeredis = pytest.importorskip("fakeredis", reason="fakeredis not installed")
+    from agno.os.event_streams.redis import RedisEventStream
+
+    stream = RedisEventStream(fakeredis.FakeAsyncRedis(), block_ms=100)
+    try:
+        await stream.register_run("r-unv", RunStatus.running)
+        await stream.complete_run("r-unv", RunStatus.unverified)
+        assert await stream.reopen_run("r-unv") is True
+        assert await stream.get_run_status("r-unv") == RunStatus.pending
+    finally:
+        await stream.aclose()

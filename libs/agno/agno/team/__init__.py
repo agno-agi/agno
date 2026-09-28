@@ -17,6 +17,8 @@ from agno.run.team import (
     TeamRunOutputEvent,
     ToolCallCompletedEvent,
     ToolCallStartedEvent,
+    VerificationCompletedEvent,
+    VerificationStartedEvent,
 )
 from agno.team.factory import TeamFactory
 from agno.team.mode import TeamMode
@@ -43,6 +45,8 @@ __all__ = [
     "RunErrorEvent",
     "RunStartedEvent",
     "RunCompletedEvent",
+    "VerificationStartedEvent",
+    "VerificationCompletedEvent",
     "MemoryUpdateStartedEvent",
     "MemoryUpdateCompletedEvent",
     "ReasoningStartedEvent",

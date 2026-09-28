@@ -53,6 +53,8 @@ from agno.models.message import Message
 
 if TYPE_CHECKING:
     from agno.offload.store import ResultStore
+    from agno.verifiers.base import Verifier
+    from agno.verifiers.types import VerificationConfig
 from agno.registry.registry import Registry
 from agno.run import RunContext, RunStatus
 from agno.run.agent import (
@@ -68,6 +70,7 @@ from agno.tools import Toolkit
 from agno.tools.function import Function
 from agno.utils.log import log_warning
 from agno.utils.safe_formatter import SafeFormatter
+from agno.utils.verifiers import validate_verifiers
 
 
 @dataclass(init=False)
@@ -201,6 +204,14 @@ class Agent:
     post_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail, BaseEval]]] = None
     # If True, run hooks as FastAPI background tasks (non-blocking). Set by AgentOS.
     _run_hooks_in_background: Optional[bool] = None
+
+    # --- Verification ---
+    # Checks that run when the model stops; a run that never passes within budget ends
+    # with RunStatus.unverified and the record on RunOutput.verification.
+    verifiers: Optional[List[Union["Verifier", Callable[..., Any]]]] = None
+    # Shared-loop budget and options for the verification loop: True is the default config and
+    # False turns verification off. Ignored when verifiers is None.
+    verification: Optional[Union[bool, "VerificationConfig"]] = None
 
     # --- Agent Reasoning ---
     # Enable reasoning by providing a reasoning_model (must be a native reasoning model).
@@ -439,6 +450,8 @@ class Agent:
         tool_hooks: Optional[List[Callable]] = None,
         pre_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail, BaseEval]]] = None,
         post_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail, BaseEval]]] = None,
+        verifiers: Optional[List[Union["Verifier", Callable[..., Any]]]] = None,
+        verification: Optional[Union[bool, "VerificationConfig"]] = None,
         reasoning_model: Optional[Union[Model, str]] = None,
         reasoning_agent: Optional[Agent] = None,
         read_chat_history: bool = False,
@@ -607,6 +620,9 @@ class Agent:
 
         self.pre_hooks = pre_hooks
         self.post_hooks = post_hooks
+
+        owner = f"Agent {self.name or self.id or ''}".rstrip()
+        self.verifiers, self.verification = validate_verifiers(verifiers, verification, owner=owner)
 
         self.reasoning_model = reasoning_model  # type: ignore[assignment]
         self.reasoning_agent = reasoning_agent

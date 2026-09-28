@@ -30,6 +30,7 @@ from agno.run.base import RunStatus
 from agno.run.requirement import RunRequirement
 from agno.session import AgentSession
 from agno.utils.message import safe_truncation_index
+from agno.verifiers.types import Verification
 
 # ---------------------------------------------------------------------------
 # Helpers (mirror the pattern from test_run_regressions.py)
@@ -753,6 +754,16 @@ class TestTruncateHelper:
         _truncate_run_to_checkpoint(run, 1)
         assert run.tools == []
         assert run.requirements == [], "Requirement dropped because its tool no longer survives"
+
+    @pytest.mark.parametrize("index, kept", [(1, False), (100, True), (-1, True)])
+    def test_truncate_drops_the_verification_record_only_on_a_real_cut(self, index, kept):
+        """The record's attempts index into the transcript, so a real cut drops it; the
+        no-op guards leave it in place."""
+        run = self._build_run_with_tools()
+        record = Verification(status="unverified")
+        run.verification = record
+        _truncate_run_to_checkpoint(run, index)
+        assert run.verification is (record if kept else None)
 
 
 def _assert_no_orphaned_tool_calls(messages) -> None:

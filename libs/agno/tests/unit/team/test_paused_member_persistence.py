@@ -6058,3 +6058,29 @@ def test_a_routing_failure_restores_the_callers_team_level_requirements(tmp_path
 
     names = [r.tool_execution.tool_name for r in (run1.requirements or [])]
     assert names.count("publish") == 1, f"the caller's run object carries: {names}"
+
+
+@pytest.mark.asyncio
+async def test_async_member_continue_failure_ends_the_team_run_in_error(tmp_path):
+    """A member whose continue fails must surface on the async path the way it does on the
+    sync one: the team run ends in error instead of completing without the approved tool."""
+    _EXECUTED.clear()
+    db_file = str(tmp_path / "flat-async.db")
+    session_id = "s-flat-async"
+
+    team1 = _build_flat_team(SqliteDb(db_file=db_file), resuming=False)
+    run1 = team1.run("Email a@example.com", session_id=session_id)
+    assert run1.is_paused
+
+    team2 = _build_flat_team(SqliteDb(db_file=db_file), resuming=True)
+    member = team2.members[0]
+
+    async def failing_continue(*args, **kwargs):
+        raise RuntimeError("transient model outage")
+
+    member.acontinue_run = failing_continue  # type: ignore[method-assign]
+    run2 = await team2.acontinue_run(
+        run_id=run1.run_id, session_id=session_id, requirements=_wire_requirements(run1.requirements)
+    )
+    assert run2.status == RunStatus.error
+    assert _EXECUTED == []

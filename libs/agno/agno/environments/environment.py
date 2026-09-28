@@ -3,7 +3,7 @@
 import asyncio
 import hashlib
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple, Union
 
@@ -13,6 +13,8 @@ from agno.scorer import FingerprintError, Scorer
 from agno.scorer._model import model_identity_payload, model_prompt_payload
 from agno.tools.function import Function
 from agno.tools.toolkit import Toolkit
+from agno.utils.verifiers import resolve_verification
+from agno.verifiers.base import coerce_verifier
 
 _TASK_KEYS = {"input", "expected", "id", "metadata"}
 
@@ -212,6 +214,24 @@ def _scorer_digest(scorer: Scorer) -> str:
     return digest()
 
 
+def _verification_component(agent: Agent) -> Optional[Dict[str, Any]]:
+    """The verifier names and the loop config: two envs that differ only in their checks are
+    different environments, and an env whose runs are not verified carries none. The fingerprint
+    object is hashed by type, its captures are world state.
+    """
+    config = resolve_verification(agent)
+    if config is None:
+        return None
+    names = [coerce_verifier(v).name for v in agent.verifiers or []]
+    config_payload: Dict[str, Any] = {}
+    for config_field in fields(config):
+        value = getattr(config, config_field.name)
+        config_payload[config_field.name] = (
+            type(value).__name__ if config_field.name == "fingerprint" and value is not None else value
+        )
+    return {"verifiers": names, "config": config_payload}
+
+
 def _declared_tool_schemas(agent: Agent) -> List[Dict[str, Any]]:
     """The declared tool schemas, hashed as declared -- never after parse_tools.
 
@@ -293,9 +313,9 @@ def _additional_input_component(value: Any) -> Any:
 
 
 def _env_fingerprint_of(env: "Environment", agent: Agent, model: Optional[Model] = None) -> str:
-    """sha256 over the environment identity: tasks, scorer, declared tools, prompt
-    strings and flags (agent-level and model-level), declared session_state, and
-    termination settings. Returned string is prefixed with the payload version
+    """sha256 over the environment identity: tasks, scorer, declared tools, verifiers
+    and their loop config, prompt strings and flags (agent-level and model-level),
+    declared session_state, and termination settings. Returned string is prefixed with the payload version
     (_ENV_FINGERPRINT_VERSION) so cross-version fingerprints never compare equal.
 
     Model-level system_prompt/instructions are prompt-shaped and therefore
@@ -355,6 +375,10 @@ def _env_fingerprint_of(env: "Environment", agent: Agent, model: Optional[Model]
                 "tool_call_limit": getattr(agent, "tool_call_limit", None),
             },
         }
+        # Omitted when absent, so an env without verifiers keeps the fingerprint it had
+        verification = _verification_component(agent)
+        if verification is not None:
+            payload["verification"] = verification
     except FingerprintError:
         raise
     except Exception as exc:

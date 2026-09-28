@@ -677,6 +677,32 @@ async def test_grid_renders_statically():
 # ---------------------------------------------------------------------------
 
 
+async def test_unverified_attempts_are_never_scored():
+    # An unverified attempt is a real run whose answer failed verification: it is
+    # unscored (pass_rate is over scored attempts only) and not an error, so the
+    # uniform-error-storm abort does not trip on it.
+    def respond(value):
+        if value == "one":
+            return _output(content="echo:one", status=RunStatus.unverified)
+        return _output(content=f"echo:{value}")
+
+    env = _stub_env(
+        respond=respond,
+        tasks=(Task(input="one", expected="echo:one"), Task(input="two", expected="echo:two")),
+    )
+    result = await arun_rollouts(env, k=2, concurrency=1)
+    summary = result.summary()
+
+    assert summary["n_attempts"] == 4
+    assert summary["n_scored"] == 2
+    assert summary["n_unscored"] == 2
+    assert summary["pass_rate"] == 1.0
+    unverified_attempts = result.task_results[0].attempts
+    assert all(attempt.score is None for attempt in unverified_attempts)
+    assert all(attempt.stop_reason == StopReason.unverified for attempt in unverified_attempts)
+    assert all(attempt.error is None for attempt in unverified_attempts)
+
+
 async def test_summary_shape():
     result = await arun_rollouts(_stub_env(), k=2, concurrency=2)
     summary = result.summary()

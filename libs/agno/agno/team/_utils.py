@@ -224,6 +224,9 @@ def _deep_copy_field(team: Team, field_name: str, field_value: Any) -> Any:
         "compression_manager",
         "learning",
         "skills",
+        # A verifier may carry a judge model or a fingerprint over a live process
+        "verifiers",
+        "verification",
     ):
         return field_value
 

@@ -151,12 +151,13 @@ class InMemoryQueueStore:
         and paused tickets are retention-exempt - without this /queue said
         paused forever and the rows accumulated unboundedly. CAS on
         status='paused': a queued/claimed continuation owns the ticket and is
-        never clobbered (its own terminal write settles it)."""
-        if status not in ("completed", "cancelled", "failed"):
+        never clobbered (its own terminal write settles it). An unverified ticket
+        re-settles the same way: its run is continued in place, never through the queue."""
+        if status not in ("completed", "unverified", "cancelled", "failed"):
             return False
         async with self._lock:
             job = self._jobs.get(job_id)
-            if job is None or job["status"] != "paused":
+            if job is None or job["status"] not in ("paused", "unverified"):
                 return False
             now = int(time.time())
             job.update(status=status, error=error, locked_by=None, locked_at=None, completed_at=now, updated_at=now)
@@ -221,7 +222,7 @@ class InMemoryQueueStore:
         sweep RECONCILES, it does not deface: a falsely-swept leg may have
         completed, cancelled, or paused before the sweeper looked, and its
         ticket must record that, not contradict it."""
-        if status not in ("completed", "cancelled", "paused", "failed"):
+        if status not in ("completed", "unverified", "cancelled", "paused", "failed"):
             return False
         async with self._lock:
             now = int(time.time())
@@ -320,7 +321,7 @@ class InMemoryQueueStore:
         """
         async with self._lock:
             job = self._jobs.get(job_id)
-            if job is None or job["status"] in ("completed", "failed", "cancelled"):
+            if job is None or job["status"] in ("completed", "unverified", "failed", "cancelled"):
                 return {"outcome": "conflict", "job": dict(job) if job is not None else None}
             if job["status"] in ("queued", "running"):
                 return {"outcome": "attach", "job": dict(job)}
@@ -361,7 +362,7 @@ class InMemoryQueueStore:
             to_delete = [
                 jid
                 for jid, j in self._jobs.items()
-                if j["status"] in ("completed", "failed", "cancelled")
+                if j["status"] in ("completed", "unverified", "failed", "cancelled")
                 and j.get("completed_at") is not None
                 and j["completed_at"] <= cutoff
             ]

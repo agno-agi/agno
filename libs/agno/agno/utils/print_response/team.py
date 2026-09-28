@@ -482,6 +482,15 @@ def print_response_stream(
                 continue
 
             if isinstance(resp, tuple(get_args(TeamRunOutputEvent))):
+                # A rejected attempt with budget left is re-entered: the next attempt's
+                # content replaces this one on screen, not appends to it
+                if (
+                    resp.event == TeamRunEvent.verification_completed
+                    and not resp.passed  # type: ignore
+                    and resp.stop_reason is None  # type: ignore
+                ):
+                    _response_content = ""
+                    _response_reasoning_content = ""
                 if resp.event == TeamRunEvent.run_content:
                     if isinstance(resp.content, str):
                         _response_content += resp.content
@@ -1414,6 +1423,15 @@ async def aprint_response_stream(
                 continue
 
             if isinstance(resp, tuple(get_args(TeamRunOutputEvent))):
+                # A rejected attempt with budget left is re-entered: the next attempt's
+                # content replaces this one on screen, not appends to it
+                if (
+                    resp.event == TeamRunEvent.verification_completed
+                    and not resp.passed  # type: ignore
+                    and resp.stop_reason is None  # type: ignore
+                ):
+                    _response_content = ""
+                    _response_reasoning_content = ""
                 if resp.event == TeamRunEvent.run_content:
                     if isinstance(resp.content, str):
                         _response_content += resp.content

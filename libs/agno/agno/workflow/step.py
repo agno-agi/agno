@@ -134,7 +134,7 @@ class UnresolvableCallableError(RuntimeError):
     """
 
 
-def _unresolvable_callable_placeholder(kind: str, ref: str) -> Callable[..., Any]:
+def unresolvable_callable_placeholder(kind: str, ref: str) -> Callable[..., Any]:
     """A constructible stand-in for a callable ref a lenient load could not resolve.
 
     It keeps the workflow loadable for listings, run history and cancel,
@@ -2271,8 +2271,10 @@ class Step:
                         executor_error_event = None
                         async for event in response_stream:
                             if isinstance(event, RunOutput) or isinstance(event, TeamRunOutput):
+                                # Consume to exhaustion: breaking throws GeneratorExit into the
+                                # executor, which persists a paused run as cancelled.
                                 active_executor_run_response = event
-                                break
+                                continue
                             if isinstance(event, _EXECUTOR_ERROR_EVENT_TYPES):
                                 executor_error_event = event
                             # Only yield executor events if stream_executor_events is True
@@ -2527,35 +2529,6 @@ class Step:
                         if isinstance(member_response, RunOutput):
                             workflow_run_response.step_executor_runs.append(member_response)
 
-    def _get_deepest_content_from_step_output(
-        self, step_output: "StepOutput"
-    ) -> Optional[Union[str, Dict[str, Any], List[Any], BaseModel]]:
-        """
-        Extract the deepest content from a step output, handling nested structures like Steps, Router, Loop, etc.
-
-        For container steps (Steps, Router, Loop, etc.), this will recursively find the content from the
-        last actual step rather than using the generic container message.
-
-        For Parallel steps, aggregates content from ALL inner steps (not just the last one).
-        """
-        # If this step has nested steps (like Steps, Condition, Router, Loop, Parallel, etc.)
-        if hasattr(step_output, "steps") and step_output.steps and len(step_output.steps) > 0:
-            # For Parallel steps, aggregate content from ALL inner steps
-            if step_output.step_type == StepType.PARALLEL:
-                aggregated_parts = []
-                for i, inner_step in enumerate(step_output.steps):
-                    inner_content = self._get_deepest_content_from_step_output(inner_step)
-                    if inner_content is not None and str(inner_content).strip():
-                        step_name = inner_step.step_name or f"Step {i + 1}"
-                        aggregated_parts.append(f"=== {step_name} ===\n{inner_content}")
-                return "\n\n".join(aggregated_parts) if aggregated_parts else step_output.content
-
-            # For other nested step types, recursively get content from the last nested step
-            return self._get_deepest_content_from_step_output(step_output.steps[-1])
-
-        # For regular steps, return their content
-        return step_output.content
-
     def _prepare_message(
         self,
         message: Optional[Union[str, Dict[str, Any], List[Any], BaseModel]],
@@ -2566,7 +2539,7 @@ class Step:
         if previous_step_outputs and self._executor_type in ["agent", "team", "workflow"]:
             last_output = list(previous_step_outputs.values())[-1] if previous_step_outputs else None
             if last_output:
-                deepest_content = self._get_deepest_content_from_step_output(last_output)
+                deepest_content = get_deepest_content_from_step_output(last_output)
                 if deepest_content:
                     return deepest_content
 
@@ -2637,10 +2610,11 @@ class Step:
         # Determine step type based on executor type
         step_type = StepType.WORKFLOW if self._executor_type == "workflow" else StepType.STEP
 
-        # Propagate cancelled / error status from the executor's RunOutput
+        # Propagate cancelled / error / unverified status from the executor's RunOutput.
+        # An unverified run never passed its verifiers, so the step is not a success.
         response_status = getattr(response, "status", None)
-        success = response_status not in (RunStatus.cancelled, RunStatus.error)
-        error = response.content if not success else None
+        success = response_status not in (RunStatus.cancelled, RunStatus.error, RunStatus.unverified)
+        error = _unverified_step_error(response) or (response.content if not success else None)
 
         return StepOutput(
             step_name=self.name or "unnamed_step",
@@ -2869,8 +2843,9 @@ class Step:
             content=nested_run_output.content,
             step_run_id=nested_run_output.run_id,
             metrics=self._aggregate_workflow_metrics(nested_run_output.metrics),
-            success=nested_run_output.status != RunStatus.error,
-            error=nested_run_output.error if hasattr(nested_run_output, "error") else None,
+            success=nested_run_output.status not in (RunStatus.cancelled, RunStatus.error, RunStatus.unverified),
+            error=_unverified_step_error(nested_run_output)
+            or (nested_run_output.error if hasattr(nested_run_output, "error") else None),
             steps=nested_steps if nested_steps else None,  # Include nested workflow's step results
         )
 
@@ -3024,10 +2999,15 @@ class Step:
             metrics=self._aggregate_workflow_metrics(nested_run_output.metrics)
             if nested_run_output is not None
             else None,
-            success=nested_run_output.status != RunStatus.error if nested_run_output is not None else False,
-            error=nested_run_output.error
-            if nested_run_output is not None and hasattr(nested_run_output, "error")
-            else None,
+            success=nested_run_output.status not in (RunStatus.cancelled, RunStatus.error, RunStatus.unverified)
+            if nested_run_output is not None
+            else False,
+            error=_unverified_step_error(nested_run_output)
+            or (
+                nested_run_output.error
+                if nested_run_output is not None and hasattr(nested_run_output, "error")
+                else None
+            ),
             steps=nested_steps if nested_steps else None,
         )
 
@@ -3146,8 +3126,9 @@ class Step:
             content=nested_run_output.content,
             step_run_id=nested_run_output.run_id,
             metrics=self._aggregate_workflow_metrics(nested_run_output.metrics),
-            success=nested_run_output.status != RunStatus.error,
-            error=nested_run_output.error if hasattr(nested_run_output, "error") else None,
+            success=nested_run_output.status not in (RunStatus.cancelled, RunStatus.error, RunStatus.unverified),
+            error=_unverified_step_error(nested_run_output)
+            or (nested_run_output.error if hasattr(nested_run_output, "error") else None),
             steps=nested_steps if nested_steps else None,  # Include nested workflow's step results
         )
 
@@ -3302,10 +3283,15 @@ class Step:
             metrics=self._aggregate_workflow_metrics(nested_run_output.metrics)
             if nested_run_output is not None
             else None,
-            success=nested_run_output.status != RunStatus.error if nested_run_output is not None else False,
-            error=nested_run_output.error
-            if nested_run_output is not None and hasattr(nested_run_output, "error")
-            else None,
+            success=nested_run_output.status not in (RunStatus.cancelled, RunStatus.error, RunStatus.unverified)
+            if nested_run_output is not None
+            else False,
+            error=_unverified_step_error(nested_run_output)
+            or (
+                nested_run_output.error
+                if nested_run_output is not None and hasattr(nested_run_output, "error")
+                else None
+            ),
             steps=nested_steps if nested_steps else None,
         )
 
@@ -3565,6 +3551,48 @@ class Step:
                 continue
 
         return videos
+
+
+def _unverified_step_error(run_output: Any) -> Optional[str]:
+    """The step error for an executor run that ended unverified, naming the stop reason; None otherwise.
+    The draft stays the step's content.
+    """
+    if getattr(run_output, "status", None) != RunStatus.unverified:
+        return None
+    record = run_output.verification
+    if record is None or record.stop_reason is None:
+        return "Run ended unverified"
+    return f"Run ended unverified ({record.stop_reason.value})"
+
+
+def get_deepest_content_from_step_output(
+    step_output: "StepOutput",
+) -> Optional[Union[str, Dict[str, Any], List[Any], BaseModel]]:
+    """
+    Extract the deepest content from a step output, handling nested structures like Steps, Router, Loop, etc.
+
+    For container steps (Steps, Router, Loop, etc.), this will recursively find the content from the
+    last actual step rather than using the generic container message.
+
+    For Parallel steps, aggregates content from ALL inner steps (not just the last one).
+    """
+    # If this step has nested steps (like Steps, Condition, Router, Loop, Parallel, etc.)
+    if hasattr(step_output, "steps") and step_output.steps and len(step_output.steps) > 0:
+        # For Parallel steps, aggregate content from ALL inner steps
+        if step_output.step_type == StepType.PARALLEL:
+            aggregated_parts = []
+            for i, inner_step in enumerate(step_output.steps):
+                inner_content = get_deepest_content_from_step_output(inner_step)
+                if inner_content is not None and str(inner_content).strip():
+                    step_name = inner_step.step_name or f"Step {i + 1}"
+                    aggregated_parts.append(f"=== {step_name} ===\n{inner_content}")
+            return "\n\n".join(aggregated_parts) if aggregated_parts else step_output.content
+
+        # For other nested step types, recursively get content from the last nested step
+        return get_deepest_content_from_step_output(step_output.steps[-1])
+
+    # For regular steps, return their content
+    return step_output.content
 
 
 def _is_async_callable(obj: Any) -> TypeGuard[Callable[..., Any]]:

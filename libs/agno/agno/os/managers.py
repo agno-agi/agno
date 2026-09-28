@@ -19,7 +19,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
 from agno.run.agent import RunOutputEvent
-from agno.run.base import RunStatus
+from agno.run.base import REOPENABLE_RUN_STATUSES, TERMINAL_RUN_STATUSES, RunStatus
 from agno.run.team import TeamRunOutputEvent
 from agno.run.workflow import WorkflowRunOutputEvent
 from agno.utils.log import log_debug, log_warning, logger
@@ -245,11 +245,14 @@ class EventsBuffer:
                 "created_at": current_time,
                 "last_updated": current_time,
             }
-        elif self.run_metadata.get(run_id, {}).get("status") == RunStatus.paused:
+        elif self.run_metadata.get(run_id, {}).get("status") in (RunStatus.paused, RunStatus.unverified):
             # A continue reuses the paused run's id, so an event arriving on a
             # paused entry means a new producer took the run over. The pause's
             # status and completed_at would let the cleanup pass reclaim a live
             # run and would route /resume to replay instead of subscribing.
+            # UNVERIFIED is continuable under the same id too (a continue
+            # restarts the verification budget on the same stream), so its
+            # entry takes the same flip.
             self.run_metadata[run_id]["status"] = RunStatus.running
             self.run_metadata[run_id].pop("completed_at", None)
 
@@ -376,11 +379,10 @@ class EventsBuffer:
         # This matters for the expired-state path: register_run re-creates
         # PENDING before the reopen, and declining there would drop the
         # counter seed (Redis parity - its missing-key case reopens too).
-        reopenable = (
-            (RunStatus.paused, RunStatus.error, RunStatus.pending)
-            if include_error
-            else (RunStatus.paused, RunStatus.pending)
-        )
+        # UNVERIFIED reopens too: terminal-for-the-stream but continuable
+        # (a continue restarts the verification budget on the same stream),
+        # so its sentinel is invalidated exactly like a pause's.
+        reopenable = REOPENABLE_RUN_STATUSES + ((RunStatus.error,) if include_error else ())
         metadata = self.run_metadata.get(run_id)
         if metadata is None:
             # State expired/lost (restart): re-create it, pre-execution
@@ -401,8 +403,9 @@ class EventsBuffer:
             del self.events[run_id]
         # A paused run can be continued later under the same id: its monotonic
         # index survives the reclaim, so the continuation's event indices keep
-        # ascending past every index a client has already seen.
-        if (self.run_metadata.get(run_id) or {}).get("status") != RunStatus.paused:
+        # ascending past every index a client has already seen. UNVERIFIED is
+        # continuable on the same stream too, so its counter survives the same way.
+        if (self.run_metadata.get(run_id) or {}).get("status") not in (RunStatus.paused, RunStatus.unverified):
             self._next_index.pop(run_id, None)
         if run_id in self.run_metadata:
             del self.run_metadata[run_id]
@@ -417,7 +420,7 @@ class EventsBuffer:
             # Terminal runs, plus paused runs: a pause can wait on an approval
             # forever, and a reclaimed paused entry is rebuilt by add_event
             # when the run is eventually continued.
-            if metadata["status"] in [RunStatus.completed, RunStatus.error, RunStatus.cancelled, RunStatus.paused]:
+            if metadata["status"] in TERMINAL_RUN_STATUSES:
                 completed_at = metadata.get("completed_at", metadata["last_updated"])
                 if current_time - completed_at > self.cleanup_interval:
                     runs_to_cleanup.append(run_id)

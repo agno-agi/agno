@@ -250,7 +250,8 @@ class TestQuietRunRefresher:
 
 class TestPausedRefresherEviction:
     @pytest.mark.asyncio
-    async def test_refresher_evicts_paused_run_finished_elsewhere(self):
+    @pytest.mark.parametrize("final_status", [RunStatus.completed, RunStatus.unverified])
+    async def test_refresher_evicts_paused_run_finished_elsewhere(self, final_status):
         """complete_run(paused) enrolls the PAUSING replica in the refresher.
         When the continue lands on ANOTHER replica and finishes the run, this
         replica must notice the terminal status on its tick and evict - or
@@ -265,7 +266,7 @@ class TestPausedRefresherEviction:
             # The continue executes ELSEWHERE: that replica writes the terminal
             # status straight into Redis (this process's stream object is not
             # involved)
-            await s._redis.set(s._status_key("r1"), RunStatus.completed.value)
+            await s._redis.set(s._status_key("r1"), final_status.value)
 
             await asyncio.sleep(1.3)  # one refresher tick
             assert "r1" not in s._active_runs, "refresher must evict a run that finished elsewhere"

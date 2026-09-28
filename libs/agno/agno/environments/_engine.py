@@ -29,6 +29,7 @@ _STATUS_TO_STOP = {
     RunStatus.paused: "paused",
     RunStatus.cancelled: "cancelled",
     RunStatus.error: "error",
+    RunStatus.unverified: "unverified",
 }
 
 
@@ -42,6 +43,10 @@ class StopReason(str, Enum):
     timeout = "timeout"  # exceeded timeout_seconds; whatever was captured is kept
     cancelled = "cancelled"  # run was cancelled
     paused = "paused"  # HITL pause; content is placeholder boilerplate, never scored
+    # A distinct member rather than folding into `error`: an unverified run is a real
+    # run whose answer failed verification, not an infrastructure fault, so it must
+    # not feed the uniform-error-storm abort. Still a failed attempt: never scored.
+    unverified = "unverified"  # run finished but its verifiers never passed
 
 
 @dataclass
@@ -219,7 +224,7 @@ async def _run_attempt(
         stop_reason = StopReason.timeout
     else:
         stop_reason = _stop_reason_for(state)
-        if stop_reason != StopReason.completed and not state.errored:
+        if stop_reason not in (StopReason.completed, StopReason.unverified) and not state.errored:
             if state.run is None:
                 state.errors.append("no run output recorded")
             else:

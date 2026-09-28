@@ -38,6 +38,7 @@ from agno.utils.agent import (
     update_session_state_util,
 )
 from agno.utils.log import log_debug, log_warning
+from agno.verifiers.report import is_verification_report
 
 # ---------------------------------------------------------------------------
 # Session read / write
@@ -976,14 +977,19 @@ def get_chat_history(
     Returns:
         List[Message]: The chat history from the session.
     """
-    return get_session_messages(
-        team,
-        session_id=session_id,
-        last_n_runs=last_n_runs,
-        skip_roles=["system", "tool"],
-        skip_member_messages=True,
-        skip_statuses=[],
-    )
+    # The verification report is a user-role message only for the model; it is not a turn.
+    return [
+        message
+        for message in get_session_messages(
+            team,
+            session_id=session_id,
+            last_n_runs=last_n_runs,
+            skip_roles=["system", "tool"],
+            skip_member_messages=True,
+            skip_statuses=[],
+        )
+        if not is_verification_report(message)
+    ]
 
 
 async def aget_chat_history(
@@ -996,14 +1002,19 @@ async def aget_chat_history(
     Returns:
         List[Message]: The chat history from the session.
     """
-    return await aget_session_messages(
-        team,
-        session_id=session_id,
-        last_n_runs=last_n_runs,
-        skip_roles=["system", "tool"],
-        skip_member_messages=True,
-        skip_statuses=[],
-    )
+    # The verification report is a user-role message only for the model; it is not a turn.
+    return [
+        message
+        for message in await aget_session_messages(
+            team,
+            session_id=session_id,
+            last_n_runs=last_n_runs,
+            skip_roles=["system", "tool"],
+            skip_member_messages=True,
+            skip_statuses=[],
+        )
+        if not is_verification_report(message)
+    ]
 
 
 # ---------------------------------------------------------------------------

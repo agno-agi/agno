@@ -6,10 +6,13 @@ from types import SimpleNamespace
 
 import pytest
 
+from agno.metrics import ModelMetrics, RunMetrics
 from agno.models.openai import OpenAIChat
 from agno.run.agent import RunOutput
 from agno.scorer import JudgeScorer
 from agno.scorer.judge import BinaryJudgeResponse, NumericJudgeResponse
+from agno.verifiers.scorer import ScorerVerifier
+from agno.workflow.types import StepOutput
 
 _FENCE_OPEN = re.compile(r'<output nonce="([0-9a-f]{32})">\n')
 
@@ -25,11 +28,11 @@ class _StubEvaluator:
 
     def run(self, prompt, stream=False):
         self.prompts.append(prompt)
-        return SimpleNamespace(content=self._content)
+        return SimpleNamespace(content=self._content, metrics=None)
 
     async def arun(self, prompt, stream=False):
         self.prompts.append(prompt)
-        return SimpleNamespace(content=self._content)
+        return SimpleNamespace(content=self._content, metrics=None)
 
 
 def _numeric_scorer(score: int, threshold: int = 7) -> JudgeScorer:
@@ -62,6 +65,13 @@ def test_judge_binary_mode_maps_to_endpoints():
 
     scorer._evaluator = _StubEvaluator(BinaryJudgeResponse(passed=False, reason="wrong"))
     assert scorer.score(RunOutput(content="x")).value == 0.0
+
+
+def test_judge_scores_a_step_output_without_an_input():
+    scorer = JudgeScorer(_JUDGE_MODEL, "Is it right?")
+    scorer._evaluator = _StubEvaluator(BinaryJudgeResponse(passed=True, reason="fine"))
+    assert scorer.score(StepOutput(content="a function step's draft")).passed is True
+    assert "a function step's draft" in scorer._evaluator.prompts[0]
 
 
 async def test_judge_scorer_async_matches_sync():
@@ -193,3 +203,58 @@ def test_fence_contains_injection():
     assert sync_nonce != async_nonce
     # The forged delimiters in the payload carry the wrong nonce.
     assert sync_nonce != "0123456789abcdef0123456789abcdef"
+
+
+# --- scorer/judge.py: judge spend is visible on the judged run -----------------
+
+
+def _judge_with_metered_evaluator(passed: bool):
+    class _MeteredEvaluator:
+        def _response(self):
+            metrics = RunMetrics(input_tokens=7, output_tokens=3, total_tokens=10)
+            metrics.details = {
+                "model": [ModelMetrics(id="judge-1", provider="test", input_tokens=7, output_tokens=3, total_tokens=10)]
+            }
+            return SimpleNamespace(content=BinaryJudgeResponse(passed=passed, reason="stubbed"), metrics=metrics)
+
+        def run(self, prompt, stream=False):
+            return self._response()
+
+        async def arun(self, prompt, stream=False):
+            return self._response()
+
+    scorer = JudgeScorer(OpenAIChat(id="gpt-5-mini"), "Is it right?")
+    scorer._evaluator = _MeteredEvaluator()
+    return scorer
+
+
+def _metered_run() -> RunOutput:
+    return RunOutput(content="the answer", metrics=RunMetrics(input_tokens=100, output_tokens=50, total_tokens=150))
+
+
+def test_judge_scorer_without_run_metrics_leaves_the_run_alone():
+    # An offline eval or environment scoring a stored run must not see judge tokens land on it.
+    run = _metered_run()
+    score = _judge_with_metered_evaluator(True).score(run)
+    assert score.passed is True
+    assert run.metrics.details is None
+    assert run.metrics.total_tokens == 150
+    assert not hasattr(score, "metrics")
+
+
+@pytest.mark.parametrize("use_async", [False, True], ids=["sync", "async"])
+async def test_scorer_verifier_spend_lands_on_the_gated_attempt(use_async):
+    # The judged run is the attempt's own output, so each verify charges that run once.
+    run = _metered_run()
+    verifier = ScorerVerifier(_judge_with_metered_evaluator(False), name="judge")
+
+    async def verify():
+        return await verifier.averify(run, None) if use_async else verifier.verify(run, None)
+
+    verdict = await verify()
+    assert verdict.passed is False
+    (judge_metrics,) = run.metrics.details["eval_model"]
+    assert (judge_metrics.id, judge_metrics.provider, judge_metrics.total_tokens) == ("judge-1", "test", 10)
+    await verify()
+    assert [m.total_tokens for m in run.metrics.details["eval_model"]] == [20]
+    assert run.metrics.total_tokens == 170

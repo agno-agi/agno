@@ -184,9 +184,10 @@ class TestSyncRunResponseWithModelResponse:
         assert len(run_response.messages) == 1
         assert run_response.messages[0].content == "keep me"
 
-    def test_replaces_tools_does_not_extend(self):
-        """The model_response.tool_executions list is cumulative; the sync should
-        replace run_response.tools to avoid double-counting."""
+    def test_merges_tools_by_tool_call_id(self):
+        """The model_response.tool_executions list is cumulative within one model call, so
+        repeated ids replace in place; executions the run already carries from an earlier
+        verification attempt survive the sync."""
         run_response = _make_run_response()
         run_response.tools = [ToolExecution(tool_call_id="old", tool_name="t", tool_args={})]
         run_messages = _make_run_messages()
@@ -197,9 +198,10 @@ class TestSyncRunResponseWithModelResponse:
         ]
 
         _sync_run_response_with_model_response(run_response, run_messages, model_response)
+        _sync_run_response_with_model_response(run_response, run_messages, model_response)
 
         assert run_response.tools is not None
-        assert [t.tool_call_id for t in run_response.tools] == ["new-1", "new-2"]
+        assert [t.tool_call_id for t in run_response.tools] == ["old", "new-1", "new-2"]
 
 
 class TestCheckpointRun:

@@ -33,7 +33,8 @@ class Approval:
     created_at: Optional[int] = None
     updated_at: Optional[int] = None
     # Run status from the associated run. Updated when run completes/errors/cancels.
-    # Values: "PAUSED", "COMPLETED", "RUNNING", "ERROR", "CANCELLED", or None.
+    # Values: "PENDING", "RUNNING", "COMPLETED", "PAUSED", "CANCELLED", "ERROR",
+    # "REGENERATED", "UNVERIFIED", or None.
     run_status: Optional[str] = None
 
     def __post_init__(self) -> None:

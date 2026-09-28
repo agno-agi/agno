@@ -117,6 +117,14 @@ def print_response_stream(
                     if response_event.run_input is not None:  # type: ignore
                         input_content = get_text_from_message(response_event.run_input.input_content)  # type: ignore
 
+                if response_event.event == RunEvent.verification_completed:  # type: ignore
+                    # A rejected attempt with budget left is re-entered: the next attempt's
+                    # content replaces this one on screen, not appends to it
+                    if not response_event.passed and response_event.stop_reason is None:  # type: ignore
+                        _response_content = ""
+                        _response_reasoning_content = ""
+                        response_content_batch = ""
+
                 if (
                     response_event.event == RunEvent.tool_call_started  # type: ignore
                     and hasattr(response_event, "tool")
@@ -331,6 +339,14 @@ async def aprint_response_stream(
                 if resp.event == RunEvent.pre_hook_completed:  # type: ignore
                     if resp.run_input is not None:  # type: ignore
                         input_content = get_text_from_message(resp.run_input.input_content)  # type: ignore
+
+                if resp.event == RunEvent.verification_completed:  # type: ignore
+                    # A rejected attempt with budget left is re-entered: the next attempt's
+                    # content replaces this one on screen, not appends to it
+                    if not resp.passed and resp.stop_reason is None:  # type: ignore
+                        _response_content = ""
+                        _response_reasoning_content = ""
+                        response_content_batch = ""
 
                 if resp.event == RunEvent.run_content:  # type: ignore
                     if isinstance(resp.content, str):

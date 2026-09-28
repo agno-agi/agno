@@ -50,6 +50,7 @@ from agno.os.job_queue import (
 )
 from agno.os.middleware.user_scope import (
     SESSION_ID_REQUIRED,
+    acancel_not_recorded,
     assert_session_matches_component,
     assert_session_writable,
     caller_is_admin,
@@ -91,7 +92,7 @@ from agno.os.utils import (
 )
 from agno.registry import Registry
 from agno.run.agent import RunOutput
-from agno.run.base import RunStatus
+from agno.run.base import TERMINAL_RUN_STATUSES, RunStatus
 from agno.run.team import RunErrorEvent as TeamRunErrorEvent
 from agno.run.team import TeamRunOutput
 from agno.team.factory import TeamFactory
@@ -304,7 +305,7 @@ async def _resume_stream_generator(
         yield f"event: error\ndata: {json.dumps(error)}\n\n"
         return
 
-    if buffer_status in (RunStatus.completed, RunStatus.error, RunStatus.cancelled, RunStatus.paused):
+    if buffer_status in TERMINAL_RUN_STATUSES:
         # PATH 2: Run finished -- replay missed events from the event stream
         total_buffered = await event_stream.get_event_count(run_id)
         missed_events = await event_stream.replay(run_id, last_event_index=last_event_index)
@@ -1162,6 +1163,8 @@ def get_team_router(
                     component_type="teams",
                     component_id=team_id,
                 )
+            if await acancel_not_recorded(getattr(factory, "db", None) or os.db, session_id, run_id):
+                return JSONResponse(content={}, status_code=200)
 
             # Tombstone a still-queued durable ticket first: intent alone
             # does not stop a job no task is executing yet
@@ -1204,6 +1207,10 @@ def get_team_router(
                 component_type="teams",
                 component_id=team_id,
             )
+        if not isinstance(team, RemoteTeam) and await acancel_not_recorded(
+            getattr(team, "db", None) or os.db, session_id, run_id
+        ):
+            return JSONResponse(content={}, status_code=200)
 
         # cancel_run always stores cancellation intent (even for not-yet-registered runs
         # in cancel-before-start scenarios), so we always return success.
@@ -1315,7 +1322,8 @@ def get_team_router(
             "**Use Cases:**\n"
             "- Resume execution after tool approval/rejection\n"
             "- Provide manual tool execution results\n"
-            "- Resume after admin approval (requirements can be empty; resolution fetched from DB)\n\n"
+            "- Resume after admin approval (requirements can be empty; resolution fetched from DB)\n"
+            "- Continue an UNVERIFIED run in place under the same run_id; the verification budget restarts\n\n"
             "**Requirements Parameter:**\n"
             "JSON string containing array of requirement objects with tool execution results.\n"
             "Can be empty when an admin-required approval has been resolved."
@@ -2304,7 +2312,9 @@ def get_team_router(
         request: Request,
         team_id: str,
         session_id: str = Query(..., description="Session ID to list runs for"),
-        status: Optional[str] = Query(None, description="Filter by run status (PENDING, RUNNING, COMPLETED, ERROR)"),
+        status: Optional[str] = Query(
+            None, description="Filter by run status (PENDING, RUNNING, COMPLETED, ERROR, PAUSED, UNVERIFIED)"
+        ),
     ):
         from agno.os.schema import TeamRunSchema
 
