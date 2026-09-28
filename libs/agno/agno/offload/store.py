@@ -468,18 +468,16 @@ class ResultStore:
             max_namespace_bytes=MAX_SESSION_NAMESPACE_BYTES,
         )
 
-    def _fs_for_namespace(self, namespace: str, user_id: Optional[str] = None) -> FileSystem:
-        fs = FileSystem(
+    def _fs_for_namespace(self, namespace: str) -> FileSystem:
+        return FileSystem(
             backend=self.fs.backend,
             namespace=namespace,
             max_file_bytes=MAX_RESULT_BYTES,
             max_namespace_bytes=MAX_SESSION_NAMESPACE_BYTES,
         )
-        # A payload lives in its user's partition, like its index row names the user.
-        return fs.resolve(user_id=user_id) if user_id else fs
 
     def _fs_for_row(self, row: Dict[str, Any]) -> FileSystem:
-        return self._fs_for_namespace(str(row["namespace"]), row.get("user_id") or None)
+        return self._fs_for_namespace(str(row["namespace"]))
 
     def _build_row(
         self,
@@ -587,10 +585,10 @@ class ResultStore:
         path, content_type = self._plan(
             session_id=session_id, run_id=run_id, tool_call_id=tool_call_id, output=output, shared=shared
         )
+        # Payloads stay in the shared partition: the namespace is already per
+        # session, the index row records the user, and releases before 3.1 wrote
+        # them there, so older results stay readable.
         session_fs = self._session_fs(session_id)
-        if user_id is not None:
-            # The payload row records its user, like the index row does.
-            session_fs = session_fs.resolve(user_id=user_id)
         session_fs.write(path, output)
         row = self._build_row(
             session_id=session_id,
@@ -632,10 +630,10 @@ class ResultStore:
         path, content_type = self._plan(
             session_id=session_id, run_id=run_id, tool_call_id=tool_call_id, output=output, shared=shared
         )
+        # Payloads stay in the shared partition: the namespace is already per
+        # session, the index row records the user, and releases before 3.1 wrote
+        # them there, so older results stay readable.
         session_fs = self._session_fs(session_id)
-        if user_id is not None:
-            # The payload row records its user, like the index row does.
-            session_fs = session_fs.resolve(user_id=user_id)
         await session_fs.awrite(path, output)
         row = self._build_row(
             session_id=session_id,
