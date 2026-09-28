@@ -30,25 +30,27 @@ managed `filesystem=True` shorthand.
 
 ## Permissions and several stores
 
-`filesystem` also accepts a toolkit, which carries its own permissions. A consumer
-that must never change the records gets the three read tools only
-(`read_only_consumer.py`):
+`filesystem` takes `True`, a `FileSystem`, or a list of them. What an agent may do
+with a store is set on the `FileSystem`: `read_only`, `allow_delete`, `include_tools`
+and `instructions`. A consumer that must never change the records gets the three
+read tools only (`read_only_consumer.py`):
 
 ```python
 decisions = FileSystem(db, namespace="research/decisions")
+decisions_read_only = FileSystem(db, namespace="research/decisions", read_only=True)
 recorder = Agent(id="recorder", db=db, filesystem=decisions)
-answerer = Agent(id="answerer", db=db, filesystem=decisions.tools(read_only=True, add_instructions=True))
+answerer = Agent(id="answerer", db=db, filesystem=decisions_read_only)
 ```
 
-A toolkit passed this way is used as given: its `read_only`, `allow_delete`,
-`include_tools` and `add_instructions` settings stand. `read_only`, `allow_delete`
-and `add_instructions` are stored with the agent config; an `include_tools` or
-`exclude_tools` selection is not.
+Both objects point at the same files; the options only shape the agent's tools,
+never the `FileSystem`'s own `read()` and `write()`. They are stored with the
+agent config.
 
-The setting holds one store. An agent that needs several attaches them through
-`tools`, splitting the tool names with `include_tools` so they do not collide
-(`multiple_stores_per_agent.py`). The setting and a manually attached
-`FileSystemTools` cannot be combined on one agent.
+An agent with several stores lists them, `filesystem=[drafts, handbook]`, and each
+store's tools get a distinct name (`multiple_stores_agent.py`). To attach the
+toolkit yourself instead, use `tools=[fs.tools(...)]`; `tools()` defaults to the
+FileSystem's own options. The setting and a manually attached toolkit cannot be
+combined on one agent.
 
 AgentOS discovers filesystems from both the setting and `tools`. `/config` lists
 each namespace's linked `agents`, with `access: "read_only"` on read-only agents

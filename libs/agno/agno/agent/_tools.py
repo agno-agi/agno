@@ -188,16 +188,13 @@ def _append_filesystem_tools(
             "filesystem manages its own FileSystemTools. Remove the manually configured "
             "FileSystemTools or disable the filesystem setting."
         )
+    # Each FileSystem carries its own tool options (read_only, allow_delete, include_tools).
     if isinstance(agent.filesystem, list):
         for index, store in enumerate(agent.filesystem, start=1):
-            toolkit = store if isinstance(store, FileSystemTools) else FileSystemTools(fs=store, add_instructions=True)
+            toolkit = store.tools(add_instructions=True)
             if len(agent.filesystem) > 1:
                 toolkit = _namespace_filesystem_toolkit(toolkit, index)
             agent_tools.append(toolkit)
-        return
-    if isinstance(agent.filesystem, FileSystemTools):
-        # The developer built the toolkit, so its permissions and instruction settings stand.
-        agent_tools.append(agent.filesystem)
         return
     agent_tools.append(filesystem.tools(add_instructions=True))
 

@@ -133,7 +133,7 @@ class BaseFS(ABC):
             return None
         return FileData(
             content=content,
-            meta=FileMeta(path=path, size_bytes=len(content.encode("utf-8")), user_id=user_id or None),
+            metadata=FileMeta(path=path, size_bytes=len(content.encode("utf-8")), user_id=user_id or None),
         )
 
     def append(

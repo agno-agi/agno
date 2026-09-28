@@ -9,7 +9,7 @@ before running the cookbook or automated tests.
 
 **Status:** PASS
 
-**Description:** Imported the app and drove it with a FastAPI test client (no server, no model call). A recorder holds `FileSystem(db, namespace="research/decisions")`; an answerer holds the same store through `filesystem=decisions.tools(read_only=True, add_instructions=True)`. Seeded `decisions/2026-09.md`.
+**Description:** Imported the app and drove it with a FastAPI test client (no server, no model call). A recorder holds `FileSystem(db, namespace="research/decisions")`; an answerer holds the same store as `FileSystem(db, namespace="research/decisions", read_only=True)`. Seeded `decisions/2026-09.md`. Re-checked 2026-09-28 after tool options moved onto `FileSystem`: the answerer resolves to read-only access and the recorder to full access.
 
 **Result:** `/config` reported one instance with `agents=["answerer", "recorder"]` and `read_only_agents=["answerer"]`. `/filesystem/entries?agent_id=answerer` and `/filesystem/files` listed the seeded file. The answerer resolved to `list_files`, `read_file`, `search_content` only; the recorder to the default seven tools. Agent runs against a model were not exercised.
 

@@ -1,7 +1,7 @@
 """LocalFileSystem: the disk-based backend for FileSystem."""
 
 import os
-from urllib.parse import quote, unquote
+from urllib.parse import unquote
 import tempfile
 from pathlib import Path
 from typing import List, Optional, Union
@@ -12,6 +12,10 @@ from agno.fs.base import BaseFS
 from agno.fs.errors import InvalidPathError, QuotaExceededError, UnsupportedOperationError
 from agno.fs.types import FileData, FileMeta
 from agno.utils.path_safety import safe_join_relative_path
+
+
+# Characters a user id keeps literally in its directory name; see _encode_user_id.
+_USER_ID_SAFE = frozenset("abcdefghijklmnopqrstuvwxyz0123456789-_")
 
 
 class LocalFileSystem(BaseFS):
@@ -31,13 +35,24 @@ class LocalFileSystem(BaseFS):
         """One on-disk directory component for a ``(namespace, user_id)`` partition.
 
         A user partition appends ``%%<user>`` to the namespace component.
-        Percent-encoding never emits ``%%``, so the join is unambiguous, and the
-        user id is percent-encoded so it stays one component.
+        Percent-encoding never emits ``%%``, so the join is unambiguous.
         """
         encoded = LocalFileSystem._encode_namespace(namespace)
         if not user_id:
             return encoded
-        return f"{encoded}%%{quote(user_id, safe='')}"
+        return f"{encoded}%%{LocalFileSystem._encode_user_id(user_id)}"
+
+    @staticmethod
+    def _encode_user_id(user_id: str) -> str:
+        """One case-safe directory component for a user id.
+
+        Only lowercase letters, digits, ``-`` and ``_`` stay literal; every other
+        UTF-8 byte is percent-encoded with lowercase hex. So ``Alice`` becomes
+        ``%41lice`` and never shares a folder with ``alice`` on a case-insensitive
+        filesystem (macOS, Windows), and no id can carry a separator, a trailing
+        dot, or a character Windows reserves. ``unquote`` reverses it exactly.
+        """
+        return "".join(chr(byte) if chr(byte) in _USER_ID_SAFE else f"%{byte:02x}" for byte in user_id.encode("utf-8"))
 
     @staticmethod
     def _encode_namespace(namespace: str) -> str:
@@ -181,7 +196,7 @@ class LocalFileSystem(BaseFS):
             return None
         return FileData(
             content=content,
-            meta=FileMeta(
+            metadata=FileMeta(
                 path=path,
                 size_bytes=stat.st_size,
                 version=None,

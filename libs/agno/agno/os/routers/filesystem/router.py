@@ -1,5 +1,5 @@
 import asyncio
-from typing import TYPE_CHECKING, Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, TypeVar, Union
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
@@ -25,6 +25,7 @@ from agno.os.routers.filesystem.schema import (
 )
 from agno.os.routers.filesystem.utils import _filesystem_backend_key
 from agno.os.schema import (
+    SortOrder,
     BadRequestResponse,
     InternalServerErrorResponse,
     NotFoundResponse,
@@ -41,6 +42,40 @@ if TYPE_CHECKING:
 
 
 _MAX_PREVIEW_CHARS = 100_000
+
+FileSortField = Literal["type", "size", "updated_at"]
+_Entry = TypeVar("_Entry", bound=Union[FileSystemEntry, FileSystemTableEntry])
+
+
+def _sort_entries(entries: List[_Entry], sort_by: Optional[FileSortField], sort_order: SortOrder) -> List[_Entry]:
+    """Order a whole listing before it is paged; without ``sort_by`` the given order stands.
+
+    Sorting by ``type`` puts directories first ascending and files first
+    descending. Sorting by size or update time keeps directories ahead of files
+    in either direction. Ties fall back to the path so a page boundary is stable.
+    """
+    if sort_by is None:
+        return entries
+
+    def value(entry: _Entry) -> Any:
+        if sort_by == "type":
+            return getattr(entry, "type", "file")
+        if sort_by == "size":
+            return entry.size_bytes or 0
+        return entry.updated_at or 0
+
+    ordered = sorted(entries, key=lambda entry: (value(entry), path_sort_key(entry.path)))
+    if sort_order == SortOrder.DESC:
+        ordered.reverse()
+    if sort_by == "type":
+        return ordered
+    return [entry for entry in ordered if getattr(entry, "type", "file") == "directory"] + [
+        entry for entry in ordered if getattr(entry, "type", "file") != "directory"
+    ]
+
+
+_SORT_BY_QUERY = Query(None, description="Sort by type, size or updated_at; the default order is by path")
+_SORT_ORDER_QUERY = Query(SortOrder.ASC, description="Sort order (asc or desc)")
 _MAX_CONCURRENT_FILESYSTEM_READS = 8
 
 
@@ -406,6 +441,8 @@ def get_filesystem_router(
         agent_id: Optional[str] = Query(None, description="Filter by agent ID"),
         namespace: Optional[str] = Query(None, description="Filter by resolved namespace"),
         query: Optional[str] = Query(None, min_length=1, max_length=200, description="Search file contents"),
+        sort_by: Optional[FileSortField] = _SORT_BY_QUERY,
+        sort_order: SortOrder = _SORT_ORDER_QUERY,
         page: int = Query(1, ge=1, description="1-indexed page number"),
         limit: int = Query(50, ge=1, le=100, description="Page size"),
     ) -> FileSystemTableResponse:
@@ -418,6 +455,7 @@ def get_filesystem_router(
             query=query.strip() if query else None,
             strict=agent_id is not None,
         )
+        entries = _sort_entries(entries, sort_by, sort_order)
         total_count = len(entries)
         total_pages = (total_count + limit - 1) // limit if total_count else 0
         start = (page - 1) * limit
@@ -446,6 +484,8 @@ def get_filesystem_router(
             None, description="Agent holding the filesystem; alone, selects that agent's first filesystem"
         ),
         directory: str = Query("", description="Relative directory inside the filesystem"),
+        sort_by: Optional[FileSortField] = _SORT_BY_QUERY,
+        sort_order: SortOrder = _SORT_ORDER_QUERY,
         page: int = Query(1, ge=1, description="1-indexed page number"),
         limit: int = Query(50, ge=1, le=100, description="Page size"),
     ) -> FileSystemListResponse:
@@ -455,7 +495,7 @@ def get_filesystem_router(
         try:
             normalized_directory = normalize_directory(directory)
             listings = [await asyncio.to_thread(_list_entries, view, normalized_directory) for view in views]
-            entries = _merge_entries(listings)
+            entries = _sort_entries(_merge_entries(listings), sort_by, sort_order)
             usages = [await view.ausage() for view in views]
         except InvalidPathError as e:
             raise HTTPException(status_code=400, detail=str(e))
@@ -512,7 +552,7 @@ def get_filesystem_router(
             raise HTTPException(status_code=400, detail=str(e))
         if file_data is None:
             raise HTTPException(status_code=404, detail="File not found")
-        metadata = file_data.meta
+        metadata = file_data.metadata
         content = file_data.content
         end = min(offset + limit, len(content))
         preview = content[offset:end]

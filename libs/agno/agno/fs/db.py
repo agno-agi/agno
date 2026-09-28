@@ -446,7 +446,7 @@ class DbFileSystem(BaseFS):
             return None
         return FileData(
             content=row[0],
-            meta=FileMeta(path=path, size_bytes=row[1], version=row[2], updated_at=row[3], user_id=user_id or None),
+            metadata=FileMeta(path=path, size_bytes=row[1], version=row[2], updated_at=row[3], user_id=user_id or None),
         )
 
     def _stat(self, namespace: str, path: str, *, user_id: str = "") -> Optional[FileMeta]:

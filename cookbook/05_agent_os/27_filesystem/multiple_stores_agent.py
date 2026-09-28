@@ -3,8 +3,8 @@ AgentOS File System - Several Stores On One Agent
 =================================================
 
 One agent receives multiple stores through ``filesystem=[...]``. Its drafts are
-read-write; the team handbook is read-only. Plain FileSystem entries get the
-default tools, while FileSystem.tools(...) entries keep their own permissions.
+read-write; the team handbook is read-only. Each FileSystem carries its own
+permissions: ``FileSystem(..., read_only=True)`` gives the agent only read tools.
 
 For several stores, tools are qualified by list position and namespace, such as
 ``fs_1_analyst_drafts_read_file`` and ``fs_2_team_handbook_read_file``. The agent
@@ -30,11 +30,12 @@ from agno.os import AgentOS
 # ---------------------------------------------------------------------------
 db = SqliteDb(
     id="filesystem-db",
-    db_file="tmp/filesystem_multiple_stores.db",
+    db_file="tmp/filesystem_multiple_stores_agent.db",
 )
 
 drafts = FileSystem(db, namespace="analyst/drafts")
-handbook = FileSystem(db, namespace="team/handbook")
+# The analyst reads the handbook but never changes it.
+handbook = FileSystem(db, namespace="team/handbook", read_only=True)
 
 # ---------------------------------------------------------------------------
 # Create Agent
@@ -44,10 +45,7 @@ analyst = Agent(
     name="Analyst",
     model=OpenAIResponses(id="gpt-5.6-luna"),
     db=db,
-    filesystem=[
-        drafts,
-        handbook.tools(read_only=True, add_instructions=True),
-    ],
+    filesystem=[drafts, handbook],
     instructions=[
         "Read the team/handbook style guide before writing analysis.",
         "Read and update your work in analyst/drafts. Never change the handbook.",

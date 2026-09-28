@@ -10,8 +10,7 @@ from agno.agent import Agent, RemoteAgent
 from agno.agent.factory import AgentFactory
 from agno.db.sqlite import SqliteDb
 from agno.fs import FileSystem
-from agno.os import AgentOS
-from agno.os.config import AuthorizationConfig
+from agno.os import AgentOS, Authorization
 from agno.registry import Registry
 
 JWT_SECRET = "test-secret-for-filesystem-routes-32-bytes"
@@ -55,12 +54,8 @@ def client_factory():
                 agents=list(agents),
                 db=db,
                 registry=registry,
-                authorization=True,
-                authorization_config=AuthorizationConfig(
-                    verification_keys=[JWT_SECRET],
-                    algorithm="HS256",
-                    user_isolation=user_isolation,
-                ),
+                authorization=Authorization(verification_keys=[JWT_SECRET], algorithm="HS256"),
+                user_isolation=user_isolation,
             )
             client = TestClient(agent_os.get_app(), raise_server_exceptions=False)
             cleanup.callback(client.close)
@@ -171,7 +166,10 @@ def test_global_files_merges_agents_sharing_the_same_filesystem(db, monkeypatch,
     assert restricted.json()["entries"][0]["agent_ids"] == ["one"]
 
 
-def test_global_files_skips_remote_agents_but_explicit_requests_fail(db, client_factory):
+def test_global_files_skips_remote_agents_but_explicit_requests_fail(db, client_factory, monkeypatch):
+    # No server runs at the remote's URL: stub the one attribute AgentOS reads at
+    # startup so the test never touches the network.
+    monkeypatch.setattr(RemoteAgent, "db", property(lambda self: None))
     filesystem = FileSystem(db, namespace="notes")
     filesystem.write("state.md", "local")
     agent = Agent(id="notes", db=db, filesystem=filesystem)
@@ -428,20 +426,19 @@ def test_manual_read_only_toolkit_is_discovered_and_browsable(db, client_factory
     assert [(row["path"], row["agent_ids"]) for row in rows] == [("decisions.md", ["answerer", "recorder"])]
 
 
-def test_read_only_toolkit_setting_is_reported_read_only(db, client_factory):
-    agent = Agent(id="answerer", db=db, filesystem=FileSystem(db, namespace="research").tools(read_only=True))
+def test_read_only_filesystem_is_reported_read_only(db, client_factory):
+    agent = Agent(id="answerer", db=db, filesystem=FileSystem(db, namespace="research", read_only=True))
     client = client_factory(agent)
 
     config = client.get("/config", headers=_headers("alice", ["config:read", "agents:read"])).json()
     instance = config["filesystem"]["namespaces"][0]
     assert instance["agents"] == [{"id": "answerer", "access": "read_only"}]
-    assert "read_only_agents" not in instance
 
 
 @pytest.mark.parametrize("read_only_first", [True, False])
 def test_config_full_access_takes_precedence_on_shared_store(db, read_only_first, client_factory):
     shared = FileSystem(db, namespace="shared")
-    reader = shared.tools(read_only=True)
+    reader = FileSystem(db, namespace="shared", read_only=True)
     attachments = [reader, shared] if read_only_first else [shared, reader]
     client = client_factory(Agent(id="analyst", db=db, filesystem=attachments))
 
@@ -494,7 +491,7 @@ def test_namespace_alone_addresses_a_filesystem_within_caller_access(db, client_
     shared = FileSystem(db, namespace="research/decisions")
     private = FileSystem(db, namespace="private")
     recorder = Agent(id="recorder", db=db, filesystem=shared)
-    answerer = Agent(id="answerer", db=db, filesystem=shared.tools(read_only=True))
+    answerer = Agent(id="answerer", db=db, filesystem=FileSystem(db, namespace="research/decisions", read_only=True))
     keeper = Agent(id="keeper", db=db, filesystem=private)
     client = client_factory(recorder, answerer, keeper)
     shared.write("decisions.md", "vector db: pgvector\n")
@@ -567,7 +564,8 @@ def test_shared_namespace_is_partitioned_per_user_under_isolation(db, client_fac
 
 def test_explicit_user_scoped_false_stays_shared_under_isolation(db, client_factory):
     handbook = FileSystem(db, namespace="handbook", user_scoped=False)
-    client = client_factory(Agent(id="reader", db=db, filesystem=handbook.tools(read_only=True)), user_isolation=True)
+    reader = FileSystem(db, namespace="handbook", user_scoped=False, read_only=True)
+    client = client_factory(Agent(id="reader", db=db, filesystem=reader), user_isolation=True)
     handbook.write("style.md", "shared\n")
 
     for user in ("alice", "bob"):
@@ -750,8 +748,6 @@ def test_a_stored_agent_with_unresolvable_tools_does_not_break_browsing(db, clie
 
 @pytest.mark.parametrize("enabled", [True, False])
 def test_top_level_user_isolation_partitions_agent_filesystems(db, enabled):
-    from agno.os import Authorization
-
     agent = Agent(id="notes", db=db, filesystem=True)
     AgentOS(
         id=OS_ID,

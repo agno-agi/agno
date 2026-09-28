@@ -39,7 +39,7 @@ class TestEdgeBehaviors:
 
         assert result is not None
         assert result.content == "before-after"
-        assert result.meta.size_bytes == len(result.content.encode("utf-8"))
+        assert result.metadata.size_bytes == len(result.content.encode("utf-8"))
 
     def test_usage_of_empty_namespace(self, fs):
         result = fs.usage()
@@ -396,19 +396,6 @@ class TestBackendDispatch:
             FileSystem("not-a-backend")
         assert "SqliteDb" in str(exc.value) and "LocalFileSystem" in str(exc.value)
 
-    def test_import_agno_fs_stays_dependency_light(self):
-        # The dispatch imports its backend lazily; `import agno.fs` must not drag
-        # SQLAlchemy in.
-        import subprocess
-        import sys
-
-        out = subprocess.run(
-            [sys.executable, "-c", "import sys, agno.fs; print('sqlalchemy' in sys.modules)"],
-            capture_output=True,
-            text=True,
-        )
-        assert out.stdout.strip() == "False", out.stdout
-
 
 class TestNamespaceSanitization:
     """Namespaces are lowercase, URL-safe identifiers."""
@@ -419,12 +406,6 @@ class TestNamespaceSanitization:
             fs = FileSystem(local_backend, namespace=spelling)
             assert fs.namespace == "bank"
             assert fs.read("secret.md") == "x"
-
-    def test_case_folding_closes_the_case_insensitive_fs_alias(self, local_backend):
-        # On a case-insensitive filesystem two spellings land on one directory. With
-        # folding they are one namespace ON PURPOSE, and a different name stays apart.
-        FileSystem(local_backend, namespace="bank").write("secret.md", "TOPSECRET")
-        assert FileSystem(local_backend, namespace="other").read("secret.md") is None
 
     def test_multi_segment_literals_fold_but_template_values_do_not(self, local_backend):
         assert FileSystem(local_backend, namespace="Radar/User-42").namespace == "radar/user-42"

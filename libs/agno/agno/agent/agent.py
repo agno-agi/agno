@@ -42,7 +42,6 @@ from agno.knowledge.protocol import KnowledgeProtocol
 
 if TYPE_CHECKING:
     from agno.fs import FileSystem
-    from agno.fs.toolkit import FileSystemTools
     from agno.learn.machine import LearningMachine
     from agno.tools.component import ComponentTool
 
@@ -143,8 +142,8 @@ class Agent:
     # --- FileSystem ---
     # Enable a durable filesystem backed by the agent's database, or provide one or several stores.
     # Each run acts in its user's partition of the store; see FileSystem.user_scoped.
-    # Pass ``FileSystem.tools(...)`` to choose the tool surface, e.g. ``fs.tools(read_only=True)``.
-    filesystem: Optional[Union[bool, FileSystem, FileSystemTools, List[Union[FileSystem, FileSystemTools]]]] = None
+    # Choose the tool surface on the FileSystem, e.g. ``FileSystem(db, namespace=..., read_only=True)``.
+    filesystem: Optional[Union[bool, FileSystem, List[FileSystem]]] = None
 
     # --- Checkpointing ---
     # When to persist run state to the database.
@@ -415,7 +414,7 @@ class Agent:
         dependencies: Optional[Dict[str, Any]] = None,
         add_dependencies_to_context: bool = False,
         db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
-        filesystem: Optional[Union[bool, FileSystem, FileSystemTools, List[Union[FileSystem, FileSystemTools]]]] = None,
+        filesystem: Optional[Union[bool, FileSystem, List[FileSystem]]] = None,
         checkpoint: Optional[Literal["runs", "tool-batch", "tools"]] = None,
         memory_manager: Optional[MemoryManager] = None,
         enable_agentic_memory: bool = False,

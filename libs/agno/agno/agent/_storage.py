@@ -44,22 +44,6 @@ from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.merge_dict import merge_dictionaries
 from agno.utils.string import generate_id_from_name
 
-_FILESYSTEM_TOOL_OPTIONS = (
-    "name",
-    "read_only",
-    "allow_delete",
-    "instructions",
-    "add_instructions",
-    "include_tools",
-    "exclude_tools",
-    "requires_confirmation_tools",
-    "external_execution_required_tools",
-    "stop_after_tool_call_tools",
-    "show_result_tools",
-    "cache_results",
-    "cache_ttl",
-    "cache_dir",
-)
 
 # MemoryManager.__init__ (agno/memory/manager.py) auto-generates
 # ``memory_manager_<8 hex>`` when no id is passed. Such an id is minted fresh
@@ -894,19 +878,13 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
         config["filesystem"] = True
     elif agent.filesystem is not None and agent.filesystem is not False:
         from agno.fs import FileSystem
-        from agno.fs.toolkit import FileSystemTools
 
         stores = agent.filesystem if isinstance(agent.filesystem, list) else [agent.filesystem]
         serialized_stores = []
         for store in stores:
-            if isinstance(store, FileSystemTools):
-                serialized_stores.append(
-                    {**store.fs.to_dict(), "tools": {key: getattr(store, key) for key in _FILESYSTEM_TOOL_OPTIONS}}
-                )
-            elif isinstance(store, FileSystem):
-                serialized_stores.append(store.to_dict())
-            else:
-                raise TypeError("filesystem must contain only FileSystem or FileSystemTools instances")
+            if not isinstance(store, FileSystem):
+                raise TypeError("filesystem must contain only FileSystem instances")
+            serialized_stores.append(store.to_dict())
         config["filesystem"] = serialized_stores if isinstance(agent.filesystem, list) else serialized_stores[0]
 
     # --- Agentic Memory settings ---
@@ -1320,12 +1298,11 @@ def from_dict(
     # --- Handle FileSystem reconstruction ---
     if isinstance(config.get("filesystem"), (dict, list)):
         from agno.fs import FileSystem
-        from agno.fs.toolkit import FileSystemTools
 
         try:
             filesystem_config = config["filesystem"]
             store_configs = filesystem_config if isinstance(filesystem_config, list) else [filesystem_config]
-            restored_stores: List[Union[FileSystem, FileSystemTools]] = []
+            restored_stores: List[FileSystem] = []
             for store_config in store_configs:
                 if not isinstance(store_config, dict):
                     raise TypeError("each serialized filesystem must be an object")
@@ -1338,17 +1315,7 @@ def from_dict(
                     filesystem_db = registry.get_db(filesystem_db_id)
                 if filesystem_db_id is not None and filesystem_db is None:
                     raise ValueError(f"database {filesystem_db_id!r} was not found on the agent or in the registry")
-                restored_filesystem = FileSystem.from_dict(store_config, db=filesystem_db)
-                options = store_config.get("tools")
-                if isinstance(options, dict):
-                    restored_stores.append(
-                        FileSystemTools(
-                            fs=restored_filesystem,
-                            **{key: options[key] for key in _FILESYSTEM_TOOL_OPTIONS if key in options},
-                        )
-                    )
-                else:
-                    restored_stores.append(restored_filesystem)
+                restored_stores.append(FileSystem.from_dict(store_config, db=filesystem_db))
             config["filesystem"] = restored_stores if isinstance(filesystem_config, list) else restored_stores[0]
         except (TypeError, ValueError) as e:
             if strict:

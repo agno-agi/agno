@@ -32,6 +32,7 @@ filesystem_agent = Agent(
     filesystem=True,
     instructions="Keep durable working notes in your filesystem.",
     markdown=True,
+    debug_mode=True,
 )
 
 agent_os = AgentOS(

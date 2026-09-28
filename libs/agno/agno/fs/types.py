@@ -18,7 +18,7 @@ class FileData:
     """One consistent read of file content and its metadata."""
 
     content: str
-    meta: FileMeta
+    metadata: FileMeta
 
 
 @dataclass

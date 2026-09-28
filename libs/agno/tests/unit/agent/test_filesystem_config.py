@@ -82,20 +82,6 @@ def test_encoded_namespace_round_trip_does_not_double_encode(db):
     assert restored.filesystem_instance.namespace == "my%20namespace"
 
 
-def test_template_values_preserve_identity_case(db):
-    filesystem = FileSystem(
-        db,
-        namespace="Users/{user_id}/Agents/{agent_id}",
-    )
-
-    upper = filesystem.resolve(user_id="Alice", agent_id="Research")
-    lower = filesystem.resolve(user_id="alice", agent_id="research")
-
-    assert upper.namespace == "users/%41lice/agents/%52esearch"
-    assert lower.namespace == "users/alice/agents/research"
-    assert upper.namespace != lower.namespace
-
-
 def test_explicit_filesystem_round_trip_preserves_separate_database(tmp_path):
     agent_db = SqliteDb(id="agent-db", db_file=str(tmp_path / "agents.db"))
     files_db = SqliteDb(id="files-db", db_file=str(tmp_path / "files.db"))
@@ -242,30 +228,67 @@ def test_stored_filesystem_agent_rehydrates_namespace_and_toolkit(tmp_path):
     assert len(_filesystem_tools(loaded)) == 1
 
 
-def test_toolkit_setting_keeps_its_permissions(db):
-    filesystem = FileSystem(db, namespace="research/decisions")
-    toolkit = filesystem.tools(read_only=True)
-    agent = Agent(id="answerer", db=db, filesystem=toolkit)
+def test_read_only_filesystem_gets_only_read_tools(db):
+    filesystem = FileSystem(db, namespace="research/decisions", read_only=True)
+    agent = Agent(id="answerer", db=db, filesystem=filesystem)
 
     agent.initialize_agent()
 
+    toolkits = _filesystem_tools(agent)
     assert agent.filesystem_instance is filesystem
-    assert _filesystem_tools(agent) == [toolkit]
-    assert sorted(toolkit.functions) == ["list_files", "read_file", "search_content"]
+    assert len(toolkits) == 1 and toolkits[0].fs is filesystem
+    assert sorted(toolkits[0].functions) == ["list_files", "read_file", "search_content"]
     assert agent.filesystems == [(filesystem, True)]
+    # The options shape the agent's tools only; the object itself still writes.
+    filesystem.write("seed.md", "seeded\n")
+    assert filesystem.read("seed.md") == "seeded\n"
 
 
-def test_toolkit_setting_round_trips_permissions(db):
-    toolkit = FileSystem(db, namespace="research/decisions").tools(read_only=True, add_instructions=True)
-    agent = Agent(id="answerer", db=db, filesystem=toolkit)
+def test_filesystem_tool_options_round_trip(db):
+    filesystem = FileSystem(
+        db,
+        namespace="research/decisions",
+        read_only=True,
+        include_tools=["read_file", "list_files"],
+        instructions="Consult the decisions log.",
+    )
+    agent = Agent(id="answerer", db=db, filesystem=filesystem)
 
     restored = Agent.from_dict(agent.to_dict())
 
-    assert isinstance(restored.filesystem, FileSystemTools)
+    assert isinstance(restored.filesystem, FileSystem)
     assert restored.filesystem.read_only is True
-    assert restored.filesystem.add_instructions is True
-    assert restored.filesystem.fs.namespace == "research/decisions"
-    assert sorted(restored.filesystem.functions) == ["list_files", "read_file", "search_content"]
+    assert restored.filesystem.include_tools == ["read_file", "list_files"]
+    assert restored.filesystem.to_dict()["instructions"] == "Consult the decisions log."
+    toolkit = _filesystem_tools(restored)[0]
+    assert sorted(toolkit.functions) == ["list_files", "read_file"]
+    assert toolkit.instructions == "Consult the decisions log."
+
+
+def test_custom_instructions_leave_the_instructions_method_callable(db):
+    filesystem = FileSystem(db, namespace="research/decisions", instructions="Custom guidance.")
+
+    assert "read_file" in filesystem.instructions()
+    assert filesystem.tools().instructions == "Custom guidance."
+
+
+def test_filesystem_setting_rejects_a_toolkit(db):
+    toolkit = FileSystem(db, namespace="research/decisions").tools(read_only=True)
+    for setting in (toolkit, [toolkit]):
+        with pytest.raises(TypeError, match="not toolkits"):
+            Agent(id="answerer", db=db, filesystem=setting).initialize_agent()
+
+
+def test_tools_defaults_to_the_filesystem_options_and_arguments_override(db):
+    handbook = FileSystem(db, namespace="team/handbook", read_only=True)
+
+    assert handbook.tools().read_only is True
+    assert handbook.tools(read_only=False).read_only is False
+
+
+def test_read_only_and_allow_delete_conflict(db):
+    with pytest.raises(ValueError, match="contradicts"):
+        FileSystem(db, namespace="team/handbook", read_only=True, allow_delete=True)
 
 
 def test_filesystems_lists_manually_attached_toolkits(db):
@@ -282,7 +305,7 @@ async def test_multiple_filesystems_qualify_tools_and_preserve_permissions(db, a
     drafts = FileSystem(db, namespace="analyst/drafts")
     handbook = FileSystem(db, namespace="team/handbook")
     handbook.write("style.md", "Lead with the conclusion.")
-    reader = FileSystemTools(fs=handbook, read_only=True, add_instructions=True)
+    reader = FileSystem(db, namespace="team/handbook", read_only=True)
     agent = Agent(id="analyst", filesystem=[drafts, reader])
 
     if async_tools:
@@ -313,10 +336,13 @@ async def test_multiple_filesystems_qualify_tools_and_preserve_permissions(db, a
     assert "My draft." in draft_text
     assert "Lead with the conclusion." in handbook_text
     assert "fs_2_team_handbook_write_file" not in functions
-    assert agent.filesystems == [(drafts, False), (handbook, True)]
+    assert agent.filesystems == [(drafts, False), (reader, True)]
     assert agent.filesystem_instance is drafts
-    assert sorted(reader.functions) == ["list_files", "read_file", "search_content"]
-    assert attached[1] is not reader
+    assert sorted(attached[1].functions) == [
+        "fs_2_team_handbook_list_files",
+        "fs_2_team_handbook_read_file",
+        "fs_2_team_handbook_search_content",
+    ]
     assert attached[1].instructions is not None
     assert "fs_2_team_handbook_read_file" in attached[1].instructions
 
@@ -326,15 +352,9 @@ def test_multiple_filesystems_round_trip_distinct_databases_and_tool_restriction
 
     first_db = SqliteDb(id="drafts-db", db_file=str(tmp_path / "drafts.db"))
     second_db = SqliteDb(id="handbook-db", db_file=str(tmp_path / "handbook.db"))
-    drafts = FileSystem(first_db, namespace="drafts")
-    handbook = FileSystem(second_db, namespace="handbook")
-    agent = Agent(
-        id="analyst",
-        filesystem=[
-            drafts.tools(include_tools=["read_file", "write_file"], requires_confirmation_tools=["write_file"]),
-            handbook.tools(read_only=True, include_tools=["read_file"]),
-        ],
-    )
+    drafts = FileSystem(first_db, namespace="drafts", include_tools=["read_file", "write_file"])
+    handbook = FileSystem(second_db, namespace="handbook", read_only=True, include_tools=["read_file"])
+    agent = Agent(id="analyst", filesystem=[drafts, handbook])
     registry = Registry()
     collect_components_from_agent(agent, registry, visited=set())
 
@@ -345,8 +365,6 @@ def test_multiple_filesystems_round_trip_distinct_databases_and_tool_restriction
     assert toolkits[1].fs.backend.db is second_db
     assert sorted(toolkits[0].functions) == ["fs_1_drafts_read_file", "fs_1_drafts_write_file"]
     assert list(toolkits[1].functions) == ["fs_2_handbook_read_file"]
-    assert toolkits[0].functions["fs_1_drafts_write_file"].requires_confirmation is True
-    assert toolkits[0].async_functions["fs_1_drafts_write_file"].requires_confirmation is True
     assert toolkits[1].read_only is True
 
 

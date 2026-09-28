@@ -27,8 +27,8 @@ def test_partitions_are_invisible_to_each_other(tmp_path):
     assert alice.read("a.md") == "alice\n"
     assert bob.read("a.md") == "bob\n"
     assert fs.read("a.md") == "shared\n"
-    assert alice.read_with_meta("a.md").meta.user_id == "alice"  # type: ignore[union-attr]
-    assert fs.read_with_meta("a.md").meta.user_id is None  # type: ignore[union-attr]
+    assert alice.read_with_meta("a.md").metadata.user_id == "alice"  # type: ignore[union-attr]
+    assert fs.read_with_meta("a.md").metadata.user_id is None  # type: ignore[union-attr]
     assert [m.user_id for m in alice.list()] == ["alice"]
     assert alice.search("bob") == []
     assert alice.usage().file_count == 1

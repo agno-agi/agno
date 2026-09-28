@@ -139,6 +139,12 @@ class FileSystem:
     Use ``db=SqliteDb(...)`` or ``db=PostgresDb(...)`` to borrow a synchronous
     database, or ``backend=`` for an explicit backend. Supply exactly one source.
 
+    ``read_only``, ``allow_delete``, ``include_tools`` and ``instructions`` shape
+    the tools an agent gets from ``Agent(filesystem=...)`` (and the defaults of
+    ``tools()``); they never restrict this object's own methods. To give agents
+    different access to one store, create one FileSystem per access level on
+    the same backend and namespace.
+
     Cheap to construct and holds no connections; the backend owns the
     engine/pool and is shared across instances.
     """
@@ -152,9 +158,15 @@ class FileSystem:
         max_file_bytes: int = 1_000_000,
         max_namespace_bytes: int = 20_000_000,
         user_scoped: Optional[bool] = None,
+        read_only: bool = False,
+        allow_delete: bool = False,
+        include_tools: Optional[List[str]] = None,
+        instructions: Optional[str] = None,
     ) -> None:
         if (backend is None) == (db is None):
             raise ValueError("Provide exactly one of backend or db")
+        if read_only and allow_delete:
+            raise ValueError("allow_delete=True contradicts read_only=True; pick one.")
         if db is not None:
             from agno.fs.db import DbFileSystem
 
@@ -173,6 +185,20 @@ class FileSystem:
         # shared partition: the user is in the key already, and data written
         # before partitions exist under exactly that key.
         self._namespace_carries_user = "user_id" in self._placeholders
+        # Agent tool options: they shape the toolkit, not this object's methods.
+        self.read_only = read_only
+        self.allow_delete = allow_delete
+        self.include_tools = list(include_tools) if include_tools is not None else None
+        # Stored privately: ``instructions()`` is the method that renders the default text.
+        self._instructions = instructions
+
+    def _copy_tool_options(self, target: "FileSystem") -> "FileSystem":
+        """Carry the agent tool options onto a derived instance."""
+        target.read_only = self.read_only
+        target.allow_delete = self.allow_delete
+        target.include_tools = list(self.include_tools) if self.include_tools is not None else None
+        target._instructions = self._instructions
+        return target
 
     @classmethod
     def _from_normalized(
@@ -197,6 +223,10 @@ class FileSystem:
         instance.user_scoped = user_scoped
         instance._user_id = user_id
         instance._namespace_carries_user = "user_id" in instance._placeholders
+        instance.read_only = False
+        instance.allow_delete = False
+        instance.include_tools = None
+        instance._instructions = None
         return instance
 
     @property
@@ -237,7 +267,7 @@ class FileSystem:
             user_id=None if user_id is None else str(user_id),
         )
         bound._namespace_carries_user = self._namespace_carries_user
-        return bound
+        return self._copy_tool_options(bound)
 
     def partitions(self) -> List[str]:
         """The users holding files in this namespace, on backends that keep partitions; else empty."""
@@ -290,6 +320,14 @@ class FileSystem:
             config["namespace_is_normalized"] = True
         if self.user_scoped is not None:
             config["user_scoped"] = self.user_scoped
+        if self.read_only:
+            config["read_only"] = True
+        if self.allow_delete:
+            config["allow_delete"] = True
+        if self.include_tools is not None:
+            config["include_tools"] = list(self.include_tools)
+        if self._instructions is not None:
+            config["instructions"] = self._instructions
         return config
 
     @classmethod
@@ -323,20 +361,35 @@ class FileSystem:
         max_file_bytes = data.get("max_file_bytes", 1_000_000)
         max_namespace_bytes = data.get("max_namespace_bytes", 20_000_000)
         user_scoped = data.get("user_scoped")
+        read_only = bool(data.get("read_only", False))
+        allow_delete = bool(data.get("allow_delete", False))
+        include_tools: Optional[List[str]] = data.get("include_tools")
+        instructions: Optional[str] = data.get("instructions")
         if data.get("namespace_is_normalized") is True:
-            return cls._from_normalized(
+            restored = cls._from_normalized(
                 backend=backend,
                 namespace=namespace,
                 max_file_bytes=max_file_bytes,
                 max_namespace_bytes=max_namespace_bytes,
                 user_scoped=user_scoped,
             )
+            if read_only and allow_delete:
+                raise ValueError("allow_delete=True contradicts read_only=True; pick one.")
+            restored.read_only = read_only
+            restored.allow_delete = allow_delete
+            restored.include_tools = list(include_tools) if include_tools is not None else None
+            restored._instructions = instructions
+            return restored
         return cls(
             backend=backend,
             namespace=namespace,
             max_file_bytes=max_file_bytes,
             max_namespace_bytes=max_namespace_bytes,
             user_scoped=user_scoped,
+            read_only=read_only,
+            allow_delete=allow_delete,
+            include_tools=include_tools,
+            instructions=instructions,
         )
 
     # ------------------------------------------------------------------
@@ -391,7 +444,7 @@ class FileSystem:
             user_id=bound_user,
         )
         resolved._namespace_carries_user = self._namespace_carries_user
-        return resolved
+        return self._copy_tool_options(resolved)
 
     def _resolve_from_context(
         self,
@@ -691,7 +744,9 @@ class FileSystem:
     # Agent surface
     # ------------------------------------------------------------------
 
-    def tools(self, *, read_only: bool = False, allow_delete: bool = False, **kwargs) -> "FileSystemTools":
+    def tools(
+        self, *, read_only: Optional[bool] = None, allow_delete: Optional[bool] = None, **kwargs
+    ) -> "FileSystemTools":
         """Build the toolkit for this file store.
 
         ``Agent(tools=[fs.tools()], instructions=[..., fs.instructions()])`` is the
@@ -712,10 +767,22 @@ class FileSystem:
         is the surface for a consumer agent that consults another agent's
         namespace by shared name. ``**kwargs`` forwards to ``Toolkit`` (e.g.
         ``include_tools``, ``requires_confirmation_tools``).
+
+        Arguments left out default to this FileSystem's own ``read_only``,
+        ``allow_delete``, ``include_tools`` and ``instructions``.
         """
         from agno.fs.toolkit import FileSystemTools
 
-        return FileSystemTools(fs=self, read_only=read_only, allow_delete=allow_delete, **kwargs)
+        if self.include_tools is not None:
+            kwargs.setdefault("include_tools", list(self.include_tools))
+        if self._instructions is not None:
+            kwargs.setdefault("instructions", self._instructions)
+        return FileSystemTools(
+            fs=self,
+            read_only=self.read_only if read_only is None else read_only,
+            allow_delete=self.allow_delete if allow_delete is None else allow_delete,
+            **kwargs,
+        )
 
     @staticmethod
     def instructions(read_only: bool = False) -> str:

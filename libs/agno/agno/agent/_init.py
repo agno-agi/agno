@@ -249,6 +249,14 @@ def set_filesystem(agent: Agent) -> None:
     from agno.fs import FileSystem
     from agno.fs.toolkit import FileSystemTools
 
+    stores: List[Any] = list(agent.filesystem) if isinstance(agent.filesystem, list) else [agent.filesystem]
+    if any(isinstance(store, FileSystemTools) for store in stores):
+        # Access is configured on the FileSystem itself; a toolkit here is the old spelling.
+        raise TypeError(
+            "filesystem takes FileSystem instances, not toolkits. Set the tool options on the "
+            "FileSystem instead, e.g. FileSystem(db, namespace=..., read_only=True)."
+        )
+
     if _manual_filesystem_tools(agent):
         # Every FileSystemTools registers the same tool names, and the resolver keeps
         # only the first registration per name, so a second toolkit would be dropped.
@@ -258,13 +266,9 @@ def set_filesystem(agent: Agent) -> None:
         )
 
     if isinstance(agent.filesystem, list):
-        if any(not isinstance(store, (FileSystem, FileSystemTools)) for store in agent.filesystem):
-            raise TypeError("filesystem lists must contain only FileSystem or FileSystemTools instances")
-        first = agent.filesystem[0]
-        agent._filesystem = first.fs if isinstance(first, FileSystemTools) else first
-    elif isinstance(agent.filesystem, FileSystemTools):
-        # A toolkit carries its own permissions (read_only, allow_delete, include_tools).
-        agent._filesystem = agent.filesystem.fs
+        if any(not isinstance(store, FileSystem) for store in agent.filesystem):
+            raise TypeError("filesystem lists must contain only FileSystem instances")
+        agent._filesystem = agent.filesystem[0]
     elif isinstance(agent.filesystem, FileSystem):
         agent._filesystem = agent.filesystem
     elif agent.filesystem is True:
@@ -276,8 +280,9 @@ def set_filesystem(agent: Agent) -> None:
             raise ValueError("filesystem=True requires the agent to have a stable id")
         # One namespace per agent; each run acts in its user's partition of it.
         agent._filesystem = FileSystem(agent.db, namespace="{agent_id}").resolve(agent_id=agent.id)
+        log_debug(f"Filesystem enabled: files are stored in namespace {agent._filesystem.namespace!r}")
     else:
-        raise TypeError("filesystem must be a bool, FileSystem, FileSystemTools, or a list of stores/toolkits")
+        raise TypeError("filesystem must be a bool, a FileSystem, or a list of FileSystem instances")
 
 
 def apply_filesystem_user_isolation(agent: Agent, enabled: bool) -> None:
@@ -321,16 +326,13 @@ def get_filesystems(agent: Agent) -> List[Tuple["FileSystem", bool]]:
     still discoverable. The setting comes first. Namespace templates are left
     unresolved for the caller to bind.
     """
-    from agno.fs.toolkit import FileSystemTools
-
     filesystems: List[Tuple["FileSystem", bool]] = []
     managed = agent.filesystem_instance
     if isinstance(agent.filesystem, list):
         for store in agent.filesystem:
-            filesystems.append((store.fs, store.read_only) if isinstance(store, FileSystemTools) else (store, False))
+            filesystems.append((store, store.read_only))
     elif managed is not None:
-        read_only = agent.filesystem.read_only if isinstance(agent.filesystem, FileSystemTools) else False
-        filesystems.append((managed, read_only))
+        filesystems.append((managed, managed.read_only))
     for toolkit in _manual_filesystem_tools(agent):
         filesystems.append((toolkit.fs, toolkit.read_only))
     return filesystems

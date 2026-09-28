@@ -3,9 +3,9 @@ AgentOS File System - Read-Only Consumer
 ========================================
 
 Two agents share one namespace with different permissions. The recorder owns
-the records and gets the full tool surface. The answerer receives
-``fs.tools(read_only=True)`` through the same ``filesystem`` setting, so it holds
-three read tools and nothing that could change the records.
+the records and gets the full tool surface. The answerer holds the same store
+as ``FileSystem(..., read_only=True)``, so it gets three read tools and nothing
+that could change the records.
 
 AgentOS lists both agents as objects on the shared filesystem: the answerer has
 ``access="read_only"``; the recorder omits ``access``, which defaults to ``"full"``.
@@ -31,6 +31,8 @@ db = SqliteDb(
 )
 
 decisions = FileSystem(db, namespace="research/decisions")
+# The same store, read-only: same backend and namespace, so the same files.
+decisions_read_only = FileSystem(db, namespace="research/decisions", read_only=True)
 
 # ---------------------------------------------------------------------------
 # Create Agents
@@ -46,14 +48,14 @@ recorder = Agent(
     markdown=True,
 )
 
-# A toolkit carries its own permissions. add_instructions=True puts the
-# matching read-only instructions in the system prompt.
+# A read-only FileSystem gives the agent only the read tools, with the
+# matching read-only instructions.
 answerer = Agent(
     id="answerer",
     name="Decision Answerer",
     model=OpenAIResponses(id="gpt-5.6-luna"),
     db=db,
-    filesystem=decisions.tools(read_only=True, add_instructions=True),
+    filesystem=decisions_read_only,
     instructions="You answer questions about past engineering decisions. Look them up before answering.",
     markdown=True,
 )

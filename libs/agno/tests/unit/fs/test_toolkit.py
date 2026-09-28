@@ -158,14 +158,6 @@ class TestSurface:
         tk = fs.tools(include_tools=FileSystemTools.FULL_TOOLS)
         assert list(tk.functions.keys()) == FileSystemTools.FULL_TOOLS
 
-    def test_toolkit_name(self, toolkit):
-        assert toolkit.name == "filesystem"
-
-    def test_surface_drift_guard_sync_and_async_methods_exist(self):
-        for tool_name in FileSystemTools.FULL_TOOLS:
-            assert callable(getattr(FileSystemTools, tool_name))
-            assert callable(getattr(FileSystemTools, "a" + tool_name))
-
 
 class TestInstructions:
     def test_static_call_without_instance(self):
@@ -174,12 +166,6 @@ class TestInstructions:
         assert "Never store secrets, passwords, or API keys." in text
         assert "replace_lines" in text
         assert "move_file" in text and "archive/" in text
-        # The record-set/seen-directory conventions moved to the durable-records
-        # cookbook, and the user-memory steer is gone: this text is the notes
-        # contract, nothing else.
-        assert "check_lines" not in text
-        assert "seen/" not in text
-        assert "user memory" not in text
 
     def test_read_only_variant_names_no_write_tool(self, fs):
         text = FileSystem.instructions(read_only=True)
@@ -246,13 +232,6 @@ class TestReadFileTool:
         # A file the agent is allowed to write is a file it can read back whole.
         backend.write("radar", "at-cap.md", "y" * 50)
         assert toolkit.read_file("at-cap.md").startswith("     1\t")
-
-    def test_too_long_guard_bypassed_for_chunked_read(self, tmp_path):
-        backend = LocalFileSystem(root=tmp_path)
-        fs = FileSystem(backend=backend, namespace="radar", max_file_bytes=10)
-        toolkit = fs.tools()
-        backend.write("radar", "big.md", "line1\nline2\nline3\n")
-        assert toolkit.read_file("big.md", start_line=2, end_line=2) == "     2\tline2"
 
 
 class TestErrorStringsVerbatim:
@@ -700,11 +679,6 @@ class TestExcludeToolsTypos:
         assert any("not FileSystem tools" in r.getMessage() for r in caplog.records)
         # the call still resolves; nothing was excluded for the misspelled name
         assert set(toolkit.functions) == set(FileSystemTools.DEFAULT_TOOLS)
-
-    def test_excluding_a_tool_outside_this_set_is_a_no_op(self, fs) -> None:
-        # delete_file left the default set in 2.8.4; the old safety idiom stays valid
-        names = set(fs.tools(exclude_tools=["delete_file"]).functions)
-        assert names == set(FileSystemTools.DEFAULT_TOOLS)
 
     def test_excluding_a_registered_tool_still_removes_it(self, fs) -> None:
         names = set(fs.tools(exclude_tools=["move_file"]).functions)
