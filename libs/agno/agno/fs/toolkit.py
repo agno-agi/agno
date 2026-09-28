@@ -203,6 +203,12 @@ class FileSystemTools(Toolkit):
             **kwargs,
         )
 
+    @property
+    def can_write(self) -> bool:
+        """Whether any registered tool can change files, after include/exclude_tools."""
+        read_capable = set(self._READ_CAPABLE_TOOLS)
+        return any(name not in read_capable for name in self.functions)
+
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------

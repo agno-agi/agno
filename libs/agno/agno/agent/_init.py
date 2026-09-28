@@ -324,17 +324,19 @@ def get_filesystems(agent: Agent) -> List[Tuple["FileSystem", bool]]:
     Covers the ``filesystem`` setting and any FileSystemTools attached through
     ``tools=[...]``, so an agent that only reads another agent's namespace is
     still discoverable. The setting comes first. Namespace templates are left
-    unresolved for the caller to bind.
+    unresolved for the caller to bind. ``read_only`` follows the tools the agent
+    actually gets: a store narrowed to read tools by ``include_tools`` or
+    ``exclude_tools`` counts as read-only too.
     """
     filesystems: List[Tuple["FileSystem", bool]] = []
     managed = agent.filesystem_instance
     if isinstance(agent.filesystem, list):
         for store in agent.filesystem:
-            filesystems.append((store, store.read_only))
+            filesystems.append((store, not store.tools().can_write))
     elif managed is not None:
-        filesystems.append((managed, managed.read_only))
+        filesystems.append((managed, not managed.tools().can_write))
     for toolkit in _manual_filesystem_tools(agent):
-        filesystems.append((toolkit.fs, toolkit.read_only))
+        filesystems.append((toolkit.fs, not toolkit.can_write))
     return filesystems
 
 
