@@ -184,6 +184,22 @@ class TestGetSessionsSemantics:
         assert total == 1
         assert rows[0]["session_id"] == "s3"
 
+    def test_filter_by_session_name_tolerates_none_names(self):
+        # A session stored with session_name=None must be skipped, not crash
+        # the whole query (#10626).
+        db = InMemoryDb()
+        db.upsert_session(_agent_session("s1", agent_id="a1", user_id="alice"))
+        named = _agent_session("s2", agent_id="a1", user_id="alice")
+        named.session_data = {"session_name": "Alpha planning"}
+        db.upsert_session(named)
+        unnamed = _agent_session("s3", agent_id="a1", user_id="alice")
+        unnamed.session_data = {"session_name": None}
+        db.upsert_session(unnamed)
+
+        rows, total = db.get_sessions(session_name="alpha", deserialize=False)
+        assert total == 1
+        assert rows[0]["session_id"] == "s2"
+
 
 class TestDeleteSessions:
     def test_delete_existing_returns_true(self):
