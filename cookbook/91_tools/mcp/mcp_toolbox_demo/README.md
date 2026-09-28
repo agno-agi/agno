@@ -8,7 +8,7 @@ In this demo, we have a collection of tools (defined in `config/tools.yaml`) tha
 - `hotel-management`: For searching and retrieving hotel information
 - `booking-system`: For handling reservations and cancellations
 
-Read more about the MCP Toolbox confiuration here: [MCP Toolbox Configuration](https://mcp-toolbox.dev/documentation/configuration).
+Read more about the MCP Toolbox configuration here: [MCP Toolbox Configuration](https://mcp-toolbox.dev/documentation/configuration).
 
 ## Prerequisites
 

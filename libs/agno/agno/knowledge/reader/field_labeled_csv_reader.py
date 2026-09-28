@@ -176,7 +176,14 @@ class FieldLabeledCSVReader(Reader):
         page_size: int = 1000,
         name: Optional[str] = None,
     ) -> List[Document]:
-        """Read a CSV file asynchronously and convert each row to a field-labeled document."""
+        """Read a CSV file asynchronously and convert each row to a field-labeled document.
+
+        Raises:
+            ValueError: If page_size is less than zero.
+        """
+        if page_size < 0:
+            raise ValueError("page_size cannot be a negative value.")
+
         try:
             if isinstance(file, Path):
                 if not file.exists():

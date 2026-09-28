@@ -24,6 +24,7 @@ def test_page_public_imports_preserve_types_without_loading_storage():
             sys.executable,
             "-c",
             dedent("""
+                import json
                 import pickle
                 import sys
 
@@ -42,17 +43,37 @@ def test_page_public_imports_preserve_types_without_loading_storage():
 
                 expected = {
                     "GrepMatch", "GrepResult", "Page", "PageChanged", "PageError", "PageList",
-                    "PageNotFound", "PageRead", "PageResult", "PageSearchConfig", "SearchHit", "SearchResult",
+                    "PageNotFound", "PageRead", "PageResult", "PageSearchConfig", "PageSourceBinding",
+                    "PageSourceBusy", "PageSourceMigration", "SearchHit", "SearchResult",
                     "SearchUnavailable", "SyncFailed", "SyncReport", "encoded_size", "tool_error",
                 }
-                assert set(page.__all__) == expected | {"PageFileSystem"}
+                assert expected | {"PageFileSystem"} <= set(page.__all__)
                 for name in expected:
                     assert getattr(page, name) is getattr(types, name)
                 assert page.SearchResult().model_dump() == {
                     "schema_version": 1, "results": (), "partial": False, "truncated": False,
                     "omitted_count": 0, "warnings": (),
                 }
+                # The relocation results are frozen, closed models; the busy error is a page error.
+                binding = page.PageSourceBinding(
+                    namespace="n", filesystem="f", catalog="c", vectors="v", source=None, revision=0
+                )
+                try:
+                    binding.source = "x"
+                except Exception as exc:
+                    assert type(exc).__name__ == "ValidationError", type(exc)
+                else:
+                    raise AssertionError("PageSourceBinding is not frozen")
+                migration = page.PageSourceMigration(
+                    before=binding, after=binding, target_source="https://x/llms.txt", dry_run=True, changed=False
+                )
+                assert page.PageSourceMigration.model_validate_json(migration.model_dump_json()) == migration
+                assert isinstance(page.PageSourceBusy(), page.PageError)
+                assert json.loads(page.tool_error(page.PageSourceBusy())) == {"schema_version": 1, "error": "page_source_busy"}
                 assert pickle.loads(b"cagno.knowledge.page\\nSearchResult\\n.") is types.SearchResult
+                # The transform is a pure source callable; it loads no storage either.
+                assert page.DocumentationMarkdown(profile="markdown")("x", path="/x.md") == "x"
+                assert page.normalize_mdx("<Note>hi</Note>\\n") == "**Note:** hi\\n"
                 assert "agno.knowledge.knowledge" not in sys.modules
             """),
         ],
@@ -62,6 +83,49 @@ def test_page_public_imports_preserve_types_without_loading_storage():
         timeout=15,
     )
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_relocation_cli_guidance_follows_the_migration_result():
+    import importlib.util
+    from pathlib import Path
+
+    from agno.knowledge.page import PageSourceBinding, PageSourceMigration
+
+    path = Path(__file__).resolve().parents[5] / "cookbook/05_agent_os/27_public_pages/migrate_page_source.py"
+    spec = importlib.util.spec_from_file_location("migrate_page_source", path)
+    cli = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(cli)  # argparse and json only; the demo import happens inside main()
+
+    old, new = "https://docs.example.com/llms.txt", "https://public.example.com/llms.txt"
+    at_old = PageSourceBinding(namespace="n", filesystem="f", catalog="c", vectors="v", source=old, revision=2)
+    at_new = at_old.model_copy(update={"source": new, "revision": 3})
+
+    dry = cli.next_steps(
+        PageSourceMigration(before=at_old, after=at_old, target_source=new, dry_run=True, changed=False)
+    )
+    assert dry.startswith("Dry run: no source relocation was applied") and "--apply" in dry
+    assert "Relocation applied" not in dry and "already points" not in dry
+
+    dry_current = cli.next_steps(
+        PageSourceMigration(before=at_new, after=at_new, target_source=new, dry_run=True, changed=False)
+    )
+    assert (
+        dry_current.startswith("Dry run: no source relocation was applied")
+        and "already points to the target" in dry_current
+    )
+    assert "--apply" not in dry_current
+
+    applied = cli.next_steps(
+        PageSourceMigration(before=at_old, after=at_new, target_source=new, dry_run=False, changed=True)
+    )
+    assert applied.startswith("Relocation applied") and "PAGE_DEMO_INDEX_URL" in applied and "restart" in applied
+    assert "index_version" in applied
+
+    noop = cli.next_steps(
+        PageSourceMigration(before=at_new, after=at_new, target_source=new, dry_run=False, changed=False)
+    )
+    assert noop.startswith("The binding already points to the target; no additional binding change was made")
+    assert "Relocation applied" not in noop and "Dry run" not in noop and "index_version" in noop
 
 
 def test_constructor_is_keyword_only_and_preserves_dataclass_database_field():
