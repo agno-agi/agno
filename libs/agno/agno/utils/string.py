@@ -66,10 +66,10 @@ def hash_string_sha256(input_string):
     return hex_digest
 
 
-def _extract_json_objects(text: str) -> list[str]:
-    objs: list[str] = []
-    brace_depth = 0
-    start_idx: Optional[int] = None
+def _scan_brace_spans(text: str, quotes_in_prose: bool) -> list[tuple[int, int]]:
+    """Return (start, end) spans of outermost balanced braces; unmatched braces are skipped."""
+    closed: list[tuple[int, int]] = []
+    stack: list[int] = []
     in_string = False
     escape = False
     for idx, ch in enumerate(text):
@@ -80,19 +80,37 @@ def _extract_json_objects(text: str) -> list[str]:
                 escape = True
             elif ch == '"':
                 in_string = False
+        elif ch == '"':
+            in_string = quotes_in_prose or bool(stack)
+        elif ch == "{":
+            stack.append(idx)
+        elif ch == "}" and stack:
+            closed.append((stack.pop(), idx + 1))
+    # Spans nest, so keep the outermost; an unclosed '{' then no longer hides the spans inside it
+    spans: list[tuple[int, int]] = []
+    last_end = -1
+    for start, end in sorted(closed):
+        if start >= last_end:
+            spans.append((start, end))
+            last_end = end
+    return spans
+
+
+def _extract_json_objects(text: str) -> list[str]:
+    # A quote in prose may open a quoted phrase or be a stray, so scan both ways and keep spans that decode
+    spans = set(_scan_brace_spans(text, quotes_in_prose=True)) | set(_scan_brace_spans(text, quotes_in_prose=False))
+    objs: list[str] = []
+    last_end = -1
+    for start, end in sorted(spans):
+        if start < last_end:
             continue
-        if ch == '"':
-            in_string = True
+        candidate = text[start:end]
+        try:
+            json.loads(candidate)
+        except (json.JSONDecodeError, RecursionError):
             continue
-        if ch == "{" and brace_depth == 0:
-            start_idx = idx
-        if ch == "{":
-            brace_depth += 1
-        elif ch == "}":
-            brace_depth -= 1
-            if brace_depth == 0 and start_idx is not None:
-                objs.append(text[start_idx : idx + 1])
-                start_idx = None
+        objs.append(candidate)
+        last_end = end
     return objs
 
 
