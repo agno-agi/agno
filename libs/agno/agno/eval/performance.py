@@ -277,14 +277,14 @@ class PerformanceEval:
         gc.collect()
         # Start tracing memory
         tracemalloc.start()
+        try:
+            self.func()
 
-        self.func()
-
-        # Get peak memory usage
-        current, peak = tracemalloc.get_traced_memory()
-
-        # Stop tracing memory
-        tracemalloc.stop()
+            # Get peak memory usage
+            current, peak = tracemalloc.get_traced_memory()
+        finally:
+            # Stop tracing memory, even if the measured function raises
+            tracemalloc.stop()
 
         self._set_log_level()  # Set log level incase function changed it
 
@@ -333,14 +333,14 @@ class PerformanceEval:
         gc.collect()
         # Start tracing memory
         tracemalloc.start()
+        try:
+            await self.func()
 
-        await self.func()
-
-        # Get peak memory usage
-        current, peak = tracemalloc.get_traced_memory()
-
-        # Stop tracing memory
-        tracemalloc.stop()
+            # Get peak memory usage
+            current, peak = tracemalloc.get_traced_memory()
+        finally:
+            # Stop tracing memory, even if the measured function raises or is cancelled
+            tracemalloc.stop()
         self._set_log_level()  # Set log level incase function changed it
 
         # Convert to MiB and subtract baseline
@@ -417,15 +417,16 @@ class PerformanceEval:
         gc.collect()
         # Start tracing memory
         tracemalloc.start()
+        try:
+            self.func()
 
-        self.func()
-
-        # Get peak memory usage
-        current, peak = tracemalloc.get_traced_memory()
-        # Take snapshot before stopping
-        current_snapshot = tracemalloc.take_snapshot()
-        # Stop tracing memory
-        tracemalloc.stop()
+            # Get peak memory usage
+            current, peak = tracemalloc.get_traced_memory()
+            # Take snapshot before stopping
+            current_snapshot = tracemalloc.take_snapshot()
+        finally:
+            # Stop tracing memory, even if the measured function raises
+            tracemalloc.stop()
 
         self._set_log_level()  # Set log level incase function changed it
 
@@ -461,15 +462,16 @@ class PerformanceEval:
         gc.collect()
         # Start tracing memory
         tracemalloc.start()
+        try:
+            await self.func()
 
-        await self.func()
-
-        # Get peak memory usage
-        current, peak = tracemalloc.get_traced_memory()
-        # Take snapshot before stopping
-        current_snapshot = tracemalloc.take_snapshot()
-        # Stop tracing memory
-        tracemalloc.stop()
+            # Get peak memory usage
+            current, peak = tracemalloc.get_traced_memory()
+            # Take snapshot before stopping
+            current_snapshot = tracemalloc.take_snapshot()
+        finally:
+            # Stop tracing memory, even if the measured function raises or is cancelled
+            tracemalloc.stop()
 
         self._set_log_level()  # Set log level incase function changed it
 
