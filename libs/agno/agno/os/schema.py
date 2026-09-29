@@ -928,6 +928,29 @@ class PaginatedResponse(BaseModel, Generic[T]):
     meta: PaginationInfo = Field(..., description="Pagination metadata")
 
 
+def paginate_list(
+    items: List[Any], page: Optional[int], limit: Optional[int]
+) -> "tuple[List[Any], Optional[PaginationInfo]]":
+    """Opt-in pagination for list routes that historically returned a bare array.
+
+    With neither ``page`` nor ``limit`` set, every item comes back with no meta, so
+    existing clients keep the old response. Otherwise returns one page (1-indexed,
+    20 per page by default) and the metadata for a ``PaginatedResponse``.
+    """
+    if page is None and limit is None:
+        return items, None
+    page = page or 1
+    limit = limit or 20
+    total_count = len(items)
+    start = (page - 1) * limit
+    return items[start : start + limit], PaginationInfo(
+        page=page,
+        limit=limit,
+        total_count=total_count,
+        total_pages=(total_count + limit - 1) // limit,
+    )
+
+
 class ComponentType(str, Enum):
     AGENT = "agent"
     TEAM = "team"

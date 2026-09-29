@@ -1,7 +1,7 @@
 import asyncio
 import contextlib
 import json
-from typing import TYPE_CHECKING, Any, AsyncGenerator, List, Literal, Optional, Union
+from typing import TYPE_CHECKING, Any, AsyncGenerator, List, Literal, Optional, Tuple, Union
 from uuid import uuid4
 
 from fastapi import (
@@ -65,8 +65,10 @@ from agno.os.schema import (
     BadRequestResponse,
     InternalServerErrorResponse,
     NotFoundResponse,
+    PaginatedResponse,
     UnauthenticatedResponse,
     ValidationErrorResponse,
+    paginate_list,
 )
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import (
@@ -1821,7 +1823,7 @@ def get_team_router(
 
     @router.get(
         "/teams",
-        response_model=List[TeamResponse],
+        response_model=Union[List[TeamResponse], PaginatedResponse[TeamResponse]],
         response_model_exclude_none=True,
         tags=["Teams"],
         operation_id="get_teams",
@@ -1900,7 +1902,11 @@ def get_team_router(
             }
         },
     )
-    async def get_teams(request: Request) -> List[TeamResponse]:
+    async def get_teams(
+        request: Request,
+        page: Optional[int] = Query(default=None, ge=1, description="Page number (1-indexed). Opt-in pagination."),
+        limit: Optional[int] = Query(default=None, ge=1, description="Teams per page. Opt-in pagination."),
+    ) -> Union[List[TeamResponse], PaginatedResponse[TeamResponse]]:
         """Return the list of all Teams present in the contextual OS"""
         # Filter teams based on user's scopes (only if authorization is enabled)
         if getattr(request.state, "authorization_enabled", False):
@@ -1923,14 +1929,12 @@ def get_team_router(
         else:
             accessible_teams = os.teams or []
 
-        teams = []
-        for team in accessible_teams:
-            if isinstance(team, Team):
-                teams.append(await TeamResponse.from_team(team=team, is_component=False))
-            elif isinstance(team, TeamFactory):
-                teams.append(TeamResponse.from_factory(team))
-            elif isinstance(team, RemoteTeam):
-                teams.append(await team.get_team_config())
+        # Code teams first, then stored ones: one ordered list so a page never
+        # overlaps or skips across the two sources. Only types this route can
+        # render are counted, so total_count matches what is listed.
+        entries: List[Tuple[Any, bool]] = [
+            (team, False) for team in accessible_teams if isinstance(team, (Team, TeamFactory, RemoteTeam))
+        ]
 
         # Also load teams from database
         if os.db and isinstance(os.db, BaseDb):
@@ -1953,11 +1957,24 @@ def get_team_router(
                 # config here (the agents endpoint already filters)
                 if getattr(request.state, "authorization_enabled", False):
                     db_teams = await afilter_resources_by_access(request, db_teams, "teams")
-                for db_team in db_teams:
-                    team_response = await TeamResponse.from_team(team=db_team, is_component=True)
-                    teams.append(team_response)
+                entries.extend((db_team, True) for db_team in db_teams)
 
-        return teams
+        # Slice before building responses: from_team is async and a RemoteTeam
+        # fetches its config over the network.
+        page_entries, meta = paginate_list(entries, page, limit)
+
+        teams: List[TeamResponse] = []
+        for team, is_component in page_entries:
+            if is_component or isinstance(team, Team):
+                teams.append(await TeamResponse.from_team(team=team, is_component=is_component))
+            elif isinstance(team, TeamFactory):
+                teams.append(TeamResponse.from_factory(team))
+            else:
+                teams.append(await team.get_team_config())
+
+        if meta is None:
+            return teams
+        return PaginatedResponse(data=teams, meta=meta)
 
     @router.get(
         "/teams/{team_id}",
