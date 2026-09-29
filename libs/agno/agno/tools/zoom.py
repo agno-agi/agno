@@ -27,7 +27,6 @@ class ZoomTools(Toolkit):
             client_id (str): The client ID for authentication. If not provided, will use ZOOM_CLIENT_ID env var.
             client_secret (str): The client secret for authentication. If not provided, will use ZOOM_CLIENT_SECRET env var.
             timeout (int): Per-request HTTP timeout in seconds. Default is 30.
-            name (str): The name of the tool. Defaults to "zoom_tool".
         """
         # Get credentials from env vars if not provided
         self.account_id = account_id or getenv("ZOOM_ACCOUNT_ID")

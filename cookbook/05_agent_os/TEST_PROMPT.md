@@ -157,8 +157,9 @@ halves and record both observations.
 
 ### 14_mcp
 
-- Boot each AgentOS MCP server with the current `mcp_server=` surface and
-  inspect its registered MCP route.
+- Boot each AgentOS MCP server with the current `mcp=` surface and
+  inspect its registered MCP route (the deprecated `mcp_server=` alias
+  should still boot).
 - Use the live MCP client to discover and call tools, then exercise
   `continue_run` and `cancel_run` rather than leaving lifecycle calls as
   commented examples.

@@ -7,7 +7,7 @@ from pydantic import BaseModel
 
 from agno.media import Audio, File, Image, Video
 from agno.run.agent import RunEvent, RunOutput, run_output_event_from_dict
-from agno.run.base import BaseRunOutputEvent, RunStatus
+from agno.run.base import BaseRunOutputEvent, CancellationStage, RunStatus
 from agno.run.team import TeamRunEvent, TeamRunOutput, team_run_output_event_from_dict
 from agno.utils.log import log_warning
 from agno.utils.media import (
@@ -115,6 +115,7 @@ class BaseWorkflowRunOutputEvent(BaseRunOutputEvent):
             "step_results",
             "step_executor_runs",
             "step_response",
+            "step_output",
             "iteration_results",
         )
         _saved: Dict[str, Any] = {}
@@ -134,6 +135,13 @@ class BaseWorkflowRunOutputEvent(BaseRunOutputEvent):
 
         if hasattr(self, "metrics") and self.metrics is not None:
             _dict["metrics"] = self.metrics.to_dict()
+
+        if isinstance(self, StepOutputEvent) and self.step_output is not None:
+            _dict["step_output"] = self.step_output.to_dict()
+            # Preserve the structured-content alias exposed by earlier events,
+            # using the same JSON-safe conversion as the nested StepOutput.
+            if "content" in _dict:
+                _dict["content"] = _dict["step_output"]["content"]
 
         # Handle StepOutput fields that contain Message objects
         if hasattr(self, "step_results") and self.step_results is not None:
@@ -585,6 +593,15 @@ class StepOutputEvent(BaseWorkflowRunOutputEvent):
     # Store actual step execution result as StepOutput object
     step_output: Optional[StepOutput] = None
 
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "StepOutputEvent":
+        from agno.workflow.types import StepOutput
+
+        data = data.copy()
+        if isinstance(data.get("step_output"), dict):
+            data["step_output"] = StepOutput.from_dict(data["step_output"])
+        return super().from_dict(data)
+
     # Properties for backward compatibility
     @property
     def content(self) -> Optional[Union[str, Dict[str, Any], List[Any], BaseModel, Any]]:
@@ -767,6 +784,10 @@ class WorkflowRunOutput:
     # against a NEWER stored value, so a presumed-dead attempt's late write
     # cannot clobber its successor. None outside durable-queue execution.
     queue_attempt: Optional[int] = None
+    # For a CANCELLED run, where it was when cancelled (see CancellationStage).
+    # None on runs written before the field existed and on shutdown
+    # interrupts: consumers treat None as unknown.
+    cancellation_stage: Optional[CancellationStage] = None
 
     # Unified HITL requirements to continue a paused workflow
     # Handles all HITL types: confirmation, user input, and route selection
@@ -877,6 +898,9 @@ class WorkflowRunOutput:
 
         if self.status is not None:
             _dict["status"] = self.status.value if isinstance(self.status, RunStatus) else self.status
+
+        if self.cancellation_stage is not None:
+            _dict["cancellation_stage"] = getattr(self.cancellation_stage, "value", self.cancellation_stage)
 
         if self.pause_kind is not None:
             # Local import to avoid circular import at module load
@@ -1070,6 +1094,9 @@ class WorkflowRunOutput:
 
         # Filter data to only include fields that are actually defined in the WorkflowRunOutput dataclass
         from dataclasses import fields
+
+        if "cancellation_stage" in data:
+            data["cancellation_stage"] = CancellationStage.coerce(data["cancellation_stage"])
 
         supported_fields = {f.name for f in fields(cls)}
         filtered_data = {k: v for k, v in data.items() if k in supported_fields}

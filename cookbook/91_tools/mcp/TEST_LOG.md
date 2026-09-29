@@ -1,5 +1,15 @@
 # Test Log
 
+### magic_hour.py
+
+**Status:** PASS
+
+**Description:** Connects to Magic Hour's production Streamable HTTP MCP endpoint through Agno's `MCPTools` with bearer authentication and discovers the available media-generation and project workflow tools. The check uses an invalid test token so it cannot create a billable project.
+
+**Result:** MCP initialization completed, Agno discovered 44 tools, and `ping` returned `pong`. The authenticated `account_retrieve` tool rejected the invalid token with HTTP 401, so the check could not create a billable project. The example also passes Python compilation, Ruff formatting, and Ruff lint checks. A paid end-to-end generation remains intentionally untested until a reviewer credential is provided securely.
+
+---
+
 ### peer_cash.py
 
 **Status:** PASS

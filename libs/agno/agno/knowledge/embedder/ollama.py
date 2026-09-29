@@ -1,8 +1,8 @@
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
-from agno.knowledge.embedder.base import Embedder
-from agno.utils.log import log_error, log_warning, logger
+from agno.knowledge.embedder.base import Embedder, raise_embedding_error
+from agno.utils.log import log_error, logger
 
 try:
     import importlib.metadata as metadata
@@ -107,8 +107,7 @@ class OllamaEmbedder(Embedder):
                 return []
             return embedding
         except Exception as e:
-            log_warning(f"Failed to get embedding: {str(e)}")
-            return []
+            raise_embedding_error(e, model_id=self.id, provider="Ollama")
 
     def get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict]]:
         embedding = self.get_embedding(text=text)
@@ -144,8 +143,7 @@ class OllamaEmbedder(Embedder):
                 return []
             return embedding
         except Exception as e:
-            log_warning(f"Error getting embedding: {str(e)}")
-            return []
+            raise_embedding_error(e, model_id=self.id, provider="Ollama")
 
     async def async_get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict]]:
         """Async version of get_embedding_and_usage."""

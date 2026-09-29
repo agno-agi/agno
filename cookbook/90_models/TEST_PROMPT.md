@@ -34,7 +34,7 @@ Special cases:
 - Skip providers whose API keys are not available — mark as SKIP with a note.
 - Providers with sub-APIs use different model classes: `openai/chat/` (OpenAIChat) vs `openai/responses/` (OpenAIResponses), `ollama/chat/` vs `ollama/responses/`, etc. Test each subdirectory independently.
 - `ollama/` examples require a local Ollama server — skip if not running.
-- `lmstudio/` and `llamacpp/` require local model servers — skip if not running.
+- `lmstudio/`, `llamacpp/` and `llmman/` require local model servers — skip if not running.
 - `vllm/` requires a local vLLM server — skip if not running.
 - Do NOT change model imports or model IDs — each file uses a specific provider.
 

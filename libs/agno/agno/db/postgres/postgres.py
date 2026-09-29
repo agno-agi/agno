@@ -25,6 +25,7 @@ from agno.db.base import (
     project_config_identity,
 )
 from agno.db.migrations.manager import MigrationManager
+from agno.db.postgres.engine import _engine_options
 from agno.db.postgres.schemas import get_table_schema_definition
 from agno.db.postgres.utils import (
     apply_sorting,
@@ -59,7 +60,6 @@ from agno.db.utils import (
     deserialize_session,
     deserialize_sessions,
     filter_context_runs,
-    json_serializer,
     learning_search_patterns,
     merge_runs_table_with_legacy_blob,
     metrics_starting_date_from_days,
@@ -198,9 +198,7 @@ class PostgresDb(BaseDb):
         if _engine is None and db_url is not None:
             _engine = create_engine(
                 db_url,
-                pool_pre_ping=True,
-                pool_recycle=3600,
-                json_serializer=json_serializer,
+                **_engine_options(),
             )
         if _engine is None:
             raise ValueError("One of db_url or db_engine must be provided")
@@ -514,10 +512,10 @@ class PostgresDb(BaseDb):
             table_created = False
             if not self.table_exists(table_name):
                 table.create(self.db_engine, checkfirst=True)
-                log_debug(f"Successfully created table '{self.db_schema}.{table_name}'")
+                log_debug(f"Created table {self.db_schema}.{table_name}")
                 table_created = True
             else:
-                log_debug(f"Table {self.db_schema}.{table_name} already exists, skipping creation")
+                log_debug(f"Table {self.db_schema}.{table_name} already exists", log_level=2)
 
             # Create indexes (Postgres)
             for idx in table.indexes:
@@ -547,7 +545,15 @@ class PostgresDb(BaseDb):
             return table
 
         except Exception as e:
-            log_error(f"Could not create table {self.db_schema}.{table_name}: {str(e)}")
+            # Concurrent CREATE TABLE may lose the catalog's uniqueness race.
+            # The caller still receives the exception and decides whether it can
+            # resolve the winner; an existing winner is not a database outage.
+            cause = getattr(e, "orig", e)
+            sqlstate = getattr(cause, "sqlstate", getattr(cause, "pgcode", None))
+            if sqlstate in ("42P07", "23505") and self.table_exists(table_name):
+                log_debug(f"Concurrent table creation: {self.db_schema}.{table_name}", log_level=2)
+            else:
+                log_error(f"Could not create table {self.db_schema}.{table_name}: {str(e)}")
             raise
 
     def _resolve_fk_reference(self, fk_ref: str) -> str:
@@ -1487,7 +1493,7 @@ class PostgresDb(BaseDb):
             session_id (str): ID of the session to read.
             session_type (SessionType): Type of session to get.
             user_id (Optional[str]): User ID to filter by. Defaults to None.
-            deserialize (Optional[bool]): Whether to serialize the session. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the session. Defaults to True.
             runs_limit (Optional[int]): If set, attach only the most recent ``runs_limit``
                 runs instead of the full history. For a fully-migrated session this is an
                 indexed ``ORDER BY run_index DESC LIMIT`` query; for a session that still
@@ -1603,7 +1609,7 @@ class PostgresDb(BaseDb):
             page (Optional[int]): The page number to return. Defaults to None.
             sort_by (Optional[str]): The field to sort by. Defaults to None.
             sort_order (Optional[str]): The sort order. Defaults to None.
-            deserialize (Optional[bool]): Whether to serialize the sessions. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the sessions. Defaults to True.
 
         Returns:
             Union[List[Session], Tuple[List[Dict], int]]:
@@ -1708,7 +1714,7 @@ class PostgresDb(BaseDb):
             session_type (Optional[SessionType]): The type of session to rename. Defaults to None.
             session_name (str): The new name for the session.
             user_id (Optional[str]): User ID to filter by. Defaults to None.
-            deserialize (Optional[bool]): Whether to serialize the session. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the session. Defaults to True.
 
         Returns:
             Optional[Union[Session, Dict[str, Any]]]:
@@ -2235,7 +2241,7 @@ class PostgresDb(BaseDb):
 
         Args:
             memory_id (str): The ID of the memory to get.
-            deserialize (Optional[bool]): Whether to serialize the memory. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the memory. Defaults to True.
             user_id (Optional[str]): The ID of the user to filter by. Defaults to None.
 
         Returns:
@@ -2296,7 +2302,7 @@ class PostgresDb(BaseDb):
             page (Optional[int]): The page number.
             sort_by (Optional[str]): The column to sort by.
             sort_order (Optional[str]): The order to sort by.
-            deserialize (Optional[bool]): Whether to serialize the memories. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the memories. Defaults to True.
 
 
         Returns:
@@ -2450,7 +2456,7 @@ class PostgresDb(BaseDb):
 
         Args:
             memory (UserMemory): The user memory to upsert.
-            deserialize (Optional[bool]): Whether to serialize the memory. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the memory. Defaults to True.
 
         Returns:
             Optional[Union[UserMemory, Dict[str, Any]]]:
@@ -2973,6 +2979,21 @@ class PostgresDb(BaseDb):
             log_error(f"Exception getting knowledge contents: {str(e)}")
             raise e
 
+    def _upsert_knowledge_content_on(self, conn, table, knowledge_row: KnowledgeRow) -> None:
+        """Publish a catalog record in the coordinator's existing transaction.
+
+        Trusted setup resolves the table first. Unlike the standalone upsert, explicit
+        nulls clear obsolete processing errors and this helper never opens or commits a transaction.
+        """
+        values = {key: value for key, value in knowledge_row.model_dump().items() if key in table.c}
+        stmt = postgresql.insert(table).values(values)
+        conn.execute(
+            stmt.on_conflict_do_update(
+                index_elements=[table.c.id],
+                set_={key: value for key, value in values.items() if key not in ("id", "created_at")},
+            )
+        )
+
     def upsert_knowledge_content(self, knowledge_row: KnowledgeRow):
         """Upsert knowledge content in the database.
 
@@ -3172,7 +3193,7 @@ class PostgresDb(BaseDb):
 
         Args:
             eval_run_id (str): The ID of the eval run to get.
-            deserialize (Optional[bool]): Whether to serialize the eval run. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the eval run. Defaults to True.
             user_id (Optional[str]): If set, only return the run if owned by this user.
 
         Returns:
@@ -3234,7 +3255,7 @@ class PostgresDb(BaseDb):
             model_id (Optional[str]): The ID of the model to filter by.
             eval_type (Optional[List[EvalType]]): The type(s) of eval to filter by.
             filter_type (Optional[EvalFilterType]): Filter by component type (agent, team, workflow).
-            deserialize (Optional[bool]): Whether to serialize the eval runs. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the eval runs. Defaults to True.
             user_id (Optional[str]): If set, only return runs owned by this user.
             create_table_if_not_found (Optional[bool]): Whether to create the table if it doesn't exist.
 
@@ -7382,6 +7403,25 @@ class PostgresDb(BaseDb):
         except Exception as e:
             log_warning(f"Error inserting session if absent (caller falls back): {e}")
             return None
+
+    def ensure_jobs_table(self) -> None:
+        """Prepare durable queue storage before polling or accepting continuations.
+
+        Stores without this optional hook retain lazy initialization. Propagate
+        provisioning failures so the worker can report unavailable storage.
+        """
+        try:
+            table = self._get_table(table_type="jobs", create_table_if_not_found=True)
+        except Exception as exc:
+            # Another replica may have completed the first-time DDL meanwhile.
+            cause = getattr(exc, "orig", exc)
+            sqlstate = getattr(cause, "sqlstate", getattr(cause, "pgcode", None))
+            if sqlstate not in ("42P07", "23505") or not self.table_exists(self.job_table_name):
+                raise
+            self._invalidate_table_cache(self.job_table_name)
+            table = self._get_table(table_type="jobs")
+        if table is None:
+            raise RuntimeError("Job queue table is unavailable after provisioning")
 
     def enqueue_job(self, job: Dict[str, Any], max_depth: int = 0) -> Dict[str, Any]:
         """Insert an accepted run job.

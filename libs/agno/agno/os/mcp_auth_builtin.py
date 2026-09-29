@@ -509,7 +509,7 @@ class AgentOSBuiltinAuth(OAuthProvider):
         # Public clients only: connector clients (claude.ai, ChatGPT, Claude Code,
         # mcp-remote) prove possession via PKCE. Refusing confidential registrations
         # means no client secret is ever stored.
-        if client_info.token_endpoint_auth_method != "none":
+        if client_info.token_endpoint_auth_method is not None and client_info.token_endpoint_auth_method != "none":
             raise RegistrationError(
                 error="invalid_client_metadata",
                 error_description=(
@@ -517,8 +517,9 @@ class AgentOSBuiltinAuth(OAuthProvider):
                     'token_endpoint_auth_method "none" and use PKCE.'
                 ),
             )
-        if client_info.client_id is None:
-            raise RegistrationError(error="invalid_client_metadata", error_description="client_id is required")
+        # mcp 2.x makes client_id a required str on OAuthClientInformationFull, so the
+        # "client_id is required" check that lived here in the 1.x model is now enforced
+        # by the type itself.
         await self._run(self._register_client_sync, client_info)
 
     def _register_client_sync(self, client_info: OAuthClientInformationFull) -> None:
@@ -527,7 +528,7 @@ class AgentOSBuiltinAuth(OAuthProvider):
         # can never wedge /register. A False return means that cap was reached.
         inserted = self._require_db().create_mcp_oauth_client(
             client_id=client_info.client_id,
-            client_metadata=client_info.model_dump_json(),
+            client_metadata=client_info.model_dump_json(by_alias=True),
             now=int(time.time()),
             unconsumed_ttl=DEFAULT_UNCONSUMED_CLIENT_TTL,
             max_clients=self._max_clients,
@@ -956,9 +957,9 @@ button {{ padding: .5rem 1.25rem; border-radius: 6px; border: 0; cursor: pointer
         deleted = await self._run(self._delete_code_sync, authorization_code.code)
         if not deleted:
             raise TokenError("invalid_grant", "Authorization code not found or already used.")
-        if client.client_id is None:
-            raise TokenError("invalid_client", "Client ID is required")
-        return await self._issue_tokens(client.client_id, authorization_code.scopes)
+        # client_id is a required str on the mcp 2.x client model (Optional under 1.x);
+        # str() narrows it for both. A registration without one never reaches here.
+        return await self._issue_tokens(str(client.client_id), authorization_code.scopes)
 
     def _delete_code_sync(self, code: str) -> bool:
         return self._require_db().delete_mcp_oauth_code(_hash(code))
@@ -1069,9 +1070,9 @@ button {{ padding: .5rem 1.25rem; border-radius: 6px; border: 0; cursor: pointer
             # outlive detection; the load-path detector alone would miss this interleaving.
             await self._run(self._revoke_family_on_reuse, payload)
             raise TokenError("invalid_grant", "Refresh token not found or already used.")
-        if client.client_id is None:
-            raise TokenError("invalid_client", "Client ID is required")
-        return await self._issue_tokens(client.client_id, scopes or refresh_token.scopes, family_id=family_id)
+        # client_id is a required str on the mcp 2.x client model (Optional under 1.x);
+        # str() narrows it for both. A registration without one never reaches here.
+        return await self._issue_tokens(str(client.client_id), scopes or refresh_token.scopes, family_id=family_id)
 
     def _delete_refresh_sync(self, refresh_token: str) -> bool:
         return self._require_db().delete_mcp_oauth_refresh(_hash(refresh_token))

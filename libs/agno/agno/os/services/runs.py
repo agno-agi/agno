@@ -49,9 +49,12 @@ async def continue_paused_run(
 ) -> AnyRunOutput:
     """Resume a paused run on any local component with the client's resolved requirements.
 
-    Remote components are rejected: their ``acontinue_run`` cannot carry resolved
-    requirements (the REST surface 400s the same case), so failing clearly beats the
-    opaque downstream TypeError that forwarding them would raise.
+    Remote components are rejected: resolved HITL requirements cannot be forwarded to a
+    downstream OS over this service (remote HITL forwarding is deferred), so failing
+    clearly beats the opaque downstream error that a forward would raise. This is a
+    deliberate restriction of the MCP/A2A path, not REST parity -- the REST agent/team
+    continue routes do forward a bare resume to a remote proxy; matching that here is
+    future work.
 
     ``stream=False`` is pinned: run-option resolution is call-site > component.stream >
     False, so a component configured with ``stream=True`` would otherwise return an
@@ -108,7 +111,9 @@ async def continue_paused_run(
     return result
 
 
-async def cancel_component_run(component: Union[Agent, Team, Workflow], run_id: str) -> None:
+async def cancel_component_run(
+    component: Union[Agent, Team, Workflow], run_id: str, auth_token: Optional[str] = None
+) -> None:
     """Request cancellation of ``run_id`` on the component that owns it.
 
     Local agent/team/workflow cancellation all delegate to one process-global
@@ -120,6 +125,16 @@ async def cancel_component_run(component: Union[Agent, Team, Workflow], run_id: 
     over HTTP and return False when the call fails; that must surface, not read as
     success.
     """
+    if isinstance(component, BaseRemote):
+        # A remote component's run lives on the downstream OS -- nothing of it can be
+        # in the local queue, so the local tombstone below must not fire: keyed on
+        # run_id alone, it would tombstone an unrelated LOCAL run whose id the caller
+        # passed. The downstream OS tombstones its own queue. The caller's token is
+        # forwarded (as the run path does) so a protected downstream accepts the call.
+        cancelled = await component.acancel_run(run_id=run_id, auth_token=auth_token)
+        if cancelled is False:
+            raise Exception(f"Cancellation of run {run_id} could not be delivered to the remote component.")
+        return
     # Tombstone a still-queued durable ticket first (parity with the REST
     # cancel routes): intent alone does not stop a job no task is executing
     # yet - without this, a worker claims the waiting ticket, starts the leg,
@@ -131,6 +146,4 @@ async def cancel_component_run(component: Union[Agent, Team, Workflow], run_id: 
     queue_worker = get_active_queue_worker()
     if queue_worker is not None:
         await queue_worker.acancel_queued(run_id)
-    cancelled = await component.acancel_run(run_id=run_id)
-    if cancelled is False and isinstance(component, BaseRemote):
-        raise Exception(f"Cancellation of run {run_id} could not be delivered to the remote component.")
+    await component.acancel_run(run_id=run_id)

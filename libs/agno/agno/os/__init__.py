@@ -2,12 +2,20 @@ from typing import TYPE_CHECKING, Any
 
 from agno.job_queue import QueueConfig, RedisCoordination
 from agno.os.app import AgentOS
-from agno.os.config import MCP_BUILTIN_TAGS, MCPBuiltinTag, MCPServerConfig
+from agno.os.config import MCP_BUILTIN_TAGS, MCPBuiltinTag, MCPConfig, MCPServerConfig
 
 if TYPE_CHECKING:
     from agno.os.mcp_auth_builtin import AgentOSBuiltinAuth
 
-__all__ = ["AgentOS", "MCPServerConfig", "MCPBuiltinTag", "MCP_BUILTIN_TAGS", "QueueConfig", "RedisCoordination"]
+__all__ = [
+    "AgentOS",
+    "MCPConfig",
+    "MCPServerConfig",  # deprecated alias of MCPConfig
+    "MCPBuiltinTag",
+    "MCP_BUILTIN_TAGS",
+    "QueueConfig",
+    "RedisCoordination",
+]
 
 
 def __getattr__(name: str) -> Any:

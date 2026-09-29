@@ -1,5 +1,4 @@
 from dataclasses import dataclass
-from datetime import timedelta
 from typing import Any, Dict, Optional
 
 
@@ -15,10 +14,17 @@ class SSEClientParams:
 
 @dataclass
 class StreamableHTTPClientParams:
-    """Parameters for Streamable HTTP client connection."""
+    """Parameters for Streamable HTTP client connection.
+
+    ``timeout`` and ``sse_read_timeout`` are expressed in seconds. The MCP SDK
+    v2 ``streamable_http_client`` no longer accepts these as keyword arguments;
+    agno maps them onto an ``httpx2.Timeout`` on the ``http_client`` it builds
+    for the connection. ``timeout`` covers connect/write/pool operations while
+    ``sse_read_timeout`` bounds the long-lived stream read.
+    """
 
     url: str
     headers: Optional[Dict[str, Any]] = None
-    timeout: Optional[timedelta] = timedelta(seconds=30)
-    sse_read_timeout: Optional[timedelta] = timedelta(seconds=60 * 5)
+    timeout: Optional[float] = 30
+    sse_read_timeout: Optional[float] = 60 * 5
     terminate_on_close: Optional[bool] = None

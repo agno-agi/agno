@@ -172,6 +172,23 @@ def test_allow_shell_false_strips_the_magic_in_kernel(make_code_mode):
     assert "CAUGHT UsageError" in result.stdout
 
 
+def test_allow_shell_false_survives_a_sibling_script_magic_loading(make_code_mode):
+    cm = make_code_mode(allow_shell=False)
+    # IPython 9.17 registers the script magics lazily, and loading any one of
+    # them instantiates the provider that owns every sibling. Running %%sh must
+    # not bring bash back.
+    code = (
+        "get_ipython().run_cell_magic('sh', '', 'echo sibling')\n"
+        "try:\n"
+        "    get_ipython().run_cell_magic('bash', '', 'echo hi')\n"
+        "except Exception as e:\n"
+        "    print('CAUGHT', type(e).__name__)\n"
+    )
+    result = cm.run(_sid("sibling"), code)
+    assert result.status == "ok"
+    assert "CAUGHT UsageError" in result.stdout
+
+
 # ------------------------------------------------------------------
 # Serialization of concurrent cells
 # ------------------------------------------------------------------

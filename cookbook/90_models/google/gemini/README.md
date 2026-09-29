@@ -125,3 +125,17 @@ python cookbook/90_models/google/gemini/grounding.py
 python cookbook/90_models/google/gemini/vertex_ai_search.py
 ```
 
+### 18. Run a basic agent on Gemini 3.8 Flash
+
+```shell
+python cookbook/90_models/google/gemini/gemini_3_8_flash.py
+```
+
+### 19. Run a market brief agent on Gemini 3.8 Flash
+
+Combines Google Search grounding, URL context, and a structured output schema
+to produce a source-backed competitive brief.
+
+```shell
+python cookbook/90_models/google/gemini/gemini_3_8_flash_market_brief.py
+```
