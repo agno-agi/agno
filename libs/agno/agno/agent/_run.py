@@ -555,7 +555,7 @@ def _run(
                     agent.model,
                     agent.fallback_config,
                     on_context_overflow=lambda: _recompact_after_overflow(
-                        agent, agent_session, run_messages, run_response
+                        agent, agent_session, run_messages, run_response, _tools
                     ),
                     messages=run_messages.messages,
                     tools=_tools,
@@ -1706,7 +1706,7 @@ async def _arun(
                     agent.model,
                     agent.fallback_config,
                     on_context_overflow=lambda: _recompact_after_overflow(
-                        agent, agent_session, run_messages, run_response
+                        agent, agent_session, run_messages, run_response, _tools
                     ),
                     messages=run_messages.messages,
                     tools=_tools,
@@ -3834,7 +3834,9 @@ def _continue_run(
                 model_response: ModelResponse = call_model_with_fallback(
                     agent.model,
                     agent.fallback_config,
-                    on_context_overflow=lambda: _recompact_after_overflow(agent, session, run_messages, run_response),
+                    on_context_overflow=lambda: _recompact_after_overflow(
+                        agent, session, run_messages, run_response, tools
+                    ),
                     messages=run_messages.messages,
                     response_format=response_format,
                     tools=tools,
@@ -5082,7 +5084,7 @@ async def _acontinue_run(
                     agent.model,
                     agent.fallback_config,
                     on_context_overflow=lambda: _recompact_after_overflow(
-                        agent, agent_session, run_messages, run_response
+                        agent, agent_session, run_messages, run_response, _tools
                     ),
                     messages=run_messages.messages,
                     response_format=response_format,

@@ -1060,7 +1060,7 @@ def handle_model_response_stream(
     for model_response_event in call_model_stream_with_fallback(
         agent.model,
         agent.fallback_config,
-        on_context_overflow=lambda: _recompact_after_overflow(agent, session, run_messages, run_response),
+        on_context_overflow=lambda: _recompact_after_overflow(agent, session, run_messages, run_response, tools),
         messages=run_messages.messages,
         response_format=response_format,
         tools=tools,
@@ -1224,7 +1224,7 @@ async def ahandle_model_response_stream(
     model_response_stream = acall_model_stream_with_fallback(
         agent.model,
         agent.fallback_config,
-        on_context_overflow=lambda: _recompact_after_overflow(agent, session, run_messages, run_response),
+        on_context_overflow=lambda: _recompact_after_overflow(agent, session, run_messages, run_response, tools),
         messages=run_messages.messages,
         response_format=response_format,
         tools=tools,

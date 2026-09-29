@@ -300,6 +300,7 @@ def _recompact_after_overflow(
     session: AgentSession,
     run_messages: Any,
     run_response: Optional[RunOutput] = None,
+    tools: Optional[List[Any]] = None,
 ) -> bool:
     """Fold harder after the provider rejected a request as too long. True if the payload shrank.
 
@@ -357,7 +358,7 @@ def _recompact_after_overflow(
         )
         return False
 
-    before = estimate_tokens(messages)
+    before = estimate_tokens(messages, tools)
     # min_fold_ratio is the run-start question - is this fold worth paying for. Here the request
     # has already been rejected, so any fold that shrinks it is worth making.
     record = replace(folder, min_fold_ratio=0, stats=compaction.stats).compact(
@@ -372,7 +373,7 @@ def _recompact_after_overflow(
         return False
 
     compacted = compaction.apply_record(messages, record)
-    after = estimate_tokens(compacted)
+    after = estimate_tokens(compacted, tools)
     if after >= before:
         # A summary has a floor cost, so a fold that reclaims nothing leaves the request no
         # more sendable than it was. Retrying an identical payload just fails twice.
