@@ -9,7 +9,7 @@ from uuid import uuid4
 from agno.compaction._cut import choose_boundary, choose_watermark, is_offload_envelope
 from agno.compaction._tokens import estimate_tokens
 from agno.compaction._view import build_view
-from agno.compaction.archive import CompactionArchive, render_messages, supports_compactions
+from agno.compaction.archive import CompactionArchive, render_messages
 from agno.compaction.prompts import (
     ARCHIVE_AWARE_PROMPT,
     ARCHIVE_LOOKUP_INSTRUCTION,
@@ -354,7 +354,7 @@ class Compaction:
         self, session_id: str, db: Optional[Any] = None, user_id: Optional[str] = None
     ) -> Optional[CompactionArchive]:
         """The archive for one session, or None when it is off or unavailable."""
-        if not self.archive or not supports_compactions(db):
+        if not self.archive or db is None:
             return None
         return CompactionArchive(db, session_id, user_id)
 

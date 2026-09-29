@@ -3307,29 +3307,6 @@ class AsyncBaseDb(ABC):
         """Rows whose expires_at has passed."""
         raise NotImplementedError
 
-    # --- Compactions (Optional) ---
-    # See the sync contract above; same semantics, async surface.
-
-    async def upsert_compaction(self, row: Dict[str, Any]) -> None:
-        """Insert one compaction record."""
-        raise NotImplementedError
-
-    async def get_compaction(self, compaction_id: str) -> Optional[Dict[str, Any]]:
-        """Get one compaction record by id."""
-        raise NotImplementedError
-
-    async def get_compactions_for_session(self, session_id: str, limit: Optional[int] = None) -> List[Dict[str, Any]]:
-        """The session's compaction records, newest first."""
-        raise NotImplementedError
-
-    async def delete_compactions_for_session(self, session_id: str) -> int:
-        """Delete a session's records. Returns the number deleted."""
-        raise NotImplementedError
-
-    async def search_compactions(self, session_id: str, query: str, limit: int = 10) -> List[Dict[str, Any]]:
-        """Records in this session whose archived transcript contains ``query``."""
-        raise NotImplementedError
-
     # --- Approvals (Optional) ---
     # These methods are optional. Override in subclasses to enable approval persistence.
 

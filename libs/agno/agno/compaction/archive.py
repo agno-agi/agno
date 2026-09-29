@@ -65,15 +65,6 @@ def _is_plain_text(query: str) -> bool:
     return not any(character in _REGEX_SYNTAX for character in query)
 
 
-def supports_compactions(db: Optional[Any]) -> bool:
-    """Whether this db can store compaction records.
-
-    Probed by attribute rather than by type so a custom BaseDb subclass that implements the
-    optional contract qualifies on its own merits.
-    """
-    return db is not None and callable(getattr(db, "upsert_compaction", None))
-
-
 class CompactionArchive:
     """Reads and writes one session's compaction records."""
 
@@ -98,10 +89,21 @@ class CompactionArchive:
             "created_at": record.created_at,
         }
 
+    def _method(self, name: str) -> Any:
+        """The db's implementation of one record method.
+
+        Only the sync BaseDb declares the record contract, as stubs that raise. A db without the
+        method at all - every async db - raises the same way, so it takes the same path.
+        """
+        method = getattr(self.db, name, None)
+        if method is None:
+            raise NotImplementedError(name)
+        return method
+
     def write(self, record: Any, messages: List[Message]) -> bool:
         """Persist one record. A failure here loses recoverability, never the run."""
         try:
-            self.db.upsert_compaction(self._row(record, messages))
+            self._method("upsert_compaction")(self._row(record, messages))
             log_debug(f"Stored compaction {record.id} with {len(messages)} archived messages")
             return True
         except NotImplementedError:
@@ -121,7 +123,7 @@ class CompactionArchive:
         was, so applying it would show the resumed run a summary of its own future.
         """
         try:
-            rows = self.db.get_compactions_for_session(self.session_id)
+            rows = self._method("get_compactions_for_session")(self.session_id)
         except NotImplementedError:
             return None
         except Exception as e:  # noqa: BLE001
@@ -151,8 +153,8 @@ class CompactionArchive:
         """
         try:
             if _is_plain_text(query):
-                return self.db.search_compactions(self.session_id, query, limit)
-            return self.db.get_compactions_for_session(self.session_id, limit)
+                return self._method("search_compactions")(self.session_id, query, limit)
+            return self._method("get_compactions_for_session")(self.session_id, limit)
         except NotImplementedError:
             return []
         except Exception as e:  # noqa: BLE001
@@ -160,4 +162,4 @@ class CompactionArchive:
             return []
 
 
-__all__ = ["CompactionArchive", "render_messages", "supports_compactions", "MAX_ARCHIVED_TOOL_RESULT_CHARS"]
+__all__ = ["CompactionArchive", "render_messages", "MAX_ARCHIVED_TOOL_RESULT_CHARS"]

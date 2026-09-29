@@ -400,6 +400,48 @@ def test_the_summary_survives_its_anchor_leaving_the_window():
     assert [c for c in sent if c.startswith("question")] == [f"question number {i}" for i in range(3, 11)]
 
 
+def test_async_dbs_declare_no_compaction_contract():
+    """Only the sync BaseDb declares the record methods. Async stubs would return unawaited
+    coroutines to a sync archive instead of saying they are unsupported."""
+    from agno.db.base import AsyncBaseDb, BaseDb
+
+    for name in ("upsert_compaction", "get_compactions_for_session", "search_compactions"):
+        assert hasattr(BaseDb, name)
+        assert not hasattr(AsyncBaseDb, name)
+
+
+def test_compaction_on_an_async_db_is_unsupported_like_any_other_db(caplog):
+    """An async db takes the same path as a sync db without compaction records: the fold still
+    applies to its run, the run completes, and the warning says the fold was not stored."""
+    import asyncio
+
+    from agno.agent import Agent
+    from agno.db.sqlite import AsyncSqliteDb
+    from agno.models.response import ModelResponse
+
+    class _AsyncStub(_StubModel):
+        async def aresponse(self, messages, **kwargs):
+            return ModelResponse(content="SUMMARY")
+
+    agent = Agent(
+        model=_RecordingModel.build(),
+        db=AsyncSqliteDb(db_file=str(Path(tempfile.mkdtemp()) / "a.db")),
+        session_id="s",
+        add_history_to_context=True,
+        compaction=Compaction(compact_at_tokens=5, uncompacted_runs=1, min_fold_ratio=0, model=_AsyncStub()),
+    )
+
+    async def runs():
+        return [await agent.arun(f"question number {i}") for i in range(3)]
+
+    with caplog.at_level(logging.WARNING, logger="agno"):
+        results = asyncio.run(runs())
+
+    assert all(r.status.value == "COMPLETED" for r in results)
+    assert results[-1].compaction is not None
+    assert any("does not implement compaction records" in r.message for r in caplog.records)
+
+
 def test_history_window_untouched_without_compaction():
     """The widening is compaction's business only."""
     from agno.agent import Agent
@@ -1652,13 +1694,18 @@ def test_resumed_run_resolves_the_fold_that_run_saw():
     assert archive.latest("r1")["summary"] == "early"
 
 
-def test_archive_degrades_when_db_cannot_store_records():
+def test_archive_degrades_when_db_cannot_store_records(caplog):
     """A db without the optional contract loses the archive, not the run."""
 
     class UnsupportedDb:
         pass
 
-    assert Compaction().archive_for("s", UnsupportedDb()) is None
+    archive = Compaction().archive_for("s", UnsupportedDb())
+    with caplog.at_level(logging.WARNING, logger="agno"):
+        assert archive.write(_record(_transcript(), 2), []) is False
+    assert archive.latest() is None
+    assert archive.search("anything") == []
+    assert any("does not implement compaction records" in r.message for r in caplog.records)
     assert Compaction().archive_for("s", None) is None
 
 
