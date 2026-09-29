@@ -51,8 +51,10 @@ def test_get_agents_list(client: httpx.Client):
     """Test GET /agents returns all agents with required fields."""
     response = client.get("/agents")
     assert response.status_code == 200
-    data = response.json()
+    body = response.json()
+    data = body["data"]
     assert isinstance(data, list)
+    assert body["meta"]["total_count"] >= len(data)
 
     agent_ids = [a["id"] for a in data]
     for agent_id in EXPECTED_ALL_AGENTS:

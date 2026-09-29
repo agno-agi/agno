@@ -44,7 +44,7 @@ def test_get_workflows_list(client: httpx.Client):
     """Test GET /workflows returns all workflows with required fields."""
     response = client.get("/workflows")
     assert response.status_code == 200
-    data = response.json()
+    data = response.json()["data"]
     assert isinstance(data, list)
 
     workflow_ids = [w["id"] for w in data]

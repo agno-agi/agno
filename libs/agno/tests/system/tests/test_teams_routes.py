@@ -45,8 +45,10 @@ def test_get_teams_list(client: httpx.Client):
     """Test GET /teams returns all teams with required fields."""
     response = client.get("/teams")
     assert response.status_code == 200
-    data = response.json()
+    body = response.json()
+    data = body["data"]
     assert isinstance(data, list)
+    assert body["meta"]["total_count"] >= len(data)
 
     team_ids = [t["id"] for t in data]
     for team_id in EXPECTED_ALL_TEAMS:

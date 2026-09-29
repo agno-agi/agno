@@ -189,7 +189,7 @@ class TestBrokenWorkflowLifecycle:
         assert client.get("/workflows/fn-wf").status_code == 422
         listing = client.get("/workflows")
         assert listing.status_code == 200
-        assert "fn-wf" in [w["id"] for w in listing.json()]
+        assert "fn-wf" in [w["id"] for w in listing.json()["data"]]
         assert client.post("/workflows/fn-wf/runs", data={"message": "hi", "stream": "false"}).status_code == 422
         assert client.post("/workflows/fn-wf/runs/r1/cancel").status_code == 200
         runs = client.get("/workflows/fn-wf/runs", params={"session_id": "s1"})
