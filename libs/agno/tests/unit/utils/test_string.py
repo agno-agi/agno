@@ -406,7 +406,7 @@ def test_parse_individual_json_discards_scalar_before_list():
     first) was extended instead, raising
     AttributeError: 'str' object has no attribute 'extend'.
     """
-    for scalar in ("draft", "42", "null", "true", '{"nested": 1}'):
+    for scalar in ('"draft"', "42", "null", "true", '{"nested": 1}'):
         result = _parse_individual_json(f'{{"items": {scalar}}}\n{{"items": ["final"]}}', ListFieldModel)
         assert result is not None, f"expected the later list to win for {scalar}"
         assert result.items == ["final"]
