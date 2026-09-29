@@ -80,6 +80,18 @@ def drop_superseded_forks(runs: Sequence["HistoryRun"], all_runs: Sequence["Hist
     return [r for index, r in enumerate(runs) if latest_index[tree_keys[index]] == index]
 
 
+def has_superseded_forks(runs: Sequence["HistoryRun"]) -> bool:
+    """Whether a fork replaces another history run in ``runs``.
+
+    Only top-level runs with a history status count, matching the rows a bounded
+    "most recent N" history read returns.
+    """
+    from agno.run.base import HISTORY_SKIP_STATUSES
+
+    history_runs = [r for r in runs if r.parent_run_id is None and r.status not in HISTORY_SKIP_STATUSES]
+    return len(drop_superseded_forks(history_runs, runs)) < len(history_runs)
+
+
 def continue_history_session(session: HistorySession, run: Optional["HistoryRun"]) -> HistorySession:
     """Return a copy of ``session`` without the continued run's fork tree.
 

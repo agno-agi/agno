@@ -338,6 +338,9 @@ class TeamSession:
                 run for run in self.runs if run.status == RunStatus.completed and run.parent_run_id is None
             ]
 
+        # A fork copies its source run's turn: keep only the latest run of each fork tree
+        completed_runs = drop_superseded_forks(completed_runs, self.runs)
+
         if num_runs is not None:
             if num_runs <= 0:
                 return []
