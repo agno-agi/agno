@@ -390,8 +390,17 @@ def _recompact_after_overflow(
     # front of it can reach - is the tail given up, one run at a time. The request has already
     # been rejected, so a smaller tail beats no answer, but the setting is still the default.
     folder, chosen_keep = None, compaction.uncompacted_runs
-    for keep in range(compaction.uncompacted_runs or 1, 0, -1):
-        candidate = replace(compaction, uncompacted_runs=keep, stats=compaction.stats)
+    # A token tail is sized, not counted, so there is no run count to give up - only a run-count
+    # tail is shrunk. Varying uncompacted_runs alongside uncompacted_tokens is not a valid config.
+    if compaction.uncompacted_tokens is not None:
+        tails: Sequence[Optional[int]] = [compaction.uncompacted_runs]
+    else:
+        tails = range(compaction.uncompacted_runs or 1, 0, -1)
+    for keep in tails:
+        if keep == compaction.uncompacted_runs:
+            candidate = compaction
+        else:
+            candidate = replace(compaction, uncompacted_runs=keep, stats=compaction.stats)
         boundary = candidate.boundary_for(messages, min_index=lead)
         if boundary is None or boundary <= lead:
             continue

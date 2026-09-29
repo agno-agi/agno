@@ -73,6 +73,20 @@ class FallbackConfig:
 # ---------------------------------------------------------------------------
 
 
+def _recovered_from_overflow(on_context_overflow: Callable[[], bool]) -> bool:
+    """Run the overflow hook, reading any failure as "not recovered".
+
+    Recovery is an extra step in front of the normal handling, not a replacement for it. The hook
+    runs inside the handler for the provider's error, so an exception from it would surface in
+    place of that error and skip the fallback chain entirely.
+    """
+    try:
+        return bool(on_context_overflow())
+    except Exception as e:  # noqa: BLE001 - recovery must never mask the provider's error
+        log_warning(f"Could not shrink the request after a context-window error: {e}")
+        return False
+
+
 def _is_context_overflow(error: Exception) -> bool:
     """Whether this error means the request was too long, after classification.
 
@@ -184,7 +198,11 @@ def call_model_with_fallback(
         # Shrinking the request and retrying the same model is cheaper than switching to a
         # larger one, and is the only response that works when no larger model is configured.
         # The fallback chain still runs if the retry fails, so the two compose.
-        if on_context_overflow is not None and _is_context_overflow(primary_error) and on_context_overflow():
+        if (
+            on_context_overflow is not None
+            and _is_context_overflow(primary_error)
+            and _recovered_from_overflow(on_context_overflow)
+        ):
             try:
                 return model.response(**kwargs)
             except ModelProviderError as retry_error:
@@ -214,7 +232,11 @@ async def acall_model_with_fallback(
     try:
         return await model.aresponse(**kwargs)
     except ModelProviderError as primary_error:
-        if on_context_overflow is not None and _is_context_overflow(primary_error) and on_context_overflow():
+        if (
+            on_context_overflow is not None
+            and _is_context_overflow(primary_error)
+            and _recovered_from_overflow(on_context_overflow)
+        ):
             try:
                 return await model.aresponse(**kwargs)
             except ModelProviderError as retry_error:
@@ -254,7 +276,11 @@ def call_model_stream_with_fallback(
     try:
         yield from model.response_stream(**kwargs)
     except ModelProviderError as primary_error:
-        if on_context_overflow is not None and _is_context_overflow(primary_error) and on_context_overflow():
+        if (
+            on_context_overflow is not None
+            and _is_context_overflow(primary_error)
+            and _recovered_from_overflow(on_context_overflow)
+        ):
             try:
                 yield from model.response_stream(**kwargs)
                 return
@@ -286,7 +312,11 @@ async def acall_model_stream_with_fallback(
         async for event in model.aresponse_stream(**kwargs):
             yield event
     except ModelProviderError as primary_error:
-        if on_context_overflow is not None and _is_context_overflow(primary_error) and on_context_overflow():
+        if (
+            on_context_overflow is not None
+            and _is_context_overflow(primary_error)
+            and _recovered_from_overflow(on_context_overflow)
+        ):
             try:
                 async for event in model.aresponse_stream(**kwargs):
                     yield event

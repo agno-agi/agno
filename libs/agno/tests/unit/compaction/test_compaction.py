@@ -864,6 +864,55 @@ def test_context_overflow_folds_and_asks_for_a_retry():
     assert estimate_tokens(run_messages.messages) < before
 
 
+def test_revalidating_a_valid_config_never_raises():
+    """Overflow recovery derives variants of the configured Compaction with dataclasses.replace(),
+    which re-runs __post_init__. A config that validated once must validate again."""
+    from dataclasses import replace
+
+    for config in (
+        Compaction(),
+        Compaction(uncompacted_runs=3),
+        Compaction(uncompacted_tokens=2_000),
+        Compaction(uncompacted_tokens=2_000, on_context_overflow=True),
+    ):
+        assert replace(config, min_fold_ratio=0).min_fold_ratio == 0
+
+    with pytest.raises(ValueError, match="cannot both be set"):
+        Compaction(uncompacted_runs=3, uncompacted_tokens=2_000)
+
+
+def test_overflow_recovery_works_with_a_token_tail():
+    """uncompacted_tokens used to make recovery raise a config error inside the provider-error
+    handler, so the user saw a ValueError instead of a recovered run."""
+    from agno.agent import Agent
+    from agno.agent._messages import _recompact_after_overflow
+    from agno.compaction._tokens import estimate_tokens
+    from agno.session.agent import AgentSession
+
+    class _RunMessages:
+        def __init__(self, messages):
+            self.messages = messages
+
+    messages = [Message(role="system", content="sys", id="s0")]
+    messages += [
+        m
+        for i in range(30)
+        for m in (
+            Message(role="user", content=f"q{i} " * 30, id=f"u{i}"),
+            Message(role="assistant", content=f"a{i} " * 800, id=f"a{i}"),
+        )
+    ]
+    run_messages = _RunMessages(messages)
+    before = estimate_tokens(messages)
+    agent = Agent(
+        num_history_runs=50,
+        compaction=Compaction(uncompacted_tokens=3_000, archive=False, model=_StubModel(), on_context_overflow=True),
+    )
+
+    assert _recompact_after_overflow(agent, AgentSession(session_id="s1", runs=[]), run_messages, None) is True
+    assert estimate_tokens(run_messages.messages) < before
+
+
 def test_overflow_retry_sends_the_compacted_payload():
     """The retry has to reach the provider, not just the helper's own variable.
 

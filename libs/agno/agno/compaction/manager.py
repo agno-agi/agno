@@ -125,7 +125,10 @@ class Compaction:
             raise ValueError(f"uncompacted_tokens must be a positive integer, got {self.uncompacted_tokens}")
         # Raise rather than pick a winner: silently honouring one of two settings the user
         # deliberately set is the kind of surprise that costs an afternoon to track down.
-        if self.uncompacted_tokens is not None and not isinstance(self.uncompacted_runs, _Unset):
+        # None is "not set", which is also what validation leaves behind below - so a config that
+        # already passed here passes again when dataclasses.replace() re-runs this.
+        runs_chosen = self.uncompacted_runs is not None and not isinstance(self.uncompacted_runs, _Unset)
+        if self.uncompacted_tokens is not None and runs_chosen:
             raise ValueError(
                 "uncompacted_runs and uncompacted_tokens cannot both be set - they describe the same "
                 "kept tail in different units. Use uncompacted_runs to keep whole turns, or "
