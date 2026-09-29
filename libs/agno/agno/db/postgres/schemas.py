@@ -491,7 +491,6 @@ COMPACTIONS_TABLE_SCHEMA = {
     # Anchors are message ids, never indexes: history is rebuilt from stored runs
     # each run, so a position means something different every time.
     "first_kept_message_id": {"type": String, "nullable": True},
-    "elision_watermark_message_id": {"type": String, "nullable": True},
     "summary": {"type": String, "nullable": True},
     # The folded transcript, verbatim. Null when the backend or the caller opted
     # out: the summary still stands, only recoverability is lost.

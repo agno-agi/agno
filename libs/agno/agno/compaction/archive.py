@@ -80,7 +80,6 @@ class CompactionArchive:
             "run_id": record.run_id,
             "user_id": self.user_id,
             "first_kept_message_id": record.first_kept_message_id,
-            "elision_watermark_message_id": record.elision_watermark_message_id,
             "summary": record.summary,
             "archived_messages": render_messages(messages) if messages else None,
             "messages_compacted": record.messages_compacted,

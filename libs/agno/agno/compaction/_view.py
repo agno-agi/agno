@@ -9,7 +9,7 @@ import re
 from typing import List, Optional
 
 from agno.compaction._cut import is_injected_compaction_message, is_offload_envelope, leading_system_count
-from agno.compaction.prompts import ELISION_PLACEHOLDER, SUMMARY_PREFIX
+from agno.compaction.prompts import SUMMARY_PREFIX
 from agno.compaction.types import CompactionRecord
 from agno.models.message import Message
 
@@ -63,7 +63,6 @@ def build_view(
     messages: List[Message],
     record: Optional[CompactionRecord],
     *,
-    elide_exclude_tools: Optional[List[str]] = None,
     strip_provider_chaining: bool = False,
     summary_suffix: Optional[str] = None,
 ) -> List[Message]:
@@ -72,8 +71,7 @@ def build_view(
     Leading system/developer messages pass verbatim. When the record's boundary resolves in this
     list, the summary is injected and everything before the boundary is omitted — a
     summary is never injected unless its cut applies, so an unresolvable boundary fails open to
-    the list as given. Tool results behind the elision watermark render as placeholders on
-    copies. With strip_provider_chaining, assistant copies drop the response-chaining key from
+    the list as given. With strip_provider_chaining, assistant copies drop the response-chaining key from
     provider_data (reasoning items and other payload survive: a function_call without its paired
     reasoning item is a provider error) so server-side chaining cannot silently rebuild the full
     history behind the view's back.
@@ -84,10 +82,6 @@ def build_view(
     if record is not None and record.summary and record.first_kept_message_id:
         boundary_index = _find_index(messages, record.first_kept_message_id, start=lead)
 
-    watermark_index: Optional[int] = None
-    if record is not None and record.elision_watermark_message_id:
-        watermark_index = _find_index(messages, record.elision_watermark_message_id, start=lead)
-
     view: List[Message] = list(messages[:lead])
     if boundary_index is not None and record is not None:
         view.append(summary_message(record, summary_suffix, surviving_result_ids(messages[lead:boundary_index])))
@@ -95,7 +89,6 @@ def build_view(
     else:
         body_start = lead
 
-    exclude = set(elide_exclude_tools or [])
     for index in range(body_start, len(messages)):
         message = messages[index]
         # When this build injects the pair itself, drop any previously injected pair so a summary
@@ -103,15 +96,6 @@ def build_view(
         if boundary_index is not None and is_injected_compaction_message(message):
             continue
         if (
-            watermark_index is not None
-            and index < watermark_index
-            and message.role == "tool"
-            and not is_offload_envelope(message)
-            and (message.tool_name or "") not in exclude
-        ):
-            content = message.content if isinstance(message.content, str) else str(message.content or "")
-            message = message.model_copy(update={"content": ELISION_PLACEHOLDER.format(n_chars=len(content))})
-        elif (
             strip_provider_chaining
             and message.role == "assistant"
             and message.provider_data is not None

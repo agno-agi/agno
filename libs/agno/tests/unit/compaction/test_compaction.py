@@ -1355,30 +1355,6 @@ def test_unresolvable_anchor_fails_open():
     assert not any(isinstance(m.content, str) and m.content.startswith(SUMMARY_PREFIX) for m in view)
 
 
-def test_tool_results_before_the_watermark_are_elided():
-    """Elision reclaims bulk tool output without paying a summarizer for it."""
-    from agno.compaction.prompts import ELISION_PLACEHOLDER
-
-    messages = [
-        Message(role="user", content="q0"),
-        Message(
-            role="assistant",
-            content=None,
-            tool_calls=[{"id": "c1", "function": {"name": "dump", "arguments": "{}"}}],
-        ),
-        Message(role="tool", tool_call_id="c1", tool_name="dump", content="x" * 5_000),
-        Message(role="user", content="q1"),
-    ]
-    record = CompactionRecord(messages_compacted=0, summary="", elision_watermark_message_id=messages[3].id)
-
-    view = Compaction().apply_record(messages, record)
-
-    elided = next(m for m in view if m.role == "tool")
-    assert elided.content == ELISION_PLACEHOLDER.format(n_chars=5_000)
-    # The transcript keeps the real payload.
-    assert messages[2].content == "x" * 5_000
-
-
 def test_boundary_never_anchors_on_a_message_that_will_not_persist():
     """A temporary message is gone by the next run; anchoring there would break."""
     messages = [

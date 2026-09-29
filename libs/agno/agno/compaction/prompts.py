@@ -4,10 +4,6 @@
 # Fixed so injected summaries are identifiable (and skippable) across builds.
 SUMMARY_PREFIX = "Summary of earlier conversation (compacted):\n\n"
 
-# Placeholder for a tool result elided from the model view. The transcript
-# keeps the full result; only the view renders this line.
-ELISION_PLACEHOLDER = "[tool result elided by compaction: {n_chars} chars. Re-run the tool if this result is needed.]"
-
 DEFAULT_COMPACTION_PROMPT = """You maintain the running summary of a long conversation between a user and an AI agent. The
 conversation exceeds the model's context window, so everything older than a recent tail is folded into
 the summary you produce. Your summary is the ONLY memory of the folded conversation: anything you omit

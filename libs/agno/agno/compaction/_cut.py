@@ -1,4 +1,4 @@
-"""Boundary and watermark selection: pair-safe, anchor-durable cut points.
+"""Boundary selection: pair-safe, anchor-durable cut points.
 
 All functions here are pure over an in-memory message list. Callers map chosen indices onto
 stored-run coordinates.
@@ -34,7 +34,7 @@ def is_injected_compaction_message(message: Message) -> bool:
 
 
 def is_offload_envelope(message: Message) -> bool:
-    """A stored-result envelope from offload_tool_results. Never elided or folded away: the
+    """A stored-result envelope from offload_tool_results. Never folded away: the
     result_id must survive verbatim so the model can read the payload back."""
     return message.role == "tool" and isinstance(message.content, str) and message.content.startswith('<result id="')
 
@@ -71,7 +71,7 @@ def _owning_batch_head(messages: List[Message], index: int) -> Optional[int]:
 
 
 def _is_durable_anchor(message: Message, *, allow_tool_batch_heads: bool = True) -> bool:
-    """Anchor durability: the boundary/watermark message must survive in the stored transcript.
+    """Anchor durability: the boundary message must survive in the stored transcript.
 
     temporary messages are removed mid-run; add_to_agent_memory=False messages are never
     persisted; when tool messages are scrubbed from storage, the assistant batch heads that own
@@ -154,23 +154,3 @@ def _earliest_orphan_head(messages: List[Message], boundary: int) -> Optional[in
         if head is not None and head < boundary and (earliest is None or head < earliest):
             earliest = head
     return earliest
-
-
-def choose_watermark(
-    messages: List[Message],
-    tail_start: int,
-    *,
-    min_index: int = 0,
-) -> Optional[str]:
-    """Choose the elision watermark: the id of the first message kept un-elided.
-
-    Scans from tail_start toward min_index for a durable message, so the watermark never
-    advances into the kept tail; an undurable stretch degrades to less elision, never more.
-    """
-    index = min(tail_start, len(messages) - 1)
-    while index >= min_index:
-        message = messages[index]
-        if message.role not in _LEADING_ROLES and _is_durable_anchor(message):
-            return message.id
-        index -= 1
-    return None

@@ -83,11 +83,6 @@ class CompactionRecord:
     # An id resolves to the same message forever, or fails to resolve at all - in which case the
     # view falls open to the full list rather than cutting in the wrong place.
     first_kept_message_id: Optional[str] = None
-    # Id of the first message whose tool results are kept in full. Tool results *before* it
-    # render as a short placeholder in the view - a cheap, no-inference tier that reclaims the
-    # bulk of a tool-heavy transcript without paying a summarizer for it. The transcript itself
-    # is untouched; only the view elides.
-    elision_watermark_message_id: Optional[str] = None
     # Row id of this record, and the run that produced it. Together they make the record a fact
     # about one run rather than a value shared by the session.
     id: Optional[str] = None
@@ -105,7 +100,6 @@ class CompactionRecord:
             "messages_compacted": self.messages_compacted,
             "summary": self.summary,
             "first_kept_message_id": self.first_kept_message_id,
-            "elision_watermark_message_id": self.elision_watermark_message_id,
             "id": self.id,
             "run_id": self.run_id,
             "archived": self.archived,
@@ -121,7 +115,6 @@ class CompactionRecord:
             messages_compacted=data.get("messages_compacted", 0),
             summary=data.get("summary", ""),
             first_kept_message_id=data.get("first_kept_message_id"),
-            elision_watermark_message_id=data.get("elision_watermark_message_id"),
             id=data.get("id") or data.get("compaction_id"),
             run_id=data.get("run_id"),
             archived=bool(data.get("archived") or data.get("archived_messages")),

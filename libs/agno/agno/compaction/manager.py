@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, List, Optional, Tuple
 from uuid import uuid4
 
-from agno.compaction._cut import choose_boundary, choose_watermark, is_offload_envelope
+from agno.compaction._cut import choose_boundary, is_offload_envelope
 from agno.compaction._tokens import estimate_tokens
 from agno.compaction._view import build_view
 from agno.compaction.archive import CompactionArchive, render_messages
@@ -98,8 +98,6 @@ class Compaction:
     # Let the agent search the archive for detail the summary dropped.
     searchable: bool = True
 
-    # Show tool results older than the cut as a short placeholder.
-    elide_tool_results: bool = True
     # Also fold and retry when the provider rejects a request as too long. compaction=True turns it on.
     on_context_overflow: bool = False
     # Skip a fold smaller than this many times the kept tail - a summary costs a few hundred tokens.
@@ -449,20 +447,6 @@ class Compaction:
             return None
         return ARCHIVE_LOOKUP_INSTRUCTION
 
-    def _watermark(self, messages: List[Message], boundary: int, previous: Optional[CompactionRecord]) -> Optional[str]:
-        """Where tool-result elision stops, when elision is on.
-
-        Elision covers the span between the previous watermark and this cut: results still in
-        the kept tail stay whole, older ones render as a placeholder. Monotonic, so a result
-        that has been elided once never comes back.
-        """
-        if not self.elide_tool_results:
-            return previous.elision_watermark_message_id if previous else None
-        floor = self._resolved_boundary(messages, previous)
-        return choose_watermark(messages, boundary, min_index=floor) or (
-            previous.elision_watermark_message_id if previous else None
-        )
-
     @staticmethod
     def _resolved_boundary(messages: List[Message], previous: Optional[CompactionRecord]) -> int:
         """Where the previous compaction cut, as an index into this message list.
@@ -606,7 +590,6 @@ class Compaction:
         record = self.build_record(
             messages, summary, messages[boundary].id, len(to_compact), tokens_before, run_id=run_id
         )
-        record.elision_watermark_message_id = self._watermark(messages, boundary, previous)
         # Size the fold before persisting: the row is written once and never updated, so a
         # measurement taken afterwards would never reach it.
         prefix = context_prefix or []
@@ -650,7 +633,6 @@ class Compaction:
         record = self.build_record(
             messages, summary, messages[boundary].id, len(to_compact), tokens_before, run_id=run_id
         )
-        record.elision_watermark_message_id = self._watermark(messages, boundary, previous)
         # Size the fold before persisting: the row is written once and never updated, so a
         # measurement taken afterwards would never reach it.
         prefix = context_prefix or []

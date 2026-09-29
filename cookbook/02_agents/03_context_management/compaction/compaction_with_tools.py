@@ -13,11 +13,6 @@ assistant's tool_calls and the tool message answering it: providers reject a
 function_call whose result is missing, so a boundary that would split a batch is
 moved to keep the batch whole.
 
-Tool results are also the bulkiest part of a transcript and the least useful to
-carry verbatim, so they get a cheaper treatment than a summary: results older
-than the elision watermark render as a short placeholder in the request, while
-the full text stays in the transcript and the archive.
-
 Prerequisites: OPENAI_API_KEY, and a Postgres running on localhost:5532
 Run: .venvs/demo/bin/python cookbook/02_agents/03_context_management/compaction/compaction_with_tools.py
 """
@@ -43,9 +38,6 @@ compaction = Compaction(
     # so this sits well under what a prose-heavy agent would need.
     compact_at_tokens=1_000,
     uncompacted_runs=1,
-    # On by default. Old tool results become "[tool result elided: N chars]" in
-    # the request - no summarizer call, and often more reclaimed than the fold.
-    elide_tool_results=True,
 )
 
 agent = Agent(
