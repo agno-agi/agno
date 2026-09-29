@@ -1,5 +1,7 @@
+import json
 from typing import List, Optional
 
+import pytest
 from pydantic import BaseModel
 
 from agno.utils.string import (
@@ -398,18 +400,26 @@ def test_parse_individual_json_merges_lists():
     assert result.items == ["a", "b"]
 
 
-def test_parse_individual_json_discards_scalar_before_list():
+@pytest.mark.parametrize("parse", [_parse_individual_json, parse_response_model_str])
+@pytest.mark.parametrize("scalar", ["draft", 42, None, True, {"nested": 1}])
+def test_scalar_before_list_across_parsers(parse, scalar):
     """A scalar fragment before a list fragment must not crash the merge.
 
     Regression test: the list branch only created its accumulator when the key
     was absent, so a preceding scalar (an LLM commonly emits a draft value
     first) was extended instead, raising
     AttributeError: 'str' object has no attribute 'extend'.
+
+    Covers both the merge helper and the public parser, whose final fallback
+    is _parse_individual_json. json.dumps keeps every fragment a valid JSON
+    object; the extraction-count assertion pins that precondition so the test
+    cannot pass by silently dropping an invalid fragment.
     """
-    for scalar in ('"draft"', "42", "null", "true", '{"nested": 1}'):
-        result = _parse_individual_json(f'{{"items": {scalar}}}\n{{"items": ["final"]}}', ListFieldModel)
-        assert result is not None, f"expected the later list to win for {scalar}"
-        assert result.items == ["final"]
+    content = json.dumps({"items": scalar}) + "\n" + json.dumps({"items": ["final"]})
+    assert len(_extract_json_objects(content)) == 2
+    result = parse(content, ListFieldModel)
+    assert result is not None, f"expected the later list to win for {scalar!r}"
+    assert result.items == ["final"]
 
 
 def test_parse_individual_json_list_before_scalar_still_fails_softly():
