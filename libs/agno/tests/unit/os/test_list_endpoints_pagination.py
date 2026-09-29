@@ -135,3 +135,9 @@ def test_total_count_excludes_components_the_caller_cannot_see(tmp_path, monkeyp
     p = prefix(route)
     assert f"db-{p}-3" not in ids_of(body["data"])
     assert body["meta"]["total_count"] == 4
+
+
+@pytest.mark.parametrize("route", ROUTES)
+def test_rejects_limit_above_the_cap(client, route):
+    assert client.get(route, params={"limit": 101}).status_code == 422
+    assert client.get(route, params={"limit": 100}).status_code == 200

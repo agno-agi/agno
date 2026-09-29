@@ -1874,7 +1874,7 @@ def get_agent_router(
     async def get_agents(
         request: Request,
         page: Optional[int] = Query(default=None, ge=1, description="Page number (1-indexed). Opt-in pagination."),
-        limit: Optional[int] = Query(default=None, ge=1, description="Agents per page. Opt-in pagination."),
+        limit: Optional[int] = Query(default=None, ge=1, le=100, description="Agents per page. Opt-in pagination."),
     ) -> Union[List[AgentResponse], PaginatedResponse[AgentResponse]]:
         """Return the list of all Agents present in the contextual OS"""
         # Filter agents based on user's scopes (only if authorization is enabled)

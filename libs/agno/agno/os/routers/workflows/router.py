@@ -1538,7 +1538,7 @@ def get_workflow_router(
     async def get_workflows(
         request: Request,
         page: Optional[int] = Query(default=None, ge=1, description="Page number (1-indexed). Opt-in pagination."),
-        limit: Optional[int] = Query(default=None, ge=1, description="Workflows per page. Opt-in pagination."),
+        limit: Optional[int] = Query(default=None, ge=1, le=100, description="Workflows per page. Opt-in pagination."),
     ) -> Union[List[WorkflowSummaryResponse], PaginatedResponse[WorkflowSummaryResponse]]:
         # Filter workflows based on user's scopes (only if authorization is enabled)
         if getattr(request.state, "authorization_enabled", False):

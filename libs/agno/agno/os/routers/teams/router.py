@@ -1905,7 +1905,7 @@ def get_team_router(
     async def get_teams(
         request: Request,
         page: Optional[int] = Query(default=None, ge=1, description="Page number (1-indexed). Opt-in pagination."),
-        limit: Optional[int] = Query(default=None, ge=1, description="Teams per page. Opt-in pagination."),
+        limit: Optional[int] = Query(default=None, ge=1, le=100, description="Teams per page. Opt-in pagination."),
     ) -> Union[List[TeamResponse], PaginatedResponse[TeamResponse]]:
         """Return the list of all Teams present in the contextual OS"""
         # Filter teams based on user's scopes (only if authorization is enabled)
