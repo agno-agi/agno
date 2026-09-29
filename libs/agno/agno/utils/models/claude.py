@@ -112,17 +112,32 @@ def _anthropic_coerce_content_block(item: Any) -> Optional[Any]:
     if item is None:
         return None
     if isinstance(item, dict):
-        return item if item.get("type") else None
-    model_dump = getattr(item, "model_dump", None)
-    if callable(model_dump):
+        block_dict = item
+    else:
+        model_dump = getattr(item, "model_dump", None)
+        if not callable(model_dump):
+            return None
         try:
             block_dict = model_dump(exclude_none=True)
         except Exception as e:
             log_warning(f"Failed to serialize Anthropic content block of type {type(item).__name__}: {e}")
             return None
-        if isinstance(block_dict, dict) and block_dict.get("type"):
-            return block_dict
-    return None
+    if not isinstance(block_dict, dict) or not block_dict.get("type"):
+        return None
+    if block_dict["type"] == "text" and isinstance(block_dict.get("citations"), list):
+        # Document titles are required but nullable. Restore nulls dropped by
+        # exclude_none above or by earlier versions, without mutating stored history.
+        block_dict = {
+            **block_dict,
+            "citations": [
+                {"document_title": None, **citation}
+                if isinstance(citation, dict)
+                and citation.get("type") in ("page_location", "char_location", "content_block_location")
+                else citation
+                for citation in block_dict["citations"]
+            ],
+        }
+    return block_dict
 
 
 _ANTHROPIC_THINKING_BLOCK_TYPES = ("thinking", "redacted_thinking")
