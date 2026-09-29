@@ -251,6 +251,155 @@ def test_explicit_history_window_is_respected_but_never_strands_the_anchor():
     assert _compaction_history_runs(too_small) > 5
 
 
+class _RecordingModel:
+    """Builds an offline model that records every request it is sent."""
+
+    @staticmethod
+    def build():
+        from agno.metrics import MessageMetrics
+        from agno.models.base import Model
+        from agno.models.response import ModelResponse
+
+        class Recording(Model):
+            def __init__(self):
+                super().__init__(id="test-model", name="test-model", provider="test")
+                self.requests: list = []
+
+            def _reply(self):
+                return ModelResponse(content="ok", role="assistant", response_usage=MessageMetrics())
+
+            def get_instructions_for_model(self, *args, **kwargs):
+                return None
+
+            def get_system_message_for_model(self, *args, **kwargs):
+                return None
+
+            async def aget_instructions_for_model(self, *args, **kwargs):
+                return None
+
+            async def aget_system_message_for_model(self, *args, **kwargs):
+                return None
+
+            def parse_args(self, *args, **kwargs):
+                return {}
+
+            def invoke(self, *args, **kwargs):
+                self.requests.append(list(kwargs.get("messages") or []))
+                return self._reply()
+
+            async def ainvoke(self, *args, **kwargs):
+                return self.invoke(*args, **kwargs)
+
+            def invoke_stream(self, *args, **kwargs):
+                self.requests.append(list(kwargs.get("messages") or []))
+                yield self._reply()
+
+            async def ainvoke_stream(self, *args, **kwargs):
+                self.requests.append(list(kwargs.get("messages") or []))
+                yield self._reply()
+
+            def _parse_provider_response(self, response, **kwargs):
+                return self._reply()
+
+            def _parse_provider_response_delta(self, response):
+                return self._reply()
+
+        return Recording()
+
+
+def _requests_over(runs, **agent_kwargs):
+    from agno.agent import Agent
+    from agno.db.in_memory import InMemoryDb
+
+    model = _RecordingModel.build()
+    agent = Agent(model=model, db=InMemoryDb(), session_id="s", add_history_to_context=True, **agent_kwargs)
+    for i in range(runs):
+        agent.run(f"question number {i}")
+    return model.requests
+
+
+@pytest.mark.parametrize(
+    "agent_kwargs",
+    [
+        {"compaction": True},
+        {"compaction": Compaction()},
+        {"compaction": True, "num_history_runs": 3},
+    ],
+)
+def test_compaction_does_not_widen_what_a_run_replays(agent_kwargs):
+    """The planner reads past num_history_runs; the model must not.
+
+    Replaying the planner's window would send the whole session every run until something folds -
+    and with compaction=True nothing folds until the provider rejects a request.
+    """
+    baseline = [len(r) for r in _requests_over(10)]
+    with_compaction = [len(r) for r in _requests_over(10, **agent_kwargs)]
+
+    assert with_compaction == baseline
+    assert with_compaction[-1] == with_compaction[-4]  # bounded, not growing
+
+
+def test_async_runs_do_not_widen_what_a_run_replays():
+    import asyncio
+
+    from agno.agent import Agent
+    from agno.db.in_memory import InMemoryDb
+
+    async def requests_over(runs, **agent_kwargs):
+        model = _RecordingModel.build()
+        agent = Agent(model=model, db=InMemoryDb(), session_id="s", add_history_to_context=True, **agent_kwargs)
+        for i in range(runs):
+            await agent.arun(f"question number {i}")
+        return [len(r) for r in model.requests]
+
+    assert asyncio.run(requests_over(10, compaction=True)) == asyncio.run(requests_over(10))
+
+
+def test_a_fold_replays_its_summary_and_everything_from_the_anchor():
+    """Once a fold exists the anchor has to be replayed, even when it is older than the window -
+    dropping it would drop the summary along with the turns it replaced."""
+    requests = _requests_over(
+        8,
+        num_history_runs=2,
+        compaction=Compaction(
+            compact_at_tokens=5, uncompacted_runs=3, min_fold_ratio=0, archive=False, model=_StubModel()
+        ),
+    )
+    last = [m.content for m in requests[-1] if m.role != "system"]
+
+    assert last[0].startswith("Summary of earlier conversation")
+    assert [c for c in last if c.startswith("question")] == [f"question number {i}" for i in range(4, 8)]
+
+
+def test_the_summary_survives_its_anchor_leaving_the_window():
+    """An explicit num_history_runs slides past a fold's anchor within a few runs. The anchor must
+    still be read and replayed, or the summary is dropped along with the turns it replaced - with
+    compaction=True, where folds are rare, that would be the normal case."""
+    from agno.agent import Agent
+
+    model = _RecordingModel.build()
+    agent = Agent(
+        model=model,
+        db=_db(),
+        session_id="s",
+        add_history_to_context=True,
+        num_history_runs=4,
+        compaction=Compaction(
+            compact_at_tokens=None, uncompacted_runs=1, min_fold_ratio=0, searchable=False, model=_StubModel()
+        ),
+    )
+    for i in range(4):
+        agent.run(f"question number {i}")
+    assert agent.compact(session_id="s").compacted
+
+    for i in range(4, 11):
+        agent.run(f"question number {i}")
+    sent = [m.content for m in model.requests[-1] if m.role != "system"]
+
+    assert sent[0].startswith("Summary of earlier conversation")
+    assert [c for c in sent if c.startswith("question")] == [f"question number {i}" for i in range(3, 11)]
+
+
 def test_history_window_untouched_without_compaction():
     """The widening is compaction's business only."""
     from agno.agent import Agent
