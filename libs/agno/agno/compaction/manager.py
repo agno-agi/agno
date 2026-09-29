@@ -14,6 +14,7 @@ from agno.compaction.prompts import (
     ARCHIVE_AWARE_PROMPT,
     ARCHIVE_LOOKUP_INSTRUCTION,
     DEFAULT_COMPACTION_PROMPT,
+    SUMMARY_BUDGET_INSTRUCTION,
 )
 from agno.compaction.types import CompactionRecord, CompactionStats, CompactionStatus
 from agno.models.base import Model
@@ -362,7 +363,12 @@ class Compaction:
             transcript = (
                 f"Summary of the conversation before this point:\n{previous}\n\nConversation since then:\n{transcript}"
             )
-        prompt = self.instructions or DEFAULT_COMPACTION_PROMPT.format(budget_tokens=self.summary_budget_tokens)
+        if self.instructions:
+            # Custom instructions replace the default prompt, and with it the length budget.
+            budget = SUMMARY_BUDGET_INSTRUCTION.format(budget_tokens=self.summary_budget_tokens)
+            prompt = f"{self.instructions}\n\n{budget}"
+        else:
+            prompt = DEFAULT_COMPACTION_PROMPT.format(budget_tokens=self.summary_budget_tokens)
         # Only ask the summary to flag its own gaps when there is somewhere to
         # go and read them. Without an archive the line would name detail the
         # assistant has no way to recover, which is worse than not saying it.

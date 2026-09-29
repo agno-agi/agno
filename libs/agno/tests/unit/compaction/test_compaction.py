@@ -779,6 +779,20 @@ def test_a_fold_that_leaves_the_context_over_the_threshold_warns(caplog):
     assert any("will fold again" in r.message for r in caplog.records)
 
 
+def test_the_summary_budget_reaches_custom_instructions():
+    """Custom instructions replace the default prompt, which is where the budget used to live - so
+    setting instructions silently dropped summary_budget_tokens."""
+    messages = _transcript()
+
+    custom = Compaction(instructions="Summarize as bullet points.", summary_budget_tokens=750)
+    system = custom._summary_messages(messages, previous=None)[0].content
+    assert system.startswith("Summarize as bullet points.")
+    assert "750 tokens" in system
+
+    default = Compaction(summary_budget_tokens=750)._summary_messages(messages, previous=None)[0].content
+    assert default.count("750 tokens") == 1
+
+
 def test_uncompacted_runs_and_uncompacted_tokens_are_mutually_exclusive():
     """Two settings claiming the same tail is a configuration nobody can reason about.
 
