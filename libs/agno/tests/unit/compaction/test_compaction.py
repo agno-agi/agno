@@ -358,17 +358,28 @@ def test_async_runs_do_not_widen_what_a_run_replays():
 def test_a_fold_replays_its_summary_and_everything_from_the_anchor():
     """Once a fold exists the anchor has to be replayed, even when it is older than the window -
     dropping it would drop the summary along with the turns it replaced."""
-    requests = _requests_over(
-        8,
+    from agno.agent import Agent
+
+    model = _RecordingModel.build()
+    agent = Agent(
+        model=model,
+        db=_db(),
+        session_id="s",
+        add_history_to_context=True,
         num_history_runs=2,
         compaction=Compaction(
-            compact_at_tokens=5, uncompacted_runs=3, min_fold_ratio=0, archive=False, model=_StubModel()
+            compact_at_tokens=None, uncompacted_runs=3, min_fold_ratio=0, searchable=False, model=_StubModel()
         ),
     )
-    last = [m.content for m in requests[-1] if m.role != "system"]
+    for i in range(6):
+        agent.run(f"question number {i}")
+    assert agent.compact(session_id="s").compacted  # keeps runs 3-5, a tail wider than the 2-run window
+
+    agent.run("question number 6")
+    last = [m.content for m in model.requests[-1] if m.role != "system"]
 
     assert last[0].startswith("Summary of earlier conversation")
-    assert [c for c in last if c.startswith("question")] == [f"question number {i}" for i in range(4, 8)]
+    assert [c for c in last if c.startswith("question")] == [f"question number {i}" for i in range(3, 7)]
 
 
 @pytest.mark.parametrize(
@@ -660,6 +671,112 @@ def test_the_kept_tail_tracks_the_token_budget():
         tails.append(estimate_tokens(messages[boundary:]))
 
     assert tails == sorted(tails)
+
+
+def _runs_of(n, answer_words=450):
+    """n runs of roughly 500 tokens each."""
+    return [
+        m
+        for i in range(n)
+        for m in (
+            Message(role="user", content=f"question {i} " + "word " * 40, id=f"u{i}"),
+            Message(role="assistant", content="detail " * answer_words, id=f"a{i}"),
+        )
+    ]
+
+
+def test_the_tail_limit_follows_the_threshold_and_ratio():
+    """compact_at_tokens / (1 + min_fold_ratio) is the largest tail a fold can pass the ratio against
+    at the moment the threshold fires. Without a threshold there is nothing to derive it from."""
+    assert Compaction(compact_at_tokens=3_000)._tail_limit == 1_000
+    assert Compaction(compact_at_tokens=3_000, min_fold_ratio=0.5)._tail_limit == 2_000
+    assert Compaction(compact_at_tokens=None)._tail_limit is None
+    assert Compaction(on_context_overflow=True)._tail_limit is None
+
+
+def test_a_token_tail_as_large_as_the_threshold_is_rejected():
+    with pytest.raises(ValueError, match="must be smaller than compact_at_tokens"):
+        Compaction(compact_at_tokens=2_000, uncompacted_tokens=2_000)
+    Compaction(compact_at_tokens=None, uncompacted_tokens=50_000)  # no threshold, nothing to compare
+
+
+def test_a_token_tail_that_delays_the_first_fold_is_warned_about(caplog):
+    """Above the limit the threshold fires and the ratio declines, run after run, until the context
+    reaches the tail times (1 + min_fold_ratio). An explicit size is the user's call, so it is kept."""
+    with caplog.at_level(logging.WARNING, logger="agno"):
+        compaction = Compaction(compact_at_tokens=2_000, uncompacted_tokens=1_500)
+    text = " ".join(r.message for r in caplog.records)
+    assert "at most 666" in text and "4500" in text
+    assert compaction.uncompacted_tokens == 1_500
+
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger="agno"):
+        Compaction(compact_at_tokens=2_000, uncompacted_tokens=400)
+    assert not caplog.records
+
+
+def test_a_run_count_tail_past_the_limit_folds_when_the_threshold_fires():
+    """Five runs of ~500 tokens are a 2,500-token tail against a 2,000-token threshold: the ratio
+    would decline every run until run 15. Cut by tokens at the limit, the fold happens at once."""
+    from agno.compaction._tokens import estimate_tokens
+
+    messages = _runs_of(5)
+    compaction = Compaction(compact_at_tokens=2_000)
+
+    boundary, status, _ = compaction.plan_with_reason(messages)
+
+    assert status == CompactionStatus.COMPACTED
+    assert estimate_tokens(messages[boundary:]) <= compaction._tail_limit
+    assert messages[boundary].role == "user"
+
+
+def test_the_tail_limit_never_cuts_into_the_newest_exchange():
+    """An oversized newest answer keeps its question: the model must not reply to a summary of what
+    it was just asked. The ratio may then decline; overflow recovery covers a request that is too long."""
+    messages = (
+        _runs_of(4)
+        + _runs_of(1, answer_words=3_000)[:1]
+        + [Message(role="assistant", content="detail " * 3_000, id="big")]
+    )
+    messages[-2].id = "newest"
+
+    boundary = Compaction(compact_at_tokens=2_000).boundary_for(messages)
+
+    assert messages[boundary].id == "newest"
+
+
+def test_cutting_a_chosen_run_count_is_logged_at_info(caplog):
+    """An explicit uncompacted_runs is being overridden, so say it where it will be seen; the default
+    is nobody's choice, so it stays at debug."""
+    messages = _runs_of(5)
+
+    with caplog.at_level(logging.DEBUG, logger="agno"):
+        Compaction(compact_at_tokens=2_000, uncompacted_runs=4, model=_StubModel(), archive=False).compact(
+            messages, session_id="s"
+        )
+    chosen = [r for r in caplog.records if "tail limit" in r.message]
+    assert chosen and chosen[0].levelno == logging.INFO
+
+    # log_debug only emits in debug mode, so the default leaves nothing at info level or above.
+    caplog.clear()
+    with caplog.at_level(logging.DEBUG, logger="agno"):
+        Compaction(compact_at_tokens=2_000, model=_StubModel(), archive=False).compact(messages, session_id="s")
+    assert not [r for r in caplog.records if "tail limit" in r.message and r.levelno >= logging.INFO]
+
+
+def test_a_fold_that_leaves_the_context_over_the_threshold_warns(caplog):
+    """When the system prompt and tools alone sit near the threshold, every fold is followed by another
+    on the next run - a summarizer call each time. The fold measures its result, so it can say so."""
+    messages = _runs_of(5)
+    huge_system_prompt = [Message(role="system", content="rule " * 3_000)]
+
+    with caplog.at_level(logging.WARNING, logger="agno"):
+        record = Compaction(compact_at_tokens=2_000, model=_StubModel(), archive=False).compact(
+            messages, session_id="s", context_prefix=huge_system_prompt
+        )
+
+    assert record is not None
+    assert any("will fold again" in r.message for r in caplog.records)
 
 
 def test_uncompacted_runs_and_uncompacted_tokens_are_mutually_exclusive():

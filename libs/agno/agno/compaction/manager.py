@@ -18,7 +18,7 @@ from agno.compaction.prompts import (
 from agno.compaction.types import CompactionRecord, CompactionStats, CompactionStatus
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.utils.log import log_error, log_info, log_warning
+from agno.utils.log import log_debug, log_error, log_info, log_warning
 
 if TYPE_CHECKING:
     from agno.metrics import RunMetrics
@@ -136,6 +136,7 @@ class Compaction:
             # The token budget is authoritative from here on; the run count would otherwise be
             # consulted by every helper that reads it.
             self.uncompacted_runs = None
+            self._check_token_tail()
         # compact_at_tokens=None is legal: it disables the automatic trigger and leaves
         # agent.compact() as the only way to fold, which is a coherent way to run this.
 
@@ -232,6 +233,36 @@ class Compaction:
             return None
         return user_indexes[-keep_runs]
 
+    @property
+    def _tail_limit(self) -> Optional[int]:
+        """The largest tail a fold can keep and still pass min_fold_ratio at the threshold.
+
+        When compact_at_tokens is reached, the history is about that size. A tail of at most
+        compact_at_tokens / (1 + min_fold_ratio) leaves at least min_fold_ratio times as much in
+        front of it, so the fold the threshold asks for is one the ratio accepts.
+        """
+        if self.compact_at_tokens is None:
+            return None
+        return int(self.compact_at_tokens / (1 + self.min_fold_ratio))
+
+    def _check_token_tail(self) -> None:
+        """An explicit token tail has to leave room to fold at the threshold."""
+        limit = self._tail_limit
+        if limit is None or self.uncompacted_tokens is None or self.compact_at_tokens is None:
+            return
+        if self.uncompacted_tokens >= self.compact_at_tokens:
+            raise ValueError(
+                f"uncompacted_tokens={self.uncompacted_tokens} must be smaller than compact_at_tokens="
+                f"{self.compact_at_tokens}: a tail that large holds the whole context, so nothing could fold."
+            )
+        if self.uncompacted_tokens > limit:
+            log_warning(
+                f"Compaction: uncompacted_tokens={self.uncompacted_tokens} is too large to fold at "
+                f"compact_at_tokens={self.compact_at_tokens} with min_fold_ratio={self.min_fold_ratio} - "
+                f"the tail can be at most {limit}. Nothing will fold until the context reaches about "
+                f"{int(self.uncompacted_tokens * (1 + self.min_fold_ratio))} tokens."
+            )
+
     def boundary_for(self, messages: List[Message], min_index: int = 0) -> Optional[int]:
         """Index of the first message kept verbatim, or None when no safe cut exists.
 
@@ -245,10 +276,63 @@ class Compaction:
             # from the newest message and stops once the budget is spent, then snaps to a
             # pair-safe turn boundary like any other cut.
             return choose_boundary(messages, keep_tokens=self.uncompacted_tokens, min_index=min_index)
+        return self._run_tail_boundary(messages, min_index)[0]
+
+    def _run_tail_boundary(self, messages: List[Message], min_index: int = 0) -> Tuple[Optional[int], bool]:
+        """The cut for a run-count tail, and whether the tail limit had to shorten it.
+
+        A run count says how many turns survive, not how large they are, so a few long turns can
+        make a tail no fold in front of it can outweigh - the threshold fires and the ratio declines,
+        run after run. Past the tail limit the tail is cut by tokens instead. Never inside the newest
+        exchange, though: folding the question the model is answering would leave it replying to a
+        summary of what it was just asked.
+        """
         keep_from = self._keep_from_index(messages)
-        if keep_from is None:
-            return None
-        return choose_boundary(messages, keep_from_index=keep_from, min_index=min_index)
+        boundary = (
+            None if keep_from is None else choose_boundary(messages, keep_from_index=keep_from, min_index=min_index)
+        )
+        limit = self._tail_limit
+        if limit is None:
+            return boundary, False
+        tail_start = min_index if boundary is None else boundary
+        if estimate_tokens(messages[tail_start:]) <= limit:
+            return boundary, False
+        cut = choose_boundary(messages, keep_tokens=limit, min_index=min_index)
+        newest = max((i for i, m in enumerate(messages) if m.role == "user"), default=None)
+        if cut is not None and newest is not None and cut > newest:
+            cut = choose_boundary(messages, keep_from_index=newest, min_index=min_index)
+        if cut is None or cut <= tail_start:
+            return boundary, False
+        return cut, True
+
+    def _log_tail_limit(self, messages: List[Message], min_index: int) -> None:
+        """Say when the tail limit kept fewer runs than uncompacted_runs asks for.
+
+        At info level when the run count was chosen, since that setting is then being overridden;
+        at debug level for the default, which nobody picked.
+        """
+        if self.uncompacted_tokens is not None or not self._run_tail_boundary(messages, min_index)[1]:
+            return
+        message = (
+            f"Compaction: the last {self.uncompacted_runs} runs exceed the {self._tail_limit}-token tail "
+            f"limit (compact_at_tokens / (1 + min_fold_ratio)), so the kept tail was cut to that size."
+        )
+        if isinstance(self.uncompacted_runs, _Unset):
+            log_debug(message)
+        else:
+            log_info(message)
+
+    def _warn_if_still_over(self, record: CompactionRecord) -> None:
+        """A fold that leaves the context at or over the threshold will fold again next run."""
+        if self.compact_at_tokens is None or not record.tokens_after:
+            return
+        if record.tokens_after >= self.compact_at_tokens:
+            log_warning(
+                f"Compaction: after folding, the context is still {record.tokens_after} tokens, at or over "
+                f"compact_at_tokens={self.compact_at_tokens}, so the next run will fold again. The system "
+                f"prompt, tools, and kept tail leave too little room - raise compact_at_tokens or keep a "
+                f"smaller tail."
+            )
 
     # -- summarizing ----------------------------------------------------
 
@@ -594,6 +678,8 @@ class Compaction:
         # measurement taken afterwards would never reach it.
         prefix = context_prefix or []
         self.measure(record, prefix + messages, prefix + self.apply_record(messages, record))
+        self._log_tail_limit(messages, already)
+        self._warn_if_still_over(record)
         if archive is not None:
             record.archived = archive.write(record, to_compact)
         self.stats.record(record)
@@ -637,6 +723,8 @@ class Compaction:
         # measurement taken afterwards would never reach it.
         prefix = context_prefix or []
         self.measure(record, prefix + messages, prefix + self.apply_record(messages, record))
+        self._log_tail_limit(messages, already)
+        self._warn_if_still_over(record)
         if archive is not None:
             record.archived = archive.write(record, to_compact)
         self.stats.record(record)
