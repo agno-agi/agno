@@ -75,51 +75,34 @@ class Compaction:
     # Type of the owner: "agent" or "team" (set when registered in the OS).
     owner_type: Optional[str] = None
 
-    # Model used to write the summary. Defaults to the agent's model.
+    # Model that writes the summary. Defaults to the agent's model.
     model: Optional[Model] = None
-    # Custom summarization instructions. Replaces the default prompt entirely.
+    # Replaces the default summarization prompt.
     instructions: Optional[str] = None
-    # Length budget given to the summarizer. A summary that grows without bound defeats the
-    # point; this is a soft target stated in the prompt, not an enforced cap.
+    # Soft length target for the summary, stated in the prompt.
     summary_budget_tokens: int = 2_000
 
     # -- when to compact ------------------------------------------------
-    # Compact when the context reaches this many tokens. Size is the only automatic trigger;
-    # call agent.compact() to fold at a moment of your own choosing.
+    # Fold when the context reaches this many tokens. None folds only on agent.compact() or overflow.
     compact_at_tokens: Optional[int] = _COMPACT_AT_TOKENS_UNSET
 
     # -- what to keep ---------------------------------------------------
     # Recent runs kept verbatim.
     uncompacted_runs: Optional[int] = _UNCOMPACTED_RUNS_UNSET
-
-    # Recent history kept verbatim, measured in tokens instead of runs. Use this when turns
-    # vary in length - a run count bounds how many turns survive, not how large they get.
-    # The cut still snaps to a turn boundary, so the tail may come out somewhat larger than
-    # asked. Mutually exclusive with uncompacted_runs.
+    # Recent history kept verbatim, by size instead of runs. Mutually exclusive with uncompacted_runs.
     uncompacted_tokens: Optional[int] = None
 
     # -- archive --------------------------------------------------------
-    # Write replaced messages to the filesystem so they stay recoverable.
+    # Store folded messages so they stay recoverable.
     archive: bool = True
-    # Give the agent read-only search over the archive, so detail the summary dropped is still
-    # answerable. Scoped to one session, and not registered until something has been archived.
+    # Let the agent search the archive for detail the summary dropped.
     searchable: bool = True
 
-    # Render tool results older than the cut as a short placeholder. A cheap, no-inference
-    # tier: on a tool-heavy transcript it reclaims more than the summary does.
+    # Show tool results older than the cut as a short placeholder.
     elide_tool_results: bool = True
-
-    # Also compact reactively when the provider rejects a request as too long.
-    #
-    # Off by default here because a proactive threshold is already in play, and hitting the
-    # provider's limit means that threshold was wrong - worth surfacing rather than absorbing.
-    # A bare ``compaction=True`` turns it on, having no threshold to rely on.
+    # Also fold and retry when the provider rejects a request as too long. compaction=True turns it on.
     on_context_overflow: bool = False
-
-    # Skip a compaction unless the folded span is at least this many times the kept tail.
-    #
-    # A summary has a floor cost of a few hundred tokens, so folding a span barely larger than
-    # what it replaces leaves the context bigger than it started. Set to 0 to always compact.
+    # Skip a fold smaller than this many times the kept tail - a summary costs a few hundred tokens.
     min_fold_ratio: float = 2.0
 
     stats: CompactionStats = field(default_factory=CompactionStats)
