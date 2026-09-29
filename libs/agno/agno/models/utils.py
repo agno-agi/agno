@@ -20,6 +20,12 @@ _PROVIDERS: Dict[str, Tuple[str, str, str, str]] = {
     "azure-ai-foundry": ("agno.models.azure", "AzureAIFoundry", "AzureAIFoundry", "azure"),
     "azure-foundry-claude": ("agno.models.azure", "AzureFoundryClaude", "AzureFoundryClaude", "azurefoundry"),
     "azure-openai": ("agno.models.azure", "AzureOpenAI", "AzureOpenAI", "azure"),
+    "azure-openai-responses": (
+        "agno.models.azure",
+        "AzureOpenAIResponses",
+        "AzureOpenAIResponses",
+        "azure",
+    ),
     "cerebras": ("agno.models.cerebras", "Cerebras", "Cerebras", "cerebras"),
     "cerebras-openai": ("agno.models.cerebras", "CerebrasOpenAI", "CerebrasOpenAI", "cerebrasopenai"),
     "cohere": ("agno.models.cohere", "Cohere", "cohere", "cohere"),
@@ -77,6 +83,7 @@ _PROVIDERS: Dict[str, Tuple[str, str, str, str]] = {
     "xai": ("agno.models.xai", "xAI", "xAI", "xai"),
     "xai-responses": ("agno.models.xai", "xAIResponses", "xAIResponses", "xai"),
     "xiaomi": ("agno.models.xiaomi", "MiMo", "MiMo", "xiaomi mimo"),
+    "yapi": ("agno.models.yapi", "YAPI", "YAPI", "yapi"),
 }
 
 # key -> (module, class_name): the construction registry consumed by `_get_model_class`, the

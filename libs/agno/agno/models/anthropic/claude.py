@@ -1124,14 +1124,14 @@ class Claude(Model):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
     ) -> ModelResponse:
         """
-        Parse the Claude streaming response into ModelProviderResponse objects.
+        Parse the Claude streaming response into ModelResponse objects.
 
         Args:
             response: Raw response chunk from Anthropic
             response_format: Optional response format for structured output parsing
 
         Returns:
-            ModelResponse: Iterator of parsed response data
+            ModelResponse: Parsed response data
         """
         model_response = ModelResponse()
 
