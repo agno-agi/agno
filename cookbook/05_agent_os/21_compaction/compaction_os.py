@@ -64,7 +64,7 @@ research_agent = Agent(
         # A fold has to be at least min_fold_ratio (2x) the tail it keeps, or it cannot
         # pay for the summary. A 1-turn tail reaches that after a few turns; a larger
         # one needs proportionally more conversation in front of it first.
-        keep_last_runs=1,
+        uncompacted_runs=1,
         searchable=True,
     ),
     markdown=True,
@@ -88,7 +88,7 @@ manual_agent = Agent(
         model=OpenAIResponses(id="gpt-5.4"),
         # No automatic trigger: this session folds only via POST .../compact.
         compact_at_tokens=None,
-        keep_last_runs=1,
+        uncompacted_runs=1,
         searchable=True,
     ),
     markdown=True,

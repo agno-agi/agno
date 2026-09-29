@@ -35,7 +35,7 @@ compaction = Compaction(
     searchable=True,
     # The turns here are short, so keep only one of them: the guard skips a fold
     # that would not be meaningfully larger than the tail it keeps.
-    keep_last_runs=1,
+    uncompacted_runs=1,
 )
 
 # ---------------------------------------------------------------------------

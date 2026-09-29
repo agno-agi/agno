@@ -180,7 +180,7 @@ def test_context_size_is_estimated_locally_when_not_supplied():
 def test_replay_window_below_the_tail_warns(caplog):
     """Widening a number the user set must not be silent.
 
-    num_history_runs at or below keep_last_runs cannot express a working compaction - the tail
+    num_history_runs at or below uncompacted_runs cannot express a working compaction - the tail
     would not fit in what the planner may read, so no anchor could ever resolve. The planner
     widens its own read to avoid dropping every summary, and says so: quietly ignoring a
     setting is worse than the misconfiguration it works around.
@@ -189,10 +189,10 @@ def test_replay_window_below_the_tail_warns(caplog):
 
     for window, keep in ((3, 5), (5, 5)):
         caplog.clear()
-        agent = Agent(num_history_runs=window, compaction=Compaction(keep_last_runs=keep))
+        agent = Agent(num_history_runs=window, compaction=Compaction(uncompacted_runs=keep))
         with caplog.at_level(logging.WARNING, logger="agno"):
             _init.set_compaction(agent)
-        assert any("keep_last_runs" in r.message for r in caplog.records), (window, keep)
+        assert any("uncompacted_runs" in r.message for r in caplog.records), (window, keep)
         # The replay setting itself is untouched; only the planner reads wider.
         assert agent.num_history_runs == window
 
@@ -201,11 +201,11 @@ def test_workable_replay_window_is_not_warned_about(caplog):
     """A window larger than the tail is a normal configuration, not a mistake."""
     from agno.agent import Agent, _init
 
-    agent = Agent(num_history_runs=20, compaction=Compaction(keep_last_runs=5))
+    agent = Agent(num_history_runs=20, compaction=Compaction(uncompacted_runs=5))
     with caplog.at_level(logging.WARNING, logger="agno"):
         _init.set_compaction(agent)
 
-    assert not [r for r in caplog.records if "keep_last_runs" in r.message]
+    assert not [r for r in caplog.records if "uncompacted_runs" in r.message]
 
 
 def test_defaults_the_user_did_not_choose_are_not_warned_about(caplog):
@@ -216,20 +216,20 @@ def test_defaults_the_user_did_not_choose_are_not_warned_about(caplog):
     with caplog.at_level(logging.WARNING, logger="agno"):
         _init.set_compaction(agent)
 
-    assert not [r for r in caplog.records if "keep_last_runs" in r.message]
+    assert not [r for r in caplog.records if "uncompacted_runs" in r.message]
 
 
 def test_compaction_is_not_starved_by_the_default_history_window():
     """num_history_runs defaults to 3, which would leave compaction nothing to fold.
 
-    Compaction folds what sits in FRONT of the kept tail. A 3-run window with keep_last_runs=5
+    Compaction folds what sits in FRONT of the kept tail. A 3-run window with uncompacted_runs=5
     has no front, so compaction could never fire under the one-flag setup - and an anchor
     outside the window cannot resolve, dropping the summary along with the turns it replaced.
     """
     from agno.agent import Agent
     from agno.agent._messages import _compaction_history_runs
 
-    agent = Agent(compaction=Compaction(keep_last_runs=5))
+    agent = Agent(compaction=Compaction(uncompacted_runs=5))
 
     assert agent.num_history_runs == 3  # the replay default is unchanged
     assert _compaction_history_runs(agent) > 5  # but the planner sees past it
@@ -244,10 +244,10 @@ def test_explicit_history_window_is_respected_but_never_strands_the_anchor():
     from agno.agent import Agent
     from agno.agent._messages import _compaction_history_runs
 
-    roomy = Agent(num_history_runs=50, compaction=Compaction(keep_last_runs=5))
+    roomy = Agent(num_history_runs=50, compaction=Compaction(uncompacted_runs=5))
     assert _compaction_history_runs(roomy) == 50
 
-    too_small = Agent(num_history_runs=2, compaction=Compaction(keep_last_runs=5))
+    too_small = Agent(num_history_runs=2, compaction=Compaction(uncompacted_runs=5))
     assert _compaction_history_runs(too_small) > 5
 
 
@@ -281,7 +281,7 @@ def test_manual_compact_folds_without_the_size_trigger():
     session = AgentSession(session_id="s1", runs=runs)
 
     # compact_at_tokens far above this conversation: the automatic path would never fire.
-    compaction = Compaction(compact_at_tokens=10_000_000, keep_last_runs=3, archive=False, model=_StubModel())
+    compaction = Compaction(compact_at_tokens=10_000_000, uncompacted_runs=3, archive=False, model=_StubModel())
     agent = Agent(compaction=compaction)
 
     result = compact_now(agent, session, _history_for_compaction(agent, session))
@@ -314,7 +314,7 @@ def test_manual_compact_still_honours_the_ratio_guard():
             Message(role="assistant", content=f"a{i}", id=f"a{i}"),
         )
     ]
-    compaction = Compaction(keep_last_runs=2, archive=False, model=_StubModel())
+    compaction = Compaction(uncompacted_runs=2, archive=False, model=_StubModel())
     agent = Agent(compaction=compaction)
 
     result = compact_now(agent, AgentSession(session_id="s1", runs=[]), history)
@@ -335,7 +335,7 @@ def test_not_worth_it_message_carries_the_numbers():
     from agno.agent._messages import compact_now
     from agno.session.agent import AgentSession
 
-    # 4 turns with keep_last_runs=2 puts the fold and the tail at the same size: ratio 1.00.
+    # 4 turns with uncompacted_runs=2 puts the fold and the tail at the same size: ratio 1.00.
     history = [
         m
         for i in range(4)
@@ -344,7 +344,7 @@ def test_not_worth_it_message_carries_the_numbers():
             Message(role="assistant", content="a " * 600, id=f"a{i}"),
         )
     ]
-    agent = Agent(compaction=Compaction(keep_last_runs=2, archive=False, model=_StubModel()))
+    agent = Agent(compaction=Compaction(uncompacted_runs=2, archive=False, model=_StubModel()))
 
     result = compact_now(agent, AgentSession(session_id="s1", runs=[]), history)
 
@@ -352,7 +352,7 @@ def test_not_worth_it_message_carries_the_numbers():
     assert "ratio 1.00" in result.message
     assert "needs 2.0" in result.message
     # The usual fix is more conversation, so it is named before the config knobs.
-    assert result.message.index("Continue") < result.message.index("keep_last_runs")
+    assert result.message.index("Continue") < result.message.index("uncompacted_runs")
 
 
 def test_compaction_result_serializes_for_an_api():
@@ -379,7 +379,7 @@ def test_declines_are_reported_not_raised():
     from agno.agent._messages import compact_now
     from agno.session.agent import AgentSession
 
-    agent = Agent(compaction=Compaction(keep_last_runs=2, archive=False, model=_StubModel()))
+    agent = Agent(compaction=Compaction(uncompacted_runs=2, archive=False, model=_StubModel()))
     session = AgentSession(session_id="s1", runs=[])
 
     for history, expected in (
@@ -413,7 +413,7 @@ def test_compaction_not_enabled_is_a_status_not_a_crash():
     assert not result.compacted
 
 
-def test_keep_last_tokens_bounds_a_tail_that_runs_cannot():
+def test_uncompacted_tokens_bounds_a_tail_that_runs_cannot():
     """A run count says how many turns survive, not how large they are.
 
     Compaction only folds what sits in FRONT of the tail, so a handful of verbose turns
@@ -427,8 +427,8 @@ def test_keep_last_tokens_bounds_a_tail_that_runs_cannot():
         messages.append(Message(role="assistant", content=("f " * 15000 if i >= 5 else f"a{i} " * 200), id=f"a{i}"))
     total = estimate_tokens(messages)
 
-    by_runs = Compaction(keep_last_runs=3).boundary_for(messages)
-    by_tokens = Compaction(keep_last_tokens=5_000).boundary_for(messages)
+    by_runs = Compaction(uncompacted_runs=3).boundary_for(messages)
+    by_tokens = Compaction(uncompacted_tokens=5_000).boundary_for(messages)
 
     assert estimate_tokens(messages[by_runs:]) > total * 0.9  # runs cannot help here
     assert estimate_tokens(messages[by_tokens:]) < total * 0.5
@@ -449,32 +449,32 @@ def test_the_kept_tail_tracks_the_token_budget():
 
     tails = []
     for budget in (2_000, 5_000, 10_000):
-        boundary = Compaction(keep_last_tokens=budget).boundary_for(messages)
+        boundary = Compaction(uncompacted_tokens=budget).boundary_for(messages)
         tails.append(estimate_tokens(messages[boundary:]))
 
     assert tails == sorted(tails)
 
 
-def test_keep_last_runs_and_keep_last_tokens_are_mutually_exclusive():
+def test_uncompacted_runs_and_uncompacted_tokens_are_mutually_exclusive():
     """Two settings claiming the same tail is a configuration nobody can reason about.
 
     Raised rather than resolved silently: honouring one of two values the user deliberately
     set is the kind of surprise that costs an afternoon to track down.
     """
     with pytest.raises(ValueError, match="cannot both be set"):
-        Compaction(keep_last_runs=3, keep_last_tokens=40_000)
+        Compaction(uncompacted_runs=3, uncompacted_tokens=40_000)
 
     # The default run count is not a choice, so it does not collide.
-    c = Compaction(keep_last_tokens=40_000)
-    assert c.keep_last_tokens == 40_000
-    assert c.keep_last_runs is None
+    c = Compaction(uncompacted_tokens=40_000)
+    assert c.uncompacted_tokens == 40_000
+    assert c.uncompacted_runs is None
 
 
 def test_a_decline_does_not_suggest_a_knob_that_cannot_help(caplog):
     """Shrinking the tail only moves the boundary while the tail holds more than one turn.
 
     The cut is pair-safe, so it never lands inside a turn. Once the tail is a single turn no
-    smaller budget can shrink it - observed lowering keep_last_tokens from 4,000 to 100 with
+    smaller budget can shrink it - observed lowering uncompacted_tokens from 4,000 to 100 with
     the ratio unchanged at 1.01. Advice to lower it there sends the reader nowhere.
     """
     head = [Message(role="user", content="q " * 12), Message(role="assistant", content="w " * 4540)]
@@ -484,16 +484,16 @@ def test_a_decline_does_not_suggest_a_knob_that_cannot_help(caplog):
         for _ in range(2)
         for m in (Message(role="user", content="q " * 12), Message(role="assistant", content="w " * 2468))
     ]
-    c = Compaction(keep_last_tokens=2_000)
+    c = Compaction(uncompacted_tokens=2_000)
 
     with caplog.at_level(logging.INFO, logger="agno"):
         c._worth_compacting(head, one_turn)
-    assert "keep_last_tokens" not in " ".join(r.message for r in caplog.records)
+    assert "uncompacted_tokens" not in " ".join(r.message for r in caplog.records)
 
     caplog.clear()
     with caplog.at_level(logging.INFO, logger="agno"):
         c._worth_compacting(head, two_turns)
-    assert "keep_last_tokens" in " ".join(r.message for r in caplog.records)
+    assert "uncompacted_tokens" in " ".join(r.message for r in caplog.records)
 
 
 def test_a_decline_names_continuing_first(caplog):
@@ -505,14 +505,14 @@ def test_a_decline_names_continuing_first(caplog):
     tail = [Message(role="user", content="q " * 12), Message(role="assistant", content="w " * 4936)]
 
     with caplog.at_level(logging.INFO, logger="agno"):
-        Compaction(keep_last_tokens=2_000)._worth_compacting(head, tail)
+        Compaction(uncompacted_tokens=2_000)._worth_compacting(head, tail)
 
     message = " ".join(r.message for r in caplog.records)
     assert message.index("Continue the conversation") < message.index("min_fold_ratio to fold sooner")
 
 
 def test_declines_name_the_tail_setting_actually_in_force(caplog):
-    """Telling someone to lower keep_last_runs when they set keep_last_tokens is a dead end.
+    """Telling someone to lower uncompacted_runs when they set uncompacted_tokens is a dead end.
 
     The run count is None once a token budget is configured, so a message naming it sends the
     reader to a setting that does not exist.
@@ -520,25 +520,25 @@ def test_declines_name_the_tail_setting_actually_in_force(caplog):
     tiny = [Message(role="user", content="hi", id="u0"), Message(role="assistant", content="hello", id="a0")]
 
     with caplog.at_level(logging.INFO, logger="agno"):
-        Compaction(keep_last_tokens=40_000).plan(tiny)
+        Compaction(uncompacted_tokens=40_000).plan(tiny)
 
     message = " ".join(r.message for r in caplog.records)
-    assert "keep_last_tokens=40000" in message
-    assert "keep_last_runs" not in message
+    assert "uncompacted_tokens=40000" in message
+    assert "uncompacted_runs" not in message
 
 
 def test_an_explicit_default_value_still_collides():
-    """keep_last_runs=5 written by hand is a choice, even though 5 is also the default.
+    """uncompacted_runs=5 written by hand is a choice, even though 5 is also the default.
 
     Comparing against the value alone cannot tell the two apart, so an explicit 5 alongside
-    keep_last_tokens was silently discarded - the exact surprise the mutual exclusion exists
+    uncompacted_tokens was silently discarded - the exact surprise the mutual exclusion exists
     to prevent.
     """
     with pytest.raises(ValueError, match="cannot both be set"):
-        Compaction(keep_last_runs=5, keep_last_tokens=20_000)
+        Compaction(uncompacted_runs=5, uncompacted_tokens=20_000)
 
     # The untouched default still does not collide.
-    assert Compaction(keep_last_tokens=20_000).keep_last_runs is None
+    assert Compaction(uncompacted_tokens=20_000).uncompacted_runs is None
 
 
 def test_opting_into_overflow_recovery_drops_the_default_threshold():
@@ -548,7 +548,7 @@ def test_opting_into_overflow_recovery_drops_the_default_threshold():
     the flag would be dead code - the user would have asked for something that never runs.
     """
     assert Compaction(on_context_overflow=True).compact_at_tokens is None
-    assert Compaction(on_context_overflow=True, keep_last_tokens=50_000).compact_at_tokens is None
+    assert Compaction(on_context_overflow=True, uncompacted_tokens=50_000).compact_at_tokens is None
 
     # Without the flag the default stands.
     assert Compaction().compact_at_tokens == 150_000
@@ -631,9 +631,9 @@ def test_the_archive_is_searchable_by_default():
     assert c.tools_for("s1", None) is None  # nothing archived yet
 
 
-def test_keep_last_tokens_rejects_non_positive_values():
-    with pytest.raises(ValueError, match="keep_last_tokens"):
-        Compaction(keep_last_tokens=0)
+def test_uncompacted_tokens_rejects_non_positive_values():
+    with pytest.raises(ValueError, match="uncompacted_tokens"):
+        Compaction(uncompacted_tokens=0)
 
 
 def test_context_overflow_folds_and_asks_for_a_retry():
@@ -666,7 +666,7 @@ def test_context_overflow_folds_and_asks_for_a_retry():
     before = estimate_tokens(messages)
     agent = Agent(
         num_history_runs=50,
-        compaction=Compaction(keep_last_runs=5, archive=False, model=_StubModel(), on_context_overflow=True),
+        compaction=Compaction(uncompacted_runs=5, archive=False, model=_StubModel(), on_context_overflow=True),
     )
 
     assert _recompact_after_overflow(agent, AgentSession(session_id="s1", runs=[]), run_messages, None) is True
@@ -768,7 +768,9 @@ def test_context_overflow_does_not_retry_what_it_cannot_shrink(caplog):
             Message(role="assistant", content="f " * 60000, id="a0"),
         ]
     )
-    agent = Agent(compaction=Compaction(keep_last_runs=1, archive=False, model=_StubModel(), on_context_overflow=True))
+    agent = Agent(
+        compaction=Compaction(uncompacted_runs=1, archive=False, model=_StubModel(), on_context_overflow=True)
+    )
 
     with caplog.at_level(logging.WARNING, logger="agno"):
         assert _recompact_after_overflow(agent, AgentSession(session_id="s1", runs=[]), run_messages, None) is False
@@ -797,7 +799,7 @@ def test_boundary_never_splits_a_tool_batch():
     """The kept tail must never begin with an unanswered tool result."""
     messages = _transcript(runs=3)
     for keep in range(len(messages) + 1):
-        c = Compaction(keep_last_runs=keep)
+        c = Compaction(uncompacted_runs=keep)
         boundary = c.boundary_for(messages)
         tail = messages[boundary:]
         if tail:
@@ -811,7 +813,7 @@ def test_boundary_never_splits_a_tool_batch():
 
 def test_boundary_keeps_requested_runs():
     messages = _transcript(runs=3)
-    c = Compaction(keep_last_runs=1)
+    c = Compaction(uncompacted_runs=1)
     tail = messages[c.boundary_for(messages) :]
     assert tail[0].role == "user"
     assert tail[0].content == "question 2"
@@ -820,7 +822,7 @@ def test_boundary_keeps_requested_runs():
 def test_keeping_everything_compacts_nothing():
     """No safe cut is None, not 0: there is nothing to fold, so the pass aborts."""
     messages = _transcript(runs=2)
-    c = Compaction(keep_last_runs=99)
+    c = Compaction(uncompacted_runs=99)
     assert c.boundary_for(messages) is None
 
 
@@ -986,7 +988,7 @@ def test_second_compaction_only_covers_what_is_new():
     """
     messages = _transcript(runs=4)
     # min_fold_ratio=0: this exercises the boundary, not the size floor.
-    c = Compaction(keep_last_runs=1, min_fold_ratio=0, model=_StubModel())
+    c = Compaction(uncompacted_runs=1, min_fold_ratio=0, model=_StubModel())
     previous = _record(messages, 2, summary="earlier")
 
     record = c.compact(messages, session_id="s", db=None, previous=previous)
@@ -1002,7 +1004,7 @@ def test_second_compaction_only_covers_what_is_new():
 
 def test_no_new_span_does_not_recompact():
     messages = _transcript(runs=2)
-    c = Compaction(keep_last_runs=1)
+    c = Compaction(uncompacted_runs=1)
     boundary = c.boundary_for(messages)
     previous = _record(messages, boundary, summary="s")
 
@@ -1012,7 +1014,7 @@ def test_no_new_span_does_not_recompact():
 def test_skips_a_fold_that_cannot_pay_for_its_summary():
     """Folding barely more than is kept leaves the context bigger, not smaller."""
     tiny = [Message(role="user", content="hi"), Message(role="assistant", content="hello")]
-    c = Compaction(keep_last_runs=1, model=_StubModel())
+    c = Compaction(uncompacted_runs=1, model=_StubModel())
 
     assert c.compact(tiny, session_id="s", db=None) is None
 
@@ -1023,7 +1025,7 @@ def test_fold_ratio_can_be_disabled():
         Message(role="assistant", content="hello"),
         Message(role="user", content="more"),
     ]
-    c = Compaction(keep_last_runs=1, min_fold_ratio=0, model=_StubModel())
+    c = Compaction(uncompacted_runs=1, min_fold_ratio=0, model=_StubModel())
 
     assert c.compact(messages, session_id="s", db=None) is not None
 
@@ -1034,7 +1036,7 @@ def test_large_fold_against_a_small_tail_clears_the_ratio():
         Message(role="assistant", content="y" * 5_000),
         Message(role="user", content="tiny"),
     ]
-    c = Compaction(keep_last_runs=1, model=_StubModel())
+    c = Compaction(uncompacted_runs=1, model=_StubModel())
 
     assert c.compact(big, session_id="s", db=None) is not None
 
@@ -1048,7 +1050,7 @@ def test_plan_refuses_what_compact_would_refuse():
     """
     # Too small to be worth folding: whatever boundary exists, both must decline together.
     tiny = [Message(role="user", content="hi"), Message(role="assistant", content="hello")]
-    c = Compaction(keep_last_runs=1, model=_StubModel())
+    c = Compaction(uncompacted_runs=1, model=_StubModel())
 
     assert c.plan(tiny) is None
     assert c.compact(tiny, session_id="s", db=None) is None
@@ -1060,7 +1062,7 @@ def test_plan_agrees_with_compact_when_worthwhile():
         Message(role="assistant", content="y" * 5_000),
         Message(role="user", content="tiny"),
     ]
-    c = Compaction(keep_last_runs=1, model=_StubModel())
+    c = Compaction(uncompacted_runs=1, model=_StubModel())
 
     boundary = c.plan(big)
     record = c.compact(big, session_id="s", db=None)
@@ -1147,7 +1149,7 @@ def test_boundary_never_anchors_on_a_message_that_will_not_persist():
         Message(role="user", content="q2"),
     ]
 
-    boundary = Compaction(keep_last_runs=1).boundary_for(messages)
+    boundary = Compaction(uncompacted_runs=1).boundary_for(messages)
 
     assert boundary is None or not messages[boundary].temporary
 
@@ -1288,13 +1290,13 @@ def test_no_model_still_uses_local_estimate():
 # --- tail selection ---------------------------------------------------------
 
 
-def test_keep_last_runs_names_an_exact_position():
+def test_uncompacted_runs_names_an_exact_position():
     """Turn-based settings resolve to an index, not to a token budget."""
     messages = _transcript(runs=4)
     user_indexes = [i for i, m in enumerate(messages) if m.role == "user"]
 
-    assert Compaction(keep_last_runs=1)._keep_from_index(messages) == user_indexes[-1]
-    assert Compaction(keep_last_runs=3)._keep_from_index(messages) == user_indexes[-3]
+    assert Compaction(uncompacted_runs=1)._keep_from_index(messages) == user_indexes[-1]
+    assert Compaction(uncompacted_runs=3)._keep_from_index(messages) == user_indexes[-3]
 
 
 def test_tail_covering_everything_means_nothing_to_fold():
@@ -1302,7 +1304,7 @@ def test_tail_covering_everything_means_nothing_to_fold():
     downstream as a real fold and produces a ratio that collapses toward zero."""
     messages = _transcript(runs=2)
 
-    c = Compaction(keep_last_runs=5)
+    c = Compaction(uncompacted_runs=5)
 
     assert c._keep_from_index(messages) is None
     assert c.boundary_for(messages) is None
@@ -1376,7 +1378,7 @@ async def test_acompact_matches_compact():
             return self.response(messages, **kwargs)
 
     messages = _transcript(runs=4)
-    kwargs = dict(keep_last_runs=1, min_fold_ratio=0)
+    kwargs = dict(uncompacted_runs=1, min_fold_ratio=0)
 
     sync = Compaction(**kwargs, model=_AsyncStub()).compact(messages, session_id="s", db=None)
     asyn = await Compaction(**kwargs, model=_AsyncStub()).acompact(messages, session_id="s", db=None)
@@ -1389,7 +1391,7 @@ async def test_acompact_matches_compact():
 @pytest.mark.asyncio
 async def test_acompact_declines_where_compact_declines():
     tiny = [Message(role="user", content="hi"), Message(role="assistant", content="hello")]
-    c = Compaction(keep_last_runs=1, model=_StubModel())
+    c = Compaction(uncompacted_runs=1, model=_StubModel())
 
     assert await c.acompact(tiny, session_id="s", db=None) is None
 

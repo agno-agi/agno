@@ -43,7 +43,7 @@ in storage; no signature or pairing errors.
 
 **Status:** PASS
 **Tier:** untagged
-**Description:** Compaction with `compaction=Compaction(compact_at_runs=5, keep_last_runs=2)` over an
+**Description:** Compaction with `compaction=Compaction(compact_at_runs=5, uncompacted_runs=2)` over an
 8-turn session. Verified the compaction fired, the summary replaced the older turns, and the agent
 still answered "remind me what my budget was" correctly from a turn that had been compacted away.
 **Result:** Completed successfully. 6 messages replaced by the summary, all 16 still stored in the

@@ -30,7 +30,7 @@ db = PostgresDb(db_url=db_url)
 # Create Agent
 # ---------------------------------------------------------------------------
 # Low token threshold so a short demo trips the automatic path; the default is 150k.
-compaction = Compaction(compact_at_tokens=3_000, keep_last_runs=1)
+compaction = Compaction(compact_at_tokens=3_000, uncompacted_runs=1)
 
 agent = Agent(
     model=Claude(id="claude-sonnet-4-5"),

@@ -39,9 +39,9 @@ agent = Agent(
     db=db,
     session_id="compaction_demo",
     add_history_to_context=True,
-    # `compaction=True` would fold only on a provider rejection. keep_last_runs is lowered so the fold
+    # `compaction=True` would fold only on a provider rejection. uncompacted_runs is lowered so the fold
     # below has history in front of the tail to work with at demo scale.
-    compaction=Compaction(keep_last_runs=2),
+    compaction=Compaction(uncompacted_runs=2),
 )
 
 # ---------------------------------------------------------------------------

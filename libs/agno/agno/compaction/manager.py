@@ -29,8 +29,8 @@ if TYPE_CHECKING:
 DEFAULT_SUMMARIZE_CHAR_BUDGET = 100_000
 
 # The default kept tail, and a sentinel standing in for "nobody set this". Comparing against
-# the value alone cannot tell keep_last_runs=5 written by hand from the default, so an explicit
-# 5 alongside keep_last_tokens would be silently discarded - the exact surprise the mutual
+# the value alone cannot tell uncompacted_runs=5 written by hand from the default, so an explicit
+# 5 alongside uncompacted_tokens would be silently discarded - the exact surprise the mutual
 # exclusion exists to prevent.
 _COMPACT_AT_TOKENS_DEFAULT = 150_000
 
@@ -41,14 +41,14 @@ class _UnsetTokens(int):
 
 _COMPACT_AT_TOKENS_UNSET = _UnsetTokens(_COMPACT_AT_TOKENS_DEFAULT)
 
-_KEEP_LAST_RUNS_DEFAULT = 5
+_UNCOMPACTED_RUNS_DEFAULT = 5
 
 
 class _Unset(int):
-    """The default keep_last_runs, indistinguishable from 5 in use but not by identity."""
+    """The default uncompacted_runs, indistinguishable from 5 in use but not by identity."""
 
 
-_KEEP_LAST_RUNS_UNSET = _Unset(_KEEP_LAST_RUNS_DEFAULT)
+_UNCOMPACTED_RUNS_UNSET = _Unset(_UNCOMPACTED_RUNS_DEFAULT)
 
 
 @dataclass
@@ -90,13 +90,13 @@ class Compaction:
 
     # -- what to keep ---------------------------------------------------
     # Recent runs kept verbatim.
-    keep_last_runs: Optional[int] = _KEEP_LAST_RUNS_UNSET
+    uncompacted_runs: Optional[int] = _UNCOMPACTED_RUNS_UNSET
 
     # Recent history kept verbatim, measured in tokens instead of runs. Use this when turns
     # vary in length - a run count bounds how many turns survive, not how large they get.
     # The cut still snaps to a turn boundary, so the tail may come out somewhat larger than
-    # asked. Mutually exclusive with keep_last_runs.
-    keep_last_tokens: Optional[int] = None
+    # asked. Mutually exclusive with uncompacted_runs.
+    uncompacted_tokens: Optional[int] = None
 
     # -- archive --------------------------------------------------------
     # Write replaced messages to the filesystem so they stay recoverable.
@@ -136,22 +136,22 @@ class Compaction:
 
         if self.compact_at_tokens is not None and self.compact_at_tokens <= 0:
             raise ValueError(f"compact_at_tokens must be a positive integer, got {self.compact_at_tokens}")
-        if self.keep_last_runs is not None and self.keep_last_runs < 0:
-            raise ValueError(f"keep_last_runs must be zero or a positive integer, got {self.keep_last_runs}")
-        if self.keep_last_tokens is not None and self.keep_last_tokens <= 0:
-            raise ValueError(f"keep_last_tokens must be a positive integer, got {self.keep_last_tokens}")
+        if self.uncompacted_runs is not None and self.uncompacted_runs < 0:
+            raise ValueError(f"uncompacted_runs must be zero or a positive integer, got {self.uncompacted_runs}")
+        if self.uncompacted_tokens is not None and self.uncompacted_tokens <= 0:
+            raise ValueError(f"uncompacted_tokens must be a positive integer, got {self.uncompacted_tokens}")
         # Raise rather than pick a winner: silently honouring one of two settings the user
         # deliberately set is the kind of surprise that costs an afternoon to track down.
-        if self.keep_last_tokens is not None and not isinstance(self.keep_last_runs, _Unset):
+        if self.uncompacted_tokens is not None and not isinstance(self.uncompacted_runs, _Unset):
             raise ValueError(
-                "keep_last_runs and keep_last_tokens cannot both be set - they describe the same "
-                "kept tail in different units. Use keep_last_runs to keep whole turns, or "
-                "keep_last_tokens to bound the tail's size."
+                "uncompacted_runs and uncompacted_tokens cannot both be set - they describe the same "
+                "kept tail in different units. Use uncompacted_runs to keep whole turns, or "
+                "uncompacted_tokens to bound the tail's size."
             )
-        if self.keep_last_tokens is not None:
+        if self.uncompacted_tokens is not None:
             # The token budget is authoritative from here on; the run count would otherwise be
             # consulted by every helper that reads it.
-            self.keep_last_runs = None
+            self.uncompacted_runs = None
         # compact_at_tokens=None is legal: it disables the automatic trigger and leaves
         # agent.compact() as the only way to fold, which is a coherent way to run this.
 
@@ -219,21 +219,21 @@ class Compaction:
     def _tail_setting(self) -> str:
         """The tail setting actually in force, named for a message the user has to act on.
 
-        Telling someone to lower keep_last_runs when they configured keep_last_tokens sends
+        Telling someone to lower uncompacted_runs when they configured uncompacted_tokens sends
         them to a setting that is None.
         """
-        if self.keep_last_tokens is not None:
-            return f"keep_last_tokens={self.keep_last_tokens}"
-        return f"keep_last_runs={self.keep_last_runs}"
+        if self.uncompacted_tokens is not None:
+            return f"uncompacted_tokens={self.uncompacted_tokens}"
+        return f"uncompacted_runs={self.uncompacted_runs}"
 
     def _keep_from_index(self, messages: List[Message]) -> Optional[int]:
         """Index the kept tail starts at, for a request expressed in turns.
 
-        ``keep_last_runs`` names a position, so this returns one. The boundary walk then only
+        ``uncompacted_runs`` names a position, so this returns one. The boundary walk then only
         snaps it earlier for safety - it never moves later, which is what makes the setting a
         floor: you may keep more than asked, never less.
         """
-        keep_runs = self.keep_last_runs or 0
+        keep_runs = self.uncompacted_runs or 0
         if keep_runs <= 0:
             return len(messages)
         # A user message opens a run.
@@ -256,11 +256,11 @@ class Compaction:
         the cut moves into the tail whole) and *durable* - it never anchors on a message that
         will not survive in storage, since the anchor has to resolve again on the next run.
         """
-        if self.keep_last_tokens is not None:
+        if self.uncompacted_tokens is not None:
             # A size budget names no position, so the walk finds one: it accumulates backward
             # from the newest message and stops once the budget is spent, then snaps to a
             # pair-safe turn boundary like any other cut.
-            return choose_boundary(messages, keep_tokens=self.keep_last_tokens, min_index=min_index)
+            return choose_boundary(messages, keep_tokens=self.uncompacted_tokens, min_index=min_index)
         keep_from = self._keep_from_index(messages)
         if keep_from is None:
             return None

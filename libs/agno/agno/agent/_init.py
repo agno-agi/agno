@@ -223,14 +223,14 @@ def set_compaction(agent: Agent) -> None:
     # own read to keep that from happening - say so, because silently ignoring a number the
     # user set is worse than the misconfiguration it works around.
     if isinstance(agent.compaction, Compaction) and not getattr(agent, "_num_history_runs_defaulted", False):
-        keep = agent.compaction.keep_last_runs
+        keep = agent.compaction.uncompacted_runs
         window = agent.num_history_runs
         if keep is not None and window is not None and window <= keep:
             log_warning(
-                f"num_history_runs={window} is not larger than compaction's keep_last_runs={keep}, "
+                f"num_history_runs={window} is not larger than compaction's uncompacted_runs={keep}, "
                 f"so there would be no history in front of the kept tail to fold. Compaction will "
                 f"read {keep + 1} runs instead; num_history_runs still governs what the model "
-                f"replays. Set keep_last_runs below num_history_runs to silence this."
+                f"replays. Set uncompacted_runs below num_history_runs to silence this."
             )
 
 

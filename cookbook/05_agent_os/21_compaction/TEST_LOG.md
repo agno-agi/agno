@@ -15,7 +15,7 @@
 **Status:** PASS
 
 **Description:** Builds an AgentOS serving one agent with
-`Compaction(compact_at_runs=4, keep_last_runs=2)` and a cheaper summarization
+`Compaction(compact_at_runs=4, uncompacted_runs=2)` and a cheaper summarization
 model. Verified the FastAPI app constructs and the agent resolves its Compaction
 config with the expected thresholds.
 

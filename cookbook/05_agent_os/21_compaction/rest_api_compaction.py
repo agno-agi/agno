@@ -137,7 +137,7 @@ def main() -> None:
                 print("  The server had already folded this session on its own.")
             else:
                 print("  Nothing was folded, so there is nothing to compare.")
-                print("  Ask more questions, or lower keep_last_runs on the server.")
+                print("  Ask more questions, or lower uncompacted_runs on the server.")
             return
         if before == after:
             print(

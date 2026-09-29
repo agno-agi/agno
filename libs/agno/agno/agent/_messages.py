@@ -166,7 +166,7 @@ def _compaction_history_runs(agent: "Agent") -> Optional[int]:
     if explicit is not None:
         # An explicit window is the user's call on replay, but it must not silently disable
         # compaction or strand an anchor. Keep whichever is larger.
-        keep = compaction.keep_last_runs or 0
+        keep = compaction.uncompacted_runs or 0
         return max(explicit, keep + 1) if keep else explicit
     return _PLANNER_WINDOW_MAX_RUNS
 
@@ -333,9 +333,9 @@ def _recompact_after_overflow(
     # little to be worth retrying - an oversized turn sitting INSIDE the tail, which no cut in
     # front of it can reach - is the tail given up, one run at a time. The request has already
     # been rejected, so a smaller tail beats no answer, but the setting is still the default.
-    folder, chosen_keep = None, compaction.keep_last_runs
-    for keep in range(compaction.keep_last_runs or 1, 0, -1):
-        candidate = replace(compaction, keep_last_runs=keep, stats=compaction.stats)
+    folder, chosen_keep = None, compaction.uncompacted_runs
+    for keep in range(compaction.uncompacted_runs or 1, 0, -1):
+        candidate = replace(compaction, uncompacted_runs=keep, stats=compaction.stats)
         boundary = candidate.boundary_for(messages, min_index=lead)
         if boundary is None or boundary <= lead:
             continue
@@ -344,9 +344,9 @@ def _recompact_after_overflow(
         # shrinking the tail further than the rejection requires.
         if estimate_tokens(messages[lead:boundary]) >= estimate_tokens(messages[boundary:]):
             break
-    if folder is not None and chosen_keep != compaction.keep_last_runs:
+    if folder is not None and chosen_keep != compaction.uncompacted_runs:
         log_info(
-            f"Compaction: keeping {chosen_keep} run(s) instead of {compaction.keep_last_runs} - "
+            f"Compaction: keeping {chosen_keep} run(s) instead of {compaction.uncompacted_runs} - "
             f"the request was rejected as too long, and the configured tail leaves too little "
             f"in front of it to fold."
         )
