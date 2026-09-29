@@ -10,7 +10,7 @@ from enum import Enum
 from io import BytesIO
 from os.path import basename
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union, cast, overload
+from typing import Any, Callable, Dict, List, Literal, Optional, Set, Tuple, Union, cast, overload
 
 from httpx import AsyncClient
 
@@ -20,7 +20,16 @@ from agno.exceptions import EmbeddingError
 from agno.filters import EQ, FilterExpr
 from agno.knowledge.content import Content, ContentAuth, ContentStatus, FileData
 from agno.knowledge.document import Document
-from agno.knowledge.page import GrepResult, PageList, PageRead, PageSearchConfig, SearchResult, SyncReport
+from agno.knowledge.page import (
+    GrepResult,
+    PageList,
+    PageRead,
+    PageSearchConfig,
+    PageSourceBinding,
+    PageSourceMigration,
+    SearchResult,
+    SyncReport,
+)
 from agno.knowledge.reader import Reader, ReaderFactory
 from agno.knowledge.reader.utils.urls import canonical_page_name, is_sitemap_url
 from agno.knowledge.remote_content.base import BaseStorageConfig
@@ -85,7 +94,9 @@ class Knowledge(RemoteKnowledge):
 
     # Reorders results after the vector db returns them, so a strategy that needs to
     # compare candidates against each other (diversity, recency) sees a real pool.
-    # Runs after any reranker configured on the vector db itself.
+    # Applied to the search results. This is where a reranker belongs: setting one on the
+    # vector db is deprecated, works only on the adapters that implement it, and cannot
+    # widen the candidate pool.
     reranker: Optional[Reranker] = None
 
     def __init__(
@@ -132,8 +143,8 @@ class Knowledge(RemoteKnowledge):
             log_warning(
                 "A reranker is set on both Knowledge and the vector db. Only the one on "
                 "Knowledge is applied and the vector db's is ignored: running both would "
-                "rerank a pool that was already reordered. Prefer the one on Knowledge, "
-                "which works with every vector db and can widen the candidate pool."
+                "rerank a pool that was already reordered. The vector db one is deprecated, "
+                "so remove it and keep the reranker on Knowledge."
             )
         self.__post_init__()
 
@@ -314,6 +325,57 @@ class Knowledge(RemoteKnowledge):
             reindex=reindex,
             validate_discovery=validate_discovery,
             seconds=3900,
+        )
+
+    def inspect_page_source(self) -> PageSourceBinding:
+        """Inspect the namespace's current storage/source binding without mutations."""
+        from agno.knowledge.page._coordinator import READ_WORKERS
+
+        return READ_WORKERS.run_sync(self._pages().inspect_source, seconds=5)
+
+    async def ainspect_page_source(self) -> PageSourceBinding:
+        """Async inspect_page_source on bounded workers."""
+        from agno.knowledge.page._coordinator import READ_WORKERS
+
+        return await READ_WORKERS.run(self._pages().inspect_source, seconds=5)
+
+    def migrate_page_source(
+        self, *, expected_source: str, target_source: str, dry_run: bool = True
+    ) -> PageSourceMigration:
+        """Explicitly relocate an existing source to another HTTPS host; dry-run by default.
+
+        The discovery path and configured storage tables must match. Caller must
+        own the target and establish that it serves the same corpus; this operation
+        performs no network fetch. The namespace lock rejects active sync/maintenance.
+        Only the source binding/revision change; pages and vectors stay untouched.
+        Sync the target with the same transform/index_version afterward to refresh
+        citations without re-embedding unchanged content. Repeating the same request
+        is safe if the binding already equals target_source. An uncertain commit
+        requires inspection/retry, not an assumption that the binding stayed old.
+        This operator API is never automatically exposed as a tool or HTTP route.
+        """
+        from agno.knowledge.page._coordinator import READ_WORKERS
+
+        return READ_WORKERS.run_sync(
+            self._pages().migrate_source,
+            expected_source=expected_source,
+            target_source=target_source,
+            dry_run=dry_run,
+            seconds=5,
+        )
+
+    async def amigrate_page_source(
+        self, *, expected_source: str, target_source: str, dry_run: bool = True
+    ) -> PageSourceMigration:
+        """Async migrate_page_source; cancellation retains capacity until transaction cleanup."""
+        from agno.knowledge.page._coordinator import READ_WORKERS
+
+        return await READ_WORKERS.run(
+            self._pages().migrate_source,
+            expected_source=expected_source,
+            target_source=target_source,
+            dry_run=dry_run,
+            seconds=5,
         )
 
     def search_pages(
@@ -5188,6 +5250,11 @@ Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUC
         async_mode: bool = False,
         enable_agentic_filters: bool = False,
         agent: Optional[Any] = None,
+        page_results: bool = False,
+        tool_name: str = "search_pages",
+        tool_description: Optional[str] = None,
+        transport: Literal["chat", "mcp"] = "chat",
+        max_output_bytes: int = 32000,
         **kwargs,
     ) -> List[Any]:
         """Get tools to expose to the Agent or Team.
@@ -5201,6 +5268,11 @@ Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUC
             async_mode: Whether to return async tools.
             enable_agentic_filters: Whether to enable filter parameter on tool.
             agent: The Agent or Team instance (for document conversion with references_format).
+            page_results: Opt into typed page search results rather than document conversion.
+            tool_name: Page search tool name when page_results is enabled.
+            tool_description: Optional product description for the page search tool.
+            transport: chat returns JSON text; mcp exposes SearchResult schema and execution errors.
+            max_output_bytes: Final page-search JSON bound (24000 through 32000 UTF-8 bytes).
             **kwargs: Additional context.
 
         Returns:
@@ -5208,6 +5280,22 @@ Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUC
         """
         if self.page_store is not None and (knowledge_filters or enable_agentic_filters):
             raise ValueError("Page knowledge does not support filters")
+        if page_results:
+            if self.page_store is None:
+                raise ValueError("page_results requires a page_store")
+            from agno.knowledge.page.tools import page_search_tool
+
+            return [
+                page_search_tool(
+                    self,
+                    async_mode=async_mode,
+                    transport=transport,
+                    tool_name=tool_name,
+                    description=tool_description,
+                    max_output_bytes=max_output_bytes,
+                    run_response=run_response,
+                )
+            ]
         if enable_agentic_filters:
             tool = self._create_search_tool_with_filters(
                 run_response=run_response,
