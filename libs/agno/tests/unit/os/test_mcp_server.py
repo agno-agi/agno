@@ -207,6 +207,41 @@ async def test_include_tags_does_not_enable_default_tools():
     assert await _tool_names(os) == {"_noop_tool"}
 
 
+@pytest.mark.parametrize(
+    "include_tags, advice",
+    [
+        pytest.param({"session"}, "default_tools=True", id="session"),
+        pytest.param({"lifecycle"}, "lifecycle_tools=True", id="lifecycle"),
+    ],
+)
+def test_include_tags_without_default_tools_warns(monkeypatch, include_tags, advice):
+    warnings: list = []
+    monkeypatch.setattr("agno.utils.log.log_warning", lambda msg, *a, **kw: warnings.append(msg))
+
+    MCPConfig(tools=[_noop_tool], include_tags=include_tags)
+
+    assert len(warnings) == 1
+    assert "include_tags has no effect" in warnings[0]
+    assert advice in warnings[0]
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        pytest.param({"include_tags": set()}, id="empty-include-tags"),
+        pytest.param({"exclude_tags": {"lifecycle"}, "lifecycle_tools": True}, id="exclude-only"),
+        pytest.param({"default_tools": True, "include_tags": {"session"}}, id="default-tools-on"),
+    ],
+)
+def test_include_tags_warning_skips_effective_configs(monkeypatch, kwargs):
+    warnings: list = []
+    monkeypatch.setattr("agno.utils.log.log_warning", lambda msg, *a, **kw: warnings.append(msg))
+
+    MCPConfig(tools=[_noop_tool], **kwargs)
+
+    assert warnings == []
+
+
 async def test_disabling_builtins_yields_only_custom_tools():
     """enable_builtin_tools=False ships ONLY the custom tools (the @context 'one tool' shape)."""
 

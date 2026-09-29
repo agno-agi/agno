@@ -356,6 +356,21 @@ class MCPConfig(BaseModel):
                 "Use AgentOS(mcp=True) for the default server without additional configuration."
             )
 
+        # include_tags only scopes enabled default tools, so without default_tools the
+        # requested tools silently never register.
+        if not self.default_tools and self.include_tags:
+            from agno.utils.log import log_warning
+
+            advice = (
+                "set lifecycle_tools=True to add continue_run/cancel_run alongside exposed components"
+                if set(self.include_tags) == {"lifecycle"}
+                else "set default_tools=True to register the default tools it scopes"
+            )
+            log_warning(
+                "MCPConfig include_tags has no effect without default_tools=True: "
+                f"{sorted(self.include_tags)} will not be registered. To serve them, {advice}."
+            )
+
         # Warn rather than raise: unlike the branch above, this configuration is accepted
         # today and callers may be relying on it, so the surface stays exactly as it is.
         # Resolution mirrors ``_enabled_builtin_tags`` in ``agno/os/mcp.py``; it is inlined
