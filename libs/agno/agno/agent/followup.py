@@ -37,26 +37,36 @@ class FollowupConfig:
     ``instructions`` adds domain or style constraints to the default system prompt.
     The main instructions and retrieved context are not copied into this call.
 
-    ``max_followups`` (default 3) is enforced: extra suggestions are dropped.
-    ``min_followups`` (default: equal to ``max_followups``, so exactly that many) is
-    only requested from the model; fewer can come back. ``min_followups=0`` lets the
-    model return fewer or none when the answer does not support a useful
-    continuation, which best keeps suggestions within the answer's boundaries.
+    The count is set either as ``num_followups`` (exactly that many, like the top-level
+    argument) or as a range with ``min_followups`` and ``max_followups``, not both. With
+    neither, the default is exactly 3. ``max_followups`` alone means up to that many,
+    possibly none; ``min_followups`` alone uses a maximum of 3. The maximum is enforced:
+    extra suggestions are dropped. The minimum is only requested from the model, so
+    fewer can come back.
     """
 
     model: Optional[Union[Model, str]] = None
     instructions: Optional[str] = None
     # After model and instructions, so FollowupConfig(model, instructions) keeps its positional meaning
-    max_followups: Optional[int] = None
+    num_followups: Optional[int] = None
     min_followups: Optional[int] = None
+    max_followups: Optional[int] = None
 
     def __post_init__(self) -> None:
         self.count_range()
 
     def count_range(self) -> Tuple[int, int]:
         """The (minimum, maximum) number of suggestions this config asks for."""
+        if self.num_followups is not None:
+            if self.min_followups is not None or self.max_followups is not None:
+                raise ValueError("Use num_followups or min_followups/max_followups, not both")
+            if self.num_followups < 1:
+                raise ValueError("num_followups must be at least 1")
+            return self.num_followups, self.num_followups
+        if self.min_followups is None and self.max_followups is None:
+            return DEFAULT_NUM_FOLLOWUPS, DEFAULT_NUM_FOLLOWUPS
         maximum = self.max_followups if self.max_followups is not None else DEFAULT_NUM_FOLLOWUPS
-        minimum = self.min_followups if self.min_followups is not None else maximum
+        minimum = self.min_followups if self.min_followups is not None else 0
         if maximum < 1:
             raise ValueError("max_followups must be at least 1")
         if not 0 <= minimum <= maximum:
@@ -70,10 +80,10 @@ class FollowupConfig:
             config["model"] = model_identity(self.model) if isinstance(self.model, Model) else str(self.model)
         if self.instructions is not None:
             config["instructions"] = self.instructions
-        if self.max_followups is not None:
-            config["max_followups"] = self.max_followups
-        if self.min_followups is not None:
-            config["min_followups"] = self.min_followups
+        for name in ("num_followups", "min_followups", "max_followups"):
+            value = getattr(self, name)
+            if value is not None:
+                config[name] = value
         return config
 
     @classmethod
@@ -85,8 +95,9 @@ class FollowupConfig:
         return cls(
             model=resolve_model(model, registry) if model is not None else None,
             instructions=data.get("instructions"),
-            max_followups=data.get("max_followups"),
+            num_followups=data.get("num_followups"),
             min_followups=data.get("min_followups"),
+            max_followups=data.get("max_followups"),
         )
 
 

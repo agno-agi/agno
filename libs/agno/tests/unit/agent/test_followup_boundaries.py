@@ -29,7 +29,7 @@ async def test_generation_paths(kind, asynchronous, stream, source, suggestions)
     unused = MagicMock(spec=Model)
     if source == "config":
         followup_options = dict(
-            followups=FollowupConfig(model=model, instructions="Suggest only documentation questions.", max_followups=2)
+            followups=FollowupConfig(model=model, instructions="Suggest only documentation questions.", num_followups=2)
         )
     elif source == "legacy":
         followup_options = dict(followups=True, num_followups=2, followup_model=model)

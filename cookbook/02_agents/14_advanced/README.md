@@ -45,15 +45,17 @@ with `num_followups` or `followup_model` raises `ValueError`.
 | `followups=True` | exactly 3 suggestions |
 | `followups=True, num_followups=5` | exactly 5 |
 | `FollowupConfig()` | exactly 3, the same as `True` |
-| `FollowupConfig(max_followups=5)` | exactly 5 (`min_followups` defaults to `max_followups`) |
-| `FollowupConfig(min_followups=0, max_followups=3)` | up to 3, possibly none |
+| `FollowupConfig(num_followups=5)` | exactly 5 |
+| `FollowupConfig(max_followups=3)` | up to 3, possibly none |
 | `FollowupConfig(min_followups=1, max_followups=3)` | 1 to 3 |
+| `FollowupConfig(min_followups=1)` | 1 to 3 (the maximum defaults to 3) |
 
-The maximum is enforced: extra suggestions are dropped. The minimum is only requested
-from the model, so fewer can come back. `min_followups=0` gives the model room to
-return nothing when a declined request leaves no useful in-scope continuation, so
-consumers should hide suggestion controls for an empty list. Failed, cancelled or
-malformed generation produces `None`.
+Inside the config, set the count with `num_followups` or with `min_followups` and
+`max_followups`, not both. The maximum is enforced: extra suggestions are dropped. The
+minimum is only requested from the model, so fewer can come back. With
+`max_followups` alone, the model may return nothing when a declined request leaves no
+useful in-scope continuation, so consumers should hide suggestion controls for an
+empty list. Failed, cancelled or malformed generation produces `None`.
 
 Every component with follow-ups enabled gets a prompt that asks the model to respect
 refusals and stay within the answer's scope. This is prompt guidance, not enforcement.
