@@ -371,10 +371,18 @@ def test_a_fold_replays_its_summary_and_everything_from_the_anchor():
     assert [c for c in last if c.startswith("question")] == [f"question number {i}" for i in range(4, 8)]
 
 
-def test_the_summary_survives_its_anchor_leaving_the_window():
-    """An explicit num_history_runs slides past a fold's anchor within a few runs. The anchor must
-    still be read and replayed, or the summary is dropped along with the turns it replaced - with
-    compaction=True, where folds are rare, that would be the normal case."""
+@pytest.mark.parametrize(
+    "window, tail",
+    [
+        ({"num_history_runs": 4}, {"uncompacted_runs": 1}),
+        ({"num_history_runs": 4}, {"uncompacted_tokens": 8}),
+        ({"num_history_messages": 8}, {"uncompacted_runs": 1}),
+    ],
+)
+def test_the_summary_survives_its_anchor_leaving_the_window(window, tail):
+    """A fixed replay window - counted in runs or in messages - slides past a fold's anchor within a
+    few runs. The anchor must still be read and replayed, or the summary is dropped along with the
+    turns it replaced - with compaction=True, where folds are rare, that would be the normal case."""
     from agno.agent import Agent
 
     model = _RecordingModel.build()
@@ -383,10 +391,8 @@ def test_the_summary_survives_its_anchor_leaving_the_window():
         db=_db(),
         session_id="s",
         add_history_to_context=True,
-        num_history_runs=4,
-        compaction=Compaction(
-            compact_at_tokens=None, uncompacted_runs=1, min_fold_ratio=0, searchable=False, model=_StubModel()
-        ),
+        compaction=Compaction(compact_at_tokens=None, min_fold_ratio=0, searchable=False, model=_StubModel(), **tail),
+        **window,
     )
     for i in range(4):
         agent.run(f"question number {i}")
@@ -395,9 +401,19 @@ def test_the_summary_survives_its_anchor_leaving_the_window():
     for i in range(4, 11):
         agent.run(f"question number {i}")
     sent = [m.content for m in model.requests[-1] if m.role != "system"]
+    asked = [int(c.split()[-1]) for c in sent if c.startswith("question")]
 
     assert sent[0].startswith("Summary of earlier conversation")
-    assert [c for c in sent if c.startswith("question")] == [f"question number {i}" for i in range(3, 11)]
+    # Everything from the anchor onward, which reaches back past the 4-run window.
+    assert asked == list(range(asked[0], 11)) and asked[0] <= 4
+
+
+def test_num_history_messages_still_bounds_what_is_sent_before_a_fold():
+    """Compaction reads past the message limit; the model does not, until a fold exists."""
+    baseline = [len(r) for r in _requests_over(8, num_history_messages=4)]
+    with_compaction = [len(r) for r in _requests_over(8, num_history_messages=4, compaction=True)]
+
+    assert with_compaction == baseline
 
 
 def test_async_dbs_declare_no_compaction_contract():

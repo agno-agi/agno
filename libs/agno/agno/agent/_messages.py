@@ -177,36 +177,37 @@ def _history_for_run(
     agent: "Agent", session: AgentSession, run_response: Optional[RunOutput], skip_role: Optional[str]
 ) -> Tuple[List[Message], Any, Optional[Set[str]]]:
     """The history a run works from, the fold in force for it, and the ids of the messages
-    num_history_runs replays.
+    num_history_runs and num_history_messages replay.
 
-    The planner reads a wider window than a run replays. Once a fold exists, its anchor has to be
-    in what is read, however old it is: the view replays the summary and everything from the
-    anchor onward, and an anchor that is not found drops the summary along with the turns it
-    replaced. Only the part from the anchor onward is kept - what sits in front of it is already
-    folded.
+    Both of those are replay settings: they bound what a run sends before the first fold, not
+    what compaction may read. The planner reads a wider window, and once a fold exists its anchor
+    has to be in what is read, however old it is - the view replays the summary and everything
+    from the anchor onward, and an anchor that is not found drops the summary along with the
+    turns it replaced. Only the part from the anchor onward is kept - what sits in front of it is
+    already folded.
     """
 
-    def fetch(last_n_runs: Optional[int]) -> List[Message]:
+    def fetch(last_n_runs: Optional[int], limit: Optional[int]) -> List[Message]:
         return session.get_messages(
             last_n_runs=last_n_runs,
-            limit=agent.num_history_messages,
+            limit=limit,
             skip_roles=[skip_role] if skip_role else None,
             agent_id=agent.id if agent.team_id is not None else None,
         )
 
-    history = fetch(_compaction_history_runs(agent))
     if getattr(agent, "compaction", None) is None:
-        return history, None, None
+        return fetch(agent.num_history_runs, agent.num_history_messages), None, None
 
+    history = fetch(_compaction_history_runs(agent), None)
     record = _stored_compaction(agent, session, _compaction_as_of(run_response))
     anchor = record.first_kept_message_id if record is not None and record.summary else None
     if anchor is not None and not any(m.id == anchor for m in history):
-        everything = fetch(None)
+        everything = fetch(None, None)
         start = next((i for i, m in enumerate(everything) if m.id == anchor), None)
         if start is not None:
             history = everything[start:]
 
-    replay = fetch(agent.num_history_runs)
+    replay = fetch(agent.num_history_runs, agent.num_history_messages)
     return history, record, {m.id for m in replay if m.id is not None}
 
 
@@ -230,13 +231,12 @@ def _replayed_view(
 def _history_for_compaction(agent: "Agent", session: AgentSession) -> List[Message]:
     """The history a manual compaction folds.
 
-    Deliberately not limited by ``num_history_runs``: that setting governs how much history a
-    RUN replays, and applying it here would let it silently cap what compaction can ever see -
-    the same starvation the automatic path guards against.
+    Deliberately not limited by ``num_history_runs`` or ``num_history_messages``: those govern how
+    much history a RUN replays, and applying them here would let them silently cap what compaction
+    can ever see - the same starvation the automatic path guards against.
     """
     skip_role = agent.system_message_role if agent.system_message_role not in ["user", "assistant", "tool"] else None
     return session.get_messages(
-        limit=agent.num_history_messages,
         skip_roles=[skip_role] if skip_role else None,
         agent_id=agent.id if agent.team_id is not None else None,
     )
