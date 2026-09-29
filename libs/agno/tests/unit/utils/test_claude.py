@@ -60,6 +60,38 @@ class TestFormatFileForMessage:
         assert result["source"]["type"] == "text"
         assert result["source"]["data"] == "x,y\n1,2"
 
+    def test_filepath_markdown_without_mime_returns_text_source(self, tmp_path):
+        """`.md` has no mimetypes entry, so it must not land in the PDF branch."""
+        p = tmp_path / "notes.md"
+        p.write_bytes(b"# Title\nbody")
+
+        result = _format_file_for_message(File(filepath=str(p)))
+
+        assert result["source"]["type"] == "text"
+        # Anthropic's text document source only accepts "text/plain" as the media_type.
+        assert result["source"]["media_type"] == "text/plain"
+        assert result["source"]["data"] == "# Title\nbody"
+
+    def test_filepath_unguessable_extension_is_not_claimed_as_pdf(self, tmp_path):
+        """An unrecognized extension carrying text is not a PDF."""
+        p = tmp_path / "runbook.customlog"
+        p.write_bytes(b"first line\n")
+
+        result = _format_file_for_message(File(filepath=str(p)))
+
+        assert result["source"]["type"] == "text"
+        assert result["source"]["data"] == "first line\n"
+
+    def test_filepath_pdf_signature_without_extension_is_base64(self, tmp_path):
+        """The PDF branch is decided by the file itself, not by a guessed default."""
+        p = tmp_path / "document.custombin"
+        p.write_bytes(b"%PDF-1.7\nnot really a full pdf\n%%EOF")
+
+        result = _format_file_for_message(File(filepath=str(p)))
+
+        assert result["source"]["type"] == "base64"
+        assert result["source"]["media_type"] == "application/pdf"
+
     def test_filepath_nonexistent_returns_none(self):
         result = _format_file_for_message(File(filepath="/nonexistent/file.pdf", mime_type="application/pdf"))
 

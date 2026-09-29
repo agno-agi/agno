@@ -10,6 +10,12 @@ if TYPE_CHECKING:
     from agno.models.anthropic.claude import SystemPromptBlock
 
 
+# Suffixes whose content is always text. `mimetypes` is registry-driven and answers these
+# inconsistently across platforms (no entry for `.md`, `application/vnd.ms-excel` for `.csv`
+# on Windows), which used to push them into the PDF/base64 branch.
+_TEXT_ONLY_SUFFIXES = frozenset({".csv", ".tsv", ".md", ".markdown", ".rst", ".log"})
+
+
 # Models that support assistant message prefill. This is a closed set —
 # prefill was deprecated starting with Claude 4.6 and all future models
 # are expected to reject it.
@@ -406,7 +412,15 @@ def _format_file_for_message(file: File, enable_citations: bool = True) -> Optio
             if media_type is None:
                 import mimetypes
 
-                media_type = mimetypes.guess_type(file.filepath)[0] or "application/pdf"
+                if path.suffix.lower() in _TEXT_ONLY_SUFFIXES:
+                    media_type = "text/plain"
+                else:
+                    media_type = mimetypes.guess_type(file.filepath)[0]
+                if media_type is None:
+                    # guess_type is registry-driven: it has no entry for formats such as `.md`
+                    # and answers `.csv` with a binary type on Windows. The base64 source only
+                    # carries PDFs, so confirm the signature instead of assuming it.
+                    media_type = "application/pdf" if raw_bytes.startswith(b"%PDF-") else "text/plain"
 
             # Map media type to source type, default to "base64" if no mapping exists
             source_type = mime_mapping.get(media_type, "base64")
