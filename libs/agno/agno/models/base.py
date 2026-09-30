@@ -1523,6 +1523,18 @@ class Model(ABC):
                 ):
                     if self.cache_response and isinstance(function_call_response, ModelResponse):
                         streaming_responses.append(function_call_response)
+                    if (
+                        isinstance(function_call_response, ModelResponse)
+                        and function_call_response.event
+                        in [
+                            ModelResponseEvent.tool_call_completed.value,
+                            ModelResponseEvent.tool_call_paused.value,
+                        ]
+                        and function_call_response.tool_executions is not None
+                    ):
+                        if model_response.tool_executions is None:
+                            model_response.tool_executions = []
+                        model_response.tool_executions.extend(function_call_response.tool_executions)
                     yield function_call_response
 
                 # Add a function call for each successful execution
@@ -1804,6 +1816,18 @@ class Model(ABC):
                 ):
                     if self.cache_response and isinstance(function_call_response, ModelResponse):
                         streaming_responses.append(function_call_response)
+                    if (
+                        isinstance(function_call_response, ModelResponse)
+                        and function_call_response.event
+                        in [
+                            ModelResponseEvent.tool_call_completed.value,
+                            ModelResponseEvent.tool_call_paused.value,
+                        ]
+                        and function_call_response.tool_executions is not None
+                    ):
+                        if model_response.tool_executions is None:
+                            model_response.tool_executions = []
+                        model_response.tool_executions.extend(function_call_response.tool_executions)
                     yield function_call_response
 
                 # Add a function call for each successful execution
