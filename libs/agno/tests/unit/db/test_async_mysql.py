@@ -24,13 +24,6 @@ def async_mysql_db(mock_async_engine):
     )
 
 
-# -- delete_run / delete_runs: a failed delete is not a missing run --
-#
-# The sync twin in agno/db/mysql/mysql.py re-raises here, and so do 13 of the 17 db
-# backends. AsyncSqliteDb and AsyncMongoDb re-raise too, so this is not an async
-# convention - it is this file diverging from its own sync twin.
-
-
 def _session_raising(error: Exception) -> Mock:
     """An async session factory whose execute() fails the way a live backend does."""
     session = AsyncMock()
