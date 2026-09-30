@@ -192,10 +192,43 @@ class SitemapReader(Reader):
 
             is_index, locs = parsed
             pending: List[str] = list(locs) if is_index and self.follow_index else []
-            page_locs: List[str] = [] if is_index else list(locs)
+            page_locs: List[str] = []
             incomplete = False
             visited = {canonical_page_url(candidate)}
-            while pending and len(page_locs) < self.max_pages:
+
+            # The max_pages budget is counted on pages that survive host filtering and
+            # canonical deduplication. Raw <loc> entries — duplicates, aliases like
+            # `/p1/` vs `/p1/index.html`, off-host entries — must not consume the budget
+            # and starve later shards of valid pages (issue #10667).
+            seen: set = set()
+            collected = 0
+
+            def _accept(loc: str) -> Optional[str]:
+                """Return ``loc`` when it passes host filter + dedup, else None."""
+                if not is_host_allowed(loc, allowed_hosts):
+                    log_debug(f"Sitemap entry on another host, skipping: {loc}")
+                    return None
+                key = canonical_page_url(loc)
+                if key in seen:
+                    return None
+                seen.add(key)
+                return loc
+
+            def _collect(locs_to_add: List[str]) -> None:
+                nonlocal collected, incomplete
+                for loc in locs_to_add:
+                    if collected >= self.max_pages:
+                        # The cap truncated this shard: further pages still exist on the
+                        # site, so a reconciling caller must not treat them as removed
+                        incomplete = True
+                        return
+                    accepted = _accept(loc)
+                    if accepted is not None:
+                        page_locs.append(accepted)
+                        collected += 1
+
+            _collect(locs if not is_index else [])
+            while pending and collected < self.max_pages:
                 child = pending.pop(0)
                 child_key = canonical_page_url(child)
                 if child_key in visited:
@@ -214,18 +247,18 @@ class SitemapReader(Reader):
                 if child_is_index:
                     pending.extend(child_locs)
                 else:
-                    page_locs.extend(child_locs)
+                    _collect(child_locs)
 
             if pending:
                 # Shards were never opened because the cap was reached first
                 incomplete = True
             pages: List[str] = []
-            seen: set = set()
+            page_seen: set = set()
             for index, loc in enumerate(page_locs):
                 key = canonical_page_url(loc)
-                if key in seen:
+                if key in page_seen:
                     continue
-                seen.add(key)
+                page_seen.add(key)
                 if not is_host_allowed(loc, allowed_hosts):
                     log_debug(f"Sitemap entry on another host, skipping: {loc}")
                     continue

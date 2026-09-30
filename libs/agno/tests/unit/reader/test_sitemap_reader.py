@@ -359,6 +359,50 @@ def test_image_loc_not_collected_as_page():
     assert not any("img.jpg" in url for url in requested)
 
 
+def test_duplicates_and_off_host_entries_do_not_consume_max_pages_budget():
+    """Raw <loc> entries that are duplicates, aliases, or off-host must not count
+    against max_pages, otherwise they starve later shards of valid pages (#10667)."""
+    routes = {
+        "https://example.com/sitemap.xml": (
+            sitemapindex_xml("https://example.com/sm1.xml", "https://example.com/sm2.xml"),
+            "application/xml",
+        ),
+        # sm1: duplicate loc + alias (index.html form) + off-host entry
+        "https://example.com/sm1.xml": (
+            urlset_xml(
+                "https://example.com/p1",
+                "https://example.com/p1",
+                "https://example.com/p1/index.html",
+                "https://evil.com/p1-alias",
+                "https://example.com/p2",
+            ),
+            "application/xml",
+        ),
+        "https://example.com/sm2.xml": (
+            urlset_xml("https://example.com/p3", "https://example.com/p4"),
+            "application/xml",
+        ),
+        "https://example.com/p1": (html_page("P1", "One"), "text/html"),
+        "https://example.com/p2": (html_page("P2", "Two"), "text/html"),
+        "https://example.com/p3": (html_page("P3", "Three"), "text/html"),
+        "https://example.com/p4": (html_page("P4", "Four"), "text/html"),
+    }
+    reader = make_reader(max_pages=3)
+    with mock_site(routes) as requested:
+        documents = reader.read("https://example.com/sitemap.xml")
+
+    # Budget of 3 must be filled with the three *eligible* pages in document
+    # order, reaching into sm2 instead of being exhausted by sm1's junk.
+    assert [doc.meta_data["url"] for doc in documents] == [
+        "https://example.com/p1",
+        "https://example.com/p2",
+        "https://example.com/p3",
+    ]
+    assert not any("evil.com" in url for url in requested)
+    # p4 lies beyond the cap: the read is incomplete, nothing is pruned
+    assert all(doc.meta_data.get("discovery_incomplete") is True for doc in documents)
+
+
 def test_max_pages_cap_across_children_preserves_order():
     routes = {
         "https://example.com/sitemap.xml": (
