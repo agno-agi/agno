@@ -24,6 +24,14 @@ class CheckoutRequest(BaseModel):
     tier: UserTier
 
 
+def _apply_tier(user: User, sub: Subscription, tier: str, *, subscription_id: str | None = None, active: bool = True) -> None:
+    if subscription_id:
+        sub.stripe_subscription_id = subscription_id
+    sub.active = active
+    sub.tier = tier
+    user.tier = tier
+
+
 @router.post("/checkout")
 def create_checkout(
     request: CheckoutRequest,
@@ -42,6 +50,7 @@ def create_checkout(
         user.stripe_customer_id = customer.id
         db.commit()
 
+    metadata = {"user_id": str(user.id), "tier": request.tier.value}
     session = stripe.checkout.Session.create(
         customer=user.stripe_customer_id,
         payment_method_types=["card"],
@@ -49,7 +58,10 @@ def create_checkout(
         mode="subscription",
         success_url="https://strategyiq.io/billing/success",
         cancel_url="https://strategyiq.io/billing/cancel",
-        metadata={"user_id": str(user.id), "tier": request.tier.value},
+        metadata=metadata,
+        # Copy tier onto the Subscription object so customer.subscription.updated
+        # does not fall back to "pro" and downgrade Elite users.
+        subscription_data={"metadata": metadata},
     )
     return {"checkout_url": session.url, "disclaimer": SEC_DISCLAIMER}
 
@@ -64,7 +76,7 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
     except (ValueError, stripe.error.SignatureVerificationError) as exc:
         raise HTTPException(status_code=400, detail="Invalid webhook") from exc
 
-    if event["type"] in ("customer.subscription.updated", "checkout.session.completed"):
+    if event["type"] == "checkout.session.completed":
         data = event["data"]["object"]
         customer_id = data.get("customer")
         user = db.query(User).filter(User.stripe_customer_id == customer_id).first()
@@ -77,15 +89,33 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
             db.add(sub)
 
         tier = data.get("metadata", {}).get("tier", "pro")
-        if event["type"] == "customer.subscription.updated":
-            sub.stripe_subscription_id = data["id"]
-            sub.active = data["status"] == "active"
-            tier = data.get("metadata", {}).get("tier", tier)
-        else:
-            sub.active = True
+        subscription_id = data.get("subscription")
+        if isinstance(subscription_id, dict):
+            subscription_id = subscription_id.get("id")
+        _apply_tier(user, sub, tier, subscription_id=subscription_id, active=True)
+        db.commit()
 
-        sub.tier = tier
-        user.tier = tier
+    elif event["type"] == "customer.subscription.updated":
+        data = event["data"]["object"]
+        customer_id = data.get("customer")
+        user = db.query(User).filter(User.stripe_customer_id == customer_id).first()
+        if not user:
+            return {"status": "ignored"}
+
+        sub = db.query(Subscription).filter(Subscription.user_id == user.id).first()
+        if not sub:
+            sub = Subscription(user_id=user.id)
+            db.add(sub)
+
+        # Prefer subscription metadata (set via subscription_data at checkout).
+        tier = data.get("metadata", {}).get("tier") or sub.tier or "pro"
+        _apply_tier(
+            user,
+            sub,
+            tier,
+            subscription_id=data.get("id"),
+            active=data.get("status") == "active",
+        )
         db.commit()
 
     elif event["type"] == "customer.subscription.deleted":

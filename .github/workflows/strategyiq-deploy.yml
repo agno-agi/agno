@@ -71,11 +71,22 @@ jobs:
     needs: test
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    # Missing VERCEL_TOKEN/ORG_ID/PROJECT_ID must not fail the whole workflow.
+    continue-on-error: true
     defaults:
       run:
         working-directory: strategyiq-final
     steps:
       - uses: actions/checkout@v4
+
+      - name: Require Vercel secrets
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          if [ -z "$VERCEL_TOKEN" ]; then
+            echo "VERCEL_TOKEN not configured; skipping frontend deploy"
+            exit 1
+          fi
 
       - name: Deploy to Vercel
         uses: amondnet/vercel-action@v25
@@ -91,6 +102,8 @@ jobs:
     needs: test
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    # Missing AWS OIDC role must not fail the whole workflow.
+    continue-on-error: true
     permissions:
       id-token: write
       contents: read
@@ -99,6 +112,15 @@ jobs:
         working-directory: strategyiq-final
     steps:
       - uses: actions/checkout@v4
+
+      - name: Require AWS role secret
+        env:
+          AWS_ROLE_TO_ASSUME: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+        run: |
+          if [ -z "$AWS_ROLE_TO_ASSUME" ]; then
+            echo "AWS_ROLE_TO_ASSUME not configured; skipping backend deploy"
+            exit 1
+          fi
 
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
@@ -154,6 +176,10 @@ jobs:
     needs: [deploy-frontend, deploy-backend]
     if: always() && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    # Do not inherit repo defaults.working-directory — this job has no checkout.
+    defaults:
+      run:
+        working-directory: .
     steps:
       - name: Notify Slack/Discord
         run: |

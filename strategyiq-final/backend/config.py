@@ -40,10 +40,16 @@ class Settings(BaseSettings):
     jwt_secret: str = ""
     jwt_algorithm: str = "HS256"
     screener_cache_ttl: int = 900
+    # Comma-separated browser origins. Never use "*" with credentials.
+    cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
 
     class Config:
         env_file = ".env"
         extra = "ignore"
+
+    def parsed_cors_origins(self) -> list[str]:
+        origins = [o.strip() for o in self.cors_origins.split(",") if o.strip()]
+        return origins or ["http://localhost:3000"]
 
 
 settings = Settings()

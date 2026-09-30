@@ -2,10 +2,17 @@
   "version": 2,
   "builds": [
     { "src": "frontend/package.json", "use": "@vercel/next" },
-    { "src": "backend/main.py", "use": "@vercel/python", "config": { "runtime": "python3.11" } }
+    { "src": "api/backend/index.py", "use": "@vercel/python", "config": { "maxLambdaSize": "50mb" } }
   ],
   "routes": [
-    { "src": "/api/(.*)", "dest": "backend/main.py" },
+    { "src": "/api/(chat|billing)(.*)", "dest": "/api/$1$2" },
+    { "src": "/auth/(.*)", "dest": "api/backend/index.py" },
+    { "src": "/ai/(.*)", "dest": "api/backend/index.py" },
+    { "src": "/eqs/(.*)", "dest": "api/backend/index.py" },
+    { "src": "/port/(.*)", "dest": "api/backend/index.py" },
+    { "src": "/market/(.*)", "dest": "api/backend/index.py" },
+    { "src": "/billing/(.*)", "dest": "api/backend/index.py" },
+    { "src": "/health", "dest": "api/backend/index.py" },
     { "src": "/(.*)", "dest": "frontend/$1" }
   ]
 }

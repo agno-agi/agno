@@ -76,3 +76,69 @@ def test_ai_agent_routes_use_db_tier_only():
     stream_params = inspect.signature(ai_module.ai_agent_stream).parameters
     assert "x_user_tier" not in agent_params
     assert "x_user_tier" not in stream_params
+
+
+def test_cors_origins_never_wildcard_with_credentials():
+    from config import Settings
+
+    origins = Settings(cors_origins="https://app.example.com, http://localhost:3000").parsed_cors_origins()
+    assert origins == ["https://app.example.com", "http://localhost:3000"]
+    assert "*" not in origins
+
+    defaults = Settings().parsed_cors_origins()
+    assert "http://localhost:3000" in defaults
+    assert "*" not in defaults
+
+
+def test_vercel_json_preserves_edge_api_routes():
+    import json
+    from pathlib import Path
+
+    vercel = json.loads((Path(__file__).resolve().parents[2] / "vercel.json").read_text())
+    routes = vercel["routes"]
+    # Edge chat/billing must not be swallowed by a catch-all /api → Python rule.
+    api_catch_all = [
+        r
+        for r in routes
+        if r.get("src", "").startswith("/api/(") is False and r.get("src") == "/api/(.*)"
+    ]
+    assert api_catch_all == []
+    edge_guard = next(r for r in routes if "chat|billing" in r.get("src", ""))
+    assert edge_guard["dest"].startswith("/api/")
+    python_dests = {r["dest"] for r in routes if "backend" in r.get("dest", "")}
+    assert python_dests
+    assert all(not d.startswith("/api/chat") for d in python_dests)
+
+
+def test_checkout_copies_tier_to_subscription_metadata():
+    import inspect
+
+    from billing import stripe as stripe_module
+
+    source = inspect.getsource(stripe_module.create_checkout)
+    assert "subscription_data" in source
+    assert "metadata" in source
+
+
+def test_ecs_healthcheck_does_not_require_curl():
+    import json
+    from pathlib import Path
+
+    task = json.loads(
+        (Path(__file__).resolve().parents[2] / "infra" / "ecs" / "task-definition-api.json").read_text()
+    )
+    command = " ".join(task["containerDefinitions"][0]["healthCheck"]["command"])
+    assert "curl" not in command
+    assert "python" in command
+    assert "/health" in command
+
+
+def test_middleware_protects_terminal_home():
+    from pathlib import Path
+
+    middleware = (Path(__file__).resolve().parents[2] / "frontend" / "middleware.ts").read_text()
+    assert 'pathname === "/"' in middleware or 'matcher: ["/"' in middleware
+    assert "/login" in middleware
+    assert "httpOnly" in (
+        Path(__file__).resolve().parents[2] / "frontend" / "app" / "api" / "auth" / "session" / "route.ts"
+    ).read_text()

@@ -7,14 +7,14 @@
     "start": "next start"
   },
   "dependencies": {
-    "next": "14.2.21",
-    "react": "18.2.0",
-    "react-dom": "18.2.0",
-    "recharts": "2.12.0",
-    "jose": "5.2.0",
     "@upstash/ratelimit": "1.1.0",
     "@upstash/redis": "1.31.0",
-    "lightweight-charts": "4.1.0"
+    "jose": "5.2.0",
+    "lightweight-charts": "4.1.0",
+    "next": "^16.3.7",
+    "react": "18.2.0",
+    "react-dom": "18.2.0",
+    "recharts": "2.12.0"
   },
   "devDependencies": {
     "@types/node": "^20.17.12",

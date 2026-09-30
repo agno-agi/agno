@@ -3,6 +3,8 @@ import type { NextRequest } from "next/server";
 import { jwtVerify } from "jose";
 import { getJwtSecretKey, isJwtConfigured, JWT_MISCONFIGURED_MESSAGE } from "@/lib/jwt";
 
+const PUBLIC_PATHS = new Set(["/login"]);
+
 async function verifyToken(token: string) {
   const secret = getJwtSecretKey();
   if (!secret) {
@@ -12,16 +14,26 @@ async function verifyToken(token: string) {
 }
 
 export async function middleware(req: NextRequest) {
+  const { pathname } = req.nextUrl;
+
+  // Always allow login + Next internals.
+  if (PUBLIC_PATHS.has(pathname) || pathname.startsWith("/_next") || pathname.startsWith("/favicon")) {
+    return NextResponse.next();
+  }
+
   const token =
     req.headers.get("authorization")?.replace("Bearer ", "") ||
     req.cookies.get("token")?.value;
 
   const isApi =
-    req.nextUrl.pathname.startsWith("/api/chat") ||
-    req.nextUrl.pathname.startsWith("/api/billing");
+    pathname.startsWith("/api/chat") ||
+    pathname.startsWith("/api/billing");
 
+  // Protect the terminal home (/), dashboard, and authenticated API proxies.
   const isProtected =
-    req.nextUrl.pathname.startsWith("/dashboard") || isApi;
+    pathname === "/" ||
+    pathname.startsWith("/dashboard") ||
+    isApi;
 
   if (!isProtected) {
     return NextResponse.next();
@@ -48,10 +60,12 @@ export async function middleware(req: NextRequest) {
     if (isApi) {
       return NextResponse.json({ error: "Token expired" }, { status: 401 });
     }
-    return NextResponse.redirect(new URL("/login?error=expired", req.url));
+    const res = NextResponse.redirect(new URL("/login?error=expired", req.url));
+    res.cookies.set("token", "", { path: "/", maxAge: 0 });
+    return res;
   }
 }
 
 export const config = {
-  matcher: ["/dashboard/:path*", "/api/chat/:path*", "/api/billing/:path*"],
+  matcher: ["/", "/dashboard/:path*", "/api/chat/:path*", "/api/billing/:path*"],
 };
