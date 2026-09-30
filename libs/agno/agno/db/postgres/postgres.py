@@ -37,6 +37,7 @@ from agno.db.postgres.utils import (
     is_table_available,
     is_valid_table,
 )
+from agno.db.run_writes import RunCreateOutcome, RunUpdateOutcome
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.mcp_oauth import (
@@ -60,9 +61,11 @@ from agno.db.utils import (
     deserialize_session,
     deserialize_sessions,
     filter_context_runs,
+    is_foreign_key_violation,
     learning_search_patterns,
     merge_runs_table_with_legacy_blob,
     metrics_starting_date_from_days,
+    run_scope_clause,
     table_schema_mismatch_error,
     validate_pagination,
 )
@@ -121,6 +124,8 @@ def _db_epoch() -> Any:
 
 
 class PostgresDb(BaseDb):
+    supports_atomic_run_creation = True
+
     def __init__(
         self,
         db_url: Optional[str] = None,
@@ -1082,6 +1087,137 @@ class PostgresDb(BaseDb):
 
         except Exception as e:
             log_error(f"Exception upserting run to runs table: {str(e)}")
+            raise e
+
+    def create_run(
+        self,
+        run: Union[RunOutput, TeamRunOutput, WorkflowRunOutput, Dict[str, Any]],
+        session_id: str,
+        user_id: Optional[str] = None,
+        run_index: Optional[int] = None,
+    ) -> RunCreateOutcome:
+        """Insert a run row, refusing to overwrite an existing run_id.
+
+        ``ON CONFLICT DO NOTHING`` on the run_id primary key: the database
+        decides the winner, so two concurrent creations of the same fresh id
+        cannot both be told they created it. See ``BaseDb.create_run``.
+        """
+        try:
+            runs_table = self._get_table(table_type="runs", create_table_if_not_found=True)
+            if runs_table is None:
+                # ERROR, not UNSUPPORTED: this adapter does implement the
+                # strict create, and UNSUPPORTED is the one answer that sends
+                # the caller back to the overwriting upsert_run
+                log_error("Runs table could not be resolved; the run was not created")
+                return RunCreateOutcome.ERROR
+
+            row = build_single_run_row(run=run, session_id=session_id, user_id=user_id, run_index=run_index)
+            row["run_data"] = sanitize_postgres_strings(row["run_data"])
+
+            try:
+                with self.Session() as sess, sess.begin():
+                    if row.get("run_index") is None:
+                        # Same-session backfill serialization - see upsert_run
+                        sess.execute(
+                            text("SELECT pg_advisory_xact_lock(hashtext('agno_run_index'), hashtext(:sid))"),
+                            {"sid": session_id},
+                        )
+                        current_max = sess.execute(
+                            select(func.max(runs_table.c.run_index)).where(runs_table.c.session_id == session_id)
+                        ).scalar()
+                        row["run_index"] = (current_max + 1) if current_max is not None else 0
+                    stmt = (
+                        postgresql.insert(runs_table)
+                        .values(**row)
+                        .on_conflict_do_nothing(index_elements=["run_id"])
+                        .returning(runs_table.c.run_id)
+                    )
+                    # RETURNING yields a row only when the insert landed;
+                    # psycopg3 reports rowcount -1 for this statement
+                    inserted = sess.execute(stmt).fetchone()
+            except IntegrityError as e:
+                # The runs table foreign-keys to its session, so the expected
+                # failure here is a missing session row. Anything else (a NOT
+                # NULL or CHECK violation) would be misreported as "create the
+                # session and retry", and the retry would fail the same way.
+                if not is_foreign_key_violation(e):
+                    log_error(f"Exception creating run in runs table: {str(e)}")
+                    return RunCreateOutcome.ERROR
+                return RunCreateOutcome.SESSION_MISSING
+
+            return RunCreateOutcome.CREATED if inserted is not None else RunCreateOutcome.CONFLICT
+
+        except Exception as e:
+            log_error(f"Exception creating run in runs table: {str(e)}")
+            raise e
+
+    def update_run(
+        self,
+        run: Union[RunOutput, TeamRunOutput, WorkflowRunOutput, Dict[str, Any]],
+        session_id: str,
+        user_id: Optional[str] = None,
+        run_index: Optional[int] = None,
+    ) -> RunUpdateOutcome:
+        """Patch an existing run row scoped to its owner. See ``BaseDb.update_run``."""
+        try:
+            runs_table = self._get_table(table_type="runs")
+            if runs_table is None:
+                return RunUpdateOutcome.MISSING
+
+            row = build_single_run_row(run=run, session_id=session_id, user_id=user_id, run_index=run_index)
+            row["run_data"] = sanitize_postgres_strings(row["run_data"])
+
+            with self.Session() as sess, sess.begin():
+                stmt = (
+                    update(runs_table)
+                    .where(runs_table.c.run_id == row["run_id"])
+                    .where(run_scope_clause(runs_table, row))
+                    .values(
+                        status=row["status"],
+                        run_data=row["run_data"],
+                        parent_run_id=row["parent_run_id"],
+                        updated_at=row["updated_at"],
+                        # Adopt a row created before its component or owner was known.
+                        # COALESCE, not assignment: a value already on the row is what
+                        # the scope matched against and must not be rewritten.
+                        agent_id=func.coalesce(runs_table.c.agent_id, row["agent_id"]),
+                        team_id=func.coalesce(runs_table.c.team_id, row["team_id"]),
+                        workflow_id=func.coalesce(runs_table.c.workflow_id, row["workflow_id"]),
+                        user_id=func.coalesce(runs_table.c.user_id, row["user_id"]),
+                        # Repair a legacy row stored with a NULL index, using
+                        # the position the caller resolved. COALESCE so a
+                        # stored index is never renumbered; omitted entirely
+                        # when the caller did not resolve one.
+                        **(
+                            {"run_index": func.coalesce(runs_table.c.run_index, row["run_index"])}
+                            if row.get("run_index") is not None
+                            else {}
+                        ),
+                    )
+                    .returning(runs_table.c.run_id)
+                )
+                if sess.execute(stmt).fetchone() is not None:
+                    return RunUpdateOutcome.UPDATED
+                # The update matched nothing. Two very different reasons, and
+                # only one of them is final, so ask which: a row this writer
+                # DOES own means it landed between the update and here, and
+                # MISSING sends the caller round again. A row it does not own
+                # is the refusal the scope exists for.
+                owned = sess.execute(
+                    select(runs_table.c.run_id)
+                    .where(runs_table.c.run_id == row["run_id"])
+                    .where(run_scope_clause(runs_table, row))
+                ).fetchone()
+                if owned is not None:
+                    return RunUpdateOutcome.MISSING
+                exists = sess.execute(
+                    select(runs_table.c.run_id).where(runs_table.c.run_id == row["run_id"])
+                ).fetchone()
+
+            return RunUpdateOutcome.SCOPE_MISMATCH if exists is not None else RunUpdateOutcome.MISSING
+
+        except Exception as e:
+            log_error(f"Exception updating run in runs table: {str(e)}")
             raise e
 
     def get_runs(
@@ -7356,7 +7492,8 @@ class PostgresDb(BaseDb):
             table = self._get_table(table_type="sessions", create_table_if_not_found=True)
             if table is None:
                 return None
-            session_dict = session.to_dict()
+            session_dict = session.to_dict(include_runs=False)
+            created_at = session_dict.get("created_at") or int(time.time())
             for data_field in ("agent_data", "team_data", "workflow_data", "session_data", "summary", "metadata"):
                 if session_dict.get(data_field):
                     session_dict[data_field] = sanitize_postgres_strings(session_dict[data_field])
@@ -7366,8 +7503,11 @@ class PostgresDb(BaseDb):
                 session_data=session_dict.get("session_data"),
                 summary=session_dict.get("summary"),
                 metadata=session_dict.get("metadata"),
-                created_at=session_dict.get("created_at"),
-                updated_at=session_dict.get("created_at"),
+                # NOT NULL, and to_dict always emits the key, so a missing
+                # timestamp arrives as None rather than absent. One value for
+                # both, or a row can be born already updated.
+                created_at=created_at,
+                updated_at=created_at,
             )
             if isinstance(session, AgentSession):
                 values.update(
