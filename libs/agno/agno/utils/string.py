@@ -171,9 +171,9 @@ def _parse_individual_json(content: str, output_schema: Type[BaseModel]) -> Opti
             for field_name, field_info in model_fields.items():
                 if field_name in candidate_obj:
                     field_value = candidate_obj[field_name]
-                    # If field is a list, extend it; otherwise, use the latest value
+                    # Extend consecutive lists; replace a previous non-list with the latest list.
                     if isinstance(field_value, list):
-                        if field_name not in merged_data:
+                        if not isinstance(merged_data.get(field_name), list):
                             merged_data[field_name] = []
                         merged_data[field_name].extend(field_value)
                     else:

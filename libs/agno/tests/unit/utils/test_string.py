@@ -1,5 +1,6 @@
 from typing import List, Optional
 
+import pytest
 from pydantic import BaseModel
 
 from agno.utils.string import (
@@ -10,6 +11,18 @@ from agno.utils.string import (
     sanitize_postgres_string,
     url_safe_string,
 )
+
+
+@pytest.mark.parametrize("previous_value", ['"invalid"', "null", "42", '{"unexpected": true}'])
+def test_parse_concatenated_json_list_after_non_list(previous_value):
+    class ListModel(BaseModel):
+        items: list[str]
+
+    content = f'{{"items": {previous_value}}}\n{{"items": ["first"]}}\n{{"items": ["second"]}}'
+    result = parse_response_model_str(content, ListModel)
+
+    assert result is not None
+    assert result.items == ["first", "second"]
 
 
 def test_extract_json_objects_with_brace_in_string_value():
