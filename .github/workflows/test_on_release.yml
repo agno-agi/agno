@@ -806,6 +806,7 @@ jobs:
           ./libs/agno/tests/integration/teams/test_session_state.py \
           ./libs/agno/tests/integration/teams/test_storage_and_memory.py \
           ./libs/agno/tests/integration/teams/human_in_the_loop/test_team_tool_hitl.py \
+          /libs/agno/tests/integration/teams/human_in_the_loop/test_team_background_stream_continue.py
           ./libs/agno/tests/integration/teams/test_filter_tool_calls.py \
           ./libs/agno/tests/integration/teams/test_multimodal.py
 
