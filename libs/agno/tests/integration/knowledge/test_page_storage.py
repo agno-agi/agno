@@ -3038,3 +3038,34 @@ def test_source_relocation_cli_reports_each_outcome_and_keeps_setup_visible(corp
     stale_sync = run(demo, "sync")
     assert stale_sync.returncode == 1 and "another documentation source" in stale_sync.stderr
     assert binding() == (new, revision + 1)
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+def test_page_evidence_retains_stale_search_excerpts_after_publication(corpus, asynchronous):
+    import asyncio
+
+    from agno.knowledge.page import arender_page_evidence, render_page_evidence
+
+    knowledge, embedder, site = corpus
+    knowledge.sync_pages(url="https://docs.example.com/llms.txt")
+    hits = knowledge.search_pages("Agent")
+    assert hits.results
+
+    def render():
+        return (
+            asyncio.run(arender_page_evidence(knowledge, hits))
+            if asynchronous
+            else render_page_evidence(knowledge, hits)
+        )
+
+    initial = render()
+    assert initial.pages[0].coverage == "full"
+    site["https://docs.example.com/agent.md"] = "# Agent\n\nNew publication has different instructions.\n"
+    knowledge.sync_pages(url="https://docs.example.com/llms.txt")
+    calls = list(embedder.calls)
+    stale = render()
+    assert stale.pages[0].coverage == "excerpts"
+    assert stale.pages[0].warnings == ("page_changed",)
+    assert hits.results[0].content in stale.text
+    assert "New publication" not in stale.text
+    assert embedder.calls == calls
