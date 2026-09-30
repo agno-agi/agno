@@ -39,6 +39,27 @@ def _resolve_external_execution(requirement: RunRequirement, content: str, error
     requirement.set_external_execution_result(error or content)
 
 
+def _tool_message_content_as_str(content: Any) -> str:
+    """Normalize AG-UI tool message content (str or multimodal parts) to a string."""
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: List[str] = []
+        for part in content:
+            if isinstance(part, str):
+                parts.append(part)
+            elif hasattr(part, "text") and getattr(part, "text", None) is not None:
+                parts.append(str(part.text))
+            elif isinstance(part, dict) and part.get("text") is not None:
+                parts.append(str(part["text"]))
+            else:
+                parts.append(str(part))
+        return "".join(parts)
+    return str(content)
+
+
 def resolve_requirements_from_tool_messages(
     requirements: List[RunRequirement],
     tool_messages: List[AGUIToolMessage],
@@ -57,13 +78,15 @@ def resolve_requirements_from_tool_messages(
         if tool_message is None:
             continue
 
+        content_str = _tool_message_content_as_str(tool_message.content)
+
         # External execution: raw content, no JSON parsing
         if requirement.pause_type == "external_execution":
-            _resolve_external_execution(requirement, tool_message.content, tool_message.error)
+            _resolve_external_execution(requirement, content_str, tool_message.error)
             continue
 
         # Structured pause types: parse JSON payload
-        parsed = parse_response_dict_str(tool_message.content)
+        parsed = parse_response_dict_str(content_str)
         payload: Dict[str, Any] = parsed if isinstance(parsed, dict) else {}
 
         if requirement.pause_type == "confirmation":

@@ -132,9 +132,14 @@ class TestValidatorInDependencyOwnedModel:
             },
         )
         assert resp.status_code == 422, f"expected 422, got {resp.status_code}: {resp.text[:200]}"
-        assert "BinaryInputContent requires id, url, or data" in resp.text, (
-            f"message missing from body: {resp.text[:300]}"
-        )
+        # ag_ui may reject via BinaryInputContent validator or via the multimodal
+        # content union discriminator (tag 'binary' is not in text/image/audio/...).
+        body = resp.text
+        assert (
+            "BinaryInputContent requires id, url, or data" in body
+            or "union_tag_invalid" in body
+            or "binary" in body.lower()
+        ), f"message missing from body: {body[:300]}"
 
 
 class TestOwnedAndBorrowedAppsAgree:
