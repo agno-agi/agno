@@ -11,9 +11,16 @@ that have needed follow-up fixes on PR #7508:
   round-trip so a re-save isn't unusable
 - non-SQL registered db types aren't regressed to db=None
 - the registry-miss path falls back to db_from_dict (not a silent drop)
+
+Ticket 15 adds the Oracle equivalents of the Postgres cases: db_from_dict
+and _clone_db_with_table_overrides previously matched Oracle's own
+advertised "oracle" type string against no branch at all, so both silently
+fell through (db_from_dict logging "Unknown database type" and returning
+None; the cloner returning None and falling back with a warning) rather
+than reconstructing a working adapter.
 """
 
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from sqlalchemy import create_engine
 
@@ -22,6 +29,7 @@ from agno.db.sqlite.sqlite import SqliteDb
 from agno.db.utils import (
     DB_TABLE_NAME_KEYS,
     _clone_db_with_table_overrides,
+    db_from_dict,
     resolve_db_from_config,
 )
 
@@ -168,6 +176,82 @@ class TestResolveDbFromConfigPostgres:
         assert redict["session_table"] == "custom_pg_sessions"
 
 
+class TestResolveDbFromConfigOracle:
+    """OracleDb.__init__ eagerly detects server capabilities (a real query)
+    unless ``json_storage`` is passed; ``detect_capabilities`` is patched
+    here rather than the engine, mirroring
+    test_db_from_dict_roundtrip.py's own choice of seam for the same reason.
+    """
+
+    @patch("agno.db.oracle.oracle.detect_capabilities")
+    def test_clone_shares_engine_and_preserves_connection_metadata(self, mock_detect_capabilities):
+        from agno.db.oracle._version import OracleCapabilities
+        from agno.db.oracle.oracle import OracleDb
+
+        mock_detect_capabilities.return_value = OracleCapabilities.from_version(23, "23.4.0.0.0")
+
+        engine = create_engine("sqlite:///:memory:")
+        os_db = OracleDb(
+            db_url="oracle+oracledb://user:pass@host/db",
+            db_engine=engine,
+            db_schema=None,
+            create_schema=False,
+        )
+        registry = _FakeRegistry(os_db)
+
+        data = dict(os_db.to_dict())
+        data["session_table"] = "custom_oracle_sessions"
+
+        clone = resolve_db_from_config(data, registry=registry)
+
+        assert clone is not os_db
+        assert isinstance(clone, OracleDb)
+        assert clone.db_engine is os_db.db_engine
+        assert clone.db_url == os_db.db_url
+        assert clone.db_schema == os_db.db_schema
+        assert clone.create_schema is False
+        redict = clone.to_dict()
+        assert redict["db_url"] == os_db.db_url
+        assert redict["type"] == "oracle"
+        assert redict["session_table"] == "custom_oracle_sessions"
+
+    @patch("agno.db.oracle.oracle.detect_capabilities")
+    def test_no_registry_falls_back_to_db_from_dict(self, mock_detect_capabilities):
+        from agno.db.oracle._version import OracleCapabilities
+        from agno.db.oracle.oracle import OracleDb
+
+        mock_detect_capabilities.return_value = OracleCapabilities.from_version(23, "23.4.0.0.0")
+
+        db_data = {
+            "type": "oracle",
+            "db_url": "oracle+oracledb://user:pass@host/db",
+            "session_table": "s",
+            "memory_table": "m",
+        }
+
+        resolved = resolve_db_from_config(db_data, registry=None)
+
+        assert isinstance(resolved, OracleDb)
+        assert resolved.session_table_name == "s"
+        assert resolved.memory_table_name == "m"
+
+
+class TestDbFromDictOracle:
+    @patch("agno.db.oracle.oracle.detect_capabilities")
+    def test_reconstructs_working_adapter_not_none(self, mock_detect_capabilities):
+        from agno.db.oracle._version import OracleCapabilities
+        from agno.db.oracle.oracle import OracleDb
+
+        mock_detect_capabilities.return_value = OracleCapabilities.from_version(23, "23.4.0.0.0")
+
+        resolved = db_from_dict({"type": "oracle", "db_url": "oracle+oracledb://user:pass@host/db"})
+
+        assert resolved is not None, (
+            "db_from_dict must reconstruct OracleDb, not fall through to the unknown-type branch"
+        )
+        assert isinstance(resolved, OracleDb)
+
+
 class TestResolveDbFromConfigNonSqlBackend:
     def test_non_sql_registered_db_returns_registered_instance_not_none(self):
         """Regression: non-SQL backends (JsonDb, RedisDb, FirestoreDb,
@@ -231,8 +315,27 @@ class TestCloneDbWithTableOverrides:
 
     def test_returns_none_for_unknown_type(self):
         fake = Mock()
-        # Not a PostgresDb or SqliteDb — cloner should bail out.
+        # Not a PostgresDb, SqliteDb or OracleDb — cloner should bail out.
         assert _clone_db_with_table_overrides(fake, {"session_table": "x"}) is None
+
+    @patch("agno.db.oracle.oracle.detect_capabilities")
+    def test_oracle_clone_applies_overrides(self, mock_detect_capabilities):
+        from agno.db.oracle._version import OracleCapabilities
+        from agno.db.oracle.oracle import OracleDb
+
+        mock_detect_capabilities.return_value = OracleCapabilities.from_version(23, "23.4.0.0.0")
+
+        engine = create_engine("sqlite:///:memory:")
+        src = OracleDb(db_url="oracle+oracledb://user:pass@host/db", db_engine=engine)
+        data = {"session_table": "new_s", "memory_table": "new_m"}
+
+        clone = _clone_db_with_table_overrides(src, data)
+
+        assert isinstance(clone, OracleDb)
+        assert clone.session_table_name == "new_s"
+        assert clone.memory_table_name == "new_m"
+        assert clone.db_engine is src.db_engine
+        assert clone.db_url == src.db_url
 
 
 class TestDbTableNameKeys:

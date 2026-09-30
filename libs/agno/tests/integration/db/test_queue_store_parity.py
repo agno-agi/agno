@@ -27,6 +27,7 @@ from agno.os.job_queue import _SyncStoreAdapter
 
 PG_URL = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 REDIS_URL = "redis://localhost:6379"
+ORACLE_URL = "oracle+oracledb://ai:ai@localhost:1523/?service_name=FREEPDB1"
 
 
 def _port_open(port: int) -> bool:
@@ -41,6 +42,7 @@ def _port_open(port: int) -> bool:
 
 _PG_AVAILABLE = _port_open(5532)
 _REDIS_AVAILABLE = _port_open(6379)
+_ORACLE_AVAILABLE = _port_open(1523)
 
 try:
     import fakeredis
@@ -61,6 +63,11 @@ STORE_PARAMS = [
     ),
     pytest.param(
         "pg", id="pg", marks=pytest.mark.skipif(not _PG_AVAILABLE, reason="Postgres not available on localhost:5532")
+    ),
+    pytest.param(
+        "oracle",
+        id="oracle",
+        marks=pytest.mark.skipif(not _ORACLE_AVAILABLE, reason="Oracle not available on localhost:1523"),
     ),
 ]
 
@@ -101,6 +108,18 @@ async def store(request):
         with engine.begin() as conn:
             conn.execute(sqlalchemy.text(f'DROP TABLE IF EXISTS {db.db_schema}."{db.job_table_name}"'))
         engine.dispose()
+        return
+    if kind == "oracle":
+        from agno.db.oracle import OracleDb
+
+        db = OracleDb(db_url=ORACLE_URL, job_table=f"parity_{uuid.uuid4().hex[:8]}")
+        yield _SyncStoreAdapter(db)
+        import sqlalchemy
+
+        if db.table_exists(db.job_table_name):
+            with db.db_engine.begin() as conn:
+                conn.execute(sqlalchemy.text(f"DROP TABLE {db.job_table_name} CASCADE CONSTRAINTS"))
+        db.db_engine.dispose()
         return
 
 
@@ -328,13 +347,19 @@ class TestSweepFamilyParity:
             doc["locked_at"] = stale_at
             inner.redis_client.set(key, _json.dumps(doc))
             inner.redis_client.zadd(inner._q_key("running"), {job_id: stale_at})
-        else:
+        elif hasattr(inner, "async_session_factory"):
             from sqlalchemy import update
 
             table = await inner._get_table(table_type="jobs")
             async with inner.async_session_factory() as sess:
                 async with sess.begin():
                     await sess.execute(update(table).where(table.c.id == job_id).values(locked_at=stale_at))
+        else:
+            # A sync SQL store (e.g. OracleDb) wrapped in _SyncStoreAdapter:
+            # no event loop involved, so this runs synchronously in place.
+            table = inner._get_table(table_type="jobs")
+            with inner.Session() as sess, sess.begin():
+                sess.execute(table.update().where(table.c.id == job_id).values(locked_at=stale_at))
 
     @pytest.mark.asyncio
     async def test_sweep_acquire_fence_and_ownership_keyed_fail(self, store):

@@ -1060,6 +1060,14 @@ def db_from_dict(db_data: Dict[str, Any]) -> Optional[Union["BaseDb"]]:
         except Exception as e:
             log_error(f"Error reconstructing ClickhouseDb from dictionary: {str(e)}")
             return None
+    elif db_type == "oracle":
+        try:
+            from agno.db.oracle import OracleDb
+
+            return OracleDb.from_dict(db_data)
+        except Exception as e:
+            log_error(f"Error reconstructing OracleDb from dictionary: {str(e)}")
+            return None
     else:
         log_warning(f"Unknown database type: {db_type}")
         return None
@@ -1133,6 +1141,23 @@ def _clone_db_with_table_overrides(
             )
     except Exception as e:
         log_error(f"Error cloning SqliteDb with table overrides: {str(e)}")
+        return None
+
+    try:
+        from agno.db.oracle import OracleDb
+
+        if isinstance(source_db, OracleDb):
+            overrides_filtered = _accepted_by(OracleDb)
+            return OracleDb(
+                db_url=source_db.db_url,
+                db_engine=source_db.db_engine,
+                db_schema=source_db.db_schema,
+                id=source_db.id,
+                create_schema=source_db.create_schema,
+                **overrides_filtered,
+            )
+    except Exception as e:
+        log_error(f"Error cloning OracleDb with table overrides: {str(e)}")
         return None
 
     return None

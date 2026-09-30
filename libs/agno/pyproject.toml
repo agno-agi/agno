@@ -69,6 +69,8 @@ dev = [
   # Driver for the Postgres adapter suites under tests/unit/db; without it
   # they importorskip away and only the SQLite half of each guard is run.
   "agno[postgres]",
+  # Same reasoning for the Oracle adapter suites under tests/unit/db.
+  "agno[oracle]",
   # First-party interfaces exercised by the unit suite
   "agno[slack]",
   "agno[agui]",
@@ -190,6 +192,12 @@ async-postgres = ["asyncpg"]
 firestore = ["google-cloud-firestore"]
 gcs = ["google-cloud-storage"]
 mysql = ["pymysql", "asyncmy"]
+# sqlalchemy>=2.0.41: first release with the Oracle VECTOR type and
+# oracle_fetch_approximate, which the vector database extra also needs. The
+# oracledb driver is left unbounded: its newest release requires a newer
+# Python than agno's floor, and package resolution already selects an older
+# compatible driver on older interpreters without an environment marker.
+oracle = ["sqlalchemy>=2.0.41", "oracledb"]
 postgres = ["sqlalchemy", "psycopg[binary]"]
 pages = ["agno[postgres]", "agno[pgvector]", "dnspython>=2.6.1", "beautifulsoup4", "regex>=2024.5.15"]
 redis = ["redis>=4.5.4", "redisvl>=0.12.1"]  # >=4.5.4: safe cancellation of blocking commands (XREAD in event stream tail)
@@ -359,6 +367,7 @@ storage = [
   "agno[firestore]",
   "agno[gcs]",  # also used by GCS media storage (gcs serves both roles)
   "agno[mysql]",
+  "agno[oracle]",  # also listed under vectordbs (oracle serves both roles)
   "agno[postgres]",
   "agno[redis]",  # also listed under vectordbs (redis serves both roles)
   "agno[s3]",
@@ -378,6 +387,7 @@ vectordbs = [
   "agno[milvusdb]",
   "agno[mongodb]",
   "agno[opensearch]",
+  "agno[oracle]",  # also listed under storage (oracle serves both roles)
   "agno[pgvector]",
   "agno[pinecone]",
   "agno[pylance]",
@@ -633,6 +643,7 @@ module = [
   "openpyxl.*",
   "openai.*",
   "opensearchpy.*",
+  "oracledb.*",
   "cv2.*",
   "openbb.*",
   "pandas.*",

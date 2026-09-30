@@ -13,6 +13,11 @@ The fix is per-engine, each using the strongest primitive available:
             under SQLite's statement-level write lock)
 - SingleStore: same inline computation via a derived table (best effort -
             the engine has no user-level locks); not covered here, no server
+- Oracle:   Oracle has no advisory-lock primitive keyed on an arbitrary
+            string. A SELECT ... FOR UPDATE on the session's own sessions
+            row is taken before the MAX read, so concurrent same-session
+            backfills serialize on that row lock the same way Postgres's
+            advisory lock serializes them.
 
 The hammers gather N concurrent no-index saves and assert the landed indexes
 are exactly 0..N-1.
@@ -225,6 +230,67 @@ class TestSqliteBackfillRace:
                 await sess.execute(select(runs_table.c.run_index).where(runs_table.c.session_id == session_id))
             ).fetchall()
         _assert_contiguous([r[0] for r in rows], 4)
+
+
+# ---------------------------------------------------------------------------
+# Oracle (runs only where a server is available; no free Oracle image exists
+# for CI, so this skips cleanly there and only runs against a local container)
+# ---------------------------------------------------------------------------
+
+ORACLE_URL = "oracle+oracledb://ai:ai@localhost:1523/?service_name=FREEPDB1"
+
+oracle_required = pytest.mark.skipif(not _port_open(1523), reason="Oracle not available on localhost:1523")
+
+
+@oracle_required
+class TestOracleBackfillRace:
+    def test_threaded_upsert_run_backfills_are_contiguous(self):
+        import sqlalchemy
+        from sqlalchemy import select
+
+        from agno.db.oracle import OracleDb
+
+        suffix = uuid.uuid4().hex[:8]
+        db = OracleDb(db_url=ORACLE_URL, session_table=f"test_rir_{suffix}", runs_table=f"test_rir_runs_{suffix}")
+        session_id = f"s-{uuid.uuid4().hex[:8]}"
+        sessions_table = db._get_table(table_type="sessions", create_table_if_not_found=True)
+        db._get_table(table_type="runs", create_table_if_not_found=True)
+        with db.Session() as sess, sess.begin():
+            sess.execute(
+                sessions_table.insert().values(session_id=session_id, session_type="agent", created_at=int(time.time()))
+            )
+
+        barrier = threading.Barrier(8)
+        errors: list = []
+
+        def writer(i: int) -> None:
+            try:
+                barrier.wait(timeout=10)
+                db.upsert_run(run=_run_dict(f"r{i}", session_id), session_id=session_id)
+            except Exception as e:
+                errors.append(e)
+
+        threads = [threading.Thread(target=writer, args=(i,)) for i in range(8)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=30)
+        assert not errors, f"writers raised: {errors}"
+
+        runs_table = db._get_table(table_type="runs")
+        with db.Session() as sess:
+            indexes = [
+                r[0]
+                for r in sess.execute(
+                    select(runs_table.c.run_index).where(runs_table.c.session_id == session_id)
+                ).fetchall()
+            ]
+
+        with db.Session() as sess, sess.begin():
+            sess.execute(sqlalchemy.text(f"DROP TABLE {db.runs_table_name} CASCADE CONSTRAINTS"))
+            sess.execute(sqlalchemy.text(f"DROP TABLE {db.session_table_name} CASCADE CONSTRAINTS"))
+
+        _assert_contiguous(indexes, 8)
 
 
 # ---------------------------------------------------------------------------

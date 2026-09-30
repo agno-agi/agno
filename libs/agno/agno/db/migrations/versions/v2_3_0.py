@@ -43,6 +43,15 @@ def up(db: BaseDb, table_type: str, table_name: str) -> bool:
             return _migrate_sqlite(db, table_type, table_name)
         elif db_type == "SingleStoreDb":
             return _migrate_singlestore(db, table_type, table_name)
+        elif db_type == "OracleDb":
+            # OracleDb was introduced against the v3.0.0 schema directly (this
+            # effort's own tickets 02+); no pre-3.0.0 Oracle table has ever
+            # existed. Its memories table has had created_at/feedback since
+            # creation, and its JSON columns are typed once at creation time
+            # (native JSON or CLOB, per the connected server's capabilities) --
+            # there is no separate JSONB-style storage upgrade the way
+            # Postgres has one. Nothing to migrate, decided rather than assumed.
+            log_info(f"{db_type}: v2.3.0 columns/JSON storage already present since table creation, nothing to do")
         else:
             log_info(f"{db_type} does not require schema migrations (NoSQL/document store)")
         return False
@@ -71,6 +80,11 @@ async def async_up(db: AsyncBaseDb, table_type: str, table_name: str) -> bool:
             return await _migrate_async_postgres(db, table_type, table_name)
         elif db_type == "AsyncSqliteDb":
             return await _migrate_async_sqlite(db, table_type, table_name)
+        elif db_type == "AsyncOracleDb":
+            # See the sync twin's own comment: no pre-3.0.0 Oracle table has
+            # ever existed, and these columns/JSON storage are present since
+            # creation for every Oracle table this adapter builds.
+            log_info(f"{db_type}: v2.3.0 columns/JSON storage already present since table creation, nothing to do")
         else:
             log_info(f"{db_type} does not require schema migrations (NoSQL/document store)")
         return False
@@ -101,6 +115,10 @@ def down(db: BaseDb, table_type: str, table_name: str) -> bool:
             return _revert_sqlite(db, table_type, table_name)
         elif db_type == "SingleStoreDb":
             return _revert_singlestore(db, table_type, table_name)
+        elif db_type == "OracleDb":
+            # There is no pre-v2.3.0 Oracle shape to revert to: every Oracle
+            # table this adapter has ever built already has these columns.
+            log_info(f"{db_type}: no pre-v2.3.0 Oracle schema exists to revert to, nothing to do")
         else:
             log_info(f"Revert not implemented for {db_type}")
         return False
@@ -127,6 +145,10 @@ async def async_down(db: AsyncBaseDb, table_type: str, table_name: str) -> bool:
             return await _revert_async_postgres(db, table_type, table_name)
         elif db_type == "AsyncSqliteDb":
             return await _revert_async_sqlite(db, table_type, table_name)
+        elif db_type == "AsyncOracleDb":
+            # See the sync twin's own comment: no pre-v2.3.0 Oracle schema
+            # has ever existed to revert to.
+            log_info(f"{db_type}: no pre-v2.3.0 Oracle schema exists to revert to, nothing to do")
         else:
             log_info(f"Revert not implemented for {db_type}")
         return False

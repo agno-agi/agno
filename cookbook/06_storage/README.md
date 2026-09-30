@@ -15,6 +15,7 @@ uv pip install google-cloud-firestore  # Firestore
 uv pip install boto3           # DynamoDB
 uv pip install singlestoredb   # SingleStore
 uv pip install google-cloud-storage  # GCS
+uv pip install "agno[oracle]"   # Oracle Database
 ```
 
 Navigate to the specific integration directory for detailed documentation and examples.
@@ -36,6 +37,7 @@ agent = Agent(
 ## Supported Databases
 
 - [`postgres`](postgres/) - PostgreSQL relational database integration
+- [`oracle`](oracle/) - Oracle Database relational database integration
 - [`sqlite`](sqlite/) - SQLite lightweight database integration
 - [`mongo`](mongo/) - MongoDB document database integration
 - [`mysql`](mysql/) - MySQL relational database integration
