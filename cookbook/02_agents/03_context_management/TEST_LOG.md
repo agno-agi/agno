@@ -159,3 +159,11 @@ markdown instead of into the database.
 **Result:** Completed successfully in 11s.
 
 ---
+
+### compaction/compaction_token_counter.py
+
+**Status:** PASS
+**Description:** Compares three token counters on the same two messages, then runs an agent with `Compaction(compact_at_tokens=1_500, uncompacted_runs=1, token_counter=model.count_tokens)` on `gpt-5.6-luna` over five detailed questions.
+**Result:** The counters disagree on the same text - local estimate 67, OpenAI `count_tokens` 79, Llama 3 tokenizer 67. Every threshold check used OpenAI's count with no fallback. The fold happened on the fifth run: `Folded 6 messages (18083 -> 6237 tokens)`. Earlier runs declined because the fold was still under 2x the one-run tail.
+
+---

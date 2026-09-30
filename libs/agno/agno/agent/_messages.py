@@ -93,9 +93,15 @@ def _estimated_context_tokens(
     plus background and compaction model calls, so it can be much larger than any single request
     the provider had to fit. ``compact_at_tokens`` is a context-size threshold, so use the current
     message view instead.
+
+    Counted by ``Compaction.token_counter`` when one is set, and locally otherwise.
     """
+    from agno.compaction._tokens import count_request
     from agno.utils.tokens import count_tokens
 
+    counted = count_request(getattr(agent.compaction, "token_counter", None), messages, tools)
+    if counted is not None:
+        return counted
     model_id = getattr(agent.model, "id", None) or "gpt-4o"
     try:
         return count_tokens(messages, tools=tools, model_id=model_id)
@@ -109,6 +115,21 @@ def _compaction_inputs(
 ) -> Dict[str, Any]:
     return {
         "context_tokens": _estimated_context_tokens(agent, messages, tools) if messages is not None else None,
+        "model": agent.model,
+    }
+
+
+async def _acompaction_inputs(
+    agent: "Agent", messages: Optional[List[Message]] = None, tools: Optional[List[Any]] = None
+) -> Dict[str, Any]:
+    """``_compaction_inputs`` for async runs. A token_counter is usually a network call, so it runs
+    in a worker thread rather than blocking the event loop."""
+    if messages is None or getattr(agent.compaction, "token_counter", None) is None:
+        return _compaction_inputs(agent, messages, tools)
+    import asyncio
+
+    return {
+        "context_tokens": await asyncio.to_thread(_estimated_context_tokens, agent, messages, tools),
         "model": agent.model,
     }
 
@@ -314,7 +335,7 @@ async def acompact_now(agent: "Agent", session: AgentSession, history: List[Mess
         return CompactionResult(status=status, message=reason)
 
     log_info("Compacting conversation history")
-    inputs = _compaction_inputs(agent, history)
+    inputs = await _acompaction_inputs(agent, history)
     new_record = await compaction.acompact(
         history,
         session_id=session.session_id,
@@ -374,7 +395,7 @@ def _recompact_after_overflow(
     from dataclasses import replace
 
     from agno.compaction._cut import leading_system_count
-    from agno.compaction._tokens import estimate_tokens
+    from agno.compaction._tokens import count_request, estimate_tokens
 
     compaction = getattr(agent, "compaction", None)
     if compaction is None or not getattr(compaction, "on_context_overflow", False):
@@ -423,7 +444,8 @@ def _recompact_after_overflow(
         )
         return False
 
-    before = estimate_tokens(messages, tools)
+    counter = getattr(compaction, "token_counter", None)
+    before = count_request(counter, messages, tools) or estimate_tokens(messages, tools)
     # min_fold_ratio is the run-start question - is this fold worth paying for. Here the request
     # has already been rejected, so any fold that shrinks it is worth making.
     record = replace(folder, min_fold_ratio=0, stats=compaction.stats).compact(
@@ -438,7 +460,7 @@ def _recompact_after_overflow(
         return False
 
     compacted = compaction.apply_record(messages, record)
-    after = estimate_tokens(compacted, tools)
+    after = count_request(counter, compacted, tools) or estimate_tokens(compacted, tools)
     if after >= before:
         # A summary has a floor cost, so a fold that reclaims nothing leaves the request no
         # more sendable than it was. Retrying an identical payload just fails twice.
@@ -548,7 +570,7 @@ async def aapply_compaction(
     in_context = _replayed_view(compaction, history, record, replay_ids)
 
     prefix = context_prefix or []
-    inputs = _compaction_inputs(agent, prefix + in_context, tools)
+    inputs = await _acompaction_inputs(agent, prefix + in_context, tools)
     if not compaction.should_compact(in_context, **inputs):
         return in_context
 

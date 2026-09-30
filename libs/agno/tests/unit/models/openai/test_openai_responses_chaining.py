@@ -289,3 +289,31 @@ async def test_missing_previous_response_is_not_retried_without_a_chain(stale_ch
             await _invoke(model, "sync", [Message(role="user", content="hi")])
 
     assert len(requests) == 1
+
+
+def test_count_tokens_counts_the_whole_history_despite_stored_response_ids():
+    """A count call carries no previous_response_id, so it must not drop what a chained request
+    would leave to the server - otherwise the input is empty and the API rejects it."""
+    from types import SimpleNamespace
+
+    from agno.models.message import Message
+    from agno.models.openai import OpenAIResponses
+
+    sent = {}
+
+    def count(**kwargs):
+        sent.update(kwargs)
+        return SimpleNamespace(input_tokens=123)
+
+    client = SimpleNamespace(responses=SimpleNamespace(input_tokens=SimpleNamespace(count=count)))
+    model = OpenAIResponses(id="gpt-5-mini")
+    model.get_client = lambda: client  # type: ignore[method-assign]
+
+    messages = [
+        Message(role="user", content="first question"),
+        Message(role="assistant", content="first answer", provider_data={"response_id": "resp_1"}),
+        Message(role="user", content="second question"),
+    ]
+
+    assert model.count_tokens(messages) == 123
+    assert len(sent["input"]) == 3

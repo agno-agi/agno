@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any, List, Optional, Tuple
 from uuid import uuid4
 
 from agno.compaction._cut import choose_boundary, is_offload_envelope
-from agno.compaction._tokens import estimate_tokens
+from agno.compaction._tokens import TokenCounter, count_request, estimate_tokens
 from agno.compaction._view import build_view
 from agno.compaction.archive import CompactionArchive, render_messages
 from agno.compaction.prompts import (
@@ -86,6 +86,10 @@ class Compaction:
     # -- when to compact ------------------------------------------------
     # Fold when the context reaches this many tokens. None folds only on agent.compact() or overflow.
     compact_at_tokens: Optional[int] = _COMPACT_AT_TOKENS_UNSET
+    # Counts a request's tokens for compact_at_tokens and overflow recovery: a function taking
+    # (messages, tools) and returning an int. Defaults to a local tiktoken estimate. Pass
+    # model.count_tokens for the provider's own count - a network call on each check.
+    token_counter: Optional[TokenCounter] = None
 
     # -- what to keep ---------------------------------------------------
     # Recent runs kept verbatim.
@@ -116,6 +120,11 @@ class Compaction:
         if self.on_context_overflow and isinstance(self.compact_at_tokens, _UnsetTokens):
             self.compact_at_tokens = None
 
+        if self.token_counter is not None and not callable(self.token_counter):
+            raise TypeError(
+                f"token_counter must be a function taking (messages, tools) and returning an int, "
+                f"got {type(self.token_counter).__name__}"
+            )
         if self.compact_at_tokens is not None and self.compact_at_tokens <= 0:
             raise ValueError(f"compact_at_tokens must be a positive integer, got {self.compact_at_tokens}")
         if self.uncompacted_runs is not None and self.uncompacted_runs < 0:
@@ -157,6 +166,9 @@ class Compaction:
         """
         if context_tokens is not None:
             return context_tokens
+        counted = count_request(self.token_counter, messages, tools)
+        if counted is not None:
+            return counted
         try:
             model_id = getattr(model, "id", None) or "gpt-4o"
             from agno.utils.tokens import count_tokens
