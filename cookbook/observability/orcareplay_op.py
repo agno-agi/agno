@@ -5,7 +5,7 @@ OrcaReplay Integration
 Demonstrates recording an Agno agent from outside the process, then replaying that run
 offline — no provider contacted, no key, no token spend.
 
-Unlike the other examples here, there is nothing to initialize: OrcaReplay does not
+There is nothing to initialize in this file: OrcaReplay does not
 instrument the agent. It wraps the process you launch and moves the base-URL variable for
 that child only, so this file is an ordinary Agno script. What changes is how you run it.
 
