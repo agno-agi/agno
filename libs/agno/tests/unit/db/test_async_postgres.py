@@ -105,13 +105,6 @@ async def test_get_schedules_table_none_raises_under_flag(async_postgres_db, mon
         await async_postgres_db.get_schedules(raise_on_error=True)
 
 
-# -- delete_run / delete_runs: a failed delete is not a missing run --
-#
-# The sync twin in agno/db/postgres/postgres.py re-raises here, and so do 13 of the 17
-# db backends. AsyncSqliteDb and AsyncMongoDb re-raise too, so this is not an async
-# convention - it is these two async files diverging from their own sync twins.
-
-
 def _session_raising(error: Exception) -> Mock:
     """An async session factory whose execute() fails the way a live backend does."""
     session = AsyncMock()
