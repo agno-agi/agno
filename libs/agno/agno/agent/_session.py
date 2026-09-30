@@ -23,7 +23,6 @@ from agno.models.message import Message
 from agno.run import RunStatus
 from agno.run.agent import RunOutput
 from agno.session import AgentSession, TeamSession, WorkflowSession
-from agno.session._utils import has_superseded_forks
 from agno.session.summary import SessionSummary
 from agno.utils.agent import (
     aget_session_metrics_util,
@@ -800,9 +799,6 @@ def get_session_messages(
     runs_limit = _bounded_history_runs_limit(agent, last_n_runs, skip_statuses)
 
     session = get_session(agent, session_id=session_id, runs_limit=runs_limit)
-    if runs_limit is not None and isinstance(session, AgentSession) and has_superseded_forks(session.runs or []):
-        # The newest N rows can include a fork's source, which history drops, leaving fewer than N runs
-        session = get_session(agent, session_id=session_id)
     if session is None:
         raise Exception("Session not found")
 
@@ -859,9 +855,6 @@ async def aget_session_messages(
     runs_limit = _bounded_history_runs_limit(agent, last_n_runs, skip_statuses)
 
     session = await aget_session(agent, session_id=session_id, runs_limit=runs_limit)
-    if runs_limit is not None and isinstance(session, AgentSession) and has_superseded_forks(session.runs or []):
-        # The newest N rows can include a fork's source, which history drops, leaving fewer than N runs
-        session = await aget_session(agent, session_id=session_id)
     if session is None:
         raise Exception("Session not found")
 

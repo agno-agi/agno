@@ -4559,7 +4559,16 @@ async def _acontinue_run_background_stream(
     # loaded run is used ONLY for the status persists - the continue dispatch
     # below still receives the caller's run_response untouched.
     persist_run = run_response or cast(Optional[RunOutput], agent_session.get_run(_run_id))
-    if persist_run:
+    # A fork or regenerate executes under a new run id, and continuing a
+    # COMPLETED run auto-forks downstream (a CANCELLED one is refused). None of
+    # those paths may stamp PENDING/RUNNING over the source run: no terminal
+    # write would ever reach it again.
+    status_before_takeover = persist_run.status if persist_run else None
+    take_over_in_place = not (fork or regenerate) and status_before_takeover not in (
+        RunStatus.completed,
+        RunStatus.cancelled,
+    )
+    if persist_run and take_over_in_place:
         persist_run.status = RunStatus.pending
         storage_run = await abuild_offloaded_storage_copy(agent, persist_run, session_id) or persist_run
         agent_session.upsert_run(run=storage_run)
@@ -4567,13 +4576,14 @@ async def _acontinue_run_background_stream(
         await asave_run(agent, run=storage_run, session_id=session_id, user_id=user_id)
     await asave_session(agent, session=agent_session)
 
-    # Pre-register with the event buffer so reconnecting clients can attach and
-    # wait while the continue-run is still queued (no events buffered yet).
-    with contextlib.suppress(Exception):
-        # Fail-open: a Redis blip must not strand an accepted run
-        await get_event_stream().register_run(_run_id, RunStatus.pending)
+    if take_over_in_place:
+        # Pre-register with the event buffer so reconnecting clients can attach and
+        # wait while the continue-run is still queued (no events buffered yet).
+        with contextlib.suppress(Exception):
+            # Fail-open: a Redis blip must not strand an accepted run
+            await get_event_stream().register_run(_run_id, RunStatus.pending)
 
-    log_info(f"Background continue-run stream {_run_id} persisted with PENDING status")
+        log_info(f"Background continue-run stream {_run_id} persisted with PENDING status")
 
     # 2. Create queue for forwarding SSE strings to the caller
     sse_queue: asyncio.Queue[Optional[str]] = asyncio.Queue()
@@ -4588,18 +4598,20 @@ async def _acontinue_run_background_stream(
         slot_cm = background_run_slot(run_id=_run_id)
         slot_held = False
         producer_terminal: Optional[RunStatus] = None
+        executed_run_id: Optional[str] = None
         try:
             await slot_cm.__aenter__()
             slot_held = True
 
             # Transition to RUNNING now that a slot is held (atomic helper).
             # persist_run covers the run-ID-only continue (loaded above).
-            if persist_run:
+            if persist_run and take_over_in_place:
                 persist_run.status = RunStatus.running
                 await apersist_run_transition(agent, "agent", session_id, persist_run, user_id=user_id)
-            with contextlib.suppress(Exception):
-                # Fail-open: coordination writes must not kill the run
-                await event_stream.set_run_status(_run_id, RunStatus.running)
+            if take_over_in_place:
+                with contextlib.suppress(Exception):
+                    # Fail-open: coordination writes must not kill the run
+                    await event_stream.set_run_status(_run_id, RunStatus.running)
 
             async for event in _acontinue_run_stream(
                 agent,
@@ -4622,6 +4634,7 @@ async def _acontinue_run_background_stream(
                 background_tasks=background_tasks,
                 **kwargs,
             ):
+                executed_run_id = executed_run_id or getattr(event, "run_id", None)
                 if isinstance(event, RunOutput):
                     continue
 
@@ -4646,11 +4659,15 @@ async def _acontinue_run_background_stream(
             # producer). producer_terminal makes the finally's sentinel say
             # CANCELLED - without it, complete_run's non-terminal coercion
             # turned an interrupted continue into a FALSE COMPLETED.
-            producer_terminal = RunStatus.cancelled
+            producer_terminal = RunStatus.cancelled if take_over_in_place else None
             from agno.run.concurrency import is_worker_managed
 
             if is_worker_managed(_run_id or ""):
                 raise  # worker-claimed: the QueueWorker owns this terminal
+            if not take_over_in_place:
+                # A fork/regenerate owns a new run id downstream. Task shutdown
+                # must not cancel the source run.
+                raise
             with contextlib.suppress(Exception):
                 interrupted_run = run_response
                 if interrupted_run is None:
@@ -4673,10 +4690,10 @@ async def _acontinue_run_background_stream(
             # arrive with run_response=None (router passes only run_id): load
             # the run from the session so the cancel is never silently skipped.
             log_info(f"Background continue-run stream {_run_id} cancelled while waiting for a slot")
-            producer_terminal = RunStatus.cancelled
+            producer_terminal = RunStatus.cancelled if take_over_in_place else None
             try:
-                cancelled_run = run_response
-                if cancelled_run is None:
+                cancelled_run = run_response if take_over_in_place else None
+                if cancelled_run is None and take_over_in_place:
                     # HITL continues arrive with run_response=None: load the
                     # run so the terminal persist is never silently skipped
                     lookup_session = await aread_or_create_session(agent, session_id=session_id, user_id=user_id)
@@ -4696,10 +4713,11 @@ async def _acontinue_run_background_stream(
         except Exception:
             log_error(f"Background continue-run stream {_run_id} failed", exc_info=True)
             producer_terminal = RunStatus.error
-            # Persist ERROR status (loading from session when run_response is None)
+            # Persist ERROR status (loading from session when run_response is None).
+            # A fork's source run keeps its own status.
             try:
-                errored_run = run_response
-                if errored_run is None:
+                errored_run = run_response if take_over_in_place else None
+                if errored_run is None and take_over_in_place:
                     # HITL continues arrive with run_response=None: load the
                     # run so the terminal persist is never silently skipped
                     lookup_session = await aread_or_create_session(agent, session_id=session_id, user_id=user_id)
@@ -4726,7 +4744,10 @@ async def _acontinue_run_background_stream(
                 # producer_terminal wins: with run_response=None the old fallback
                 # marked a cancelled/errored run COMPLETED, so /resume lied
                 # about a run that never executed
-                final_status = producer_terminal or (run_response.status if run_response else None)
+                # After a fork, run_response is the source run: the outcome is the fork's
+                final_status = producer_terminal or (
+                    run_response.status if run_response and take_over_in_place else None
+                )
                 if final_status is None:
                     # HTTP continues arrive with run_response=None: the run row
                     # is the only truth for the final status. Falling through
@@ -4735,7 +4756,8 @@ async def _acontinue_run_background_stream(
                     # stopped and the next continue restarted indices.
                     with contextlib.suppress(Exception):
                         lookup_session = await aread_or_create_session(agent, session_id=session_id, user_id=user_id)
-                        final_status = getattr(lookup_session.get_run(_run_id), "status", None)
+                        lookup_id = executed_run_id or _run_id
+                        final_status = getattr(lookup_session.get_run(lookup_id), "status", None)
                 if isinstance(final_status, str) and not isinstance(final_status, RunStatus):
                     # DB round-trips can degrade the enum to a plain str
                     with contextlib.suppress(ValueError):

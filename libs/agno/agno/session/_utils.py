@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from copy import copy
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Set, TypeVar, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, TypeVar, Union
 
 if TYPE_CHECKING:
     from agno.run.agent import RunOutput
@@ -49,49 +49,6 @@ def resolve_run_index(
     return None
 
 
-def _fork_root_id(run: "HistoryRun", runs_by_id: Dict[str, "HistoryRun"]) -> Optional[str]:
-    """Return the id of the first run in ``run``'s fork chain, or its own id when it is not a fork.
-
-    When an ancestor is not loaded on the session, the chain stops at the missing id, which every
-    run forked from it shares.
-    """
-    root_id = run.run_id
-    current: Optional["HistoryRun"] = run
-    visited: Set[str] = set()
-    while current is not None and current.forked_from_run_id and current.run_id not in visited:
-        if current.run_id is not None:
-            visited.add(current.run_id)
-        root_id = current.forked_from_run_id
-        current = runs_by_id.get(root_id)
-    return root_id
-
-
-def drop_superseded_forks(runs: Sequence["HistoryRun"], all_runs: Sequence["HistoryRun"]) -> List["HistoryRun"]:
-    """Keep only the latest run of each fork tree.
-
-    A fork copies its source run's messages, so a source run and every fork of it share turns.
-    Keeping only the latest of them makes those turns reach the model once. ``runs`` must be in
-    chronological order; ``all_runs`` is used to resolve fork chains through runs that ``runs``
-    no longer contains.
-    """
-    runs_by_id = {r.run_id: r for r in all_runs if r.run_id is not None}
-    tree_keys = [_fork_root_id(r, runs_by_id) or f"__run_{index}" for index, r in enumerate(runs)]
-    latest_index = {key: index for index, key in enumerate(tree_keys)}
-    return [r for index, r in enumerate(runs) if latest_index[tree_keys[index]] == index]
-
-
-def has_superseded_forks(runs: Sequence["HistoryRun"]) -> bool:
-    """Whether a fork replaces another history run in ``runs``.
-
-    Only top-level runs with a history status count, matching the rows a bounded
-    "most recent N" history read returns.
-    """
-    from agno.run.base import HISTORY_SKIP_STATUSES
-
-    history_runs = [r for r in runs if r.parent_run_id is None and r.status not in HISTORY_SKIP_STATUSES]
-    return len(drop_superseded_forks(history_runs, runs)) < len(history_runs)
-
-
 def continue_history_session(session: HistorySession, run: Optional["HistoryRun"]) -> HistorySession:
     """Return a copy of ``session`` without the continued run's fork tree.
 
@@ -103,9 +60,35 @@ def continue_history_session(session: HistorySession, run: Optional["HistoryRun"
         return session
     session_runs = list(session.runs or [])
     runs_by_id = {r.run_id: r for r in session_runs if r.run_id is not None}
-    root_id = _fork_root_id(run, runs_by_id)
-    excluded = {r.run_id for r in session_runs if _fork_root_id(r, runs_by_id) == root_id}
-    excluded.update(run_id for run_id in (run.run_id, root_id) if run_id is not None)
+    root_ids: Dict[str, Optional[str]] = {}
+
+    def fork_root_id(start: "HistoryRun") -> Optional[str]:
+        # Walk up forked_from_run_id to the first run of the chain; a missing ancestor ends the
+        # chain at its id, which every run forked from it shares. Roots are cached per run so each
+        # chain is walked once.
+        chain: List[str] = []
+        current: Optional["HistoryRun"] = start
+        root_id = start.run_id
+        while current is not None and current.run_id is not None:
+            if current.run_id in root_ids:
+                root_id = root_ids[current.run_id]
+                break
+            if current.run_id in chain:
+                break
+            chain.append(current.run_id)
+            root_id = current.run_id
+            if not current.forked_from_run_id:
+                break
+            root_id = current.forked_from_run_id
+            current = runs_by_id.get(root_id)
+        for run_id in chain:
+            root_ids[run_id] = root_id
+        return root_id
+
+    root_id = fork_root_id(run)
+    excluded: Set[Optional[str]] = {r.run_id for r in session_runs if fork_root_id(r) == root_id}
+    excluded.update((run.run_id, root_id))
+    excluded.discard(None)
     history_session = copy(session)
     history_session.runs = [r for r in session_runs if r.run_id not in excluded]  # type: ignore[assignment]
     return history_session

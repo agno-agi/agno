@@ -10,7 +10,6 @@ from agno.models.message import Message
 from agno.run.agent import RunOutput, RunStatus
 from agno.run.base import HISTORY_SKIP_STATUSES
 from agno.run.team import TeamRunOutput
-from agno.session._utils import drop_superseded_forks
 from agno.session.summary import SessionSummary
 from agno.utils.log import log_debug, log_warning
 
@@ -211,9 +210,6 @@ class TeamSession:
         # Filter by status
         session_runs = [run for run in session_runs if hasattr(run, "status") and run.status not in skip_statuses]  # type: ignore
 
-        # A fork copies its source run's messages: keep only the latest run of each fork tree
-        session_runs = drop_superseded_forks(session_runs, self.runs)
-
         # Filter by last_n_runs before applying message limit
         if last_n_runs is not None:
             if last_n_runs <= 0:
@@ -337,9 +333,6 @@ class TeamSession:
             completed_runs = [
                 run for run in self.runs if run.status == RunStatus.completed and run.parent_run_id is None
             ]
-
-        # A fork copies its source run's turn: keep only the latest run of each fork tree
-        completed_runs = drop_superseded_forks(completed_runs, self.runs)
 
         if num_runs is not None:
             if num_runs <= 0:

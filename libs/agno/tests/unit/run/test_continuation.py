@@ -6,7 +6,6 @@ import pytest
 
 from agno.agent import Agent
 from agno.agent._messages import _build_continue_run_messages as agent_messages
-from agno.db.base import SessionType
 from agno.db.sqlite import AsyncSqliteDb, SqliteDb
 from agno.models.base import Model
 from agno.models.message import Message
@@ -14,7 +13,7 @@ from agno.models.response import ModelResponse, ToolExecution
 from agno.run import RunStatus
 from agno.run.agent import RunOutput
 from agno.run.requirement import RunRequirement
-from agno.run.team import TeamRunInput, TeamRunOutput
+from agno.run.team import TeamRunOutput
 from agno.session import AgentSession, TeamSession
 from agno.team import Team
 from agno.team._run import _build_continue_run_messages as team_messages
@@ -278,111 +277,51 @@ def test_continuing_a_fork_excludes_sibling_forks(kind):
     assert build_history(kind, runs, second_fork) == ["prior", "current"]
 
 
-def test_get_messages_keeps_only_the_latest_run_of_a_fork_tree(kind):
-    """Normal runs read history through get_messages, so fork sources must not repeat there either."""
-    prior = text_run(kind, "prior", "prior")
-    source = text_run(kind, "source", "question")
-    fork = text_run(kind, "fork", "question", "follow up", forked_from="source")
-    session = make_session(kind, [prior, source, fork])
-    assert [m.content for m in session.get_messages()] == ["prior", "question", "follow up"]
-    assert [m.content for m in session.get_messages(last_n_runs=1)] == ["question", "follow up"]
-
-
-def test_get_messages_keeps_the_source_while_its_fork_is_skipped(kind):
-    """A fork that paused or failed does not replace its source in history."""
-    source = text_run(kind, "source", "question")
-    fork = text_run(kind, "fork", "question", "follow up", status=RunStatus.paused, forked_from="source")
-    session = make_session(kind, [source, fork])
-    assert [m.content for m in session.get_messages()] == ["question"]
-
-
-def test_get_messages_without_forks_is_unchanged(kind):
-    runs = [text_run(kind, f"run-{i}", f"turn {i}") for i in range(3)]
-    session = make_session(kind, runs)
-    assert [m.content for m in session.get_messages()] == ["turn 0", "turn 1", "turn 2"]
+def fork_runs(db, source_id="current"):
+    return [r for r in db.get_runs(session_id="session") if r.run_id != source_id and r.run_id != "prior"]
 
 
 @pytest.mark.asyncio
-async def test_new_run_after_auto_fork_sees_the_source_turn_once(kind, tmp_path):
-    """Continuing a COMPLETED run with input forks it; the next run must not see the shared turn twice."""
-    db = SqliteDb(db_file=str(tmp_path / "runs.db"))
-    model = InspectModel(lambda messages: None)
-    component = make_component(kind, model=model, db=db, add_history_to_context=True)
-    source = make_run(
-        kind,
-        "source",
-        status=RunStatus.completed,
-        messages=[Message(role="user", content="source request"), Message(role="assistant", content="source answer")],
-    )
-    session = make_session(kind, [source])
-    db.upsert_session(session)
-    db.upsert_run(source, session_id="session", user_id="owner", run_index=0)
+async def test_background_fork_of_paused_run_keeps_the_source_paused(kind, tmp_path):
+    """A background fork runs under a new run id, so the source must not be left PENDING/RUNNING."""
+    component, current, model, _ = prepare_continuation(kind, tmp_path, "confirmation")
+    model.inspect_messages = lambda messages: None
 
-    await component.acontinue_run(run_id="source", session_id="session", user_id="owner", input="follow up")
-    await component.arun("new message", session_id="session", user_id="owner")
+    async for _ in component.acontinue_run(
+        run_id="current",
+        session_id="session",
+        requirements=current.requirements,
+        fork=True,
+        stream=True,
+        background=True,
+    ):
+        pass
 
-    messages = model.requests[-1]
-    assert sum(m.content == "source request" for m in messages) == 1, [m.content for m in messages]
-    assert sum(m.content == "follow up" for m in messages) == 1, [m.content for m in messages]
+    assert component.db.get_run("current").status == RunStatus.paused
+    forks = fork_runs(component.db)
+    assert len(forks) == 1
+    assert forks[0].status not in (RunStatus.pending, RunStatus.running)
 
 
-def test_team_history_context_shows_a_forked_turn_once():
-    """Members get team history as [run-N] entries, which must not repeat a fork's source run."""
-
-    def team_turn(run_id, question, answer, forked_from=None):
-        return make_run(
-            "team",
-            run_id,
-            status=RunStatus.completed,
-            input=TeamRunInput(input_content=question),
-            content=answer,
-            forked_from_run_id=forked_from,
-        )
-
-    session = make_session(
-        "team",
-        [
-            team_turn("prior", "What is the capital of France?", "Paris"),
-            team_turn("source", "What is the capital of Portugal?", "Lisbon"),
-            team_turn("fork", "What is the capital of Portugal?", "Lisbon", forked_from="source"),
-        ],
-    )
-    assert session.get_team_history() == [
-        ("What is the capital of France?", "Paris"),
-        ("What is the capital of Portugal?", "Lisbon"),
+@pytest.mark.asyncio
+async def test_background_continue_of_completed_run_keeps_the_source_completed(kind, tmp_path):
+    """Continuing a COMPLETED run auto-forks, so its stored status must stay COMPLETED."""
+    component, current, model, _ = prepare_continuation(kind, tmp_path, "external")
+    current.status = RunStatus.completed
+    current.tools = None
+    current.requirements = None
+    current.messages = [
+        Message(role="user", content="source request"),
+        Message(role="assistant", content="source answer"),
     ]
-    assert "[run-3]" not in (session.get_team_history_context() or "")
-    assert session.get_team_history(num_runs=1) == [("What is the capital of Portugal?", "Lisbon")]
+    component.db.upsert_run(current, session_id="session", user_id="owner")
+    source_before = component.db.get_run("current").to_dict()
+    model.inspect_messages = lambda messages: None
 
+    async for _ in component.acontinue_run(
+        run_id="current", session_id="session", input="follow up", stream=True, background=True
+    ):
+        pass
 
-def save_runs(db, kind, runs):
-    db.upsert_session(make_session(kind, runs))
-    for index, run in enumerate(runs):
-        db.upsert_run(run, session_id="session", user_id="owner", run_index=index)
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("asynchronous", [False, True])
-async def test_bounded_session_messages_match_full_history_with_forks(tmp_path, asynchronous):
-    """The "most recent N" read must return the same window as get_messages on the full session."""
-    db = SqliteDb(db_file=str(tmp_path / "runs.db"))
-    save_runs(
-        db,
-        "agent",
-        [
-            text_run("agent", "name", "My name is Harsh."),
-            text_run("agent", "city", "My city is Pune."),
-            text_run("agent", "fork", "My city is Pune.", "Reply only DONE.", forked_from="city"),
-        ],
-    )
-    agent = Agent(id="component", db=db, telemetry=False)
-    full_session = db.get_session(session_id="session", session_type=SessionType.AGENT, user_id="owner")
-    expected = [m.content for m in full_session.get_messages(last_n_runs=2)]
-
-    if asynchronous:
-        bounded = await agent.aget_session_messages(session_id="session", last_n_runs=2)
-    else:
-        bounded = agent.get_session_messages(session_id="session", last_n_runs=2)
-
-    assert expected == ["My name is Harsh.", "My city is Pune.", "Reply only DONE."]
-    assert [m.content for m in bounded] == expected
+    assert component.db.get_run("current").to_dict() == source_before
+    assert [f.status for f in fork_runs(component.db)] == [RunStatus.completed]
