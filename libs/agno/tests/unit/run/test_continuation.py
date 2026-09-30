@@ -72,23 +72,11 @@ def make_session(kind, runs):
 
 
 @pytest.mark.parametrize("status", list(RunStatus))
-@pytest.mark.parametrize("fork_depth", [0, 2])
-def test_history_excludes_current_transcript_before_limits(kind, status, fork_depth):
+def test_history_excludes_current_transcript_before_limits(kind, status):
     component = make_component(kind, add_history_to_context=True, num_history_runs=1)
     prior = make_run(kind, "prior", status=RunStatus.completed, messages=[Message(role="user", content="prior")])
-    source = make_run(kind, "source", status=status, messages=[Message(role="user", content="current")])
-    runs = [prior, source]
-    current = source
-    for index in range(fork_depth):
-        current = make_run(
-            kind,
-            f"fork-{index}",
-            status=status,
-            messages=deepcopy(source.messages),
-            forked_from_run_id=current.run_id,
-        )
-        runs.append(current)
-    session = make_session(kind, runs)
+    current = make_run(kind, "current", status=status, messages=[Message(role="user", content="current")])
+    session = make_session(kind, [prior, current])
     before = deepcopy(session.to_dict())
     builder = agent_messages if kind == "agent" else team_messages
     result = builder(component, input=deepcopy(current.messages), session=session, run_response=current)
@@ -206,72 +194,3 @@ async def test_async_continue_preserves_status_behavior_and_pairs_tools(
     assert model.calls == 1
     assert reader.get_run("current").status == RunStatus.completed
     assert calls == ([] if pause_type == "external" else ["Paris"])
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("asynchronous", [False, True])
-@pytest.mark.parametrize("stream", [False, True])
-async def test_completed_continue_excludes_fork_source_from_history(kind, tmp_path, asynchronous, stream):
-    component, current, model, _ = prepare_continuation(kind, tmp_path, "external")
-    current.status = RunStatus.completed
-    current.tools = None
-    current.requirements = None
-    current.messages = [
-        Message(role="user", content="source request"),
-        Message(role="assistant", content="source answer"),
-    ]
-    component.db.upsert_run(current, session_id="session", user_id="owner")
-    source_before = component.db.get_run("current").to_dict()
-
-    model.inspect_messages = lambda messages: None
-    method = component.acontinue_run if asynchronous else component.continue_run
-    result = method(run_id="current", session_id="session", stream=stream)
-    if asynchronous:
-        if stream:
-            async for _ in result:
-                pass
-        else:
-            await result
-    elif stream:
-        list(result)
-    assert model.calls == 1
-    messages = model.requests[-1]
-    assert sum(m.content == "source request" for m in messages) == 1
-    assert sum(m.content == "source answer" for m in messages) == 1
-    assert sum(m.content == "prior" for m in messages) == 1
-    assert component.db.get_run("current").to_dict() == source_before
-
-
-def build_history(kind, runs, current, **component_kwargs):
-    component = make_component(kind, add_history_to_context=True, **component_kwargs)
-    builder = agent_messages if kind == "agent" else team_messages
-    session = make_session(kind, runs)
-    result = builder(component, input=deepcopy(current.messages), session=session, run_response=current)
-    return [m.content for m in result.messages]
-
-
-def text_run(kind, run_id, *contents, status=RunStatus.completed, forked_from=None):
-    return make_run(
-        kind,
-        run_id,
-        status=status,
-        messages=[Message(role="user", content=c) for c in contents],
-        forked_from_run_id=forked_from,
-    )
-
-
-def test_resuming_original_excludes_its_completed_fork(kind):
-    """Resuming a paused run must not read back a fork of it, which copies the same turns."""
-    prior = text_run(kind, "prior", "prior")
-    original = text_run(kind, "original", "current", status=RunStatus.paused)
-    fork = text_run(kind, "fork", "current", "fork turn", forked_from="original")
-    assert build_history(kind, [prior, original, fork], original) == ["prior", "current"]
-
-
-def test_continuing_a_fork_excludes_sibling_forks(kind):
-    prior = text_run(kind, "prior", "prior")
-    source = text_run(kind, "source", "current")
-    first_fork = text_run(kind, "fork-1", "current", "first branch", forked_from="source")
-    second_fork = text_run(kind, "fork-2", "current", status=RunStatus.paused, forked_from="source")
-    runs = [prior, source, first_fork, second_fork]
-    assert build_history(kind, runs, second_fork) == ["prior", "current"]

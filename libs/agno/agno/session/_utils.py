@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from copy import copy
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, TypeVar, Union
+from typing import TYPE_CHECKING, Any, Optional, TypeVar, Union
 
 if TYPE_CHECKING:
     from agno.run.agent import RunOutput
@@ -13,9 +13,7 @@ if TYPE_CHECKING:
     from agno.session.team import TeamSession
     from agno.session.workflow import WorkflowSession
 
-    HistoryRun = Union[RunOutput, TeamRunOutput]
-
-HistorySession = TypeVar("HistorySession", "AgentSession", "TeamSession")
+HistorySessionT = TypeVar("HistorySessionT", "AgentSession", "TeamSession")
 
 
 def resolve_run_index(
@@ -49,46 +47,17 @@ def resolve_run_index(
     return None
 
 
-def continue_history_session(session: HistorySession, run: Optional["HistoryRun"]) -> HistorySession:
-    """Return a copy of ``session`` without the continued run's fork tree.
+def continue_history_session(
+    session: HistorySessionT,
+    run: Optional[Union["RunOutput", "TeamRunOutput"]],
+) -> HistorySessionT:
+    """Return a copy of ``session`` without the continued run.
 
-    The continued run's messages are its input, and every run in its fork tree (the runs it was
-    forked from, forks of it, and sibling forks) carries a copy of the same turns, whatever their
-    stored status. The original session and its runs are left untouched, including cached sessions.
+    The continued run's messages are its input, so it must not also come back as history, whatever
+    its stored status. The original session and its runs are left untouched, including cached sessions.
     """
     if run is None:
         return session
-    session_runs = list(session.runs or [])
-    runs_by_id = {r.run_id: r for r in session_runs if r.run_id is not None}
-    root_ids: Dict[str, Optional[str]] = {}
-
-    def fork_root_id(start: "HistoryRun") -> Optional[str]:
-        # Walk up forked_from_run_id to the first run of the chain; a missing ancestor ends the
-        # chain at its id, which every run forked from it shares. Roots are cached per run so each
-        # chain is walked once.
-        chain: List[str] = []
-        current: Optional["HistoryRun"] = start
-        root_id = start.run_id
-        while current is not None and current.run_id is not None:
-            if current.run_id in root_ids:
-                root_id = root_ids[current.run_id]
-                break
-            if current.run_id in chain:
-                break
-            chain.append(current.run_id)
-            root_id = current.run_id
-            if not current.forked_from_run_id:
-                break
-            root_id = current.forked_from_run_id
-            current = runs_by_id.get(root_id)
-        for run_id in chain:
-            root_ids[run_id] = root_id
-        return root_id
-
-    root_id = fork_root_id(run)
-    excluded: Set[Optional[str]] = {r.run_id for r in session_runs if fork_root_id(r) == root_id}
-    excluded.update((run.run_id, root_id))
-    excluded.discard(None)
     history_session = copy(session)
-    history_session.runs = [r for r in session_runs if r.run_id not in excluded]  # type: ignore[assignment]
+    history_session.runs = [r for r in session.runs or [] if r.run_id != run.run_id]
     return history_session
