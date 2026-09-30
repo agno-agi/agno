@@ -1,7 +1,7 @@
 import asyncio
 import contextlib
 import json
-from typing import TYPE_CHECKING, Any, AsyncGenerator, List, Literal, Optional, Union
+from typing import TYPE_CHECKING, Any, AsyncGenerator, Dict, List, Literal, Optional, Union
 from uuid import uuid4
 
 from fastapi import (
@@ -1753,6 +1753,106 @@ def get_team_router(
             raise HTTPException(status_code=400, detail=str(e))
 
         return {"session_id": new_session_id, "forked_from_session_id": session_id}
+
+    @router.post(
+        "/teams/{team_id}/sessions/{session_id}/compact",
+        tags=["Teams"],
+        operation_id="compact_team_session",
+        summary="Compact Team Session",
+        description=(
+            "Fold this session's older history into a summary now, without waiting for the "
+            "context to reach ``compact_at_tokens``. The stored transcript is never modified - "
+            "compaction shortens what is sent to the model, not the record.\n\n"
+            "A compaction can legitimately decline, which is reported rather than raised. Check "
+            "``compacted``, and show ``message`` to the user:\n"
+            "- ``compacted`` - the fold happened; ``record`` carries the token counts\n"
+            "- ``not_worth_it`` - the span is too small to pay for the summary replacing it, so "
+            "folding would leave the context bigger\n"
+            "- ``nothing_to_fold`` - the kept tail covers the whole conversation\n"
+            "- ``already_compacted`` - a previous fold already covers everything up to the only "
+            "safe cut point\n"
+            "- ``no_history`` - the session has no stored history yet\n"
+            "- ``not_enabled`` - compaction is not configured on this team\n"
+            "- ``summary_failed`` - the summarizer returned nothing"
+        ),
+        responses={
+            200: {
+                "description": "Compaction attempted; see status for the outcome",
+                "content": {
+                    "application/json": {
+                        "examples": {
+                            "compacted": {
+                                "summary": "The fold happened",
+                                "value": {
+                                    "status": "compacted",
+                                    "message": "Compacted 18 messages (15864 -> 3981 tokens).",
+                                    "compacted": True,
+                                    "record": {
+                                        "messages_compacted": 18,
+                                        "tokens_before": 15864,
+                                        "tokens_after": 3981,
+                                    },
+                                },
+                            },
+                            "declined": {
+                                "summary": "Declined - folding would not help",
+                                "value": {
+                                    "status": "not_worth_it",
+                                    "message": (
+                                        "This fold would cost more in summary than it reclaims, so "
+                                        "the context would not shrink. Lower min_fold_ratio or "
+                                        "uncompacted_runs to fold sooner."
+                                    ),
+                                    "compacted": False,
+                                    "record": None,
+                                },
+                            },
+                        }
+                    }
+                },
+            },
+            400: {"description": "The team does not support compaction", "model": BadRequestResponse},
+            404: {"description": "Team not found", "model": NotFoundResponse},
+        },
+        dependencies=[Depends(require_resource_access("teams", "run", "team_id"))],
+    )
+    async def compact_team_session(
+        team_id: str,
+        session_id: str,
+        request: Request,
+        user_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        if hasattr(request.state, "user_id") and request.state.user_id is not None:
+            user_id = request.state.user_id
+
+        try:
+            team = get_team_by_id(
+                team_id=team_id,
+                teams=os.teams,
+                db=os.db,
+                registry=registry,
+                create_fresh=True,
+                user_id=get_scoped_user_id(request),
+                strict=False,
+                published_only=False,
+            )
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Error resolving team '{team_id}': {e}")
+            raise HTTPException(status_code=500, detail="Internal server error")
+        if team is None:
+            raise HTTPException(status_code=404, detail="Team not found")
+        # A remote team runs elsewhere; its history is not this server's to fold.
+        if isinstance(team, RemoteTeam):
+            raise HTTPException(status_code=400, detail="Compaction is not supported for remote teams")
+
+        # Scope the session read to the caller, so one user cannot compact another's session.
+        scoped_user_id = get_scoped_user_id(request)
+        effective_user_id = scoped_user_id or user_id
+
+        result = await team.acompact(session_id=session_id, user_id=effective_user_id)
+        return result.to_dict()
 
     @router.get(
         "/teams",

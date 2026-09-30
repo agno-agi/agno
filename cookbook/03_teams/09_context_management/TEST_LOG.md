@@ -111,3 +111,15 @@ DEBUG You coordinate a team of specialized AI agents to fulfill the user's
 
 ---
 
+
+---
+
+### compaction.py
+
+**Status:** PASS
+
+**Description:** Team with two members, `compaction=Compaction(uncompacted_runs=2)`, SQLite storage and `gpt-5.6-luna`. Five turns about a Japan trip, the first stating a $4,000 budget; then `team.compact()`; then a question about the budget.
+
+**Result:** The fold succeeded - `[compacted 9 messages: 1923 -> 1342 tokens, archived=True]`. The follow-up answered "Your total trip budget was $4,000", recovered from the summary after the message stating it had been folded away.
+
+---

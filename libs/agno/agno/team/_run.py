@@ -27,6 +27,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel
 
+from agno.compaction._runtime import recompact_after_overflow
 from agno.agent._tools import result_store_kwargs
 from agno.exceptions import (
     InputCheckError,
@@ -386,6 +387,9 @@ def _run_tasks(
             model_response = call_model_with_fallback(
                 team.model,
                 team.fallback_config,
+                on_context_overflow=lambda: recompact_after_overflow(
+                    team, session, accumulated_messages, run_response, _tools
+                ),
                 messages=accumulated_messages,
                 response_format=response_format,
                 tools=_tools,
@@ -710,6 +714,17 @@ def _run_tasks_stream(
                 events_to_skip=team.events_to_skip,
                 store_events=team.store_events,
             )
+
+        # Events raised while assembling messages (compaction). Assembly is not a generator,
+        # so they are collected there and emitted here, once the run has started.
+        if stream_events:
+            for assembly_event in run_messages.events:
+                yield handle_event(  # type: ignore
+                    assembly_event,
+                    run_response,
+                    events_to_skip=team.events_to_skip,
+                    store_events=team.store_events,
+                )
 
         raise_if_cancelled(run_response.run_id)  # type: ignore
 
@@ -1254,6 +1269,9 @@ def _run(
                 model_response: ModelResponse = call_model_with_fallback(
                     team.model,
                     team.fallback_config,
+                    on_context_overflow=lambda: recompact_after_overflow(
+                        team, session, run_messages.messages, run_response, _tools
+                    ),
                     messages=run_messages.messages,
                     response_format=response_format,
                     tools=_tools,
@@ -1612,6 +1630,17 @@ def _run_stream(
                         events_to_skip=team.events_to_skip,
                         store_events=team.store_events,
                     )
+
+                # Events raised while assembling messages (compaction). Assembly is not a generator,
+                # so they are collected there and emitted here, once the run has started.
+                if stream_events:
+                    for assembly_event in run_messages.events:
+                        yield handle_event(  # type: ignore
+                            assembly_event,
+                            run_response,
+                            events_to_skip=team.events_to_skip,
+                            store_events=team.store_events,
+                        )
 
                 raise_if_cancelled(run_response.run_id)  # type: ignore
 
@@ -2283,6 +2312,9 @@ async def _arun_tasks(
             model_response = await acall_model_with_fallback(
                 team.model,
                 team.fallback_config,
+                on_context_overflow=lambda: recompact_after_overflow(
+                    team, team_session, accumulated_messages, run_response, _tools
+                ),
                 messages=accumulated_messages,
                 response_format=response_format,
                 tools=_tools,
@@ -2640,6 +2672,17 @@ async def _arun_tasks_stream(
                 events_to_skip=team.events_to_skip,
                 store_events=team.store_events,
             )
+
+        # Events raised while assembling messages (compaction). Assembly is not a generator,
+        # so they are collected there and emitted here, once the run has started.
+        if stream_events:
+            for assembly_event in run_messages.events:
+                yield handle_event(  # type: ignore
+                    assembly_event,
+                    run_response,
+                    events_to_skip=team.events_to_skip,
+                    store_events=team.store_events,
+                )
 
         await araise_if_cancelled(run_response.run_id)  # type: ignore
 
@@ -3241,6 +3284,9 @@ async def _arun(
                 model_response = await acall_model_with_fallback(
                     team.model,
                     team.fallback_config,
+                    on_context_overflow=lambda: recompact_after_overflow(
+                        team, team_session, run_messages.messages, run_response, _tools
+                    ),
                     messages=run_messages.messages,
                     tools=_tools,
                     tool_choice=team.tool_choice,
@@ -3952,6 +3998,17 @@ async def _arun_stream(
                         events_to_skip=team.events_to_skip,
                         store_events=team.store_events,
                     )
+
+                # Events raised while assembling messages (compaction). Assembly is not a generator,
+                # so they are collected there and emitted here, once the run has started.
+                if stream_events:
+                    for assembly_event in run_messages.events:
+                        yield handle_event(  # type: ignore
+                            assembly_event,
+                            run_response,
+                            events_to_skip=team.events_to_skip,
+                            store_events=team.store_events,
+                        )
 
                 # 5. Reason about the task if reasoning is enabled
                 async for item in ahandle_reasoning_stream(
@@ -6987,6 +7044,9 @@ async def _ahandle_model_response_for_continue(
     model_response: ModelResponse = await acall_model_with_fallback(
         team.model,
         team.fallback_config,
+        on_context_overflow=lambda: recompact_after_overflow(
+            team, team_session, run_messages.messages, run_response, tools
+        ),
         messages=run_messages.messages,
         response_format=response_format,
         tools=tools,
@@ -8348,6 +8408,9 @@ def _continue_run(
                 model_response: ModelResponse = call_model_with_fallback(
                     team.model,
                     team.fallback_config,
+                    on_context_overflow=lambda: recompact_after_overflow(
+                        team, session, run_messages.messages, run_response, tools
+                    ),
                     messages=run_messages.messages,
                     response_format=response_format,
                     tools=tools,

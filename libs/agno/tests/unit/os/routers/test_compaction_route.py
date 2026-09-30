@@ -59,3 +59,45 @@ def test_response_shape_is_stable(client: TestClient):
     body = client.post("/agents/a1/sessions/s1/compact").json()
 
     assert set(body) == {"status", "message", "compacted", "record"}
+
+
+# --- teams: the same contract --------------------------------------------------
+
+
+@pytest.fixture
+def team_client() -> TestClient:
+    from agno.os.routers.teams.router import get_team_router
+    from agno.team import Team
+
+    db = SqliteDb(db_file=str(Path(tempfile.mkdtemp()) / "compaction.db"))
+    agent_os = AgentOS(teams=[Team(id="t1", name="T", members=[], db=db, compaction=Compaction())])
+    app = FastAPI()
+    app.include_router(get_team_router(agent_os))
+    return TestClient(app)
+
+
+def test_team_route_is_registered():
+    from agno.os.routers.teams.router import get_team_router
+    from agno.team import Team
+
+    db = SqliteDb(db_file=str(Path(tempfile.mkdtemp()) / "compaction.db"))
+    agent_os = AgentOS(teams=[Team(id="t1", members=[], db=db, compaction=Compaction())])
+
+    paths = {(route.path, tuple(sorted(route.methods))) for route in get_team_router(agent_os).routes}
+
+    assert ("/teams/{team_id}/sessions/{session_id}/compact", ("POST",)) in paths
+
+
+def test_team_decline_is_a_200_with_a_reason(team_client: TestClient):
+    response = team_client.post("/teams/t1/sessions/does-not-exist/compact")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["compacted"] is False
+    assert body["status"] == "no_history"
+    assert body["message"]
+    assert set(body) == {"status", "message", "compacted", "record"}
+
+
+def test_unknown_team_is_a_404(team_client: TestClient):
+    assert team_client.post("/teams/nope/sessions/s1/compact").status_code == 404

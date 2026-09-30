@@ -577,10 +577,8 @@ class Agent:
         # Whether the 3-run window is this default or the user's own choice. Compaction needs to
         # tell them apart: it may widen its own view past a default, but an explicit window is a
         # decision it should respect.
-        self._num_history_runs_defaulted = False
         if self.num_history_messages is None and self.num_history_runs is None:
             self.num_history_runs = 3
-            self._num_history_runs_defaulted = True
 
         self.max_tool_calls_from_history = max_tool_calls_from_history
 
@@ -1107,10 +1105,14 @@ class Agent:
         compacting would leave the context bigger, so it is reported rather than performed.
         Check ``result.compacted``, or show ``result.message``.
         """
-        return _messages.compact_session(self, session_id=session_id, user_id=user_id)
+        from agno.compaction._runtime import compact_session
+
+        return compact_session(self, session_id=session_id, user_id=user_id)
 
     async def acompact(self, session_id: Optional[str] = None, user_id: Optional[str] = None) -> "CompactionResult":
-        return await _messages.acompact_session(self, session_id=session_id, user_id=user_id)
+        from agno.compaction._runtime import acompact_session
+
+        return await acompact_session(self, session_id=session_id, user_id=user_id)
 
     def rename(self, name: str, session_id: Optional[str] = None) -> None:
         return _session.rename(self, name=name, session_id=session_id)

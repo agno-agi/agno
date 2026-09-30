@@ -1036,7 +1036,7 @@ def handle_model_response_stream(
     session_state: Optional[Dict[str, Any]] = None,
     run_context: Optional[RunContext] = None,
 ) -> Iterator[RunOutputEvent]:
-    from agno.agent._messages import _recompact_after_overflow
+    from agno.compaction._runtime import recompact_after_overflow
 
     agent.model = cast(Model, agent.model)
 
@@ -1060,7 +1060,9 @@ def handle_model_response_stream(
     for model_response_event in call_model_stream_with_fallback(
         agent.model,
         agent.fallback_config,
-        on_context_overflow=lambda: _recompact_after_overflow(agent, session, run_messages, run_response, tools),
+        on_context_overflow=lambda: recompact_after_overflow(
+            agent, session, run_messages.messages, run_response, tools
+        ),
         messages=run_messages.messages,
         response_format=response_format,
         tools=tools,
@@ -1200,7 +1202,7 @@ async def ahandle_model_response_stream(
     session_state: Optional[Dict[str, Any]] = None,
     run_context: Optional[RunContext] = None,
 ) -> AsyncIterator[RunOutputEvent]:
-    from agno.agent._messages import _recompact_after_overflow
+    from agno.compaction._runtime import recompact_after_overflow
 
     agent.model = cast(Model, agent.model)
 
@@ -1224,7 +1226,9 @@ async def ahandle_model_response_stream(
     model_response_stream = acall_model_stream_with_fallback(
         agent.model,
         agent.fallback_config,
-        on_context_overflow=lambda: _recompact_after_overflow(agent, session, run_messages, run_response, tools),
+        on_context_overflow=lambda: recompact_after_overflow(
+            agent, session, run_messages.messages, run_response, tools
+        ),
         messages=run_messages.messages,
         response_format=response_format,
         tools=tools,
