@@ -1776,9 +1776,10 @@ async def test_state_delta_after_tool_call():
     result_idx = event_types.index(EventType.TOOL_CALL_RESULT)
     assert delta_idx > result_idx
 
-    # Verify the delta contains the right operations
+    # Verify the delta contains the right operations.
+    # StateDeltaEvent coerces JSON-patch dicts into typed ReplaceOperation models.
     delta_event = events[delta_idx]
-    delta_paths = [op["path"] for op in delta_event.delta]
+    delta_paths = [op["path"] if isinstance(op, dict) else op.path for op in delta_event.delta]
     assert "/counter" in delta_paths
     assert "/status" in delta_paths
 
@@ -1941,9 +1942,12 @@ def test_extract_media_binary_content():
     audio_bytes = b"binary-audio"
     video_bytes = b"binary-video"
     file_bytes = b"binary-file"
+    # BinaryInputContent is deprecated and no longer accepted by UserMessage's
+    # multimodal union; construct without validation to cover the legacy path.
     messages = [
-        UserMessage(
+        UserMessage.model_construct(
             id="u1",
+            role="user",
             content=[
                 BinaryInputContent(
                     mime_type="image/png", data=base64.b64encode(image_bytes).decode(), filename="image.png"
