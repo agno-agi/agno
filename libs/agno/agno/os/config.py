@@ -322,6 +322,22 @@ class MCPConfig(BaseModel):
             self.server_card_url = parsed.scheme + self.server_card_url[len(scheme_written) :]
         return self
 
+    def _lifecycle_rides_along(self) -> bool:
+        """Whether the exposure ride-along will serve continue_run/cancel_run.
+
+        Mirrors the ``has_exposures and lifecycle_tools and "lifecycle" not in exclude_tags``
+        arm of ``_enabled_builtin_tags`` in ``agno/os/mcp.py``.
+        """
+        if not self.lifecycle_tools or "lifecycle" in (self.exclude_tags or set()):
+            return False
+
+        from agno.agent.agent import Agent
+        from agno.team.team import Team
+        from agno.tools.component import ComponentTool
+        from agno.workflow.workflow import Workflow
+
+        return any(isinstance(tool, (Agent, Team, Workflow, ComponentTool)) for tool in self.tools or [])
+
     @model_validator(mode="after")
     def _check_has_tools(self) -> "MCPConfig":
         """Refuse a config that would mount an MCP server with zero tools.
@@ -342,6 +358,22 @@ class MCPConfig(BaseModel):
                 "MCPConfig(default_tools=True) to enable the default tools. "
                 "Use AgentOS(mcp=True) for the default server without additional configuration."
             )
+
+        # include_tags only scopes enabled default tools, so without default_tools the
+        # requested tags register nothing. ``lifecycle`` is the exception: the ride-along
+        # serves the pair when an exposed component is published and the tag is not excluded.
+        if not self.default_tools and self.include_tags:
+            requested = set(self.include_tags)
+            if self._lifecycle_rides_along():
+                requested -= {"lifecycle"}
+            if requested:
+                from agno.utils.log import log_warning
+
+                log_warning(
+                    "MCPConfig include_tags has no effect without default_tools=True: "
+                    f"{sorted(requested)} will not be registered. To serve them, set "
+                    "default_tools=True to register the default tools it scopes."
+                )
 
         # Warn rather than raise: unlike the branch above, this configuration is accepted
         # today and callers may be relying on it, so the surface stays exactly as it is.

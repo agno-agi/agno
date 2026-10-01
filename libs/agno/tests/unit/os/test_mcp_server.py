@@ -207,6 +207,75 @@ async def test_include_tags_does_not_enable_default_tools():
     assert await _tool_names(os) == {"_noop_tool"}
 
 
+@pytest.mark.parametrize(
+    "kwargs, reported",
+    [
+        pytest.param({"include_tags": {"session"}}, ["session"], id="session"),
+        # Advice must name a path that works: lifecycle_tools=True adds the pair only
+        # alongside an exposed component, so a callable-only surface needs default_tools.
+        pytest.param({"include_tags": {"lifecycle"}}, ["lifecycle"], id="lifecycle-callable-only"),
+        pytest.param(
+            {"include_tags": {"lifecycle"}, "lifecycle_tools": True},
+            ["lifecycle"],
+            id="lifecycle-without-exposure",
+        ),
+        pytest.param({"include_tags": {"core", "session"}}, ["core", "session"], id="several-tags"),
+    ],
+)
+def test_include_tags_without_default_tools_warns(monkeypatch, kwargs, reported):
+    warnings: list = []
+    monkeypatch.setattr("agno.utils.log.log_warning", lambda msg, *a, **kw: warnings.append(msg))
+
+    MCPConfig(tools=[_noop_tool], **kwargs)
+
+    assert len(warnings) == 1
+    assert "include_tags has no effect" in warnings[0]
+    assert "default_tools=True" in warnings[0]
+    assert str(reported) in warnings[0]
+
+
+def test_include_tags_lifecycle_is_quiet_when_the_ride_along_serves_it(monkeypatch):
+    """An exposed component plus lifecycle_tools=True registers the pair, so nothing is missing."""
+    warnings: list = []
+    monkeypatch.setattr("agno.utils.log.log_warning", lambda msg, *a, **kw: warnings.append(msg))
+
+    MCPConfig(tools=[_agent().as_tool(name="ask")], lifecycle_tools=True, include_tags={"lifecycle"})
+
+    assert warnings == []
+
+
+def test_include_tags_reports_only_the_tags_the_ride_along_cannot_serve(monkeypatch):
+    """The ride-along covers ``lifecycle``; ``session`` still needs default_tools=True."""
+    warnings: list = []
+    monkeypatch.setattr("agno.utils.log.log_warning", lambda msg, *a, **kw: warnings.append(msg))
+
+    MCPConfig(
+        tools=[_agent().as_tool(name="ask")],
+        lifecycle_tools=True,
+        include_tags={"lifecycle", "session"},
+    )
+
+    assert len(warnings) == 1
+    assert "['session']" in warnings[0]
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        pytest.param({"include_tags": set()}, id="empty-include-tags"),
+        pytest.param({"exclude_tags": {"lifecycle"}, "lifecycle_tools": True}, id="exclude-only"),
+        pytest.param({"default_tools": True, "include_tags": {"session"}}, id="default-tools-on"),
+    ],
+)
+def test_include_tags_warning_skips_effective_configs(monkeypatch, kwargs):
+    warnings: list = []
+    monkeypatch.setattr("agno.utils.log.log_warning", lambda msg, *a, **kw: warnings.append(msg))
+
+    MCPConfig(tools=[_noop_tool], **kwargs)
+
+    assert warnings == []
+
+
 async def test_disabling_builtins_yields_only_custom_tools():
     """enable_builtin_tools=False ships ONLY the custom tools (the @context 'one tool' shape)."""
 

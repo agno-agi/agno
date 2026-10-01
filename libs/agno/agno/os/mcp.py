@@ -125,7 +125,7 @@ def _enabled_builtin_tags(config: "Optional[MCPConfig]", has_exposures: bool = F
     them, exactly as it did before the tag existed -- tools register on tag
     INTERSECTION, so an implicitly enabled ``lifecycle`` would resurrect the dual-tagged
     pair on a surface that excluded ``core``). The tag is added only when named
-    explicitly in ``include_tags``, or by opting in with ``lifecycle_tools=True``
+    explicitly in ``include_tags`` with ``default_tools=True``, or by opting in with ``lifecycle_tools=True``
     alongside exposed components. This supports resuming HITL runs and requesting
     cancellation without enabling the full default surface. Both off-switches are honoured --
     ``lifecycle_tools=False`` and an explicit ``exclude_tags={"lifecycle"}`` -- and
