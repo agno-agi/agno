@@ -50,7 +50,7 @@ python -m http.server 3000 --bind 127.0.0.1 --directory cookbook/05_agent_os/28_
 Open <http://localhost:3000/?pipe=assistant> (use `localhost`, not `127.0.0.1`,
 which AgentOS does not allow as an origin), start a conversation, and allow
 microphone access. Use the sidebar to change the AgentOS URL or the voice pipe ID
-(`assistant`, `tools`, or `knowledge`), so one client serves every example. AgentOS
+(`assistant`, `tools`, `knowledge`, `reasoning`, or `computer`), so one client serves every example. AgentOS
 already allows `http://localhost:3000` as a CORS origin. To serve the client from
 another origin, add it to `AgentOS(cors_allowed_origins=[...])`. Opening
 `index.html` directly from disk does not work, because the browser sends
@@ -81,7 +81,7 @@ Validate route registration without making provider calls:
 Each file creates its own agent and voice server. Every agent has a SQLite db in the
 repository's `tmp/` folder, so each voice turn is saved as a run and appears in
 AgentOS sessions. Stop the previous example with
-Ctrl+C before running another: all three use port 7777. They use the same provider
+Ctrl+C before running another: they all use port 7777. They use the same provider
 environment variables and the same test client; switch the pipe ID in the client.
 
 | File | Feature | Voice pipe | Client URL | Try saying |
@@ -89,6 +89,8 @@ environment variables and the same test client; switch the pipe ID in the client
 | `voice_agent.py` | Basic conversation | `/voice/assistant/pipe` | `http://localhost:3000/?pipe=assistant` | "What can you do?" |
 | `voice_tools.py` | Agno calculator and web search toolkits | `/voice/tools/pipe` | `http://localhost:3000/?pipe=tools` | "What is twelve point five times three?" |
 | `voice_knowledge.py` | Answer from the Agno docs with Agno Knowledge | `/voice/knowledge/pipe` | `http://localhost:3000/?pipe=knowledge` | "What is AgentOS?" |
+| `voice_reasoning.py` | Native model reasoning before each answer | `/voice/reasoning/pipe` | `http://localhost:3000/?pipe=reasoning` | "A bat and a ball cost one dollar ten..." |
+| `voice_computer_use.py` | The pyautogui computer use agent, by voice | `/voice/computer/pipe` | `http://localhost:3000/?pipe=computer` | "Open Chrome and go to agno dot com" |
 
 From the repository root, using the existing Windows development environment:
 
@@ -116,6 +118,18 @@ server required. A fresh environment needs `pip install lancedb` in addition to 
 voice dependencies. Try "How do I give an agent memory?" and "What is the difference
 between a team and a workflow?"
 
+`voice_reasoning.py` uses the model's native reasoning: `reasoning_effort` defaults
+to `low` and `VOICE_REASONING_EFFORT` raises it. Reasoning summaries are stored on
+each run for AgentOS and are never spoken. Expect more delay before the first word
+than the other examples, growing with effort.
+
+`voice_computer_use.py` imports the agent from
+`cookbook/91_tools/computer_use/computer_use_agent.py` and needs `pip install
+pyautogui`. It really controls your mouse and keyboard: move the mouse into a
+screen corner to abort. Speaking while it works cancels the task, and the window it
+minimizes first is usually the client's browser window, which keeps the call
+running.
+
 Both new scripts support `--check` without provider calls. The tools check covers
 toolkit registration, local calculator calls, and routes. The knowledge check covers configuration
 and routes; it does not create embeddings or test live retrieval.
@@ -140,7 +154,8 @@ agent_os = AgentOS(agents=[agent], live_sockets=[voice])
 app = agent_os.get_app()  # Adds the WebSocket route /voice/assistant/pipe.
 ```
 
-See [INTEGRATION.md](INTEGRATION.md) for the wire protocol: authentication, audio
+`GET /voice` lists the registered pipes and their agents. See
+[INTEGRATION.md](INTEGRATION.md) for discovery and the wire protocol: authentication, audio
 framing, events, and the playback acknowledgments a client must send.
 
 The default STT model is `gpt-live-transcribe`; audio streams over its persistent

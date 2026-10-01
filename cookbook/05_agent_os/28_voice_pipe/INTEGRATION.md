@@ -6,7 +6,8 @@ AgentOS exposes each `VoicePipe` in `live_sockets` at a single WebSocket route:
 /voice/{id}/pipe
 ```
 
-AgentOS does not serve a voice page or browser assets. Your product owns the
+It also lists the registered pipes at `GET /voice`. AgentOS does not serve a voice
+page or browser assets. Your product owns the
 client. `client/` in this folder is a reference implementation of everything below:
 `voice-client.js` handles the socket and playback, and `audio-worklet.js` handles
 microphone capture.
@@ -23,6 +24,22 @@ agent_os = AgentOS(
 ```
 
 Clients then connect to `wss://<your-agentos-host>/voice/support/pipe`.
+
+## Discovery
+
+`GET /voice` returns each pipe and the agent it speaks for:
+
+```json
+[
+  {"id": "support", "agent_id": "support-agent", "agent_name": "Support", "path": "/voice/support/pipe"}
+]
+```
+
+Use `path` to open the socket and `agent_id` to load that agent's saved voice
+sessions from `/sessions`. The endpoint uses normal AgentOS HTTP authentication
+and appears in `/docs`; the WebSocket itself does not, because OpenAPI cannot
+describe WebSocket routes. Like `GET /agents`, it only lists pipes whose agent the
+caller can read. A server without live sockets returns 404.
 
 ## Connection rules
 

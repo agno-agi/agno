@@ -2,6 +2,53 @@
 
 ## 2026-10-02
 
+### voice_computer_use.py
+
+**Status:** NOT RUN
+
+**Description:** Wraps the pyautogui computer use agent from
+`cookbook/91_tools/computer_use/` in a VoicePipe with a 300-second response
+timeout, `markdown=False`, and runs stored through `AgentOS(db=...)`. Confirmed
+that Agno runs sync tools through `asyncio.to_thread`, so screen actions do not
+block the voice session. Scoped Ruff passed.
+
+**Result:** `--check` was not run because `pyautogui` is not installed in the
+development environment. A live run needs provider keys and desktop control.
+
+---
+
+### voice_reasoning.py
+
+**Status:** PASS for offline checks
+
+**Description:** New example using the model's native reasoning
+(`reasoning_effort`, default `low`, with `reasoning_summary="auto"`). Confirmed in
+the agent's streaming code that reasoning deltas arrive with `content=None`, so the
+pipe never speaks them, while the summary is stored on the run. Ran `--check` and
+scoped Ruff.
+
+**Result:** Route check passed. Live reasoning latency and answer quality are not
+verified; that needs provider keys.
+
+---
+
+### GET /voice discovery endpoint
+
+**Status:** PASS for automated checks
+
+**Description:** Added `GET /voice`, which returns `id`, `agent_id`, `agent_name`,
+and `path` for each live socket. Like `GET /agents`, it filters pipes by the
+caller's agent read access. Its scope mapping is an explicit empty list because
+`/voice` is not an agents path, so a mapped `agents:read` would reject tokens
+scoped to one agent; a valid token is still required. Ran the voice router, voice
+pipe, and scope unit suites.
+
+**Result:** 123 tests passed. The new tests cover the listing and its `/docs`
+entry, 401 without the security key or a JWT, and filtering for a token scoped
+to one agent.
+
+---
+
 ### SQLite run storage for the examples
 
 **Status:** PASS for offline checks

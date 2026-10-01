@@ -3,6 +3,8 @@
 - [x] AgentOS adds only the canonical WebSocket route `/voice/{id}/pipe` per live
       socket; the browser client lives in the cookbook, and INTEGRATION.md documents
       the protocol for custom clients.
+- [x] `GET /voice` lists each pipe with its agent ID, name, and WebSocket path,
+      filtered by agent read access and shown in `/docs`.
 - [x] Browser voice interface with responsive layout, transcript, mic selection,
       mute/end controls, authentication input, and explicit errors.
 - [x] Redesign with Agent UI's charcoal/orange design tokens, compact sidebar,

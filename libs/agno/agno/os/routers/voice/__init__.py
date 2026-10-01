@@ -7,7 +7,8 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional
 from urllib.parse import urlsplit
 from uuid import uuid4
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
+from pydantic import BaseModel, Field
 from starlette.routing import Match
 
 from agno.os.auth import verify_websocket_service_account
@@ -28,6 +29,13 @@ _AUTH_TIMEOUT = 10.0
 
 class _VoiceAccessError(Exception):
     pass
+
+
+class VoicePipeResponse(BaseModel):
+    id: str = Field(..., description="Voice pipe ID")
+    agent_id: Optional[str] = Field(None, description="ID of the agent the pipe speaks for")
+    agent_name: Optional[str] = Field(None, description="Name of the agent the pipe speaks for")
+    path: str = Field(..., description="WebSocket path to connect to")
 
 
 def _origin_allowed(websocket: WebSocket, allowed_origins: List[str]) -> bool:
@@ -155,6 +163,44 @@ def get_voice_router(os: "AgentOS", settings: AgnoAPISettings) -> APIRouter:
             scope = {"type": "websocket", "path": path, "root_path": "", "app": os.base_app}
             if any(route.matches(scope)[0] == Match.FULL for route in os.base_app.routes):
                 raise ValueError(f"Voice route conflicts with an existing base-app route: {path}")
+
+    @router.get(
+        "/voice",
+        response_model=List[VoicePipeResponse],
+        summary="List Voice Pipes",
+        description=(
+            "List the voice pipes registered in `live_sockets`, with the agent each one speaks for.\n\n"
+            "Each pipe is a WebSocket at `path` (`/voice/{id}/pipe`). Clients stream PCM16, mono, 24 kHz "
+            "microphone audio and receive transcripts, reply text, and PCM16 speech. WebSocket routes are "
+            "not part of OpenAPI, so the pipe itself does not appear in these docs."
+        ),
+    )
+    async def list_voice_pipes(request: Request) -> List[VoicePipeResponse]:
+        visible = list(pipes.values())
+        # Match GET /agents: only list pipes whose agent the caller may access.
+        if getattr(request.state, "authorization_enabled", False):
+            from agno.os.auth import (
+                build_insufficient_permissions_detail,
+                filter_resources_by_access,
+                get_accessible_resources,
+            )
+
+            if not get_accessible_resources(request, "agents"):
+                raise HTTPException(
+                    status_code=403,
+                    detail=build_insufficient_permissions_detail(getattr(request.state, "required_scopes", None)),
+                )
+            allowed = filter_resources_by_access(request, [pipe.agent for pipe in visible], "agents")
+            visible = [pipe for pipe in visible if any(agent is pipe.agent for agent in allowed)]
+        return [
+            VoicePipeResponse(
+                id=pipe.id,
+                agent_id=pipe.agent.id,
+                agent_name=pipe.agent.name,
+                path=f"/voice/{pipe.id}/pipe",
+            )
+            for pipe in visible
+        ]
 
     @router.websocket("/voice/{pipe_id}/pipe", name="voice_pipe")
     async def voice_socket(websocket: WebSocket, pipe_id: str):

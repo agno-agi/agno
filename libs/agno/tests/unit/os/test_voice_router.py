@@ -266,3 +266,38 @@ def test_service_account_scopes_apply_even_without_jwt(pipe, scopes, allowed):
         if allowed:
             assert ws.receive_json()["user_id"] == "sa:bot"
     assert bool(pipe.calls) is allowed
+
+
+def test_voice_listing_describes_each_pipe_and_appears_in_docs(pipe):
+    client = TestClient(make_os(pipe).get_app())
+    response = client.get("/voice")
+    assert response.status_code == 200
+    assert response.json() == [
+        {"id": "test-voice", "agent_id": "voice-agent", "agent_name": "Voice Agent", "path": "/voice/test-voice/pipe"}
+    ]
+    assert "/voice" in client.get("/openapi.json").json()["paths"]
+
+
+def test_voice_listing_requires_the_security_key(pipe):
+    client = TestClient(make_os(pipe, settings=AgnoAPISettings(os_security_key=SECRET)).get_app())
+    assert client.get("/voice").status_code == 401
+    response = client.get("/voice", headers={"Authorization": f"Bearer {SECRET}"})
+    assert response.status_code == 200
+    assert [item["id"] for item in response.json()] == ["test-voice"]
+
+
+def test_voice_listing_only_shows_pipes_for_readable_agents():
+    other = StubPipe(Agent(id="other-agent", name="Other", telemetry=False), id="other-voice")
+    mine = StubPipe(Agent(id="voice-agent", name="Voice Agent", telemetry=False))
+    os = AgentOS(
+        live_sockets=[mine, other],
+        telemetry=False,
+        authorization=True,
+        authorization_config=AuthorizationConfig(verification_keys=[SECRET], algorithm="HS256"),
+    )
+    client = TestClient(os.get_app())
+    assert client.get("/voice").status_code == 401
+    scoped = client.get("/voice", headers={"Authorization": f"Bearer {token(['agents:voice-agent:read'])}"})
+    assert scoped.status_code == 200
+    assert [item["id"] for item in scoped.json()] == ["test-voice"]
+    assert client.get("/voice", headers={"Authorization": f"Bearer {token(['teams:read'])}"}).status_code == 403
