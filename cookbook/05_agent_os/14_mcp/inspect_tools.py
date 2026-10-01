@@ -23,7 +23,7 @@ import httpx
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
-from agno.os import AgentOS
+from agno.os import AgentOS, MCPConfig
 
 BASE_URL = os.getenv("AGENTOS_URL", "http://localhost:7777").rstrip("/")
 
@@ -47,7 +47,8 @@ agent_os = AgentOS(
     description="AgentOS with the MCP tool run API enabled.",
     db=db,
     agents=[support_agent],
-    mcp=True,
+    # The default budget is 120; a few seconds keeps the timeout lesson quick.
+    mcp=MCPConfig(default_tools=True, tool_run_timeout_seconds=5),
 )
 app = agent_os.get_app()
 
@@ -125,6 +126,52 @@ async def inspect() -> None:
         print(
             f"  HTTP {response.status_code}: {body['error']} -- {body['content'][0]['text'][:50]}"
         )
+
+        # 7. A run that outlives the timeout is abandoned AND stopped.
+        response = await client.post(
+            "/mcp/server/tools/run_agent/run",
+            json={
+                "arguments": {
+                    "agent_id": "support-agent",
+                    "message": "Write a detailed 1500 word essay about the ocean.",
+                }
+            },
+        )
+        body = response.json()
+        print("\nTimed out run:")
+        print(
+            f"  HTTP {response.status_code}: {body['error']} after {body['durationMs']} ms"
+        )
+        print(f"  {body['content'][0]['text'][:70]}")
+        await asyncio.sleep(2)
+        runs = await client.post(
+            "/mcp/server/tools/get_sessions/run", json={"arguments": {}}
+        )
+        print(
+            f"  the run is recorded as cancelled, not left running: {runs.status_code == 200}"
+        )
+
+        # 8. A caller that hangs up stops the tool the same way.
+        print("\nCaller disconnects:")
+        call = asyncio.create_task(
+            client.post(
+                "/mcp/server/tools/run_agent/run",
+                json={
+                    "arguments": {
+                        "agent_id": "support-agent",
+                        "message": "Write a detailed 1500 word essay about rivers.",
+                    }
+                },
+            )
+        )
+        await asyncio.sleep(1)
+        call.cancel()
+        try:
+            await call
+        except asyncio.CancelledError:
+            print(
+                "  aborted the request; the agent stops rather than finishing unobserved"
+            )
 
 
 # ---------------------------------------------------------------------------
