@@ -793,6 +793,119 @@ def test_the_summary_budget_reaches_custom_instructions():
     assert default.count("750 tokens") == 1
 
 
+# --- token_counter -------------------------------------------------------------
+
+
+def test_token_counter_decides_the_threshold():
+    """compact_at_tokens is measured with the configured counter, not the local estimate."""
+    from agno.agent import Agent
+    from agno.agent._messages import _estimated_context_tokens
+
+    seen = {}
+
+    def counter(messages, tools):
+        seen["messages"], seen["tools"] = len(messages), tools
+        return 12_345
+
+    agent = Agent(compaction=Compaction(token_counter=counter))
+    tools = [{"type": "function", "function": {"name": "t"}}]
+
+    assert _estimated_context_tokens(agent, _transcript(), tools) == 12_345
+    assert seen == {"messages": len(_transcript()), "tools": tools}
+
+
+def test_a_failing_token_counter_falls_back_to_the_local_estimate(caplog):
+    """A counter is often a network call or third-party code; it must never fail a run."""
+    from agno.agent import Agent
+    from agno.agent._messages import _estimated_context_tokens
+
+    def broken(messages, tools):
+        raise ConnectionError("count endpoint down")
+
+    local = _estimated_context_tokens(Agent(compaction=Compaction()), _transcript())
+    with caplog.at_level(logging.WARNING, logger="agno"):
+        counted = _estimated_context_tokens(Agent(compaction=Compaction(token_counter=broken)), _transcript())
+
+    assert counted == local
+    assert any("token_counter failed" in r.message for r in caplog.records)
+
+
+def test_token_counter_must_be_a_function():
+    with pytest.raises(TypeError, match="token_counter"):
+        Compaction(token_counter=1_000)  # type: ignore[arg-type]
+
+
+def test_a_models_own_count_tokens_is_a_valid_counter():
+    """Model.count_tokens already takes (messages, tools), so no adapter or provider mapping is needed."""
+    from agno.agent import Agent
+    from agno.agent._messages import _estimated_context_tokens
+    from agno.models.openai import OpenAIResponses
+
+    class _Counting(OpenAIResponses):
+        def count_tokens(self, messages, tools=None, output_schema=None):
+            return 777
+
+    agent = Agent(compaction=Compaction(token_counter=_Counting(id="gpt-5-mini").count_tokens))
+
+    assert _estimated_context_tokens(agent, _transcript()) == 777
+
+
+def test_async_runs_count_with_the_token_counter_off_the_event_loop():
+    import asyncio
+    import threading
+
+    from agno.agent import Agent
+    from agno.agent._messages import _acompaction_inputs
+
+    threads = []
+
+    def counter(messages, tools):
+        threads.append(threading.current_thread())
+        return 42
+
+    agent = Agent(compaction=Compaction(token_counter=counter))
+    inputs = asyncio.run(_acompaction_inputs(agent, _transcript()))
+
+    assert inputs["context_tokens"] == 42
+    assert threads and threads[0] is not threading.main_thread()
+
+
+def test_overflow_recovery_sizes_the_request_with_the_token_counter(caplog):
+    """The before/after sizes in the recovery log come from the same counter as the threshold."""
+    from agno.agent import Agent
+    from agno.agent._messages import _recompact_after_overflow
+    from agno.session.agent import AgentSession
+
+    class _RunMessages:
+        def __init__(self, messages):
+            self.messages = messages
+
+    messages = [Message(role="system", content="sys", id="s0")]
+    messages += [
+        m
+        for i in range(30)
+        for m in (
+            Message(role="user", content=f"q{i} " * 30, id=f"u{i}"),
+            Message(role="assistant", content=f"a{i} " * 800, id=f"a{i}"),
+        )
+    ]
+    run_messages = _RunMessages(messages)
+    agent = Agent(
+        num_history_runs=50,
+        compaction=Compaction(
+            uncompacted_runs=5,
+            archive=False,
+            model=_StubModel(),
+            on_context_overflow=True,
+            token_counter=lambda msgs, tools: 1_000 * len(msgs),
+        ),
+    )
+
+    with caplog.at_level(logging.INFO, logger="agno"):
+        assert _recompact_after_overflow(agent, AgentSession(session_id="s1", runs=[]), run_messages, None)
+    assert any(f"(61000 -> {1_000 * len(run_messages.messages)} tokens)" in r.message for r in caplog.records)
+
+
 def test_uncompacted_runs_and_uncompacted_tokens_are_mutually_exclusive():
     """Two settings claiming the same tail is a configuration nobody can reason about.
 

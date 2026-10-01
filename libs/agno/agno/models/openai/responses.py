@@ -817,6 +817,10 @@ class OpenAIResponses(Model):
         output_schema: Optional[Union[Dict, Type[BaseModel]]] = None,
     ) -> int:
         try:
+            # A count covers the whole context. Stored response ids make formatting keep only what
+            # follows the last response - right for a request that chains on it, but this call
+            # carries no previous_response_id, so the input would come out empty.
+            messages = self._without_response_ids(messages)
             formatted_input = self._format_messages(messages, compress_tool_results=True, tools=tools)
             formatted_tools = self._format_tool_params(messages, tools) if tools is not None else None
 
@@ -839,6 +843,10 @@ class OpenAIResponses(Model):
     ) -> int:
         """Async version of count_tokens using the async client."""
         try:
+            # A count covers the whole context. Stored response ids make formatting keep only what
+            # follows the last response - right for a request that chains on it, but this call
+            # carries no previous_response_id, so the input would come out empty.
+            messages = self._without_response_ids(messages)
             formatted_input = self._format_messages(messages, compress_tool_results=True, tools=tools)
             formatted_tools = self._format_tool_params(messages, tools) if tools else None
 
