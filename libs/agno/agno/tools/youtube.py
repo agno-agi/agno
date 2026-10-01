@@ -53,13 +53,18 @@ class YouTubeTools(Toolkit):
 
         if hostname == "youtu.be":
             return parsed_url.path[1:]
-        if hostname in ("www.youtube.com", "youtube.com"):
+        if hostname in (
+            "www.youtube.com",
+            "youtube.com",
+            "m.youtube.com",
+            "music.youtube.com",
+            "www.youtube-nocookie.com",
+            "youtube-nocookie.com",
+        ):
             if parsed_url.path == "/watch":
                 query_params = parse_qs(parsed_url.query)
                 return query_params.get("v", [None])[0]
-            if parsed_url.path.startswith("/embed/"):
-                return parsed_url.path.split("/")[2]
-            if parsed_url.path.startswith("/v/"):
+            if parsed_url.path.startswith(("/embed/", "/v/", "/shorts/", "/live/")):
                 return parsed_url.path.split("/")[2]
         return None
 
@@ -82,6 +87,9 @@ class YouTubeTools(Toolkit):
             video_id = self.get_youtube_video_id(url)
         except Exception:
             return "Error getting video ID from URL, please provide a valid YouTube url"
+
+        if video_id is None:
+            return "No video ID found"
 
         try:
             params = {"format": "json", "url": f"https://www.youtube.com/watch?v={video_id}"}
