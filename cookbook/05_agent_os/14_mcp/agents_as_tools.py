@@ -2,15 +2,15 @@
 Serve agents as MCP tools
 =========================
 
-Turn the default MCP surface off and serve agents directly as tools. A bare
+Serve agents directly as tools using the custom MCP surface. A bare
 agent in MCPConfig(tools=[...]) becomes a tool named after its id with the
 agent's own description; agent.as_tool(name=..., description=...) publishes
 it under a model-facing name and pitch of your choosing instead. An MCP
 client sees chief and deep_research -- not run_agent(agent_id=...) -- and
 each call runs through the same machinery as the default run tools (fresh
-session minting, scope checks, progress). continue_run and cancel_run ride
-along automatically so paused (human-in-the-loop) runs stay resumable; set
-lifecycle_tools=False to serve exactly the configured tools.
+session minting, scope checks, progress). Only the configured tools are
+published. Set lifecycle_tools=True to add continue_run and cancel_run when
+clients need to resume paused (human-in-the-loop) runs or request cancellation.
 
 as_tool also carries the presentation a client and a marketplace reviewer
 read: title= is the display name, and annotations= are the behaviour hints
@@ -68,7 +68,6 @@ agent_os = AgentOS(
     db=db,
     agents=[chief, researcher],
     mcp=MCPConfig(
-        default_tools=False,
         tools=[
             chief,
             researcher.as_tool(
