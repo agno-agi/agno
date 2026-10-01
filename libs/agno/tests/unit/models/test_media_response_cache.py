@@ -182,3 +182,78 @@ def test_cache_key_does_not_fetch_urls(field, cls, monkeypatch):
 
     monkeypatch.setattr(cls, "get_content_bytes", unexpected_fetch)
     assert cache_key(field, [cls(url="https://example.invalid/input")])
+
+
+@pytest.mark.parametrize("field,cls", MEDIA)
+def test_local_file_hash_uses_bounded_reads(field, cls, tmp_path, monkeypatch):
+    from hashlib import sha256
+    from pathlib import Path
+
+    content = b"abc" * (1024 * 1024)
+    path = tmp_path / "large-media"
+    path.write_bytes(content)
+    original_open = Path.open
+    read_sizes = []
+
+    class BoundedReader:
+        def __enter__(self):
+            self.file = original_open(path, "rb")
+            return self
+
+        def __exit__(self, *args):
+            self.file.close()
+
+        def read(self, size=-1):
+            assert 0 < size <= 1024 * 1024, "media must not be read into memory in one call"
+            read_sizes.append(size)
+            return self.file.read(size)
+
+    def open_media(self, *args, **kwargs):
+        if self == path:
+            return BoundedReader()
+        return original_open(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", open_media)
+    result = OpenAIChat(id="test", api_key="test")._get_input_media_cache_data(cls(filepath=path))
+    assert result["file_content_hash"] == sha256(content).hexdigest()
+    assert len(read_sizes) > 1
+
+
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.asyncio
+async def test_async_cache_hit_hashes_off_event_loop(stream, tmp_path, monkeypatch):
+    import asyncio
+    import threading
+
+    from agno.models.base import Model
+    from agno.models.response import ModelResponse
+
+    path = tmp_path / "input"
+    path.write_bytes(b"audio")
+    messages = [Message(role="user", content="Describe.", audio=[Audio(filepath=path)])]
+    model = OpenAIChat(id="test", api_key="test", cache_response=True)
+    original_key = Model._get_model_cache_key
+    loop_thread = threading.get_ident()
+    key_threads = []
+
+    def checked_key(self, *args, **kwargs):
+        key_threads.append(threading.get_ident())
+        assert threading.get_ident() != loop_thread, "cache key hashing blocks the event loop"
+        return original_key(self, *args, **kwargs)
+
+    monkeypatch.setattr(Model, "_get_model_cache_key", checked_key)
+    monkeypatch.setattr(Model, "_get_cached_model_response", lambda *args: {"streaming_responses": []})
+    monkeypatch.setattr(Model, "_model_response_from_cache", lambda *args: ModelResponse(content="cached"))
+    monkeypatch.setattr(Model, "_streaming_responses_from_cache", lambda *args: iter([ModelResponse(content="cached")]))
+    for _ in range(2):
+        if stream:
+            responses = [response async for response in model.aresponse_stream(messages)]
+            assert responses[0].content == "cached"
+        else:
+            assert (await model.aresponse(messages)).content == "cached"
+        await asyncio.sleep(0)
+    assert len(key_threads) == 2
+
+
+def test_text_and_bytes_content_share_cache_key():
+    assert cache_key("files", [File(content="abc")]) == cache_key("files", [File(content=b"abc")])

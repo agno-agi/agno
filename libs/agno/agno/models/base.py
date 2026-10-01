@@ -448,6 +448,7 @@ class Model(ABC):
         """Identify input media without fetching URLs or including tracking metadata."""
         content = media.content
         if isinstance(content, str):
+            # Text and its UTF-8 bytes intentionally identify the same provider input.
             content = content.encode("utf-8")
         media_data: Dict[str, Any] = {
             "url": media.url,
@@ -458,7 +459,11 @@ class Model(ABC):
         }
         if media.filepath is not None:
             try:
-                media_data["file_content_hash"] = sha256(Path(media.filepath).read_bytes()).hexdigest()
+                file_hash = sha256()
+                with Path(media.filepath).open("rb") as media_file:
+                    while chunk := media_file.read(1024 * 1024):
+                        file_hash.update(chunk)
+                media_data["file_content_hash"] = file_hash.hexdigest()
             except (OSError, ValueError):
                 # Preserve provider handling of unreadable inputs, but do not confuse them
                 # with a later readable file at the same path.
@@ -960,7 +965,9 @@ class Model(ABC):
 
         # Check cache if enabled
         if self.cache_response:
-            cache_key = self._get_model_cache_key(messages, stream=False, response_format=response_format, tools=tools)
+            cache_key = await asyncio.to_thread(
+                self._get_model_cache_key, messages, stream=False, response_format=response_format, tools=tools
+            )
             cached_data = self._get_cached_model_response(cache_key)
 
             if cached_data:
@@ -1725,7 +1732,9 @@ class Model(ABC):
         # Check cache if enabled - capture key BEFORE streaming to avoid mismatch
         cache_key = None
         if self.cache_response:
-            cache_key = self._get_model_cache_key(messages, stream=True, response_format=response_format, tools=tools)
+            cache_key = await asyncio.to_thread(
+                self._get_model_cache_key, messages, stream=True, response_format=response_format, tools=tools
+            )
             cached_data = self._get_cached_model_response(cache_key)
 
             if cached_data:
