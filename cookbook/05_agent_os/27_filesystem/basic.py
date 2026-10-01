@@ -11,7 +11,6 @@ Try: Connect Agno OS to http://localhost:7777 and open File System
 """
 
 from agno.agent import Agent
-from agno.db.sqlite import SqliteDb
 from agno.db.postgres import PostgresDb
 from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS
@@ -22,8 +21,6 @@ db = PostgresDb(
     db_url=getenv("DATABASE_URL", "postgresql+psycopg://ai:ai@localhost:5532/ai"),
 
 )
-
-
 filesystem_agent = Agent(
     id="filesystem-agent",
     name="File System Agent",
@@ -45,3 +42,4 @@ app = agent_os.get_app()
 
 if __name__ == "__main__":
     agent_os.serve(app="basic:app", reload=True)
+
