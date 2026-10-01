@@ -181,9 +181,7 @@ class PubmedTools(Toolkit):
                     article_text = (
                         f"Title: {article.get('Title')}\n"
                         f"Published: {article.get('Published')}\n"
-                        f"Summary: {summary[:200]}..."
-                        if len(summary) > 200
-                        else f"Summary: {summary}"
+                        f"Summary: {summary[:200] + '...' if len(summary) > 200 else summary}"
                     )
                 results.append(article_text)
 

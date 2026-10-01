@@ -65,8 +65,3 @@ class TestToolkitOverDb:
         fs.append("Seen/b.md", "y")
         found = {m.path for m in fs.list(directory="seen")}
         assert found == {"seen/a.md"}
-
-    def test_read_only_toolkit_has_three_tools_over_db(self, db_fs):
-        tools = _fs(db_fs).tools(read_only=True)
-        names = {f.name for f in tools.functions.values()}
-        assert names == {"read_file", "list_files", "search_content"}

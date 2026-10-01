@@ -1,5 +1,6 @@
 """Unit tests for PubmedTools class."""
 
+import json
 from unittest.mock import MagicMock, patch
 
 import httpx
@@ -107,3 +108,75 @@ def test_search_pubmed_reports_http_status_error():
         result = PubmedTools().search_pubmed("test query")
 
     assert result == "Could not fetch articles. Error: rate limited"
+
+
+@pytest.mark.parametrize(
+    ("results_expanded", "abstract", "expected_result"),
+    [
+        pytest.param(
+            False,
+            "A short abstract.",
+            "Title: Test article\nPublished: 2026\nSummary: A short abstract.",
+            id="short-abstract",
+        ),
+        pytest.param(
+            False,
+            "a" * 200,
+            "Title: Test article\nPublished: 2026\nSummary: " + "a" * 200,
+            id="200-character-abstract",
+        ),
+        pytest.param(
+            False,
+            "a" * 200 + "b",
+            "Title: Test article\nPublished: 2026\nSummary: " + "a" * 200 + "...",
+            id="201-character-abstract",
+        ),
+        pytest.param(
+            False,
+            None,
+            "Title: Test article\nPublished: 2026\nSummary: No abstract available",
+            id="missing-abstract",
+        ),
+        pytest.param(
+            True,
+            "a" * 200 + "b",
+            "Published: 2026\n"
+            "Title: Test article\n"
+            "First Author: Smith, Jane\n"
+            "Journal: Test journal\n"
+            "Publication Type: Journal Article\n"
+            "DOI: 10.1234/test\n"
+            "PubMed URL: https://pubmed.ncbi.nlm.nih.gov/111/\n"
+            "Full Text URL: https://doi.org/10.1234/test\n"
+            "Keywords: medicine\n"
+            "MeSH Terms: Humans\n"
+            "Summary:\n" + "a" * 200 + "b",
+            id="expanded-preserves-full-abstract",
+        ),
+    ],
+)
+def test_search_pubmed_formats_article_results(mock_httpx_get, results_expanded, abstract, expected_result):
+    abstract_xml = f"<Abstract><AbstractText>{abstract}</AbstractText></Abstract>" if abstract is not None else ""
+    details_xml = f"""<PubmedArticleSet>
+        <PubmedArticle>
+            <MedlineCitation>
+                <PMID>111</PMID>
+                <Article>
+                    <Journal><JournalIssue><PubDate><Year>2026</Year></PubDate></JournalIssue>
+                        <Title>Test journal</Title></Journal>
+                    <ArticleTitle>Test article</ArticleTitle>
+                    {abstract_xml}
+                    <AuthorList><Author><LastName>Smith</LastName><ForeName>Jane</ForeName></Author></AuthorList>
+                    <PublicationTypeList><PublicationType>Journal Article</PublicationType></PublicationTypeList>
+                </Article>
+                <KeywordList><Keyword>medicine</Keyword></KeywordList>
+                <MeshHeadingList><MeshHeading><DescriptorName>Humans</DescriptorName></MeshHeading></MeshHeadingList>
+            </MedlineCitation>
+            <PubmedData><ArticleIdList><ArticleId IdType="doi">10.1234/test</ArticleId></ArticleIdList></PubmedData>
+        </PubmedArticle>
+    </PubmedArticleSet>"""
+    mock_httpx_get.side_effect = [MagicMock(content=ESEARCH_XML), MagicMock(content=details_xml.encode())]
+
+    result = PubmedTools(results_expanded=results_expanded).search_pubmed("test query")
+
+    assert json.loads(result) == [expected_result]

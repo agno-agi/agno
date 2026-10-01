@@ -476,6 +476,9 @@ class ResultStore:
             max_namespace_bytes=MAX_SESSION_NAMESPACE_BYTES,
         )
 
+    def _fs_for_row(self, row: Dict[str, Any]) -> FileSystem:
+        return self._fs_for_namespace(str(row["namespace"]))
+
     def _build_row(
         self,
         *,
@@ -582,6 +585,9 @@ class ResultStore:
         path, content_type = self._plan(
             session_id=session_id, run_id=run_id, tool_call_id=tool_call_id, output=output, shared=shared
         )
+        # Payloads stay in the shared partition: the namespace is already per
+        # session, the index row records the user, and releases before 3.1 wrote
+        # them there, so older results stay readable.
         session_fs = self._session_fs(session_id)
         session_fs.write(path, output)
         row = self._build_row(
@@ -624,6 +630,9 @@ class ResultStore:
         path, content_type = self._plan(
             session_id=session_id, run_id=run_id, tool_call_id=tool_call_id, output=output, shared=shared
         )
+        # Payloads stay in the shared partition: the namespace is already per
+        # session, the index row records the user, and releases before 3.1 wrote
+        # them there, so older results stay readable.
         session_fs = self._session_fs(session_id)
         await session_fs.awrite(path, output)
         row = self._build_row(
@@ -812,13 +821,13 @@ class ResultStore:
         )
 
     def _read_payload(self, row: Dict[str, Any]) -> str:
-        content = self._fs_for_namespace(str(row["namespace"])).read(str(row["path"]))
+        content = self._fs_for_row(row).read(str(row["path"]))
         if content is None:
             raise KeyError(f"stored payload for {row['result_id']} is missing")
         return content
 
     async def _aread_payload(self, row: Dict[str, Any]) -> str:
-        content = await self._fs_for_namespace(str(row["namespace"])).aread(str(row["path"]))
+        content = await self._fs_for_row(row).aread(str(row["path"]))
         if content is None:
             raise KeyError(f"stored payload for {row['result_id']} is missing")
         return content
@@ -917,7 +926,7 @@ class ResultStore:
             batch = rows[batch_start : batch_start + DELETE_BATCH_SIZE]
             for row in batch:
                 try:
-                    self._fs_for_namespace(str(row["namespace"])).delete(str(row["path"]))
+                    self._fs_for_row(row).delete(str(row["path"]))
                 except Exception as e:
                     log_warning(f"Result payload delete failed for {row.get('result_id')}: {e}")
             self._db_call("delete_tool_results", [str(row["result_id"]) for row in batch])
@@ -928,7 +937,7 @@ class ResultStore:
             batch = rows[batch_start : batch_start + DELETE_BATCH_SIZE]
             for row in batch:
                 try:
-                    await self._fs_for_namespace(str(row["namespace"])).adelete(str(row["path"]))
+                    await self._fs_for_row(row).adelete(str(row["path"]))
                 except Exception as e:
                     log_warning(f"Result payload delete failed for {row.get('result_id')}: {e}")
             await self._adb_call("delete_tool_results", [str(row["result_id"]) for row in batch])
