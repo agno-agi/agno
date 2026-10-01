@@ -23,6 +23,7 @@ ONE_LINER = re.compile(r"^\s*<(?P<name>[A-Z][A-Za-z]*|h[1-6])(?P<attrs>\s[^<>]*?
 ATTR = re.compile(r"""([A-Za-z][\w-]*)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|\{([^}]*)\}|([^\s"'<>]+)))?""")
 CALLOUTS = {"Note": "Note", "Warning": "Warning", "Tip": "Tip", "Info": "Info", "Check": "Check", "Callout": ""}
 LABELLED = {"CodeBlockTab": "value", "Tab": "title", "Accordion": "title"}  # tag -> attribute that names it
+PARAM_FIELD_NAME_ATTRIBUTES = ("query", "path", "body", "header")
 _PLAIN_BLOCK_START = re.compile(r"^(?:[-*+]\s|\d+[.)]\s|#{1,6}\s|>|\||```|~~~)")
 
 
@@ -131,7 +132,10 @@ def _render(name: str, attrs: dict[str, str], inner: list[str], ctx: _Context) -
         head = f"[{title}]({href})" if title and href else f"**{title}**" if title else f"<{href}>" if href else ""
         return _bullet(head, inner, ctx)
     if name in ("ResponseField", "ParamField"):
-        head = f"`{attrs['name']}`" if attrs.get("name") else ""
+        field_name = attrs.get("name", "")
+        if name == "ParamField" and not field_name:
+            field_name = next((attrs[location] for location in PARAM_FIELD_NAME_ATTRIBUTES if attrs.get(location)), "")
+        head = f"`{field_name}`" if field_name else ""
         details = [attrs["type"]] if attrs.get("type") else []
         if "required" in attrs:
             details.append("required")
