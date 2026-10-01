@@ -94,6 +94,7 @@ from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
 from agno.run.team import RunErrorEvent as TeamRunErrorEvent
 from agno.run.team import TeamRunOutput
+from agno.run.utils import is_forking_continue
 from agno.team.factory import TeamFactory
 from agno.team.remote import RemoteTeam
 from agno.team.team import Team
@@ -1455,13 +1456,13 @@ def get_team_router(
         take_over_in_place: Optional[bool] = None
         if not factory and not isinstance(team, RemoteTeam):
             stamped_run = await team.aget_run_output(run_id, session_id=session_id, user_id=user_id)
-            # The background streamer's predicate, from the same row: a COMPLETED
-            # run auto-forks and a CANCELLED run is refused, so neither owns its id.
-            # A missing row is left undecided so the streamer never registers a key
-            # the dispatch is about to refuse.
+            # The dispatch's own fork rule, from the same row: a forking continue
+            # runs under a new id and a CANCELLED run is refused, so neither owns
+            # this run's id. A missing row is left undecided so the streamer never
+            # registers a key the dispatch is about to refuse.
             if stamped_run is not None:
-                take_over_in_place = (
-                    not fork and not regenerate and stamped_run.status not in (RunStatus.completed, RunStatus.cancelled)
+                take_over_in_place = stamped_run.status != RunStatus.cancelled and not is_forking_continue(
+                    stamped_run.status, fork=fork, regenerate=regenerate
                 )
             stamped_version = stamped_component_version(stamped_run)
             if stamped_version is not None:

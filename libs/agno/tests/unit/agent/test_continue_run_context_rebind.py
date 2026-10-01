@@ -9,16 +9,20 @@ values from the parent's id. (#9681)
 Driven through the real run/continue_run pipeline with a scripted offline model.
 """
 
+import asyncio
 import json
 from typing import Any, AsyncIterator, Iterator, List, Optional, Tuple, Union
 
 import pytest
 
+import agno.os.event_streams as es_mod
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.metrics import MessageMetrics
 from agno.models.base import Model
 from agno.models.response import ModelResponse
+from agno.os.event_streams import InMemoryEventStream, set_event_stream
+from agno.os.managers import EventsBuffer, SSESubscriberManager
 from agno.run.agent import RunOutput
 from agno.run.base import RunContext, RunStatus
 from agno.run.team import TeamRunOutput
@@ -178,6 +182,26 @@ def _dependency_probe(seen: List[Tuple[Optional[str], Optional[str]]]):
         return "probed"
 
     return probe_state
+
+
+async def _drain_background_tasks(tasks) -> None:
+    """The SSE generator returns when the producer pushes its sentinel, which happens before
+    the event stream is finalized; wait for the detached task itself."""
+    for _ in range(300):
+        if not [t for t in list(tasks) if not t.done()]:
+            return
+        await asyncio.sleep(0.01)
+
+
+@pytest.fixture()
+def stream_harness():
+    """Swap in a fresh in-memory event stream so a test can read what a background
+    continue published under which run_id."""
+    original = es_mod._event_stream
+    stream = InMemoryEventStream(events_buffer=EventsBuffer(), subscriber_manager=SSESubscriberManager())
+    set_event_stream(stream)
+    yield stream
+    es_mod._event_stream = original
 
 
 class TestAgentContinuationRebind:
@@ -420,6 +444,288 @@ class TestAgentContinuationRebind:
         assert len(stored.runs) == 1, "a refused continue must not persist a second run"
         assert frames and "event: RunError" in frames[0], f"expected a RunError frame, got {frames[:1]}"
 
+    @pytest.mark.asyncio
+    async def test_a_background_stream_continue_of_a_missing_run_registers_nothing(self, stream_harness, tmp_path):
+        """No stored row means no source run to take over and none to advertise: the
+        producer must not register the key at all, or a run that never existed is
+        advertised to reconnecting clients. The refusal still reaches the client."""
+        from agno.agent._run import _background_tasks
+
+        agent = Agent(
+            model=_ScriptedModel([_text("never called")]),
+            db=SqliteDb(db_file=str(tmp_path / "bg-missing.db")),
+            telemetry=False,
+        )
+
+        frames = [
+            chunk
+            async for chunk in agent.acontinue_run(
+                run_id="r-missing", session_id="bg-3", input="probe again", stream=True, background=True
+            )
+        ]
+        await _drain_background_tasks(_background_tasks)
+
+        assert frames and "event: RunError" in frames[0], f"expected a RunError frame, got {frames[:1]}"
+        assert await stream_harness.get_run_status("r-missing") is None, (
+            "a run missing from the session was registered on the event stream"
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_background_stream_continue_of_a_completed_run_is_published_under_the_fork(
+        self, stream_harness, tmp_path
+    ):
+        """A background continue of a COMPLETED run auto-forks. Every event-stream write goes
+        under the fork's own id, so /resume on the fork replays it and /resume on the parent
+        never replays a run the parent did not execute."""
+        db = SqliteDb(db_file=str(tmp_path / "bg-fork.db"))
+        agent = Agent(
+            model=_ScriptedModel([_text("first run done"), _text("continuation done")]), db=db, telemetry=False
+        )
+        first = await agent.arun("probe once", session_id="bg-2")
+        assert first.status == RunStatus.completed
+
+        from agno.agent._run import _background_tasks
+
+        frames = [
+            chunk
+            async for chunk in agent.acontinue_run(
+                run_id=first.run_id, session_id="bg-2", input="probe again", stream=True, background=True
+            )
+        ]
+        await _drain_background_tasks(_background_tasks)
+
+        assert frames, "the client received no frames"
+        assert await stream_harness.get_run_status(first.run_id) is None, "the parent's key was written for a fork"
+        stored = db.get_session(session_id="bg-2", session_type="agent")
+        assert stored is not None and stored.runs is not None and len(stored.runs) == 2
+        assert [r.status for r in stored.runs if r.run_id == first.run_id] == [RunStatus.completed]
+        fork_id = next(r.run_id for r in stored.runs if r.forked_from_run_id == first.run_id)
+        assert await stream_harness.get_run_status(fork_id) == RunStatus.completed
+        assert await stream_harness.get_event_count(fork_id) == len(frames), (
+            "the fork's events were not buffered under the fork's own key"
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_background_stream_forking_retry_re_forks_under_the_same_id(self, stream_harness, tmp_path):
+        """The fork id is minted before the first attempt, so a transient failure that
+        re-enters the retry loop re-forks under that same id: the key the stream registered
+        is the one that completes, and the session holds one fork, not one per attempt."""
+        db = SqliteDb(db_file=str(tmp_path / "bg-retry.db"))
+        agent = Agent(
+            model=_ScriptedModel(_in_place_retry_script()),
+            db=db,
+            retries=1,
+            delay_between_retries=0,
+            telemetry=False,
+        )
+        first = await agent.arun("probe once", session_id="bg-4")
+        assert first.status == RunStatus.completed
+
+        from agno.agent._run import _background_tasks
+
+        frames = [
+            chunk
+            async for chunk in agent.acontinue_run(
+                run_id=first.run_id, session_id="bg-4", input="probe again", stream=True, background=True
+            )
+        ]
+        await _drain_background_tasks(_background_tasks)
+
+        assert frames, "the client received no frames"
+        stored = db.get_session(session_id="bg-4", session_type="agent")
+        assert stored is not None and stored.runs is not None
+        forks = [r for r in stored.runs if r.forked_from_run_id == first.run_id]
+        assert [r.status for r in forks] == [RunStatus.completed], (
+            f"expected one completed fork, got {[(r.run_id, r.status) for r in forks]}"
+        )
+        assert await stream_harness.get_run_status(forks[0].run_id) == RunStatus.completed, (
+            "the retry executed under a different id than the one the stream registered"
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_background_stream_continue_of_an_unsaved_run_response_is_buffered_under_its_id(
+        self, stream_harness, tmp_path
+    ):
+        """A caller-held run whose row is not in this agent's db still executes: the dispatch
+        continues the object and never reads the row. Its events must still be buffered under
+        its id, or the background continue cannot be reconnected."""
+        from agno.agent._run import _background_tasks
+
+        first = await Agent(model=_ScriptedModel([_text("first run done")]), telemetry=False).arun("probe once")
+        first.status = RunStatus.error
+        agent = Agent(
+            model=_ScriptedModel([_text("continuation done")]),
+            db=SqliteDb(db_file=str(tmp_path / "bg-unsaved.db")),
+            telemetry=False,
+        )
+
+        frames = [
+            chunk
+            async for chunk in agent.acontinue_run(
+                run_response=first, session_id="bg-5", input="probe again", stream=True, background=True
+            )
+        ]
+        await _drain_background_tasks(_background_tasks)
+
+        assert frames, "the client received no frames"
+        assert await stream_harness.get_run_status(first.run_id) == RunStatus.completed
+        assert await stream_harness.get_event_count(first.run_id) == len(frames), (
+            "the continuation executed but none of its events were buffered"
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_background_stream_continue_of_a_stale_object_is_buffered_where_it_executes(
+        self, stream_harness, tmp_path
+    ):
+        """The dispatch decides fork-or-not from the caller's object, not the stored row. A
+        PAUSED object over a COMPLETED row continues in place, so its events belong under the
+        source id; a fork id predicted from the row would name a run that never executes."""
+        from copy import deepcopy
+
+        from agno.agent._run import _background_tasks
+
+        db = SqliteDb(db_file=str(tmp_path / "bg-stale.db"))
+        agent = Agent(
+            model=_ScriptedModel([_text("first run done"), _text("continuation done")]), db=db, telemetry=False
+        )
+        first = await agent.arun("probe once", session_id="bg-6")
+        stale = deepcopy(first)
+        stale.status = RunStatus.paused
+
+        frames = [
+            chunk
+            async for chunk in agent.acontinue_run(
+                run_response=stale, session_id="bg-6", input="probe again", stream=True, background=True
+            )
+        ]
+        await _drain_background_tasks(_background_tasks)
+
+        assert frames, "the client received no frames"
+        stored = db.get_session(session_id="bg-6", session_type="agent")
+        assert stored is not None and stored.runs is not None
+        assert [r.run_id for r in stored.runs] == [first.run_id], "the continue was expected to run in place"
+        assert await stream_harness.get_event_count(first.run_id) == len(frames), (
+            "the events were buffered under an id that never executed"
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_background_stream_continue_of_a_completed_object_over_a_cancelled_row_is_buffered_under_the_fork(
+        self, stream_harness, tmp_path
+    ):
+        """The dispatch refuses only when the run it continues is cancelled. A COMPLETED object
+        over a CANCELLED row forks, so the fork's events must be buffered under the fork id."""
+        from copy import deepcopy
+
+        from agno.agent._run import _background_tasks
+        from agno.agent._session import asave_run
+
+        db = SqliteDb(db_file=str(tmp_path / "bg-cancelled-row.db"))
+        agent = Agent(
+            model=_ScriptedModel([_text("first run done"), _text("continuation done")]), db=db, telemetry=False
+        )
+        first = await agent.arun("probe once", session_id="bg-7")
+        held = deepcopy(first)
+        first.status = RunStatus.cancelled
+        await asave_run(agent, run=first, session_id="bg-7")
+
+        frames = [
+            chunk
+            async for chunk in agent.acontinue_run(
+                run_response=held, session_id="bg-7", input="probe again", stream=True, background=True
+            )
+        ]
+        await _drain_background_tasks(_background_tasks)
+
+        stored = db.get_session(session_id="bg-7", session_type="agent")
+        assert stored is not None and stored.runs is not None
+        forks = [r for r in stored.runs if r.forked_from_run_id == first.run_id]
+        assert len(forks) == 1, "the continue was expected to fork the completed object"
+        assert await stream_harness.get_event_count(forks[0].run_id) == len(frames), (
+            "the fork executed but none of its events were buffered"
+        )
+        assert await stream_harness.get_run_status(first.run_id) is None
+
+    @pytest.mark.asyncio
+    async def test_a_forking_retry_before_the_fork_keeps_the_parents_cancellation_entry(self, monkeypatch, tmp_path):
+        """When the first attempt dies before it forks, run_response still names the parent.
+        The retry drops only a fork it abandoned; dropping the parent's entry would make a
+        live parent uncancellable."""
+        import agno.agent._storage as storage
+        from agno.run.cancel import acleanup_run, aget_active_runs, aregister_run
+
+        agent = Agent(
+            model=_ScriptedModel([_text("first run done"), _text("continuation done")]),
+            db=SqliteDb(db_file=str(tmp_path / "retry-parent.db")),
+            retries=1,
+            delay_between_retries=0,
+            telemetry=False,
+        )
+        first = await agent.arun("probe once", session_id="rp-1")
+        await aregister_run(first.run_id)
+
+        real_read = storage.aread_or_create_session
+        reads = {"n": 0}
+
+        async def flaky_read(*args: Any, **kwargs: Any):
+            reads["n"] += 1
+            if reads["n"] == 1:
+                raise ConnectionError("transient db failure")
+            return await real_read(*args, **kwargs)
+
+        monkeypatch.setattr(storage, "aread_or_create_session", flaky_read)
+        continued = await _execute(
+            agent,
+            async_mode=True,
+            stream=True,
+            continuing=True,
+            run_id=first.run_id,
+            session_id="rp-1",
+            fork=True,
+            input="probe again",
+        )
+
+        assert continued.run_id != first.run_id and continued.status == RunStatus.completed
+        still_registered = first.run_id in await aget_active_runs()
+        await acleanup_run(first.run_id)
+        assert still_registered, "the retry dropped the parent's cancellation entry"
+
+    @pytest.mark.asyncio
+    async def test_a_stream_retry_before_the_run_loads_still_forks_the_stored_run(self, monkeypatch, tmp_path):
+        """When the first attempt of a streamed continue fails before the run is loaded, the
+        retry must load the stored run and fork it. An error placeholder left in run_response
+        was continued in place instead, and the parent row was lost."""
+        db = SqliteDb(db_file=str(tmp_path / "stream-retry-load.db"))
+        agent = Agent(
+            model=_ScriptedModel([_text("first run done"), _text("continuation done")]),
+            db=db,
+            retries=1,
+            delay_between_retries=0,
+            telemetry=False,
+        )
+        first = await agent.arun("probe once", session_id="sr-1")
+
+        real_get_session = db.get_session
+        reads = {"n": 0}
+
+        def flaky_get_session(*args: Any, **kwargs: Any):
+            reads["n"] += 1
+            if reads["n"] == 2:
+                raise ConnectionError("transient db failure")
+            return real_get_session(*args, **kwargs)
+
+        monkeypatch.setattr(db, "get_session", flaky_get_session)
+        continued = await _execute(
+            agent, async_mode=True, stream=True, continuing=True, run_id=first.run_id, session_id="sr-1", input="again"
+        )
+        monkeypatch.setattr(db, "get_session", real_get_session)
+
+        assert continued.forked_from_run_id == first.run_id, "the retry continued a placeholder instead of forking"
+        stored = db.get_session(session_id="sr-1", session_type="agent")
+        assert stored is not None and stored.runs is not None
+        assert [len(r.messages or []) for r in stored.runs if r.run_id == first.run_id] == [
+            len(first.messages or [])
+        ], "the parent run was overwritten or lost"
+
 
 class TestTeamContinuationRebind:
     @pytest.mark.asyncio
@@ -569,3 +875,140 @@ class TestTeamContinuationRebind:
         assert seen[0].get("current_run_id") == run.run_id, (
             f"the leader's tool saw the member's run_id in session_state after the delegation: {seen[0]}"
         )
+
+    @pytest.mark.asyncio
+    async def test_a_background_stream_continue_of_a_completed_run_is_published_under_the_fork(
+        self, stream_harness, tmp_path
+    ):
+        """The team twin of the agent test above."""
+        db = SqliteDb(db_file=str(tmp_path / "bg-fork-team.db"))
+        member = Agent(name="member", model=_ScriptedModel([_text("member done")]), telemetry=False)
+        team = Team(
+            members=[member],
+            model=_ScriptedModel([_text("first run done"), _text("continuation done")]),
+            db=db,
+            telemetry=False,
+        )
+        first = await team.arun("probe once", session_id="bg-2")
+        assert first.status == RunStatus.completed
+
+        from agno.team._run import _background_tasks
+
+        frames = [
+            chunk
+            async for chunk in team.acontinue_run(
+                run_id=first.run_id, session_id="bg-2", input="probe again", stream=True, background=True
+            )
+        ]
+        await _drain_background_tasks(_background_tasks)
+
+        assert frames, "the client received no frames"
+        assert await stream_harness.get_run_status(first.run_id) is None, "the parent's key was written for a fork"
+        stored = db.get_session(session_id="bg-2", session_type="team")
+        assert stored is not None and stored.runs is not None
+        assert [r.status for r in stored.runs if r.run_id == first.run_id] == [RunStatus.completed]
+        fork_id = next(r.run_id for r in stored.runs if r.forked_from_run_id == first.run_id)
+        assert await stream_harness.get_run_status(fork_id) == RunStatus.completed
+        assert await stream_harness.get_event_count(fork_id) == len(frames), (
+            "the fork's events were not buffered under the fork's own key"
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_background_stream_forking_retry_re_forks_under_the_same_id(self, stream_harness, tmp_path):
+        """The team twin of the agent test above."""
+        db = SqliteDb(db_file=str(tmp_path / "bg-retry-team.db"))
+        member = Agent(name="member", model=_ScriptedModel([_text("member done")]), telemetry=False)
+        team = Team(
+            members=[member],
+            model=_ScriptedModel(_in_place_retry_script()),
+            db=db,
+            retries=1,
+            delay_between_retries=0,
+            telemetry=False,
+        )
+        first = await team.arun("probe once", session_id="bg-4")
+        assert first.status == RunStatus.completed
+
+        from agno.team._run import _background_tasks
+
+        frames = [
+            chunk
+            async for chunk in team.acontinue_run(
+                run_id=first.run_id, session_id="bg-4", input="probe again", stream=True, background=True
+            )
+        ]
+        await _drain_background_tasks(_background_tasks)
+
+        assert frames, "the client received no frames"
+        stored = db.get_session(session_id="bg-4", session_type="team")
+        assert stored is not None and stored.runs is not None
+        forks = [r for r in stored.runs if r.forked_from_run_id == first.run_id]
+        assert [r.status for r in forks] == [RunStatus.completed], (
+            f"expected one completed fork, got {[(r.run_id, r.status) for r in forks]}"
+        )
+        assert await stream_harness.get_run_status(forks[0].run_id) == RunStatus.completed, (
+            "the retry executed under a different id than the one the stream registered"
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_background_stream_continue_of_a_missing_run_registers_nothing(self, stream_harness, tmp_path):
+        """The team twin of the agent test above."""
+        from agno.team._run import _background_tasks
+
+        member = Agent(name="member", model=_ScriptedModel([_text("never called")]), telemetry=False)
+        team = Team(
+            members=[member],
+            model=_ScriptedModel([_text("never called")]),
+            db=SqliteDb(db_file=str(tmp_path / "bg-missing-team.db")),
+            telemetry=False,
+        )
+
+        frames = [
+            chunk
+            async for chunk in team.acontinue_run(
+                run_id="r-missing", session_id="bg-3", input="probe again", stream=True, background=True
+            )
+        ]
+        await _drain_background_tasks(_background_tasks)
+
+        assert frames and "RunError" in frames[0], f"expected a RunError frame, got {frames[:1]}"
+        assert await stream_harness.get_run_status("r-missing") is None, (
+            "a run missing from the session was registered on the event stream"
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_stream_retry_before_the_run_loads_still_forks_the_stored_run(self, monkeypatch, tmp_path):
+        """The team twin of the agent test above."""
+        db = SqliteDb(db_file=str(tmp_path / "stream-retry-load-team.db"))
+        member = Agent(name="member", model=_ScriptedModel([_text("member done")]), telemetry=False)
+        team = Team(
+            members=[member],
+            model=_ScriptedModel([_text("first run done"), _text("continuation done")]),
+            db=db,
+            retries=1,
+            delay_between_retries=0,
+            telemetry=False,
+        )
+        first = await team.arun("probe once", session_id="sr-2")
+
+        real_get_session = db.get_session
+        reads = {"n": 0}
+
+        def flaky_get_session(*args: Any, **kwargs: Any):
+            reads["n"] += 1
+            if reads["n"] == 2:
+                raise ConnectionError("transient db failure")
+            return real_get_session(*args, **kwargs)
+
+        monkeypatch.setattr(db, "get_session", flaky_get_session)
+        continued = await _execute(
+            team, async_mode=True, stream=True, continuing=True, run_id=first.run_id, session_id="sr-2", input="again"
+        )
+        monkeypatch.setattr(db, "get_session", real_get_session)
+
+        assert continued.forked_from_run_id == first.run_id, "the retry continued a placeholder instead of forking"
+        stored = db.get_session(session_id="sr-2", session_type="team")
+        assert stored is not None and stored.runs is not None
+        assert [len(r.messages or []) for r in stored.runs if r.run_id == first.run_id] == [
+            len(first.messages or [])
+        ], "the parent run was overwritten or lost"

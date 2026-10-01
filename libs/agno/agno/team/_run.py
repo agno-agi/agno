@@ -89,6 +89,7 @@ from agno.run.team import (
     TeamRunOutput,
     TeamRunOutputEvent,
 )
+from agno.run.utils import is_forking_continue
 from agno.session import TeamSession
 from agno.session._utils import continue_history_session, resolve_run_index
 from agno.tools.function import Function
@@ -7098,9 +7099,9 @@ def _truncate_team_run_to_checkpoint(run_response: "TeamRunOutput", message_inde
     run_response.last_checkpoint_at_message_index = message_index
 
 
-def _fork_team_run(run_response: "TeamRunOutput", message_index: int) -> "TeamRunOutput":
-    """Deep-clone a team run with a new ``run_id``, set fork metadata, and
-    truncate to ``message_index``.
+def _fork_team_run(run_response: "TeamRunOutput", message_index: int, run_id: Optional[str] = None) -> "TeamRunOutput":
+    """Deep-clone a team run with a new ``run_id`` (``run_id`` when the caller
+    pre-minted one), set fork metadata, and truncate to ``message_index``.
 
     Scope is the team's own state (messages, tools, requirements, metrics).
     Member runs that the original team produced stay where they are — they
@@ -7127,7 +7128,7 @@ def _fork_team_run(run_response: "TeamRunOutput", message_index: int) -> "TeamRu
     message_index = safe_truncation_index(run_response.messages or [], message_index)
 
     forked = copy.deepcopy(run_response)
-    forked.run_id = str(uuid4())
+    forked.run_id = run_id or str(uuid4())
     forked.forked_from_run_id = run_response.run_id
     forked.forked_from_message_index = message_index
     forked.metrics = RunMetrics()
@@ -7177,16 +7178,18 @@ def _apply_continue_modifiers_team(
     fork: bool,
     message_index: Optional[int],
     run_context: RunContext,
+    fork_run_id: Optional[str] = None,
 ) -> "TeamRunOutput":
     """Apply ``fork`` and/or ``message_index`` to a loaded team run_response.
 
     Mirrors agent's :func:`_apply_continue_modifiers`. Returns the same
     instance when only truncating, a new instance (with cloned members)
     when forking. ``run_context`` is re-pointed at the resulting run.
+    ``fork_run_id`` is the fork's id when the caller minted it up front.
     """
     if fork:
         idx = message_index if message_index is not None else len(run_response.messages or [])
-        run_response = _fork_team_run(run_response, idx)
+        run_response = _fork_team_run(run_response, idx, run_id=fork_run_id)
     elif message_index is not None:
         _truncate_team_run_to_checkpoint(run_response, message_index)
     _bind_run_context_to_team_run(team, run_context, run_response)
@@ -7713,8 +7716,7 @@ def continue_run_dispatch(
     # and must get a new run_id. Mid-flight states (RUNNING / PAUSED) resume
     # in place because their loop never finished. ERROR / CANCELLED are NOT
     # auto-forked (retry semantics) — same call as agent.
-    if not fork and run_response.status == RunStatus.completed:
-        fork = True
+    fork = is_forking_continue(run_response.status, fork=fork)
 
     # Apply modifiers BEFORE the requirements machinery. If we forked, the
     # rest of the dispatch operates on the new run with cloned members.
@@ -8826,6 +8828,33 @@ def _as_run_status(value: Union[RunStatus, str, None]) -> Union[RunStatus, str, 
         return value
 
 
+def _resolve_background_continue_team(
+    run_id: str,
+    stored_run: Optional[TeamRunOutput],
+    run_response: Optional[TeamRunOutput],
+    *,
+    fork: bool,
+    regenerate: bool,
+) -> Tuple[Optional[str], bool, Optional[str]]:
+    """Where a background team continue executes, as ``(fork_run_id, take_over_in_place, stream_run_id)``.
+
+    A forking continue gets its fork id here, so the dispatch forks under it and a retry re-forks
+    under the same one. Every rule reads the run the dispatch continues (the caller's run_response,
+    else the stored run). Only an in-place continue owns ``run_id``. A cancelled run is refused but
+    still answers under ``run_id``; a run_id that names no run gets no stream key.
+    """
+    stored_status = _as_run_status(getattr(stored_run, "status", None))
+    dispatch_status = _as_run_status(run_response.status) if run_response is not None else stored_status
+    if stored_run is None and run_response is None:
+        return None, False, None
+    if dispatch_status == RunStatus.cancelled:
+        return None, False, run_id
+    if is_forking_continue(dispatch_status, fork=fork, regenerate=regenerate):
+        fork_run_id = str(uuid4())
+        return fork_run_id, False, fork_run_id
+    return None, True, run_id
+
+
 async def _acontinue_run_background_stream(
     team: Team,
     run_context: RunContext,
@@ -8931,12 +8960,10 @@ async def _acontinue_run_background_stream(
     # caller shape passed to _acontinue_run_stream unchanged.
     persist_run = run_response if run_response is not None else stored_run
 
-    # A fork/regenerate executes under a new run id. A run-id-only continue of
-    # a completed run auto-forks downstream, while a cancelled run is refused.
-    # None of those paths may stamp PENDING/RUNNING over the source run.
-    take_over_in_place = not (fork or regenerate) and status_before_takeover not in (
-        RunStatus.completed,
-        RunStatus.cancelled,
+    # Only an in-place continue may stamp PENDING/RUNNING over the source run;
+    # a fork runs and streams under its own id.
+    fork_run_id, take_over_in_place, stream_run_id = _resolve_background_continue_team(
+        _run_id, stored_run, run_response, fork=fork, regenerate=regenerate
     )
     if persist_run is not None and take_over_in_place:
         persist_run.status = RunStatus.pending
@@ -8944,18 +8971,15 @@ async def _acontinue_run_background_stream(
         team_session.upsert_run(run_response=storage_run)
         # v3 substrate: persist the changed run through the O(1) per-run save.
         await asave_run(team, run=storage_run, session_id=session_id, user_id=user_id)
+        log_info(f"Background continue-run stream {_run_id} persisted with PENDING status")
     await asave_session(team, session=team_session)
 
-    # Pre-register only an in-place takeover. Forks and auto-forks are keyed by
-    # a new run id downstream; fabricating PENDING under the source key would
-    # corrupt the original run's reconnect state.
-    if take_over_in_place:
+    # Pre-register under the executing id so a /resume that lands before the
+    # first event attaches. The source key of a fork is never written.
+    if stream_run_id is not None and (take_over_in_place or fork_run_id is not None):
         with contextlib.suppress(Exception):
             # Fail-open: a Redis blip must not strand an accepted run.
-            await get_event_stream().register_run(_run_id, RunStatus.pending)
-
-    if take_over_in_place:
-        log_info(f"Background continue-run stream {_run_id} persisted with PENDING status")
+            await get_event_stream().register_run(stream_run_id, RunStatus.pending)
 
     # 2. Create queue for forwarding SSE strings to the caller
     sse_queue: asyncio.Queue[Optional[str]] = asyncio.Queue()
@@ -8967,6 +8991,8 @@ async def _acontinue_run_background_stream(
         event_stream = get_event_stream()
         from agno.os.utils import amark_continue_stream_running, format_sse_event_with_index
 
+        # Keyed on the source id: a queued fork has not sent the client its id
+        # yet, so the source id is the handle that cancels it.
         slot_cm = background_run_slot(run_id=_run_id)
         slot_held = False
         producer_terminal: Optional[RunStatus] = None
@@ -8979,10 +9005,11 @@ async def _acontinue_run_background_stream(
         async def _dispatch_sse(event: Any) -> None:
             """Buffer and fan out an event, then hand it to the original client."""
             event_index: Optional[int] = None
-            try:
-                event_index = await event_stream.add_event(_run_id, event)
-            except Exception:
-                log_warning(f"Failed to buffer event for continue-run {_run_id}")
+            if stream_run_id is not None:
+                try:
+                    event_index = await event_stream.add_event(stream_run_id, event)
+                except Exception:
+                    log_warning(f"Failed to buffer event for continue-run {stream_run_id}")
 
             sse_data = format_sse_event_with_index(event, event_index=event_index, run_id=_run_id)
 
@@ -9004,6 +9031,10 @@ async def _acontinue_run_background_stream(
                 # Reopen a prior PAUSED stream atomically, seed any expired
                 # event index from durable history, and then mark it RUNNING.
                 await amark_continue_stream_running(_run_id, component=team, session_id=session_id, user_id=user_id)
+            elif fork_run_id is not None:
+                with contextlib.suppress(Exception):
+                    # Fail-open: coordination writes must not kill the run.
+                    await event_stream.set_run_status(fork_run_id, RunStatus.running)
 
             async for event in _acontinue_run_stream(
                 team,
@@ -9026,6 +9057,7 @@ async def _acontinue_run_background_stream(
                 yield_run_output=True,
                 debug_mode=debug_mode,
                 background_tasks=background_tasks,
+                fork_run_id=fork_run_id,
                 **kwargs,
             ):
                 if isinstance(event, TeamRunOutput):
@@ -9041,7 +9073,7 @@ async def _acontinue_run_background_stream(
             # producer). producer_terminal makes the finally's sentinel say
             # CANCELLED - without it, complete_run's non-terminal coercion
             # turned an interrupted continue into a FALSE COMPLETED.
-            producer_terminal = RunStatus.cancelled if take_over_in_place else None
+            producer_terminal = RunStatus.cancelled
             from agno.run.concurrency import is_worker_managed
 
             if is_worker_managed(_run_id or ""):
@@ -9072,7 +9104,7 @@ async def _acontinue_run_background_stream(
             # arrive with run_response=None (router passes only run_id): load
             # the run from the session so the cancel is never silently skipped.
             log_info(f"Background continue-run stream {_run_id} cancelled while waiting for a slot")
-            producer_terminal = RunStatus.cancelled if take_over_in_place else None
+            producer_terminal = RunStatus.cancelled
             try:
                 cancelled_run: Optional[TeamRunOutput] = None
                 if take_over_in_place:
@@ -9207,10 +9239,10 @@ async def _acontinue_run_background_stream(
                 log_warning(f"Failed to signal primary queue for continue-run {_run_id} completion")
 
             # Mark the run terminal in the distributed event stream and wake
-            # all tails. The source key must keep the source run's status when
-            # the continue produced a fork with a different run id.
+            # all tails. A fork is finalized under its own id; the source key
+            # is never written.
             try:
-                if isinstance(producer_error, RunNotContinuableError):
+                if isinstance(producer_error, RunNotContinuableError) and fork_run_id is None:
                     refused_status = _as_run_status(
                         status_before_takeover if status_before_takeover is not None else prior_object_status
                     )
@@ -9225,37 +9257,22 @@ async def _acontinue_run_background_stream(
                     final_status = producer_terminal
                 elif producer_error is not None:
                     final_status = RunStatus.error
-                elif not take_over_in_place:
-                    # Explicit fork/regenerate and run-id auto-fork execute
-                    # under a different id. Use stored authority, never the
-                    # stale caller object or the fork output.
-                    source_status = _as_run_status(
-                        status_before_takeover if status_before_takeover is not None else prior_object_status
-                    )
-                    if isinstance(source_status, RunStatus) and source_status in (
-                        RunStatus.completed,
-                        RunStatus.paused,
-                        RunStatus.cancelled,
-                        RunStatus.error,
-                    ):
-                        final_status = source_status
-                    else:
-                        final_status = RunStatus.completed
                 else:
-                    # final_output covers run-id-only calls. Fall back to the
-                    # in-memory persisted object, then the exact durable row,
-                    # so a chained HITL pause is never advertised COMPLETED.
+                    # final_output covers run-id-only calls and forks. An in-place
+                    # continue falls back to the in-memory persisted object, then
+                    # the exact durable row, so a chained HITL pause is never
+                    # advertised COMPLETED. Those read the source run, never a fork.
                     produced_status: Union[RunStatus, str, None] = None
-                    if final_output is not None and getattr(final_output, "run_id", None) == _run_id:
+                    if final_output is not None and getattr(final_output, "run_id", None) == stream_run_id:
                         produced_status = final_output.status
-                    if produced_status is None and run_response is not None:
+                    if produced_status is None and run_response is not None and take_over_in_place:
                         produced_status = run_response.status
-                    if produced_status is None and persist_run is not None:
+                    if produced_status is None and persist_run is not None and take_over_in_place:
                         produced_status = persist_run.status
                     produced_status = _as_run_status(produced_status)
-                    if not isinstance(produced_status, RunStatus) or produced_status in (
-                        RunStatus.pending,
-                        RunStatus.running,
+                    if take_over_in_place and (
+                        not isinstance(produced_status, RunStatus)
+                        or produced_status in (RunStatus.pending, RunStatus.running)
                     ):
                         with contextlib.suppress(Exception):
                             lookup_session = await _aread_or_create_session(
@@ -9272,7 +9289,8 @@ async def _acontinue_run_background_stream(
                     else:
                         final_status = RunStatus.completed
 
-                await asyncio.shield(event_stream.complete_run(_run_id, final_status))
+                if stream_run_id is not None:
+                    await asyncio.shield(event_stream.complete_run(stream_run_id, final_status))
             except (Exception, asyncio.CancelledError):
                 log_warning(f"Failed to mark continue-run {_run_id} as completed in event stream")
 
@@ -9535,6 +9553,7 @@ async def _acontinue_run(
     # from the parent again instead of forking the abandoned fork.
     unresolved_dependencies = dict(run_context.dependencies) if isinstance(run_context.dependencies, dict) else None
     original_run_response = run_response
+    source_run_id = original_run_response.run_id if original_run_response is not None else run_id
     original_fork = fork
     original_input = input
 
@@ -9549,9 +9568,15 @@ async def _acontinue_run(
                     # Only a forking retry restarts from the caller's inputs; an in-place
                     # retry keeps the requirement resolution and routed member results.
                     if fork:
+                        # Before the fork, run_response still names the parent; only a
+                        # run this attempt forked is abandoned.
+                        if run_response is not None and run_response.run_id and run_response.run_id != source_run_id:
+                            await acleanup_run(run_response.run_id)
                         run_response = original_run_response
                         fork = original_fork
                         input = original_input
+                        if run_id:
+                            run_context.run_id = run_id
                     if unresolved_dependencies is not None and isinstance(run_context.dependencies, dict):
                         run_context.dependencies.clear()
                         run_context.dependencies.update(unresolved_dependencies)
@@ -9611,8 +9636,7 @@ async def _acontinue_run(
                 original_run_id_for_lineage = run_response.run_id if regenerate else None
 
                 # Auto-fork on COMPLETED — preserves 1-run-1-loop invariant.
-                if not fork and run_response.status == RunStatus.completed:
-                    fork = True
+                fork = is_forking_continue(run_response.status, fork=fork)
 
                 _did_snapshot_dispatch = fork or _will_truncate_team_run(run_response, continue_index)
                 run_response = _apply_continue_modifiers_team(team, run_response, fork, continue_index, run_context)
@@ -10017,6 +10041,7 @@ async def _acontinue_run_stream(
     yield_run_output: bool = False,
     debug_mode: Optional[bool] = None,
     background_tasks: Optional[Any] = None,
+    fork_run_id: Optional[str] = None,
     **kwargs: Any,
 ) -> AsyncIterator[Union[TeamRunOutputEvent, RunOutputEvent, TeamRunOutput]]:
     """Continue a paused team run (async, streaming)."""
@@ -10040,9 +10065,11 @@ async def _acontinue_run_stream(
     # run that skipped it.
     requirements_applied = False
     routed_member_results: List[str] = []
-    # See _acontinue_run: a forking retry restarts from the caller's inputs.
+    # See _acontinue_run: a forking retry restarts from the caller's inputs. A
+    # pre-minted fork_run_id makes the retry re-fork under the same id.
     unresolved_dependencies = dict(run_context.dependencies) if isinstance(run_context.dependencies, dict) else None
     original_run_response = run_response
+    source_run_id = original_run_response.run_id if original_run_response is not None else run_id
     original_fork = fork
     original_input = input
 
@@ -10057,9 +10084,15 @@ async def _acontinue_run_stream(
                     # Only a forking retry restarts from the caller's inputs; an in-place
                     # retry keeps the requirement resolution and routed member results.
                     if fork:
+                        # Before the fork, run_response still names the parent; only a
+                        # run this attempt forked is abandoned.
+                        if run_response is not None and run_response.run_id and run_response.run_id != source_run_id:
+                            await acleanup_run(run_response.run_id)
                         run_response = original_run_response
                         fork = original_fork
                         input = original_input
+                        if run_id:
+                            run_context.run_id = run_id
                     if unresolved_dependencies is not None and isinstance(run_context.dependencies, dict):
                         run_context.dependencies.clear()
                         run_context.dependencies.update(unresolved_dependencies)
@@ -10119,11 +10152,12 @@ async def _acontinue_run_stream(
                 original_run_id_for_lineage = run_response.run_id if regenerate else None
 
                 # Auto-fork on COMPLETED — preserves 1-run-1-loop invariant.
-                if not fork and run_response.status == RunStatus.completed:
-                    fork = True
+                fork = is_forking_continue(run_response.status, fork=fork)
 
                 _did_snapshot_dispatch = fork or _will_truncate_team_run(run_response, continue_index)
-                run_response = _apply_continue_modifiers_team(team, run_response, fork, continue_index, run_context)
+                run_response = _apply_continue_modifiers_team(
+                    team, run_response, fork, continue_index, run_context, fork_run_id=fork_run_id
+                )
                 if regenerate and original_run_id_for_lineage:
                     run_response.regenerated_from = original_run_id_for_lineage
                     if replace_original is not False and run_response.forked_from_run_id:
@@ -10707,9 +10741,6 @@ async def _acontinue_run_stream(
                 # ERROR run row over the target run.
                 raise
             except Exception as e:
-                if run_response is None:
-                    run_response = TeamRunOutput(run_id=run_id)
-                run_response = cast(TeamRunOutput, run_response)
                 if attempt < num_attempts - 1:
                     if team.exponential_backoff:
                         delay = team.delay_between_retries * (2**attempt)
@@ -10718,6 +10749,12 @@ async def _acontinue_run_stream(
                     log_warning(f"Attempt {attempt + 1}/{num_attempts} failed. Retrying in {delay}s...: {str(e)}")
                     await asyncio.sleep(delay)
                     continue
+
+                # Built only once no retry is left: a retry that found run_response set would
+                # continue this empty stub instead of loading the stored run.
+                if run_response is None:
+                    run_response = TeamRunOutput(run_id=run_id)
+                run_response = cast(TeamRunOutput, run_response)
 
                 run_response.status = RunStatus.error
                 flush_in_flight_messages_on_error_team(run_response, locals().get("run_messages"))
