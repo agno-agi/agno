@@ -2431,6 +2431,77 @@ async def test_tool_run_api_refuses_an_unverified_bearer_token():
         assert "ran" not in response.text
 
 
+async def test_tool_run_api_accepts_a_valid_mcp_auth_token():
+    """The gate must admit a real token, not just refuse bad ones.
+
+    A suite that only asserts 401 passes whether the route is correctly gated or simply
+    broken, so this signs a token the configured verifier actually accepts. fastmcp's auth
+    middleware wraps the whole MCP sub-app (it inspects the method and headers, never the
+    path), so this custom route is verified upstream and ``_denied`` reads that verdict
+    rather than re-verifying.
+    """
+    import time
+
+    import jwt
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from fastmcp.server.auth.providers.jwt import JWTVerifier
+
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    private_pem = key.private_bytes(
+        serialization.Encoding.PEM,
+        serialization.PrivateFormat.PKCS8,
+        serialization.NoEncryption(),
+    ).decode()
+    public_pem = (
+        key.public_key()
+        .public_bytes(serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo)
+        .decode()
+    )
+    issuer, audience = "https://issuer.example", "test-aud"
+
+    def _token(**overrides) -> str:
+        claims = {
+            "sub": "alice",
+            "iss": issuer,
+            "aud": audience,
+            "iat": int(time.time()),
+            "exp": int(time.time()) + 3600,
+        }
+        claims.update(overrides)
+        return jwt.encode(claims, private_pem, algorithm="RS256")
+
+    def _ran() -> str:
+        """Returns a marker."""
+        return "ran"
+
+    os = AgentOS(
+        agents=[_agent()],
+        mcp=MCPConfig(tools=[_ran]),
+        mcp_auth=JWTVerifier(public_key=public_pem, issuer=issuer, audience=audience),
+    )
+    app = get_mcp_server(os)
+
+    async with _mcp_client(app, base_url="http://localhost") as client:
+
+        async def _run(header: str):
+            return await client.post(
+                "/mcp/server/tools/_ran/run", json={"arguments": {}}, headers={"Authorization": header}
+            )
+
+        accepted = await _run(f"Bearer {_token()}")
+        forged = await _run("Bearer not-a-token")
+        expired = await _run(f"Bearer {_token(iat=int(time.time()) - 7200, exp=int(time.time()) - 3600)}")
+        wrong_audience = await _run(f"Bearer {_token(aud='somewhere-else')}")
+
+    assert accepted.status_code == 200, accepted.text
+    assert accepted.json()["isError"] is False
+    assert "ran" in accepted.text
+    for refused in (forged, expired, wrong_audience):
+        assert refused.status_code == 401, refused.text
+        assert "ran" not in refused.text
+
+
 def _jwt_verifier():
     from fastmcp.server.auth.providers.jwt import JWTVerifier
 
