@@ -59,6 +59,8 @@ from agno.os.middleware.user_scope import (
     caller_is_admin,
     get_scoped_user_id,
     run_matches_component,
+    sync_directory_from_request,
+    verify_run_belongs_to_component,
     verify_run_in_session,
     verify_run_in_session_via_db,
 )
@@ -72,11 +74,11 @@ from agno.os.schema import (
 )
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import (
+    adraft_preview_identity,
     afinalize_continue_stream,
     allow_draft_preview,
     amark_continue_stream_running,
     classify_upload_file,
-    draft_preview_identity,
     find_factory_by_id,
     format_sse_event,
     get_agent_by_id,
@@ -696,6 +698,9 @@ def get_agent_router(
             if user_id and user_id != state_user_id:
                 log_warning("User ID parameter passed in both request state and kwargs, using request state")
             user_id = state_user_id
+        # No-auth roster: an unauthenticated run's user_id still registers the person in the
+        # directory (no-op when auth is on -- the middleware already provisioned/enforced).
+        sync_directory_from_request(request, user_id)
         if hasattr(request.state, "session_id") and request.state.session_id is not None:
             if session_id and session_id != request.state.session_id:
                 log_warning("Session ID parameter passed in both request state and kwargs, using request state")
@@ -1186,6 +1191,16 @@ def get_agent_router(
                     component_type="agents",
                     component_id=agent_id,
                 )
+            else:
+                # RBAC without isolation: the run must still belong to the gated component.
+                await verify_run_belongs_to_component(
+                    request,
+                    getattr(factory, "db", None) or os.db,
+                    component_type="agents",
+                    component_id=agent_id,
+                    run_id=run_id,
+                    session_id=session_id,
+                )
 
             # Tombstone a still-queued durable ticket first: intent alone
             # does not stop a job no task is executing yet
@@ -1229,6 +1244,16 @@ def get_agent_router(
                 scoped_user_id,
                 component_type="agents",
                 component_id=agent_id,
+            )
+        else:
+            # RBAC without isolation: the run must still belong to the gated component.
+            await verify_run_belongs_to_component(
+                request,
+                getattr(agent, "db", None) or os.db,
+                component_type="agents",
+                component_id=agent_id,
+                run_id=run_id,
+                session_id=session_id,
             )
 
         # Tombstone a still-queued durable ticket first: intent alone does not
@@ -1428,6 +1453,16 @@ def get_agent_router(
                 component_type="agents",
                 component_id=agent_id,
             )
+        elif not isinstance(agent, RemoteAgent):
+            # RBAC without isolation: the run must still belong to the gated component.
+            await verify_run_belongs_to_component(
+                request,
+                getattr(agent, "db", None) or os.db,
+                component_type="agents",
+                component_id=agent_id,
+                run_id=run_id,
+                session_id=session_id,
+            )
 
         # Version-stable continuation: a run started with an explicitly pinned
         # version (draft preview) recorded it in its run metadata; continue on
@@ -1443,7 +1478,7 @@ def get_agent_router(
                 # must not resolve (defense against a forged/leaked stamp).
                 # Same 404 the run-start route raises, so a denial is
                 # indistinguishable from the component being absent.
-                if not allow_draft_preview(os.db, agent_id, stamped_version, *draft_preview_identity(request)):
+                if not allow_draft_preview(os.db, agent_id, stamped_version, *await adraft_preview_identity(request)):
                     raise HTTPException(status_code=404, detail="Agent not found")
                 try:
                     stamped_agent = get_agent_by_id(
@@ -1774,6 +1809,16 @@ def get_agent_router(
         scoped_user_id = get_scoped_user_id(request)
         effective_user_id = scoped_user_id or user_id
 
+        # The source session must belong to this agent: the per-resource gate authorised
+        # agent_id, not whichever session id the client named.
+        await verify_run_belongs_to_component(
+            request,
+            getattr(agent, "db", None) or os.db,
+            component_type="agents",
+            component_id=agent_id,
+            session_id=session_id,
+        )
+
         try:
             new_session_id = await agent.afork_session(  # type: ignore[union-attr]
                 source_session_id=session_id,
@@ -1827,13 +1872,13 @@ def get_agent_router(
         # Filter agents based on user's scopes (only if authorization is enabled)
         if getattr(request.state, "authorization_enabled", False):
             from agno.os.auth import (
+                afilter_resources_by_access,
+                aget_accessible_resources,
                 build_insufficient_permissions_detail,
-                filter_resources_by_access,
-                get_accessible_resources,
             )
 
             # Check if user has any agent scopes at all
-            accessible_ids = get_accessible_resources(request, "agents")
+            accessible_ids = await aget_accessible_resources(request, "agents")
             if not accessible_ids:
                 required_scopes = getattr(request.state, "required_scopes", None)
                 raise HTTPException(
@@ -1842,7 +1887,7 @@ def get_agent_router(
                 )
 
             # Limit results based on the user's access/scopes
-            accessible_agents = filter_resources_by_access(request, os.agents or [], "agents")
+            accessible_agents = await afilter_resources_by_access(request, os.agents or [], "agents")
         else:
             accessible_agents = os.agents or []
 
@@ -1890,7 +1935,7 @@ def get_agent_router(
             if db_agents:
                 # Apply the same RBAC filtering to DB-loaded agents
                 if getattr(request.state, "authorization_enabled", False):
-                    db_agents = filter_resources_by_access(request, db_agents, "agents")
+                    db_agents = await afilter_resources_by_access(request, db_agents, "agents")
                 for db_agent in db_agents:
                     agent_response = await AgentResponse.from_agent(agent=db_agent, is_component=True)
                     agents.append(agent_response)
@@ -2278,6 +2323,16 @@ def get_agent_router(
                     component_type="agents",
                     component_id=agent_id,
                 )
+            else:
+                # RBAC without isolation: the run must still belong to the gated component.
+                await verify_run_belongs_to_component(
+                    request,
+                    getattr(factory, "db", None) or os.db,
+                    component_type="agents",
+                    component_id=agent_id,
+                    run_id=run_id,
+                    session_id=session_id,
+                )
             # Without a concrete agent, we can only serve buffer events for
             # this run; the DB fallback path inside the generator requires an
             # entity, so signal early if the buffer doesn't have it.
@@ -2310,6 +2365,16 @@ def get_agent_router(
                 scoped_user_id,
                 component_type="agents",
                 component_id=agent_id,
+            )
+        else:
+            # RBAC without isolation: the run must still belong to the gated component.
+            await verify_run_belongs_to_component(
+                request,
+                getattr(agent, "db", None) or os.db,
+                component_type="agents",
+                component_id=agent_id,
+                run_id=run_id,
+                session_id=session_id,
             )
 
         return StreamingResponse(
