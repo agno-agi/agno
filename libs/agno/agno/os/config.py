@@ -171,30 +171,20 @@ class MCPConfig(BaseModel):
     # outright on raw bytes.
     tools: Optional[List[Any]] = None
 
-    # Opt in to the 8 default tools, including continue_run/cancel_run, alongside
-    # your own ``tools`` surface. Plain
-    # AgentOS(mcp=True) still serves all default tools. ``enable_builtin_tools`` is
-    # the deprecated spelling, still accepted at construction.
+    # Opt in to the 8 default tools alongside your own ``tools``. ``AgentOS(mcp=True)``
+    # still serves them all. ``enable_builtin_tools`` is the deprecated spelling.
     default_tools: bool = False
 
-    # Opt in to ``continue_run``/``cancel_run`` alongside components exposed via
-    # ``tools``, without enabling all default tools. Enable this when clients need
-    # to resume paused (HITL) runs or request cancellation. This flag is additive:
-    # False does not remove the pair from the default tools enabled by
-    # ``default_tools=True``. The added pair is bounded
-    # to the publication list: when it registered only because exposures exist (not
-    # via ``core`` or an explicit include), it refuses runs of unpublished roster
-    # components, and it is scope-gated per component like the tool that produced the
-    # run.
+    # Opt in to ``continue_run``/``cancel_run`` for components exposed via ``tools``, so
+    # paused (HITL) runs can resume without the full default surface. Additive: False does
+    # not remove the pair enabled by ``default_tools=True``. When it registers only via
+    # exposure, it is bounded to the published components and scope-gated per component.
     lifecycle_tools: bool = False
 
-    # Finer scoping over enabled default tools via their tags (see ``MCP_BUILTIN_TAGS``).
-    # These tags do not opt in to default tools; set ``default_tools=True`` first.
-    # When ``include_tags`` is set, only default tools carrying one of those tags are
-    # registered (name ``lifecycle`` explicitly to serve just the run-resumption pair).
-    # ``exclude_tags`` is then subtracted. With ``default_tools=False`` there are no
-    # default tools to scope, but ``exclude_tags={"lifecycle"}`` still disables the
-    # exposure ride-along (see ``lifecycle_tools``).
+    # Scope the enabled default tools by tag (see ``MCP_BUILTIN_TAGS``); these do not opt in
+    # to them, so set ``default_tools=True`` first. ``include_tags`` keeps only tools carrying
+    # one of those tags, then ``exclude_tags`` is subtracted. ``exclude_tags={"lifecycle"}``
+    # also disables the exposure ride-along (see ``lifecycle_tools``).
     include_tags: Optional[Set[MCPBuiltinTag]] = None
     exclude_tags: Optional[Set[MCPBuiltinTag]] = None
 
@@ -242,13 +232,10 @@ class MCPConfig(BaseModel):
     # ``authorize`` layers, in the order listed.
     middleware: Optional[List[Any]] = None
 
-    # Disable transport sessions for legacy MCP clients (2025-11-25 and earlier).
-    # Modern requests (2026-07-28) are always sessionless, regardless of this flag.
-    # Legacy stateless mode loses server-to-client requests and SSE resumability;
-    # request-scoped progress still works. Agno conversation/run state is independent.
-    # Only True is forwarded; False preserves FastMCP settings, including
-    # FASTMCP_STATELESS_HTTP. Application storage/coordination must still be shared
-    # when serving multiple workers.
+    # Disable transport sessions for legacy MCP clients (2025-11-25 and earlier); modern
+    # requests are always sessionless. Costs server-initiated requests and SSE resumability,
+    # not request-scoped progress or Agno run state. Only True is forwarded, so False leaves
+    # FastMCP settings (including FASTMCP_STATELESS_HTTP) in control.
     stateless: bool = False
 
     @model_validator(mode="before")

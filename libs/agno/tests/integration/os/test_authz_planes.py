@@ -16,6 +16,7 @@ from agno.os.authz._composite import CompositeAuthorizationProvider  # noqa: E40
 from agno.os.authz.admin_router import get_roles_router  # noqa: E402
 from agno.os.authz.provider import AuthorizationContext  # noqa: E402
 from agno.os.authz.scope_provider import ScopeAuthorizationProvider  # noqa: E402
+from agno.os.utils import flatten_routes  # noqa: E402
 
 SECRET = "composite-secret-at-least-256-bits-long-padding-xxxxxxxx"
 OS_ID = "composite-os"
@@ -304,7 +305,9 @@ def test_workflow_continue_route_carries_the_approval_gate():
     app = AgentOS(id="parity-os", workflows=[wf]).get_app()
 
     def _dep_names(path_suffix: str, method: str) -> set:
-        for route in app.routes:
+        # FastAPI keeps each included router as one nested entry in app.routes; flatten
+        # them so the router's own routes are visible.
+        for route in flatten_routes(app.routes):
             if getattr(route, "path", "").endswith(path_suffix) and method in getattr(route, "methods", set()):
                 return {d.call.__qualname__ for d in route.dependant.dependencies}
         raise AssertionError(f"route {method} {path_suffix} not found")
