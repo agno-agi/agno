@@ -326,8 +326,7 @@ class MCPConfig(BaseModel):
         """Whether the exposure ride-along will serve continue_run/cancel_run.
 
         Mirrors the ``has_exposures and lifecycle_tools and "lifecycle" not in exclude_tags``
-        arm of ``_enabled_builtin_tags`` in ``agno/os/mcp.py``. Exposures are recognised by
-        type so this module keeps its typing+pydantic-only imports.
+        arm of ``_enabled_builtin_tags`` in ``agno/os/mcp.py``.
         """
         if not self.lifecycle_tools or "lifecycle" in (self.exclude_tags or set()):
             return False
@@ -362,8 +361,7 @@ class MCPConfig(BaseModel):
 
         # include_tags only scopes enabled default tools, so without default_tools the
         # requested tags register nothing. ``lifecycle`` is the exception: the ride-along
-        # serves the pair when an exposed component is published and the tag is not
-        # excluded, so warn on what the build will actually leave out.
+        # serves the pair when an exposed component is published and the tag is not excluded.
         if not self.default_tools and self.include_tags:
             requested = set(self.include_tags)
             if self._lifecycle_rides_along():
