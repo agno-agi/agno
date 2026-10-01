@@ -401,7 +401,8 @@ def _run(
     """
     from agno.agent._hooks import execute_post_hooks, execute_pre_hooks
     from agno.agent._init import disconnect_connectable_tools
-    from agno.agent._messages import _recompact_after_overflow, get_run_messages
+    from agno.compaction._runtime import recompact_after_overflow
+    from agno.agent._messages import get_run_messages
     from agno.agent._response import (
         convert_response_to_structured_format,
         generate_followups,
@@ -554,8 +555,8 @@ def _run(
                 model_response: ModelResponse = call_model_with_fallback(
                     agent.model,
                     agent.fallback_config,
-                    on_context_overflow=lambda: _recompact_after_overflow(
-                        agent, agent_session, run_messages, run_response, _tools
+                    on_context_overflow=lambda: recompact_after_overflow(
+                        agent, agent_session, run_messages.messages, run_response, _tools
                     ),
                     messages=run_messages.messages,
                     tools=_tools,
@@ -1547,7 +1548,8 @@ async def _arun(
     """
     from agno.agent._hooks import aexecute_post_hooks, aexecute_pre_hooks
     from agno.agent._init import disconnect_connectable_tools, disconnect_mcp_tools
-    from agno.agent._messages import _recompact_after_overflow, aget_run_messages
+    from agno.compaction._runtime import recompact_after_overflow
+    from agno.agent._messages import aget_run_messages
     from agno.agent._response import (
         agenerate_followups,
         agenerate_response_with_output_model,
@@ -1705,8 +1707,8 @@ async def _arun(
                 model_response: ModelResponse = await acall_model_with_fallback(
                     agent.model,
                     agent.fallback_config,
-                    on_context_overflow=lambda: _recompact_after_overflow(
-                        agent, agent_session, run_messages, run_response, _tools
+                    on_context_overflow=lambda: recompact_after_overflow(
+                        agent, agent_session, run_messages.messages, run_response, _tools
                     ),
                     messages=run_messages.messages,
                     tools=_tools,
@@ -3805,7 +3807,7 @@ def _continue_run(
     # Register run for cancellation tracking
     from agno.agent._hooks import execute_post_hooks
     from agno.agent._init import disconnect_connectable_tools
-    from agno.agent._messages import _recompact_after_overflow
+    from agno.compaction._runtime import recompact_after_overflow
     from agno.agent._response import (
         convert_response_to_structured_format,
         generate_followups,
@@ -3835,8 +3837,8 @@ def _continue_run(
                 model_response: ModelResponse = call_model_with_fallback(
                     agent.model,
                     agent.fallback_config,
-                    on_context_overflow=lambda: _recompact_after_overflow(
-                        agent, session, run_messages, run_response, tools
+                    on_context_overflow=lambda: recompact_after_overflow(
+                        agent, session, run_messages.messages, run_response, tools
                     ),
                     messages=run_messages.messages,
                     response_format=response_format,
@@ -4834,7 +4836,8 @@ async def _acontinue_run(
     """
     from agno.agent._hooks import aexecute_post_hooks
     from agno.agent._init import disconnect_connectable_tools, disconnect_mcp_tools
-    from agno.agent._messages import _recompact_after_overflow, aget_continue_run_messages
+    from agno.compaction._runtime import recompact_after_overflow
+    from agno.agent._messages import aget_continue_run_messages
     from agno.agent._response import (
         agenerate_followups,
         agenerate_response_with_output_model,
@@ -5085,8 +5088,8 @@ async def _acontinue_run(
                 model_response: ModelResponse = await acall_model_with_fallback(
                     agent.model,
                     agent.fallback_config,
-                    on_context_overflow=lambda: _recompact_after_overflow(
-                        agent, agent_session, run_messages, run_response, _tools
+                    on_context_overflow=lambda: recompact_after_overflow(
+                        agent, agent_session, run_messages.messages, run_response, _tools
                     ),
                     messages=run_messages.messages,
                     response_format=response_format,

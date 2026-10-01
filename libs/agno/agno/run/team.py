@@ -2,7 +2,7 @@ from copy import copy
 from dataclasses import asdict, dataclass, field
 from enum import Enum
 from time import time
-from typing import Any, Dict, List, Optional, Sequence, Union, get_args
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Union, get_args
 
 from pydantic import BaseModel
 
@@ -22,6 +22,9 @@ from agno.utils.media import (
     reconstruct_response_audio,
     reconstruct_videos,
 )
+
+if TYPE_CHECKING:
+    from agno.compaction.types import CompactionRecord
 
 
 @dataclass
@@ -171,6 +174,9 @@ class TeamRunEvent(str, Enum):
 
     compression_started = "TeamCompressionStarted"
     compression_completed = "TeamCompressionCompleted"
+
+    compaction_started = "TeamCompactionStarted"
+    compaction_completed = "TeamCompactionCompleted"
 
     followups_started = "TeamFollowupsStarted"
     followups_completed = "TeamFollowupsCompleted"
@@ -512,6 +518,24 @@ class CompressionCompletedEvent(BaseTeamRunEvent):
 
 
 @dataclass
+class CompactionStartedEvent(BaseTeamRunEvent):
+    """Event sent when conversation compaction is about to start"""
+
+    event: str = TeamRunEvent.compaction_started.value
+
+
+@dataclass
+class CompactionCompletedEvent(BaseTeamRunEvent):
+    """Event sent when conversation compaction has completed"""
+
+    event: str = TeamRunEvent.compaction_completed.value
+    messages_compacted: Optional[int] = None
+    tokens_before: Optional[int] = None
+    tokens_after: Optional[int] = None
+    archived: Optional[bool] = None
+
+
+@dataclass
 class FollowupsStartedEvent(BaseTeamRunEvent):
     event: str = TeamRunEvent.followups_started.value
 
@@ -671,6 +695,8 @@ TeamRunOutputEvent = Union[
     ModelRequestCompletedEvent,
     CompressionStartedEvent,
     CompressionCompletedEvent,
+    CompactionStartedEvent,
+    CompactionCompletedEvent,
     FollowupsStartedEvent,
     FollowupsCompletedEvent,
     TaskIterationStartedEvent,
@@ -720,6 +746,8 @@ TEAM_RUN_EVENT_TYPE_REGISTRY = {
     TeamRunEvent.model_request_completed.value: ModelRequestCompletedEvent,
     TeamRunEvent.compression_started.value: CompressionStartedEvent,
     TeamRunEvent.compression_completed.value: CompressionCompletedEvent,
+    TeamRunEvent.compaction_started.value: CompactionStartedEvent,
+    TeamRunEvent.compaction_completed.value: CompactionCompletedEvent,
     TeamRunEvent.followups_started.value: FollowupsStartedEvent,
     TeamRunEvent.followups_completed.value: FollowupsCompletedEvent,
     TeamRunEvent.task_iteration_started.value: TaskIterationStartedEvent,
@@ -761,6 +789,8 @@ class TeamRunOutput:
 
     messages: Optional[List[Message]] = None
     metrics: Optional[RunMetrics] = None
+    # What compaction did to this run's context, when it ran.
+    compaction: Optional["CompactionRecord"] = None
     model: Optional[str] = None
     model_provider: Optional[str] = None
 
@@ -848,6 +878,7 @@ class TeamRunOutput:
     _HAND_SERIALIZED_FIELDS = (
         "messages",
         "metrics",
+        "compaction",
         "status",
         "tools",
         "metadata",
@@ -882,6 +913,9 @@ class TeamRunOutput:
 
         if self.metrics is not None:
             _dict["metrics"] = self.metrics.to_dict() if isinstance(self.metrics, RunMetrics) else self.metrics
+
+        if self.compaction is not None:
+            _dict["compaction"] = self.compaction.to_dict() if hasattr(self.compaction, "to_dict") else self.compaction
 
         if self.status is not None:
             _dict["status"] = self.status.value if isinstance(self.status, RunStatus) else self.status
@@ -1041,6 +1075,12 @@ class TeamRunOutput:
         if metrics:
             metrics = RunMetrics.from_dict(metrics)
 
+        compaction = data.pop("compaction", None)
+        if compaction:
+            from agno.compaction.types import CompactionRecord
+
+            compaction = CompactionRecord.from_dict(compaction)
+
         citations = data.pop("citations", None)
         citations = Citations.model_validate(citations) if citations else None
 
@@ -1056,6 +1096,7 @@ class TeamRunOutput:
         return cls(
             messages=messages,
             metrics=metrics,
+            compaction=compaction,
             member_responses=parsed_member_responses,
             additional_input=additional_input,
             reasoning_steps=reasoning_steps,

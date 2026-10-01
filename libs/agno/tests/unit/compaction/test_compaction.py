@@ -116,7 +116,7 @@ def test_tool_loop_context_is_measured_once_not_summed_per_call():
     that produces the figure is what is under test.
     """
     from agno.agent import Agent
-    from agno.agent._messages import _estimated_context_tokens
+    from agno.compaction._runtime import estimated_context_tokens
 
     messages = [
         Message(role="system", content="sys " * 100),
@@ -133,10 +133,10 @@ def test_tool_loop_context_is_measured_once_not_summed_per_call():
         messages.append(Message(role="tool", tool_call_id=f"c{i}", tool_name="search", content="result " * 300))
 
     agent = Agent()
-    context = _estimated_context_tokens(agent, messages)
+    context = estimated_context_tokens(agent, messages)
 
     # What billing telemetry would have reported: every intermediate request, summed.
-    billed = sum(_estimated_context_tokens(agent, messages[: 2 + 2 * (i + 1)]) for i in range(4))
+    billed = sum(estimated_context_tokens(agent, messages[: 2 + 2 * (i + 1)]) for i in range(4))
 
     assert context is not None
     assert billed > context * 2, (billed, context)
@@ -154,14 +154,14 @@ def test_context_estimate_counts_more_than_history():
     Measuring history alone would leave the trigger blind to that.
     """
     from agno.agent import Agent
-    from agno.agent._messages import _estimated_context_tokens
+    from agno.compaction._runtime import estimated_context_tokens
 
     history = [Message(role="user", content="hi"), Message(role="assistant", content="hello")]
     with_system = [Message(role="system", content="instructions " * 500)] + history
 
     agent = Agent()
 
-    assert _estimated_context_tokens(agent, with_system) > _estimated_context_tokens(agent, history)
+    assert estimated_context_tokens(agent, with_system) > estimated_context_tokens(agent, history)
 
 
 def test_context_size_is_estimated_locally_when_not_supplied():
@@ -177,46 +177,18 @@ def test_context_size_is_estimated_locally_when_not_supplied():
     assert c.should_compact(_transcript(), model=ExplodingModel()) is True
 
 
-def test_replay_window_below_the_tail_warns(caplog):
-    """Widening a number the user set must not be silent.
-
-    num_history_runs at or below uncompacted_runs cannot express a working compaction - the tail
-    would not fit in what the planner may read, so no anchor could ever resolve. The planner
-    widens its own read to avoid dropping every summary, and says so: quietly ignoring a
-    setting is worse than the misconfiguration it works around.
-    """
+def test_a_small_replay_window_is_not_a_misconfiguration(caplog):
+    """num_history_runs bounds only what a run sends; compaction reads its own window. A window at
+    or below the kept tail overrides nothing, so there is nothing to warn about."""
     from agno.agent import Agent, _init
 
-    for window, keep in ((3, 5), (5, 5)):
+    for window, keep in ((2, 5), (5, 5), (20, 5)):
         caplog.clear()
         agent = Agent(num_history_runs=window, compaction=Compaction(uncompacted_runs=keep))
         with caplog.at_level(logging.WARNING, logger="agno"):
             _init.set_compaction(agent)
-        assert any("uncompacted_runs" in r.message for r in caplog.records), (window, keep)
-        # The replay setting itself is untouched; only the planner reads wider.
+        assert not [r for r in caplog.records if "num_history_runs" in r.message], (window, keep)
         assert agent.num_history_runs == window
-
-
-def test_workable_replay_window_is_not_warned_about(caplog):
-    """A window larger than the tail is a normal configuration, not a mistake."""
-    from agno.agent import Agent, _init
-
-    agent = Agent(num_history_runs=20, compaction=Compaction(uncompacted_runs=5))
-    with caplog.at_level(logging.WARNING, logger="agno"):
-        _init.set_compaction(agent)
-
-    assert not [r for r in caplog.records if "uncompacted_runs" in r.message]
-
-
-def test_defaults_the_user_did_not_choose_are_not_warned_about(caplog):
-    """compaction=True collides two framework defaults - that is not the user's mistake."""
-    from agno.agent import Agent, _init
-
-    agent = Agent(compaction=True)
-    with caplog.at_level(logging.WARNING, logger="agno"):
-        _init.set_compaction(agent)
-
-    assert not [r for r in caplog.records if "uncompacted_runs" in r.message]
 
 
 def test_compaction_is_not_starved_by_the_default_history_window():
@@ -227,28 +199,24 @@ def test_compaction_is_not_starved_by_the_default_history_window():
     outside the window cannot resolve, dropping the summary along with the turns it replaced.
     """
     from agno.agent import Agent
-    from agno.agent._messages import _compaction_history_runs
+    from agno.compaction._runtime import compaction_history_runs
 
     agent = Agent(compaction=Compaction(uncompacted_runs=5))
 
     assert agent.num_history_runs == 3  # the replay default is unchanged
-    assert _compaction_history_runs(agent) > 5  # but the planner sees past it
+    assert compaction_history_runs(agent) > 5  # but the planner sees past it
 
 
-def test_explicit_history_window_is_respected_but_never_strands_the_anchor():
-    """An explicit window is the user's call on replay - until it would lose data.
-
-    Below the kept tail the boundary anchor falls outside the window and stops resolving, which
-    discards the summary silently. The window is raised just enough to prevent that.
-    """
+def test_compaction_reads_past_any_replay_window():
+    """The planner's read is never narrower than what a run sends - those messages are selected from
+    it - and otherwise reads wide, whether the window is the default or the user's choice."""
     from agno.agent import Agent
-    from agno.agent._messages import _compaction_history_runs
+    from agno.compaction._runtime import compaction_history_runs
 
-    roomy = Agent(num_history_runs=50, compaction=Compaction(uncompacted_runs=5))
-    assert _compaction_history_runs(roomy) == 50
-
-    too_small = Agent(num_history_runs=2, compaction=Compaction(uncompacted_runs=5))
-    assert _compaction_history_runs(too_small) > 5
+    for window in (2, 3, 50):
+        assert compaction_history_runs(Agent(num_history_runs=window, compaction=Compaction())) == 500
+    assert compaction_history_runs(Agent(num_history_runs=1_000, compaction=Compaction())) == 1_000
+    assert compaction_history_runs(Agent(num_history_runs=2)) == 2  # no compaction, no widening
 
 
 class _RecordingModel:
@@ -472,9 +440,9 @@ def test_compaction_on_an_async_db_is_unsupported_like_any_other_db(caplog):
 def test_history_window_untouched_without_compaction():
     """The widening is compaction's business only."""
     from agno.agent import Agent
-    from agno.agent._messages import _compaction_history_runs
+    from agno.compaction._runtime import compaction_history_runs
 
-    assert _compaction_history_runs(Agent()) == 3
+    assert compaction_history_runs(Agent()) == 3
 
 
 def test_manual_compact_folds_without_the_size_trigger():
@@ -484,7 +452,7 @@ def test_manual_compact_folds_without_the_size_trigger():
     judgement compact_at_tokens exists to make, so only that threshold is bypassed.
     """
     from agno.agent import Agent
-    from agno.agent._messages import _history_for_compaction, compact_now
+    from agno.compaction._runtime import compact_now, history_for_compaction
     from agno.run.agent import RunOutput
     from agno.session.agent import AgentSession
 
@@ -502,7 +470,7 @@ def test_manual_compact_folds_without_the_size_trigger():
     compaction = Compaction(compact_at_tokens=10_000_000, uncompacted_runs=3, archive=False, model=_StubModel())
     agent = Agent(compaction=compaction)
 
-    result = compact_now(agent, session, _history_for_compaction(agent, session))
+    result = compact_now(agent, session, history_for_compaction(agent, session))
 
     assert result.compacted
     assert result.record is not None
@@ -519,7 +487,7 @@ def test_manual_compact_still_honours_the_ratio_guard():
     is reported as a status a caller can show, not raised and not silent.
     """
     from agno.agent import Agent
-    from agno.agent._messages import compact_now
+    from agno.compaction._runtime import compact_now
     from agno.session.agent import AgentSession
 
     # Enough turns that a boundary exists - otherwise this declines as NOTHING_TO_FOLD and
@@ -550,7 +518,7 @@ def test_not_worth_it_message_carries_the_numbers():
     hair from one that was never close - and the ratio is what says which lever to reach for.
     """
     from agno.agent import Agent
-    from agno.agent._messages import compact_now
+    from agno.compaction._runtime import compact_now
     from agno.session.agent import AgentSession
 
     # 4 turns with uncompacted_runs=2 puts the fold and the tail at the same size: ratio 1.00.
@@ -594,7 +562,7 @@ def test_declines_are_reported_not_raised():
     failure, and force every caller to catch it.
     """
     from agno.agent import Agent
-    from agno.agent._messages import compact_now
+    from agno.compaction._runtime import compact_now
     from agno.session.agent import AgentSession
 
     agent = Agent(compaction=Compaction(uncompacted_runs=2, archive=False, model=_StubModel()))
@@ -622,7 +590,7 @@ def test_declines_are_reported_not_raised():
 
 def test_compaction_not_enabled_is_a_status_not_a_crash():
     from agno.agent import Agent
-    from agno.agent._messages import compact_now
+    from agno.compaction._runtime import compact_now
     from agno.session.agent import AgentSession
 
     result = compact_now(Agent(), AgentSession(session_id="s1", runs=[]), [Message(role="user", content="x")])
@@ -983,7 +951,7 @@ def test_context_overflow_folds_and_asks_for_a_retry():
     cannot - and reports whether the payload is worth resending.
     """
     from agno.agent import Agent
-    from agno.agent._messages import _recompact_after_overflow
+    from agno.compaction._runtime import recompact_after_overflow
     from agno.compaction._tokens import estimate_tokens
     from agno.session.agent import AgentSession
 
@@ -1007,7 +975,7 @@ def test_context_overflow_folds_and_asks_for_a_retry():
         compaction=Compaction(uncompacted_runs=5, archive=False, model=_StubModel(), on_context_overflow=True),
     )
 
-    assert _recompact_after_overflow(agent, AgentSession(session_id="s1", runs=[]), run_messages, None) is True
+    assert recompact_after_overflow(agent, AgentSession(session_id="s1", runs=[]), run_messages.messages, None) is True
     assert estimate_tokens(run_messages.messages) < before
 
 
@@ -1032,7 +1000,7 @@ def test_overflow_recovery_works_with_a_token_tail():
     """uncompacted_tokens used to make recovery raise a config error inside the provider-error
     handler, so the user saw a ValueError instead of a recovered run."""
     from agno.agent import Agent
-    from agno.agent._messages import _recompact_after_overflow
+    from agno.compaction._runtime import recompact_after_overflow
     from agno.compaction._tokens import estimate_tokens
     from agno.session.agent import AgentSession
 
@@ -1056,7 +1024,7 @@ def test_overflow_recovery_works_with_a_token_tail():
         compaction=Compaction(uncompacted_tokens=3_000, archive=False, model=_StubModel(), on_context_overflow=True),
     )
 
-    assert _recompact_after_overflow(agent, AgentSession(session_id="s1", runs=[]), run_messages, None) is True
+    assert recompact_after_overflow(agent, AgentSession(session_id="s1", runs=[]), run_messages.messages, None) is True
     assert estimate_tokens(run_messages.messages) < before
 
 
@@ -1141,7 +1109,7 @@ def test_streaming_also_recovers_from_an_overflow():
 def test_context_overflow_does_not_retry_what_it_cannot_shrink(caplog):
     """Retrying an identical payload just fails twice."""
     from agno.agent import Agent
-    from agno.agent._messages import _recompact_after_overflow
+    from agno.compaction._runtime import recompact_after_overflow
     from agno.session.agent import AgentSession
 
     class _RunMessages:
@@ -1160,14 +1128,17 @@ def test_context_overflow_does_not_retry_what_it_cannot_shrink(caplog):
     )
 
     with caplog.at_level(logging.WARNING, logger="agno"):
-        assert _recompact_after_overflow(agent, AgentSession(session_id="s1", runs=[]), run_messages, None) is False
+        assert (
+            recompact_after_overflow(agent, AgentSession(session_id="s1", runs=[]), run_messages.messages, None)
+            is False
+        )
     assert any("no safe cut left" in r.message for r in caplog.records)
 
 
 def test_context_overflow_is_a_no_op_without_compaction():
     """An agent with no compaction configured must not be changed by the overflow path."""
     from agno.agent import Agent
-    from agno.agent._messages import _recompact_after_overflow
+    from agno.compaction._runtime import recompact_after_overflow
     from agno.session.agent import AgentSession
 
     class _RunMessages:
@@ -1176,7 +1147,9 @@ def test_context_overflow_is_a_no_op_without_compaction():
 
     run_messages = _RunMessages([Message(role="user", content="hi", id="u0")])
 
-    assert _recompact_after_overflow(Agent(), AgentSession(session_id="s1", runs=[]), run_messages, None) is False
+    assert (
+        recompact_after_overflow(Agent(), AgentSession(session_id="s1", runs=[]), run_messages.messages, None) is False
+    )
 
 
 # --- boundary safety -----------------------------------------------------

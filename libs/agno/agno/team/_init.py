@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from agno.compaction.manager import Compaction
     from agno.learn.machine import LearningMachine
     from agno.offload.store import ResultStore
     from agno.team.mode import TeamMode
@@ -157,6 +158,7 @@ def __init__(
     add_learnings_to_context: bool = True,
     compress_tool_results: bool = False,
     compression_manager: Optional["CompressionManager"] = None,
+    compaction: Optional[Union[bool, "Compaction"]] = None,
     offload_tool_results: Optional[Union[bool, "ResultStore"]] = None,
     metadata: Optional[Dict[str, Any]] = None,
     reasoning_model: Optional[Union[Model, str]] = None,
@@ -347,6 +349,7 @@ def __init__(
     # Context compression settings
     team.compress_tool_results = compress_tool_results
     team.compression_manager = compression_manager
+    team.compaction = compaction
 
     # Result offloading settings
     team.offload_tool_results = offload_tool_results
@@ -890,6 +893,10 @@ def initialize_team(team: "Team", debug_mode: Optional[bool] = None) -> None:
         _ensure_result_store(team)
     if team.learning is not None and team.learning is not False:
         _set_learning_machine(team)
+    if team.compaction is not None:
+        from agno.compaction._runtime import resolve_compaction
+
+        resolve_compaction(team)
 
     log_debug(f"Team ID: {team.id}", center=True)
 

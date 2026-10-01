@@ -46,6 +46,8 @@ from agno.run.agent import (
     ToolCallStartedEvent,
 )
 from agno.run.requirement import RunRequirement
+from agno.run.team import CompactionCompletedEvent as TeamCompactionCompletedEvent
+from agno.run.team import CompactionStartedEvent as TeamCompactionStartedEvent
 from agno.run.team import CompressionCompletedEvent as TeamCompressionCompletedEvent
 from agno.run.team import CompressionStartedEvent as TeamCompressionStartedEvent
 from agno.run.team import FollowupsCompletedEvent as TeamFollowupsCompletedEvent
@@ -995,6 +997,36 @@ def create_compaction_completed_event(
         session_id=from_run_response.session_id,
         agent_id=from_run_response.agent_id,  # type: ignore
         agent_name=from_run_response.agent_name,  # type: ignore
+        run_id=from_run_response.run_id,
+        messages_compacted=messages_compacted,
+        tokens_before=tokens_before,
+        tokens_after=tokens_after,
+        archived=archived,
+    )
+
+
+def create_team_compaction_started_event(
+    from_run_response: TeamRunOutput,
+) -> TeamCompactionStartedEvent:
+    return TeamCompactionStartedEvent(
+        session_id=from_run_response.session_id,
+        team_id=from_run_response.team_id,  # type: ignore
+        team_name=from_run_response.team_name,  # type: ignore
+        run_id=from_run_response.run_id,
+    )
+
+
+def create_team_compaction_completed_event(
+    from_run_response: TeamRunOutput,
+    messages_compacted: Optional[int] = None,
+    tokens_before: Optional[int] = None,
+    tokens_after: Optional[int] = None,
+    archived: Optional[bool] = None,
+) -> TeamCompactionCompletedEvent:
+    return TeamCompactionCompletedEvent(
+        session_id=from_run_response.session_id,
+        team_id=from_run_response.team_id,  # type: ignore
+        team_name=from_run_response.team_name,  # type: ignore
         run_id=from_run_response.run_id,
         messages_compacted=messages_compacted,
         tokens_before=tokens_before,

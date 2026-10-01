@@ -19,6 +19,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel
 
+from agno.compaction._runtime import recompact_after_overflow
 from agno.agent._tools import result_store_kwargs
 from agno.exceptions import RunCancelledException
 from agno.media import Audio
@@ -1018,6 +1019,7 @@ def _handle_model_response_stream(
     for model_response_event in call_model_stream_with_fallback(
         team.model,
         team.fallback_config,
+        on_context_overflow=lambda: recompact_after_overflow(team, session, run_messages.messages, run_response, tools),
         messages=run_messages.messages,
         response_format=response_format,
         tools=tools,
@@ -1179,6 +1181,7 @@ async def _ahandle_model_response_stream(
     model_stream = acall_model_stream_with_fallback(
         team.model,
         team.fallback_config,
+        on_context_overflow=lambda: recompact_after_overflow(team, session, run_messages.messages, run_response, tools),
         messages=run_messages.messages,
         response_format=response_format,
         tools=tools,

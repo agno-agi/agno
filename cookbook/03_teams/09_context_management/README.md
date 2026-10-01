@@ -17,3 +17,4 @@ Examples for team workflows in context_management.
 - custom_system_message.py - Demonstrates custom system message and system message role.
 - datetime_format.py - Demonstrates custom datetime format in team context.
 - location_context.py - Demonstrates location and timezone context.
+- compaction.py - Demonstrates compaction: folding older team history into a summary, on demand with team.compact().

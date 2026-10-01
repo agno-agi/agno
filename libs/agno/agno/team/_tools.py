@@ -236,6 +236,14 @@ def _determine_tools_for_model(
             )
         )
 
+    # Read-only search over history this session compacted away. Scoped to
+    # this session's archive namespace, so one session can never read another's.
+    compaction = getattr(team, "compaction", None)
+    if compaction is not None and getattr(compaction, "searchable", False) and session is not None:
+        archive_tools = compaction.tools_for(session.session_id, team.db)
+        if archive_tools:
+            _tools.extend(archive_tools)
+
     # Add tools for accessing knowledge
     # Single unified path through get_relevant_docs_from_knowledge(),
     # which checks knowledge_retriever first, then falls back to knowledge.search().

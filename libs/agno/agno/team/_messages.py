@@ -24,6 +24,7 @@ from typing import (
 
 from pydantic import BaseModel
 
+from agno.compaction._runtime import aapply_compaction, apply_compaction, history_for_run
 from agno.media import Audio, File, Image, Video
 from agno.models.base import Model
 from agno.models.message import Message, MessageReferences
@@ -1025,25 +1026,35 @@ def _get_run_messages(
         # to preserve conversation continuity.
         skip_role = team.system_message_role if team.system_message_role not in ["user", "assistant", "tool"] else None
 
-        history = session.get_messages(
-            last_n_runs=team.num_history_runs,
-            limit=team.num_history_messages,
-            skip_roles=[skip_role] if skip_role else None,
-            team_id=team.id if team.parent_team_id is not None else None,
-        )
+        history, stored_record, replay_ids = history_for_run(team, session, run_response, skip_role)
 
         if len(history) > 0:
             history_copy = [copy_history_message(msg) for msg in history]
 
-            # Refresh pre-signed URLs for media loaded from history
+            # Filter tool calls from history messages
+            if team.max_tool_calls_from_history is not None:
+                filter_tool_calls(history_copy, team.max_tool_calls_from_history)
+
+            # Replace the older part of the history with a summary once it has
+            # grown past the configured threshold.
+            history_copy = apply_compaction(
+                team,
+                session,
+                history_copy,
+                stored_record,
+                run_response,
+                events=run_messages.events,
+                context_prefix=run_messages.messages,
+                tools=tools,
+                replay_ids=replay_ids,
+            )
+
+            # Refresh pre-signed URLs for media loaded from history. After compaction, so only
+            # what is actually sent is refreshed - compaction may read further back than that.
             if team.media_storage is not None:
                 from agno.utils.media_offload import refresh_messages_media
 
                 refresh_messages_media(history_copy, team.media_storage)
-
-            # Filter tool calls from history messages
-            if team.max_tool_calls_from_history is not None:
-                filter_tool_calls(history_copy, team.max_tool_calls_from_history)
 
             log_debug(f"Adding {len(history_copy)} messages from history")
 
@@ -1159,25 +1170,35 @@ async def _aget_run_messages(
         # Standard conversation roles ("user", "assistant", "tool") should never be filtered
         # to preserve conversation continuity.
         skip_role = team.system_message_role if team.system_message_role not in ["user", "assistant", "tool"] else None
-        history = session.get_messages(
-            last_n_runs=team.num_history_runs,
-            limit=team.num_history_messages,
-            skip_roles=[skip_role] if skip_role else None,
-            team_id=team.id if team.parent_team_id is not None else None,
-        )
+        history, stored_record, replay_ids = history_for_run(team, session, run_response, skip_role)
 
         if len(history) > 0:
             history_copy = [copy_history_message(msg) for msg in history]
 
-            # Refresh pre-signed URLs for media loaded from history
+            # Filter tool calls from history messages
+            if team.max_tool_calls_from_history is not None:
+                filter_tool_calls(history_copy, team.max_tool_calls_from_history)
+
+            # Replace the older part of the history with a summary once it has
+            # grown past the configured threshold.
+            history_copy = await aapply_compaction(
+                team,
+                session,
+                history_copy,
+                stored_record,
+                run_response,
+                events=run_messages.events,
+                context_prefix=run_messages.messages,
+                tools=tools,
+                replay_ids=replay_ids,
+            )
+
+            # Refresh pre-signed URLs for media loaded from history. After compaction, so only
+            # what is actually sent is refreshed - compaction may read further back than that.
             if team.media_storage is not None:
                 from agno.utils.media_offload import arefresh_messages_media
 
                 await arefresh_messages_media(history_copy, team.media_storage)
-
-            # Filter tool calls from history messages
-            if team.max_tool_calls_from_history is not None:
-                filter_tool_calls(history_copy, team.max_tool_calls_from_history)
 
             log_debug(f"Adding {len(history_copy)} messages from history")
 

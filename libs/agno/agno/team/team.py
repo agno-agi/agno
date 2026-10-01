@@ -44,6 +44,8 @@ from agno.models.message import Message
 from agno.models.response import ModelResponse
 
 if TYPE_CHECKING:
+    from agno.compaction.manager import Compaction
+    from agno.compaction.types import CompactionResult
     from agno.offload.store import ResultStore
 from agno.registry.registry import Registry
 from agno.run import RunContext, RunStatus
@@ -340,6 +342,14 @@ class Team:
     # Compression manager for compressing tool call results
     compression_manager: Optional["CompressionManager"] = None
 
+    # --- Compaction ---
+    # Keep a long session inside the context window: when the conversation
+    # crosses a threshold, older messages are archived and replaced by a
+    # summary. True uses the defaults; a Compaction sets the thresholds, what
+    # is kept verbatim, and whether the team can search the archive. Covers the
+    # team's own context; members compact theirs through their own setting.
+    compaction: Optional[Union[bool, "Compaction"]] = None
+
     # --- Result Offloading ---
     # Store tool results and member answers longer than a threshold as files
     # and leave a short envelope with a result id in the message. True uses
@@ -554,6 +564,7 @@ class Team:
         add_learnings_to_context: bool = True,
         compress_tool_results: bool = False,
         compression_manager: Optional["CompressionManager"] = None,
+        compaction: Optional[Union[bool, "Compaction"]] = None,
         offload_tool_results: Optional[Union[bool, "ResultStore"]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         reasoning_model: Optional[Union[Model, str]] = None,
@@ -673,6 +684,7 @@ class Team:
             add_learnings_to_context=add_learnings_to_context,
             compress_tool_results=compress_tool_results,
             compression_manager=compression_manager,
+            compaction=compaction,
             offload_tool_results=offload_tool_results,
             metadata=metadata,
             reasoning_model=reasoning_model,
@@ -852,6 +864,27 @@ class Team:
     ) -> str:
         """Async variant of :meth:`fork_session`."""
         return await _run.afork_session_dispatch(self, source_session_id=source_session_id, user_id=user_id)
+
+    def compact(self, session_id: Optional[str] = None, user_id: Optional[str] = None) -> "CompactionResult":
+        """Compact this session's history now, without waiting for the size trigger.
+
+        For folding at a moment you choose - the end of a topic, before a long task - rather
+        than when the context happens to cross a threshold.
+
+        Returns a CompactionResult carrying a status and a human-readable message. A fold can
+        legitimately decline: if the span is too small to pay for the summary replacing it,
+        compacting would leave the context bigger, so it is reported rather than performed.
+        Check ``result.compacted``, or show ``result.message``.
+        """
+        from agno.compaction._runtime import compact_session
+
+        return compact_session(self, session_id=session_id, user_id=user_id)
+
+    async def acompact(self, session_id: Optional[str] = None, user_id: Optional[str] = None) -> "CompactionResult":
+        """Async variant of :meth:`compact`."""
+        from agno.compaction._runtime import acompact_session
+
+        return await acompact_session(self, session_id=session_id, user_id=user_id)
 
     @overload
     def run(
