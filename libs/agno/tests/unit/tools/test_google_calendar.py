@@ -512,6 +512,21 @@ class TestFindAvailableSlots:
         assert result_data["events_analyzed"] == 0
         assert len(result_data["available_slots"]) >= 10
 
+    @patch.object(GoogleCalendarTools, "_get_working_hours")
+    def test_find_available_slots_single_day_queries_working_hours(
+        self, mock_working_hours, calendar_tools, mock_calendar_service
+    ):
+        mock_working_hours.return_value = json.dumps(
+            {"start_hour": 9, "end_hour": 17, "timezone": "UTC", "locale": "en"}
+        )
+        mock_calendar_service.events().list().execute.return_value = {"items": []}
+
+        calendar_tools.find_available_slots(start_date="2026-10-02", end_date="2026-10-02", duration_minutes=60)
+
+        params = mock_calendar_service.events().list.call_args.kwargs
+        assert params["timeMin"] == "2026-10-02T09:00:00+00:00"
+        assert params["timeMax"] == "2026-10-02T17:00:00+00:00"
+
     def test_find_available_slots_invalid_date(self, calendar_tools):
         result = calendar_tools.find_available_slots(
             start_date="invalid-date", end_date="2025-07-19", duration_minutes=60

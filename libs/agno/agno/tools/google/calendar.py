@@ -569,7 +569,11 @@ class GoogleCalendarTools(GoogleToolkit):
                 locale = "en"
                 log_debug("Using default working hours: 9:00-17:00")
 
-            events_json = self.fetch_all_events(start_date=start_date, end_date=end_date)
+            current = start_dt.replace(hour=working_hours_start, minute=0, second=0, microsecond=0)
+            end_search = end_dt.replace(hour=working_hours_end, minute=0, second=0, microsecond=0)
+
+            # A bare end date becomes 00:00 and timeMax is exclusive, so query the scanned window instead
+            events_json = self.fetch_all_events(start_date=current.isoformat(), end_date=end_search.isoformat())
             events_data = json.loads(events_json)
 
             if isinstance(events_data, dict) and "error" in events_data:
@@ -592,8 +596,6 @@ class GoogleCalendarTools(GoogleToolkit):
                         log_debug(f"Skipping invalid event: {err}")
 
             available_slots = []
-            current = start_dt.replace(hour=working_hours_start, minute=0, second=0, microsecond=0)
-            end_search = end_dt.replace(hour=working_hours_end, minute=0, second=0, microsecond=0)
 
             while current <= end_search:
                 if current.weekday() >= 5:
