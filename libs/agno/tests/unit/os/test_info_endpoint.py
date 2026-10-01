@@ -60,13 +60,33 @@ class TestInfoEndpointMcpDiscovery:
     def test_mcp_disabled_by_default(self):
         client = _build_client()
         body = client.get("/info").json()
-        assert body["mcp"] == {"enabled": False, "path": None, "oauth": None}
+        assert body["mcp"] == {"enabled": False, "path": None, "oauth": None, "tool_run_api": False}
 
     def test_mcp_enabled_reports_path(self):
         pytest.importorskip("fastmcp")
         client = _build_client(mcp_server=True)
         body = client.get("/info").json()
-        assert body["mcp"] == {"enabled": True, "path": "/mcp", "oauth": None}
+        assert body["mcp"] == {"enabled": True, "path": "/mcp", "oauth": None, "tool_run_api": True}
+
+    def test_tool_run_api_is_reported_off_when_switched_off(self):
+        """A client can disable its Run control upfront instead of failing on the call."""
+        pytest.importorskip("fastmcp")
+        from agno.os import MCPConfig
+
+        client = _build_client(mcp=MCPConfig(default_tools=True, tool_run_api=False))
+        body = client.get("/info").json()
+        assert body["mcp"]["enabled"] is True
+        assert body["mcp"]["tool_run_api"] is False
+
+    def test_mcp_path_reports_the_configured_transport_path(self):
+        """The path is configurable; a client builds the card and runner URLs from it."""
+        pytest.importorskip("fastmcp")
+        from agno.os import MCPConfig
+
+        client = _build_client(mcp=MCPConfig(default_tools=True, path="/ai/mcp"))
+        body = client.get("/info").json()
+        # Reported verbatim: hardcoding "/mcp" sent clients to a path this OS does not serve.
+        assert body["mcp"]["path"] == "/ai/mcp"
 
 
 class TestInfoEndpointAuthMode:

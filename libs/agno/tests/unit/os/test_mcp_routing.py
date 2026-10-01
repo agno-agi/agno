@@ -270,3 +270,29 @@ async def test_host_check_is_scoped_to_mcp_routes_and_allows_underscores():
         # A malformed Host is only the MCP routes' problem.
         assert (await http.get("/health", headers={"host": "evil.example/x?y="})).status_code == 200
         assert (await http.get("/mcp/server-card", headers={"host": "evil.example/x?y="})).status_code == 400
+
+
+# The tool runner moves with the transport path the same way the card does, but it is never
+# admitted anonymously: this harness is a public-MCP deployment, where the protocol endpoint
+# is open and the runner still is not.
+
+
+async def test_tool_runner_is_not_public_on_a_public_mcp_deployment():
+    """Public MCP opens the transport, never the operator surface."""
+    async with client() as (http, _):
+        assert (await http.post("/server/tools/echo/run", json={"arguments": {}}, headers=HEADERS)).status_code == 401
+        # The transport itself stays anonymous, so the exemption is still in place.
+        assert (
+            await http.post("/", headers=HEADERS, json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
+        ).status_code == 200
+
+
+async def test_tool_runner_follows_a_configured_transport_path():
+    """The route moves with ``path``; the canonical prefix stops answering."""
+    async with client(host="localhost", path="/api/rpc") as (http, _):
+        moved = await http.post("/api/rpc/server/tools/echo/run", json={"arguments": {}}, headers=HEADERS)
+        canonical = await http.post("/mcp/server/tools/echo/run", json={"arguments": {}}, headers=HEADERS)
+
+    # 401 rather than 404: the route exists at the configured path and is gated.
+    assert moved.status_code == 401
+    assert canonical.status_code == 404
