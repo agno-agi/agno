@@ -32,6 +32,7 @@ from agno.run import RunContext
 from agno.run.agent import RunOutput
 from agno.run.messages import RunMessages
 from agno.session import AgentSession
+from agno.session._utils import continue_history_session
 from agno.tools.function import Function
 from agno.utils.agent import (
     aexecute_instructions,
@@ -2089,6 +2090,7 @@ def _build_continue_run_messages(
     session: Optional[AgentSession] = None,
     add_history_to_context: Optional[bool] = None,
     run_context: Optional[RunContext] = None,
+    run_response: Optional[RunOutput] = None,
 ) -> RunMessages:
     """This function returns a RunMessages object with the following attributes:
         - system_message: The system message for this run
@@ -2143,7 +2145,7 @@ def _build_continue_run_messages(
             agent.system_message_role if agent.system_message_role not in ["user", "assistant", "tool"] else None
         )
 
-        history: List[Message] = session.get_messages(
+        history: List[Message] = continue_history_session(session, run_response).get_messages(
             last_n_runs=agent.num_history_runs,
             limit=agent.num_history_messages,
             skip_roles=[skip_role] if skip_role else None,
@@ -2178,12 +2180,15 @@ def get_continue_run_messages(
     session: Optional[AgentSession] = None,
     add_history_to_context: Optional[bool] = None,
     run_context: Optional[RunContext] = None,
+    run_response: Optional[RunOutput] = None,
 ) -> RunMessages:
     """Build the messages that resume a paused run, reading offloaded media back first.
 
     The paused run's own messages come off the database carrying a reference and no bytes.
     """
-    run_messages = _build_continue_run_messages(agent, input, session, add_history_to_context, run_context)
+    run_messages = _build_continue_run_messages(
+        agent, input, session, add_history_to_context, run_context, run_response
+    )
     media_storage = _resolve_media_storage(agent)
     if media_storage is not None:
         from agno.utils.media_offload import refresh_messages_media
@@ -2198,9 +2203,12 @@ async def aget_continue_run_messages(
     session: Optional[AgentSession] = None,
     add_history_to_context: Optional[bool] = None,
     run_context: Optional[RunContext] = None,
+    run_response: Optional[RunOutput] = None,
 ) -> RunMessages:
     """Async variant of :func:`get_continue_run_messages`."""
-    run_messages = _build_continue_run_messages(agent, input, session, add_history_to_context, run_context)
+    run_messages = _build_continue_run_messages(
+        agent, input, session, add_history_to_context, run_context, run_response
+    )
     media_storage = _resolve_media_storage(agent)
     if media_storage is not None:
         from agno.utils.media_offload import arefresh_messages_media
