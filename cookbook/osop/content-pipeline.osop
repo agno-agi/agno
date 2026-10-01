@@ -1,0 +1,84 @@
+# Agno Content Pipeline in OSOP Format
+
+osop_version: "1.0"
+
+id: agno-content-pipeline
+
+name: Agno Content Pipeline Workflow
+
+description: A multi-step content creation pipeline — research a topic, plan an outline, write a draft, review it, then publish. Demonstrates Agno Agent and Workflow patterns in a portable, tool-agnostic format.
+
+tags: [agno, agent, workflow, content, pipeline]
+
+nodes:
+  - id: user-request
+    type: human
+    name: User Request
+    description: User provides a topic for the content piece.
+
+  - id: research
+    type: agent
+    name: Research Agent
+    description: Searches the web for current information, statistics, and sources on the topic.
+    runtime:
+      provider: openai
+      model: gpt-5.6-luna
+    config:
+      tools: [web_search]
+      temperature: 0.3
+
+  - id: plan
+    type: agent
+    name: Content Planner
+    description: Turns research findings into a structured outline with sections and key points.
+    runtime:
+      provider: openai
+      model: gpt-5.6-luna
+    config:
+      temperature: 0.5
+
+  - id: write
+    type: agent
+    name: Writer Agent
+    description: Writes the full content draft following the outline.
+    runtime:
+      provider: openai
+      model: gpt-5.6-luna
+    config:
+      temperature: 0.7
+
+  - id: review
+    type: agent
+    name: Reviewer Agent
+    description: Reviews the draft for accuracy, tone, and structure, and produces the final version.
+    runtime:
+      provider: openai
+      model: gpt-5.6-luna
+    config:
+      temperature: 0.2
+
+  - id: publish
+    type: api
+    name: Publish Content
+    description: Deliver the final content (save to file or hand off to a publishing API).
+
+edges:
+  - from: user-request
+    to: research
+    mode: sequential
+
+  - from: research
+    to: plan
+    mode: sequential
+
+  - from: plan
+    to: write
+    mode: sequential
+
+  - from: write
+    to: review
+    mode: sequential
+
+  - from: review
+    to: publish
+    mode: sequential
