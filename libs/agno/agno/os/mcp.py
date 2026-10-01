@@ -4,7 +4,7 @@ import functools
 import inspect
 import logging
 import re
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from copy import deepcopy
 from typing import (
     TYPE_CHECKING,
@@ -17,7 +17,6 @@ from typing import (
     Literal,
     NamedTuple,
     Optional,
-    Set,
     Union,
     get_type_hints,
 )
@@ -77,7 +76,7 @@ logger = logging.getLogger(__name__)
 # tag set lives in agno/os/config.py next to the MCPConfig fields that consume it --
 # single source of truth so adding a new tag is a one-place change.
 from agno.os.config import MCP_BUILTIN_TAGS as _BUILTIN_TOOL_TAGS  # noqa: E402
-from agno.os.config import MCP_SERVER_CARD_PATH  # noqa: E402
+from agno.os.config import MCP_SERVER_CARD_PATH, MCP_TOOL_RUN_PATH  # noqa: E402
 
 # Names of the default (built-in) tools by tag set, used to detect name collisions with
 # exposed components before registration. Keep in sync with the ``name=`` / ``tags=``
@@ -2071,6 +2070,14 @@ def _server_card_enabled(mcp_config: "Optional[MCPConfig]") -> bool:
     return mcp_config is None or mcp_config.server_card
 
 
+# Mirrors ``MCPConfig.tool_run_timeout_seconds`` for ``mcp=True``, which has no config object.
+_DEFAULT_TOOL_RUN_TIMEOUT_SECONDS = 120.0
+
+
+def _tool_run_api_enabled(mcp_config: "Optional[MCPConfig]") -> bool:
+    return mcp_config is None or mcp_config.tool_run_api
+
+
 def _card_name(hostname: str, server_name: str) -> str:
     """The card's reverse-DNS name: the request host reversed, a slash, the server name as a slug.
 
@@ -2104,6 +2111,27 @@ def _truncate(value: str, limit: int) -> str:
     return value if len(value) <= limit else value[: limit - 1].rstrip() + "…"
 
 
+def _tool_entry(tool: Any) -> Dict[str, Any]:
+    """One tool in the same shape ``tools/list`` and the Server Card publish."""
+    entry = tool.to_mcp_tool().model_dump(exclude_none=True, by_alias=True)
+    entry.pop("_meta", None)
+    return entry
+
+
+async def _published_tools(mcp: FastMCP) -> Dict[str, Any]:
+    """The published tools by name, highest version per name.
+
+    ``list_tools`` returns every version of a tool. Deduplication goes through fastmcp's own
+    ``dedupe_with_versions`` so this picks the same version a connected client resolves to --
+    keeping the first one instead would publish an older schema than ``tools/call`` executes,
+    and a caller would fill in the form for one schema and run another. The runner pins its
+    call to the version selected here, so the two cannot drift apart.
+    """
+    from fastmcp.utilities.versions import dedupe_with_versions
+
+    return {tool.name: tool for tool in dedupe_with_versions(await mcp.list_tools(), lambda t: t.name)}
+
+
 async def _card_tools(mcp: FastMCP) -> List[Dict[str, Any]]:
     """The published tools in the same shape ``tools/list`` returns.
 
@@ -2112,17 +2140,7 @@ async def _card_tools(mcp: FastMCP) -> List[Dict[str, Any]]:
     ``inputSchema``. Descriptions are published whole -- they are written for the calling model,
     and a clipped one is worse than none. Internal transport metadata (``_meta``) is dropped.
     """
-    entries: List[Dict[str, Any]] = []
-    seen: Set[str] = set()
-    # list_tools returns every version of a tool; the card names each one once.
-    for tool in await mcp.list_tools():
-        if tool.name in seen:
-            continue
-        seen.add(tool.name)
-        entry = tool.to_mcp_tool().model_dump(exclude_none=True, by_alias=True)
-        entry.pop("_meta", None)
-        entries.append(entry)
-    return entries
+    return [_tool_entry(tool) for tool in (await _published_tools(mcp)).values()]
 
 
 async def _server_card(
@@ -2222,6 +2240,231 @@ def _register_server_card(
         )
 
 
+def _tool_result_payload(result: Any) -> Dict[str, Any]:
+    """A ``ToolResult`` as JSON, in the shape ``tools/call`` returns it over the protocol."""
+    payload: Dict[str, Any] = {
+        "isError": bool(getattr(result, "is_error", False)),
+        "content": [block.model_dump(exclude_none=True, by_alias=True) for block in (result.content or [])],
+    }
+    structured = result.structured_content
+    if structured is not None:
+        payload["structuredContent"] = structured
+    return payload
+
+
+def _register_tool_run_api(
+    mcp: FastMCP, os: "AgentOS", timeout_seconds: float, mcp_config: "Optional[MCPConfig]" = None
+) -> None:
+    """Register the plain-HTTP tool runner.
+
+    This exists for an operator UI that tests a tool the way MCP Inspector does, without
+    implementing an MCP client. The tools it runs are the ones the Server Card already
+    publishes, so there is no listing here. The split between an HTTP status and ``isError``
+    follows the protocol: a tool that ran and failed is a successful call carrying a failed
+    result, and only a call that never happened is a 4xx.
+    """
+    import asyncio
+    import time
+
+    # fastmcp raises its own ValidationError for a call whose arguments do not match the
+    # tool's input schema; it is not pydantic's, and it is not a ToolError subclass.
+    from fastmcp.exceptions import NotFoundError
+    from fastmcp.exceptions import ValidationError as ToolValidationError
+    from fastmcp.utilities.versions import VersionSpec
+    from mcp.shared.exceptions import MCPError
+
+    from agno.utils.log import log_debug
+    from starlette.requests import Request
+    from starlette.responses import JSONResponse, Response
+
+    def _json(payload: Dict[str, Any], status_code: int = 200) -> Response:
+        # Never cached and never readable cross-origin: unlike the card, this surface both
+        # requires a credential and changes state.
+        return JSONResponse(
+            payload,
+            status_code=status_code,
+            headers={"Cache-Control": "no-store", "Vary": "Origin, Authorization"},
+        )
+
+    class _CallerGone(Exception):
+        """The caller hung up before the tool finished."""
+
+    async def _call_watching_the_caller(request: Request, coro: Any) -> Any:
+        """Run ``coro``, abandoning it if the time runs out or the caller disconnects.
+
+        ``asyncio.wait_for`` only stops WAITING -- the tool keeps running, so a timed-out
+        ``run_agent`` goes on driving the model and spending tokens for an answer nobody
+        will read. The same is true when the caller hangs up (a Stop button, a closed tab):
+        HTTP has no cancel message, the dropped connection IS the signal, and ignoring it
+        leaves the work orphaned.
+
+        So the three outcomes race and the first one wins. Cancelling the task propagates
+        all the way down -- through ``agent.arun`` into the model's own HTTP request -- so
+        generation actually stops rather than finishing unobserved.
+
+        The disconnect is awaited as an event rather than polled: ``call_tool`` is a single
+        long await with no loop to check inside.
+        """
+        work = asyncio.ensure_future(coro)
+
+        async def _hung_up() -> None:
+            while True:
+                message = await request.receive()
+                if message.get("type") == "http.disconnect":
+                    return
+
+        watcher = asyncio.ensure_future(_hung_up())
+        timer = asyncio.ensure_future(asyncio.sleep(timeout_seconds))
+        try:
+            done, _ = await asyncio.wait({work, watcher, timer}, return_when=asyncio.FIRST_COMPLETED)
+            if work in done:
+                return work.result()
+            # Nobody is waiting for this result any more; stop producing it.
+            work.cancel()
+            with suppress(asyncio.CancelledError, Exception):
+                await work
+            if watcher in done:
+                raise _CallerGone()
+            raise asyncio.TimeoutError()
+        finally:
+            for task in (watcher, timer):
+                task.cancel()
+                with suppress(asyncio.CancelledError, Exception):
+                    await task
+
+    def _failed(
+        error: str,
+        message: str,
+        status_code: int,
+        *,
+        details: Optional[str] = None,
+        started: Optional[float] = None,
+    ) -> Response:
+        """A failure in the same shape a failed tool call has.
+
+        Every response this endpoint returns carries ``isError`` and ``content``, so a caller
+        renders one thing whatever went wrong -- the protocol itself groups "the tool failed"
+        and "no such tool" into a single failure class. ``error`` names the class for a caller
+        that wants to branch, and the HTTP status still separates a call that never happened
+        (4xx) from a tool that ran and failed (200).
+        """
+        payload: Dict[str, Any] = {
+            "isError": True,
+            "content": [{"type": "text", "text": message}],
+            "error": error,
+        }
+        if details is not None:
+            payload["details"] = details
+        if started is not None:
+            payload["durationMs"] = round((time.perf_counter() - started) * 1000)
+        return _json(payload, status_code=status_code)
+
+    def _denied(request: Request) -> Optional[Response]:
+        """401 unless this request carries a VERIFIED identity that ``authorize`` accepts.
+
+        Neither of the server's own gates covers this route: fastmcp wraps only the ``/mcp``
+        transport route in its ``RequireAuthMiddleware``, and under ``mcp_auth`` the
+        ``authorize`` gate is registered with ``only_path="/mcp"``, an exact match. So both
+        checks are made here.
+
+        Only a token the server itself verified counts. ``request.state.user_id`` is NOT
+        evidence: with ``user_isolation`` and no REST auth, ``NoAuthIdentityMiddleware``
+        copies a caller-supplied ``?user_id=`` straight onto it, and treating that as a
+        principal let an anonymous request run any published tool. The verified signals are
+        fastmcp's ``scope["user"].access_token`` and the ``authenticated`` flag that the
+        auth middleware sets only after it checks a credential.
+
+        Fail closed: on a gated server, no verified principal means no tool run.
+        """
+        if _mcp_server_is_open(os):
+            return None
+
+        # Verified-only. A self-asserted id never reaches either of these.
+        access_token = getattr(request.scope.get("user"), "access_token", None)
+        state = request.scope.get("state") or {}
+        authenticated = bool(getattr(request.state, "authenticated", False) or state.get("authenticated"))
+        if access_token is None and not authenticated:
+            return _failed("unauthorized", "This MCP server requires an authenticated caller.", 401)
+
+        # The operator's per-call predicate, which the transport applies at /mcp and which
+        # must not be weaker here. user_id is only trusted once the checks above pass.
+        authorize = mcp_config.authorize if mcp_config is not None else None
+        if authorize is not None:
+            user_id = getattr(request.state, "user_id", None) or state.get("user_id")
+            if not authorize(user_id):
+                return _failed("unauthorized", "Not authorized for the MCP server.", 401)
+        return None
+
+    @mcp.custom_route(MCP_TOOL_RUN_PATH, methods=["POST"], include_in_schema=False)
+    async def run_published_tool(request: Request) -> Response:
+        denied = _denied(request)
+        if denied is not None:
+            return denied
+
+        tool_name = request.path_params["tool_name"]
+        try:
+            body = await request.json()
+        except Exception:
+            return _failed("invalid_json", "Request body must be a JSON object.", 400)
+        if body is None:
+            body = {}
+        if not isinstance(body, dict):
+            return _failed("invalid_json", "Request body must be a JSON object.", 400)
+
+        arguments = body.get("arguments", {})
+        if arguments is None:
+            arguments = {}
+        if not isinstance(arguments, dict):
+            return _failed("invalid_arguments", "'arguments' must be a JSON object.", 400)
+
+        # Resolved against the published surface, so a tool this server does not publish is
+        # not runnable here even when it exists on the registry.
+        published = (await _published_tools(mcp)).get(tool_name)
+        if published is None:
+            return _failed("tool_not_found", f"Unknown tool: {tool_name!r}", 404)
+
+        # Pin the call to the version whose schema was published. Left unset, fastmcp resolves
+        # the name to its own highest version, which is the same tool today only because both
+        # sides happen to agree -- stating it here means the form and the run cannot diverge.
+        version = VersionSpec(eq=published.version) if published.version is not None else None
+
+        started = time.perf_counter()
+        try:
+            result = await _call_watching_the_caller(request, mcp.call_tool(tool_name, arguments, version=version))
+        except _CallerGone:
+            # The tool has been cancelled; there is no one left to tell. Starlette still
+            # wants a response object for a request it is finishing, and 499 is the
+            # conventional "client closed request" code -- it is never delivered.
+            log_debug(f"MCP tool run {tool_name!r} cancelled: the caller disconnected")
+            return _json({"isError": True, "error": "client_disconnected"}, status_code=499)
+        except asyncio.TimeoutError:
+            return _failed(
+                "timeout",
+                f"Tool {tool_name!r} did not finish within {timeout_seconds:g}s.",
+                408,
+                started=started,
+            )
+        except NotFoundError as exc:
+            # Racing a surface change between the check above and the call.
+            return _failed("tool_not_found", str(exc), 404, started=started)
+        except ToolValidationError as exc:
+            return _failed(
+                "invalid_arguments",
+                f"Arguments do not match the input schema of {tool_name!r}.",
+                400,
+                details=str(exc),
+                started=started,
+            )
+        except (ToolError, MCPError) as exc:
+            # The tool ran and failed. That is a result, not a transport failure, so the
+            # status stays 200 while the body matches every other failure.
+            return _failed("tool_error", str(exc), 200, started=started)
+
+        payload = _tool_result_payload(result)
+        payload["durationMs"] = round((time.perf_counter() - started) * 1000)
+        return _json(payload)
+
+
 def _accepts_event_stream(accept_header: str) -> bool:
     """True when the Accept header explicitly names ``text/event-stream``.
 
@@ -2298,6 +2541,16 @@ def build_mcp_server(
             server_version,
             card_url=(mcp_config.server_card_url if mcp_config is not None else None),
             allowed_hosts=(mcp_config.allowed_hosts if mcp_config is not None else None),
+        )
+
+    if _tool_run_api_enabled(mcp_config):
+        _register_tool_run_api(
+            mcp,
+            os,
+            timeout_seconds=(
+                mcp_config.tool_run_timeout_seconds if mcp_config is not None else _DEFAULT_TOOL_RUN_TIMEOUT_SECONDS
+            ),
+            mcp_config=mcp_config,
         )
 
     # Classify the tool surface up front: the enabled default-tool tags depend on
