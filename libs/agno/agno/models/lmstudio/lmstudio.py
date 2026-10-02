@@ -21,5 +21,5 @@ class LMStudio(OpenAILike):
 
     base_url: str = "http://127.0.0.1:1234/v1"
 
-    supports_native_structured_outputs: bool = False
+    supports_native_structured_outputs: bool = True
     supports_json_schema_outputs: bool = True
