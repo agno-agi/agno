@@ -23,6 +23,7 @@ from uuid import uuid4  # noqa: E402
 
 import httpx  # noqa: E402
 from fastmcp import Client, Context  # noqa: E402
+from fastmcp.utilities.versions import VersionSpec  # noqa: E402
 from starlette.middleware import Middleware  # noqa: E402
 from starlette.middleware.base import BaseHTTPMiddleware  # noqa: E402
 
@@ -2136,3 +2137,449 @@ async def test_continue_run_requires_the_session_id():
         schema = {t.name: t for t in await client.list_tools()}["continue_run"].input_schema
         assert "session_id" in schema["required"]
         assert "run_id" in schema["required"]
+
+
+# --------------------------- tool run API (HTTP) ---------------------------
+#
+# The plain-HTTP tool surface an operator UI uses to test a tool without speaking the
+# protocol. The contract it must hold: a tool that ran and failed is a 200 carrying
+# ``isError``, and only a call that never happened is a 4xx.
+
+
+def _echo_os(**mcp_kwargs) -> AgentOS:
+    """An OS whose published tool runs without touching a db or a model."""
+
+    def echo(text: str = "hi") -> str:
+        """Returns what it was given."""
+        return f"echo: {text}"
+
+    return AgentOS(
+        name="Echo AgentOS",
+        agents=[_agent()],
+        mcp=MCPConfig(tools=[echo], allowed_hosts=["example.com"], **mcp_kwargs),
+    )
+
+
+async def test_tool_run_api_runs_a_tool_and_returns_its_result():
+    app = get_mcp_server(_echo_os())
+    async with _mcp_client(app) as client:
+        response = await client.post("/mcp/server/tools/echo/run", json={"arguments": {"text": "there"}})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["isError"] is False
+    # Both shapes are carried so a caller can show the text or the parsed payload.
+    assert body["content"][0]["text"] == "echo: there"
+    assert body["structuredContent"]["result"] == "echo: there"
+    assert body["durationMs"] >= 0
+
+
+async def test_tool_run_api_accepts_a_call_without_a_body():
+    """A tool whose arguments are all optional is runnable without sending any."""
+    app = get_mcp_server(_echo_os())
+    async with _mcp_client(app) as client:
+        response = await client.post("/mcp/server/tools/echo/run", json={})
+
+    assert response.status_code == 200
+    assert response.json()["isError"] is False
+
+
+async def test_tool_run_api_reports_a_failing_tool_as_a_result_not_an_error():
+    """The tool ran; it just failed. That is a 200 with ``isError``, like ``tools/call``."""
+    app = get_mcp_server(_docs_os())
+    async with _mcp_client(app) as client:
+        response = await client.post(
+            "/mcp/server/tools/run_agent/run",
+            json={"arguments": {"agent_id": "ghost", "message": "hi"}},
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["isError"] is True
+    assert "ghost" in "".join(block["text"] for block in body["content"])
+
+
+async def test_tool_run_api_reports_every_failure_in_one_shape():
+    """A caller renders one thing whatever went wrong.
+
+    The protocol groups "the tool failed" and "no such tool" into a single failure class, so
+    every response here carries ``isError`` and ``content`` -- only the HTTP status separates
+    a call that never happened from a tool that ran and failed.
+    """
+    app = get_mcp_server(_echo_os())
+    async with _mcp_client(app) as client:
+        failures = [
+            await client.post("/mcp/server/tools/echo/run", json={"arguments": {"text": {"not": "a string"}}}),
+            await client.post("/mcp/server/tools/nope/run", json={"arguments": {}}),
+            await client.post("/mcp/server/tools/echo/run", content=b"not json"),
+        ]
+
+    for response in failures:
+        body = response.json()
+        assert body["isError"] is True, response.text
+        assert body["content"][0]["type"] == "text", response.text
+        assert body["content"][0]["text"], response.text
+        # ``error`` names the class for a caller that wants to branch on it.
+        assert isinstance(body["error"], str), response.text
+
+
+async def test_tool_run_api_rejects_an_unknown_tool():
+    app = get_mcp_server(_docs_os())
+    async with _mcp_client(app) as client:
+        response = await client.post("/mcp/server/tools/not_a_tool/run", json={"arguments": {}})
+
+    assert response.status_code == 404
+    assert response.json()["error"] == "tool_not_found"
+
+
+async def test_tool_run_api_rejects_arguments_that_do_not_match_the_schema():
+    app = get_mcp_server(_docs_os())
+    async with _mcp_client(app) as client:
+        response = await client.post("/mcp/server/tools/run_agent/run", json={"arguments": {"agent_id": "docs-agent"}})
+
+    assert response.status_code == 400
+    assert response.json()["error"] == "invalid_arguments"
+
+
+async def test_tool_run_api_rejects_a_malformed_body():
+    app = get_mcp_server(_docs_os())
+    async with _mcp_client(app) as client:
+        malformed = await client.post("/mcp/server/tools/get_agentos_config/run", content=b"not json")
+        wrong_type = await client.post("/mcp/server/tools/get_agentos_config/run", json={"arguments": []})
+
+    assert malformed.status_code == 400
+    assert malformed.json()["error"] == "invalid_json"
+    assert wrong_type.status_code == 400
+    assert wrong_type.json()["error"] == "invalid_arguments"
+
+
+async def test_tool_run_api_runs_the_version_whose_schema_it_published():
+    """The published schema and the executed tool must be the same version.
+
+    ``list_tools`` returns every version of a tool. If the card publishes one version's
+    input schema while ``call_tool`` resolves the name to another, a caller fills in the
+    form correctly and the run fails -- or worse, silently does something else.
+    """
+    os = AgentOS(agents=[_agent()], mcp=MCPConfig(tools=[_agent().as_tool(name="ask")]))
+    server = build_mcp_server(os)
+
+    @server.tool(name="versioned", version="1")
+    def _v1(only_in_v1: int) -> str:
+        """First version."""
+        return "v1 ran"
+
+    @server.tool(name="versioned", version="2")
+    def _v2(only_in_v2: str) -> str:
+        """Second version."""
+        return "v2 ran"
+
+    published = (await mcp_mod._published_tools(server))["versioned"]
+    schema_fields = set(published.to_mcp_tool().input_schema.get("properties", {}))
+
+    # Whichever version is published, calling it with that schema's arguments must run it.
+    arguments = {field: (1 if field == "only_in_v1" else "x") for field in schema_fields}
+    result = await server.call_tool(
+        "versioned", arguments, version=VersionSpec(eq=published.version) if published.version else None
+    )
+
+    expected = "v1 ran" if "only_in_v1" in schema_fields else "v2 ran"
+    assert "".join(getattr(block, "text", "") for block in result.content) == expected
+    # fastmcp resolves a bare name to its highest version, so the card must publish that one.
+    assert published.version == "2"
+
+
+async def test_tool_run_api_only_serves_tools_this_server_publishes():
+    """A tool scoped out of the surface is not runnable, even though it exists."""
+    os = _docs_os(default_tools=True, exclude_tags={"session"})
+    app = get_mcp_server(os)
+    async with _mcp_client(app) as client:
+        published = {tool["name"] for tool in (await client.get("/mcp/server-card")).json()["tools"]}
+        response = await client.post("/mcp/server/tools/get_sessions/run", json={"arguments": {}})
+
+    assert "get_sessions" not in published
+    assert response.status_code == 404
+
+
+async def test_tool_run_api_stops_the_tool_when_the_caller_disconnects():
+    """A Stop button (or a closed tab) must stop the work, not just the waiting.
+
+    HTTP has no cancel message -- the dropped connection is the signal, delivered as an
+    ``http.disconnect`` ASGI event. Only a real socket produces one, so this runs a real
+    server rather than the in-process transport (which unwinds the task by itself and
+    would pass even with the handler ignoring the disconnect entirely).
+    """
+    import socket
+    import threading
+
+    import uvicorn
+
+    started = threading.Event()
+    finished = threading.Event()
+
+    async def _slow() -> str:
+        """Finishes in 3s unless the disconnect cancels it first."""
+        started.set()
+        await asyncio.sleep(3)
+        finished.set()
+        return "done"
+
+    # The timeout is far longer than the tool, so only the disconnect can stop it.
+    os = AgentOS(agents=[_agent()], mcp=MCPConfig(tools=[_slow], tool_run_timeout_seconds=30))
+    app = os.get_app()
+
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+
+    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="critical"))
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+    try:
+        for _ in range(100):
+            await asyncio.sleep(0.1)
+            if server.started:
+                break
+        assert server.started, "test server never came up"
+
+        # Send the request on a raw socket, then close it mid-run.
+        body = b'{"arguments": {}}'
+        request = (
+            b"POST /mcp/server/tools/_slow/run HTTP/1.1\r\n"
+            b"Host: localhost\r\nContent-Type: application/json\r\n"
+            b"Content-Length: " + str(len(body)).encode() + b"\r\n\r\n" + body
+        )
+        conn = socket.create_connection(("127.0.0.1", port))
+        conn.sendall(request)
+        await asyncio.to_thread(started.wait, 10)
+        assert started.is_set(), "the tool never started"
+        conn.close()  # the Stop button
+
+        # Outlast the tool: if the disconnect was ignored it completes here.
+        await asyncio.sleep(6)
+        assert not finished.is_set(), "the tool kept running after the caller disconnected"
+    finally:
+        server.should_exit = True
+        thread.join(timeout=10)
+
+
+async def test_tool_run_api_times_out_a_tool_that_does_not_finish():
+    async def _sleep() -> str:
+        """Sleeps past the timeout."""
+        await asyncio.sleep(30)
+        return "done"
+
+    os = AgentOS(agents=[_agent()], mcp=MCPConfig(tools=[_sleep], tool_run_timeout_seconds=0.05))
+    app = get_mcp_server(os)
+    async with _mcp_client(app, base_url="http://localhost") as client:
+        response = await client.post("/mcp/server/tools/_sleep/run", json={"arguments": {}})
+
+    assert response.status_code == 408
+    assert response.json()["error"] == "timeout"
+
+
+async def test_tool_run_api_can_be_turned_off_without_affecting_the_card():
+    app = get_mcp_server(_docs_os(tool_run_api=False))
+    async with _mcp_client(app) as client:
+        assert (await client.post("/mcp/server/tools/get_agentos_config/run", json={})).status_code == 404
+        assert (await client.get("/mcp/server-card")).status_code == 200
+
+
+async def test_tool_run_api_does_not_claim_a_sibling_path():
+    """``/mcp/servers`` shares a prefix with ``/mcp/server`` but is a different route.
+
+    The plural is deliberately left free for the servers this OS connects to.
+    """
+    app = get_mcp_server(_docs_os())
+    async with _mcp_client(app) as client:
+        assert (await client.get("/mcp/servers")).status_code == 404
+        assert (await client.get("/mcp/server/toolshed")).status_code == 404
+
+
+async def test_tool_run_api_refuses_an_unverified_bearer_token():
+    """A bearer header is not evidence: the token must have been verified.
+
+    fastmcp wraps only the ``/mcp`` transport route in RequireAuthMiddleware and
+    ``MCPConfig.authorize`` is registered with ``only_path="/mcp"``, so neither runs for
+    this custom route. Accepting any request that merely carries an Authorization header
+    let a caller run every published tool with ``Bearer anything``.
+    """
+    from fastmcp.server.auth.providers.jwt import JWTVerifier
+
+    def _ran() -> str:
+        """Returns a marker."""
+        return "ran"
+
+    verifier = JWTVerifier(
+        public_key="-----BEGIN PUBLIC KEY-----\nMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE"
+        + ("A" * 64)
+        + "\n-----END PUBLIC KEY-----",
+        issuer="https://issuer.example",
+        audience="test",
+    )
+    os = AgentOS(agents=[_agent()], mcp=MCPConfig(tools=[_ran]), mcp_auth=verifier)
+    app = get_mcp_server(os)
+
+    async with _mcp_client(app, base_url="http://localhost") as client:
+        forged = await client.post(
+            "/mcp/server/tools/_ran/run", json={"arguments": {}}, headers={"Authorization": "Bearer forged"}
+        )
+        anonymous = await client.post("/mcp/server/tools/_ran/run", json={"arguments": {}})
+
+    for response in (forged, anonymous):
+        assert response.status_code == 401, response.text
+        assert response.json()["error"] == "unauthorized"
+        assert "ran" not in response.text
+
+
+async def test_tool_run_api_accepts_a_valid_mcp_auth_token():
+    """The gate must admit a real token, not just refuse bad ones.
+
+    A suite that only asserts 401 passes whether the route is correctly gated or simply
+    broken, so this signs a token the configured verifier actually accepts. fastmcp's auth
+    middleware wraps the whole MCP sub-app (it inspects the method and headers, never the
+    path), so this custom route is verified upstream and ``_denied`` reads that verdict
+    rather than re-verifying.
+    """
+    import time
+
+    import jwt
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from fastmcp.server.auth.providers.jwt import JWTVerifier
+
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    private_pem = key.private_bytes(
+        serialization.Encoding.PEM,
+        serialization.PrivateFormat.PKCS8,
+        serialization.NoEncryption(),
+    ).decode()
+    public_pem = (
+        key.public_key()
+        .public_bytes(serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo)
+        .decode()
+    )
+    issuer, audience = "https://issuer.example", "test-aud"
+
+    def _token(**overrides) -> str:
+        claims = {
+            "sub": "alice",
+            "iss": issuer,
+            "aud": audience,
+            "iat": int(time.time()),
+            "exp": int(time.time()) + 3600,
+        }
+        claims.update(overrides)
+        return jwt.encode(claims, private_pem, algorithm="RS256")
+
+    def _ran() -> str:
+        """Returns a marker."""
+        return "ran"
+
+    os = AgentOS(
+        agents=[_agent()],
+        mcp=MCPConfig(tools=[_ran]),
+        mcp_auth=JWTVerifier(public_key=public_pem, issuer=issuer, audience=audience),
+    )
+    app = get_mcp_server(os)
+
+    async with _mcp_client(app, base_url="http://localhost") as client:
+
+        async def _run(header: str):
+            return await client.post(
+                "/mcp/server/tools/_ran/run", json={"arguments": {}}, headers={"Authorization": header}
+            )
+
+        accepted = await _run(f"Bearer {_token()}")
+        forged = await _run("Bearer not-a-token")
+        expired = await _run(f"Bearer {_token(iat=int(time.time()) - 7200, exp=int(time.time()) - 3600)}")
+        wrong_audience = await _run(f"Bearer {_token(aud='somewhere-else')}")
+
+    assert accepted.status_code == 200, accepted.text
+    assert accepted.json()["isError"] is False
+    assert "ran" in accepted.text
+    for refused in (forged, expired, wrong_audience):
+        assert refused.status_code == 401, refused.text
+        assert "ran" not in refused.text
+
+
+def _jwt_verifier():
+    from fastmcp.server.auth.providers.jwt import JWTVerifier
+
+    return JWTVerifier(
+        public_key="-----BEGIN PUBLIC KEY-----\nMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE"
+        + ("A" * 64)
+        + "\n-----END PUBLIC KEY-----",
+        issuer="https://issuer.example",
+        audience="test",
+    )
+
+
+async def test_tool_run_api_refuses_a_self_asserted_query_string_identity():
+    """``?user_id=`` is a claim, not a credential.
+
+    With ``user_isolation`` and no REST auth, NoAuthIdentityMiddleware copies the query
+    param onto ``request.state.user_id`` for scoping. Treating that as a principal let an
+    anonymous caller run any published tool.
+    """
+
+    def _ran() -> str:
+        """Returns a marker."""
+        return "ran"
+
+    os = AgentOS(agents=[_agent()], mcp=MCPConfig(tools=[_ran]), mcp_auth=_jwt_verifier(), user_isolation=True)
+    app = get_mcp_server(os)
+
+    async with _mcp_client(app, base_url="http://localhost") as client:
+        response = await client.post("/mcp/server/tools/_ran/run?user_id=attacker", json={"arguments": {}})
+
+    assert response.status_code == 401, response.text
+    assert response.json()["error"] == "unauthorized"
+    assert "ran" not in response.text
+
+
+async def test_tool_run_api_applies_the_authorize_predicate():
+    """``MCPConfig.authorize`` guards this route too.
+
+    Under ``mcp_auth`` the gate middleware is registered with ``only_path="/mcp"``, an exact
+    match that never covers ``/mcp/server/tools/...``. A caller the predicate rejects must
+    not be able to run tools here just because the transport is where the gate lives.
+    """
+
+    def _ran() -> str:
+        """Returns a marker."""
+        return "ran"
+
+    os = AgentOS(
+        agents=[_agent()],
+        mcp=MCPConfig(tools=[_ran], authorize=lambda user_id: False),
+        mcp_auth=_jwt_verifier(),
+        user_isolation=True,
+    )
+    app = get_mcp_server(os)
+
+    async with _mcp_client(app, base_url="http://localhost") as client:
+        response = await client.post("/mcp/server/tools/_ran/run?user_id=x", json={"arguments": {}})
+
+    assert response.status_code == 401, response.text
+    assert "ran" not in response.text
+
+
+def test_a_transport_path_may_not_sit_inside_another_paths_sub_routes():
+    """Reserved sub-routes are a subtree, not one exact prefix.
+
+    ``/mcp/server/tools`` sits under ``/mcp``'s ``/server`` just as ``/mcp/server`` does;
+    an alias there would swallow requests meant for the transport.
+    """
+    for alias in ("/mcp/server", "/mcp/server/tools", "/mcp/server/tools/deeper", "/mcp/server-card"):
+        with pytest.raises(ValueError, match="must not overlap"):
+            MCPConfig(default_tools=True, path="/mcp", path_aliases=[alias])
+
+    # A path that merely shares a prefix is not inside the subtree.
+    MCPConfig(default_tools=True, path="/mcp/servertools")
+    MCPConfig(default_tools=True, path="/mcp", path_aliases=["/legacy"])
+
+
+def test_server_path_may_not_collide_with_a_transport_path():
+    """One alias may not sit on another's ``/server`` subtree, which would shadow the runner."""
+    with pytest.raises(ValueError, match="must not overlap"):
+        MCPConfig(default_tools=True, path="/a", path_aliases=["/a/server"])
