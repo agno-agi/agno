@@ -1,6 +1,6 @@
 from dataclasses import replace
 from datetime import datetime, timezone
-from math import exp, log
+from math import exp, isfinite, log
 from typing import Any, List, Optional, Tuple
 
 from pydantic import Field, field_validator
@@ -19,6 +19,8 @@ def _as_timestamp(value: Any) -> Optional[float]:
     if isinstance(value, bool):
         return None
     if isinstance(value, (int, float)):
+        if not isfinite(value):
+            return None
         # Milliseconds are common in JSON payloads and are centuries away in seconds.
         return float(value) / 1000.0 if value > 1e11 else float(value)
     if isinstance(value, datetime):
