@@ -111,6 +111,7 @@ def test_resolve_sdk_gated_providers(provider, name, expected_key):
         # Plain providers whose display string already equals the key.
         ("openai", None, "openai"),
         ("anthropic", None, "anthropic"),
+        ("apiroute", None, "apiroute"),
     ],
 )
 def test_resolve_provider_aliases(provider, name, expected_key):
