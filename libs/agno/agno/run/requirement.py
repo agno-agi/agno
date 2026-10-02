@@ -106,14 +106,14 @@ class RunRequirement:
             self.needs_external_execution and self.tool_execution and self.tool_execution.external_execution_silent
         )
 
-    def confirm(self):
+    def confirm(self) -> None:
         if not self.needs_confirmation:
             raise ValueError("This requirement does not require confirmation")
         self.confirmation = True
         if self.tool_execution:
             self.tool_execution.confirmed = True
 
-    def reject(self, note: Optional[str] = None):
+    def reject(self, note: Optional[str] = None) -> None:
         if not self.needs_confirmation:
             raise ValueError("This requirement does not require confirmation")
         self.confirmation = False
@@ -170,7 +170,7 @@ class RunRequirement:
             if all(q.selected_options is not None for q in self.user_feedback_schema) and self.tool_execution:
                 self.tool_execution.answered = True
 
-    def set_external_execution_result(self, result: str):
+    def set_external_execution_result(self, result: str) -> None:
         if not self.needs_external_execution:
             raise ValueError("This requirement does not require external execution")
         self.external_execution_result = result
