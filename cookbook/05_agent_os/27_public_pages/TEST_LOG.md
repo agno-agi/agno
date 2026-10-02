@@ -238,6 +238,71 @@ unrelated modules, identical on the PR base and head; no new diagnostics.
 - FIXED: an empty page index returned before command validation, so invalid syntax, unsupported commands, pipes and missing paths all reported `is_error=False` and MCP saw success. The empty-index message now follows validation; malformed input stays an error and a valid command against an empty index still reports it.
 - Existing chat command tools retain their character-bound text contract. Direct typed/MCP command results additionally bound the complete result JSON; MCP envelope overhead remains under the transport's own limits. No product feedback or score-interpretation policy moved upstream.
 
+## Agno 3.0.x MCP defaults validation (2026-09-18)
+
+Used an isolated `.venvs/demo` with this worktree installed, `mcp==2.1.1`, and `fastmcp==4.0.3`. Imported each cookbook, constructed its real AgentOS app, and inspected registration through a FastMCP in-memory client. Temporary local data and test-only credentials were used. These are configuration/discovery checks; no live model calls, hosted clients, database-backed public-page ingestion, or production services were exercised.
+
+### mcp_domain.py
+
+**Status:** PASS
+
+**Description:** Built the app with dedicated-host routing and verified documentation_home is the only MCP tool with default_tools omitted.
+
+**Result:** Application construction and exact MCP tool registration passed.
+
+---
+
+### public_control_plane.py
+
+**Status:** PASS
+
+**Description:** Built the app using a locally generated RS256 public key and verified service_description is the only MCP tool with default_tools omitted.
+
+**Result:** Application construction and exact MCP tool registration passed.
+
+---
+
+### public_pages.py
+
+**Status:** PASS
+
+**Description:** Built the app and verified search_docs, read_docs, and grep_docs are the entire MCP tool list with default_tools omitted.
+
+**Result:** Application construction and exact MCP tool registration passed.
+
+---
+
+## Explicit lifecycle defaults follow-up (2026-09-18)
+
+**Status:** PASS
+
+**Description:** Re-ran configuration/discovery checks for mcp_domain.py,
+public_control_plane.py, and public_pages.py using the isolated demo environment
+with `mcp==2.1.1` and `fastmcp==4.0.3`.
+
+**Result:** All three apps built and published exactly their custom tools. The
+updated public MCP tests also verify that exposed components need no lifecycle
+opt-out, while explicitly enabling lifecycle tools remains rejected. These checks
+did not exercise PostgreSQL-backed ingestion or hosted clients.
+
+---
+
+## 2026-10-02 sync reports name failed pages
+
+### SyncReport.failed_paths
+
+**Status:** PASS
+
+**Description:** Ran the page storage integration suite against PostgreSQL 18 +
+pgvector with this worktree, plus the page contract and per-page content unit
+tests. Assertions cover a publication failure after the vector write, a failed
+embedding on first sync followed by a clean retry, and a failed prune deletion.
+
+**Result:** 233 passed. Each failure reports its site path in `failed_paths`
+(`("/agent.md",)`), and the clean retry reports none. Found on a deployed
+docs corpus where 1 of 3,913 pages failed and neither the report nor the logs
+said which.
+
 ---
 
 ### public_pages.py sync-docs and page_sync_progress.py (2026-09-21)

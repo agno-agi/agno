@@ -91,6 +91,8 @@ await knowledge.async_sync_pages(url=index_url, validate_discovery=validate_inde
 
 An application may bind an explicit override into its callback. Acceptance still requires the existing discovery and processing checks before pruning; the callback cannot turn empty discovery or partial processing into a successful reconciliation. Without a callback, the framework applies no shrink threshold. Validation adds one namespace-scoped catalog count only on sync, not on query traffic.
 
+A sync with any failed page reports `status="partial"`; the other pages are published and searchable, and pruning waits for a clean run. `SyncReport.failed` is the full count and `failed_paths` names up to 20 of those pages (for example `("/guides/setup.md",)`), so an application can show which pages to check or decide how many failures it tolerates. Each failure is also logged with its path and underlying cause (for example `SyncFailed: sync_failed <- ConnectError: [Errno 104] Connection reset by peer`). A later sync retries failed pages along with any changed ones.
+
 ## Explicit retrieval and customization
 
 `attach_docs_context` calls the same `search_docs` exposed to the model and places its bounded JSON in `{docs_context}` before the first model call. The example owns its instructions and evidence formatting; customize that hook for query alternatives or full-page rendering. No Knowledge object is attached to the Agent. The model can use the three explicitly named tools. Follow-up suggestions use a separately configured model after the answer.
@@ -131,7 +133,7 @@ configuration accepts no arbitrary SQL or deadline overrides.
 
 Only the selected Agent, native MCP and protected sync Workflow are exposed. Sessions, configuration and unselected components are closed. Workflow trigger/status require verified bearer credentials even while chat is anonymous. Scoped service accounts require the workflow run/read permissions and cannot use internal-service exemptions. `PAGE_DEMO_SYNC_TOKEN` configures the existing internal-service principal for a trusted deployment hook; keep it out of browsers and MCP clients.
 
-For custom functions such as this example's MCP tools, use `MCPConfig(tools=[...], default_tools=False, stateless=True)`. No lifecycle flag is needed. If you expose agents, teams or workflows as MCP tools, also set `lifecycle_tools=False` or `exclude_tags={"lifecycle"}`: the public surface does not allow the automatically added `continue_run` and `cancel_run` tools.
+For custom functions such as this example's MCP tools, use `MCPConfig(tools=[...], stateless=True)`. Both default and lifecycle tools are disabled by default, including when exposing agents, teams or workflows. Keep these defaults: the public surface does not allow the built-in `continue_run` and `cancel_run` tools.
 
 Public chat defaults to 10 requests/client/minute, 50 globally/minute, 80/client/day and 3,000 globally/day. Cancel and MCP use separate shared buckets. PostgreSQL counters use the stable AgentOS ID across replicas. Default identity ignores arbitrary forwarded headers; customize `PublicSurface.client_id` only for an edge-overwritten trusted header. Request bodies, output, duration and concurrency are bounded; uploads are disabled here. CORS includes admission failures and readiness checks table preparation.
 

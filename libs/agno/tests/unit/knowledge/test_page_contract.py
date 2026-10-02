@@ -577,3 +577,21 @@ def test_collisions_and_foreign_destinations_cannot_prune(monkeypatch):
     source = PageSource(base + "/llms.txt", None, WorkBudget(5))
     pages = source.discover()
     assert not source.complete and set(pages) == {"/a.md"}
+
+
+def test_sync_failure_logs_name_the_underlying_cause():
+    import httpx
+
+    from agno.knowledge.page._coordinator import _failure
+    from agno.knowledge.page.types import SyncFailed
+
+    reset = httpx.ConnectError("[Errno 104] Connection reset by peer")
+    try:
+        try:
+            raise httpx.ConnectError("[Errno 104] Connection reset by peer") from reset
+        except httpx.ConnectError as exc:
+            raise SyncFailed() from exc
+    except SyncFailed as failed:
+        assert _failure(failed) == "SyncFailed: sync_failed <- ConnectError: [Errno 104] Connection reset by peer"
+    assert _failure(RuntimeError()) == "RuntimeError"
+    assert len(_failure(ValueError("x" * 1000))) == 300

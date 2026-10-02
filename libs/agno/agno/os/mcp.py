@@ -8,6 +8,7 @@ from contextlib import contextmanager
 from copy import deepcopy
 from typing import (
     TYPE_CHECKING,
+    Annotated,
     Any,
     Callable,
     Dict,
@@ -29,6 +30,7 @@ from fastmcp.server.http import (
 )
 from fastmcp.tools import ToolResult
 from mcp.types import ToolAnnotations
+from pydantic import Field
 
 from agno.db.base import SessionType
 from agno.os.mcp_results import build_custom_tool_result, build_run_tool_result, trim_session_run
@@ -123,9 +125,9 @@ def _enabled_builtin_tags(config: "Optional[MCPConfig]", has_exposures: bool = F
     them, exactly as it did before the tag existed -- tools register on tag
     INTERSECTION, so an implicitly enabled ``lifecycle`` would resurrect the dual-tagged
     pair on a surface that excluded ``core``). The tag is added only when named
-    explicitly in ``include_tags``, or by the exposure ride-along below: an exposed
-    component can pause on a HITL tool, and without continue_run the pause would be a
-    dead end over MCP. Both ride-along off-switches are honoured --
+    explicitly in ``include_tags`` with ``default_tools=True``, or by opting in with ``lifecycle_tools=True``
+    alongside exposed components. This supports resuming HITL runs and requesting
+    cancellation without enabling the full default surface. Both off-switches are honoured --
     ``lifecycle_tools=False`` and an explicit ``exclude_tags={"lifecycle"}`` -- and
     both gate ONLY the ride-along; neither strips the pair from an enabled ``core``
     surface.
@@ -234,7 +236,7 @@ def _collision_free_advice(colliding_name: str, enabled_tags: "Optional[set]") -
     """The action clause of a name-collision error: how to free ``colliding_name``.
 
     The run-lifecycle pair (continue_run/cancel_run) is tagged BOTH "core" and
-    "lifecycle", and rides along with any exposure. So "is this a lifecycle tool" is
+    "lifecycle", and can be explicitly added alongside exposures. So "is this a lifecycle tool" is
     always true for it and cannot decide the advice -- what matters is HOW the name got
     onto the server. When it was claimed solely via the ride-along ("core" not enabled),
     only the lifecycle switches free it; when "core" is enabled the pair registers as a
@@ -872,8 +874,12 @@ _MISSING_BRIDGE_DETAIL = (
 )
 
 
-def _require_tool_scopes(method: str, path: str) -> None:
+async def _require_tool_scopes(method: str, path: str) -> None:
     """Enforce the caller's scopes against the REST route this tool call is equivalent to.
+
+    Awaits the provider's async decision and audit write (mirroring the REST/WS gates) so a
+    managed-role/ReBAC gate does its DB or network I/O off the event loop and works against
+    an async database.
 
     The MCP tools are an alternate transport for the REST surface, so authorization
     reuses the REST mechanism verbatim: map the tool call onto its REST route and run
@@ -889,8 +895,13 @@ def _require_tool_scopes(method: str, path: str) -> None:
     """
     from fastmcp.server.dependencies import get_http_request
 
-    from agno.os.auth import build_insufficient_permissions_detail
-    from agno.os.scopes import check_route_scopes
+    from agno.os.auth import (
+        _default_authorization_provider,
+        build_insufficient_permissions_detail,
+        resolve_authorization_provider,
+    )
+    from agno.os.authz.provider import AuthorizationContext
+    from agno.os.scopes import get_required_scopes_for_route, get_resource_context_from_path
 
     try:
         request = get_http_request()
@@ -911,16 +922,73 @@ def _require_tool_scopes(method: str, path: str) -> None:
             raise Exception(_MISSING_BRIDGE_DETAIL)
         return
 
+    required_scopes = get_required_scopes_for_route(_tool_scope_mappings(), method, path)
+    if not required_scopes:
+        return
+
     admin_scope_raw = getattr(state, "admin_scope", None)
     admin_scope = admin_scope_raw if isinstance(admin_scope_raw, str) else None
-    scope_check = check_route_scopes(
-        list(getattr(state, "scopes", None) or []),
-        _tool_scope_mappings(),
-        method,
-        path,
+
+    # Derive the resource context from the SYNTHETIC REST path the tool maps onto
+    # (e.g. "/agents/<id>/runs" -> agents/<id>), preserving v2.7's per-resource
+    # subtlety: the provider decides on the specific resource, not just the family.
+    resource_type, resource_id = get_resource_context_from_path(path)
+    actions = {s.rsplit(":", 1)[1] for s in required_scopes if ":" in s}
+    action = next(iter(actions)) if len(actions) == 1 else None
+
+    # Resolve the provider from the in-flight request's app.state — with none configured
+    # this is the default ScopeAuthorizationProvider, whose authorize_route delegates to
+    # has_required_scopes, so the tool gate stays byte-identical to v2.7's
+    # check_route_scopes. (The MCP tools have no GET-listing escape hatch: an
+    # unauthorised call is a hard denial, matching the prior behaviour.)
+    # A service-account PAT carries its own scopes as its ACL and has no subject/role in
+    # a managed store, so it is evaluated by the scope provider here too -- mirroring the
+    # REST per-resource gate. Routing PATs through a configured provider would deny every
+    # MCP tool call for a caller the transport already authenticated on scope math.
+    provider = _default_authorization_provider() if is_service_account else resolve_authorization_provider(request)
+    ctx = AuthorizationContext(
+        principal_id=getattr(state, "user_id", None),
+        scopes=list(getattr(state, "scopes", None) or []),
+        claims=getattr(state, "claims", None) or {},
+        resource_type=resource_type,
+        resource_id=resource_id,
+        action=action,
         admin_scope=admin_scope,
     )
-    if not scope_check.allowed:
+    # The provider decides — default ScopeAuthorizationProvider is byte-identical to
+    # v2.7's check_route_scopes; a managed-role/custom provider enforces its own model
+    # on the OAuth-authenticated caller here too.
+    from agno.os.authz.audit import arecord_decision
+
+    allowed = await provider.aauthorize_route(ctx, required_scopes)
+    # Record the decision on the SAME trail the REST gate writes to, so an access audit
+    # covers the MCP transport too (the tools are an alternate front door to the same
+    # surface). The sink is mirrored onto this sub-app's state; no sink -> no-op.
+    # Same non-secret token reference the REST gate captures (jti, else a short hash),
+    # so an MCP row correlates to the issuer's logs exactly like a REST row does.
+    # Best-effort ONLY: this is audit metadata, so it must never break enforcement --
+    # not every caller hands us a full Request (the fastmcp in-memory transport passes a
+    # minimal stand-in with no headers). Falling back to None just means the row is
+    # keyed by the token's jti, or carries no token reference at all.
+    bearer: Optional[str] = None
+    try:
+        raw = request.headers.get("Authorization") or ""
+        if raw[:7].lower() == "bearer ":
+            bearer = raw[7:]
+    except Exception:  # pragma: no cover - defensive: audit must not break the gate
+        bearer = None
+    await arecord_decision(
+        request,
+        allowed=allowed,
+        target=f"{method} {path}",
+        principal=ctx.principal_id,
+        required_scopes=required_scopes,
+        scopes=ctx.scopes,
+        claims=ctx.claims,
+        token=bearer,
+        reason=None if allowed else "mcp_tool_scope_denied",
+    )
+    if not allowed:
         # Under mcp_auth, a scope denial is most often an external-AS misconfiguration
         # (the token carries non-agno scopes), which the client-facing 403 can't point at.
         # Log the presented-vs-required scopes and the AS-config hint so the deployer can
@@ -930,11 +998,11 @@ def _require_tool_scopes(method: str, path: str) -> None:
 
             log_warning(
                 f"MCP tool scope check failed for {method} {path}: caller presented "
-                f"{list(getattr(state, 'scopes', None) or [])}, required {scope_check.required_scopes}. "
+                f"{list(getattr(state, 'scopes', None) or [])}, required {required_scopes}. "
                 "If this is a Tier-2 (external authorization server) deployment, configure your AS to emit "
                 "agno-format scopes in the token 'scope' claim."
             )
-        raise Exception(build_insufficient_permissions_detail(scope_check.required_scopes))
+        raise Exception(build_insufficient_permissions_detail(required_scopes))
 
 
 async def _enforce_run_continuation_allowed(db: Any, run_id: str) -> None:
@@ -972,6 +1040,7 @@ async def _enforce_run_continuation_allowed(db: Any, run_id: str) -> None:
         run_id,
         authorization_enabled=bool(getattr(state, "authorization_enabled", False)),
         user_scopes=list(getattr(state, "scopes", None) or []),
+        request=request,
     )
     if reason:
         raise Exception(reason)
@@ -1743,6 +1812,23 @@ def _split_tool_entries(mcp_config: "Optional[MCPConfig]", os: "AgentOS") -> "tu
     return customs, exposures
 
 
+# Argument descriptions for the built-in and exposed tools. They are published in each tool's
+# inputSchema, which every MCP client sends to its model verbatim on tools/list, so each one is
+# prompt text: a short phrase the calling model can act on, nothing about how the server
+# resolves the value. Operator-facing semantics stay in comments here.
+_RunMessage = Annotated[str, Field(description="The message to send.")]
+# Advisory only: an authenticated caller's identity always replaces it (``_resolve_user_id``).
+_RunUserId = Annotated[Optional[str], Field(description="User to attribute the run to.")]
+_RunSessionId = Annotated[Optional[str], Field(description="Session to continue. Omit to start a new one.")]
+# Ignored for a caller scoped by user isolation, who always reads their own sessions.
+_ReadUserId = Annotated[Optional[str], Field(description="Filter to one user.")]
+_DbId = Annotated[Optional[str], Field(description="Only when get_agentos_config lists several databases.")]
+_ReadSessionType = Annotated[
+    Optional[Literal["agent", "team", "workflow"]], Field(description="Auto-detected when omitted.")
+]
+_OwnerId = Annotated[Optional[str], Field(description="Set exactly one of agent_id, team_id, workflow_id.")]
+
+
 def _make_exposed_run_tool(
     os: "AgentOS",
     kind: "Literal['agents', 'teams']",
@@ -1757,12 +1843,12 @@ def _make_exposed_run_tool(
     label_prefix = "Agent" if kind == "agents" else "Team"
 
     async def run_exposed(
-        message: str,
+        message: _RunMessage,
         ctx: Context,
-        user_id: Optional[str] = None,
-        session_id: Optional[str] = None,
+        user_id: _RunUserId = None,
+        session_id: _RunSessionId = None,
     ) -> ToolResult:
-        _require_tool_scopes("POST", f"/{kind}/{component_id}/runs")
+        await _require_tool_scopes("POST", f"/{kind}/{component_id}/runs")
         resolved_user_id = _resolve_user_id(user_id)
         component = await _resolve_run_component(
             os, kind, component_id, user_id=resolved_user_id, session_id=session_id
@@ -1796,14 +1882,14 @@ def _make_exposed_workflow_tool(
     """A run tool bound to one workflow: the ``run_workflow`` body with the id fixed."""
 
     async def run_exposed_workflow(
-        message: str,
+        message: _RunMessage,
         ctx: Context,
-        user_id: Optional[str] = None,
-        session_id: Optional[str] = None,
+        user_id: _RunUserId = None,
+        session_id: _RunSessionId = None,
     ) -> ToolResult:
         from agno.workflow.remote import RemoteWorkflow
 
-        _require_tool_scopes("POST", f"/workflows/{component_id}/runs")
+        await _require_tool_scopes("POST", f"/workflows/{component_id}/runs")
         resolved_user_id = _resolve_user_id(user_id)
         workflow = await _resolve_run_component(
             os, "workflows", component_id, user_id=resolved_user_id, session_id=session_id
@@ -1871,9 +1957,8 @@ def _register_exposed_components(
     }
     taken.update(custom_tool_names or {})
 
-    # continue_run rides along with exposure by default (the lifecycle tag), so this is
-    # False only when the deployer opted out -- the paused-result text then points the
-    # caller at REST instead of at a tool that does not exist.
+    # When neither the default tools nor the lifecycle opt-in registers continue_run,
+    # the paused-result text points the caller at REST instead of a missing tool.
     continue_run_available = bool({"core", "lifecycle"} & enabled_tags)
     singulars = {"agents": "agent", "teams": "team", "workflows": "workflow"}
 
@@ -1976,6 +2061,7 @@ def _register_exposed_components(
         mcp.tool(name=tool_name, title=title, description=description, annotations=annotations)(fn)
 
 
+# Mandated by the schema's $schema pattern; not hosted until the extension graduates.
 SERVER_CARD_SCHEMA = "https://static.modelcontextprotocol.io/schemas/v1/server-card.schema.json"
 SERVER_CARD_MEDIA_TYPE = "application/mcp-server-card+json"
 _MCP_PATH = "/mcp"
@@ -2088,7 +2174,7 @@ async def _server_card(
     }
     # ``version`` is required by the schema and must match what the runtime reports in
     # ``serverInfo.version``, so the card mirrors ``mcp.version`` when nothing was configured --
-    # even though fastmcp defaults that to its own library version. Set ``MCPConfig(version=...)``
+    # even though fastmcp defaults that to its own library version. Set ``MCPConfig.version``
     # or ``AgentOS(version=...)`` to publish the deployment's real version instead.
     card["version"] = _truncate(version or str(mcp.version), _CARD_VERSION_MAX)
     # Not part of the Server Card schema, which leaves the tool surface to ``tools/list``. It is
@@ -2131,8 +2217,7 @@ def _register_server_card(
                 "Vary": vary,
                 "Access-Control-Allow-Origin": "*",
                 "Access-Control-Allow-Methods": "GET",
-                "Access-Control-Allow-Headers": "Content-Type, If-None-Match",
-                "Access-Control-Expose-Headers": "ETag",
+                "Access-Control-Allow-Headers": "Content-Type",
             },
         )
 
@@ -2216,7 +2301,7 @@ def build_mcp_server(
         )
 
     # Classify the tool surface up front: the enabled default-tool tags depend on
-    # whether components are exposed (the lifecycle pair rides along with exposure).
+    # whether components are exposed (lifecycle_tools=True adds their lifecycle pair).
     custom_entries, exposure_entries = _split_tool_entries(mcp_config, os)
     enabled_tags = _enabled_builtin_tags(mcp_config, has_exposures=bool(exposure_entries))
 
@@ -2278,7 +2363,7 @@ def build_mcp_server(
         annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
     )  # type: ignore
     async def config() -> Dict[str, Any]:
-        _require_tool_scopes("GET", "/config")
+        await _require_tool_scopes("GET", "/config")
         from agno.db.base import BaseDb
 
         request = _http_request_or_none()
@@ -2362,22 +2447,20 @@ def build_mcp_server(
         name="run_agent",
         title="Run Agent",
         description=(
-            "Run an agent with a message and get its response. Pass a session_id from get_sessions to "
-            "continue that conversation; omit it to start a new one (the session_id comes back in "
-            "structuredContent). If the result status is PAUSED, resolve the returned requirements and "
-            "call continue_run. Agent ids come from get_agentos_config."
+            "Run an agent with a message and get its response. If the result status is PAUSED, resolve "
+            "the returned requirements and call continue_run."
         ),
         tags={"core"},
         annotations={"readOnlyHint": False, "destructiveHint": True, "openWorldHint": True},
     )  # type: ignore
     async def run_agent(
-        agent_id: str,
-        message: str,
+        agent_id: Annotated[str, Field(description="Agent id from get_agentos_config.")],
+        message: _RunMessage,
         ctx: Context,
-        user_id: Optional[str] = None,
-        session_id: Optional[str] = None,
+        user_id: _RunUserId = None,
+        session_id: _RunSessionId = None,
     ) -> ToolResult:
-        _require_tool_scopes("POST", f"/agents/{agent_id}/runs")
+        await _require_tool_scopes("POST", f"/agents/{agent_id}/runs")
         user_id = _resolve_user_id(user_id)
         agent = await _resolve_run_component(os, "agents", agent_id, user_id=user_id, session_id=session_id)
         # Mint a fresh session per call when omitted (matches REST), never the sticky default.
@@ -2392,20 +2475,20 @@ def build_mcp_server(
         name="run_team",
         title="Run Team",
         description=(
-            "Run a team of agents with a message and get its response. Same session and PAUSED semantics "
-            "as run_agent. Team ids come from get_agentos_config."
+            "Run a team of agents with a message and get its response. If the result status is PAUSED, "
+            "resolve the returned requirements and call continue_run."
         ),
         tags={"core"},
         annotations={"readOnlyHint": False, "destructiveHint": True, "openWorldHint": True},
     )  # type: ignore
     async def run_team(
-        team_id: str,
-        message: str,
+        team_id: Annotated[str, Field(description="Team id from get_agentos_config.")],
+        message: _RunMessage,
         ctx: Context,
-        user_id: Optional[str] = None,
-        session_id: Optional[str] = None,
+        user_id: _RunUserId = None,
+        session_id: _RunSessionId = None,
     ) -> ToolResult:
-        _require_tool_scopes("POST", f"/teams/{team_id}/runs")
+        await _require_tool_scopes("POST", f"/teams/{team_id}/runs")
         user_id = _resolve_user_id(user_id)
         team = await _resolve_run_component(os, "teams", team_id, user_id=user_id, session_id=session_id)
         # Mint a fresh session per call when omitted (matches REST), never the sticky default.
@@ -2421,22 +2504,22 @@ def build_mcp_server(
         title="Run Workflow",
         description=(
             "Run a workflow with an input message and get its result. Can be long-running: progress is "
-            "reported per step when the client supports it. Same session and PAUSED semantics as "
-            "run_agent. Workflow ids come from get_agentos_config."
+            "reported per step when the client supports it. If the result status is PAUSED, resolve the "
+            "returned requirements and call continue_run."
         ),
         tags={"core"},
         annotations={"readOnlyHint": False, "destructiveHint": True, "openWorldHint": True},
     )  # type: ignore
     async def run_workflow(
-        workflow_id: str,
-        message: str,
+        workflow_id: Annotated[str, Field(description="Workflow id from get_agentos_config.")],
+        message: _RunMessage,
         ctx: Context,
-        user_id: Optional[str] = None,
-        session_id: Optional[str] = None,
+        user_id: _RunUserId = None,
+        session_id: _RunSessionId = None,
     ) -> ToolResult:
         from agno.workflow.remote import RemoteWorkflow
 
-        _require_tool_scopes("POST", f"/workflows/{workflow_id}/runs")
+        await _require_tool_scopes("POST", f"/workflows/{workflow_id}/runs")
         user_id = _resolve_user_id(user_id)
         workflow = await _resolve_run_component(os, "workflows", workflow_id, user_id=user_id, session_id=session_id)
         # Mint a fresh session per call when omitted (matches REST), never the sticky default.
@@ -2467,28 +2550,31 @@ def build_mcp_server(
         name="continue_run",
         title="Continue Paused Run",
         description=(
-            "Resume a PAUSED run after resolving its requirements (human-in-the-loop). "
-            "When a run tool returns status=PAUSED, its structuredContent carries the unresolved "
-            "requirements; set the resolution fields on them (e.g. confirmation=true) and pass them "
-            "back here unchanged otherwise. Provide exactly one of agent_id / team_id / workflow_id "
-            "(the component that owns the run) plus the run_id and session_id from the paused result."
+            "Resume a PAUSED run after resolving its requirements (human-in-the-loop). The paused "
+            "result's structuredContent carries the run_id, session_id, owning component id, and the "
+            "unresolved requirements."
         ),
         tags={"core", "lifecycle"},
         annotations={"readOnlyHint": False, "destructiveHint": True, "openWorldHint": True},
     )  # type: ignore
     async def continue_run(
-        run_id: str,
+        run_id: Annotated[str, Field(description="run_id from the PAUSED result.")],
+        session_id: Annotated[str, Field(description="session_id from the PAUSED result.")],
         ctx: Context,
-        session_id: Optional[str] = None,
-        agent_id: Optional[str] = None,
-        team_id: Optional[str] = None,
-        workflow_id: Optional[str] = None,
-        requirements: Optional[List[Dict[str, Any]]] = None,
-        user_id: Optional[str] = None,
+        agent_id: _OwnerId = None,
+        team_id: _OwnerId = None,
+        workflow_id: _OwnerId = None,
+        requirements: Annotated[
+            Optional[List[Dict[str, Any]]],
+            Field(
+                description="The PAUSED result's requirements with their resolution fields set, e.g. confirmation=true."
+            ),
+        ] = None,
+        user_id: _RunUserId = None,
     ) -> ToolResult:
         component_type, component_id = _classify_lifecycle_target(agent_id, team_id, workflow_id)
         _require_published_component("continue_run", component_type, component_id)
-        _require_tool_scopes("POST", f"/{component_type}/{component_id}/runs/{run_id}/continue")
+        await _require_tool_scopes("POST", f"/{component_type}/{component_id}/runs/{run_id}/continue")
         user_id = _resolve_user_id(user_id)
         # published_only=False, like the REST /continue routes: the run may live
         # on a draft-only preview component that has no published version.
@@ -2542,22 +2628,25 @@ def build_mcp_server(
         title="Cancel Run",
         description=(
             "Request cancellation of a running run. Irreversible: the run stops and is marked CANCELLED "
-            "(if it has not started yet, the intent is recorded and applied when it does). Provide the "
-            "run_id, its session_id, and exactly one of agent_id / team_id / workflow_id."
+            "(if it has not started yet, the intent is recorded and applied when it does)."
         ),
         tags={"core", "lifecycle"},
         annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": True, "openWorldHint": True},
     )  # type: ignore
     async def cancel_run(
-        run_id: str,
-        session_id: Optional[str] = None,
-        agent_id: Optional[str] = None,
-        team_id: Optional[str] = None,
-        workflow_id: Optional[str] = None,
+        run_id: Annotated[str, Field(description="Run to cancel.")],
+        # Mandatory for a caller scoped by user isolation (ownership is proven through the
+        # session); an admin's cancel is keyed on run_id alone.
+        session_id: Annotated[
+            Optional[str], Field(description="Session the run belongs to. Pass it when you have it.")
+        ] = None,
+        agent_id: _OwnerId = None,
+        team_id: _OwnerId = None,
+        workflow_id: _OwnerId = None,
     ) -> str:
         component_type, component_id = _classify_lifecycle_target(agent_id, team_id, workflow_id)
         _require_published_component("cancel_run", component_type, component_id)
-        _require_tool_scopes("POST", f"/{component_type}/{component_id}/runs/{run_id}/cancel")
+        await _require_tool_scopes("POST", f"/{component_type}/{component_id}/runs/{run_id}/cancel")
         # Factory components cancel STATICALLY (mirrors the REST factory-cancel routes):
         # cancellation is a run_id-keyed global intent, so building the factory is both
         # unnecessary and harmful -- generic resolution invokes it, which 400s a
@@ -2590,26 +2679,28 @@ def build_mcp_server(
         name="get_sessions",
         title="List Sessions",
         description=(
-            "List past sessions (conversations), newest first. Filter by session_type, component_id "
-            "(an agent/team/workflow id from get_agentos_config), user, or session_name. Use a returned "
-            "session_id with the run tools to continue that conversation, or with get_session_runs to "
-            "read its history. db_id is only needed when get_agentos_config lists multiple databases."
+            "List past sessions (conversations), newest first. Use a returned session_id with the run "
+            "tools to continue that conversation, or with get_session_runs to read its history."
         ),
         tags={"session"},
         annotations={"readOnlyHint": True, "destructiveHint": False, "openWorldHint": False},
     )  # type: ignore
     async def get_sessions(
-        session_type: Literal["agent", "team", "workflow"] = "agent",
-        component_id: Optional[str] = None,
-        user_id: Optional[str] = None,
-        session_name: Optional[str] = None,
-        limit: int = 20,
-        page: int = 1,
-        sort_by: str = "created_at",
-        sort_order: Literal["asc", "desc"] = "desc",
-        db_id: Optional[str] = None,
+        session_type: Annotated[
+            Literal["agent", "team", "workflow"], Field(description="Defaults to agent.")
+        ] = "agent",
+        component_id: Annotated[Optional[str], Field(description="Filter to one agent, team, or workflow id.")] = None,
+        user_id: _ReadUserId = None,
+        session_name: Annotated[Optional[str], Field(description="Filter by name.")] = None,
+        limit: Annotated[int, Field(ge=1, description="Sessions per page.")] = 20,
+        page: Annotated[int, Field(ge=1, description="Page number, starting at 1.")] = 1,
+        # An unknown column is ignored by the DB layer (results come back unsorted), so the
+        # description names the two useful ones rather than explaining the fallback.
+        sort_by: Annotated[str, Field(description="created_at or updated_at.")] = "created_at",
+        sort_order: Annotated[Literal["asc", "desc"], Field(description="Sort direction.")] = "desc",
+        db_id: _DbId = None,
     ) -> Dict[str, Any]:
-        _require_tool_scopes("GET", "/sessions")
+        await _require_tool_scopes("GET", "/sessions")
         user_id = _scoped_read_user_id(user_id)
         db = await get_db(os.dbs, db_id)
         session_type_enum = SessionType(session_type)
@@ -2652,23 +2743,27 @@ def build_mcp_server(
         description=(
             "Read a session's conversation history: each run's input and response content with its "
             "run_id, status, and timestamp, oldest first. Returns the answer content only, not the full "
-            "message transcript. Pass run_id to get that one run in FULL, untrimmed detail -- the complete "
-            "message transcript INCLUDING the system prompt/instructions, plus every event and metric. "
-            "This is the debugging escape hatch and can be large (a long run returns a lot of tokens), so "
-            "request a specific run_id deliberately, not by default. session_type is auto-detected when "
-            "omitted; db_id is only needed when get_agentos_config lists multiple databases."
+            "message transcript."
         ),
         tags={"session"},
         annotations={"readOnlyHint": True, "destructiveHint": False, "openWorldHint": False},
     )  # type: ignore
     async def get_session_runs(
-        session_id: str,
-        run_id: Optional[str] = None,
-        session_type: Optional[Literal["agent", "team", "workflow"]] = None,
-        user_id: Optional[str] = None,
-        db_id: Optional[str] = None,
+        session_id: Annotated[str, Field(description="Session to read.")],
+        run_id: Annotated[
+            Optional[str],
+            Field(
+                description=(
+                    "One run in full detail, system prompt and every event included. Large; omit for the "
+                    "trimmed history of every run."
+                )
+            ),
+        ] = None,
+        session_type: _ReadSessionType = None,
+        user_id: _ReadUserId = None,
+        db_id: _DbId = None,
     ) -> List[Dict[str, Any]]:
-        _require_tool_scopes("GET", f"/sessions/{session_id}/runs")
+        await _require_tool_scopes("GET", f"/sessions/{session_id}/runs")
         user_id = _scoped_read_user_id(user_id)
         db = await get_db(os.dbs, db_id)
         session_type_enum = SessionType(session_type) if session_type else None
@@ -2770,7 +2865,24 @@ def _identity_bridge_kwargs(os: "AgentOS") -> Dict[str, Any]:
     config = getattr(os, "authorization_config", None)
     admin_scope = getattr(config, "admin_scope", None) if config is not None else None
     user_isolation = bool(getattr(config, "user_isolation", False)) if config is not None else False
-    return {"admin_scope": admin_scope or AgentOSScope.ADMIN.value, "user_isolation": user_isolation}
+    # User directory: mcp_auth exempts /mcp from the parent AuthMiddleware, so the bridge
+    # must re-apply the disabled-user kill-switch itself. The directory is a peer of authz
+    # (AgentOS(user_directory=...)), so read it from there, not authorization_config.
+    directory = getattr(os, "user_directory", None)
+    return {
+        "admin_scope": admin_scope or AgentOSScope.ADMIN.value,
+        "user_isolation": user_isolation,
+        "user_store": directory,  # the directory is the roster store
+        "user_auto_provision": bool(directory.auto_provision) if directory is not None else False,
+        "user_email_claim": directory.email_claim if directory is not None else "email",
+        "user_name_claim": directory.name_claim if directory is not None else "name",
+        "user_directory_fail_closed": bool(directory.fail_closed) if directory is not None else False,
+        # Role store so a first-time auto-provision on the MCP path grants the same default role
+        # it would on the HTTP/WebSocket paths. The store lives on the Authorization object, same
+        # as the HTTP path reads it via app.state.role_store; without this the MCP path provisions
+        # a user but never grants their default role.
+        "role_store": getattr(os, "_authz_role_store", None),
+    }
 
 
 # Localhost defaults so a desktop / local MCP server is protected with zero extra config.
@@ -2901,8 +3013,8 @@ def get_mcp_server(
     http_app_params = inspect.signature(mcp.http_app).parameters
     if "host_origin_protection" in http_app_params:
         http_app_kwargs["host_origin_protection"] = False
-    # Opt-in stateless transport: no session is retained between requests, so any replica
-    # can answer any request. Only passed when requested, so the fastmcp default stands.
+    # Modern requests are already sessionless. This opts legacy clients out of transport
+    # sessions too. Only passed when requested, so the FastMCP settings remain in control.
     if mcp_config is not None and mcp_config.stateless and "stateless_http" in http_app_params:
         http_app_kwargs["stateless_http"] = True
     if mcp_auth is not None:
