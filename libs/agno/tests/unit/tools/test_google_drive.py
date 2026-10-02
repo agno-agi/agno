@@ -3,13 +3,14 @@ import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import docx
 import pytest
 from google.oauth2.credentials import Credentials
 from googleapiclient.errors import HttpError
 from pptx import Presentation
 from pptx.util import Inches
 
-from agno.tools.google.drive import PPTX_MIME_TYPE, GoogleDriveTools
+from agno.tools.google.drive import DOCX_MIME_TYPE, PPTX_MIME_TYPE, GoogleDriveTools
 
 
 @pytest.fixture
@@ -531,6 +532,39 @@ def test_read_file_pptx_grouped_shapes_and_line_breaks(drive_tools):
 
     assert result["extractedFrom"] == "pptx"
     assert result["content"] == "=== Slide 1 ===\nTop level box\nGrouped box\nfirst\nsecond"
+
+
+def test_read_file_docx_tables_in_document_order(drive_tools):
+    document = docx.Document()
+    document.add_paragraph("Before table")
+    table = document.add_table(rows=3, cols=2)
+    table.cell(0, 0).text = "Product"
+    table.cell(0, 1).text = "Revenue"
+    table.cell(1, 0).text = "Agno"
+    table.cell(1, 1).text = "100"
+    document.add_paragraph("After table")
+    buffer = io.BytesIO()
+    document.save(buffer)
+
+    drive_tools.service.files.return_value.get.return_value.execute.return_value = {
+        "id": "d1",
+        "name": "report.docx",
+        "mimeType": DOCX_MIME_TYPE,
+        "size": str(len(buffer.getvalue())),
+    }
+    mock_downloader = MagicMock()
+    mock_downloader.next_chunk.return_value = (MagicMock(), True)
+    with patch("agno.tools.google.drive.MediaIoBaseDownload", return_value=mock_downloader) as mock_dl:
+
+        def capture_buffer(buf, req):
+            buf.write(buffer.getvalue())
+            return mock_downloader
+
+        mock_dl.side_effect = capture_buffer
+        result = json.loads(drive_tools.read_file("d1"))
+
+    assert result["extractedFrom"] == "docx"
+    assert result["content"] == "Before table\nProduct\tRevenue\nAgno\t100\nAfter table"
 
 
 # ---------------------------------------------------------------------------
