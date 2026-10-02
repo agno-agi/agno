@@ -697,6 +697,7 @@ class Model(ABC):
         _compress_tool_results = compression_manager is not None and compression_manager.compress_tool_results
         _compression_manager = compression_manager if _compress_tool_results else None
 
+        tool_calls_disabled = False
         while True:
             # Compress tool results if compression is enabled and threshold is met
             if _compression_manager is not None and _compression_manager.should_compress(
@@ -862,6 +863,19 @@ class Model(ABC):
                     if any(not req.is_resolved() for req in run_response.requirements):
                         break
 
+                # A model may use successful earlier tool results to synthesize a final
+                # answer after its budget is exhausted. Give it one final turn with no
+                # tools. If it still returns a tool call, stop rather than looping.
+                if tool_calls_disabled:
+                    break
+                if function_call_results and all(m.tool_call_limit_reached for m in function_call_results):
+                    tools = []
+                    _tool_dicts = []
+                    _functions = {}
+                    tool_choice = "none"
+                    tool_calls_disabled = True
+                    continue
+
                 # Continue loop to get next response
                 continue
 
@@ -920,6 +934,7 @@ class Model(ABC):
         _compression_manager = compression_manager if _compress_tool_results else None
 
         function_call_count = 0
+        tool_calls_disabled = False
 
         while True:
             # Compress existing tool results BEFORE making API call to avoid context overflow
@@ -1084,6 +1099,19 @@ class Model(ABC):
                 if run_response is not None and run_response.requirements:
                     if any(not req.is_resolved() for req in run_response.requirements):
                         break
+
+                # A model may use successful earlier tool results to synthesize a final
+                # answer after its budget is exhausted. Give it one final turn with no
+                # tools. If it still returns a tool call, stop rather than looping.
+                if tool_calls_disabled:
+                    break
+                if function_call_results and all(m.tool_call_limit_reached for m in function_call_results):
+                    tools = []
+                    _tool_dicts = []
+                    _functions = {}
+                    tool_choice = "none"
+                    tool_calls_disabled = True
+                    continue
 
                 # Continue loop to get next response
                 continue
@@ -1411,6 +1439,7 @@ class Model(ABC):
         _compression_manager = compression_manager if _compress_tool_results else None
 
         function_call_count = 0
+        tool_calls_disabled = False
 
         while True:
             # Compress existing tool results BEFORE invoke
@@ -1593,6 +1622,19 @@ class Model(ABC):
                     if any(not req.is_resolved() for req in run_response.requirements):
                         break
 
+                # A model may use successful earlier tool results to synthesize a final
+                # answer after its budget is exhausted. Give it one final turn with no
+                # tools. If it still returns a tool call, stop rather than looping.
+                if tool_calls_disabled:
+                    break
+                if function_call_results and all(m.tool_call_limit_reached for m in function_call_results):
+                    tools = []
+                    _tool_dicts = []
+                    _functions = {}
+                    tool_choice = "none"
+                    tool_calls_disabled = True
+                    continue
+
                 # Continue loop to get next response
                 continue
 
@@ -1692,6 +1734,7 @@ class Model(ABC):
         _compression_manager = compression_manager if _compress_tool_results else None
 
         function_call_count = 0
+        tool_calls_disabled = False
 
         while True:
             # Compress existing tool results BEFORE making API call to avoid context overflow
@@ -1873,6 +1916,19 @@ class Model(ABC):
                 if run_response is not None and run_response.requirements:
                     if any(not req.is_resolved() for req in run_response.requirements):
                         break
+
+                # A model may use successful earlier tool results to synthesize a final
+                # answer after its budget is exhausted. Give it one final turn with no
+                # tools. If it still returns a tool call, stop rather than looping.
+                if tool_calls_disabled:
+                    break
+                if function_call_results and all(m.tool_call_limit_reached for m in function_call_results):
+                    tools = []
+                    _tool_dicts = []
+                    _functions = {}
+                    tool_choice = "none"
+                    tool_calls_disabled = True
+                    continue
 
                 # Continue loop to get next response
                 continue
@@ -2222,6 +2278,7 @@ class Model(ABC):
             tool_name=function_call.function.name,
             tool_args=function_call.arguments,
             tool_call_error=True,
+            tool_call_limit_reached=True,
         )
 
     def run_function_call(
