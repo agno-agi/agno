@@ -1,3 +1,4 @@
+import weakref
 import asyncio
 import collections.abc
 import json
@@ -130,6 +131,9 @@ def _handle_agent_exception(a_exc: AgentRunException, additional_input: Optional
             m.stop_after_tool_call = True
 
 
+_CLIENT_ATTRS = ("client", "async_client", "http_client", "mistral_client", "model_client")
+
+
 @dataclass
 class Model(ABC):
     # ID of the model to use.
@@ -189,6 +193,20 @@ class Model(ABC):
     def __post_init__(self):
         if self.provider is None and self.name is not None:
             self.provider = f"{self.name} ({self.id})"
+        # Remember the client objects the caller supplied (agno builds its own lazily, later), keyed
+        # by a weak reference so a deep copy keeps a caller-supplied client but drops an agno-built
+        # one. A client a provider rebuilds later is a different object, so its weak reference no
+        # longer matches and it is dropped too.
+        marks: dict = {}
+        for _attr in _CLIENT_ATTRS:
+            _obj = getattr(self, _attr, None)
+            if _obj is None:
+                continue
+            try:
+                marks[_attr] = weakref.ref(_obj)
+            except TypeError:
+                marks[_attr] = _obj  # not weak-referenceable; hold a direct reference
+        self._caller_supplied_clients = marks
 
     def _get_retry_delay(self, attempt: int) -> float:
         """Calculate the delay before the next retry attempt."""
@@ -3213,13 +3231,19 @@ class Model(ABC):
         new_model = cls.__new__(cls)
         memo[id(self)] = new_model
 
-        # Deep copy all attributes except client objects
+        caller_supplied: dict = getattr(self, "_caller_supplied_clients", {})
+        # Deep copy all attributes; client objects are handled by ownership below
         for k, v in self.__dict__.items():
             if k in {"response_format", "_tools", "_functions"}:
                 continue
-            # Skip client objects
-            if k in {"client", "async_client", "http_client", "mistral_client", "model_client"}:
-                setattr(new_model, k, None)
+            # Keep a caller-supplied client so custom credentials/transport survive the copy; drop an
+            # agno-built one (or a client a provider rebuilt over the caller's) so the copy makes its
+            # own and concurrent copies (the main run and its memory pass) don't share one pool. The
+            # mark is by object, so a rebuilt client no longer matches and is dropped.
+            if k in _CLIENT_ATTRS:
+                mark = caller_supplied.get(k)
+                owned = mark() if isinstance(mark, weakref.ReferenceType) else mark
+                setattr(new_model, k, v if owned is not None and owned is v else None)
                 continue
             try:
                 setattr(new_model, k, deepcopy(v, memo))
