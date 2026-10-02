@@ -97,12 +97,48 @@ async def test_storage_and_chaining_on_wire(response_client, mode, store, disabl
     assert payload["store"] is (store is not False)
     if not disable_chaining and store is not False:
         assert payload["previous_response_id"] == "resp_previous"
+        assert payload["instructions"] == "Fresh documentation for this turn"
         assert payload["input"] == [{"role": "user", "content": "Follow-up question"}]
     else:
         assert "previous_response_id" not in payload
+        assert "instructions" not in payload
         assert [item["content"] for item in payload["input"]] == [message.content for message in messages]
         assert payload["include"].count("reasoning.encrypted_content") == 1
     assert "use_previous_response_id" not in payload
+
+
+@pytest.mark.parametrize("mode", ["sync", "async", "sync_stream", "async_stream"])
+async def test_chained_run_sends_its_own_system_message(response_client, mode):
+    """Instructions are not carried over previous_response_id, so a rebuilt system message must be sent again."""
+    requests, transport = response_client
+    with OpenAI(api_key="test", http_client=httpx.Client(transport=transport)) as client:
+        async with AsyncOpenAI(api_key="test", http_client=httpx.AsyncClient(transport=transport)) as async_client:
+            model = OpenAIResponses(id="gpt-5.6-luna", client=client, async_client=async_client)
+            await _invoke(
+                model, mode, [Message(role="system", content="Rule set A"), Message(role="user", content="First")]
+            )
+            await _invoke(
+                model,
+                mode,
+                [
+                    Message(role="system", content="Rule set B"),
+                    Message(role="user", content="First", from_history=True),
+                    Message(
+                        role="assistant",
+                        content="Reply",
+                        provider_data={"response_id": "resp_first"},
+                        from_history=True,
+                    ),
+                    Message(role="user", content="Second"),
+                ],
+            )
+
+    assert "previous_response_id" not in requests[0]
+    assert requests[1]["previous_response_id"] == "resp_first"
+    assert [(payload["instructions"], payload["input"]) for payload in requests] == [
+        ("Rule set A", [{"role": "user", "content": "First"}]),
+        ("Rule set B", [{"role": "user", "content": "Second"}]),
+    ]
 
 
 @pytest.mark.parametrize("mode", ["sync", "async", "sync_stream", "async_stream"])
@@ -240,10 +276,10 @@ async def test_stale_previous_response_id_is_retried_with_replayed_context(stale
     assert assistant.provider_data["response_id"] == "resp_new"
     assert [("previous_response_id" in payload) for payload in requests] == [True, False]
     assert requests[0]["input"] == [{"role": "user", "content": "Thanks, and again?"}]
+    assert requests[0]["instructions"] == requests[1]["instructions"] == "Instructions"
 
     replayed = requests[1]["input"]
     assert [item.get("role") or item["type"] for item in replayed] == [
-        "developer",
         "user",
         "function_call",
         "function_call_output",
@@ -251,8 +287,8 @@ async def test_stale_previous_response_id_is_retried_with_replayed_context(stale
         "user",
     ]
     # The rejected ids are unknown to the server, so the replayed call must not carry one.
-    assert "id" not in replayed[2]
-    assert replayed[2]["call_id"] == replayed[3]["call_id"] == "call_old"
+    assert "id" not in replayed[1]
+    assert replayed[1]["call_id"] == replayed[2]["call_id"] == "call_old"
     assert requests[1]["store"] is True
 
 
