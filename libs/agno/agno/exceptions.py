@@ -212,6 +212,27 @@ class ContextWindowExceededError(ModelProviderError):
         self.error_id = "context_window_exceeded_error"
 
 
+class ModelRefusalError(ModelProviderError):
+    """Exception raised when the model declines the request (Claude's stop_reason "refusal").
+
+    The provider answers with a normal HTTP 200, so that is the status code. The request is not
+    retried on the same model, but general fallback models (FallbackConfig.on_error) still apply:
+    another model can usually answer it.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        status_code: int = 200,
+        model_name: Optional[str] = None,
+        model_id: Optional[str] = None,
+        category: Optional[str] = None,
+    ):
+        super().__init__(message, status_code, model_name, model_id)
+        self.error_id = "model_refusal_error"
+        self.category = category
+
+
 class EmbeddingError(AgnoError):
     """Raised when an embedder fails to produce an embedding.
 
