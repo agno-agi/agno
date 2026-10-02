@@ -91,7 +91,7 @@ await knowledge.async_sync_pages(url=index_url, validate_discovery=validate_inde
 
 An application may bind an explicit override into its callback. Acceptance still requires the existing discovery and processing checks before pruning; the callback cannot turn empty discovery or partial processing into a successful reconciliation. Without a callback, the framework applies no shrink threshold. Validation adds one namespace-scoped catalog count only on sync, not on query traffic.
 
-A sync with any failed page reports `status="partial"`; the other pages are published and searchable, and pruning waits for a clean run. `SyncReport.failed` is the full count and `failed_paths` names up to 20 of those pages (for example `("/guides/setup.md",)`), so an application can show which pages to check or decide how many failures it tolerates. Each failure is also logged with its path. A later sync retries failed pages along with any changed ones.
+A sync with any failed page reports `status="partial"`; the other pages are published and searchable, and pruning waits for a clean run. `SyncReport.failed` is the full count and `failed_paths` names up to 20 of those pages (for example `("/guides/setup.md",)`), so an application can show which pages to check or decide how many failures it tolerates. Each failure is also logged with its path and underlying cause (for example `SyncFailed: sync_failed <- ConnectError: [Errno 104] Connection reset by peer`). A later sync retries failed pages along with any changed ones.
 
 ## Explicit retrieval and customization
 

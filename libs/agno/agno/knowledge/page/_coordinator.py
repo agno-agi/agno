@@ -80,6 +80,19 @@ _PARALLEL_SEARCHES = BoundedSemaphore(2)
 _QUERY_WORKERS = ThreadPoolExecutor(max_workers=6, thread_name_prefix="knowledge-query")
 
 
+def _failure(exc: BaseException) -> str:
+    """One bounded log line naming an error and its causes, e.g. a fetch's connection reset."""
+    parts: List[str] = []
+    current: Optional[BaseException] = exc
+    while current is not None and len(parts) < 4:
+        message = str(current).strip()
+        part = f"{type(current).__name__}: {message}" if message else type(current).__name__
+        if not parts or parts[-1] != part:
+            parts.append(part)
+        current = current.__cause__
+    return " <- ".join(parts)[:300]
+
+
 def _digest(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
@@ -1468,7 +1481,7 @@ class PageCoordinator:
                                 )
                             )
                         except Exception as exc:
-                            log_warning(f"Page sync failed for {page.path} ({type(exc).__name__})")
+                            log_warning(f"Page sync failed for {page.path} ({_failure(exc)})")
                             if conn.invalidated or conn.closed or self._pending_publication is not None:
                                 # Do not reconnect a connection that owned the namespace lock.
                                 conn.invalidate()
@@ -1508,7 +1521,7 @@ class PageCoordinator:
                                 )
                                 pending_delete = True
                             deleted += 1
-                        except Exception:
+                        except Exception as exc:
                             if conn.invalidated or conn.closed or pending_delete:
                                 conn.invalidate()
                                 if self._publication_outcome(path, deleted=True):
@@ -1520,7 +1533,7 @@ class PageCoordinator:
                             else:
                                 failed += 1
                                 failed_paths.append(path)
-                                log_warning(f"Page delete failed for {path}")
+                                log_warning(f"Page delete failed for {path} ({_failure(exc)})")
                                 errors.append("page_delete_failed")
                             break
                 if not source.complete:
