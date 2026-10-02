@@ -11,3 +11,5 @@ class TogetherEmbedder(OpenAIEmbedder):
     dimensions: int = 768
     api_key: Optional[str] = getenv("TOGETHER_API_KEY")
     base_url: str = "https://api.together.xyz/v1"
+    # Together AI rejects the 'dimensions' parameter (HTTP 400).
+    send_dimensions: Optional[bool] = False
