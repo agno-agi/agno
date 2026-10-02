@@ -2222,6 +2222,7 @@ class Model(ABC):
             tool_name=function_call.function.name,
             tool_args=function_call.arguments,
             tool_call_error=True,
+            stop_after_tool_call=True,
         )
 
     def run_function_call(
