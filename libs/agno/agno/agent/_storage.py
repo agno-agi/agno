@@ -1229,22 +1229,12 @@ def from_dict(
         config["reasoning_model"] = resolve_model(config["reasoning_model"], registry)
 
     # --- Handle parser_model reconstruction ---
-    # TODO: implement parser model deserialization
-    # if "parser_model" in config:
-    #     model_data = config["parser_model"]
-    #     if isinstance(model_data, dict) and "id" in model_data:
-    #         config["parser_model"] = get_model(f"{model_data['provider']}:{model_data['id']}")
-    #     elif isinstance(model_data, str):
-    #         config["parser_model"] = get_model(model_data)
+    if config.get("parser_model") is not None:
+        config["parser_model"] = resolve_model(config["parser_model"], registry)
 
     # --- Handle output_model reconstruction ---
-    # TODO: implement output model deserialization
-    # if "output_model" in config:
-    #     model_data = config["output_model"]
-    #     if isinstance(model_data, dict) and "id" in model_data:
-    #         config["output_model"] = get_model(f"{model_data['provider']}:{model_data['id']}")
-    #     elif isinstance(model_data, str):
-    #         config["output_model"] = get_model(model_data)
+    if config.get("output_model") is not None:
+        config["output_model"] = resolve_model(config["output_model"], registry)
 
     # --- Handle tools reconstruction ---
     if "tools" in config and config["tools"]:
@@ -1496,9 +1486,9 @@ def from_dict(
         input_schema=config.get("input_schema"),
         output_schema=config.get("output_schema"),
         # --- Parser and output settings ---
-        # parser_model=config.get("parser_model"),  # TODO
+        parser_model=config.get("parser_model"),
         parser_model_prompt=config.get("parser_model_prompt"),
-        # output_model=config.get("output_model"),  # TODO
+        output_model=config.get("output_model"),
         output_model_prompt=config.get("output_model_prompt"),
         parse_response=config.get("parse_response", True),
         structured_outputs=config.get("structured_outputs"),
