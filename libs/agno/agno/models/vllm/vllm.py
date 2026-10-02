@@ -21,8 +21,10 @@ class VLLM(OpenAILike):
         base_url: vLLM server URL
         temperature: Sampling temperature
         top_p: Nucleus sampling probability
-        presence_penalty: Repetition penalty
+        presence_penalty: Penalize tokens already present in the generated text
+        repetition_penalty: Penalize tokens from the prompt and generated text
         top_k: Top-k sampling
+        min_p: Minimum token probability relative to the most likely token
         enable_thinking: Special mode flag
     """
 
@@ -38,6 +40,16 @@ class VLLM(OpenAILike):
     presence_penalty: float = 1.5
     top_k: Optional[int] = None
     enable_thinking: Optional[bool] = None
+    repetition_penalty: Optional[float] = None
+    min_p: Optional[float] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        model_dict = super().to_dict()
+        if self.repetition_penalty is not None:
+            model_dict["repetition_penalty"] = self.repetition_penalty
+        if self.min_p is not None:
+            model_dict["min_p"] = self.min_p
+        return model_dict
 
     def _get_client_params(self) -> Dict[str, Any]:
         """
@@ -71,6 +83,10 @@ class VLLM(OpenAILike):
         vllm_body: Dict[str, Any] = {}
         if self.top_k is not None:
             vllm_body["top_k"] = self.top_k
+        if self.repetition_penalty is not None:
+            vllm_body["repetition_penalty"] = self.repetition_penalty
+        if self.min_p is not None:
+            vllm_body["min_p"] = self.min_p
         if self.enable_thinking is not None:
             vllm_body.setdefault("chat_template_kwargs", {})["enable_thinking"] = self.enable_thinking
 

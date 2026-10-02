@@ -99,6 +99,10 @@ vLLM embedders can load and run embedding models locally without requiring a ser
 
 ## Examples
 
+The basic example sets `repetition_penalty` and `min_p` directly on `VLLM`.
+Both default to `None`, leaving server defaults unchanged. Explicit values override
+the same keys in `extra_body`; other `extra_body` keys are preserved.
+
 ```shell
 python cookbook/90_models/vllm/basic.py
 ```
