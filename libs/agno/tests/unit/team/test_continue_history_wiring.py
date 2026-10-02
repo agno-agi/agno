@@ -174,7 +174,7 @@ def _patch_async_dispatch(monkeypatch: pytest.MonkeyPatch, team_session: TeamSes
     """Patch everything ``_acontinue_run``/``_acontinue_run_stream`` touch
     before the message-builder call, other than the message builder itself."""
 
-    async def fake_asetup_session(team, run_context, session_id, user_id, run_id):
+    async def fake_asetup_session(team, run_context, session_id, user_id, run_id, resolve_dependencies=True):
         return team_session
 
     async def fake_aregister_run(run_id):

@@ -1,10 +1,13 @@
-"""Shared serialization helpers for run outputs.
+"""Shared helpers for run outputs.
 
 The AgentOS MCP result layer and the Studio runner toolkit both build their
-run-status and paused-requirement payloads from these helpers.
+run-status and paused-requirement payloads from these helpers. The agent and
+team continue dispatch and the AgentOS continue routes share the fork rule.
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
+
+from agno.run.base import RunStatus
 
 
 def run_status_string(run_output: Any) -> str:
@@ -29,3 +32,14 @@ def serialized_paused_requirements(run_output: Any) -> Optional[List[Dict[str, A
         elif isinstance(requirement, dict):
             serialized.append(requirement)
     return serialized or None
+
+
+def is_forking_continue(status: Union[RunStatus, str, None], *, fork: bool = False, regenerate: bool = False) -> bool:
+    """Whether continuing a run executes under a new run id.
+
+    An explicit fork or a regenerate always does, and a COMPLETED run auto-forks so its
+    persisted row keeps a single model loop. The continue dispatch (agent + team), the
+    background streamers and the AgentOS continue routes all decide from this, so none of
+    them can predict a different run id than the one that executes.
+    """
+    return fork or regenerate or status == RunStatus.completed
