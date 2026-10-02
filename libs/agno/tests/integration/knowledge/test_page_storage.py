@@ -81,6 +81,33 @@ def corpus(engine, monkeypatch):
     return knowledge, embedder, site
 
 
+def test_redirected_aliases_are_skipped_not_failed_and_pruned(corpus, monkeypatch):
+    """A listed page that now redirects elsewhere is an alias: skipped, never a failure, and pruned."""
+    from agno.knowledge.page import PageMoved
+
+    knowledge, _, site = corpus
+    url = "https://docs.example.com/llms.txt"
+    alias = "https://docs.example.com/old-agent.md"
+    site[url] += f"\n- [Old agent]({alias})"
+    site[alias] = "# Old agent\n\nServed before it moved.\n"
+    assert knowledge.sync_pages(url=url).updated == 2
+    assert "/old-agent.md" in [page.path for page in knowledge.list_pages().pages]
+
+    served = PageSource.fetch
+
+    def fetch(self, page_url, max_bytes):
+        if page_url == alias:
+            raise PageMoved("https://github.com/org/repo/blob/main/CHANGELOG.md")
+        return served(self, page_url, max_bytes)
+
+    monkeypatch.setattr(PageSource, "fetch", fetch)
+    report = knowledge.sync_pages(url=url)
+    assert report.status == "completed" and report.failed == 0 and not report.errors
+    assert report.skipped == 1 and report.skipped_paths == ("/old-agent.md",)
+    assert report.deleted == 1  # the alias stored by the earlier sync is pruned
+    assert [page.path for page in knowledge.list_pages().pages] == ["/agent.md"]
+
+
 def warm_search_pool(knowledge, count):
     # Parallel optional work reuses pooled connections; cold work falls back to
     # the parent's snapshot instead of adding an unbounded transport handshake.
@@ -3044,3 +3071,51 @@ def test_source_relocation_cli_reports_each_outcome_and_keeps_setup_visible(corp
     stale_sync = run(demo, "sync")
     assert stale_sync.returncode == 1 and "another documentation source" in stale_sync.stderr
     assert binding() == (new, revision + 1)
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+def test_native_sync_progress_stream_counts_and_terminal_partial_status(corpus, asynchronous):
+    import asyncio
+
+    from agno.knowledge.page import PageSyncProgress, SyncReport
+
+    knowledge, embedder, site = corpus
+
+    def collect():
+        if not asynchronous:
+            return list(knowledge.stream_sync_pages(url="https://docs.example.com/llms.txt"))
+
+        async def events():
+            return [event async for event in knowledge.astream_sync_pages(url="https://docs.example.com/llms.txt")]
+
+        return asyncio.run(events())
+
+    events = collect()
+    assert isinstance(events[-1], SyncReport) and events[-1].updated == 1
+    progress = [event for event in events if isinstance(event, PageSyncProgress)]
+    assert progress[0].stage == "waiting"
+    assert any(event.stage == "discovered" and event.discovered == 1 for event in progress)
+    assert any(event.processed == 1 and event.updated == 1 for event in progress)
+    site["https://docs.example.com/agent.md"] += "\nChanged content.\n"
+    embedder.fail = True
+    events = collect()
+    assert isinstance(events[-1], SyncReport)
+    assert events[-1].status == "partial" and events[-1].failed == 1
+    assert any(isinstance(event, PageSyncProgress) and event.failed == 1 for event in events)
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+def test_failed_progress_observer_does_not_fail_publication(corpus, asynchronous):
+    import asyncio
+
+    knowledge, _, _ = corpus
+    seen = []
+
+    def observer(event):
+        seen.append(event)
+        raise RuntimeError("observer failed")
+
+    kwargs = dict(url="https://docs.example.com/llms.txt", on_progress=observer)
+    report = asyncio.run(knowledge.async_sync_pages(**kwargs)) if asynchronous else knowledge.sync_pages(**kwargs)
+    assert report.updated == 1 and report.status == "completed"
+    assert len(seen) == 1

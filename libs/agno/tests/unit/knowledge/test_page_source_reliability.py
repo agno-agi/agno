@@ -198,3 +198,68 @@ def test_attempt_timeout_never_exceeds_the_remaining_deadline(monkeypatch):
     monkeypatch.setattr(httpx, "Client", lambda **kw: timeouts.append(kw["timeout"]) or wrapped(**kw))
     assert source.fetch(source.url, 10) == "ok"
     assert timeouts[0].read <= 3 and timeouts[0].connect <= 3
+
+
+@pytest.mark.parametrize(
+    "location,target",
+    [
+        ("https://github.com/org/repo/blob/main/CHANGELOG.md", "https://github.com/org/repo/blob/main/CHANGELOG.md"),
+        ("/guides/chat#evaluation.md", "https://docs.example.com/guides/chat#evaluation.md"),
+        ("/guides/changelog", "https://docs.example.com/guides/changelog"),
+    ],
+)
+def test_listed_page_redirecting_to_another_page_or_host_is_an_alias(monkeypatch, location, target):
+    """Off-site links, sections of other pages and non-Markdown URLs (which serve HTML) are not pages."""
+    from agno.knowledge.page import PageMoved
+
+    seen = []
+
+    def handle(request):
+        seen.append(request)
+        return httpx.Response(307, headers={"location": location})
+
+    source, waits = _source_with(monkeypatch, handle)
+    with pytest.raises(PageMoved) as moved:
+        source.fetch("https://docs.example.com/guides/old.md", 1000)
+    assert moved.value.target == target and moved.value.code == "page_moved"
+    assert len(seen) == 1 and waits == []  # not retried, never fetched elsewhere
+
+
+def test_page_moved_to_another_markdown_url_is_followed(monkeypatch):
+    seen = []
+
+    def handle(request):
+        seen.append(request.url.path)
+        if request.url.path == "/old.md":
+            return httpx.Response(307, headers={"location": "/new/old.md#top"})
+        return httpx.Response(200, content=b"# Moved", headers={"content-type": "text/markdown"})
+
+    source, _ = _source_with(monkeypatch, handle)
+    assert source.fetch("https://docs.example.com/old.md", 100) == "# Moved"
+    assert seen == ["/old.md", "/new/old.md"]
+
+
+def test_index_redirects_are_still_followed(monkeypatch):
+    def handle(request):
+        if request.url.path == "/llms.txt":
+            return httpx.Response(307, headers={"location": "/docs/llms.txt"})
+        return httpx.Response(
+            200, content=b"- [A](https://docs.example.com/a.md)", headers={"content-type": "text/plain"}
+        )
+
+    source, _ = _source_with(monkeypatch, handle)
+    assert source.fetch("https://docs.example.com/llms.txt", 1000).startswith("- [A]")
+
+
+def test_markdown_page_served_as_html_is_never_stored(monkeypatch):
+    from agno.knowledge.page import PageNotMarkdown
+
+    def handle(request):
+        return httpx.Response(
+            200, content=b"<!DOCTYPE html><html></html>", headers={"content-type": "text/html; charset=utf-8"}
+        )
+
+    source, waits = _source_with(monkeypatch, handle)
+    with pytest.raises(PageNotMarkdown):
+        source.fetch("https://docs.example.com/page.md", 1000)
+    assert waits == []
