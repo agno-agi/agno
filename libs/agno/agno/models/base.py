@@ -95,10 +95,13 @@ def _log_messages(messages: List[Message]) -> None:
         m.log(metrics=False)
 
 
-def _handle_agent_exception(a_exc: AgentRunException, additional_input: Optional[List[Message]] = None) -> None:
-    """Handle AgentRunException and collect additional messages."""
+def _handle_agent_exception(
+    a_exc: AgentRunException, additional_input: Optional[List[Message]] = None
+) -> Optional[str]:
+    """Handle AgentRunException, collect additional messages, and return stopping agent content."""
     if additional_input is None:
         additional_input = []
+    stop_agent_message_content = None
     if a_exc.user_message is not None:
         msg = (
             Message(role="user", content=a_exc.user_message)
@@ -114,6 +117,8 @@ def _handle_agent_exception(a_exc: AgentRunException, additional_input: Optional
             else a_exc.agent_message
         )
         additional_input.append(msg)
+        if a_exc.stop_execution:
+            stop_agent_message_content = msg.get_content_string()
 
     if a_exc.messages:
         for m in a_exc.messages:
@@ -128,6 +133,8 @@ def _handle_agent_exception(a_exc: AgentRunException, additional_input: Optional
     if a_exc.stop_execution:
         for m in additional_input:
             m.stop_after_tool_call = True
+
+    return stop_agent_message_content
 
 
 @dataclass
@@ -2250,11 +2257,12 @@ class Model(ABC):
         # Run function calls sequentially
         function_execution_result: FunctionExecutionResult = FunctionExecutionResult(status="failure")
         stop_after_tool_call_from_exception = False
+        stop_agent_message_content = None
         try:
             function_execution_result = function_call.execute()
         except AgentRunException as a_exc:
             # Update additional messages from function call
-            _handle_agent_exception(a_exc, additional_input)
+            stop_agent_message_content = _handle_agent_exception(a_exc, additional_input)
             # If stop_execution is True, mark that we should stop after this tool call
             if a_exc.stop_execution:
                 stop_after_tool_call_from_exception = True
@@ -2407,6 +2415,8 @@ class Model(ABC):
 
         # Add function call to function call results
         function_call_results.append(function_call_result)
+        if stop_agent_message_content is not None:
+            yield ModelResponse(content=stop_agent_message_content)
 
     def run_function_calls(
         self,
@@ -2959,10 +2969,11 @@ class Model(ABC):
 
             # Handle AgentRunException
             stop_after_tool_call_from_exception = False
+            stop_agent_message_content = None
             if isinstance(function_call_success, AgentRunException):
                 a_exc = function_call_success
                 # Update additional messages from function call
-                _handle_agent_exception(a_exc, additional_input)
+                stop_agent_message_content = _handle_agent_exception(a_exc, additional_input)
                 # If stop_execution is True, mark that we should stop after this tool call
                 if a_exc.stop_execution:
                     stop_after_tool_call_from_exception = True
@@ -3106,6 +3117,8 @@ class Model(ABC):
 
             # Add function call result to function call results
             function_call_results.append(function_call_result)
+            if stop_agent_message_content is not None:
+                yield ModelResponse(content=stop_agent_message_content)
 
         # Add any additional messages at the end
         if additional_input:
