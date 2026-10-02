@@ -514,6 +514,8 @@ def _initialize_member(team: "Team", member: Union["Team", Agent], debug_mode: O
 
         # Inherit team primary model if agent has no explicit model
         if member.model is None and team.model is not None:
+            if getattr(team.model, "requires_explicit_member_models", False):
+                raise ValueError("This Team leader requires an explicit model on every member agent")
             member.model = team.model
             log_info(f"Agent '{member.name or member.id}' inheriting model from Team: {team.model.id}")
 
@@ -862,6 +864,10 @@ def initialize_team(team: "Team", debug_mode: Optional[bool] = None) -> None:
     set_checkpoint(team)
 
     _set_default_model(team)
+
+    validate_model_team = getattr(team.model, "validate_team_configuration", None)
+    if validate_model_team is not None:
+        validate_model_team(team)
 
     # Set debug mode
     _set_debug(team, debug_mode=debug_mode)

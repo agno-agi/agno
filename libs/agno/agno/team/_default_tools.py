@@ -1512,6 +1512,27 @@ def _get_delegate_task_function(
 
         delegate_func = Function.from_callable(delegate_function, name="delegate_task_to_member")
 
+        if team.mode == "route" and getattr(team.model, "requires_structured_member_roster", False):
+            from agno.utils.callables import get_resolved_members
+
+            members = get_resolved_members(team, run_context) or []
+            roster = [
+                {
+                    "id": member.id,
+                    "description": {
+                        "name": member.name,
+                        "role": getattr(member, "role", None),
+                        "description": member.description,
+                    },
+                }
+                for member in members
+            ]
+            delegate_func.parameters["properties"]["member_id"]["enum"] = [member["id"] for member in roster]
+            delegate_func.parameters["x-agno-route"] = {
+                "members": roster,
+                "passthrough": not team.determine_input_for_members,
+            }
+
     if team.respond_directly:
         delegate_func.stop_after_tool_call = True
         delegate_func.show_result = True
