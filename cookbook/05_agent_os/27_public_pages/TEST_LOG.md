@@ -287,6 +287,24 @@ did not exercise PostgreSQL-backed ingestion or hosted clients.
 
 ---
 
+## 2026-10-02 sync reports name failed pages
+
+### SyncReport.failed_paths
+
+**Status:** PASS
+
+**Description:** Ran the page storage integration suite against PostgreSQL 18 +
+pgvector with this worktree, plus the page contract and per-page content unit
+tests. Assertions cover a publication failure after the vector write, a failed
+embedding on first sync followed by a clean retry, and a failed prune deletion.
+
+**Result:** 233 passed. Each failure reports its site path in `failed_paths`
+(`("/agent.md",)`), and the clean retry reports none. Found on a deployed
+docs corpus where 1 of 3,913 pages failed and neither the report nor the logs
+said which.
+
+---
+
 ## 2026-10-02 patient retries for page fetches
 
 ### PageSource.fetch retries
