@@ -52,22 +52,43 @@ class CartesiaTTS(TTSModel):
             raise ValueError("Set CARTESIA_API_KEY or pass api_key to CartesiaTTS.")
         separator = "&" if "?" in self.base_url else "?"
         url = self.base_url + separator + urlencode({"cartesia_version": self.api_version})
-        async with connect(
-            url,
-            additional_headers={"X-API-Key": api_key},
-            open_timeout=self.connect_timeout,
-            close_timeout=2,
-            max_size=2**22,
-            max_queue=16,
-        ) as connection:
-            yield _CartesiaSession(connection, self)
+
+        async def open_socket() -> Any:
+            return await connect(
+                url,
+                additional_headers={"X-API-Key": api_key},
+                open_timeout=self.connect_timeout,
+                close_timeout=2,
+                max_size=2**22,
+                max_queue=16,
+            )
+
+        session = _CartesiaSession(await open_socket(), self, open_socket)
+        try:
+            yield session
+        finally:
+            with suppress(Exception):
+                await session._connection.close()
 
 
 class _CartesiaSession(TTSSession):
-    def __init__(self, connection: Any, model: CartesiaTTS) -> None:
+    def __init__(self, connection: Any, model: CartesiaTTS, open_socket: Optional[Any] = None) -> None:
         self._connection = connection
         self._model = model
+        self._open_socket = open_socket
         self._lock = asyncio.Lock()
+
+    async def _ensure_open(self) -> None:
+        from websockets.protocol import State
+
+        # The socket can die while the call is idle, for example a keepalive ping
+        # timeout during a long tool run. Reopen it so one dropped connection costs
+        # at most the reply in progress, not every reply for the rest of the call.
+        if self._open_socket is None or self._connection.state is State.OPEN:
+            return
+        with suppress(Exception):
+            await self._connection.close()
+        self._connection = await self._open_socket()
 
     def _request(self, context_id: str, text: str, continuation: bool) -> Dict[str, Any]:
         return {
@@ -93,6 +114,7 @@ class _CartesiaSession(TTSSession):
                     first = await tokens._next()
                     if first is None:
                         return
+                    await self._ensure_open()
                     offset = samples
                     stream = self._synthesize_context(tokens._segment(first))
                     try:
