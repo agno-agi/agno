@@ -153,8 +153,8 @@ async def resolve_slack_bot(async_client: Any, bot_id: str) -> Tuple[str, Option
 class BotNameResolver:
     """Resolves a Slack bot user ID to its display name with per-instance caching.
 
-    Instantiated once per mounted Slack interface inside ``attach_routes`` so
-    each interface keeps its own cache without polluting module-level state.
+    Created once per Slack handler set by ``build_handlers`` (the HTTP routes and the
+    Socket Mode listener alike) so each keeps its own cache without polluting module-level state.
     Only successful lookups are cached — transient API failures are retried on
     the next message.
     """
@@ -189,7 +189,8 @@ class EventDeduplicator:
     Slack retries any event not acked within 3s (immediately, then +1 min, then +5 min),
     marking each with X-Slack-Retry-Num. A retry is only a duplicate if the original
     delivery reached us, so the route dedupes on event_id instead of dropping every retry.
-    Instantiated once per mounted Slack interface inside ``attach_routes``.
+    Created once per Slack handler set by ``build_handlers``, for the HTTP routes and the
+    Socket Mode listener alike.
 
     The seen-set is per-process. With several uvicorn workers or replicas, a retry that
     lands on a different process is not recognised and the event runs a second time,
