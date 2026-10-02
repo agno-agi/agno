@@ -1315,6 +1315,7 @@ def run_dispatch(
     session_state: Optional[Dict[str, Any]] = None,
     run_context: Optional[RunContext] = None,
     run_id: Optional[str] = None,
+    tools: Optional[list] = None,
     audio: Optional[Sequence[Audio]] = None,
     images: Optional[Sequence[Image]] = None,
     videos: Optional[Sequence[Video]] = None,
@@ -1427,6 +1428,9 @@ def run_dispatch(
         metadata=opts.metadata,
         output_schema=opts.output_schema,
     )
+    # Per-request tool override: tools param takes precedence over run_context.tools
+    if tools is not None:
+        run_context.tools = tools
     # Apply options with precedence: explicit args > existing run_context > resolved defaults.
     opts.apply_to_context(
         run_context,
@@ -2838,6 +2842,7 @@ def arun_dispatch(  # type: ignore
     session_state: Optional[Dict[str, Any]] = None,
     run_context: Optional[RunContext] = None,
     run_id: Optional[str] = None,
+    tools: Optional[list] = None,
     audio: Optional[Sequence[Audio]] = None,
     images: Optional[Sequence[Image]] = None,
     videos: Optional[Sequence[Video]] = None,
@@ -2953,6 +2958,9 @@ def arun_dispatch(  # type: ignore
         metadata=opts.metadata,
         output_schema=opts.output_schema,
     )
+    # Per-request tool override: tools param takes precedence over run_context.tools
+    if tools is not None:
+        run_context.tools = tools
     # Apply options with precedence: explicit args > existing run_context > resolved defaults.
     opts.apply_to_context(
         run_context,
