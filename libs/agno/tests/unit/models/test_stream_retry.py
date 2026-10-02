@@ -15,8 +15,8 @@ from agno.run.team import TeamRunOutput
 from agno.team.team import Team
 
 Attempt = List[Union[ModelResponse, Exception]]
-PICKUP = {"name": "add_line_item", "arguments": '{"description": "Pickup"}'}
-AIRFREIGHT = {"name": "add_line_item", "arguments": '{"description": "Airfreight"}'}
+DESIGN = {"name": "add_line_item", "arguments": '{"description": "Design"}'}
+HOSTING = {"name": "add_line_item", "arguments": '{"description": "Hosting"}'}
 
 
 class ScriptedStreamModel(Model):
@@ -57,7 +57,7 @@ def two_requests_each_failing_once() -> List[Attempt]:
         # Request 1: one finished tool call, then the stream fails
         [
             ModelResponse(content="Adding the items. "),
-            ModelResponse(tool_calls=[{"id": "call_a1", "type": "function", "function": PICKUP}]),
+            ModelResponse(tool_calls=[{"id": "call_a1", "type": "function", "function": DESIGN}]),
             overloaded,
         ],
         # Request 1, retried: the model plans the same call again, plus a second one
@@ -65,8 +65,8 @@ def two_requests_each_failing_once() -> List[Attempt]:
             ModelResponse(content="Adding the items. "),
             ModelResponse(
                 tool_calls=[
-                    {"id": "call_b1", "type": "function", "function": PICKUP},
-                    {"id": "call_b2", "type": "function", "function": AIRFREIGHT},
+                    {"id": "call_b1", "type": "function", "function": DESIGN},
+                    {"id": "call_b2", "type": "function", "function": HOSTING},
                 ]
             ),
         ],
@@ -91,7 +91,7 @@ def assert_failed_attempts_discarded(
 ) -> None:
     assert run_output is not None
     assert model.attempts == []
-    assert executed == ["Pickup", "Airfreight"]
+    assert executed == ["Design", "Hosting"]
     assert run_output.content == "Adding the items. Both items added."
     assistant_messages = [m for m in run_output.messages if m.role == "assistant"]
     assert [m.content for m in assistant_messages] == ["Adding the items. ", "Both items added."]
@@ -104,7 +104,7 @@ def test_agent_stream_retry_discards_failed_attempt():
     agent = make_agent(model, executed)
 
     run_output = None
-    for event in agent.run("Add Pickup and Airfreight to the quote.", stream=True, yield_run_output=True):
+    for event in agent.run("Add Design and Hosting to the quote.", stream=True, yield_run_output=True):
         if isinstance(event, RunOutput):
             run_output = event
 
@@ -117,7 +117,7 @@ async def test_agent_async_stream_retry_discards_failed_attempt():
     agent = make_agent(model, executed)
 
     run_output = None
-    async for event in agent.arun("Add Pickup and Airfreight to the quote.", stream=True, yield_run_output=True):
+    async for event in agent.arun("Add Design and Hosting to the quote.", stream=True, yield_run_output=True):
         if isinstance(event, RunOutput):
             run_output = event
 
