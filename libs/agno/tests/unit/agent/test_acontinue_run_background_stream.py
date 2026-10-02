@@ -17,6 +17,61 @@ def make_mock_event_stream() -> MagicMock:
     return stream
 
 
+@pytest.mark.asyncio
+async def test_primary_stream_waits_for_terminal_bookkeeping():
+    import asyncio
+
+    from agno.agent._run import _acontinue_run_background_stream
+    from agno.run import RunStatus
+    from agno.run.agent import RunOutput
+
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    settled = asyncio.Event()
+    stream = make_mock_event_stream()
+    run = RunOutput(run_id="terminal-order", session_id="session", status=RunStatus.paused)
+    session = MagicMock()
+    session.get_run.return_value = run
+
+    async def complete_run(*args):
+        entered.set()
+        await release.wait()
+        settled.set()
+
+    async def continued_stream(*args, **kwargs):
+        run.status = RunStatus.completed
+        if False:
+            yield
+
+    async def consume():
+        async for _ in _acontinue_run_background_stream(
+            MagicMock(db=None),
+            run_context=MagicMock(),
+            run_response=run,
+            session_id=run.session_id,
+        ):
+            pass
+
+    stream.complete_run.side_effect = complete_run
+    with (
+        patch("agno.agent._run._acontinue_run_stream", side_effect=continued_stream),
+        patch("agno.agent._storage.aread_or_create_session", new_callable=AsyncMock, return_value=session),
+        patch("agno.agent._storage.update_metadata"),
+        patch("agno.agent._run.apersist_run_transition", new_callable=AsyncMock),
+        patch("agno.os.event_streams.get_event_stream", return_value=stream),
+    ):
+        consumer = asyncio.create_task(consume())
+        try:
+            await asyncio.wait_for(entered.wait(), timeout=2)
+            await asyncio.sleep(0)
+            await asyncio.sleep(0)
+            assert not consumer.done(), "end-of-stream preceded producer terminal bookkeeping"
+        finally:
+            release.set()
+            await asyncio.wait_for(consumer, timeout=2)
+            await asyncio.wait_for(settled.wait(), timeout=2)
+
+
 class TestRePausedContinueFinalStatus:
     @pytest.mark.asyncio
     async def test_re_paused_continue_publishes_paused_not_completed(self):
