@@ -595,6 +595,20 @@ def test_convert_schema_enum_with_title():
     assert result.enum == ["active", "inactive", "pending"]
 
 
+def test_convert_schema_integer_enum():
+    """Test that an integer enum keeps type INTEGER, with format enum and the values as strings"""
+    schema_dict = {"type": "integer", "enum": [1, 2], "description": "Priority level", "default": 1}
+
+    result = convert_schema(schema_dict)
+
+    assert result is not None
+    assert result.type == "INTEGER"
+    assert result.format == "enum"
+    assert result.enum == ["1", "2"]
+    assert result.description == "Priority level"
+    assert result.default == 1
+
+
 def test_convert_schema_array_with_title():
     """Test converting an array schema with title"""
     schema_dict = {
