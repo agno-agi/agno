@@ -431,7 +431,7 @@ class OpenAIChat(Model):
             return model_response
 
         except RateLimitError as e:
-            log_error(f"Rate limit error from OpenAI API: {str(e)}")
+            self._log_provider_error(f"Rate limit error from OpenAI API: {str(e)}", e.response.status_code)
             try:
                 error_message = e.response.json().get("error", {})
             except Exception:
@@ -448,10 +448,10 @@ class OpenAIChat(Model):
                 model_id=self.id,
             ) from e
         except APIConnectionError as e:
-            log_error(f"API connection error from OpenAI API: {str(e)}")
+            self._log_provider_error(f"API connection error from OpenAI API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
         except APIStatusError as e:
-            log_error(f"API status error from OpenAI API: {str(e)}")
+            self._log_provider_error(f"API status error from OpenAI API: {str(e)}", e.response.status_code)
             try:
                 error_body = e.response.json().get("error", {})
             except Exception:
@@ -521,7 +521,7 @@ class OpenAIChat(Model):
             return provider_response
 
         except RateLimitError as e:
-            log_error(f"Rate limit error from OpenAI API: {str(e)}")
+            self._log_provider_error(f"Rate limit error from OpenAI API: {str(e)}", e.response.status_code)
             try:
                 error_message = e.response.json().get("error", {})
             except Exception:
@@ -538,10 +538,10 @@ class OpenAIChat(Model):
                 model_id=self.id,
             ) from e
         except APIConnectionError as e:
-            log_error(f"API connection error from OpenAI API: {str(e)}")
+            self._log_provider_error(f"API connection error from OpenAI API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
         except APIStatusError as e:
-            log_error(f"API status error from OpenAI API: {str(e)}")
+            self._log_provider_error(f"API status error from OpenAI API: {str(e)}", e.response.status_code)
             try:
                 error_body = e.response.json().get("error", {})
             except Exception:
@@ -608,7 +608,7 @@ class OpenAIChat(Model):
             assistant_message.metrics.stop_timer()
 
         except RateLimitError as e:
-            log_error(f"Rate limit error from OpenAI API: {str(e)}")
+            self._log_provider_error(f"Rate limit error from OpenAI API: {str(e)}", e.response.status_code)
             try:
                 error_message = e.response.json().get("error", {})
             except Exception:
@@ -625,10 +625,10 @@ class OpenAIChat(Model):
                 model_id=self.id,
             ) from e
         except APIConnectionError as e:
-            log_error(f"API connection error from OpenAI API: {str(e)}")
+            self._log_provider_error(f"API connection error from OpenAI API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
         except APIStatusError as e:
-            log_error(f"API status error from OpenAI API: {str(e)}")
+            self._log_provider_error(f"API status error from OpenAI API: {str(e)}", e.response.status_code)
             try:
                 error_body = e.response.json().get("error", {})
             except Exception:
@@ -697,7 +697,7 @@ class OpenAIChat(Model):
             assistant_message.metrics.stop_timer()
 
         except RateLimitError as e:
-            log_error(f"Rate limit error from OpenAI API: {str(e)}")
+            self._log_provider_error(f"Rate limit error from OpenAI API: {str(e)}", e.response.status_code)
             try:
                 error_message = e.response.json().get("error", {})
             except Exception:
@@ -714,10 +714,10 @@ class OpenAIChat(Model):
                 model_id=self.id,
             ) from e
         except APIConnectionError as e:
-            log_error(f"API connection error from OpenAI API: {str(e)}")
+            self._log_provider_error(f"API connection error from OpenAI API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
         except APIStatusError as e:
-            log_error(f"API status error from OpenAI API: {str(e)}")
+            self._log_provider_error(f"API status error from OpenAI API: {str(e)}", e.response.status_code)
             try:
                 error_body = e.response.json().get("error", {})
             except Exception:

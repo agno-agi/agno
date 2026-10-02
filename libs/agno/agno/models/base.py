@@ -224,6 +224,18 @@ class Model(ABC):
 
         return True
 
+    def _log_provider_error(self, message: str, status_code: int = 502) -> None:
+        """Log an API error a provider adapter is about to raise as ModelProviderError.
+
+        A retryable error is a WARNING while the retry loop will retry it and log the final failure
+        itself; with retries=0, or for an error the loop will not retry, it is an ERROR.
+        """
+        error = ModelProviderError.classify(ModelProviderError(message=message, status_code=status_code))
+        if self.retries > 0 and self._is_retryable_error(error):
+            log_warning(message)
+        else:
+            log_error(message)
+
     def _invoke_with_retry(self, **kwargs) -> ModelResponse:
         """
         Invoke the model with retry logic for ModelProviderError.
