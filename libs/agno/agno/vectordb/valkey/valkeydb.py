@@ -217,6 +217,7 @@ class ValkeyDb(VectorDb):
                 use_tls=self.use_tls,
                 request_timeout=self.request_timeout,
                 client_name=self.client_name,
+                client_info_tag="agno",
             )
             self._glide_client = GlideClient.create(config)
             self._client_initialized = True

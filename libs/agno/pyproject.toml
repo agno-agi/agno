@@ -198,7 +198,7 @@ redis = ["redis>=4.5.4", "redisvl>=0.12.1"]  # >=4.5.4: safe cancellation of blo
 s3 = ["boto3", "aioboto3"]
 sql = ["sqlalchemy[asyncio]"]
 sqlite = ["sqlalchemy[asyncio]", "aiosqlite"]
-valkey = ["valkey-glide-sync>=2.1.0"]
+valkey = ["valkey-glide-sync>=2.5.2"]
 
 # Dependencies for Vector databases
 cassandra = ["cassio"]
