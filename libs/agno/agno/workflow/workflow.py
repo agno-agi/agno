@@ -669,7 +669,7 @@ class Workflow:
     # If set, media is uploaded here before DB persistence when store_media is True, and only
     # references are stored. With store_media False, media is not offloaded.
     media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None
-    # Events to skip when persisting the events on the run response
+    # Events to skip when persisting the events on the run response (default: StepProgress)
     events_to_skip: Optional[List[Union[WorkflowRunEvent, RunEvent, TeamRunEvent]]] = None
 
     # Control whether to store executor responses (agent/team responses) in flattened runs
@@ -749,7 +749,10 @@ class Workflow:
         self.store_events = store_events
         self.store_media = store_media
         self.media_storage = media_storage
-        self.events_to_skip = events_to_skip or []
+        # By default, function progress is streamed but not stored: a step can emit one
+        # StepProgress per item (one per page in a sync), which would bloat every stored run.
+        # Pass an explicit list (e.g. []) to store it. Mirrors Agent's run_content default.
+        self.events_to_skip = events_to_skip if events_to_skip is not None else [WorkflowRunEvent.step_progress]
         self.stream = stream
         self.stream_executor_events = stream_executor_events
         self.store_executor_outputs = store_executor_outputs

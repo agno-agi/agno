@@ -18,7 +18,6 @@ from agno.knowledge.page import PageError, SyncReport, tool_error
 from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS, MCPConfig, QueueConfig
 from agno.os.public import PublicSurface
-from agno.run.workflow import WorkflowRunEvent
 from agno.tools.mcp import MCPTools
 from agno.vectordb.pgvector import PgVector
 from agno.vectordb.pgvector.index import HNSW
@@ -155,8 +154,8 @@ sync = Workflow(
     db=db,
     input_schema=SyncRequest,
     steps=[Step(name="reconcile", executor=sync_source)],
-    # AgentOS stores run events. Progress is one event per page, so it is streamed but not saved.
-    events_to_skip=[WorkflowRunEvent.step_progress],
+    # AgentOS stores run events. Workflows skip StepProgress by default, so the one event
+    # per page is streamed live but not saved.
 )
 
 

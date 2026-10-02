@@ -357,9 +357,10 @@ The `sync-docs` workflow in `public_pages.py` uses this. Its function step consu
 events over its existing workflow REST/SSE route, and the existing
 `AgentOSClient.run_workflow_stream()` parses them into `StepProgressEvent`.
 AgentOS stores the events of every run it serves, and a sync emits roughly one
-progress event per page, so the workflow sets
-`events_to_skip=[WorkflowRunEvent.step_progress]`: progress is streamed live and
-left out of the saved run, which keeps the report.
+progress event per page. Workflows skip `StepProgress` events when storing by
+default (`events_to_skip` defaults to `[WorkflowRunEvent.step_progress]`), so
+progress is streamed live and left out of the saved run, which keeps the report.
+Pass an explicit `events_to_skip` list, such as `[]`, to store progress.
 
 One server does everything, on port 7777. Anonymous users can chat, search and read
 documentation. They cannot start a sync: the workflow trigger requires the bearer
