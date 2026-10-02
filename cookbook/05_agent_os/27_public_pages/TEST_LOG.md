@@ -305,6 +305,37 @@ said which.
 
 ---
 
+## 2026-10-02 patient retries for page fetches
+
+### PageSource.fetch retries
+
+**Status:** PASS
+
+**Description:** A Render deployment syncing docs.agno.com (3,913 pages) failed
+1–2 random pages every run. Wrapping the fetcher during a real sync showed
+`ConnectError: [Errno 104] Connection reset by peer` on a different page each
+time, while isolated fetches always succeeded. The previous policy (3 attempts,
+0.25 s and 0.5 s waits) gave up within about a second. Ran the fetch reliability
+and page contract unit tests and the page storage integration suite against
+PostgreSQL 18 + pgvector with this worktree.
+
+**Result:** A burst of four connection resets recovers on the fifth attempt with
+waits of 0.5, 1, 2 and 4 s. A 502, a dropped connection and a write error are
+retried; `Retry-After` is honored and capped at 10 s; a retry that would pass the
+fetch deadline fails immediately with its cause. Permanent failures still make
+one request.
+
+**Live follow-up (same day):** the backoff alone did not help on the deployment.
+A Render shell run of a real sync with the new retry policy swapped in still gave
+up on a page after one attempt: the attempt took about 30 s, a TLS handshake that
+hung and then ended in `Connection reset by peer`, consuming the whole fetch
+deadline before any retry. Each attempt now has its own timeout (5 s connect,
+10 s overall). The next live run timed out the stalled handshake at 5.0 s
+(`ConnectTimeout: The handshake operation timed out`), retried on a fresh
+connection, recovered on attempt 2, and finished with 0 failed pages.
+
+---
+
 ### public_pages.py sync-docs and page_sync_progress.py (2026-09-21)
 
 **Status:** PASS offline and live. The live sync reported `partial` twice before
