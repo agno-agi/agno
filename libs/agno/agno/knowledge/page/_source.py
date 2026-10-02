@@ -6,6 +6,7 @@ import ipaddress
 import random
 import re
 import time
+from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
@@ -15,7 +16,7 @@ from urllib.parse import quote, unquote, urljoin, urlsplit, urlunsplit
 import httpx
 
 from agno.fs._paths import normalize_path
-from agno.knowledge.page.types import SyncFailed
+from agno.knowledge.page.types import PageMoved, PageNotMarkdown, SyncFailed
 from agno.knowledge.reader.llms_txt_reader import LLMsTxtReader
 from agno.utils.bounded import WorkBudget
 
@@ -59,6 +60,21 @@ def source_url(url: str) -> str:
         raise ValueError("invalid_source_port")
     page_path(parts.path or "/")
     return urlunsplit(("https", parts.netloc.lower(), parts.path or "/", "", ""))
+
+
+# Files an index may link to that can never be a documentation page: API specs,
+# data, media and archives. Discovery skips them wherever they point, so a link to
+# an OpenAPI spec neither fails as a page nor marks discovery incomplete. Not .js
+# or .css: pages can be named like "/guides/node.js".
+NON_PAGE_FILE = re.compile(
+    r"\.(?:json|ya?ml|xml|csv|tsv|pdf|png|jpe?g|gif|svg|webp|ico|mp3|mp4|webm|wav|zip|gz|tgz|tar|woff2?|ttf)$",
+    re.I,
+)
+
+
+def is_non_page_file(url: str) -> bool:
+    """True when a link names a file that cannot be a documentation page."""
+    return isinstance(url, str) and NON_PAGE_FILE.search(urlsplit(url).path) is not None
 
 
 @dataclass(frozen=True)
@@ -153,11 +169,24 @@ class PageSource:
                             extensions={"sni_hostname": parts.hostname},
                         ) as response:
                             if response.is_redirect:
+                                location = urljoin(current, response.headers["location"])
+                                if url.endswith(".md"):
+                                    # A listed Markdown page that now redirects to another host, to a
+                                    # section of another page, or to a non-Markdown URL (which serves
+                                    # HTML) is an alias, not a page of this source. A move to another
+                                    # Markdown URL on the same host is followed.
+                                    target = urlsplit(location)
+                                    if target.netloc.lower() != self.origin or not target.path.endswith(".md"):
+                                        raise PageMoved(location)
+                                    location = urlunsplit(target._replace(fragment=""))
                                 if redirect == 3:
                                     raise SyncFailed()
-                                current = source_url(urljoin(current, response.headers["location"]))
+                                current = source_url(location)
                                 continue
                             response.raise_for_status()
+                            content_type = response.headers.get("content-type", "").lower()
+                            if url.endswith(".md") and content_type.startswith("text/html"):
+                                raise PageNotMarkdown()
                             body = bytearray()
                             for chunk in response.iter_bytes():
                                 self.budget.remaining()
@@ -218,13 +247,15 @@ class PageSource:
             if not entries:
                 self.complete = False
             for entry in entries:
+                if is_non_page_file(entry.url):
+                    continue
                 try:
                     target = source_url(entry.url)
                     if urlsplit(target).netloc != self.origin or not target.startswith(self.base + "/"):
                         raise ValueError("invalid_source_destination")
                     relative = target[len(self.base) :]
                     if relative.endswith("/llms.txt") or relative.startswith("/_llms/"):
-                        visit(target, depth + 1)
+                        queue.append((target, depth + 1))
                         continue
                     # Fumadocs links can identify the rendered page through an
                     # llms.mdx route while its resolved Markdown is served at .md.
@@ -264,7 +295,12 @@ class PageSource:
                 except Exception:
                     self.complete = False
 
-        visit(self.url, 0)
+        # Breadth-first, so each nested index is reached at its shallowest depth: a root
+        # that lists every sub-index directly stays within max_depth however deep the
+        # sub-indexes link to each other.
+        queue: deque[tuple[str, int]] = deque([(self.url, 0)])
+        while queue:
+            visit(*queue.popleft())
         if not pages:
             raise SyncFailed()
         return pages

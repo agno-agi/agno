@@ -51,6 +51,7 @@ from agno.knowledge.page.types import (
     Page,
     PageChanged,
     PageError,
+    PageMoved,
     PageList,
     PageNotFound,
     PageRead,
@@ -67,7 +68,7 @@ from agno.knowledge.page.types import (
     encoded_size,
 )
 from agno.utils.bounded import BoundedWorkers, WorkBudget
-from agno.utils.log import log_warning
+from agno.utils.log import log_info, log_warning
 from agno.vectordb.pgvector import PgVector
 from agno.vectordb.pgvector.index import HNSW
 
@@ -1449,6 +1450,7 @@ class PageCoordinator:
         progress("waiting")
         errors = []
         failed_paths: list[str] = []
+        skipped_paths: list[str] = []
         acquired = False
         with self.engine.connect() as conn:
             lock_deadline = time.monotonic() + min(1200, budget.remaining())
@@ -1514,6 +1516,13 @@ class PageCoordinator:
                                     source_url=source.url,
                                 )
                             )
+                        except PageMoved as moved:
+                            # An alias of another page or an off-site link: not a page of this
+                            # source, so it is skipped rather than failed and never stored.
+                            skipped_paths.append(page.path)
+                            log_info(
+                                f"Page skipped: {page.path} redirects to {moved.target} (not a page of this source)"
+                            )
                         except Exception as exc:
                             log_warning(f"Page sync failed for {page.path} ({_failure(exc)})")
                             if conn.invalidated or conn.closed or self._pending_publication is not None:
@@ -1540,8 +1549,10 @@ class PageCoordinator:
                             row.metadata["_agno"]["page"]["path"]
                             for row in self._rows(conn, limit=20_001, include_content=False)
                         ]
+                    skipped = set(skipped_paths)
                     for path in paths:
-                        if path in pages:
+                        # Skipped aliases are pruned too: an older sync may have stored them.
+                        if path in pages and path not in skipped:
                             continue
                         pending_delete = False
                         try:
@@ -1584,6 +1595,8 @@ class PageCoordinator:
                     unknown=unknown,
                     errors=tuple(errors[:20]),
                     failed_paths=tuple(failed_paths[:20]),
+                    skipped=len(skipped_paths),
+                    skipped_paths=tuple(skipped_paths[:20]),
                 )
                 if not conn.invalidated and not conn.closed:
                     with conn.begin():

@@ -81,6 +81,33 @@ def corpus(engine, monkeypatch):
     return knowledge, embedder, site
 
 
+def test_redirected_aliases_are_skipped_not_failed_and_pruned(corpus, monkeypatch):
+    """A listed page that now redirects elsewhere is an alias: skipped, never a failure, and pruned."""
+    from agno.knowledge.page import PageMoved
+
+    knowledge, _, site = corpus
+    url = "https://docs.example.com/llms.txt"
+    alias = "https://docs.example.com/old-agent.md"
+    site[url] += f"\n- [Old agent]({alias})"
+    site[alias] = "# Old agent\n\nServed before it moved.\n"
+    assert knowledge.sync_pages(url=url).updated == 2
+    assert "/old-agent.md" in [page.path for page in knowledge.list_pages().pages]
+
+    served = PageSource.fetch
+
+    def fetch(self, page_url, max_bytes):
+        if page_url == alias:
+            raise PageMoved("https://github.com/org/repo/blob/main/CHANGELOG.md")
+        return served(self, page_url, max_bytes)
+
+    monkeypatch.setattr(PageSource, "fetch", fetch)
+    report = knowledge.sync_pages(url=url)
+    assert report.status == "completed" and report.failed == 0 and not report.errors
+    assert report.skipped == 1 and report.skipped_paths == ("/old-agent.md",)
+    assert report.deleted == 1  # the alias stored by the earlier sync is pruned
+    assert [page.path for page in knowledge.list_pages().pages] == ["/agent.md"]
+
+
 def warm_search_pool(knowledge, count):
     # Parallel optional work reuses pooled connections; cold work falls back to
     # the parent's snapshot instead of adding an unbounded transport handshake.
