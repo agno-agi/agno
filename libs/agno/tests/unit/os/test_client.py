@@ -815,3 +815,40 @@ async def test_run_workflow_stream_returns_typed_events():
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "method,route",
+    [("list_agents_page", "/agents"), ("list_teams_page", "/teams"), ("list_workflows_page", "/workflows")],
+)
+async def test_list_page_parses_a_paginated_response(method, route):
+    """Verify list_*_page sends page/limit and returns the server's page as is."""
+    client = AgentOSClient(base_url="http://localhost:7777")
+    mock_data = {
+        "data": [{"id": "b", "name": "B"}],
+        "meta": {"page": 2, "limit": 1, "total_count": 3, "total_pages": 3},
+    }
+    with patch.object(client, "_aget", new_callable=AsyncMock) as mock_get:
+        mock_get.return_value = mock_data
+        result = await getattr(client, method)(page=2, limit=1)
+
+        mock_get.assert_called_once_with(route, params={"page": 2, "limit": 1}, headers=None)
+    assert [item.id for item in result.data] == ["b"]
+    assert result.meta.total_count == 3
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method", ["list_agents_page", "list_teams_page", "list_workflows_page"])
+async def test_list_page_slices_a_bare_list_from_an_older_server(method):
+    """Verify list_*_page still returns one page when the server ignores page/limit."""
+    client = AgentOSClient(base_url="http://localhost:7777")
+    mock_data = [{"id": i, "name": i.upper()} for i in ("a", "b", "c")]
+    with patch.object(client, "_aget", new_callable=AsyncMock) as mock_get:
+        mock_get.return_value = mock_data
+        result = await getattr(client, method)(page=2, limit=2)
+
+    assert [item.id for item in result.data] == ["c"]
+    assert result.meta.page == 2
+    assert result.meta.total_count == 3
+    assert result.meta.total_pages == 2

@@ -1,6 +1,6 @@
 import json
 from datetime import date
-from typing import Any, AsyncIterator, Callable, Dict, List, Optional, Sequence, Union
+from typing import Any, AsyncIterator, Callable, Dict, List, Optional, Sequence, Type, TypeVar, Union
 
 from fastapi import UploadFile
 from httpx import ConnectError, ConnectTimeout, TimeoutException
@@ -66,11 +66,24 @@ from agno.os.schema import (
     WorkflowRunSchema,
     WorkflowSessionDetailSchema,
     WorkflowSummaryResponse,
+    paginate_list,
 )
 from agno.run.agent import RunOutput, RunOutputEvent, run_output_event_from_dict
 from agno.run.team import TeamRunOutput, TeamRunOutputEvent, team_run_output_event_from_dict
 from agno.run.workflow import WorkflowRunOutput, WorkflowRunOutputEvent, workflow_run_output_event_from_dict
 from agno.utils.http import get_default_async_client, get_default_sync_client
+
+SummaryT = TypeVar("SummaryT", AgentSummaryResponse, TeamSummaryResponse, WorkflowSummaryResponse)
+
+
+def _to_page(data: Any, model: Type[SummaryT], page: int, limit: int) -> PaginatedResponse[SummaryT]:
+    # Older servers ignore page/limit and return a bare list
+    if isinstance(data, list):
+        items, meta = paginate_list(data, page, limit)
+        return PaginatedResponse[model](  # type: ignore[valid-type]
+            data=[model.model_validate(item) for item in items], meta=meta
+        )
+    return PaginatedResponse[model].model_validate(data)  # type: ignore[valid-type]
 
 
 class AgentOSClient:
@@ -488,6 +501,28 @@ class AgentOSClient:
         data = await self._aget("/agents", headers=headers)
         return [AgentSummaryResponse.model_validate(item) for item in data]
 
+    async def list_agents_page(
+        self, page: int = 1, limit: int = 20, headers: Optional[Dict[str, str]] = None
+    ) -> PaginatedResponse[AgentSummaryResponse]:
+        """List one page of the agents configured in the AgentOS instance.
+
+        Servers that predate pagination on this route return every agent; that
+        list is sliced here so callers always get a single page.
+
+        Args:
+            page: Page number (1-indexed)
+            limit: Number of agents per page (max 100)
+            headers: HTTP headers to include in the request (optional)
+
+        Returns:
+            PaginatedResponse[AgentSummaryResponse]: One page of agent summaries
+
+        Raises:
+            HTTPStatusError: On HTTP errors
+        """
+        data = await self._aget("/agents", params={"page": page, "limit": limit}, headers=headers)
+        return _to_page(data, AgentSummaryResponse, page, limit)
+
     def get_agent(self, agent_id: str, headers: Optional[Dict[str, str]] = None) -> AgentResponse:
         """Get detailed configuration for a specific agent.
 
@@ -768,6 +803,28 @@ class AgentOSClient:
         """
         data = await self._aget("/teams", headers=headers)
         return [TeamSummaryResponse.model_validate(item) for item in data]
+
+    async def list_teams_page(
+        self, page: int = 1, limit: int = 20, headers: Optional[Dict[str, str]] = None
+    ) -> PaginatedResponse[TeamSummaryResponse]:
+        """List one page of the teams configured in the AgentOS instance.
+
+        Servers that predate pagination on this route return every team; that
+        list is sliced here so callers always get a single page.
+
+        Args:
+            page: Page number (1-indexed)
+            limit: Number of teams per page (max 100)
+            headers: HTTP headers to include in the request (optional)
+
+        Returns:
+            PaginatedResponse[TeamSummaryResponse]: One page of team summaries
+
+        Raises:
+            HTTPStatusError: On HTTP errors
+        """
+        data = await self._aget("/teams", params={"page": page, "limit": limit}, headers=headers)
+        return _to_page(data, TeamSummaryResponse, page, limit)
 
     def get_team(self, team_id: str, headers: Optional[Dict[str, str]] = None) -> TeamResponse:
         """Get detailed configuration for a specific team.
@@ -1067,6 +1124,28 @@ class AgentOSClient:
         """
         data = await self._aget("/workflows", headers=headers)
         return [WorkflowSummaryResponse.model_validate(item) for item in data]
+
+    async def list_workflows_page(
+        self, page: int = 1, limit: int = 20, headers: Optional[Dict[str, str]] = None
+    ) -> PaginatedResponse[WorkflowSummaryResponse]:
+        """List one page of the workflows configured in the AgentOS instance.
+
+        Servers that predate pagination on this route return every workflow; that
+        list is sliced here so callers always get a single page.
+
+        Args:
+            page: Page number (1-indexed)
+            limit: Number of workflows per page (max 100)
+            headers: HTTP headers to include in the request (optional)
+
+        Returns:
+            PaginatedResponse[WorkflowSummaryResponse]: One page of workflow summaries
+
+        Raises:
+            HTTPStatusError: On HTTP errors
+        """
+        data = await self._aget("/workflows", params={"page": page, "limit": limit}, headers=headers)
+        return _to_page(data, WorkflowSummaryResponse, page, limit)
 
     def get_workflow(
         self, workflow_id: str, version: Optional[int] = None, headers: Optional[Dict[str, str]] = None

@@ -3,7 +3,7 @@ import contextlib
 import json
 import weakref
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, AsyncGenerator, Dict, List, Optional, Union
+from typing import TYPE_CHECKING, Any, AsyncGenerator, Dict, List, Optional, Tuple, Union
 from uuid import uuid4
 
 from fastapi import (
@@ -69,9 +69,11 @@ from agno.os.schema import (
     BadRequestResponse,
     InternalServerErrorResponse,
     NotFoundResponse,
+    PaginatedResponse,
     UnauthenticatedResponse,
     ValidationErrorResponse,
     WorkflowSummaryResponse,
+    paginate_list,
 )
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import (
@@ -1502,7 +1504,7 @@ def get_workflow_router(
 
     @router.get(
         "/workflows",
-        response_model=List[WorkflowSummaryResponse],
+        response_model=Union[List[WorkflowSummaryResponse], PaginatedResponse[WorkflowSummaryResponse]],
         response_model_exclude_none=True,
         tags=["Workflows"],
         operation_id="get_workflows",
@@ -1533,7 +1535,11 @@ def get_workflow_router(
             }
         },
     )
-    async def get_workflows(request: Request) -> List[WorkflowSummaryResponse]:
+    async def get_workflows(
+        request: Request,
+        page: Optional[int] = Query(default=None, ge=1, description="Page number (1-indexed). Opt-in pagination."),
+        limit: Optional[int] = Query(default=None, ge=1, le=100, description="Workflows per page. Opt-in pagination."),
+    ) -> Union[List[WorkflowSummaryResponse], PaginatedResponse[WorkflowSummaryResponse]]:
         # Filter workflows based on user's scopes (only if authorization is enabled)
         if getattr(request.state, "authorization_enabled", False):
             from agno.os.auth import (
@@ -1555,10 +1561,9 @@ def get_workflow_router(
         else:
             accessible_workflows = os.workflows or []
 
-        workflows: List[WorkflowSummaryResponse] = []
-        if accessible_workflows:
-            for workflow in accessible_workflows:
-                workflows.append(WorkflowSummaryResponse.from_workflow(workflow=workflow, is_component=False))
+        # Code workflows first, then stored ones: one ordered list so a page
+        # never overlaps or skips across the two sources.
+        entries: List[Tuple[Any, bool]] = [(workflow, False) for workflow in accessible_workflows]
 
         if os.db and isinstance(os.db, BaseDb):
             from agno.workflow.workflow import get_workflows
@@ -1583,15 +1588,25 @@ def get_workflow_router(
                 # filters)
                 if getattr(request.state, "authorization_enabled", False):
                     db_workflows = await afilter_resources_by_access(request, db_workflows, "workflows")
-            for db_workflow in db_workflows or []:
-                try:
-                    workflows.append(WorkflowSummaryResponse.from_workflow(workflow=db_workflow, is_component=True))
-                except Exception:
-                    workflow_id = getattr(db_workflow, "id", "unknown")
-                    logger.exception(f"Error converting workflow {workflow_id} to response")
-                    continue
+            entries.extend((db_workflow, True) for db_workflow in db_workflows or [])
 
-        return workflows
+        page_entries, meta = paginate_list(entries, page, limit)
+
+        workflows: List[WorkflowSummaryResponse] = []
+        for workflow, is_component in page_entries:
+            if not is_component:
+                workflows.append(WorkflowSummaryResponse.from_workflow(workflow=workflow, is_component=False))
+                continue
+            try:
+                workflows.append(WorkflowSummaryResponse.from_workflow(workflow=workflow, is_component=True))
+            except Exception:
+                workflow_id = getattr(workflow, "id", "unknown")
+                logger.exception(f"Error converting workflow {workflow_id} to response")
+                continue
+
+        if meta is None:
+            return workflows
+        return PaginatedResponse(data=workflows, meta=meta)
 
     @router.get(
         "/workflows/{workflow_id}",
