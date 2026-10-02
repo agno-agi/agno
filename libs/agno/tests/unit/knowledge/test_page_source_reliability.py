@@ -26,11 +26,12 @@ def test_retry_transport_with_pinned_dns(monkeypatch, failure, exhausted):
         return httpx.Response(200, content=b"hello")
 
     monkeypatch.setattr(httpx, "Client", lambda **kw: original(transport=httpx.MockTransport(handle), **kw))
+    monkeypatch.setattr(PageSource, "retry_base_seconds", 0)
     source = PageSource("https://docs.example.com/llms.txt", None, WorkBudget(5))
     if exhausted:
         with pytest.raises(SyncFailed):
             source.fetch(source.url, 10)
-        assert len(seen) == 3
+        assert len(seen) == PageSource.fetch_attempts
     else:
         assert source.fetch(source.url, 10) == "hello"
         assert len(seen) == 2
@@ -74,3 +75,89 @@ def test_duplicate_navigation_keeps_first_title(monkeypatch):
     pages = source.discover()
     assert source.complete and set(pages) == {"/a.md", "/b.md"}
     assert pages["/a.md"].title == "First"
+
+
+def _source_with(monkeypatch, handle, budget=None):
+    """A PageSource whose transport is `handle` and whose retry waits are recorded, not slept."""
+    import random
+
+    import dns.resolver
+
+    monkeypatch.setattr(dns.resolver.Resolver, "resolve", lambda *a, **kw: ["93.184.216.34"])
+    original = httpx.Client
+    monkeypatch.setattr(httpx, "Client", lambda **kw: original(transport=httpx.MockTransport(handle), **kw))
+    monkeypatch.setattr(random, "uniform", lambda low, high: high)  # no jitter: exact schedule
+    source = PageSource("https://docs.example.com/llms.txt", None, budget or WorkBudget(60))
+    waits: list[float] = []
+    monkeypatch.setattr(source.budget.cancelled, "wait", lambda seconds: waits.append(round(seconds, 3)) or False)
+    return source, waits
+
+
+def test_burst_of_connection_resets_backs_off_and_recovers(monkeypatch):
+    seen = []
+
+    def handle(request):
+        seen.append(request)
+        if len(seen) < 5:
+            raise httpx.ConnectError("[Errno 104] Connection reset by peer")
+        return httpx.Response(200, content=b"hello")
+
+    source, waits = _source_with(monkeypatch, handle)
+    assert source.fetch(source.url, 10) == "hello"
+    assert len(seen) == 5 and waits == [0.5, 1.0, 2.0, 4.0]
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        lambda request: httpx.Response(502),
+        lambda request: (_ for _ in ()).throw(httpx.RemoteProtocolError("Server disconnected")),
+        lambda request: (_ for _ in ()).throw(httpx.WriteError("broken pipe")),
+    ],
+)
+def test_server_errors_and_dropped_connections_are_retried(monkeypatch, failure):
+    seen = []
+
+    def handle(request):
+        seen.append(request)
+        return failure(request) if len(seen) == 1 else httpx.Response(200, content=b"ok")
+
+    source, waits = _source_with(monkeypatch, handle)
+    assert source.fetch(source.url, 10) == "ok" and waits == [0.5]
+
+
+@pytest.mark.parametrize("header,expected", [("3", 3.0), ("99", 10.0)])
+def test_retry_after_is_honored_and_bounded(monkeypatch, header, expected):
+    seen = []
+
+    def handle(request):
+        seen.append(request)
+        if len(seen) == 1:
+            return httpx.Response(429, headers={"retry-after": header})
+        return httpx.Response(200, content=b"ok")
+
+    source, waits = _source_with(monkeypatch, handle)
+    assert source.fetch(source.url, 10) == "ok" and waits == [expected]
+
+
+def test_retry_never_sleeps_past_the_fetch_deadline(monkeypatch):
+    def handle(request):
+        return httpx.Response(503, headers={"retry-after": "8"})
+
+    source, waits = _source_with(monkeypatch, handle, budget=WorkBudget(5))
+    with pytest.raises(SyncFailed) as failed:
+        source.fetch(source.url, 10)
+    assert waits == [] and isinstance(failed.value.__cause__, httpx.HTTPStatusError)
+
+
+def test_retry_after_parsing():
+    from datetime import datetime, timedelta, timezone
+    from email.utils import format_datetime
+
+    from agno.knowledge.page._source import _retry_after_seconds
+
+    soon = format_datetime(datetime.now(timezone.utc) + timedelta(seconds=30), usegmt=True)
+    assert _retry_after_seconds("5") == 5.0
+    assert 25 <= (_retry_after_seconds(soon) or 0) <= 30
+    assert _retry_after_seconds("Wed, 21 Oct 2015 07:28:00 GMT") == 0.0
+    assert _retry_after_seconds("soon") is None and _retry_after_seconds(None) is None

@@ -284,3 +284,25 @@ with `mcp==2.1.1` and `fastmcp==4.0.3`.
 updated public MCP tests also verify that exposed components need no lifecycle
 opt-out, while explicitly enabling lifecycle tools remains rejected. These checks
 did not exercise PostgreSQL-backed ingestion or hosted clients.
+
+---
+
+## 2026-10-02 patient retries for page fetches
+
+### PageSource.fetch retries
+
+**Status:** PASS
+
+**Description:** A Render deployment syncing docs.agno.com (3,913 pages) failed
+1–2 random pages every run. Wrapping the fetcher during a real sync showed
+`ConnectError: [Errno 104] Connection reset by peer` on a different page each
+time, while isolated fetches always succeeded. The previous policy (3 attempts,
+0.25 s and 0.5 s waits) gave up within about a second. Ran the fetch reliability
+and page contract unit tests and the page storage integration suite against
+PostgreSQL 18 + pgvector with this worktree.
+
+**Result:** A burst of four connection resets recovers on the fifth attempt with
+waits of 0.5, 1, 2 and 4 s. A 502, a dropped connection and a write error are
+retried; `Retry-After` is honored and capped at 10 s; a retry that would pass the
+fetch deadline fails immediately with its cause. Permanent failures still make
+one request. Live re-validation on the deployment is pending a release.

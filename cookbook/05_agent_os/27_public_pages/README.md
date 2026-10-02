@@ -91,6 +91,8 @@ await knowledge.async_sync_pages(url=index_url, validate_discovery=validate_inde
 
 An application may bind an explicit override into its callback. Acceptance still requires the existing discovery and processing checks before pruning; the callback cannot turn empty discovery or partial processing into a successful reconciliation. Without a callback, the framework applies no shrink threshold. Validation adds one namespace-scoped catalog count only on sync, not on query traffic.
 
+Page and index fetches retry transient failures (connection resets, dropped connections, timeouts, 429 and 5xx responses) up to five attempts with jittered exponential backoff of roughly 0.5, 1, 2 and 4 seconds, honoring a `Retry-After` header up to 10 seconds. Retries never extend past each fetch's 30-second deadline. Other 4xx responses, foreign redirects, oversized pages and cancellation fail without retrying.
+
 ## Explicit retrieval and customization
 
 `attach_docs_context` calls the same `search_docs` exposed to the model and places its bounded JSON in `{docs_context}` before the first model call. The example owns its instructions and evidence formatting; customize that hook for query alternatives or full-page rendering. No Knowledge object is attached to the Agent. The model can use the three explicitly named tools. Follow-up suggestions use a separately configured model after the answer.
