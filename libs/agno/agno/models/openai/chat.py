@@ -466,16 +466,20 @@ class OpenAIChat(Model):
                     status_code=e.response.status_code,
                     model_name=self.name,
                     model_id=self.id,
+                    code=error_code,
                 ) from e
             raise ModelProviderError(
                 message=error_message,
                 status_code=e.response.status_code,
                 model_name=self.name,
                 model_id=self.id,
+                code=error_code,
             ) from e
         except ModelAuthenticationError as e:
             log_error(f"Model authentication error from OpenAI API: {str(e)}")
             raise e
+        except ModelProviderError:
+            raise
         except Exception as e:
             log_error(f"Error from OpenAI API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
@@ -556,16 +560,20 @@ class OpenAIChat(Model):
                     status_code=e.response.status_code,
                     model_name=self.name,
                     model_id=self.id,
+                    code=error_code,
                 ) from e
             raise ModelProviderError(
                 message=error_message,
                 status_code=e.response.status_code,
                 model_name=self.name,
                 model_id=self.id,
+                code=error_code,
             ) from e
         except ModelAuthenticationError as e:
             log_error(f"Model authentication error from OpenAI API: {str(e)}")
             raise e
+        except ModelProviderError:
+            raise
         except Exception as e:
             log_error(f"Error from OpenAI API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
@@ -643,16 +651,20 @@ class OpenAIChat(Model):
                     status_code=e.response.status_code,
                     model_name=self.name,
                     model_id=self.id,
+                    code=error_code,
                 ) from e
             raise ModelProviderError(
                 message=error_message,
                 status_code=e.response.status_code,
                 model_name=self.name,
                 model_id=self.id,
+                code=error_code,
             ) from e
         except ModelAuthenticationError as e:
             log_error(f"Model authentication error from OpenAI API: {str(e)}")
             raise e
+        except ModelProviderError:
+            raise
         except Exception as e:
             log_error(f"Error from OpenAI API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
@@ -732,16 +744,20 @@ class OpenAIChat(Model):
                     status_code=e.response.status_code,
                     model_name=self.name,
                     model_id=self.id,
+                    code=error_code,
                 ) from e
             raise ModelProviderError(
                 message=error_message,
                 status_code=e.response.status_code,
                 model_name=self.name,
                 model_id=self.id,
+                code=error_code,
             ) from e
         except ModelAuthenticationError as e:
             log_error(f"Model authentication error from OpenAI API: {str(e)}")
             raise e
+        except ModelProviderError:
+            raise
         except Exception as e:
             log_error(f"Error from OpenAI API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
@@ -816,6 +832,7 @@ class OpenAIChat(Model):
                 message=response.error.get("message", "Unknown model error"),  # type: ignore
                 model_name=self.name,
                 model_id=self.id,
+                code=response.error.get("code"),  # type: ignore
             )
 
         # Get response message
