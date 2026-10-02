@@ -10,7 +10,7 @@ import time
 from typing import Any, List, Tuple
 
 from agno.db.base import AsyncBaseDb, BaseDb
-from agno.db.migrations.utils import quote_db_identifier
+from agno.db.migrations.utils import get_db_type, quote_db_identifier
 from agno.utils.log import log_error, log_info, log_warning
 
 try:
@@ -32,7 +32,7 @@ def up(db: BaseDb, table_type: str, table_name: str) -> bool:
     Returns:
         bool: True if any migration was applied, False otherwise.
     """
-    db_type = type(db).__name__
+    db_type = get_db_type(db)
 
     try:
         if db_type == "PostgresDb":
@@ -64,7 +64,7 @@ async def async_up(db: AsyncBaseDb, table_type: str, table_name: str) -> bool:
     Returns:
         bool: True if any migration was applied, False otherwise.
     """
-    db_type = type(db).__name__
+    db_type = get_db_type(db)
 
     try:
         if db_type == "AsyncPostgresDb":
@@ -90,7 +90,7 @@ def down(db: BaseDb, table_type: str, table_name: str) -> bool:
     Returns:
         bool: True if any migration was reverted, False otherwise.
     """
-    db_type = type(db).__name__
+    db_type = get_db_type(db)
 
     try:
         if db_type == "PostgresDb":
@@ -120,7 +120,7 @@ async def async_down(db: AsyncBaseDb, table_type: str, table_name: str) -> bool:
     Returns:
         bool: True if any migration was reverted, False otherwise.
     """
-    db_type = type(db).__name__
+    db_type = get_db_type(db)
 
     try:
         if db_type == "AsyncPostgresDb":
@@ -140,7 +140,7 @@ def _migrate_postgres(db: BaseDb, table_type: str, table_name: str) -> bool:
     from sqlalchemy import text
 
     db_schema = db.db_schema or "public"  # type: ignore
-    db_type = type(db).__name__
+    db_type = get_db_type(db)
     quoted_schema = quote_db_identifier(db_type, db_schema)
     quoted_table = quote_db_identifier(db_type, table_name)
 
@@ -308,7 +308,7 @@ async def _migrate_async_postgres(db: AsyncBaseDb, table_type: str, table_name: 
     from sqlalchemy import text
 
     db_schema = db.db_schema or "public"  # type: ignore
-    db_type = type(db).__name__
+    db_type = get_db_type(db)
     quoted_schema = quote_db_identifier(db_type, db_schema)
     quoted_table = quote_db_identifier(db_type, table_name)
 
@@ -479,7 +479,7 @@ def _migrate_mysql(db: BaseDb, table_type: str, table_name: str) -> bool:
     from sqlalchemy import text
 
     db_schema = db.db_schema or "agno"  # type: ignore
-    db_type = type(db).__name__
+    db_type = get_db_type(db)
     quoted_schema = quote_db_identifier(db_type, db_schema)
     quoted_table = quote_db_identifier(db_type, table_name)
 
@@ -568,7 +568,7 @@ def _migrate_mysql(db: BaseDb, table_type: str, table_name: str) -> bool:
 
 def _migrate_sqlite(db: BaseDb, table_type: str, table_name: str) -> bool:
     """Migrate SQLite database."""
-    db_type = type(db).__name__
+    db_type = get_db_type(db)
     quoted_table = quote_db_identifier(db_type, table_name)
 
     with db.Session() as sess, sess.begin():  # type: ignore
@@ -630,7 +630,7 @@ def _migrate_sqlite(db: BaseDb, table_type: str, table_name: str) -> bool:
 
 async def _migrate_async_sqlite(db: AsyncBaseDb, table_type: str, table_name: str) -> bool:
     """Migrate SQLite database."""
-    db_type = type(db).__name__
+    db_type = get_db_type(db)
     quoted_table = quote_db_identifier(db_type, table_name)
 
     async with db.async_session_factory() as sess, sess.begin():  # type: ignore
@@ -696,7 +696,7 @@ def _migrate_singlestore(db: BaseDb, table_type: str, table_name: str) -> bool:
     from sqlalchemy import text
 
     db_schema = db.db_schema or "agno"  # type: ignore
-    db_type = type(db).__name__
+    db_type = get_db_type(db)
     quoted_schema = quote_db_identifier(db_type, db_schema)
     quoted_table = quote_db_identifier(db_type, table_name)
 
@@ -779,7 +779,7 @@ def _revert_postgres(db: BaseDb, table_type: str, table_name: str) -> bool:
     from sqlalchemy import text
 
     db_schema = db.db_schema or "agno"  # type: ignore
-    db_type = type(db).__name__
+    db_type = get_db_type(db)
     quoted_schema = quote_db_identifier(db_type, db_schema)
     quoted_table = quote_db_identifier(db_type, table_name)
 
@@ -815,7 +815,7 @@ async def _revert_async_postgres(db: AsyncBaseDb, table_type: str, table_name: s
     from sqlalchemy import text
 
     db_schema = db.db_schema or "agno"  # type: ignore
-    db_type = type(db).__name__
+    db_type = get_db_type(db)
     quoted_schema = quote_db_identifier(db_type, db_schema)
     quoted_table = quote_db_identifier(db_type, table_name)
 
@@ -852,7 +852,7 @@ def _revert_mysql(db: BaseDb, table_type: str, table_name: str) -> bool:
     from sqlalchemy import text
 
     db_schema = db.db_schema or "agno"  # type: ignore
-    db_type = type(db).__name__
+    db_type = get_db_type(db)
     quoted_schema = quote_db_identifier(db_type, db_schema)
     quoted_table = quote_db_identifier(db_type, table_name)
 
@@ -934,7 +934,7 @@ def _revert_singlestore(db: BaseDb, table_type: str, table_name: str) -> bool:
     from sqlalchemy import text
 
     db_schema = db.db_schema or "agno"  # type: ignore
-    db_type = type(db).__name__
+    db_type = get_db_type(db)
     quoted_schema = quote_db_identifier(db_type, db_schema)
     quoted_table = quote_db_identifier(db_type, table_name)
 
