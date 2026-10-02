@@ -1,5 +1,6 @@
 import asyncio
 from typing import List, Optional
+from urllib.parse import parse_qs, urlparse
 
 from agno.knowledge.chunking.recursive import RecursiveChunking
 from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyType
@@ -42,9 +43,19 @@ class YouTubeReader(Reader):
         return [ContentType.YOUTUBE]
 
     def read(self, url: str, name: Optional[str] = None) -> List[Document]:
+        """Read a transcript from a watch URL, share URL, Shorts URL, or video ID."""
         try:
-            # Extract video ID from URL
-            video_id = url.split("v=")[-1].split("&")[0]
+            parsed_url = urlparse(url)
+            if parsed_url.hostname in ("youtu.be", "www.youtu.be"):
+                video_id = parsed_url.path.strip("/").split("/")[0]
+            elif parsed_url.hostname in (
+                "youtube.com",
+                "www.youtube.com",
+                "m.youtube.com",
+            ) and parsed_url.path.startswith("/shorts/"):
+                video_id = parsed_url.path.split("/")[2]
+            else:
+                video_id = parse_qs(parsed_url.query).get("v", [url])[0]
             log_info(f"Reading transcript for video: {video_id}")
 
             # Get transcript
