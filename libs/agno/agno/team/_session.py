@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from agno.team.team import Team
 
 from agno.db.base import SessionType
+from agno.exceptions import SessionNotSavedError
 from agno.metrics import SessionMetrics
 from agno.models.message import Message
 from agno.run import RunStatus
@@ -339,6 +340,9 @@ def save_session(team: "Team", session: TeamSession) -> None:
 
     Args:
         session: The TeamSession to save.
+
+    Raises:
+        SessionNotSavedError: If the configured database does not save the session.
     """
     from copy import copy
 
@@ -379,7 +383,8 @@ def save_session(team: "Team", session: TeamSession) -> None:
                     if hasattr(run, "member_responses"):
                         # Scrub individual member responses based on their storage flags
                         _scrub_member_responses(team, run.member_responses)
-        _upsert_session(team, session=storage_session)
+        if _upsert_session(team, session=storage_session) is None:
+            raise SessionNotSavedError(session.session_id)
         log_debug(f"Created or updated TeamSession record: {session.session_id}")
 
 
@@ -389,6 +394,9 @@ async def asave_session(team: "Team", session: TeamSession) -> None:
 
     Args:
         session: The TeamSession to save.
+
+    Raises:
+        SessionNotSavedError: If the configured database does not save the session.
     """
     from copy import copy
 
@@ -423,9 +431,11 @@ async def asave_session(team: "Team", session: TeamSession) -> None:
                         _scrub_member_responses(team, run.member_responses)
 
         if _has_async_db(team):
-            await _aupsert_session(team, session=storage_session)
+            result = await _aupsert_session(team, session=storage_session)
         else:
-            _upsert_session(team, session=storage_session)
+            result = _upsert_session(team, session=storage_session)
+        if result is None:
+            raise SessionNotSavedError(session.session_id)
         log_debug(f"Created or updated TeamSession record: {session.session_id}")
 
 
