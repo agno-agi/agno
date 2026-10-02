@@ -1228,6 +1228,8 @@ def _run_stream(
                         user_id=user_id,
                     )
                 yield run_error
+                if yield_run_output:
+                    yield run_response
                 break
             except KeyboardInterrupt:
                 run_response = _handle_run_cancellation(run_response, KeyboardInterrupt(), run_messages)
@@ -1288,6 +1290,8 @@ def _run_stream(
                     )
 
                 yield run_error
+                if yield_run_output:
+                    yield run_response
     finally:
         # Cancel background futures on error (wait_for_thread_tasks_stream handles waiting on success)
         for future in (memory_future, learning_future):
@@ -2726,6 +2730,8 @@ async def _arun_stream(
 
                 # Yield the error event
                 yield run_error
+                if yield_run_output:
+                    yield run_response
                 break
 
             except (KeyboardInterrupt, asyncio.CancelledError, GeneratorExit) as cancel_exc:
@@ -2803,6 +2809,8 @@ async def _arun_stream(
 
                 # Yield the error event
                 yield run_error
+                if yield_run_output:
+                    yield run_response
     finally:
         # Always disconnect connectable tools
         disconnect_connectable_tools(agent)
