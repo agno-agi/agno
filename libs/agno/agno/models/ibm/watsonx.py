@@ -20,6 +20,11 @@ except ImportError:
     raise ImportError("`ibm-watsonx-ai` is not installed. Please install it using `pip install ibm-watsonx-ai`.")
 
 
+def _status_code(e: Exception) -> int:
+    # ibm_watsonx_ai request failures carry the HTTP response on the exception
+    return getattr(getattr(e, "response", None), "status_code", None) or 502
+
+
 @dataclass
 class WatsonX(Model):
     """
@@ -194,7 +199,9 @@ class WatsonX(Model):
 
         except Exception as e:
             log_error(f"Error calling WatsonX API: {str(e)}")
-            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+            raise ModelProviderError(
+                message=str(e), status_code=_status_code(e), model_name=self.name, model_id=self.id
+            ) from e
 
     async def ainvoke(
         self,
@@ -231,7 +238,9 @@ class WatsonX(Model):
 
         except Exception as e:
             log_error(f"Error calling WatsonX API: {str(e)}")
-            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+            raise ModelProviderError(
+                message=str(e), status_code=_status_code(e), model_name=self.name, model_id=self.id
+            ) from e
 
     def invoke_stream(
         self,
@@ -267,7 +276,9 @@ class WatsonX(Model):
 
         except Exception as e:
             log_error(f"Error calling WatsonX API: {str(e)}")
-            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+            raise ModelProviderError(
+                message=str(e), status_code=_status_code(e), model_name=self.name, model_id=self.id
+            ) from e
 
     async def ainvoke_stream(
         self,
@@ -305,7 +316,9 @@ class WatsonX(Model):
 
         except Exception as e:
             log_error(f"Error in async streaming from WatsonX API: {str(e)}")
-            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+            raise ModelProviderError(
+                message=str(e), status_code=_status_code(e), model_name=self.name, model_id=self.id
+            ) from e
 
     # Override base method
     @staticmethod

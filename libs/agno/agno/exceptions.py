@@ -145,6 +145,14 @@ class ModelProviderError(AgnoError):
         "prompt is too long",
         "prompt too long",
         "exceeds the model",
+        "exceeds the maximum number of tokens",  # Gemini
+        "input is too long",  # Bedrock
+        "too many input tokens",  # Bedrock
+        "maximum prompt length",  # xAI
+        "tokens limit",  # watsonx
+        "token_quantity_exceeded",  # watsonx
+        "`inputs` tokens + `max_new_tokens`",  # HuggingFace TGI
+        "`inputs` must have less than",  # HuggingFace TGI
     ]
 
     def __init__(

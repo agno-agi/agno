@@ -135,3 +135,43 @@ class TestNonContextWindowErrors:
         classified = ModelProviderError.classify(error)
 
         assert classified is error
+
+
+# =============================================================================
+# Real provider messages
+# =============================================================================
+
+
+class TestProviderContextWindowMessages:
+    """Verbatim overflow messages from providers that rely on message matching rather than an error code."""
+
+    @pytest.mark.parametrize(
+        "error_message",
+        [
+            "The input token count (1200000) exceeds the maximum number of tokens allowed (1048576).",
+            "An error occurred (ValidationException) when calling the Converse operation: "
+            "Input is too long for requested model.",
+            "Too many input tokens. Max input tokens: 128000, request input token count: 140000",
+            "This model's maximum prompt length is 131072 but the request contains 150000 tokens.",
+            "the number of input tokens 9000 cannot exceed the total tokens limit 8192 for this model",
+            '{"code": "token_quantity_exceeded", "message": "input token count is above the limit"}',
+            "Input validation error: `inputs` tokens + `max_new_tokens` must be <= 4096. "
+            "Given: 4500 `inputs` tokens and 512 `max_new_tokens`",
+            "Input validation error: `inputs` must have less than 4096 tokens. Given: 5000",
+        ],
+        ids=[
+            "gemini",
+            "bedrock_converse",
+            "bedrock_nova",
+            "xai",
+            "watsonx_message",
+            "watsonx_code",
+            "huggingface_tgi_total",
+            "huggingface_tgi_inputs",
+        ],
+    )
+    def test_classify_provider_messages(self, error_message: str):
+        error = ModelProviderError(message=error_message, status_code=400)
+        classified = ModelProviderError.classify(error)
+
+        assert isinstance(classified, ContextWindowExceededError)
