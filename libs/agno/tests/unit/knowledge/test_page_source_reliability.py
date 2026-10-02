@@ -161,3 +161,40 @@ def test_retry_after_parsing():
     assert 25 <= (_retry_after_seconds(soon) or 0) <= 30
     assert _retry_after_seconds("Wed, 21 Oct 2015 07:28:00 GMT") == 0.0
     assert _retry_after_seconds("soon") is None and _retry_after_seconds(None) is None
+
+
+def test_each_attempt_has_its_own_timeout_so_a_stalled_handshake_is_retried(monkeypatch):
+    """A handshake that hangs must time out per attempt, not consume the 30 s fetch deadline."""
+    timeouts = []
+    seen = []
+
+    def handle(request):
+        seen.append(request)
+        if len(seen) == 1:
+            raise httpx.ConnectTimeout("_ssl.c:1064: The handshake operation timed out")
+        return httpx.Response(200, content=b"ok")
+
+    source, waits = _source_with(monkeypatch, handle)
+    wrapped = httpx.Client
+
+    def recording_client(**kwargs):
+        timeouts.append(kwargs["timeout"])
+        return wrapped(**kwargs)
+
+    monkeypatch.setattr(httpx, "Client", recording_client)
+    assert source.fetch(source.url, 10) == "ok"
+    assert len(seen) == 2 and waits == [0.5]
+    assert all(t.connect == 5.0 and t.read == 10.0 for t in timeouts)
+
+
+def test_attempt_timeout_never_exceeds_the_remaining_deadline(monkeypatch):
+    timeouts = []
+
+    def handle(request):
+        return httpx.Response(200, content=b"ok")
+
+    source, _ = _source_with(monkeypatch, handle, budget=WorkBudget(3))
+    wrapped = httpx.Client
+    monkeypatch.setattr(httpx, "Client", lambda **kw: timeouts.append(kw["timeout"]) or wrapped(**kw))
+    assert source.fetch(source.url, 10) == "ok"
+    assert timeouts[0].read <= 3 and timeouts[0].connect <= 3

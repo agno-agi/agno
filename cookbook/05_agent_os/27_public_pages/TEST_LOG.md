@@ -305,4 +305,13 @@ PostgreSQL 18 + pgvector with this worktree.
 waits of 0.5, 1, 2 and 4 s. A 502, a dropped connection and a write error are
 retried; `Retry-After` is honored and capped at 10 s; a retry that would pass the
 fetch deadline fails immediately with its cause. Permanent failures still make
-one request. Live re-validation on the deployment is pending a release.
+one request.
+
+**Live follow-up (same day):** the backoff alone did not help on the deployment.
+A Render shell run of a real sync with the new retry policy swapped in still gave
+up on a page after one attempt: the attempt took about 30 s, a TLS handshake that
+hung and then ended in `Connection reset by peer`, consuming the whole fetch
+deadline before any retry. Each attempt now has its own timeout (5 s connect,
+10 s overall). The next live run timed out the stalled handshake at 5.0 s
+(`ConnectTimeout: The handshake operation timed out`), retried on a fresh
+connection, recovered on attempt 2, and finished with 0 failed pages.

@@ -97,6 +97,11 @@ class PageSource:
     retry_base_seconds = 0.5
     retry_max_seconds = 4.0
     retry_after_max_seconds = 10.0
+    # A stalled connection (seen as a TLS handshake that hangs, then resets) must not
+    # consume the whole fetch deadline: each attempt gets its own bound so a retry on
+    # a fresh connection still fits. Healthy page fetches take well under a second.
+    connect_timeout_seconds = 5.0
+    attempt_timeout_seconds = 10.0
 
     def __init__(self, url: str, public_url: Optional[str], budget: WorkBudget):
         self.url = source_url(url)
@@ -138,7 +143,9 @@ class PageSource:
                     remaining = min(deadline - time.monotonic(), self.budget.remaining())
                     if remaining <= 0:
                         raise TimeoutError()
-                    with httpx.Client(timeout=remaining, trust_env=False, follow_redirects=False) as client:
+                    attempt_timeout = min(remaining, self.attempt_timeout_seconds)
+                    timeout = httpx.Timeout(attempt_timeout, connect=min(self.connect_timeout_seconds, attempt_timeout))
+                    with httpx.Client(timeout=timeout, trust_env=False, follow_redirects=False) as client:
                         with client.stream(
                             "GET",
                             pinned,
