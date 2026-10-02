@@ -34,6 +34,7 @@ from agno.run import RunContext
 from agno.run.agent import RUN_OUTPUT_EVENT_TYPES, Followups, RunEvent, RunOutput, RunOutputEvent
 from agno.run.messages import RunMessages
 from agno.run.requirement import RunRequirement
+from agno.run.steering import steering_for
 from agno.run.team import TEAM_RUN_OUTPUT_EVENT_TYPES, TeamRunOutputEvent
 from agno.session import AgentSession
 from agno.tools.function import Function
@@ -51,6 +52,7 @@ from agno.utils.events import (
     create_reasoning_started_event,
     create_reasoning_step_event,
     create_run_output_content_event,
+    create_run_steered_event,
     create_tool_call_completed_event,
     create_tool_call_error_event,
     create_tool_call_started_event,
@@ -1075,9 +1077,20 @@ def handle_model_response_stream(
             run_messages=run_messages,
             run_context=run_context,
         ),
+        steering=steering_for(run_response.run_id),
     ):
         # Handle LLM request events and compression events from ModelResponse
         if isinstance(model_response_event, ModelResponse):
+            if model_response_event.event == ModelResponseEvent.run_steered.value:
+                if stream_events:
+                    for steered_message in model_response_event.steered_messages or []:
+                        yield handle_event(  # type: ignore
+                            create_run_steered_event(from_run_response=run_response, message=steered_message),
+                            run_response,
+                            events_to_skip=agent.events_to_skip,  # type: ignore
+                            store_events=agent.store_events,
+                        )
+                continue
             if model_response_event.event == ModelResponseEvent.model_request_started.value:
                 if stream_events:
                     yield handle_event(  # type: ignore
@@ -1236,11 +1249,22 @@ async def ahandle_model_response_stream(
             run_messages=run_messages,
             run_context=run_context,
         ),
+        steering=steering_for(run_response.run_id),
     )  # type: ignore
 
     async for model_response_event in model_response_stream:  # type: ignore
         # Handle LLM request events and compression events from ModelResponse
         if isinstance(model_response_event, ModelResponse):
+            if model_response_event.event == ModelResponseEvent.run_steered.value:
+                if stream_events:
+                    for steered_message in model_response_event.steered_messages or []:
+                        yield handle_event(  # type: ignore
+                            create_run_steered_event(from_run_response=run_response, message=steered_message),
+                            run_response,
+                            events_to_skip=agent.events_to_skip,  # type: ignore
+                            store_events=agent.store_events,
+                        )
+                continue
             if model_response_event.event == ModelResponseEvent.model_request_started.value:
                 if stream_events:
                     yield handle_event(  # type: ignore

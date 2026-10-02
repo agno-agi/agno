@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional
 
 from agno.media import Audio, File, Image, Video
 from agno.metrics import MessageMetrics, ToolCallMetrics
-from agno.models.message import Citations
+from agno.models.message import Citations, Message
 from agno.tools.function import UserFeedbackQuestion, UserInputField
 
 
@@ -21,6 +21,7 @@ class ModelResponseEvent(str, Enum):
     model_request_started = "ModelRequestStarted"
     model_request_completed = "ModelRequestCompleted"
     fallback_model_activated = "FallbackModelActivated"
+    run_steered = "RunSteered"
 
 
 @dataclass
@@ -150,6 +151,9 @@ class ModelResponse:
 
     # Compression stats
     compression_stats: Optional[Dict[str, Any]] = None
+
+    # Steering input appended to the conversation (for run_steered events)
+    steered_messages: Optional[List[Message]] = None
 
     # Model request metrics (for model_request_completed events)
     input_tokens: Optional[int] = None

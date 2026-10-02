@@ -177,6 +177,7 @@ class TeamRunEvent(str, Enum):
 
     run_paused = "TeamRunPaused"
     run_continued = "TeamRunContinued"
+    run_steered = "TeamRunSteered"
 
     # Task mode events
     task_iteration_started = "TeamTaskIterationStarted"
@@ -347,6 +348,15 @@ class RunContinuedEvent(BaseTeamRunEvent):
     """Event sent when a paused team run is continued"""
 
     event: str = TeamRunEvent.run_continued.value
+
+
+@dataclass
+class RunSteeredEvent(BaseTeamRunEvent):
+    """Event sent when input steered into a running team run joins its conversation"""
+
+    event: str = TeamRunEvent.run_steered.value
+    message_id: Optional[str] = None
+    content: Optional[Any] = None
 
 
 @dataclass
@@ -648,6 +658,7 @@ TeamRunOutputEvent = Union[
     RunCancelledEvent,
     RunPausedEvent,
     RunContinuedEvent,
+    RunSteeredEvent,
     PreHookStartedEvent,
     PreHookCompletedEvent,
     PostHookStartedEvent,
@@ -697,6 +708,7 @@ TEAM_RUN_EVENT_TYPE_REGISTRY = {
     TeamRunEvent.run_cancelled.value: RunCancelledEvent,
     TeamRunEvent.run_paused.value: RunPausedEvent,
     TeamRunEvent.run_continued.value: RunContinuedEvent,
+    TeamRunEvent.run_steered.value: RunSteeredEvent,
     TeamRunEvent.pre_hook_started.value: PreHookStartedEvent,
     TeamRunEvent.pre_hook_completed.value: PreHookCompletedEvent,
     TeamRunEvent.post_hook_started.value: PostHookStartedEvent,

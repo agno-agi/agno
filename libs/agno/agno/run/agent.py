@@ -154,6 +154,7 @@ class RunEvent(str, Enum):
 
     run_paused = "RunPaused"
     run_continued = "RunContinued"
+    run_steered = "RunSteered"
 
     pre_hook_started = "PreHookStarted"
     pre_hook_completed = "PreHookCompleted"
@@ -314,6 +315,15 @@ class RunPausedEvent(BaseAgentRunEvent):
 @dataclass
 class RunContinuedEvent(BaseAgentRunEvent):
     event: str = RunEvent.run_continued.value
+
+
+@dataclass
+class RunSteeredEvent(BaseAgentRunEvent):
+    """Event sent when input steered into a running run joins its conversation"""
+
+    event: str = RunEvent.run_steered.value
+    message_id: Optional[str] = None
+    content: Optional[Any] = None
 
 
 @dataclass
@@ -532,6 +542,7 @@ RunOutputEvent = Union[
     RunCancelledEvent,
     RunPausedEvent,
     RunContinuedEvent,
+    RunSteeredEvent,
     PreHookStartedEvent,
     PreHookCompletedEvent,
     PostHookStartedEvent,
@@ -577,6 +588,7 @@ RUN_EVENT_TYPE_REGISTRY = {
     RunEvent.run_cancelled.value: RunCancelledEvent,
     RunEvent.run_paused.value: RunPausedEvent,
     RunEvent.run_continued.value: RunContinuedEvent,
+    RunEvent.run_steered.value: RunSteeredEvent,
     RunEvent.pre_hook_started.value: PreHookStartedEvent,
     RunEvent.pre_hook_completed.value: PreHookCompletedEvent,
     RunEvent.post_hook_started.value: PostHookStartedEvent,
