@@ -23,7 +23,7 @@ from typing import (
 
 from docstring_parser import parse
 from packaging.version import Version
-from pydantic import BaseModel, Field, field_validator, validate_call
+from pydantic import BaseModel, Field, ValidationError, field_validator, validate_call
 
 from agno.exceptions import AgentRunException, RunCancelledException
 from agno.media import Audio, File, Image, Video
@@ -2161,6 +2161,14 @@ class FunctionCall(BaseModel):
 
         return call_str
 
+    def _log_failure(self, e: Exception) -> None:
+        """Log a failed call once. Arguments that do not fit the signature come from the model and
+        go back to it as the tool result, so they are a warning; anything else is logged with its traceback."""
+        if isinstance(e, ValidationError) and e.title == getattr(self.function.entrypoint, "__qualname__", None):
+            log_warning(f"Invalid arguments for {self.get_call_str()}: {e}")
+        else:
+            log_exception(f"Could not run function {self.get_call_str()}: {e}")
+
     def _safe_hook_call(self, hook: Callable, hook_args: Dict[str, Any]) -> Any:
         """Call a hook with list-structure-safe messages.
 
@@ -2683,8 +2691,7 @@ class FunctionCall(BaseModel):
         except RunCancelledException:
             raise
         except Exception as e:
-            log_warning(f"Could not run function {self.get_call_str()}: {str(e)}")
-            log_exception(e)
+            self._log_failure(e)
             self.error = str(e)
             execution_result = FunctionExecutionResult(status="failure", error=str(e))
 
@@ -2952,8 +2959,7 @@ class FunctionCall(BaseModel):
         except RunCancelledException:
             raise
         except Exception as e:
-            log_warning(f"Could not run function {self.get_call_str()}: {str(e)}")
-            log_exception(e)
+            self._log_failure(e)
             self.error = str(e)
             execution_result = FunctionExecutionResult(status="failure", error=str(e))
 
