@@ -15,11 +15,13 @@ from typing import Callable, Literal, Mapping, Optional
 from agno.utils.markdown import FenceState, advance_code_fence
 
 HTML_BLOCK = r"div|h[1-6]|video"
+# Tag attributes: anything but < and >, except inside quoted values (type="Record<string, string>").
+ATTRS = r"""(?P<attrs>\s(?:"[^"]*"|'[^']*'|[^<>"'])*?)?"""
 HTML_VOID = r"img|br|source|video"
-BLOCK_OPEN = re.compile(rf"^\s*<(?P<name>[A-Z][A-Za-z]*|{HTML_BLOCK})(?P<attrs>\s[^<>]*?)?(?<!/)>\s*$")
+BLOCK_OPEN = re.compile(rf"^\s*<(?P<name>[A-Z][A-Za-z]*|{HTML_BLOCK}){ATTRS}(?<!/)>\s*$")
 BLOCK_CLOSE = re.compile(rf"^\s*</(?P<name>[A-Z][A-Za-z]*|{HTML_BLOCK})>\s*$")
-SELF_CLOSING = re.compile(rf"^\s*<(?P<name>[A-Z][A-Za-z]*|{HTML_VOID})(?P<attrs>\s[^<>]*?)?\s*/>\s*$")
-ONE_LINER = re.compile(r"^\s*<(?P<name>[A-Z][A-Za-z]*|h[1-6])(?P<attrs>\s[^<>]*?)?>(?P<body>.*)</(?P=name)>\s*$")
+SELF_CLOSING = re.compile(rf"^\s*<(?P<name>[A-Z][A-Za-z]*|{HTML_VOID}){ATTRS}\s*/>\s*$")
+ONE_LINER = re.compile(rf"^\s*<(?P<name>[A-Z][A-Za-z]*|h[1-6]){ATTRS}>(?P<body>.*)</(?P=name)>\s*$")
 ATTR = re.compile(r"""([A-Za-z][\w-]*)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|\{([^}]*)\}|([^\s"'<>]+)))?""")
 CALLOUTS = {"Note": "Note", "Warning": "Warning", "Tip": "Tip", "Info": "Info", "Check": "Check", "Callout": ""}
 LABELLED = {"CodeBlockTab": "value", "Tab": "title", "Accordion": "title"}  # tag -> attribute that names it
@@ -131,7 +133,9 @@ def _render(name: str, attrs: dict[str, str], inner: list[str], ctx: _Context) -
         head = f"[{title}]({href})" if title and href else f"**{title}**" if title else f"<{href}>" if href else ""
         return _bullet(head, inner, ctx)
     if name in ("ResponseField", "ParamField"):
-        head = f"`{attrs['name']}`" if attrs.get("name") else ""
+        # Mintlify's ParamField names its field by location: path=, query=, body= or header=.
+        field = next((attrs[key] for key in ("name", "path", "query", "body", "header") if attrs.get(key)), "")
+        head = f"`{field}`" if field else ""
         details = [attrs["type"]] if attrs.get("type") else []
         if "required" in attrs:
             details.append("required")

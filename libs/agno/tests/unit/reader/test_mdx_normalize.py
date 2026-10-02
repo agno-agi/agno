@@ -287,3 +287,22 @@ def test_module_statements_kept_when_disabled_unclosed_or_verbatim():
     assert DocumentationMarkdown()(MINTLIFY_ESM, path="/x.md") == MINTLIFY_ESM
     unclosed = "# Title\n\nexport const Broken = () => {\n\nBody text.\n"
     assert DocumentationMarkdown(profile="mintlify")(unclosed, path="/x.md") == unclosed
+
+
+def test_quoted_attribute_values_may_contain_angle_brackets():
+    mintlify = DocumentationMarkdown(profile="mintlify")
+    tab = '<Tabs>\n<Tab title="From Fleet > Integrations">\nOpen the page.\n</Tab>\n</Tabs>\n'
+    assert mintlify(tab, path="/x.md") == "**From Fleet > Integrations**\n\nOpen the page.\n"
+    field = '<ResponseField name="overrides" type="Record<string, string>">\nPer-tool text.\n</ResponseField>\n'
+    assert mintlify(field, path="/x.md") == "- `overrides` (Record<string, string>): Per-tool text.\n"
+
+
+def test_param_field_is_named_by_its_location_attribute():
+    mintlify = DocumentationMarkdown(profile="mintlify")
+    field = '<ParamField body="retryOn" type="((error: Error) => boolean)" required>\nWhich errors to retry.\n</ParamField>\n'
+    assert (
+        mintlify(field, path="/x.md") == "- `retryOn` (((error: Error) => boolean), required): Which errors to retry.\n"
+    )
+    assert mintlify('<ParamField query="limit" type="int">\nPage size.\n</ParamField>\n', path="/x.md").startswith(
+        "- `limit` (int)"
+    )

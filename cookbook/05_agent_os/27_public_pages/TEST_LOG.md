@@ -533,3 +533,26 @@ inlined component code across 55 of 1,666 pages, keeping every heading and prose
 line on the pages checked. docs.agno.com discovery is unchanged (3,913 pages,
 complete) and `fumadocs` output is byte-identical with and without `strip_esm`
 on all 3,913 pages. The `sync` mode's embedding run was not executed.
+
+---
+
+## 2026-10-02 redirected page aliases are skipped, not failed
+
+### Live sync of docs.langchain.com
+
+**Status:** PASS
+
+**Description:** Ran a docs-agent template stack (PostgreSQL 18 + pgvector,
+`DOCS_FORMAT=mintlify`) with this worktree mounted as `agno`, and synced
+docs.langchain.com through the `sync-docs` workflow, before and after this change.
+
+**Result:** Before: `partial` in 1,147 s, 1,628 updated, 38 failed, so pruning was
+skipped. All 38 were listed pages that redirect elsewhere: to
+reference.langchain.com, GitHub, academy.langchain.com and other hosts; to a
+`#section` of another page (`invalid_source_url`); or to a same-site URL without
+`.md`, whose HTML was embedded until the provider rejected it at its 8,192-token
+input limit. After: `completed` in 243 s, 1,666 discovered, 23 updated, 0 failed,
+38 skipped, each logged with its target. 1,628 pages are stored and no alias is.
+The quoted-attribute fix updated the four pages that kept `<Tab title="… > …">`
+and `ResponseField type="Record<…>"` tags; the only remaining component tags are
+the contributing guide's inline-code mentions.
