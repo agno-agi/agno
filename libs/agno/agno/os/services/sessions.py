@@ -9,13 +9,14 @@ Sync ``BaseDb`` calls are offloaded to a threadpool so an async surface (MCP or
 REST) never blocks its event loop on database I/O.
 """
 
-from typing import Any, Dict, List, Literal, Optional, Tuple, Union
+from typing import Any, Dict, List, Literal, Optional, Tuple, Type, Union
 
 from starlette.concurrency import run_in_threadpool
 
 from agno.db.base import AsyncBaseDb, BaseDb, SessionType
 from agno.db.utils import detect_session_type
-from agno.os.schema import RunSchema, TeamRunSchema, WorkflowRunSchema
+from agno.os.schema import RunPreview, RunSchema, TeamRunSchema, WorkflowRunSchema
+from agno.os.utils import get_run_input, to_utc_datetime
 from agno.utils.log import log_warning
 
 AnyRunSchema = Union[RunSchema, TeamRunSchema, WorkflowRunSchema]
@@ -172,27 +173,83 @@ async def _get_session_dict(
     return session, session_type  # type: ignore[return-value]
 
 
-def classify_session_run(run: Dict[str, Any], session_type: SessionType) -> Optional[AnyRunSchema]:
-    """Render one persisted run dict as the schema matching its actual shape.
+def _run_schema_class(run: Dict[str, Any], session_type: SessionType) -> Optional[Type[AnyRunSchema]]:
+    """Pick the schema a persisted run dict renders as, or None when the run is not listed.
 
     Team and workflow sessions can contain member/step runs of other kinds, so
     classification is per-run (by which component id the run carries), not
-    per-session. Mirrors the REST behavior exactly, including dropping team-session
-    runs that carry neither an agent_id nor a team_id (returns None).
+    per-session. Team-session runs that carry neither an agent_id nor a team_id
+    are not listed.
     """
     if session_type == SessionType.AGENT:
-        return RunSchema.from_dict(run)
+        return RunSchema
     if session_type == SessionType.TEAM:
         if run.get("agent_id") is not None:
-            return RunSchema.from_dict(run)
+            return RunSchema
         if run.get("team_id") is not None:
-            return TeamRunSchema.from_dict(run)
+            return TeamRunSchema
         return None
     if run.get("workflow_id") is not None:
-        return WorkflowRunSchema.from_dict(run)
+        return WorkflowRunSchema
     if run.get("team_id") is not None:
-        return TeamRunSchema.from_dict(run)
-    return RunSchema.from_dict(run)
+        return TeamRunSchema
+    return RunSchema
+
+
+def classify_session_run(run: Dict[str, Any], session_type: SessionType) -> Optional[AnyRunSchema]:
+    """Render one persisted run dict as the schema matching its actual shape (None when not listed)."""
+    schema_class = _run_schema_class(run, session_type)
+    return schema_class.from_dict(run) if schema_class is not None else None
+
+
+class InvalidRunCursorError(ValueError):
+    """Raised when a runs page is requested with both a before and an after cursor."""
+
+
+_IndexedRun = Tuple[int, Dict[str, Any], Type[AnyRunSchema]]
+
+RUN_PREVIEW_INPUT_MAX_CHARS = 200
+
+
+async def _get_indexed_session_runs(
+    db: Union[BaseDb, AsyncBaseDb],
+    *,
+    session_id: str,
+    session_type: Optional[SessionType],
+    user_id: Optional[str],
+    created_after: Optional[int],
+    created_before: Optional[int],
+) -> List[_IndexedRun]:
+    """The session's listed runs as ``(run_index, run_dict, schema_class)``, in chronological order.
+
+    ``run_index`` is the run's position in the session's full history, assigned
+    before any filter so it stays stable across filters and across the list,
+    page and preview endpoints.
+    """
+    session, resolved_type = await _get_session_dict(
+        db, session_id=session_id, session_type=session_type, user_id=user_id
+    )
+
+    indexed: List[_IndexedRun] = []
+    for run_index, run in enumerate(session.get("runs") or []):
+        created_at = run.get("created_at")
+        # `is not None` (not truthiness): a bound of 0 is a real epoch timestamp, and a run
+        # whose created_at is 0 must still be filtered rather than silently kept.
+        if created_after is not None and created_at is not None and created_at < created_after:
+            continue
+        if created_before is not None and created_at is not None and created_at > created_before:
+            continue
+        schema_class = _run_schema_class(run, resolved_type)
+        if schema_class is not None:
+            indexed.append((run_index, run, schema_class))
+    return indexed
+
+
+def _render_run(indexed_run: _IndexedRun) -> AnyRunSchema:
+    run_index, run, schema_class = indexed_run
+    run_schema = schema_class.from_dict(run)
+    run_schema.run_index = run_index
+    return run_schema
 
 
 async def get_session_runs(
@@ -208,21 +265,95 @@ async def get_session_runs(
 
     Raises :class:`SessionNotFoundError` when the session does not exist.
     """
-    session, resolved_type = await _get_session_dict(
-        db, session_id=session_id, session_type=session_type, user_id=user_id
+    indexed = await _get_indexed_session_runs(
+        db,
+        session_id=session_id,
+        session_type=session_type,
+        user_id=user_id,
+        created_after=created_after,
+        created_before=created_before,
+    )
+    return [_render_run(indexed_run) for indexed_run in indexed]
+
+
+async def get_session_runs_window(
+    db: Union[BaseDb, AsyncBaseDb],
+    *,
+    session_id: str,
+    limit: int,
+    before_run_index: Optional[int] = None,
+    after_run_index: Optional[int] = None,
+    session_type: Optional[SessionType] = None,
+    user_id: Optional[str] = None,
+    created_after: Optional[int] = None,
+    created_before: Optional[int] = None,
+) -> Tuple[List[AnyRunSchema], int, bool]:
+    """One cursor page of a session's runs, in chronological order.
+
+    With ``after_run_index`` the page is the oldest ``limit`` runs after it;
+    otherwise it is the newest ``limit`` runs, before ``before_run_index`` when
+    given. Returns ``(runs, total_count, has_more)``, where ``has_more`` reports
+    runs beyond the page in the paging direction.
+
+    Raises :class:`SessionNotFoundError` when the session does not exist and
+    :class:`InvalidRunCursorError` when both cursors are given.
+    """
+    if before_run_index is not None and after_run_index is not None:
+        raise InvalidRunCursorError("Pass at most one of before_run_index and after_run_index")
+
+    indexed = await _get_indexed_session_runs(
+        db,
+        session_id=session_id,
+        session_type=session_type,
+        user_id=user_id,
+        created_after=created_after,
+        created_before=created_before,
     )
 
-    runs = session.get("runs") or []
-    filtered: List[Dict[str, Any]] = []
-    for run in runs:
-        created_at = run.get("created_at")
-        # `is not None` (not truthiness): a bound of 0 is a real epoch timestamp, and a run
-        # whose created_at is 0 must still be filtered rather than silently kept.
-        if created_after is not None and created_at is not None and created_at < created_after:
-            continue
-        if created_before is not None and created_at is not None and created_at > created_before:
-            continue
-        filtered.append(run)
+    if after_run_index is not None:
+        candidates = [indexed_run for indexed_run in indexed if indexed_run[0] > after_run_index]
+        window = candidates[:limit]
+    else:
+        if before_run_index is not None:
+            candidates = [indexed_run for indexed_run in indexed if indexed_run[0] < before_run_index]
+        else:
+            candidates = indexed
+        window = candidates[-limit:]
 
-    classified = (classify_session_run(run, resolved_type) for run in filtered)
-    return [run_schema for run_schema in classified if run_schema is not None]
+    return [_render_run(indexed_run) for indexed_run in window], len(indexed), len(candidates) > limit
+
+
+async def get_session_run_previews(
+    db: Union[BaseDb, AsyncBaseDb],
+    *,
+    session_id: str,
+    session_type: Optional[SessionType] = None,
+    user_id: Optional[str] = None,
+    created_after: Optional[int] = None,
+    created_before: Optional[int] = None,
+) -> List[RunPreview]:
+    """A lightweight preview of every listed run, for navigating a session without loading full runs.
+
+    Raises :class:`SessionNotFoundError` when the session does not exist.
+    """
+    indexed = await _get_indexed_session_runs(
+        db,
+        session_id=session_id,
+        session_type=session_type,
+        user_id=user_id,
+        created_after=created_after,
+        created_before=created_before,
+    )
+    return [
+        RunPreview(
+            run_id=run.get("run_id", ""),
+            run_index=run_index,
+            parent_run_id=run.get("parent_run_id"),
+            status=run.get("status"),
+            created_at=to_utc_datetime(run.get("created_at")),
+            input_preview=get_run_input(run, is_workflow_run=schema_class is WorkflowRunSchema)[
+                :RUN_PREVIEW_INPUT_MAX_CHARS
+            ],
+        )
+        for run_index, run, schema_class in indexed
+    ]

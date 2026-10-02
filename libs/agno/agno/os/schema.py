@@ -663,6 +663,7 @@ CANCELLATION_STAGE_DESCRIPTION = (
 
 class RunSchema(BaseModel):
     run_id: str = Field(..., description="Unique identifier for the run")
+    run_index: Optional[int] = Field(None, description="0-based position of the run in its session")
     parent_run_id: Optional[str] = Field(None, description="Parent run ID if this is a nested run")
     agent_id: Optional[str] = Field(None, description="Agent ID that executed this run")
     user_id: Optional[str] = Field(None, description="User ID associated with the run")
@@ -753,6 +754,7 @@ class RunSchema(BaseModel):
 
 class TeamRunSchema(BaseModel):
     run_id: str = Field(..., description="Unique identifier for the team run")
+    run_index: Optional[int] = Field(None, description="0-based position of the run in its session")
     parent_run_id: Optional[str] = Field(None, description="Parent run ID if this is a nested run")
     team_id: Optional[str] = Field(None, description="Team ID that executed this run")
     status: Optional[str] = Field(None, description="Run status (PENDING, RUNNING, COMPLETED, ERROR, etc.)")
@@ -840,6 +842,7 @@ class TeamRunSchema(BaseModel):
 
 class WorkflowRunSchema(BaseModel):
     run_id: str = Field(..., description="Unique identifier for the workflow run")
+    run_index: Optional[int] = Field(None, description="0-based position of the run in its session")
     run_input: Optional[str] = Field(None, description="Input provided to the workflow")
     events: Optional[List[dict]] = Field(None, description="Events generated during the workflow")
     workflow_id: Optional[str] = Field(None, description="Workflow ID that was executed")
@@ -926,6 +929,28 @@ class PaginatedResponse(BaseModel, Generic[T]):
 
     data: List[T] = Field(..., description="List of items for the current page")
     meta: PaginationInfo = Field(..., description="Pagination metadata")
+
+
+class CursorPaginationInfo(BaseModel):
+    limit: int = Field(..., description="Maximum number of items in this page", ge=1)
+    total_count: int = Field(..., description="Total count of items matching the filters", ge=0)
+    has_more: bool = Field(..., description="Whether more items exist beyond this page in the paging direction")
+
+
+class CursorPaginatedResponse(BaseModel, Generic[T]):
+    """Wrapper for cursor-paginated responses; callers page with a boundary taken from ``data``."""
+
+    data: List[T] = Field(..., description="List of items for the current page")
+    meta: CursorPaginationInfo = Field(..., description="Pagination metadata")
+
+
+class RunPreview(BaseModel):
+    run_id: str = Field(..., description="Unique identifier for the run")
+    run_index: int = Field(..., description="0-based position of the run in its session")
+    parent_run_id: Optional[str] = Field(None, description="Parent run ID if this is a member or nested run")
+    status: Optional[str] = Field(None, description="Run status")
+    created_at: Optional[datetime] = Field(None, description="Run creation timestamp")
+    input_preview: Optional[str] = Field(None, description="Run input, truncated")
 
 
 class ComponentType(str, Enum):
