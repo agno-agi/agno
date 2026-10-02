@@ -3,7 +3,7 @@
 import json
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
-import httpx
+import httpx2
 import pytest
 
 bs4 = pytest.importorskip("bs4")
@@ -216,7 +216,7 @@ def test_process_response_unknown_content_type(reader):
 def test_fetch_url_plain_content(reader):
     mock_response = _mock_httpx_response("Plain text content", "text/plain")
 
-    with patch("agno.utils.http.httpx.get", return_value=mock_response):
+    with patch("agno.utils.http.httpx2.get", return_value=mock_response):
         result = reader.fetch_url("https://example.com/file.txt")
 
     assert result == "Plain text content"
@@ -225,7 +225,7 @@ def test_fetch_url_plain_content(reader):
 def test_fetch_url_html_content(reader):
     mock_response = _mock_httpx_response("<html><body><main>Extracted</main></body></html>", "text/html")
 
-    with patch("agno.utils.http.httpx.get", return_value=mock_response):
+    with patch("agno.utils.http.httpx2.get", return_value=mock_response):
         result = reader.fetch_url("https://example.com/page")
 
     assert "Extracted" in result
@@ -233,8 +233,8 @@ def test_fetch_url_html_content(reader):
 
 def test_fetch_url_http_error(reader):
     with patch(
-        "agno.utils.http.httpx.get",
-        side_effect=httpx.HTTPStatusError("error", request=MagicMock(), response=MagicMock(status_code=404)),
+        "agno.utils.http.httpx2.get",
+        side_effect=httpx2.HTTPStatusError("error", request=MagicMock(), response=MagicMock(status_code=404)),
     ):
         result = reader.fetch_url("https://example.com/missing")
 
@@ -242,7 +242,7 @@ def test_fetch_url_http_error(reader):
 
 
 def test_fetch_url_request_error(reader):
-    with patch("agno.utils.http.httpx.get", side_effect=httpx.RequestError("connection failed")):
+    with patch("agno.utils.http.httpx2.get", side_effect=httpx2.RequestError("connection failed")):
         result = reader.fetch_url("https://example.com/down")
 
     assert result is None
@@ -418,7 +418,7 @@ def test_toolkit_reader_reuse(tools):
 def test_get_index_returns_json(tools):
     mock_response = _mock_httpx_response(SAMPLE_LLMS_TXT, "text/plain")
 
-    with patch("agno.utils.http.httpx.get", return_value=mock_response):
+    with patch("agno.utils.http.httpx2.get", return_value=mock_response):
         result = tools.get_llms_txt_index("https://docs.acme.com/llms.txt")
 
     data = json.loads(result)
@@ -429,7 +429,7 @@ def test_get_index_returns_json(tools):
 
 
 def test_get_index_failure(tools):
-    with patch("agno.utils.http.httpx.get", side_effect=httpx.RequestError("connection failed")):
+    with patch("agno.utils.http.httpx2.get", side_effect=httpx2.RequestError("connection failed")):
         result = tools.get_llms_txt_index("https://example.com/llms.txt")
 
     assert "Failed to fetch" in result
@@ -451,14 +451,14 @@ def test_get_index_error_handling(tools):
 def test_read_url_returns_content(tools):
     mock_response = _mock_httpx_response("Page content here", "text/plain")
 
-    with patch("agno.utils.http.httpx.get", return_value=mock_response):
+    with patch("agno.utils.http.httpx2.get", return_value=mock_response):
         result = tools.read_llms_txt_url("https://docs.acme.com/introduction")
 
     assert result == "Page content here"
 
 
 def test_read_url_failure(tools):
-    with patch("agno.utils.http.httpx.get", side_effect=httpx.RequestError("connection failed")):
+    with patch("agno.utils.http.httpx2.get", side_effect=httpx2.RequestError("connection failed")):
         result = tools.read_llms_txt_url("https://example.com/missing")
 
     assert "Failed to fetch" in result
@@ -476,7 +476,7 @@ async def test_aget_index_returns_json(tools):
     mock_client = AsyncMock()
     mock_client.get.return_value = mock_response
 
-    with patch("agno.tools.llms_txt.httpx.AsyncClient") as mock_async_client:
+    with patch("agno.tools.llms_txt.httpx2.AsyncClient") as mock_async_client:
         mock_async_client.return_value.__aenter__ = AsyncMock(return_value=mock_client)
         mock_async_client.return_value.__aexit__ = AsyncMock(return_value=False)
 
@@ -494,7 +494,7 @@ async def test_aread_url_returns_content(tools):
     mock_client = AsyncMock()
     mock_client.get.return_value = mock_response
 
-    with patch("agno.tools.llms_txt.httpx.AsyncClient") as mock_async_client:
+    with patch("agno.tools.llms_txt.httpx2.AsyncClient") as mock_async_client:
         mock_async_client.return_value.__aenter__ = AsyncMock(return_value=mock_client)
         mock_async_client.return_value.__aexit__ = AsyncMock(return_value=False)
 
@@ -586,7 +586,7 @@ def test_reader_fetch_url_blocks_disallowed():
 
 
 def test_reader_fetch_url_uses_event_hook_when_allowlisted():
-    """Allowlisted fetches bypass fetch_with_retry and use a local httpx.Client
+    """Allowlisted fetches bypass fetch_with_retry and use a local httpx2.Client
     with a request event-hook so each redirect target is re-validated."""
     reader = LLMsTxtReader(allowed_hosts=["docs.agno.com"])
     response = _mock_httpx_response("Doc content", "text/plain")
@@ -597,7 +597,7 @@ def test_reader_fetch_url_uses_event_hook_when_allowlisted():
 
     with (
         patch("agno.knowledge.reader.llms_txt_reader.fetch_with_retry") as mock_fetch,
-        patch("agno.knowledge.reader.llms_txt_reader.httpx.Client", return_value=mock_client) as mock_client_ctor,
+        patch("agno.knowledge.reader.llms_txt_reader.httpx2.Client", return_value=mock_client) as mock_client_ctor,
     ):
         result = reader.fetch_url("https://docs.agno.com/page")
 
@@ -629,11 +629,11 @@ def test_reader_fetch_url_returns_none_when_redirect_target_disallowed():
 
     mock_client = MagicMock()
     mock_client.__enter__.return_value = mock_client
-    # Simulate the hook firing inside client.get(...) when httpx re-issues the
+    # Simulate the hook firing inside client.get(...) when httpx2 re-issues the
     # request to the disallowed redirect target.
-    mock_client.get.side_effect = httpx.RequestError("Host not in allowed_hosts: 127.0.0.1", request=MagicMock())
+    mock_client.get.side_effect = httpx2.RequestError("Host not in allowed_hosts: 127.0.0.1", request=MagicMock())
 
-    with patch("agno.knowledge.reader.llms_txt_reader.httpx.Client", return_value=mock_client):
+    with patch("agno.knowledge.reader.llms_txt_reader.httpx2.Client", return_value=mock_client):
         result = reader.fetch_url("https://docs.agno.com/old")
 
     assert result is None
@@ -653,7 +653,7 @@ async def test_reader_async_fetch_url_blocks_disallowed():
 
 @pytest.mark.asyncio
 async def test_reader_async_fetch_url_uses_local_client_when_allowlisted():
-    """Allowlisted async fetches build a local httpx.AsyncClient with the request
+    """Allowlisted async fetches build a local httpx2.AsyncClient with the request
     event-hook so each redirect target is re-validated."""
     reader = LLMsTxtReader(allowed_hosts=["docs.agno.com"])
     response = _mock_httpx_response("Doc content", "text/plain")
@@ -665,7 +665,7 @@ async def test_reader_async_fetch_url_uses_local_client_when_allowlisted():
 
     with (
         patch("agno.knowledge.reader.llms_txt_reader.async_fetch_with_retry") as mock_fetch,
-        patch("agno.knowledge.reader.llms_txt_reader.httpx.AsyncClient", return_value=local_client) as mock_ctor,
+        patch("agno.knowledge.reader.llms_txt_reader.httpx2.AsyncClient", return_value=local_client) as mock_ctor,
     ):
         result = await reader.async_fetch_url(caller_client, "https://docs.agno.com/page")
 

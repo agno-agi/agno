@@ -5,11 +5,11 @@ from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
-import httpx
+import httpx2
 import jwt
 import pytest
 from fastapi.testclient import TestClient
-from httpx import ASGITransport
+from httpx2 import ASGITransport
 from pydantic import BaseModel
 
 from agno.db.base import ComponentType
@@ -507,7 +507,9 @@ def versioned_workflow_app(temp_storage_db_file):
 @pytest.mark.asyncio
 async def test_aget_workflow_version_returns_specific_version(versioned_workflow_app):
     """Test async GET /workflows/{id}?version=1 returns version 1 config."""
-    async with httpx.AsyncClient(transport=ASGITransport(app=versioned_workflow_app), base_url="http://test") as client:
+    async with httpx2.AsyncClient(
+        transport=ASGITransport(app=versioned_workflow_app), base_url="http://test"
+    ) as client:
         response = await client.get("/workflows/versioned-wf", params={"version": 1})
         assert response.status_code == 200
         data = response.json()
@@ -518,7 +520,9 @@ async def test_aget_workflow_version_returns_specific_version(versioned_workflow
 @pytest.mark.asyncio
 async def test_aget_workflow_version_returns_different_version(versioned_workflow_app):
     """Test async GET /workflows/{id}?version=2 returns version 2 config."""
-    async with httpx.AsyncClient(transport=ASGITransport(app=versioned_workflow_app), base_url="http://test") as client:
+    async with httpx2.AsyncClient(
+        transport=ASGITransport(app=versioned_workflow_app), base_url="http://test"
+    ) as client:
         response = await client.get("/workflows/versioned-wf", params={"version": 2})
         assert response.status_code == 200
         data = response.json()
@@ -529,7 +533,9 @@ async def test_aget_workflow_version_returns_different_version(versioned_workflo
 @pytest.mark.asyncio
 async def test_aget_workflow_without_version_returns_current(versioned_workflow_app):
     """Test async GET /workflows/{id} without version returns latest published version."""
-    async with httpx.AsyncClient(transport=ASGITransport(app=versioned_workflow_app), base_url="http://test") as client:
+    async with httpx2.AsyncClient(
+        transport=ASGITransport(app=versioned_workflow_app), base_url="http://test"
+    ) as client:
         response = await client.get("/workflows/versioned-wf")
         assert response.status_code == 200
         data = response.json()
@@ -540,6 +546,8 @@ async def test_aget_workflow_without_version_returns_current(versioned_workflow_
 @pytest.mark.asyncio
 async def test_aget_workflow_nonexistent_version_returns_404(versioned_workflow_app):
     """Test async GET /workflows/{id}?version=999 returns 404."""
-    async with httpx.AsyncClient(transport=ASGITransport(app=versioned_workflow_app), base_url="http://test") as client:
+    async with httpx2.AsyncClient(
+        transport=ASGITransport(app=versioned_workflow_app), base_url="http://test"
+    ) as client:
         response = await client.get("/workflows/versioned-wf", params={"version": 999})
         assert response.status_code == 404

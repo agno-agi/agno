@@ -1,7 +1,7 @@
 import json
 from typing import Any, List
 
-import httpx
+import httpx2
 
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, logger
@@ -47,14 +47,14 @@ class HackerNewsTools(Toolkit):
         try:
             log_debug(f"Getting top {num_stories} stories from Hacker News")
             # Fetch top story IDs
-            response = httpx.get("https://hacker-news.firebaseio.com/v0/topstories.json", timeout=self.timeout)
+            response = httpx2.get("https://hacker-news.firebaseio.com/v0/topstories.json", timeout=self.timeout)
             response.raise_for_status()
             story_ids = response.json()
 
             # Fetch story details
             stories = []
             for story_id in story_ids[:num_stories]:
-                story_response = httpx.get(
+                story_response = httpx2.get(
                     f"https://hacker-news.firebaseio.com/v0/item/{story_id}.json",
                     timeout=self.timeout,
                 )
@@ -81,7 +81,7 @@ class HackerNewsTools(Toolkit):
 
         try:
             log_debug(f"Getting details for user: {username}")
-            response = httpx.get(
+            response = httpx2.get(
                 f"https://hacker-news.firebaseio.com/v0/user/{username}.json",
                 timeout=self.timeout,
             )

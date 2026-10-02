@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlsplit
 
-import httpx
+import httpx2
 
 from agnoctl.errors import CLIError
 from agnoctl.http import AgentOSAPI, build_client
@@ -258,7 +258,7 @@ def _probe_mcp(base_url: str) -> bool:
                 json={"jsonrpc": "2.0", "id": 0, "method": "ping"},
                 headers={"Accept": "application/json, text/event-stream"},
             )
-    except httpx.HTTPError:
+    except httpx2.HTTPError:
         return False
     return response.status_code != 404
 
@@ -283,8 +283,8 @@ def _probe_candidate(candidate: str, url_source: str, url_source_file: Optional[
     """Probe one candidate URL; an OSInfo when a live AgentOS answers, else None."""
     try:
         api = AgentOSAPI(candidate, timeout=DISCOVERY_TIMEOUT)
-    except httpx.InvalidURL as e:
-        # A user-supplied URL (flag/env/env-file) that httpx cannot parse -- e.g. an
+    except httpx2.InvalidURL as e:
+        # A user-supplied URL (flag/env/env-file) that httpx2 cannot parse -- e.g. an
         # un-expanded "${PORT}" or a typo'd port. Fail clearly, not with a traceback.
         raise CLIError(
             "Invalid AgentOS URL: " + candidate + _source_note(url_source, url_source_file) + ".",

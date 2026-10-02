@@ -14,7 +14,7 @@ import os
 import sys
 from datetime import UTC, datetime, timedelta
 
-import httpx
+import httpx2
 import jwt
 from agno.agent import Agent, AgentFactory
 from agno.db.sqlite import SqliteDb
@@ -138,7 +138,7 @@ def run_demo() -> None:
     admin_token = make_token("admin", ["workspace:read", "workspace:write"])
     guest_token = make_token("guest", ["workspace:read"])
 
-    with httpx.Client(base_url=BASE_URL, timeout=90.0) as client:
+    with httpx2.Client(base_url=BASE_URL, timeout=90.0) as client:
         viewer_response = client.post(
             f"/agents/{workspace_factory.id}/runs",
             data={

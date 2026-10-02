@@ -6,7 +6,7 @@ Run with: pytest test_evals_routes.py -v --tb=short
 
 import uuid
 
-import httpx
+import httpx2
 import pytest
 
 from .test_utils import REQUEST_TIMEOUT, generate_jwt_token
@@ -19,9 +19,9 @@ def test_user_id() -> str:
 
 
 @pytest.fixture(scope="module")
-def client(gateway_url: str, test_user_id: str) -> httpx.Client:
+def client(gateway_url: str, test_user_id: str) -> httpx2.Client:
     """Create an HTTP client for the gateway server with authentication."""
-    return httpx.Client(
+    return httpx2.Client(
         base_url=gateway_url,
         timeout=REQUEST_TIMEOUT,
         headers={"Authorization": f"Bearer {generate_jwt_token(audience='gateway-os', user_id=test_user_id)}"},
@@ -40,7 +40,7 @@ class TestLocalEvalRoutes:
     DB_ID = "gateway-db"
 
     @pytest.fixture(scope="class")
-    def created_eval_run(self, client: httpx.Client) -> dict:
+    def created_eval_run(self, client: httpx2.Client) -> dict:
         """Create an accuracy eval run for testing CRUD operations."""
         response = client.post(
             f"/eval-runs?db_id={self.DB_ID}",
@@ -58,7 +58,7 @@ class TestLocalEvalRoutes:
         assert data["agent_id"] == self.AGENT_ID
         return data
 
-    def test_get_eval_runs_paginated(self, client: httpx.Client, created_eval_run: dict):
+    def test_get_eval_runs_paginated(self, client: httpx2.Client, created_eval_run: dict):
         """Test GET /eval-runs returns paginated evaluation runs including created eval."""
         response = client.get(f"/eval-runs?limit=10&page=1&db_id={self.DB_ID}")
         assert response.status_code == 200
@@ -78,7 +78,7 @@ class TestLocalEvalRoutes:
         assert "limit" in meta
         assert "total_count" in meta
 
-    def test_get_eval_runs_filtered_by_local_agent(self, client: httpx.Client, created_eval_run: dict):
+    def test_get_eval_runs_filtered_by_local_agent(self, client: httpx2.Client, created_eval_run: dict):
         """Test GET /eval-runs filters by local agent_id."""
         response = client.get(f"/eval-runs?agent_id={self.AGENT_ID}&limit=10&db_id={self.DB_ID}")
         assert response.status_code == 200
@@ -94,7 +94,7 @@ class TestLocalEvalRoutes:
         eval_ids = [e["id"] for e in data["data"]]
         assert created_eval_run["id"] in eval_ids
 
-    def test_get_eval_run_by_id(self, client: httpx.Client, created_eval_run: dict):
+    def test_get_eval_run_by_id(self, client: httpx2.Client, created_eval_run: dict):
         """Test GET /eval-runs/{eval_run_id} returns the specific eval run."""
         eval_id = created_eval_run["id"]
         response = client.get(f"/eval-runs/{eval_id}?db_id={self.DB_ID}")
@@ -107,7 +107,7 @@ class TestLocalEvalRoutes:
         assert "eval_data" in data
         assert "created_at" in data
 
-    def test_update_eval_run_name(self, client: httpx.Client, created_eval_run: dict):
+    def test_update_eval_run_name(self, client: httpx2.Client, created_eval_run: dict):
         """Test PATCH /eval-runs/{eval_run_id} updates the eval run name."""
         eval_id = created_eval_run["id"]
         new_name = f"Updated Local Eval {uuid.uuid4().hex[:8]}"
@@ -127,7 +127,7 @@ class TestLocalEvalRoutes:
         assert verify_response.status_code == 200
         assert verify_response.json()["name"] == new_name
 
-    def test_delete_eval_run(self, client: httpx.Client):
+    def test_delete_eval_run(self, client: httpx2.Client):
         """Test DELETE /eval-runs removes the eval run."""
         # Create an eval to delete
         create_response = client.post(
@@ -162,7 +162,7 @@ class TestRemoteEvalRoutes:
     DB_ID = "remote-db"
 
     @pytest.fixture(scope="class")
-    def created_eval_run(self, client: httpx.Client) -> dict:
+    def created_eval_run(self, client: httpx2.Client) -> dict:
         """Create an accuracy eval run for testing CRUD operations."""
         response = client.post(
             f"/eval-runs?db_id={self.DB_ID}",
@@ -180,7 +180,7 @@ class TestRemoteEvalRoutes:
         assert data["agent_id"] == self.AGENT_ID
         return data
 
-    def test_get_eval_runs_paginated(self, client: httpx.Client, created_eval_run: dict):
+    def test_get_eval_runs_paginated(self, client: httpx2.Client, created_eval_run: dict):
         """Test GET /eval-runs returns paginated evaluation runs including created eval."""
         response = client.get(f"/eval-runs?limit=10&page=1&db_id={self.DB_ID}")
         assert response.status_code == 200
@@ -200,7 +200,7 @@ class TestRemoteEvalRoutes:
         assert "limit" in meta
         assert "total_count" in meta
 
-    def test_get_eval_runs_filtered_by_remote_agent(self, client: httpx.Client, created_eval_run: dict):
+    def test_get_eval_runs_filtered_by_remote_agent(self, client: httpx2.Client, created_eval_run: dict):
         """Test GET /eval-runs filters by remote agent_id."""
         response = client.get(f"/eval-runs?agent_id={self.AGENT_ID}&limit=10&db_id={self.DB_ID}")
         assert response.status_code == 200
@@ -216,7 +216,7 @@ class TestRemoteEvalRoutes:
         eval_ids = [e["id"] for e in data["data"]]
         assert created_eval_run["id"] in eval_ids
 
-    def test_get_eval_run_by_id(self, client: httpx.Client, created_eval_run: dict):
+    def test_get_eval_run_by_id(self, client: httpx2.Client, created_eval_run: dict):
         """Test GET /eval-runs/{eval_run_id} returns the specific eval run."""
         eval_id = created_eval_run["id"]
         response = client.get(f"/eval-runs/{eval_id}?db_id={self.DB_ID}")
@@ -229,7 +229,7 @@ class TestRemoteEvalRoutes:
         assert "eval_data" in data
         assert "created_at" in data
 
-    def test_update_eval_run_name(self, client: httpx.Client, created_eval_run: dict):
+    def test_update_eval_run_name(self, client: httpx2.Client, created_eval_run: dict):
         """Test PATCH /eval-runs/{eval_run_id} updates the eval run name."""
         eval_id = created_eval_run["id"]
         new_name = f"Updated Remote Eval {uuid.uuid4().hex[:8]}"
@@ -249,7 +249,7 @@ class TestRemoteEvalRoutes:
         assert verify_response.status_code == 200
         assert verify_response.json()["name"] == new_name
 
-    def test_delete_eval_run(self, client: httpx.Client):
+    def test_delete_eval_run(self, client: httpx2.Client):
         """Test DELETE /eval-runs removes the eval run."""
         # Create an eval to delete
         create_response = client.post(

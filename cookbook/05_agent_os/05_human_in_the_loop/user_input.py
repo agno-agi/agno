@@ -16,7 +16,7 @@ import argparse
 import json
 from typing import Any
 
-import httpx
+import httpx2
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
@@ -113,7 +113,7 @@ def provide_values(requirements: list[dict[str, Any]]) -> list[str]:
 
 def run_demo() -> None:
     """Resolve each user-input pause through the team continuation route."""
-    with httpx.Client(base_url=BASE_URL, timeout=120.0) as client:
+    with httpx2.Client(base_url=BASE_URL, timeout=120.0) as client:
         response = client.post(
             f"/teams/{TEAM_ID}/runs",
             data={

@@ -139,7 +139,7 @@ class NotionTools(Toolkit):
         try:
             log_debug(f"Searching for pages with tag: {tag}")
 
-            import httpx
+            import httpx2
 
             headers = {
                 "Authorization": f"Bearer {self.api_key}",
@@ -150,7 +150,7 @@ class NotionTools(Toolkit):
             payload = {"filter": {"property": "Tag", "select": {"equals": tag}}}
 
             # The SDK client does not support the query method
-            response = httpx.post(
+            response = httpx2.post(
                 f"https://api.notion.com/v1/databases/{self.database_id}/query",
                 headers=headers,
                 json=payload,

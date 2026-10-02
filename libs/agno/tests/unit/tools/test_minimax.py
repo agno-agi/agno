@@ -1,13 +1,13 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import httpx
+import httpx2
 
 from agno.tools.minimax import MINIMAX_VIDEO_URLS, MiniMaxTools
 
 
 def _response(data, method="GET"):
-    request = httpx.Request(method, "https://example.com")
-    return httpx.Response(200, json=data, request=request)
+    request = httpx2.Request(method, "https://example.com")
+    return httpx2.Response(200, json=data, request=request)
 
 
 def test_init_uses_regional_endpoint():
@@ -33,8 +33,8 @@ def test_generate_video_returns_video_artifact():
     )
 
     with (
-        patch("agno.tools.minimax.httpx.post", return_value=create_response) as mock_post,
-        patch("agno.tools.minimax.httpx.get", side_effect=[running_response, succeeded_response]) as mock_get,
+        patch("agno.tools.minimax.httpx2.post", return_value=create_response) as mock_post,
+        patch("agno.tools.minimax.httpx2.get", side_effect=[running_response, succeeded_response]) as mock_get,
         patch("agno.tools.minimax.time.sleep") as mock_sleep,
     ):
         result = tools.generate_video("A paper boat crosses a moonlit lake")
@@ -64,8 +64,8 @@ def test_generate_video_surfaces_task_failure():
     )
 
     with (
-        patch("agno.tools.minimax.httpx.post", return_value=create_response),
-        patch("agno.tools.minimax.httpx.get", return_value=failed_response),
+        patch("agno.tools.minimax.httpx2.post", return_value=create_response),
+        patch("agno.tools.minimax.httpx2.get", return_value=failed_response),
     ):
         result = tools.generate_video("Rejected prompt")
 
@@ -76,7 +76,7 @@ def test_generate_video_surfaces_task_failure():
 def test_generate_video_requires_task_id():
     tools = MiniMaxTools(api_key="test-key")
 
-    with patch("agno.tools.minimax.httpx.post", return_value=_response({}, method="POST")):
+    with patch("agno.tools.minimax.httpx2.post", return_value=_response({}, method="POST")):
         result = tools.generate_video("A quiet forest")
 
     assert result.content == "Failed to generate video: No task ID returned"
@@ -100,8 +100,8 @@ def test_generate_video_never_polls_past_max_wait_time():
         clock["now"] += seconds
 
     with (
-        patch("agno.tools.minimax.httpx.post", return_value=create_response),
-        patch("agno.tools.minimax.httpx.get", side_effect=fake_get) as mock_get,
+        patch("agno.tools.minimax.httpx2.post", return_value=create_response),
+        patch("agno.tools.minimax.httpx2.get", side_effect=fake_get) as mock_get,
         patch("agno.tools.minimax.time.monotonic", side_effect=lambda: clock["now"]),
         patch("agno.tools.minimax.time.sleep", side_effect=fake_sleep),
     ):
@@ -139,7 +139,7 @@ async def test_agenerate_video_returns_video_artifact():
     client_factory.return_value.__aexit__.return_value = False
 
     with (
-        patch("agno.tools.minimax.httpx.AsyncClient", client_factory),
+        patch("agno.tools.minimax.httpx2.AsyncClient", client_factory),
         patch("agno.tools.minimax.asyncio.sleep", new_callable=AsyncMock) as mock_sleep,
     ):
         result = await tools.agenerate_video("A paper boat crosses a moonlit lake")
@@ -174,7 +174,7 @@ async def test_agenerate_video_never_polls_past_max_wait_time():
     client_factory.return_value.__aexit__.return_value = False
 
     with (
-        patch("agno.tools.minimax.httpx.AsyncClient", client_factory),
+        patch("agno.tools.minimax.httpx2.AsyncClient", client_factory),
         patch("agno.tools.minimax.time.monotonic", side_effect=lambda: clock["now"]),
         patch("agno.tools.minimax.asyncio.sleep", side_effect=fake_sleep),
     ):

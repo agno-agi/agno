@@ -1,7 +1,7 @@
 import asyncio
 from typing import Any, Dict, List, Optional, Union
 
-import httpx
+import httpx2
 
 from agno.filters import FilterExpr
 from agno.knowledge.document import Document
@@ -193,7 +193,7 @@ class LightRag(VectorDb):
                 "so results are not scoped to the caller."
             )
         try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
+            async with httpx2.AsyncClient(timeout=30.0) as client:
                 response = await client.post(
                     f"{self.server_url}/query",
                     json={"query": query, "mode": "hybrid", "include_references": True},
@@ -205,10 +205,10 @@ class LightRag(VectorDb):
 
                 return self._format_lightrag_response(result, query, mode)
 
-        except httpx.RequestError as e:
+        except httpx2.RequestError as e:
             log_error(f"HTTP Request Error: {str(e)}")
             return []
-        except httpx.HTTPStatusError as e:
+        except httpx2.HTTPStatusError as e:
             log_error(f"HTTP Status Error: {str(e)}")
             return []
         except Exception as e:
@@ -221,10 +221,10 @@ class LightRag(VectorDb):
 
     async def async_drop(self) -> None:
         """Async drop the vector database"""
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx2.AsyncClient(timeout=30.0) as client:
             await client.delete(f"{self.server_url}/documents", headers=self._get_headers())
 
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx2.AsyncClient(timeout=30.0) as client:
             await client.post(
                 f"{self.server_url}/documents/clear_cache",
                 json={"modes": ["default", "naive"]},
@@ -270,7 +270,7 @@ class LightRag(VectorDb):
         try:
             payload = {"doc_ids": [external_id], "delete_file": False}
 
-            async with httpx.AsyncClient() as client:
+            async with httpx2.AsyncClient() as client:
                 response = await client.request(
                     method="DELETE",
                     url=f"{self.server_url}/documents/delete_document",
@@ -288,7 +288,7 @@ class LightRag(VectorDb):
     async def _insert_text(self, text: str) -> Dict[str, Any]:
         """Insert text into the LightRAG server."""
 
-        async with httpx.AsyncClient() as client:
+        async with httpx2.AsyncClient() as client:
             response = await client.post(
                 f"{self.server_url}/documents/text",
                 json={"text": text},
@@ -319,7 +319,7 @@ class LightRag(VectorDb):
         else:
             files = {"file": file_content}  # type: ignore
 
-        async with httpx.AsyncClient() as client:
+        async with httpx2.AsyncClient() as client:
             response = await client.post(
                 f"{self.server_url}/documents/upload",
                 files=files,
@@ -337,9 +337,9 @@ class LightRag(VectorDb):
 
     async def insert_text(self, file_source: str, text: str) -> Optional[str]:
         """Insert text into the LightRAG server."""
-        import httpx
+        import httpx2
 
-        async with httpx.AsyncClient() as client:
+        async with httpx2.AsyncClient() as client:
             response = await client.post(
                 f"{self.server_url}/documents/text",
                 json={"file_source": file_source, "text": text},
@@ -358,7 +358,7 @@ class LightRag(VectorDb):
 
     async def _get_document_id(self, track_id: str) -> Optional[str]:
         """Get the document ID from the upload ID."""
-        async with httpx.AsyncClient() as client:
+        async with httpx2.AsyncClient() as client:
             response = await client.get(
                 f"{self.server_url}/documents/track_status/{track_id}",
                 headers=self._get_headers(),
@@ -401,9 +401,9 @@ class LightRag(VectorDb):
         mode: str = "hybrid"  # Default mode, can be "local", "global", or "hybrid"
 
         try:
-            import httpx
+            import httpx2
 
-            async with httpx.AsyncClient(timeout=30.0) as client:
+            async with httpx2.AsyncClient(timeout=30.0) as client:
                 response = await client.post(
                     f"{self.server_url}/query",
                     json={"query": query, "mode": "hybrid", "include_references": True},
@@ -415,10 +415,10 @@ class LightRag(VectorDb):
 
                 return self._format_lightrag_response(result, query, mode)
 
-        except httpx.RequestError as e:
+        except httpx2.RequestError as e:
             log_error(f"HTTP Request Error: {str(e)}")
             return None
-        except httpx.HTTPStatusError as e:
+        except httpx2.HTTPStatusError as e:
             log_error(f"HTTP Status Error: {str(e)}")
             return None
         except Exception as e:

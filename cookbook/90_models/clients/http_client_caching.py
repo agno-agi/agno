@@ -1,7 +1,7 @@
 """
 ⚙️ Global HTTP Client Customization (Cookbook)
 
-Demonstrates how to define a single global `httpx.Client`
+Demonstrates how to define a single global `httpx2.Client`
 so that all agno Agents (OpenAI, Anthropic, internal models, etc.)
 share consistent behavior: logging, headers, request IDs, and retries.
 
@@ -11,14 +11,14 @@ Use cases:
 - Production-grade instrumentation
 
 Install:
-    uv pip install agno openai httpx
+    uv pip install agno openai httpx2
 """
 
 import logging
 import uuid
 from datetime import datetime
 
-import httpx
+import httpx2
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.utils.http import set_default_sync_client
@@ -30,7 +30,7 @@ from agno.utils.http import set_default_sync_client
 # ----------------------------------------------------------------------------
 # Logging Setup
 # ----------------------------------------------------------------------------
-# use debug so we can see httpx headers
+# use debug so we can see httpx2 headers
 logging.basicConfig(
     level=logging.DEBUG, format="%(asctime)s [%(levelname)s] %(message)s"
 )
@@ -41,10 +41,10 @@ logger = logging.getLogger("agno.http")
 # ----------------------------------------------------------------------------
 
 
-class RequestIDTransport(httpx.HTTPTransport):
+class RequestIDTransport(httpx2.HTTPTransport):
     """Injects a unique request ID into each outgoing request."""
 
-    def handle_request(self, request: httpx.Request) -> httpx.Response:
+    def handle_request(self, request: httpx2.Request) -> httpx2.Response:
         req_id = str(uuid.uuid4())
         request.headers["X-Request-ID"] = req_id
         logger.info(f"[{request.method}] {request.url} (ID={req_id})")
@@ -55,9 +55,9 @@ class RequestIDTransport(httpx.HTTPTransport):
         return response
 
 
-request_id_client = httpx.Client(
+request_id_client = httpx2.Client(
     transport=RequestIDTransport(),
-    timeout=httpx.Timeout(30.0),
+    timeout=httpx2.Timeout(30.0),
 )
 set_default_sync_client(request_id_client)
 
@@ -69,14 +69,14 @@ agent.run("Hello!", stream=False)
 # ----------------------------------------------------------------------------
 
 
-class HeaderInjectTransport(httpx.HTTPTransport):
+class HeaderInjectTransport(httpx2.HTTPTransport):
     """Adds global company headers and authentication tokens."""
 
     def __init__(self, headers: dict, **kwargs):
         super().__init__(**kwargs)
         self.headers = headers
 
-    def handle_request(self, request: httpx.Request) -> httpx.Response:
+    def handle_request(self, request: httpx2.Request) -> httpx2.Response:
         request.headers.update(self.headers)
         return super().handle_request(request)
 
@@ -89,23 +89,23 @@ company_headers = {
     "X-Timestamp": datetime.now().isoformat(),
 }
 
-header_client = httpx.Client(
+header_client = httpx2.Client(
     transport=HeaderInjectTransport(company_headers),
-    timeout=httpx.Timeout(30.0),
+    timeout=httpx2.Timeout(30.0),
 )
 set_default_sync_client(header_client)
 
 agent = Agent(model=OpenAIChat(id="gpt-5.2"), name="Header Agent")
 agent.run("Inject company headers", stream=False)
 
-print("Look at the httpx debug logs to see your headers added!")
+print("Look at the httpx2 debug logs to see your headers added!")
 
 # ----------------------------------------------------------------------------
 # Example 3 — Production-Ready Combined Transport
 # ----------------------------------------------------------------------------
 
 
-class ProductionTransport(httpx.HTTPTransport):
+class ProductionTransport(httpx2.HTTPTransport):
     """Combines headers, request IDs, and error tracking."""
 
     def __init__(self, service_name: str, headers: dict):
@@ -114,7 +114,7 @@ class ProductionTransport(httpx.HTTPTransport):
         self.headers = headers
         self.counter = 0
 
-    def handle_request(self, request: httpx.Request) -> httpx.Response:
+    def handle_request(self, request: httpx2.Request) -> httpx2.Response:
         self.counter += 1
         req_id = str(uuid.uuid4())
 
@@ -145,9 +145,9 @@ class ProductionTransport(httpx.HTTPTransport):
             raise
 
 
-prod_client = httpx.Client(
+prod_client = httpx2.Client(
     transport=ProductionTransport("my-ai-app", company_headers),
-    timeout=httpx.Timeout(60.0),
+    timeout=httpx2.Timeout(60.0),
 )
 set_default_sync_client(prod_client)
 

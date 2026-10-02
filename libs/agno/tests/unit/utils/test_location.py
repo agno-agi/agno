@@ -2,7 +2,7 @@
 
 from unittest.mock import Mock
 
-import httpx
+import httpx2
 import pytest
 
 from agno.utils.location import get_location
@@ -14,7 +14,7 @@ def test_get_location_returns_ip_geolocation(monkeypatch):
     location_response = Mock(status_code=200)
     location_response.json.return_value = {"city": "Paris", "region": "Ile-de-France", "country": "France"}
     mock_get = Mock(side_effect=[ip_response, location_response])
-    monkeypatch.setattr(httpx, "get", mock_get)
+    monkeypatch.setattr(httpx2, "get", mock_get)
 
     assert get_location() == {"city": "Paris", "region": "Ile-de-France", "country": "France"}
     assert mock_get.call_args_list[0].args == ("https://api.ipify.org?format=json",)
@@ -22,7 +22,7 @@ def test_get_location_returns_ip_geolocation(monkeypatch):
 
 
 def test_get_location_returns_empty_dict_on_http_error(monkeypatch):
-    monkeypatch.setattr(httpx, "get", Mock(side_effect=httpx.ConnectError("offline")))
+    monkeypatch.setattr(httpx2, "get", Mock(side_effect=httpx2.ConnectError("offline")))
 
     assert get_location() == {}
 
@@ -32,7 +32,7 @@ def test_get_location_returns_empty_dict_when_lookup_is_not_ok(monkeypatch):
     ip_response = Mock()
     ip_response.json.return_value = {"ip": "203.0.113.7"}
     location_response = Mock(status_code=503)
-    monkeypatch.setattr(httpx, "get", Mock(side_effect=[ip_response, location_response]))
+    monkeypatch.setattr(httpx2, "get", Mock(side_effect=[ip_response, location_response]))
 
     assert get_location() == {}
 
@@ -40,11 +40,11 @@ def test_get_location_returns_empty_dict_when_lookup_is_not_ok(monkeypatch):
 @pytest.mark.parametrize(
     "error",
     [
-        httpx.ConnectError("offline"),
-        httpx.ConnectTimeout("slow"),
-        httpx.InvalidURL("bad url"),
-        httpx.CookieConflict("conflict"),
-        httpx.StreamError("stream"),
+        httpx2.ConnectError("offline"),
+        httpx2.ConnectTimeout("slow"),
+        httpx2.InvalidURL("bad url"),
+        httpx2.CookieConflict("conflict"),
+        httpx2.StreamError("stream"),
         ValueError("not json"),
         KeyError("ip"),
         RuntimeError("anything else"),
@@ -62,10 +62,10 @@ def test_get_location_returns_empty_dict_when_lookup_is_not_ok(monkeypatch):
 )
 def test_get_location_swallows_every_failure(monkeypatch, error):
     """`get_location()` runs inline while a system message is being built, so
-    every failure has to come back as an empty dict. `httpx.InvalidURL`,
-    `CookieConflict` and `StreamError` are not `httpx.HTTPError` subclasses,
+    every failure has to come back as an empty dict. `httpx2.InvalidURL`,
+    `CookieConflict` and `StreamError` are not `httpx2.HTTPError` subclasses,
     so catching only `HTTPError` would let them reach the run."""
-    monkeypatch.setattr(httpx, "get", Mock(side_effect=error))
+    monkeypatch.setattr(httpx2, "get", Mock(side_effect=error))
 
     assert get_location() == {}
 
@@ -76,7 +76,7 @@ def test_get_location_survives_a_malformed_geolocation_payload(monkeypatch):
     ip_response.json.return_value = {"ip": "203.0.113.7"}
     location_response = Mock(status_code=200)
     location_response.json.return_value = {}
-    monkeypatch.setattr(httpx, "get", Mock(side_effect=[ip_response, location_response]))
+    monkeypatch.setattr(httpx2, "get", Mock(side_effect=[ip_response, location_response]))
 
     assert get_location() == {"city": None, "region": None, "country": None}
 

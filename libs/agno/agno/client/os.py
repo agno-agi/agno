@@ -3,7 +3,7 @@ from datetime import date
 from typing import Any, AsyncIterator, Callable, Dict, List, Optional, Sequence, Union
 
 from fastapi import UploadFile
-from httpx import ConnectError, ConnectTimeout, TimeoutException
+from httpx2 import ConnectError, ConnectTimeout, TimeoutException
 
 from agno.db.base import SessionType
 from agno.db.schemas.evals import EvalFilterType, EvalType

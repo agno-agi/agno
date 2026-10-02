@@ -14,7 +14,7 @@ import os
 import sys
 from typing import Optional
 
-import httpx
+import httpx2
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.models.openai import OpenAIResponses
@@ -118,7 +118,7 @@ agent_os = AgentOS(
 app = agent_os.get_app()
 
 
-def find_schedule(client: httpx.Client) -> dict | None:
+def find_schedule(client: httpx2.Client) -> dict | None:
     """Return this lesson's schedule, if it exists."""
     response = client.get("/schedules", params={"limit": 100, "page": 1})
     response.raise_for_status()
@@ -134,7 +134,7 @@ def find_schedule(client: httpx.Client) -> dict | None:
 
 def run_agentic_demo() -> None:
     """Ask the live agent to create a schedule and verify stored defaults."""
-    with httpx.Client(base_url=BASE_URL, timeout=180.0) as client:
+    with httpx2.Client(base_url=BASE_URL, timeout=180.0) as client:
         health_response = client.get("/health")
         health_response.raise_for_status()
         config_response = client.get("/config")

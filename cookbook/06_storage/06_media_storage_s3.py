@@ -14,7 +14,7 @@ Requirements:
 
 import os
 
-import httpx
+import httpx2
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.media import Image
@@ -83,7 +83,7 @@ agent_with_persist = Agent(
 if __name__ == "__main__":
     # Download image content first so media storage can offload it to S3.
     # mime_type gives the stored object its file extension and Content-Type.
-    image_bytes = httpx.get(IMAGE_URL, follow_redirects=True).content
+    image_bytes = httpx2.get(IMAGE_URL, follow_redirects=True).content
 
     agent.print_response(
         "What do you see in this image?",

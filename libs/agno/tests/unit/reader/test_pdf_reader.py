@@ -2,7 +2,7 @@ import asyncio
 from io import BytesIO
 from pathlib import Path
 
-import httpx
+import httpx2
 import pytest
 
 from agno.knowledge.reader.pdf_reader import (
@@ -24,7 +24,7 @@ def sample_pdf_path(tmp_path_factory) -> Path:
         url = "https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
 
         # Download the PDF file
-        response = httpx.get(url)
+        response = httpx2.get(url)
         response.raise_for_status()
 
         # Save to temporary location

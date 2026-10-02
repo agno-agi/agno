@@ -8,7 +8,7 @@ of the stored session. Both ship with hand-maintained async twins.
 import threading
 from urllib.parse import parse_qsl
 
-import httpx
+import httpx2
 import pytest
 
 from agno.exceptions import ModelAuthenticationError
@@ -26,13 +26,13 @@ EXPIRED_MESSAGE = "The SuperGrok sign-in code expired (30 minutes). Start the lo
 
 
 def _manager(handler, **kwargs) -> XAITokenManager:
-    return XAITokenManager(http_client=httpx.Client(transport=httpx.MockTransport(handler)), **kwargs)
+    return XAITokenManager(http_client=httpx2.Client(transport=httpx2.MockTransport(handler)), **kwargs)
 
 
-def _counting(response: httpx.Response):
+def _counting(response: httpx2.Response):
     calls = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         calls.append(request)
         return response
 
@@ -45,7 +45,7 @@ def _counting(response: httpx.Response):
 
 
 def test_poll_once_pending_echoes_interval_one_post():
-    handler, calls = _counting(httpx.Response(400, json={"error": "authorization_pending"}))
+    handler, calls = _counting(httpx2.Response(400, json={"error": "authorization_pending"}))
 
     result = _manager(handler).poll_once("device-code-1", interval=7)
 
@@ -57,7 +57,7 @@ def test_poll_once_pending_echoes_interval_one_post():
 
 
 def test_poll_once_slow_down_bumps_interval_by_five():
-    handler, calls = _counting(httpx.Response(400, json={"error": "slow_down"}))
+    handler, calls = _counting(httpx2.Response(400, json={"error": "slow_down"}))
 
     result = _manager(handler).poll_once("device-code-1", interval=7)
 
@@ -67,7 +67,7 @@ def test_poll_once_slow_down_bumps_interval_by_five():
 
 
 def test_poll_once_success_persists_via_the_real_save_path(sqlite_db, encryption_key, token_response, fake_clock):
-    handler, calls = _counting(httpx.Response(200, json=token_response))
+    handler, calls = _counting(httpx2.Response(200, json=token_response))
     manager = _manager(handler, db=sqlite_db, encryption_key=encryption_key, now_fn=fake_clock)
 
     result = manager.poll_once("device-code-1", interval=5)
@@ -86,7 +86,7 @@ def test_poll_once_success_persists_via_the_real_save_path(sqlite_db, encryption
 
 
 def test_poll_once_denied_returns_the_drafted_message():
-    handler, calls = _counting(httpx.Response(400, json={"error": "access_denied"}))
+    handler, calls = _counting(httpx2.Response(400, json={"error": "access_denied"}))
 
     result = _manager(handler).poll_once("device-code-1", interval=5)
 
@@ -96,7 +96,7 @@ def test_poll_once_denied_returns_the_drafted_message():
 
 
 def test_poll_once_expired_returns_the_drafted_message():
-    handler, calls = _counting(httpx.Response(400, json={"error": "expired_token"}))
+    handler, calls = _counting(httpx2.Response(400, json={"error": "expired_token"}))
 
     result = _manager(handler).poll_once("device-code-1", interval=5)
 
@@ -106,7 +106,7 @@ def test_poll_once_expired_returns_the_drafted_message():
 
 
 def test_poll_once_unknown_error_still_raises_with_raw_body():
-    response = httpx.Response(400, json={"error": "pizza_error", "error_description": "the oven is off"})
+    response = httpx2.Response(400, json={"error": "pizza_error", "error_description": "the oven is off"})
     handler, calls = _counting(response)
 
     with pytest.raises(ModelAuthenticationError) as exc_info:
@@ -117,7 +117,7 @@ def test_poll_once_unknown_error_still_raises_with_raw_body():
 
 
 def test_poll_once_200_without_token_still_raises():
-    handler, calls = _counting(httpx.Response(200, json={"error": "server_error"}))
+    handler, calls = _counting(httpx2.Response(200, json={"error": "server_error"}))
 
     with pytest.raises(ModelAuthenticationError, match="missing access_token"):
         _manager(handler).poll_once("device-code-1", interval=5)
@@ -132,16 +132,16 @@ def test_poll_once_200_without_token_still_raises():
 
 async def test_apoll_once_pending_and_slow_down():
     responses = [
-        httpx.Response(400, json={"error": "authorization_pending"}),
-        httpx.Response(400, json={"error": "slow_down"}),
+        httpx2.Response(400, json={"error": "authorization_pending"}),
+        httpx2.Response(400, json={"error": "slow_down"}),
     ]
     calls = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         calls.append(request)
         return responses[min(len(calls), len(responses)) - 1]
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
         manager = XAITokenManager(async_http_client=client)
         pending = await manager.apoll_once("device-code-1", interval=7)
         slowed = await manager.apoll_once("device-code-1", interval=7)
@@ -154,8 +154,8 @@ async def test_apoll_once_pending_and_slow_down():
 
 
 async def test_apoll_once_success_persists(async_sqlite_db, encryption_key, token_response, fake_clock):
-    handler, calls = _counting(httpx.Response(200, json=token_response))
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    handler, calls = _counting(httpx2.Response(200, json=token_response))
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
         manager = XAITokenManager(
             db=async_sqlite_db, encryption_key=encryption_key, async_http_client=client, now_fn=fake_clock
         )
@@ -173,31 +173,31 @@ async def test_apoll_once_success_persists(async_sqlite_db, encryption_key, toke
 
 
 async def test_apoll_once_terminal_and_unknown_outcomes():
-    handler, calls = _counting(httpx.Response(400, json={"error": "access_denied"}))
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    handler, calls = _counting(httpx2.Response(400, json={"error": "access_denied"}))
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
         denied = await XAITokenManager(async_http_client=client).apoll_once("device-code-1", interval=5)
     assert denied.status == DevicePollStatus.denied
     assert denied.message == DENIED_MESSAGE
     assert len(calls) == 1 and calls[0].method == "POST"
 
-    handler, calls = _counting(httpx.Response(400, json={"error": "expired_token"}))
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    handler, calls = _counting(httpx2.Response(400, json={"error": "expired_token"}))
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
         expired = await XAITokenManager(async_http_client=client).apoll_once("device-code-1", interval=5)
     assert expired.status == DevicePollStatus.expired
     assert expired.message == EXPIRED_MESSAGE
     assert len(calls) == 1 and calls[0].method == "POST"
 
-    handler, calls = _counting(httpx.Response(500, text="upstream exploded"))
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    handler, calls = _counting(httpx2.Response(500, text="upstream exploded"))
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
         with pytest.raises(ModelAuthenticationError, match="upstream exploded"):
             await XAITokenManager(async_http_client=client).apoll_once("device-code-1", interval=5)
     assert len(calls) == 1 and calls[0].method == "POST"
 
 
 async def test_apoll_once_200_without_token_still_raises():
-    handler, calls = _counting(httpx.Response(200, json={"error": "server_error"}))
+    handler, calls = _counting(httpx2.Response(200, json={"error": "server_error"}))
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
         with pytest.raises(ModelAuthenticationError, match="missing access_token"):
             await XAITokenManager(async_http_client=client).apoll_once("device-code-1", interval=5)
 
@@ -251,7 +251,7 @@ def test_sign_out_wipes_file_store(tmp_path, encryption_key, token_endpoint, fak
 
 
 async def test_asign_out_wipes_db_row_cache_and_memory(async_sqlite_db, encryption_key, token_endpoint, fake_clock):
-    async with httpx.AsyncClient(transport=httpx.MockTransport(token_endpoint)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(token_endpoint)) as client:
         manager = XAITokenManager(
             db=async_sqlite_db, encryption_key=encryption_key, async_http_client=client, now_fn=fake_clock
         )
@@ -278,7 +278,7 @@ async def test_asign_out_wipes_db_row_cache_and_memory(async_sqlite_db, encrypti
 
 async def test_asign_out_wipes_file_store(tmp_path, encryption_key, token_endpoint, fake_clock):
     token_file = tmp_path / "xai_token.json"
-    async with httpx.AsyncClient(transport=httpx.MockTransport(token_endpoint)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(token_endpoint)) as client:
         manager = XAITokenManager(
             token_path=str(token_file), encryption_key=encryption_key, async_http_client=client, now_fn=fake_clock
         )

@@ -36,7 +36,7 @@ def test_searxng_search(searxng_instance):
         ]
     }
 
-    with patch("httpx.get") as mock_get:
+    with patch("httpx2.get") as mock_get:
         mock_response = Mock()
         mock_response.json.return_value = mock_response_payload
         mock_get.return_value = mock_response
@@ -58,7 +58,7 @@ def test_searxng_search_with_engines(searxng_with_engines):
     """Test search with specific engines configured."""
     mock_response_payload = {"results": [{"title": "Test", "url": "http://test.com"}]}
 
-    with patch("httpx.get") as mock_get:
+    with patch("httpx2.get") as mock_get:
         mock_response = Mock()
         mock_response.json.return_value = mock_response_payload
         mock_get.return_value = mock_response
@@ -75,7 +75,7 @@ def test_searxng_search_with_fixed_max_results(searxng_with_fixed_results):
         "results": [{"title": f"Result {i}", "url": f"http://example.com/{i}"} for i in range(1, 6)]
     }
 
-    with patch("httpx.get") as mock_get:
+    with patch("httpx2.get") as mock_get:
         mock_response = Mock()
         mock_response.json.return_value = mock_response_payload
         mock_get.return_value = mock_response
@@ -91,7 +91,7 @@ def test_searxng_image_search(searxng_instance):
     """Test the image_search method."""
     mock_response_payload = {"results": [{"title": "Image 1", "url": "http://example.com/img1"}]}
 
-    with patch("httpx.get") as mock_get:
+    with patch("httpx2.get") as mock_get:
         mock_response = Mock()
         mock_response.json.return_value = mock_response_payload
         mock_get.return_value = mock_response
@@ -111,7 +111,7 @@ def test_searxng_news_search():
     """Test the news_search method."""
     mock_response_payload = {"results": [{"title": "News 1", "url": "http://example.com/news1"}]}
 
-    with patch("httpx.get") as mock_get:
+    with patch("httpx2.get") as mock_get:
         mock_response = Mock()
         mock_response.json.return_value = mock_response_payload
         mock_get.return_value = mock_response
@@ -125,7 +125,7 @@ def test_searxng_news_search():
 
 def test_searxng_search_error_handling(searxng_instance):
     """Test error handling in search method."""
-    with patch("httpx.get") as mock_get:
+    with patch("httpx2.get") as mock_get:
         mock_get.side_effect = Exception("Network error")
 
         result = searxng_instance.search_web("test query")
@@ -137,7 +137,7 @@ def test_searxng_query_encoding(searxng_instance):
     """Test that queries are properly URL encoded."""
     mock_response_payload = {"results": []}
 
-    with patch("httpx.get") as mock_get:
+    with patch("httpx2.get") as mock_get:
         mock_response = Mock()
         mock_response.json.return_value = mock_response_payload
         mock_get.return_value = mock_response
@@ -195,7 +195,7 @@ def test_category_searches(category, method_name):
     """Test all category-specific search methods."""
     mock_response_payload = {"results": [{"title": "Test", "url": "http://test.com"}]}
 
-    with patch("httpx.get") as mock_get:
+    with patch("httpx2.get") as mock_get:
         mock_response = Mock()
         mock_response.json.return_value = mock_response_payload
         mock_get.return_value = mock_response

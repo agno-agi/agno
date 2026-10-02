@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from os import getenv
 from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Iterator, List, Optional, Type, Union
 
-import httpx
+import httpx2
 from pydantic import BaseModel
 
 from agno.exceptions import ModelAuthenticationError, ModelProviderError
@@ -193,7 +193,7 @@ class xAIResponses(OpenResponses):
             def _deployment_token() -> str:
                 try:
                     return manager.get_access_token(user_id="")
-                except (ModelAuthenticationError, httpx.HTTPError):
+                except (ModelAuthenticationError, httpx2.HTTPError):
                     return _NOT_SIGNED_IN_SENTINEL
 
             return _deployment_token
@@ -216,7 +216,7 @@ class xAIResponses(OpenResponses):
             async def _adeployment_token() -> str:
                 try:
                     return await manager.aget_access_token(user_id="")
-                except (ModelAuthenticationError, httpx.HTTPError):
+                except (ModelAuthenticationError, httpx2.HTTPError):
                     return _NOT_SIGNED_IN_SENTINEL
 
             return _adeployment_token
@@ -288,12 +288,12 @@ class xAIResponses(OpenResponses):
             try:
                 manager.get_access_token(user_id=user_id)
                 return user_id
-            except (ModelAuthenticationError, httpx.HTTPError):
+            except (ModelAuthenticationError, httpx2.HTTPError):
                 pass
         try:
             manager.get_access_token(user_id="")
             return ""
-        except (ModelAuthenticationError, httpx.HTTPError):
+        except (ModelAuthenticationError, httpx2.HTTPError):
             # No slot could be confirmed - including because the network is down.
             # The caller re-raises the provider's 401, which is what it needs to see.
             return None
@@ -314,12 +314,12 @@ class xAIResponses(OpenResponses):
             try:
                 await manager.aget_access_token(user_id=user_id)
                 return user_id
-            except (ModelAuthenticationError, httpx.HTTPError):
+            except (ModelAuthenticationError, httpx2.HTTPError):
                 pass
         try:
             await manager.aget_access_token(user_id="")
             return ""
-        except (ModelAuthenticationError, httpx.HTTPError):
+        except (ModelAuthenticationError, httpx2.HTTPError):
             # No slot could be confirmed - including because the network is down.
             # The caller re-raises the provider's 401, which is what it needs to see.
             return None
@@ -350,7 +350,7 @@ class xAIResponses(OpenResponses):
                 # through to the shared slot (§1.2 step 2).
                 if candidate and e.message != _NO_TOKEN_MESSAGE:
                     raise
-            except httpx.HTTPError:
+            except httpx2.HTTPError:
                 # Not swallowed for the deployment slot either: the sync resolver
                 # would repeat the same call on the event loop, and it cannot reach
                 # the env fallback through a transport error anyway.
@@ -441,7 +441,7 @@ class xAIResponses(OpenResponses):
         if self._using_oauth():
             _check_openai_version()
             client_params["api_key"] = self._async_token_callable()
-        if self.http_client and isinstance(self.http_client, httpx.AsyncClient):
+        if self.http_client and isinstance(self.http_client, httpx2.AsyncClient):
             client_params["http_client"] = self.http_client
         # When no custom http_client is provided, let the OpenAI SDK use its own default client.
         # The SDK defaults to HTTP/1.1 which avoids transient 400 errors caused by HTTP/2

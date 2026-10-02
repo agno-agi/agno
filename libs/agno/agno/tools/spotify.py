@@ -13,7 +13,7 @@ Required scopes:
 import json
 from typing import Any, List, Optional
 
-import httpx
+import httpx2
 
 from agno.tools import Toolkit
 from agno.utils.log import log_debug
@@ -78,7 +78,7 @@ class SpotifyTools(Toolkit):
             "Content-Type": "application/json",
         }
 
-        with httpx.Client(timeout=self.timeout) as client:
+        with httpx2.Client(timeout=self.timeout) as client:
             response = client.request(
                 method=method,
                 url=url,

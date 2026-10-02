@@ -2,7 +2,7 @@ import uuid
 from os import getenv
 from typing import Any, List, Optional, Union
 
-import httpx
+import httpx2
 
 from agno.agent import Agent
 from agno.media import Image
@@ -59,7 +59,7 @@ class GiphyTools(Toolkit):
         }
 
         try:
-            response = httpx.get(base_url, params=params)
+            response = httpx2.get(base_url, params=params)
             response.raise_for_status()
 
             # Extract the GIF URLs
@@ -85,7 +85,7 @@ class GiphyTools(Toolkit):
             else:
                 return ToolResult(content="No gifs found")
 
-        except httpx.HTTPStatusError as e:
+        except httpx2.HTTPStatusError as e:
             log_error(f"HTTP error occurred: {e.response.status_code} - {e.response.text}: {str(e)}")
             return ToolResult(content=f"HTTP error occurred: {e.response.status_code}")
         except Exception as e:

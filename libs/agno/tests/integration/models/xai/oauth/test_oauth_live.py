@@ -8,7 +8,7 @@ rotation persist, one real /v1/responses call, and a catalog fetch.
 import os
 import tempfile
 
-import httpx
+import httpx2
 import pytest
 
 from agno.models.xai.oauth import XAI_TOKEN_URL, XAITokenManager
@@ -87,7 +87,7 @@ def test_live_responses_call(live_manager):
 def test_live_catalog_fetch(live_manager):
     manager, _db, _key = live_manager
 
-    response = httpx.get(
+    response = httpx2.get(
         "https://api.x.ai/v1/models", headers={"Authorization": "Bearer " + manager.get_access_token()}, timeout=30.0
     )
 

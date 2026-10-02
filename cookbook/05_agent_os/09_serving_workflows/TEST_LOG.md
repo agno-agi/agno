@@ -59,7 +59,7 @@ without executing the workflow again.
 
 **Test mode:** LIVE
 
-**Description:** Ran the raw-httpx client against `basic.py` using OpenAI
+**Description:** Ran the raw-httpx2 client against `basic.py` using OpenAI
 Responses `gpt-5.5`.
 
 **Result:** The non-streaming run

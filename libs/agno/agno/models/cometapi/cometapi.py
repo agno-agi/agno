@@ -2,7 +2,7 @@ from dataclasses import dataclass, field
 from os import getenv
 from typing import Any, Dict, List, Optional
 
-import httpx
+import httpx2
 
 from agno.exceptions import ModelAuthenticationError
 from agno.models.openai.like import OpenAILike
@@ -55,7 +55,7 @@ class CometAPI(OpenAILike):
             return []
 
         try:
-            with httpx.Client() as client:
+            with httpx2.Client() as client:
                 response = client.get(
                     f"{self.base_url}/models",
                     headers={"Authorization": f"Bearer {self.api_key}", "Accept": "application/json"},

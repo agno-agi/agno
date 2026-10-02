@@ -9,7 +9,7 @@ from pathlib import Path
 from ssl import SSLContext
 from typing import Any, Dict, List, Literal, Optional, Tuple, Union, cast
 
-import httpx
+import httpx2
 
 from agno.exceptions import PathSecurityError
 from agno.run.base import RunContext
@@ -722,7 +722,7 @@ class SlackTools(Toolkit):
                 )
 
             headers = {"Authorization": f"Bearer {self.token}"}
-            download_response = httpx.get(url_private, headers=headers, timeout=30)
+            download_response = httpx2.get(url_private, headers=headers, timeout=30)
             download_response.raise_for_status()
             content = download_response.content
 
@@ -748,7 +748,7 @@ class SlackTools(Toolkit):
         except SlackApiError as e:
             logger.exception("Error downloading file")
             return json.dumps({"error": str(e)})
-        except httpx.HTTPError as e:
+        except httpx2.HTTPError as e:
             logger.exception("Error downloading file content")
             return json.dumps({"error": f"HTTP error: {str(e)}"})
 
@@ -771,11 +771,11 @@ class SlackTools(Toolkit):
                 return None
 
             headers = {"Authorization": f"Bearer {self.token}"}
-            download_response = httpx.get(url_private, headers=headers, timeout=30)
+            download_response = httpx2.get(url_private, headers=headers, timeout=30)
             download_response.raise_for_status()
             return download_response.content
 
-        except (SlackApiError, httpx.HTTPError):
+        except (SlackApiError, httpx2.HTTPError):
             logger.exception("Error downloading file bytes")
             return None
 

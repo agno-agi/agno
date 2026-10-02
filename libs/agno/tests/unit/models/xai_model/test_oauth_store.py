@@ -9,7 +9,7 @@ import os
 import stat
 from unittest.mock import MagicMock, patch
 
-import httpx
+import httpx2
 import pytest
 
 from agno.exceptions import ModelAuthenticationError
@@ -20,7 +20,7 @@ from agno.utils.encryption import decrypt_dict, encrypt_dict, generate_encryptio
 
 
 def _sync_manager(token_endpoint, **kwargs) -> XAITokenManager:
-    return XAITokenManager(http_client=httpx.Client(transport=httpx.MockTransport(token_endpoint)), **kwargs)
+    return XAITokenManager(http_client=httpx2.Client(transport=httpx2.MockTransport(token_endpoint)), **kwargs)
 
 
 # ---------------------------------------------------------------------------
@@ -53,7 +53,7 @@ def test_store_round_trip_sqlite(sqlite_db, encryption_key, token_endpoint, fake
 
 
 async def test_store_round_trip_async_sqlite(async_sqlite_db, encryption_key, token_endpoint, fake_clock):
-    async with httpx.AsyncClient(transport=httpx.MockTransport(token_endpoint)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(token_endpoint)) as client:
         manager = XAITokenManager(
             db=async_sqlite_db,
             encryption_key=encryption_key,
@@ -298,7 +298,7 @@ async def test_the_memory_slot_does_not_serve_one_users_token_to_another_async(
     sqlite_db, encryption_key, token_endpoint, fake_clock
 ):
     manager = XAITokenManager(
-        async_http_client=httpx.AsyncClient(transport=httpx.MockTransport(token_endpoint)),
+        async_http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(token_endpoint)),
         db=sqlite_db,
         encryption_key=encryption_key,
         now_fn=fake_clock,

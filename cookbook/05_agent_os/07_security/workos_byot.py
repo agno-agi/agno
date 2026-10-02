@@ -17,7 +17,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-import httpx
+import httpx2
 from agno.agent import Agent
 from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS
@@ -58,7 +58,7 @@ def build_agent_os(jwks_file: str, audience: str) -> tuple[AgentOS, Any]:
 
 
 def _download_workos_jwks(client_id: str, destination: Path) -> Path:
-    response = httpx.get(
+    response = httpx2.get(
         f"https://api.workos.com/sso/jwks/{client_id}",
         timeout=10.0,
     )

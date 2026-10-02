@@ -12,7 +12,7 @@ import time as time_module
 import weakref
 from concurrent.futures import ThreadPoolExecutor
 
-import httpx
+import httpx2
 import pytest
 
 from agno.exceptions import ModelAuthenticationError
@@ -31,7 +31,7 @@ def _seeded_manager(sqlite_db, encryption_key, token_endpoint, fake_clock) -> XA
     manager = XAITokenManager(
         db=sqlite_db,
         encryption_key=encryption_key,
-        http_client=httpx.Client(transport=httpx.MockTransport(token_endpoint)),
+        http_client=httpx2.Client(transport=httpx2.MockTransport(token_endpoint)),
         now_fn=fake_clock,
     )
     manager.poll_for_token("device-code-1", interval=5, deadline=fake_clock() + 1800)
@@ -114,7 +114,7 @@ def test_second_manager_uses_persisted_state(sqlite_db, encryption_key, token_en
     second = XAITokenManager(
         db=sqlite_db,
         encryption_key=encryption_key,
-        http_client=httpx.Client(transport=httpx.MockTransport(token_endpoint)),
+        http_client=httpx2.Client(transport=httpx2.MockTransport(token_endpoint)),
         now_fn=fake_clock,
     )
     assert second.get_access_token() == "access-token-1"
@@ -213,13 +213,13 @@ def test_cache_never_serves_a_token_across_different_stores(
     manager_a = XAITokenManager(
         db=sqlite_db,
         encryption_key=encryption_key,
-        http_client=httpx.Client(transport=httpx.MockTransport(token_endpoint)),
+        http_client=httpx2.Client(transport=httpx2.MockTransport(token_endpoint)),
         now_fn=fake_clock,
     )
     manager_b = XAITokenManager(
         db=other_db,
         encryption_key=encryption_key,
-        http_client=httpx.Client(transport=httpx.MockTransport(token_endpoint)),
+        http_client=httpx2.Client(transport=httpx2.MockTransport(token_endpoint)),
         now_fn=fake_clock,
     )
     manager_a.poll_for_token("device-code-1", interval=5, deadline=fake_clock() + 1800)
@@ -302,15 +302,15 @@ def test_contended_refresh_across_two_event_loops(sqlite_db, encryption_key, tok
     # An asyncio.Lock binds to the event loop that first sees contention on it,
     # and sync callers wrapping arun in asyncio.run() give one process many
     # loops over its lifetime - a fresh loop must get a fresh lock
-    async def slow_handler(request: httpx.Request) -> httpx.Response:
+    async def slow_handler(request: httpx2.Request) -> httpx2.Response:
         await asyncio.sleep(0.01)  # real suspension so the second task contends
         return token_endpoint(request)
 
     manager = XAITokenManager(
         db=sqlite_db,
         encryption_key=encryption_key,
-        http_client=httpx.Client(transport=httpx.MockTransport(token_endpoint)),
-        async_http_client=httpx.AsyncClient(transport=httpx.MockTransport(slow_handler)),
+        http_client=httpx2.Client(transport=httpx2.MockTransport(token_endpoint)),
+        async_http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(slow_handler)),
         now_fn=fake_clock,
     )
     manager.poll_for_token("device-code-1", interval=5, deadline=fake_clock() + 1800)

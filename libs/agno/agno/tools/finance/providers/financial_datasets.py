@@ -5,7 +5,7 @@ Structured, real-time market data built for agents: prices, company facts,
 financial statements, metrics, news, insider trades, earnings, SEC filings.
 Commercial use is allowed on every plan. Needs `FINANCIAL_DATASETS_API_KEY`
 (every request costs credits; see https://financialdatasets.ai/pricing). No extra
-dependency: uses `httpx`.
+dependency: uses `httpx2`.
 
 Not served by this provider (absent from the API): `search_symbols` and
 `get_analyst_recommendations` — `FinanceTools` simply does not register those
@@ -19,7 +19,7 @@ from datetime import date, datetime, timedelta, timezone
 from os import getenv
 from typing import Any, Dict, List, Optional, Tuple
 
-import httpx
+import httpx2
 
 from agno.tools.finance.base import (
     GET_COMPANY_PROFILE,
@@ -171,12 +171,12 @@ class FinancialDatasets(FinanceProvider):
         """GET one page. `url` (a `next_page_url`) overrides path+params."""
         headers = self._headers()
         try:
-            with httpx.Client(timeout=self.timeout) as client:
+            with httpx2.Client(timeout=self.timeout) as client:
                 if url:
                     response = client.get(url, headers=headers)
                 else:
                     response = client.get(self._url(path), headers=headers, params=self._params(params or {}))
-        except httpx.RequestError as e:
+        except httpx2.RequestError as e:
             raise FinanceProviderError(f"Request to financialdatasets.ai failed: {e}") from e
         return self._parse(response, path)
 
@@ -185,12 +185,12 @@ class FinancialDatasets(FinanceProvider):
     ) -> Dict[str, Any]:
         headers = self._headers()
         try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
+            async with httpx2.AsyncClient(timeout=self.timeout) as client:
                 if url:
                     response = await client.get(url, headers=headers)
                 else:
                     response = await client.get(self._url(path), headers=headers, params=self._params(params or {}))
-        except httpx.RequestError as e:
+        except httpx2.RequestError as e:
             raise FinanceProviderError(f"Request to financialdatasets.ai failed: {e}") from e
         return self._parse(response, path)
 
@@ -234,7 +234,7 @@ class FinancialDatasets(FinanceProvider):
         return merged
 
     @staticmethod
-    def _parse(response: httpx.Response, path: str) -> Dict[str, Any]:
+    def _parse(response: httpx2.Response, path: str) -> Dict[str, Any]:
         if response.status_code >= 400:
             detail = ""
             try:
@@ -377,7 +377,7 @@ class FinancialDatasets(FinanceProvider):
         return self._filings(symbol, self._get_pages(path, params, key or "filings", limit))
 
     # ------------------------------------------------------------------
-    # Capabilities — async (native httpx.AsyncClient)
+    # Capabilities — async (native httpx2.AsyncClient)
     # ------------------------------------------------------------------
 
     async def aget_quote(self, symbol: str) -> Quote:

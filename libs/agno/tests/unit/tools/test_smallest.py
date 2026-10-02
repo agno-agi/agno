@@ -3,7 +3,7 @@
 import json
 from unittest.mock import MagicMock, patch
 
-import httpx
+import httpx2
 import pytest
 
 from agno.agent import Agent
@@ -89,7 +89,7 @@ def test_init_custom_base_url(mock_agent):
     mock_response.headers = {"content-type": "audio/wav"}
     mock_response.raise_for_status.return_value = None
 
-    with patch("agno.tools.smallest.httpx.post", return_value=mock_response) as mock_post:
+    with patch("agno.tools.smallest.httpx2.post", return_value=mock_response) as mock_post:
         tools.text_to_speech(mock_agent, "Hello world")
 
     args, _ = mock_post.call_args
@@ -116,7 +116,7 @@ def test_text_to_speech_success(smallest_tools, mock_agent):
     mock_response.headers = {"content-type": "audio/wav"}
     mock_response.raise_for_status.return_value = None
 
-    with patch("agno.tools.smallest.httpx.post", return_value=mock_response) as mock_post:
+    with patch("agno.tools.smallest.httpx2.post", return_value=mock_response) as mock_post:
         result = smallest_tools.text_to_speech(mock_agent, "Hello world")
 
     assert isinstance(result, ToolResult)
@@ -146,7 +146,7 @@ def test_text_to_speech_voice_override(smallest_tools, mock_agent):
     mock_response.headers = {"content-type": "audio/wav"}
     mock_response.raise_for_status.return_value = None
 
-    with patch("agno.tools.smallest.httpx.post", return_value=mock_response) as mock_post:
+    with patch("agno.tools.smallest.httpx2.post", return_value=mock_response) as mock_post:
         smallest_tools.text_to_speech(mock_agent, "Hello world", voice_id="custom_voice")
 
     _, kwargs = mock_post.call_args
@@ -160,7 +160,7 @@ def test_text_to_speech_language_param(mock_agent):
     mock_response.headers = {"content-type": "audio/wav"}
     mock_response.raise_for_status.return_value = None
 
-    with patch("agno.tools.smallest.httpx.post", return_value=mock_response) as mock_post:
+    with patch("agno.tools.smallest.httpx2.post", return_value=mock_response) as mock_post:
         SmallestTools(api_key="test_key").text_to_speech(mock_agent, "Hello world")
         _, kwargs = mock_post.call_args
         assert kwargs["json"]["language"] == "en"
@@ -180,7 +180,7 @@ def test_text_to_speech_mp3_mime_type(mock_agent):
     mock_response.headers = {"content-type": "audio/mpeg"}
     mock_response.raise_for_status.return_value = None
 
-    with patch("agno.tools.smallest.httpx.post", return_value=mock_response) as mock_post:
+    with patch("agno.tools.smallest.httpx2.post", return_value=mock_response) as mock_post:
         result = tools.text_to_speech(mock_agent, "Hello world")
 
     assert result.audios[0].mime_type == "audio/mpeg"
@@ -197,7 +197,7 @@ def test_text_to_speech_saves_to_target_directory(mock_agent, tmp_path):
     mock_response.headers = {"content-type": "audio/wav"}
     mock_response.raise_for_status.return_value = None
 
-    with patch("agno.tools.smallest.httpx.post", return_value=mock_response):
+    with patch("agno.tools.smallest.httpx2.post", return_value=mock_response):
         tools.text_to_speech(mock_agent, "Hello world")
 
     saved_files = list(target_dir.glob("*.wav"))
@@ -214,7 +214,7 @@ def test_text_to_speech_saves_multiple_times_without_overwriting(mock_agent, tmp
     mock_response.headers = {"content-type": "audio/wav"}
     mock_response.raise_for_status.return_value = None
 
-    with patch("agno.tools.smallest.httpx.post", return_value=mock_response):
+    with patch("agno.tools.smallest.httpx2.post", return_value=mock_response):
         tools.text_to_speech(mock_agent, "Hello world")
         tools.text_to_speech(mock_agent, "Hello again")
 
@@ -224,10 +224,10 @@ def test_text_to_speech_saves_multiple_times_without_overwriting(mock_agent, tmp
 
 def test_text_to_speech_error(smallest_tools, mock_agent):
     """Test text-to-speech error handling against a real HTTP error response."""
-    request = httpx.Request("POST", SMALLEST_TTS_URL)
-    error_response = httpx.Response(401, json={"error": "unauthorized"}, request=request)
+    request = httpx2.Request("POST", SMALLEST_TTS_URL)
+    error_response = httpx2.Response(401, json={"error": "unauthorized"}, request=request)
 
-    with patch("agno.tools.smallest.httpx.post", return_value=error_response):
+    with patch("agno.tools.smallest.httpx2.post", return_value=error_response):
         result = smallest_tools.text_to_speech(mock_agent, "Hello world")
 
     assert isinstance(result, ToolResult)
@@ -243,7 +243,7 @@ def test_text_to_speech_unexpected_content_type(smallest_tools, mock_agent):
     mock_response.headers = {"content-type": "application/json"}
     mock_response.raise_for_status.return_value = None
 
-    with patch("agno.tools.smallest.httpx.post", return_value=mock_response):
+    with patch("agno.tools.smallest.httpx2.post", return_value=mock_response):
         result = smallest_tools.text_to_speech(mock_agent, "Hello world")
 
     assert isinstance(result, ToolResult)
@@ -270,7 +270,7 @@ def test_get_voices_success(smallest_tools):
         ]
     }
 
-    with patch("agno.tools.smallest.httpx.get", return_value=mock_response) as mock_get:
+    with patch("agno.tools.smallest.httpx2.get", return_value=mock_response) as mock_get:
         result = smallest_tools.get_voices()
 
     args, kwargs = mock_get.call_args
@@ -291,7 +291,7 @@ def test_get_voices_list_response(smallest_tools):
     mock_response.raise_for_status.return_value = None
     mock_response.json.return_value = [{"id": "magnus", "name": "Magnus"}]
 
-    with patch("agno.tools.smallest.httpx.get", return_value=mock_response):
+    with patch("agno.tools.smallest.httpx2.get", return_value=mock_response):
         result = smallest_tools.get_voices()
 
     voices = json.loads(result)
@@ -307,7 +307,7 @@ def test_get_voices_pro_model_uses_pro_catalog():
     mock_response.raise_for_status.return_value = None
     mock_response.json.return_value = {"voices": []}
 
-    with patch("agno.tools.smallest.httpx.get", return_value=mock_response) as mock_get:
+    with patch("agno.tools.smallest.httpx2.get", return_value=mock_response) as mock_get:
         result = tools.get_voices()
 
     args, _ = mock_get.call_args
@@ -317,10 +317,10 @@ def test_get_voices_pro_model_uses_pro_catalog():
 
 def test_get_voices_error(smallest_tools):
     """Test voice listing error handling against a real HTTP error response."""
-    request = httpx.Request("GET", SMALLEST_VOICES_URLS["lightning_v3.1"])
-    error_response = httpx.Response(400, json={"error": "bad request"}, request=request)
+    request = httpx2.Request("GET", SMALLEST_VOICES_URLS["lightning_v3.1"])
+    error_response = httpx2.Response(400, json={"error": "bad request"}, request=request)
 
-    with patch("agno.tools.smallest.httpx.get", return_value=error_response):
+    with patch("agno.tools.smallest.httpx2.get", return_value=error_response):
         result = smallest_tools.get_voices()
 
     assert result.startswith("Error")

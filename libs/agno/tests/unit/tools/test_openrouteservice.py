@@ -2,7 +2,7 @@
 
 from unittest.mock import Mock, patch
 
-import httpx
+import httpx2
 import pytest
 
 from agno.tools.openrouteservice import OpenRouteServiceTools
@@ -51,7 +51,7 @@ def test_init_with_selective_tools():
 def test_geocode_location_success(ors_tools):
     """Geocoding returns latitude/longitude for a place name."""
     payload = _geocode_payload("Berlin, Germany", 13.407, 52.524)
-    with patch("agno.tools.openrouteservice.httpx.Client") as mock_client:
+    with patch("agno.tools.openrouteservice.httpx2.Client") as mock_client:
         client_instance = mock_client.return_value.__enter__.return_value
         client_instance.get.return_value = _mock_response(payload)
 
@@ -64,7 +64,7 @@ def test_geocode_location_success(ors_tools):
 
 def test_geocode_location_empty_result(ors_tools):
     """Geocoding an unknown place returns an error."""
-    with patch("agno.tools.openrouteservice.httpx.Client") as mock_client:
+    with patch("agno.tools.openrouteservice.httpx2.Client") as mock_client:
         client_instance = mock_client.return_value.__enter__.return_value
         client_instance.get.return_value = _mock_response({"features": []})
 
@@ -80,7 +80,7 @@ def test_get_directions_success(ors_tools):
     amsterdam = _mock_response(_geocode_payload("Amsterdam, Netherlands", 4.892, 52.373))
     directions = _mock_response({"routes": [{"summary": {"distance": 649000.0, "duration": 23400.0}}]})
 
-    with patch("agno.tools.openrouteservice.httpx.Client") as mock_client:
+    with patch("agno.tools.openrouteservice.httpx2.Client") as mock_client:
         client_instance = mock_client.return_value.__enter__.return_value
         client_instance.get.side_effect = [berlin, amsterdam]
         client_instance.post.return_value = directions
@@ -103,7 +103,7 @@ def test_get_directions_invalid_profile(ors_tools):
 
 def test_get_directions_geocode_failure(ors_tools):
     """A failed geocode short-circuits with a clear error."""
-    with patch("agno.tools.openrouteservice.httpx.Client") as mock_client:
+    with patch("agno.tools.openrouteservice.httpx2.Client") as mock_client:
         client_instance = mock_client.return_value.__enter__.return_value
         client_instance.get.return_value = _mock_response({"features": []})
 
@@ -119,7 +119,7 @@ def test_get_distance_matrix_success(ors_tools):
     amsterdam = _mock_response(_geocode_payload("Amsterdam, Netherlands", 4.892, 52.373))
     matrix = _mock_response({"distances": [[0, 649.0], [649.0, 0]], "durations": [[0, 23400.0], [23400.0, 0]]})
 
-    with patch("agno.tools.openrouteservice.httpx.Client") as mock_client:
+    with patch("agno.tools.openrouteservice.httpx2.Client") as mock_client:
         client_instance = mock_client.return_value.__enter__.return_value
         client_instance.get.side_effect = [berlin, amsterdam]
         client_instance.post.return_value = matrix
@@ -140,13 +140,13 @@ def test_get_distance_matrix_requires_two_locations(ors_tools):
 
 def test_http_error_handling(ors_tools):
     """HTTP status errors are mapped to friendly messages."""
-    request = httpx.Request("GET", "https://api.openrouteservice.org/geocode/search")
-    error_response = httpx.Response(status_code=429, request=request)
+    request = httpx2.Request("GET", "https://api.openrouteservice.org/geocode/search")
+    error_response = httpx2.Response(status_code=429, request=request)
 
     def raise_error(*args, **kwargs):
-        raise httpx.HTTPStatusError("rate limited", request=request, response=error_response)
+        raise httpx2.HTTPStatusError("rate limited", request=request, response=error_response)
 
-    with patch("agno.tools.openrouteservice.httpx.Client") as mock_client:
+    with patch("agno.tools.openrouteservice.httpx2.Client") as mock_client:
         client_instance = mock_client.return_value.__enter__.return_value
         client_instance.get.side_effect = raise_error
 
@@ -171,7 +171,7 @@ async def test_aget_directions_success(ors_tools):
     async def async_post(*args, **kwargs):
         return directions
 
-    with patch("agno.tools.openrouteservice.httpx.AsyncClient") as mock_client:
+    with patch("agno.tools.openrouteservice.httpx2.AsyncClient") as mock_client:
         client_instance = mock_client.return_value.__aenter__.return_value
         client_instance.get.side_effect = async_get
         client_instance.post.side_effect = async_post

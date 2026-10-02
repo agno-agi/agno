@@ -12,7 +12,7 @@ from agno.tools.gandr import MAX_INPUT_CHARACTERS, GandrTools
 
 @pytest.fixture
 def mock_response():
-    """Create a mock httpx response carrying audio bytes."""
+    """Create a mock httpx2 response carrying audio bytes."""
     response = MagicMock()
     response.content = b"audio data"
     response.raise_for_status.return_value = None
@@ -81,7 +81,7 @@ def test_feature_registration():
 
 def test_text_to_speech(gandr_tools, mock_agent, mock_response):
     """Test text-to-speech functionality creates artifact."""
-    with patch("agno.tools.gandr.httpx.post", return_value=mock_response) as mock_post:
+    with patch("agno.tools.gandr.httpx2.post", return_value=mock_response) as mock_post:
         result = gandr_tools.text_to_speech(agent=mock_agent, text="Hello world")
 
     # Verify request arguments
@@ -111,7 +111,7 @@ def test_text_to_speech(gandr_tools, mock_agent, mock_response):
 
 def test_text_to_speech_overrides(gandr_tools, mock_agent, mock_response):
     """Test voice and response_format overrides are passed through."""
-    with patch("agno.tools.gandr.httpx.post", return_value=mock_response) as mock_post:
+    with patch("agno.tools.gandr.httpx2.post", return_value=mock_response) as mock_post:
         result = gandr_tools.text_to_speech(
             agent=mock_agent,
             text="Hello world",
@@ -131,7 +131,7 @@ def test_text_to_speech_overrides(gandr_tools, mock_agent, mock_response):
 
 def test_text_to_speech_input_too_long(gandr_tools, mock_agent):
     """Test the client side input length validation."""
-    with patch("agno.tools.gandr.httpx.post") as mock_post:
+    with patch("agno.tools.gandr.httpx2.post") as mock_post:
         result = gandr_tools.text_to_speech(agent=mock_agent, text="a" * (MAX_INPUT_CHARACTERS + 1))
 
     # No request is made for oversized input
@@ -143,10 +143,10 @@ def test_text_to_speech_input_too_long(gandr_tools, mock_agent):
 
 
 def test_default_timeout_is_bounded(gandr_tools, mock_agent, mock_response):
-    """Test a finite timeout is sent, since httpx treats None as no timeout at all."""
+    """Test a finite timeout is sent, since httpx2 treats None as no timeout at all."""
     assert gandr_tools.timeout is not None
 
-    with patch("agno.tools.gandr.httpx.post", return_value=mock_response) as mock_post:
+    with patch("agno.tools.gandr.httpx2.post", return_value=mock_response) as mock_post:
         gandr_tools.text_to_speech(agent=mock_agent, text="Hello world")
 
     assert mock_post.call_args[1]["timeout"] == gandr_tools.timeout
@@ -166,7 +166,7 @@ def test_init_invalid_response_format():
 
 def test_text_to_speech_invalid_voice(gandr_tools, mock_agent):
     """Test an unsupported voice is rejected client side."""
-    with patch("agno.tools.gandr.httpx.post") as mock_post:
+    with patch("agno.tools.gandr.httpx2.post") as mock_post:
         result = gandr_tools.text_to_speech(agent=mock_agent, text="Hello", voice="not-a-real-voice")
 
     mock_post.assert_not_called()
@@ -176,7 +176,7 @@ def test_text_to_speech_invalid_voice(gandr_tools, mock_agent):
 
 def test_text_to_speech_invalid_response_format(gandr_tools, mock_agent):
     """Test an unsupported response format is rejected client side."""
-    with patch("agno.tools.gandr.httpx.post") as mock_post:
+    with patch("agno.tools.gandr.httpx2.post") as mock_post:
         result = gandr_tools.text_to_speech(agent=mock_agent, text="Hello", response_format="ogg")
 
     mock_post.assert_not_called()
@@ -186,7 +186,7 @@ def test_text_to_speech_invalid_response_format(gandr_tools, mock_agent):
 
 def test_text_to_speech_empty_input(gandr_tools, mock_agent):
     """Test blank input is rejected without making a request."""
-    with patch("agno.tools.gandr.httpx.post") as mock_post:
+    with patch("agno.tools.gandr.httpx2.post") as mock_post:
         result = gandr_tools.text_to_speech(agent=mock_agent, text="   ")
 
     mock_post.assert_not_called()
@@ -202,7 +202,7 @@ def test_text_to_speech_non_audio_response(gandr_tools, mock_agent):
     response.headers = {"content-type": "text/html"}
     response.text = "<html>error</html>"
 
-    with patch("agno.tools.gandr.httpx.post", return_value=response):
+    with patch("agno.tools.gandr.httpx2.post", return_value=response):
         result = gandr_tools.text_to_speech(agent=mock_agent, text="Hello")
 
     assert result.audios is None
@@ -213,7 +213,7 @@ def test_text_to_speech_pcm_artifact_metadata(gandr_tools, mock_agent, mock_resp
     """Test pcm artifacts carry the sample rate, since pcm is returned headerless."""
     mock_response.headers = {"content-type": "audio/pcm"}
 
-    with patch("agno.tools.gandr.httpx.post", return_value=mock_response):
+    with patch("agno.tools.gandr.httpx2.post", return_value=mock_response):
         result = gandr_tools.text_to_speech(agent=mock_agent, text="Hello", response_format="pcm")
 
     artifact = result.audios[0]
@@ -224,7 +224,7 @@ def test_text_to_speech_pcm_artifact_metadata(gandr_tools, mock_agent, mock_resp
 
 def test_text_to_speech_error(gandr_tools, mock_agent):
     """Test error handling for text_to_speech."""
-    with patch("agno.tools.gandr.httpx.post", side_effect=Exception("TTS API Error")):
+    with patch("agno.tools.gandr.httpx2.post", side_effect=Exception("TTS API Error")):
         result = gandr_tools.text_to_speech(agent=mock_agent, text="Error test")
 
     # Verify ToolResult is returned with error message

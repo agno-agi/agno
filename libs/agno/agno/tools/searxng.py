@@ -2,7 +2,7 @@ import json
 import urllib.parse
 from typing import Any, List, Optional
 
-import httpx
+import httpx2
 
 from agno.tools import Toolkit
 from agno.utils.log import log_info
@@ -141,7 +141,7 @@ class Searxng(Toolkit):
 
         log_info(f"Fetching results from searxng: {url}")
         try:
-            response = httpx.get(url, timeout=self.timeout)
+            response = httpx2.get(url, timeout=self.timeout)
             response.raise_for_status()
             resp = response.json()
             results = self.fixed_max_results or max_results

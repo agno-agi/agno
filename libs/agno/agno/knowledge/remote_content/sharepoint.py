@@ -78,7 +78,7 @@ class SharePointConfig(BaseStorageConfig):
 
     def _get_site_id(self, access_token: str) -> Optional[str]:
         """Get the SharePoint site ID."""
-        import httpx
+        import httpx2
 
         if self.site_id:
             return self.site_id
@@ -89,9 +89,9 @@ class SharePointConfig(BaseStorageConfig):
             url = f"https://graph.microsoft.com/v1.0/sites/{self.hostname}"
 
         try:
-            response = httpx.get(url, headers={"Authorization": f"Bearer {access_token}"})
+            response = httpx2.get(url, headers={"Authorization": f"Bearer {access_token}"})
             if response.status_code == 200:
                 return response.json().get("id")
-        except httpx.HTTPError:
+        except httpx2.HTTPError:
             pass
         return None

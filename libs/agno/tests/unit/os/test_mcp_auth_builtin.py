@@ -29,7 +29,7 @@ import time  # noqa: E402
 from contextlib import asynccontextmanager  # noqa: E402
 from urllib.parse import parse_qs, urlparse  # noqa: E402
 
-import httpx  # noqa: E402
+import httpx2  # noqa: E402
 from sqlalchemy import inspect as sa_inspect  # noqa: E402
 from sqlalchemy import text  # noqa: E402
 
@@ -88,8 +88,8 @@ def _os(provider, db=None, security_key=None) -> AgentOS:
 async def _http_client(os: AgentOS):
     app = os.get_app()
     async with app.router.lifespan_context(app):
-        transport = httpx.ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://localhost") as client:
+        transport = httpx2.ASGITransport(app=app)
+        async with httpx2.AsyncClient(transport=transport, base_url="http://localhost") as client:
             yield client
 
 

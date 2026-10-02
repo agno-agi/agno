@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional, Union, get_args
 from uuid import uuid4
 
-import httpx
+import httpx2
 
 from agno.agent import Agent
 from agno.media import Audio
@@ -98,7 +98,7 @@ class SmallestTools(Toolkit):
             result (str): JSON string containing a list of voices with their metadata.
         """
         try:
-            response = httpx.get(
+            response = httpx2.get(
                 SMALLEST_VOICES_URLS[self.model],
                 headers=self._headers(),
                 timeout=self.timeout,
@@ -175,7 +175,7 @@ class SmallestTools(Toolkit):
                 "output_format": self.output_format,
             }
 
-            response = httpx.post(
+            response = httpx2.post(
                 self.base_url,
                 headers={
                     **self._headers(),

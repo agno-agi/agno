@@ -1,6 +1,6 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import httpx
+import httpx2
 import pytest
 
 from agno.tools.adanos import AdanosTools
@@ -33,7 +33,7 @@ def test_disabled_tool_is_not_registered():
     assert "get_stock_sentiment" in tools.functions
 
 
-@patch("agno.tools.adanos.httpx.Client")
+@patch("agno.tools.adanos.httpx2.Client")
 def test_get_stock_sentiment_maps_source_dates_and_auth(mock_client_class):
     response = MagicMock()
     response.json.return_value = {"ticker": "AAPL", "found": True}
@@ -52,7 +52,7 @@ def test_get_stock_sentiment_maps_source_dates_and_auth(mock_client_class):
     )
 
 
-@patch("agno.tools.adanos.httpx.Client")
+@patch("agno.tools.adanos.httpx2.Client")
 def test_get_crypto_sentiment_uses_reddit_crypto_endpoint(mock_client_class):
     response = MagicMock()
     response.json.return_value = {"symbol": "BTC", "found": True}
@@ -67,7 +67,7 @@ def test_get_crypto_sentiment_uses_reddit_crypto_endpoint(mock_client_class):
     assert client.get.call_args.args[0] == "https://api.adanos.org/reddit/crypto/v1/token/BTC"
 
 
-@patch("agno.tools.adanos.httpx.Client")
+@patch("agno.tools.adanos.httpx2.Client")
 def test_get_trending_clamps_limit_to_api_maximum(mock_client_class):
     response = MagicMock()
     response.json.return_value = {"results": []}
@@ -82,7 +82,7 @@ def test_get_trending_clamps_limit_to_api_maximum(mock_client_class):
     assert client.get.call_args.args[0] == "https://api.adanos.org/x/stocks/v1/trending"
 
 
-@patch("agno.tools.adanos.httpx.Client")
+@patch("agno.tools.adanos.httpx2.Client")
 def test_crypto_rejects_non_reddit_source_without_request(mock_client_class):
     tools = AdanosTools(api_key="test-key")
 
@@ -92,7 +92,7 @@ def test_crypto_rejects_non_reddit_source_without_request(mock_client_class):
     mock_client_class.assert_not_called()
 
 
-@patch("agno.tools.adanos.httpx.Client")
+@patch("agno.tools.adanos.httpx2.Client")
 def test_missing_api_key_returns_actionable_error(mock_client_class):
     with patch.dict("os.environ", {}, clear=True):
         tools = AdanosTools()
@@ -103,15 +103,15 @@ def test_missing_api_key_returns_actionable_error(mock_client_class):
     mock_client_class.return_value.__enter__.return_value.get.assert_not_called()
 
 
-@patch("agno.tools.adanos.httpx.Client")
+@patch("agno.tools.adanos.httpx2.Client")
 def test_http_error_preserves_status_and_api_detail(mock_client_class):
-    request = httpx.Request("GET", "https://api.adanos.org/reddit/stocks/v1/stock/AAPL")
-    response = MagicMock(spec=httpx.Response)
+    request = httpx2.Request("GET", "https://api.adanos.org/reddit/stocks/v1/stock/AAPL")
+    response = MagicMock(spec=httpx2.Response)
     response.status_code = 429
     response.json.return_value = {"detail": {"error": "Rate limit exceeded"}}
     client = mock_client_class.return_value.__enter__.return_value
     client.get.return_value = response
-    response.raise_for_status.side_effect = httpx.HTTPStatusError("rate limited", request=request, response=response)
+    response.raise_for_status.side_effect = httpx2.HTTPStatusError("rate limited", request=request, response=response)
     tools = AdanosTools(api_key="test-key")
 
     result = tools.get_stock_sentiment("AAPL")
@@ -124,7 +124,7 @@ def test_http_error_preserves_status_and_api_detail(mock_client_class):
 
 
 @pytest.mark.asyncio
-@patch("agno.tools.adanos.httpx.AsyncClient")
+@patch("agno.tools.adanos.httpx2.AsyncClient")
 async def test_async_tool_uses_same_endpoint_contract(mock_client_class):
     response = MagicMock()
     response.json.return_value = {"market_sentiment": "bullish"}

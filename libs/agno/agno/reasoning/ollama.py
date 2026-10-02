@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, AsyncIterator, Iterator, List, Optional, Tuple
 
-import httpx
+import httpx2
 
 from agno.models.base import Model
 from agno.models.message import Message
@@ -44,7 +44,7 @@ def _fetch_ollama_capabilities(reasoning_model: Model) -> Optional[List[str]]:
 
     try:
         headers = {"authorization": f"Bearer {api_key}"} if api_key else {}
-        response = httpx.post(
+        response = httpx2.post(
             f"{host.rstrip('/')}/api/show",
             json={"model": reasoning_model.id},
             headers=headers,

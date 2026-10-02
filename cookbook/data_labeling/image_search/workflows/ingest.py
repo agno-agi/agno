@@ -4,7 +4,7 @@ Image Ingest Workflow
 
 Wipes the existing index, then for each image URL in the configured list:
 
-  1. Fetch the bytes (httpx, follow redirects).
+  1. Fetch the bytes (httpx2, follow redirects).
   2. Ask the labeling agent for a search-tuned ImageDescription.
   3. Flatten the description and insert into Knowledge — the flat text is
      embedded for vector search; the structured fields are stored as
@@ -23,7 +23,7 @@ of prompt changes.
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Dict
 
-import httpx
+import httpx2
 from agno.agent import Agent
 from agno.media import Image
 from agno.workflow import Step, StepInput, StepOutput, Workflow
@@ -89,7 +89,7 @@ def make_extractor() -> Agent:
 # a thread pool. Returns nothing on success; raises on any failure so the
 # pool can attribute it to the URL.
 # ---------------------------------------------------------------------------
-def _ingest_one(url: str, client: httpx.Client) -> None:
+def _ingest_one(url: str, client: httpx2.Client) -> None:
     response = client.get(url)
     response.raise_for_status()
     extractor = make_extractor()
@@ -119,7 +119,7 @@ def ingest(step_input: StepInput) -> StepOutput:
     failed = 0
     errors: list[dict[str, str]] = []
 
-    with httpx.Client(follow_redirects=True, timeout=FETCH_TIMEOUT_SECONDS) as client:
+    with httpx2.Client(follow_redirects=True, timeout=FETCH_TIMEOUT_SECONDS) as client:
         with ThreadPoolExecutor(max_workers=INGEST_CONCURRENCY) as pool:
             futures = {pool.submit(_ingest_one, url, client): url for url in IMAGE_URLS}
             for future in as_completed(futures):

@@ -16,9 +16,9 @@ from agno.utils.http import get_default_async_client, get_default_sync_client
 from agno.utils.log import log_warning
 
 try:
-    from httpx import ConnectError, ConnectTimeout, TimeoutException
+    from httpx2 import ConnectError, ConnectTimeout, TimeoutException
 except ImportError:
-    raise ImportError("`httpx` not installed. Please install using `pip install httpx`")
+    raise ImportError("`httpx2` not installed. Please install using `pip install httpx2`")
 
 
 __all__ = ["A2AClient"]

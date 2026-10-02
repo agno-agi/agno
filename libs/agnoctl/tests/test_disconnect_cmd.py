@@ -2,7 +2,7 @@
 
 import json
 
-import httpx
+import httpx2
 from typer.testing import CliRunner
 
 from agnoctl.main import app
@@ -26,12 +26,12 @@ def _disconnect(args=(), **kwargs):
 def _refuse_all(monkeypatch):
     """No AgentOS answers anywhere: the torn-down-deployment situation."""
 
-    def refuse(request: httpx.Request) -> httpx.Response:
-        raise httpx.ConnectError("connection refused", request=request)
+    def refuse(request: httpx2.Request) -> httpx2.Response:
+        raise httpx2.ConnectError("connection refused", request=request)
 
     import agnoctl.http as http_module
 
-    monkeypatch.setattr(http_module, "_transport_override", httpx.MockTransport(refuse))
+    monkeypatch.setattr(http_module, "_transport_override", httpx2.MockTransport(refuse))
 
 
 def test_disconnect_removes_connected_entries(monkeypatch, fake_os, fake_clients):

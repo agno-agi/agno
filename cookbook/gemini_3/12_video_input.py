@@ -16,7 +16,7 @@ Example prompts to try:
 - "What is the overall mood of this video?"
 """
 
-import httpx
+import httpx2
 from agno.agent import Agent
 from agno.media import Video
 from agno.models.google import Gemini
@@ -53,7 +53,7 @@ if __name__ == "__main__":
     # --- From bytes content ---
     print("--- Analyzing video from bytes ---\n")
     url = "https://agno-public.s3.amazonaws.com/demo/sample_seaview.mp4"
-    response = httpx.get(url)
+    response = httpx2.get(url)
 
     video_agent.print_response(
         "Describe and summarize this video.",
@@ -78,7 +78,7 @@ if __name__ == "__main__":
 Video input methods:
 
 1. From URL (download first)
-   response = httpx.get("https://example.com/video.mp4")
+   response = httpx2.get("https://example.com/video.mp4")
    videos=[Video(content=response.content, format="mp4")]
 
 2. From local file

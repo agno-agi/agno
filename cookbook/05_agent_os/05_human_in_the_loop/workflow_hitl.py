@@ -20,7 +20,7 @@ import argparse
 import json
 from typing import Any
 
-import httpx
+import httpx2
 from agno.db.sqlite import SqliteDb
 from agno.os import AgentOS
 from agno.workflow import HumanReview, OnReject
@@ -147,7 +147,7 @@ def resolve_step_requirements(
 
 def run_demo() -> None:
     """Continue the workflow until all three HITL pauses are resolved."""
-    with httpx.Client(base_url=BASE_URL, timeout=30.0) as client:
+    with httpx2.Client(base_url=BASE_URL, timeout=30.0) as client:
         response = client.post(
             f"/workflows/{WORKFLOW_ID}/runs",
             data={

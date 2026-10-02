@@ -8,7 +8,7 @@ Demonstrates tool decorator.
 import json
 from typing import Iterator
 
-import httpx
+import httpx2
 from agno.agent import Agent
 from agno.tools import tool
 
@@ -22,12 +22,12 @@ def get_top_hackernews_stories(agent: Agent) -> Iterator[str]:
     num_stories = agent.dependencies.get("num_stories", 5) if agent.dependencies else 5
 
     # Fetch top story IDs
-    response = httpx.get("https://hacker-news.firebaseio.com/v0/topstories.json")
+    response = httpx2.get("https://hacker-news.firebaseio.com/v0/topstories.json")
     story_ids = response.json()
 
     # Yield story details
     for story_id in story_ids[:num_stories]:
-        story_response = httpx.get(
+        story_response = httpx2.get(
             f"https://hacker-news.firebaseio.com/v0/item/{story_id}.json"
         )
         story = story_response.json()
@@ -57,7 +57,7 @@ if __name__ == "__main__":
     import asyncio
     import json
 
-    import httpx
+    import httpx2
     from agno.agent import Agent
     from agno.tools import tool
 
@@ -70,14 +70,14 @@ if __name__ == "__main__":
             )
 
             # Fetch top story IDs
-            response = httpx.get(
+            response = httpx2.get(
                 "https://hacker-news.firebaseio.com/v0/topstories.json"
             )
             story_ids = response.json()
 
             # Get story details
             for story_id in story_ids[:num_stories]:
-                async with httpx.AsyncClient() as client:
+                async with httpx2.AsyncClient() as client:
                     story_response = await client.get(
                         f"https://hacker-news.firebaseio.com/v0/item/{story_id}.json"
                     )
@@ -97,7 +97,7 @@ if __name__ == "__main__":
                 else "San Francisco"
             )
 
-            async with httpx.AsyncClient() as client:
+            async with httpx2.AsyncClient() as client:
                 # Geocode city to get latitude and longitude
                 geo_resp = await client.get(
                     "https://geocoding-api.open-meteo.com/v1/search",

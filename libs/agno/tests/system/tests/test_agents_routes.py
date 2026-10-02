@@ -8,7 +8,7 @@ import asyncio
 import json
 import uuid
 
-import httpx
+import httpx2
 import pytest
 
 from .test_utils import (
@@ -33,9 +33,9 @@ def test_user_id() -> str:
 
 
 @pytest.fixture(scope="module")
-def client(gateway_url: str, test_user_id: str) -> httpx.Client:
+def client(gateway_url: str, test_user_id: str) -> httpx2.Client:
     """Create an HTTP client for the gateway server with authentication."""
-    return httpx.Client(
+    return httpx2.Client(
         base_url=gateway_url,
         timeout=REQUEST_TIMEOUT,
         headers={"Authorization": f"Bearer {generate_jwt_token(audience='gateway-os', user_id=test_user_id)}"},
@@ -47,7 +47,7 @@ def client(gateway_url: str, test_user_id: str) -> httpx.Client:
 # =============================================================================
 
 
-def test_get_agents_list(client: httpx.Client):
+def test_get_agents_list(client: httpx2.Client):
     """Test GET /agents returns all agents with required fields."""
     response = client.get("/agents")
     assert response.status_code == 200
@@ -63,7 +63,7 @@ def test_get_agents_list(client: httpx.Client):
         assert "name" in agent
 
 
-def test_get_local_agent_details(client: httpx.Client):
+def test_get_local_agent_details(client: httpx2.Client):
     """Test GET /agents/{agent_id} returns full details for local agent."""
     response = client.get("/agents/gateway-agent")
     assert response.status_code == 200
@@ -77,7 +77,7 @@ def test_get_local_agent_details(client: httpx.Client):
     assert data["model"]["provider"] == "OpenAI"
 
 
-def test_get_remote_agent_assistant_details(client: httpx.Client):
+def test_get_remote_agent_assistant_details(client: httpx2.Client):
     """Test GET /agents/assistant-agent returns remote agent details."""
     response = client.get("/agents/assistant-agent")
     assert response.status_code == 200
@@ -89,7 +89,7 @@ def test_get_remote_agent_assistant_details(client: httpx.Client):
     assert data["model"]["model"] == "gpt-5-mini"
 
 
-def test_get_remote_agent_researcher_details(client: httpx.Client):
+def test_get_remote_agent_researcher_details(client: httpx2.Client):
     """Test GET /agents/researcher-agent returns remote agent details."""
     response = client.get("/agents/researcher-agent")
     assert response.status_code == 200
@@ -100,7 +100,7 @@ def test_get_remote_agent_researcher_details(client: httpx.Client):
     assert "model" in data
 
 
-def test_get_agent_not_found(client: httpx.Client):
+def test_get_agent_not_found(client: httpx2.Client):
     """Test GET /agents/{agent_id} returns 404 for non-existent agent."""
     response = client.get("/agents/non-existent-agent")
     assert response.status_code == 404
@@ -108,7 +108,7 @@ def test_get_agent_not_found(client: httpx.Client):
     assert "detail" in data
 
 
-def test_create_agent_run_non_streaming(client: httpx.Client, test_session_id: str, test_user_id: str):
+def test_create_agent_run_non_streaming(client: httpx2.Client, test_session_id: str, test_user_id: str):
     """Test POST /agents/{agent_id}/runs (non-streaming) returns complete response."""
     response = client.post(
         "/agents/gateway-agent/runs",
@@ -133,7 +133,7 @@ def test_create_agent_run_non_streaming(client: httpx.Client, test_session_id: s
     assert data["user_id"] == test_user_id
 
 
-def test_create_agent_run_streaming(client: httpx.Client, test_user_id: str):
+def test_create_agent_run_streaming(client: httpx2.Client, test_user_id: str):
     """Test POST /agents/{agent_id}/runs (streaming) returns proper SSE stream with RunStarted and RunCompleted events."""
     session_id = str(uuid.uuid4())
     response = client.post(
@@ -173,7 +173,7 @@ def test_create_agent_run_streaming(client: httpx.Client, test_user_id: str):
     assert last_data["session_id"] == session_id
 
 
-def test_create_agent_run_with_new_session(client: httpx.Client, test_user_id: str):
+def test_create_agent_run_with_new_session(client: httpx2.Client, test_user_id: str):
     """Test agent run creates new session when session_id not provided."""
     response = client.post(
         "/agents/gateway-agent/runs",
@@ -205,7 +205,7 @@ def test_create_agent_run_with_new_session(client: httpx.Client, test_user_id: s
 # =============================================================================
 
 
-def test_create_remote_agent_run_non_streaming(client: httpx.Client, test_user_id: str):
+def test_create_remote_agent_run_non_streaming(client: httpx2.Client, test_user_id: str):
     """Test POST /agents/{agent_id}/runs (non-streaming) for remote agent returns complete response."""
     session_id = str(uuid.uuid4())
     response = client.post(
@@ -231,7 +231,7 @@ def test_create_remote_agent_run_non_streaming(client: httpx.Client, test_user_i
     assert data["user_id"] == test_user_id
 
 
-def test_create_remote_agent_run_streaming(client: httpx.Client, test_user_id: str):
+def test_create_remote_agent_run_streaming(client: httpx2.Client, test_user_id: str):
     """Test POST /agents/{agent_id}/runs (streaming) for remote agent returns proper SSE stream."""
     session_id = str(uuid.uuid4())
     response = client.post(
@@ -273,7 +273,7 @@ def test_create_remote_agent_run_streaming(client: httpx.Client, test_user_id: s
     assert last_data["agent_id"] == "assistant-agent"
 
 
-def test_create_researcher_agent_run(client: httpx.Client, test_user_id: str):
+def test_create_researcher_agent_run(client: httpx2.Client, test_user_id: str):
     """Test running the researcher remote agent (with search tools)."""
     session_id = str(uuid.uuid4())
     response = client.post(
@@ -300,7 +300,7 @@ def test_create_researcher_agent_run(client: httpx.Client, test_user_id: str):
 # =============================================================================
 # Google ADK Agent Tests
 # =============================================================================
-def test_get_adk_agent_details(client: httpx.Client):
+def test_get_adk_agent_details(client: httpx2.Client):
     """Test GET /agents/facts_agent returns Google ADK agent details."""
     response = client.get("/agents/facts_agent")
     assert response.status_code == 200
@@ -310,7 +310,7 @@ def test_get_adk_agent_details(client: httpx.Client):
     assert "name" in data
 
 
-def test_create_adk_agent_run_non_streaming(client: httpx.Client, test_user_id: str):
+def test_create_adk_agent_run_non_streaming(client: httpx2.Client, test_user_id: str):
     """Test POST /agents/facts_agent/runs (non-streaming) for Google ADK agent returns complete response."""
     session_id = str(uuid.uuid4())
     response = client.post(
@@ -336,7 +336,7 @@ def test_create_adk_agent_run_non_streaming(client: httpx.Client, test_user_id: 
     assert data["user_id"] == test_user_id
 
 
-def test_create_adk_agent_run_streaming(client: httpx.Client, test_user_id: str):
+def test_create_adk_agent_run_streaming(client: httpx2.Client, test_user_id: str):
     """Test POST /agents/facts_agent/runs (streaming) for Google ADK agent returns proper SSE stream."""
     session_id = str(uuid.uuid4())
     response = client.post(
@@ -383,7 +383,7 @@ def test_create_adk_agent_run_streaming(client: httpx.Client, test_user_id: str)
 # =============================================================================
 
 
-def test_get_a2a_assistant_agent_details(client: httpx.Client):
+def test_get_a2a_assistant_agent_details(client: httpx2.Client):
     """Test GET /agents/assistant-agent-2 returns Agno A2A agent details."""
     response = client.get("/agents/assistant-agent-2")
     assert response.status_code == 200
@@ -393,7 +393,7 @@ def test_get_a2a_assistant_agent_details(client: httpx.Client):
     assert "name" in data
 
 
-def test_get_a2a_researcher_agent_details(client: httpx.Client):
+def test_get_a2a_researcher_agent_details(client: httpx2.Client):
     """Test GET /agents/researcher-agent-2 returns Agno A2A agent details."""
     response = client.get("/agents/researcher-agent-2")
     assert response.status_code == 200
@@ -403,7 +403,7 @@ def test_get_a2a_researcher_agent_details(client: httpx.Client):
     assert "name" in data
 
 
-def test_create_a2a_assistant_agent_run_non_streaming(client: httpx.Client, test_user_id: str):
+def test_create_a2a_assistant_agent_run_non_streaming(client: httpx2.Client, test_user_id: str):
     """Test POST /agents/assistant-agent-2/runs (non-streaming) for Agno A2A agent returns complete response."""
     session_id = str(uuid.uuid4())
     response = client.post(
@@ -429,7 +429,7 @@ def test_create_a2a_assistant_agent_run_non_streaming(client: httpx.Client, test
     assert data["user_id"] == test_user_id
 
 
-def test_create_a2a_assistant_agent_run_streaming(client: httpx.Client, test_user_id: str):
+def test_create_a2a_assistant_agent_run_streaming(client: httpx2.Client, test_user_id: str):
     """Test POST /agents/assistant-agent-2/runs (streaming) for Agno A2A agent returns proper SSE stream."""
     session_id = str(uuid.uuid4())
     response = client.post(
@@ -471,7 +471,7 @@ def test_create_a2a_assistant_agent_run_streaming(client: httpx.Client, test_use
     assert last_data["agent_id"] == "assistant-agent-2"
 
 
-def test_create_a2a_researcher_agent_run_non_streaming(client: httpx.Client, test_user_id: str):
+def test_create_a2a_researcher_agent_run_non_streaming(client: httpx2.Client, test_user_id: str):
     """Test POST /agents/researcher-agent-2/runs (non-streaming) for Agno A2A agent returns complete response."""
     session_id = str(uuid.uuid4())
     response = client.post(
@@ -497,7 +497,7 @@ def test_create_a2a_researcher_agent_run_non_streaming(client: httpx.Client, tes
     assert data["user_id"] == test_user_id
 
 
-def test_create_a2a_researcher_agent_run_streaming(client: httpx.Client, test_user_id: str):
+def test_create_a2a_researcher_agent_run_streaming(client: httpx2.Client, test_user_id: str):
     """Test POST /agents/researcher-agent-2/runs (streaming) for Agno A2A agent returns proper SSE stream."""
     session_id = str(uuid.uuid4())
     response = client.post(
@@ -540,7 +540,7 @@ def test_create_a2a_researcher_agent_run_streaming(client: httpx.Client, test_us
 
 
 @pytest.mark.asyncio
-async def test_cancel_agent_run_streaming(client: httpx.Client, test_user_id: str, gateway_url: str):
+async def test_cancel_agent_run_streaming(client: httpx2.Client, test_user_id: str, gateway_url: str):
     """Test cancelling a streaming agent run returns cancellation event."""
     session_id = str(uuid.uuid4())
     latest_run_id = None
@@ -550,7 +550,7 @@ async def test_cancel_agent_run_streaming(client: httpx.Client, test_user_id: st
     async def stream_agent_run():
         """Stream the agent run and collect events."""
         nonlocal latest_run_id, cancellation_event_received
-        async with httpx.AsyncClient(
+        async with httpx2.AsyncClient(
             base_url=gateway_url,
             timeout=REQUEST_TIMEOUT,
             headers={"Authorization": f"Bearer {generate_jwt_token(audience='gateway-os', user_id=test_user_id)}"},
@@ -606,7 +606,7 @@ async def test_cancel_agent_run_streaming(client: httpx.Client, test_user_id: st
             # Wait 1 second before canceling to ensure run has started
             await asyncio.sleep(1)
 
-            async with httpx.AsyncClient(
+            async with httpx2.AsyncClient(
                 base_url=gateway_url,
                 timeout=REQUEST_TIMEOUT,
                 headers={"Authorization": f"Bearer {generate_jwt_token(audience='gateway-os', user_id=test_user_id)}"},
@@ -625,7 +625,7 @@ async def test_cancel_agent_run_streaming(client: httpx.Client, test_user_id: st
     # Wait for the agent task to complete (it should be cancelled)
     try:
         await agent_task
-    except (httpx.StreamError, httpx.ReadError, httpx.RemoteProtocolError):
+    except (httpx2.StreamError, httpx2.ReadError, httpx2.RemoteProtocolError):
         # Stream errors are expected when cancellation closes the connection
         pass
 

@@ -92,7 +92,7 @@ class AntigravityAgent(BaseExternalAgent):
 
         Raises ValueError if custom_agent_name is not set on this adapter.
         """
-        import httpx
+        import httpx2
 
         if not self.custom_agent_name:
             raise ValueError("ensure_custom_agent requires custom_agent_name to be set on the adapter")
@@ -108,7 +108,7 @@ class AntigravityAgent(BaseExternalAgent):
             body["base_environment"] = {"type": "remote", "sources": self.sources}
 
         headers = {"Content-Type": "application/json", "x-goog-api-key": self._resolved_api_key()}
-        with httpx.Client(timeout=self.timeout) as client:
+        with httpx2.Client(timeout=self.timeout) as client:
             response = client.post(f"{self.base_url}/agents", json=body, headers=headers)
 
         if response.status_code == 409:
@@ -129,7 +129,7 @@ class AntigravityAgent(BaseExternalAgent):
              turn in that session; requires a db to be configured).
           3. Raises ValueError if neither is available.
         """
-        import httpx
+        import httpx2
 
         env_id = environment_id
         if not env_id and session_id and self.db is not None:
@@ -144,7 +144,7 @@ class AntigravityAgent(BaseExternalAgent):
         url = f"{self.base_url}/files/environment-{env_id}:download?alt=media"
         headers = {"x-goog-api-key": self._resolved_api_key()}
         written = 0
-        with httpx.Client(timeout=self.timeout, follow_redirects=True) as client:
+        with httpx2.Client(timeout=self.timeout, follow_redirects=True) as client:
             with client.stream("GET", url, headers=headers) as response:
                 if response.status_code >= 400:
                     body = response.read().decode("utf-8", errors="replace")
@@ -373,7 +373,7 @@ class AntigravityAgent(BaseExternalAgent):
 
     async def _arun_adapter(self, input: Any, *, history: Optional[List[Dict[str, Any]]] = None, **kwargs: Any) -> str:
         """Non-streaming POST /interactions, return the final text."""
-        import httpx
+        import httpx2
 
         session = kwargs.get("session")
         session_id = kwargs.get("session_id")
@@ -384,7 +384,7 @@ class AntigravityAgent(BaseExternalAgent):
             f"Antigravity request: session_id={session_id}, environment={body['environment']!r}, "
             f"previous_interaction_id={body.get('previous_interaction_id')!r}"
         )
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
+        async with httpx2.AsyncClient(timeout=self.timeout) as client:
             response = await client.post(
                 f"{self.base_url}/interactions",
                 json=body,
@@ -405,7 +405,7 @@ class AntigravityAgent(BaseExternalAgent):
         self, input: Any, *, history: Optional[List[Dict[str, Any]]] = None, **kwargs: Any
     ) -> AsyncIterator[RunOutputEvent]:
         """Streaming POST /interactions, translate SSE events to Agno events."""
-        import httpx
+        import httpx2
 
         run_id = kwargs.get("run_id", str(uuid4()))
         session = kwargs.get("session")
@@ -422,7 +422,7 @@ class AntigravityAgent(BaseExternalAgent):
             f"Antigravity stream request: session_id={session_id}, environment={body['environment']!r}, "
             f"previous_interaction_id={body.get('previous_interaction_id')!r}"
         )
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
+        async with httpx2.AsyncClient(timeout=self.timeout) as client:
             async with client.stream(
                 "POST",
                 f"{self.base_url}/interactions",

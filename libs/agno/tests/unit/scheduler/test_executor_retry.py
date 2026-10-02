@@ -119,7 +119,7 @@ class TestReleaseAlwaysCalled:
         mock_resp.status_code = 200
         mock_resp.text = "OK"
 
-        with patch("agno.scheduler.executor.httpx") as mock_httpx:
+        with patch("agno.scheduler.executor.httpx2") as mock_httpx:
             mock_client = AsyncMock()
             mock_client.request = AsyncMock(return_value=mock_resp)
             mock_client.__aenter__ = AsyncMock(return_value=mock_client)
@@ -151,7 +151,7 @@ class TestReleaseAlwaysCalled:
         mock_resp.status_code = 200
         mock_resp.text = "OK"
 
-        with patch("agno.scheduler.executor.httpx") as mock_httpx:
+        with patch("agno.scheduler.executor.httpx2") as mock_httpx:
             mock_client = AsyncMock()
             mock_client.request = AsyncMock(return_value=mock_resp)
             mock_client.__aenter__ = AsyncMock(return_value=mock_client)
@@ -184,7 +184,7 @@ class TestComputeNextRunFailure:
         mock_resp.status_code = 200
         mock_resp.text = "OK"
 
-        with patch("agno.scheduler.executor.httpx") as mock_httpx:
+        with patch("agno.scheduler.executor.httpx2") as mock_httpx:
             mock_client = AsyncMock()
             mock_client.request = AsyncMock(return_value=mock_resp)
             mock_client.__aenter__ = AsyncMock(return_value=mock_client)
@@ -224,7 +224,7 @@ class TestAsyncDbSupport:
         mock_resp.status_code = 200
         mock_resp.text = "OK"
 
-        with patch("agno.scheduler.executor.httpx") as mock_httpx:
+        with patch("agno.scheduler.executor.httpx2") as mock_httpx:
             mock_client = AsyncMock()
             mock_client.request = AsyncMock(return_value=mock_resp)
             mock_client.__aenter__ = AsyncMock(return_value=mock_client)

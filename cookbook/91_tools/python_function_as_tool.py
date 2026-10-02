@@ -7,7 +7,7 @@ Demonstrates python function as tool.
 
 import json
 
-import httpx
+import httpx2
 from agno.agent import Agent
 
 # ---------------------------------------------------------------------------
@@ -26,13 +26,13 @@ def get_top_hackernews_stories(num_stories: int = 10) -> str:
     """
 
     # Fetch top story IDs
-    response = httpx.get("https://hacker-news.firebaseio.com/v0/topstories.json")
+    response = httpx2.get("https://hacker-news.firebaseio.com/v0/topstories.json")
     story_ids = response.json()
 
     # Fetch story details
     stories = []
     for story_id in story_ids[:num_stories]:
-        story_response = httpx.get(
+        story_response = httpx2.get(
             f"https://hacker-news.firebaseio.com/v0/item/{story_id}.json"
         )
         story = story_response.json()

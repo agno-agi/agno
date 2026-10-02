@@ -6,9 +6,9 @@ from agno.tools import Toolkit
 from agno.utils.log import log_error, logger
 
 try:
-    import httpx
+    import httpx2
 except ImportError:
-    raise ImportError("`httpx` not installed. Please install using `pip install httpx`")
+    raise ImportError("`httpx2` not installed. Please install using `pip install httpx2`")
 
 
 class PerplexitySearch(Toolkit):
@@ -87,7 +87,7 @@ class PerplexitySearch(Toolkit):
             body["search_language_filter"] = self.search_language_filter
 
         try:
-            response = httpx.post(
+            response = httpx2.post(
                 f"{self.base_url}/search",
                 headers=headers,
                 json=body,
@@ -146,7 +146,7 @@ class PerplexitySearch(Toolkit):
             body["search_language_filter"] = self.search_language_filter
 
         try:
-            async with httpx.AsyncClient() as client:
+            async with httpx2.AsyncClient() as client:
                 response = await client.post(
                     f"{self.base_url}/search",
                     headers=headers,

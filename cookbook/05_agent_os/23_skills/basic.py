@@ -16,7 +16,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-import httpx
+import httpx2
 from agno.agent import Agent
 from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS
@@ -72,7 +72,7 @@ def require_tool(run: dict[str, Any], tool_name: str) -> dict[str, Any]:
 
 def run_demo() -> None:
     """Execute the local skill through a model-backed AgentOS run."""
-    with httpx.Client(base_url=BASE_URL, timeout=180.0) as client:
+    with httpx2.Client(base_url=BASE_URL, timeout=180.0) as client:
         health_response = client.get("/health")
         health_response.raise_for_status()
 

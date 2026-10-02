@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-import httpx
+import httpx2
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.anthropic import Claude
@@ -149,7 +149,7 @@ def run_demo() -> None:
     """Resolve all three pause types through the AgentOS continuation endpoint."""
     component_id = f"os-research-buddy-{uuid4().hex[:8]}"
     session_id = f"studio-hitl-{component_id}"
-    with httpx.Client(base_url=BASE_URL, timeout=180.0) as client:
+    with httpx2.Client(base_url=BASE_URL, timeout=180.0) as client:
         response = client.post(
             f"/agents/{AGENT_ID}/runs",
             data={

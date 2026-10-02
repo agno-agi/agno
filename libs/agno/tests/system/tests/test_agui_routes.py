@@ -9,7 +9,7 @@ import json
 import uuid
 from typing import Any, Dict, List, Tuple
 
-import httpx
+import httpx2
 import pytest
 
 from .test_utils import generate_jwt_token
@@ -88,9 +88,9 @@ def test_user_id() -> str:
 
 
 @pytest.fixture(scope="module")
-def client(gateway_url: str, test_user_id: str) -> httpx.Client:
+def client(gateway_url: str, test_user_id: str) -> httpx2.Client:
     """Create an HTTP client for the gateway server with JWT authentication."""
-    return httpx.Client(
+    return httpx2.Client(
         base_url=gateway_url,
         timeout=REQUEST_TIMEOUT,
         headers={"Authorization": f"Bearer {generate_jwt_token(audience='gateway-os', user_id=test_user_id)}"},
@@ -105,14 +105,14 @@ def client(gateway_url: str, test_user_id: str) -> httpx.Client:
 class TestAGUILocalAgent:
     """Test AG-UI interface with local agent."""
 
-    def test_agui_status_endpoint(self, client: httpx.Client):
+    def test_agui_status_endpoint(self, client: httpx2.Client):
         """Test the AG-UI status endpoint."""
         response = client.get("/agui/local/status")
         assert response.status_code == 200
         data = response.json()
         assert data["status"] == "available"
 
-    def test_agui_run_local_agent_streaming(self, client: httpx.Client, test_thread_id: str, test_user_id: str):
+    def test_agui_run_local_agent_streaming(self, client: httpx2.Client, test_thread_id: str, test_user_id: str):
         """Test AG-UI streaming run with local agent."""
         response = client.post(
             "/agui/local/agui",
@@ -137,7 +137,7 @@ class TestAGUILocalAgent:
         is_valid, error_msg = validate_agui_stream_events(events)
         assert is_valid, f"Stream validation failed: {error_msg}"
 
-    def test_agui_run_local_agent_with_context(self, client: httpx.Client, test_user_id: str):
+    def test_agui_run_local_agent_with_context(self, client: httpx2.Client, test_user_id: str):
         """Test AG-UI run preserves thread context."""
         thread_id = str(uuid.uuid4())
 
@@ -184,14 +184,14 @@ class TestAGUILocalAgent:
 class TestAGUIRemoteAgent:
     """Test AG-UI interface with remote agent."""
 
-    def test_agui_status_endpoint_remote(self, client: httpx.Client):
+    def test_agui_status_endpoint_remote(self, client: httpx2.Client):
         """Test the AG-UI status endpoint for remote agent interface."""
         response = client.get("/agui/remote/status")
         assert response.status_code == 200
         data = response.json()
         assert data["status"] == "available"
 
-    def test_agui_run_remote_agent_streaming(self, client: httpx.Client, test_user_id: str):
+    def test_agui_run_remote_agent_streaming(self, client: httpx2.Client, test_user_id: str):
         """Test AG-UI streaming run with remote agent."""
         thread_id = str(uuid.uuid4())
 
@@ -227,14 +227,14 @@ class TestAGUIRemoteAgent:
 class TestAGUITeam:
     """Test AG-UI interface with teams (local and remote)."""
 
-    def test_agui_status_endpoint_team(self, client: httpx.Client):
+    def test_agui_status_endpoint_team(self, client: httpx2.Client):
         """Test the AG-UI status endpoint for team interface."""
         response = client.get("/agui/team/status")
         assert response.status_code == 200
         data = response.json()
         assert data["status"] == "available"
 
-    def test_agui_run_remote_team_streaming(self, client: httpx.Client, test_user_id: str):
+    def test_agui_run_remote_team_streaming(self, client: httpx2.Client, test_user_id: str):
         """Test AG-UI streaming run with remote team."""
         thread_id = str(uuid.uuid4())
 

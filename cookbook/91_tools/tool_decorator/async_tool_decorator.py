@@ -9,7 +9,7 @@ import asyncio
 import json
 from typing import AsyncIterator
 
-import httpx
+import httpx2
 from agno.agent import Agent
 from agno.tools import tool
 
@@ -22,7 +22,7 @@ from agno.tools import tool
 async def get_top_hackernews_stories(agent: Agent) -> AsyncIterator[str]:
     num_stories = agent.dependencies.get("num_stories", 5) if agent.dependencies else 5
 
-    async with httpx.AsyncClient() as client:
+    async with httpx2.AsyncClient() as client:
         # Fetch top story IDs
         response = await client.get(
             "https://hacker-news.firebaseio.com/v0/topstories.json"

@@ -1,6 +1,6 @@
 """Unit tests for the page-fetcher seam below the URL readers.
 
-HttpxPageFetcher is exercised through httpx.MockTransport (no network); the
+HttpxPageFetcher is exercised through httpx2.MockTransport (no network); the
 ParallelPageFetcher retry/breaker/fallback plumbing is exercised with stub
 backends and fallbacks so every provider behavior is scripted.
 """
@@ -14,7 +14,7 @@ import sys
 from typing import List, Optional
 from unittest.mock import patch
 
-import httpx
+import httpx2
 import pytest
 
 from agno.knowledge.reader.page_fetcher import (
@@ -42,31 +42,31 @@ PLAIN_TEXT = "just plain text, no markup"
 RSS_BODY = '<?xml version="1.0"?><rss><channel><title>Feed</title></channel></rss>'
 
 
-def _site_handler(request: httpx.Request) -> httpx.Response:
+def _site_handler(request: httpx2.Request) -> httpx2.Response:
     path = request.url.path
     if path == "/page":
-        return httpx.Response(200, content=HTML_PAGE.encode(), headers={"content-type": "text/html; charset=utf-8"})
+        return httpx2.Response(200, content=HTML_PAGE.encode(), headers={"content-type": "text/html; charset=utf-8"})
     if path == "/plain":
-        return httpx.Response(200, content=PLAIN_TEXT.encode(), headers={"content-type": "text/plain"})
+        return httpx2.Response(200, content=PLAIN_TEXT.encode(), headers={"content-type": "text/plain"})
     if path == "/rss":
-        return httpx.Response(200, content=RSS_BODY.encode(), headers={"content-type": "application/rss+xml"})
+        return httpx2.Response(200, content=RSS_BODY.encode(), headers={"content-type": "application/rss+xml"})
     if path == "/missing":
-        return httpx.Response(404, content=b"gone")
+        return httpx2.Response(404, content=b"gone")
     if path == "/redirect":
-        return httpx.Response(302, headers={"location": "https://evil.com/page"})
-    return httpx.Response(200, content=b"<html><body>other</body></html>", headers={"content-type": "text/html"})
+        return httpx2.Response(302, headers={"location": "https://evil.com/page"})
+    return httpx2.Response(200, content=b"<html><body>other</body></html>", headers={"content-type": "text/html"})
 
 
 def _install_transport(monkeypatch, handler):
-    """Route the fetcher's own httpx clients through a MockTransport; returns the request log."""
-    requests: List[httpx.Request] = []
+    """Route the fetcher's own httpx2 clients through a MockTransport; returns the request log."""
+    requests: List[httpx2.Request] = []
 
-    def tracking_handler(request: httpx.Request) -> httpx.Response:
+    def tracking_handler(request: httpx2.Request) -> httpx2.Response:
         requests.append(request)
         return handler(request)
 
-    transport = httpx.MockTransport(tracking_handler)
-    real_client, real_async_client = httpx.Client, httpx.AsyncClient
+    transport = httpx2.MockTransport(tracking_handler)
+    real_client, real_async_client = httpx2.Client, httpx2.AsyncClient
 
     def client(**kwargs):
         kwargs["transport"] = transport
@@ -76,8 +76,8 @@ def _install_transport(monkeypatch, handler):
         kwargs["transport"] = transport
         return real_async_client(**kwargs)
 
-    monkeypatch.setattr(httpx, "Client", client)
-    monkeypatch.setattr(httpx, "AsyncClient", async_client)
+    monkeypatch.setattr(httpx2, "Client", client)
+    monkeypatch.setattr(httpx2, "AsyncClient", async_client)
     return requests
 
 
@@ -94,8 +94,8 @@ def test_html_page_extracts_main_content(monkeypatch):
     assert "Navigation links" not in page.content
     assert "Footer text" not in page.content
     assert page.title == "Test Page"
-    assert page.extractor == "httpx"
-    assert page.attempts == [{"extractor": "httpx", "outcome": "ok"}]
+    assert page.extractor == "httpx2"
+    assert page.attempts == [{"extractor": "httpx2", "outcome": "ok"}]
 
 
 def test_plain_text_passes_through_raw(monkeypatch):
@@ -105,7 +105,7 @@ def test_plain_text_passes_through_raw(monkeypatch):
     assert page.ok
     assert page.content == PLAIN_TEXT
     assert page.title is None
-    assert page.attempts == [{"extractor": "httpx", "outcome": "ok"}]
+    assert page.attempts == [{"extractor": "httpx2", "outcome": "ok"}]
 
 
 def test_non_html_content_type_is_an_error(monkeypatch):
@@ -116,7 +116,7 @@ def test_non_html_content_type_is_an_error(monkeypatch):
     assert page.content is None
     assert page.error.startswith("not-html")
     assert "application/rss+xml" in page.error
-    assert page.attempts == [{"extractor": "httpx", "outcome": page.error}]
+    assert page.attempts == [{"extractor": "httpx2", "outcome": page.error}]
 
 
 def test_http_404_is_an_error(monkeypatch):
@@ -125,7 +125,7 @@ def test_http_404_is_an_error(monkeypatch):
 
     assert not page.ok
     assert page.error == "HTTP 404"
-    assert page.attempts == [{"extractor": "httpx", "outcome": "HTTP 404"}]
+    assert page.attempts == [{"extractor": "httpx2", "outcome": "HTTP 404"}]
 
 
 def test_off_host_url_refused_without_a_request(monkeypatch):
@@ -148,7 +148,7 @@ def test_redirect_to_off_host_is_guarded(monkeypatch):
 
     assert not page.ok
     assert "Host not in allowed_hosts: evil.com" in page.error
-    assert page.attempts == [{"extractor": "httpx", "outcome": page.error}]
+    assert page.attempts == [{"extractor": "httpx2", "outcome": page.error}]
     # The redirect guard fired before the request to evil.com was sent.
     assert [request.url.host for request in requests] == ["example.com"]
 
@@ -193,7 +193,7 @@ async def test_sync_and_async_return_same_shapes(monkeypatch):
         assert sync_page.content == async_page.content
         assert sync_page.error == async_page.error
         assert sync_page.title == async_page.title
-        assert sync_page.extractor == async_page.extractor == "httpx"
+        assert sync_page.extractor == async_page.extractor == "httpx2"
 
 
 # --- ParallelPageFetcher stubs ---
@@ -517,17 +517,17 @@ def _build_pdf(text: str) -> bytes:
     return out.getvalue()
 
 
-def _pdf_site_handler(request: httpx.Request) -> httpx.Response:
+def _pdf_site_handler(request: httpx2.Request) -> httpx2.Response:
     path = request.url.path
     if path == "/doc.pdf":
-        return httpx.Response(200, content=_build_pdf(PDF_TEXT), headers={"content-type": "application/pdf"})
+        return httpx2.Response(200, content=_build_pdf(PDF_TEXT), headers={"content-type": "application/pdf"})
     if path == "/blob":
         # A real PDF body served without a PDF content type: only the %PDF- magic identifies it.
-        return httpx.Response(200, content=_build_pdf(PDF_TEXT), headers={"content-type": "application/octet-stream"})
+        return httpx2.Response(200, content=_build_pdf(PDF_TEXT), headers={"content-type": "application/octet-stream"})
     if path == "/corrupt.pdf":
         # No %PDF- magic either: only the content type routes this to the PDF branch.
-        return httpx.Response(200, content=b"not really a pdf at all", headers={"content-type": "application/pdf"})
-    return httpx.Response(404, content=b"gone")
+        return httpx2.Response(200, content=b"not really a pdf at all", headers={"content-type": "application/pdf"})
+    return httpx2.Response(404, content=b"gone")
 
 
 def test_pdf_response_extracts_text(monkeypatch):
@@ -538,8 +538,8 @@ def test_pdf_response_extracts_text(monkeypatch):
     assert page.error is None
     assert page.content == PDF_TEXT
     assert page.title is None
-    assert page.extractor == "httpx"
-    assert page.attempts == [{"extractor": "httpx", "outcome": "ok"}]
+    assert page.extractor == "httpx2"
+    assert page.attempts == [{"extractor": "httpx2", "outcome": "ok"}]
 
 
 @pytest.mark.asyncio
@@ -549,7 +549,7 @@ async def test_async_pdf_response_extracts_text(monkeypatch):
 
     assert page.ok
     assert page.content == PDF_TEXT
-    assert page.attempts == [{"extractor": "httpx", "outcome": "ok"}]
+    assert page.attempts == [{"extractor": "httpx2", "outcome": "ok"}]
 
 
 def test_pdf_magic_under_octet_stream_routes_to_pdf_branch(monkeypatch):
@@ -570,7 +570,7 @@ def test_corrupt_pdf_body_is_an_error(monkeypatch):
     assert not page.ok
     assert page.content is None
     assert page.error == "empty"
-    assert page.attempts == [{"extractor": "httpx", "outcome": "empty"}]
+    assert page.attempts == [{"extractor": "httpx2", "outcome": "empty"}]
 
 
 def test_pdf_reader_exception_is_a_pdf_error(monkeypatch):
@@ -588,7 +588,7 @@ def test_pdf_reader_exception_is_a_pdf_error(monkeypatch):
     assert not page.ok
     assert page.content is None
     assert page.error == "pdf: RuntimeError: boom"
-    assert page.attempts == [{"extractor": "httpx", "outcome": "pdf: RuntimeError: boom"}]
+    assert page.attempts == [{"extractor": "httpx2", "outcome": "pdf: RuntimeError: boom"}]
 
 
 def test_missing_pypdf_names_the_extra(monkeypatch):
@@ -600,4 +600,4 @@ def test_missing_pypdf_names_the_extra(monkeypatch):
 
     assert not page.ok
     assert page.error == "pdf support requires the `agno[pdf]` extra (pypdf)"
-    assert page.attempts == [{"extractor": "httpx", "outcome": page.error}]
+    assert page.attempts == [{"extractor": "httpx2", "outcome": page.error}]

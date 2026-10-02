@@ -11,7 +11,7 @@ Workflow becomes a served resource.
 | `basic.py` | Serve a canonical two-step, database-backed Workflow. |
 | `with_workflow_agent.py` | Chat with a WorkflowAgent over HTTP and reuse workflow history. |
 | `with_input_schema.py` | Expose a Pydantic `input_schema` in workflow detail for structured clients. |
-| `run_over_api.py` | Create a run, consume SSE events, and list persisted runs with raw `httpx`. |
+| `run_over_api.py` | Create a run, consume SSE events, and list persisted runs with raw `httpx2`. |
 | `ws_stream.py` | Stream workflow events through the genuine `/workflows/ws` WebSocket. |
 
 ## Prerequisites

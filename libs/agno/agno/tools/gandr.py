@@ -2,7 +2,7 @@ from os import getenv
 from typing import Any, Dict, List, Literal, Optional, Union, get_args
 from uuid import uuid4
 
-import httpx
+import httpx2
 
 from agno.agent import Agent
 from agno.media import Audio
@@ -131,7 +131,7 @@ class GandrTools(Toolkit):
             log_info(f"Using voice: {effective_voice} for text_to_speech.")
             log_info(f"Using model: {self.model_id} and response_format: {effective_format} for text_to_speech.")
 
-            response = httpx.post(
+            response = httpx2.post(
                 f"{self.base_url}/v1/audio/speech",
                 headers={"Authorization": f"Bearer {self.api_key}"},
                 json={

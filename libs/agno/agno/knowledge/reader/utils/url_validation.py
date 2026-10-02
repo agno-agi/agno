@@ -39,13 +39,13 @@ def is_host_allowed(url: str, allowed_hosts: Optional[List[str]]) -> bool:
 
 
 def make_redirect_guard(allowed_hosts: Optional[List[str]]) -> Optional[Callable[[Any], None]]:
-    """Build a *sync* httpx request event-hook that refuses redirects to disallowed hosts.
+    """Build a *sync* httpx2 request event-hook that refuses redirects to disallowed hosts.
 
-    Use this with ``httpx.Client``. For ``httpx.AsyncClient`` use
-    :func:`make_async_redirect_guard` — httpx enforces that AsyncClient hooks be
+    Use this with ``httpx2.Client``. For ``httpx2.AsyncClient`` use
+    :func:`make_async_redirect_guard` — httpx2 enforces that AsyncClient hooks be
     coroutines, so the two cannot share a single implementation.
 
-    httpx invokes the ``request`` event hook for every outbound request including
+    httpx2 invokes the ``request`` event hook for every outbound request including
     those issued by 3xx redirect-following. Pair this with ``follow_redirects=True``
     so legitimate same-host redirects work, while cross-host redirects to addresses
     outside the allowlist raise an error before the request is sent.
@@ -58,17 +58,17 @@ def make_redirect_guard(allowed_hosts: Optional[List[str]]) -> Optional[Callable
 
     def _guard(request: Any) -> None:
         if not is_host_allowed(str(request.url), allowed_hosts):
-            import httpx
+            import httpx2
 
-            raise httpx.RequestError(f"Host not in allowed_hosts: {request.url.host}", request=request)
+            raise httpx2.RequestError(f"Host not in allowed_hosts: {request.url.host}", request=request)
 
     return _guard
 
 
 def make_async_redirect_guard(allowed_hosts: Optional[List[str]]) -> Optional[Callable[[Any], Any]]:
-    """Async counterpart to :func:`make_redirect_guard` for use with ``httpx.AsyncClient``.
+    """Async counterpart to :func:`make_redirect_guard` for use with ``httpx2.AsyncClient``.
 
-    httpx awaits AsyncClient event hooks, so they must be ``async def`` callables —
+    httpx2 awaits AsyncClient event hooks, so they must be ``async def`` callables —
     the sync version blows up with "object NoneType can't be used in 'await' expression"
     when handed to an AsyncClient.
     """
@@ -77,8 +77,8 @@ def make_async_redirect_guard(allowed_hosts: Optional[List[str]]) -> Optional[Ca
 
     async def _guard(request: Any) -> None:
         if not is_host_allowed(str(request.url), allowed_hosts):
-            import httpx
+            import httpx2
 
-            raise httpx.RequestError(f"Host not in allowed_hosts: {request.url.host}", request=request)
+            raise httpx2.RequestError(f"Host not in allowed_hosts: {request.url.host}", request=request)
 
     return _guard

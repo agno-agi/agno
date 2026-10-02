@@ -81,7 +81,7 @@ class TestDownloadEventFilesAsync:
                 {"id": "F1", "name": "clip.mp4", "mimetype": "video/mp4", "url_private": "https://files.slack.com/F1"}
             ]
         }
-        with patch("agno.os.interfaces.slack.helpers.httpx.AsyncClient") as mock_httpx:
+        with patch("agno.os.interfaces.slack.helpers.httpx2.AsyncClient") as mock_httpx:
             mock_client = AsyncMock()
             mock_client.get = AsyncMock(return_value=mock_response)
             mock_httpx.return_value.__aenter__ = AsyncMock(return_value=mock_client)

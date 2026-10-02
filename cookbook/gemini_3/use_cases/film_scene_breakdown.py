@@ -9,7 +9,7 @@ Run:
     python cookbook/gemini_3/use_cases/film_scene_breakdown.py
 """
 
-import httpx
+import httpx2
 from agno.agent import Agent
 from agno.media import File, Video
 from agno.models.google import Gemini
@@ -137,7 +137,7 @@ if __name__ == "__main__":
     script_url = "https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
 
     print("Downloading video sample...")
-    video_response = httpx.get(video_url)
+    video_response = httpx2.get(video_url)
 
     print("Running production team analysis...\n")
     production_team.print_response(

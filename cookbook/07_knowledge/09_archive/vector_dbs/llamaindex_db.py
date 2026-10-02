@@ -10,7 +10,7 @@ import asyncio
 from pathlib import Path
 from shutil import rmtree
 
-import httpx
+import httpx2
 from agno.agent import Agent
 from agno.knowledge.knowledge import Knowledge
 from agno.models.openai import OpenAIChat
@@ -35,7 +35,7 @@ def prepare_data() -> Path:
     data_dir.mkdir(parents=True, exist_ok=True)
 
     file_path = data_dir.joinpath("paul_graham_essay.txt")
-    response = httpx.get(source_url)
+    response = httpx2.get(source_url)
     if response.status_code == 200:
         with open(file_path, "wb") as file:
             file.write(response.content)

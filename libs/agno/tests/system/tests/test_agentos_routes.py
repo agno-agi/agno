@@ -12,7 +12,7 @@ Run with: pytest test_agentos_routes.py -v --tb=short
 import os
 import uuid
 
-import httpx
+import httpx2
 import pytest
 
 from .test_utils import REQUEST_TIMEOUT, generate_jwt_token
@@ -25,9 +25,9 @@ def test_user_id() -> str:
 
 
 @pytest.fixture(scope="module")
-def client(gateway_url: str, test_user_id: str) -> httpx.Client:
+def client(gateway_url: str, test_user_id: str) -> httpx2.Client:
     """Create an HTTP client for the gateway server with authentication."""
-    return httpx.Client(
+    return httpx2.Client(
         base_url=gateway_url,
         timeout=REQUEST_TIMEOUT,
         headers={"Authorization": f"Bearer {generate_jwt_token(audience='gateway-os', user_id=test_user_id)}"},
@@ -39,7 +39,7 @@ def client(gateway_url: str, test_user_id: str) -> httpx.Client:
 # =============================================================================
 
 
-def test_remote_agent_assistant_accessible(client: httpx.Client):
+def test_remote_agent_assistant_accessible(client: httpx2.Client):
     """Test remote assistant-agent is accessible through gateway."""
     response = client.get("/agents/assistant-agent")
     assert response.status_code == 200
@@ -49,7 +49,7 @@ def test_remote_agent_assistant_accessible(client: httpx.Client):
     assert data["name"] == "Assistant"
 
 
-def test_remote_agent_researcher_accessible(client: httpx.Client):
+def test_remote_agent_researcher_accessible(client: httpx2.Client):
     """Test remote researcher-agent is accessible through gateway."""
     response = client.get("/agents/researcher-agent")
     assert response.status_code == 200
@@ -59,7 +59,7 @@ def test_remote_agent_researcher_accessible(client: httpx.Client):
     assert data["name"] == "Researcher"
 
 
-def test_remote_team_accessible(client: httpx.Client):
+def test_remote_team_accessible(client: httpx2.Client):
     """Test remote research-team is accessible through gateway."""
     response = client.get("/teams/research-team")
     assert response.status_code == 200
@@ -69,7 +69,7 @@ def test_remote_team_accessible(client: httpx.Client):
     assert "members" in data
 
 
-def test_remote_workflow_accessible(client: httpx.Client):
+def test_remote_workflow_accessible(client: httpx2.Client):
     """Test remote qa-workflow is accessible through gateway."""
     response = client.get("/workflows/qa-workflow")
     assert response.status_code == 200
@@ -84,7 +84,7 @@ def test_remote_workflow_accessible(client: httpx.Client):
 # =============================================================================
 
 
-def test_agent_not_found_error(client: httpx.Client):
+def test_agent_not_found_error(client: httpx2.Client):
     """Test 404 error for non-existent agent."""
     response = client.get("/agents/invalid-agent-id-12345")
     assert response.status_code == 404
@@ -92,19 +92,19 @@ def test_agent_not_found_error(client: httpx.Client):
     assert "detail" in data
 
 
-def test_team_not_found_error(client: httpx.Client):
+def test_team_not_found_error(client: httpx2.Client):
     """Test 404 error for non-existent team."""
     response = client.get("/teams/invalid-team-id")
     assert response.status_code == 404
 
 
-def test_workflow_not_found_error(client: httpx.Client):
+def test_workflow_not_found_error(client: httpx2.Client):
     """Test 404 error for non-existent workflow."""
     response = client.get("/workflows/invalid-workflow-id")
     assert response.status_code == 404
 
 
-def test_invalid_session_type_error(client: httpx.Client):
+def test_invalid_session_type_error(client: httpx2.Client):
     """Test 422 error for invalid session type."""
     response = client.get("/sessions?type=invalid_type")
     assert response.status_code == 422
@@ -112,7 +112,7 @@ def test_invalid_session_type_error(client: httpx.Client):
     assert "detail" in data
 
 
-def test_missing_required_field_error(client: httpx.Client):
+def test_missing_required_field_error(client: httpx2.Client):
     """Test 422 error for missing required field in agent run."""
     response = client.post(
         "/agents/gateway-agent/runs",
@@ -123,7 +123,7 @@ def test_missing_required_field_error(client: httpx.Client):
     assert response.status_code == 422
 
 
-def test_invalid_json_body_error(client: httpx.Client):
+def test_invalid_json_body_error(client: httpx2.Client):
     """Test error handling for invalid JSON in request body."""
     response = client.post(
         "/sessions?type=agent",
@@ -133,14 +133,14 @@ def test_invalid_json_body_error(client: httpx.Client):
     assert response.status_code == 422
 
 
-def test_session_not_found_error(client: httpx.Client):
+def test_session_not_found_error(client: httpx2.Client):
     """Test 404 error for non-existent session."""
     fake_session_id = str(uuid.uuid4())
     response = client.get(f"/sessions/{fake_session_id}?type=agent&db_id=gateway-db")
     assert response.status_code == 404
 
 
-def test_memory_not_found_error(client: httpx.Client):
+def test_memory_not_found_error(client: httpx2.Client):
     """Test 404 error for non-existent memory."""
     fake_memory_id = str(uuid.uuid4())
     response = client.get(f"/memories/{fake_memory_id}?user_id=test-user&db_id=gateway-db")
@@ -156,11 +156,11 @@ class TestAuthorizationErrors:
     """Test authorization error scenarios."""
 
     @pytest.fixture(scope="class")
-    def unauthenticated_client(self, gateway_url: str) -> httpx.Client:
+    def unauthenticated_client(self, gateway_url: str) -> httpx2.Client:
         """Create an HTTP client without authentication."""
-        return httpx.Client(base_url=gateway_url, timeout=REQUEST_TIMEOUT)
+        return httpx2.Client(base_url=gateway_url, timeout=REQUEST_TIMEOUT)
 
-    def test_unauthenticated_request_returns_401(self, unauthenticated_client: httpx.Client):
+    def test_unauthenticated_request_returns_401(self, unauthenticated_client: httpx2.Client):
         """Test that unauthenticated requests return 401."""
         # Only test if authorization is enabled
         if os.getenv("ENABLE_AUTHORIZATION", "true").lower() != "true":
@@ -176,7 +176,7 @@ class TestAuthorizationErrors:
         if os.getenv("ENABLE_AUTHORIZATION", "true").lower() != "true":
             pytest.skip("Authorization is disabled")
 
-        invalid_client = httpx.Client(
+        invalid_client = httpx2.Client(
             base_url=gateway_url,
             timeout=REQUEST_TIMEOUT,
             headers={"Authorization": "Bearer invalid-token-here"},
@@ -193,7 +193,7 @@ class TestAuthorizationErrors:
 
         # Generate an already expired token
         expired_token = generate_jwt_token(audience="gateway-os", expires_in_hours=-1)
-        expired_client = httpx.Client(
+        expired_client = httpx2.Client(
             base_url=gateway_url,
             timeout=REQUEST_TIMEOUT,
             headers={"Authorization": f"Bearer {expired_token}"},
@@ -203,14 +203,14 @@ class TestAuthorizationErrors:
         data = response.json()
         assert "detail" in data
 
-    def test_health_endpoint_no_auth_required(self, unauthenticated_client: httpx.Client):
+    def test_health_endpoint_no_auth_required(self, unauthenticated_client: httpx2.Client):
         """Test that health endpoint does not require authentication."""
         response = unauthenticated_client.get("/health")
         assert response.status_code == 200
         data = response.json()
         assert data["status"] == "ok"
 
-    def test_docs_endpoint_no_auth_required(self, unauthenticated_client: httpx.Client):
+    def test_docs_endpoint_no_auth_required(self, unauthenticated_client: httpx2.Client):
         """Test that docs endpoint does not require authentication."""
         response = unauthenticated_client.get("/docs")
         # Should be 200 if docs are enabled, otherwise 404

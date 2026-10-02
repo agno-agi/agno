@@ -19,7 +19,7 @@ Requirements:
 
 import os
 
-import httpx
+import httpx2
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.media import Image
@@ -83,7 +83,7 @@ workflow = Workflow(
 if __name__ == "__main__":
     # Download the image so the workflow sends bytes. URL-only media is skipped during
     # offload unless the backend is built with persist_remote_urls=True.
-    image_bytes = httpx.get(IMAGE_URL, follow_redirects=True).content
+    image_bytes = httpx2.get(IMAGE_URL, follow_redirects=True).content
 
     session_id = "workflow-media-session"
     response = workflow.run(

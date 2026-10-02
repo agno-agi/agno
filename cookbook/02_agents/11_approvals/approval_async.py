@@ -10,7 +10,7 @@ import json
 import os
 import time
 
-import httpx
+import httpx2
 from agno.agent import Agent
 from agno.approval import approval
 from agno.db.sqlite import SqliteDb
@@ -31,11 +31,11 @@ def get_top_hackernews_stories(num_stories: int) -> str:
     Returns:
         str: JSON string of story details.
     """
-    response = httpx.get("https://hacker-news.firebaseio.com/v0/topstories.json")
+    response = httpx2.get("https://hacker-news.firebaseio.com/v0/topstories.json")
     story_ids = response.json()
     stories = []
     for story_id in story_ids[:num_stories]:
-        story = httpx.get(
+        story = httpx2.get(
             f"https://hacker-news.firebaseio.com/v0/item/{story_id}.json"
         ).json()
         story.pop("text", None)

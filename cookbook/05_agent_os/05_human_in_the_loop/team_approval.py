@@ -17,7 +17,7 @@ import argparse
 import json
 from typing import Any
 
-import httpx
+import httpx2
 from agno.agent import Agent
 from agno.approval import approval
 from agno.db.sqlite import SqliteDb
@@ -119,7 +119,7 @@ def find_approval_id(value: Any) -> str | None:
 
 
 def run_team_case(
-    client: httpx.Client,
+    client: httpx2.Client,
     team_id: str,
     session_id: str,
     message: str,
@@ -192,7 +192,7 @@ def run_team_case(
 
 def run_demo() -> None:
     """Exercise leader-owned and member-owned persistent approvals."""
-    with httpx.Client(base_url=BASE_URL, timeout=120.0) as client:
+    with httpx2.Client(base_url=BASE_URL, timeout=120.0) as client:
         run_team_case(
             client,
             team_id=LEADER_TEAM_ID,

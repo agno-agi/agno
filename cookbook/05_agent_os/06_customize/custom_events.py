@@ -17,7 +17,7 @@ import json
 from dataclasses import dataclass
 from typing import Optional
 
-import httpx
+import httpx2
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
@@ -80,7 +80,7 @@ app = agent_os.get_app()
 def run_demo() -> None:
     """Stream one run and verify the custom event crossed the OS boundary."""
     custom_event: dict | None = None
-    with httpx.Client(base_url=BASE_URL, timeout=120.0) as client:
+    with httpx2.Client(base_url=BASE_URL, timeout=120.0) as client:
         with client.stream(
             "POST",
             f"/agents/{AGENT_ID}/runs",

@@ -17,9 +17,9 @@ from agno.db.schemas.scheduler import (
 from agno.utils.log import log_error, log_info, log_warning
 
 try:
-    import httpx
+    import httpx2
 except ImportError:
-    httpx = None  # type: ignore[assignment]
+    httpx2 = None  # type: ignore[assignment]
 
 # Terminal run statuses (RunStatus enum values from agno.run.base)
 _TERMINAL_STATUSES = {"COMPLETED", "CANCELLED", "ERROR", "PAUSED"}
@@ -54,22 +54,22 @@ class ScheduleExecutor:
         timeout: int = 3600,
         poll_interval: int = _DEFAULT_POLL_INTERVAL,
     ) -> None:
-        if httpx is None:
-            raise ImportError("`httpx` not installed. Please install it using `pip install httpx`")
+        if httpx2 is None:
+            raise ImportError("`httpx2` not installed. Please install it using `pip install httpx2`")
         self.base_url = base_url.rstrip("/")
         self.internal_service_token = internal_service_token
         self.timeout = timeout
         self.poll_interval = poll_interval
-        self._client: Optional[httpx.AsyncClient] = None
+        self._client: Optional[httpx2.AsyncClient] = None
 
-    async def _get_client(self) -> httpx.AsyncClient:
-        """Get or create the shared httpx.AsyncClient."""
+    async def _get_client(self) -> httpx2.AsyncClient:
+        """Get or create the shared httpx2.AsyncClient."""
         if self._client is None or self._client.is_closed:
-            self._client = httpx.AsyncClient(timeout=httpx.Timeout(self.timeout))
+            self._client = httpx2.AsyncClient(timeout=httpx2.Timeout(self.timeout))
         return self._client
 
     async def close(self) -> None:
-        """Close the shared httpx client."""
+        """Close the shared httpx2 client."""
         if self._client is not None and not self._client.is_closed:
             await self._client.aclose()
             self._client = None

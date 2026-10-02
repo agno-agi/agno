@@ -6,9 +6,9 @@ from os import getenv
 from typing import Any, List, Optional
 
 try:
-    import httpx
+    import httpx2
 except ImportError:
-    raise ImportError("`httpx` not installed.")
+    raise ImportError("`httpx2` not installed.")
 
 from agno.tools import Toolkit
 
@@ -47,7 +47,7 @@ class BrandfetchTools(Toolkit):
         self.api_key = api_key or getenv("BRANDFETCH_API_KEY")
         self.client_id = client_id or getenv("BRANDFETCH_CLIENT_ID")
         self.base_url = base_url
-        self.timeout = httpx.Timeout(timeout)
+        self.timeout = httpx2.Timeout(timeout)
         self.search_url = f"{self.base_url}/search"
         self.brand_url = f"{self.base_url}/brands"
 
@@ -86,11 +86,11 @@ class BrandfetchTools(Toolkit):
         headers = {"Authorization": f"Bearer {self.api_key}"}
 
         try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
+            async with httpx2.AsyncClient(timeout=self.timeout) as client:
                 response = await client.get(url, headers=headers)
                 response.raise_for_status()
                 return response.json()
-        except httpx.HTTPStatusError as e:
+        except httpx2.HTTPStatusError as e:
             if e.response.status_code == 404:
                 return {"error": f"Brand not found for identifier: {identifier}"}
             elif e.response.status_code == 401:
@@ -99,7 +99,7 @@ class BrandfetchTools(Toolkit):
                 return {"error": "Rate limit exceeded"}
             else:
                 return {"error": f"API error: {e.response.status_code}"}
-        except httpx.RequestError as e:
+        except httpx2.RequestError as e:
             return {"error": f"Request failed: {str(e)}"}
 
     def search_by_identifier(self, identifier: str) -> dict[str, Any]:
@@ -122,11 +122,11 @@ class BrandfetchTools(Toolkit):
         headers = {"Authorization": f"Bearer {self.api_key}"}
 
         try:
-            with httpx.Client(timeout=self.timeout) as client:
+            with httpx2.Client(timeout=self.timeout) as client:
                 response = client.get(url, headers=headers)
                 response.raise_for_status()
                 return response.json()
-        except httpx.HTTPStatusError as e:
+        except httpx2.HTTPStatusError as e:
             if e.response.status_code == 404:
                 return {"error": f"Brand not found for identifier: {identifier}"}
             elif e.response.status_code == 401:
@@ -135,7 +135,7 @@ class BrandfetchTools(Toolkit):
                 return {"error": "Rate limit exceeded"}
             else:
                 return {"error": f"API error: {e.response.status_code}"}
-        except httpx.RequestError as e:
+        except httpx2.RequestError as e:
             return {"error": f"Request failed: {str(e)}"}
 
     async def asearch_by_brand(self, name: str) -> dict[str, Any]:
@@ -158,11 +158,11 @@ class BrandfetchTools(Toolkit):
         params = {"c": self.client_id}
 
         try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
+            async with httpx2.AsyncClient(timeout=self.timeout) as client:
                 response = await client.get(url, params=params)
                 response.raise_for_status()
                 return response.json()
-        except httpx.HTTPStatusError as e:
+        except httpx2.HTTPStatusError as e:
             if e.response.status_code == 404:
                 return {"error": f"No brands found for name: {name}"}
             elif e.response.status_code == 401:
@@ -171,7 +171,7 @@ class BrandfetchTools(Toolkit):
                 return {"error": "Rate limit exceeded"}
             else:
                 return {"error": f"API error: {e.response.status_code}"}
-        except httpx.RequestError as e:
+        except httpx2.RequestError as e:
             return {"error": f"Request failed: {str(e)}"}
 
     def search_by_brand(self, name: str) -> dict[str, Any]:
@@ -194,11 +194,11 @@ class BrandfetchTools(Toolkit):
         params = {"c": self.client_id}
 
         try:
-            with httpx.Client(timeout=self.timeout) as client:
+            with httpx2.Client(timeout=self.timeout) as client:
                 response = client.get(url, params=params)
                 response.raise_for_status()
                 return response.json()
-        except httpx.HTTPStatusError as e:
+        except httpx2.HTTPStatusError as e:
             if e.response.status_code == 404:
                 return {"error": f"No brands found for name: {name}"}
             elif e.response.status_code == 401:
@@ -207,5 +207,5 @@ class BrandfetchTools(Toolkit):
                 return {"error": "Rate limit exceeded"}
             else:
                 return {"error": f"API error: {e.response.status_code}"}
-        except httpx.RequestError as e:
+        except httpx2.RequestError as e:
             return {"error": f"Request failed: {str(e)}"}

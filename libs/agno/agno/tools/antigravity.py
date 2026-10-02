@@ -3,7 +3,7 @@ from os import getenv
 from textwrap import dedent
 from typing import Any, Dict, List, Optional, Union
 
-import httpx
+import httpx2
 
 from agno.agent import Agent
 from agno.exceptions import PathSecurityError
@@ -111,27 +111,27 @@ class AntigravityTools(Toolkit):
         return {"Content-Type": "application/json", "x-goog-api-key": self.api_key or ""}
 
     def _post(self, path: str, body: Dict[str, Any]) -> Dict[str, Any]:
-        with httpx.Client(timeout=self.timeout) as client:
+        with httpx2.Client(timeout=self.timeout) as client:
             response = client.post(f"{self.base_url}{path}", json=body, headers=self._headers())
             if response.status_code >= 400:
                 raise RuntimeError(f"Antigravity {path} returned {response.status_code}: {response.text}")
             return response.json()
 
     def _get(self, path: str) -> Dict[str, Any]:
-        with httpx.Client(timeout=self.timeout) as client:
+        with httpx2.Client(timeout=self.timeout) as client:
             response = client.get(f"{self.base_url}{path}", headers=self._headers())
             if response.status_code >= 400:
                 raise RuntimeError(f"Antigravity {path} returned {response.status_code}: {response.text}")
             return response.json()
 
     def _delete(self, path: str) -> None:
-        with httpx.Client(timeout=self.timeout) as client:
+        with httpx2.Client(timeout=self.timeout) as client:
             response = client.delete(f"{self.base_url}{path}", headers=self._headers())
             if response.status_code >= 400:
                 raise RuntimeError(f"Antigravity {path} returned {response.status_code}: {response.text}")
 
     def _patch(self, path: str, body: Dict[str, Any]) -> Dict[str, Any]:
-        with httpx.Client(timeout=self.timeout) as client:
+        with httpx2.Client(timeout=self.timeout) as client:
             response = client.patch(f"{self.base_url}{path}", json=body, headers=self._headers())
             if response.status_code >= 400:
                 raise RuntimeError(f"Antigravity {path} returned {response.status_code}: {response.text}")
@@ -202,7 +202,7 @@ class AntigravityTools(Toolkit):
             if sources:
                 body["base_environment"] = {"type": "remote", "sources": sources}
             log_debug(f"Antigravity: registering agent {agent_id!r} from {directory}")
-            with httpx.Client(timeout=self.timeout) as client:
+            with httpx2.Client(timeout=self.timeout) as client:
                 response = client.post(f"{self.base_url}/agents", json=body, headers=self._headers())
             if response.status_code == 409:
                 log_debug(f"Antigravity: agent {agent_id!r} already exists, reusing")
@@ -525,7 +525,7 @@ class AntigravityTools(Toolkit):
                 env_id = state["antigravity_env_id"]
 
             url = f"{self.base_url}/files/environment-{env_id}:download?alt=media"
-            with httpx.Client(timeout=self.timeout, follow_redirects=True) as client:
+            with httpx2.Client(timeout=self.timeout, follow_redirects=True) as client:
                 with client.stream("GET", url, headers=self._headers()) as response:
                     if response.status_code >= 400:
                         body = response.read().decode("utf-8", errors="replace")
