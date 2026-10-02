@@ -12,6 +12,7 @@ from typing import (
     List,
     Optional,
     Sequence,
+    Tuple,
     Type,
     Union,
 )
@@ -1089,6 +1090,28 @@ def _resolve_media_storage(agent: Agent) -> Optional[Any]:
     return agent.media_storage or getattr(getattr(agent, "_team", None), "media_storage", None)
 
 
+def _split_member_history_from_task(
+    input: Union[str, List, Dict, Message, BaseModel, List[Message]],
+) -> Tuple[List[Message], Union[str, List, Dict, Message, BaseModel, List[Message]]]:
+    """Split the history a team passes to a member from the task that follows it.
+
+    When a team delegates to a member with add_history_to_context, the member's input is its
+    prior messages (tagged from_history) followed by the task as a plain user message. The task
+    is returned as a string so the user message is built the same way as for a string input.
+    """
+    if (
+        isinstance(input, list)
+        and len(input) > 1
+        and isinstance(input[-1], Message)
+        and input[-1].role == "user"
+        and not input[-1].from_history
+        and isinstance(input[-1].content, str)
+        and all(isinstance(msg, Message) and msg.from_history for msg in input[:-1])
+    ):
+        return list(input[:-1]), input[-1].content
+    return [], input
+
+
 def get_run_messages(
     agent: Agent,
     *,
@@ -1204,6 +1227,10 @@ def get_run_messages(
     # 4. Add user message to run_messages
     user_message: Optional[Message] = None
 
+    # A team member with history gets it as input, followed by its task. Build the user message
+    # from that task as for a string input, so knowledge references, dependencies and media are kept
+    member_history, input = _split_member_history_from_task(input)
+
     # 4.1 Build user message if input is None, str or list and not a list of Message/dict objects
     if (
         input is None
@@ -1256,6 +1283,11 @@ def get_run_messages(
             log_warning(f"Failed to convert BaseModel to message: {str(e)}")
 
     # 5. Add input messages to run_messages if provided (List[Message] or List[Dict])
+    for _m in member_history:
+        run_messages.messages.append(_m)
+        if run_messages.extra_messages is None:
+            run_messages.extra_messages = []
+        run_messages.extra_messages.append(_m)
     if (
         isinstance(input, list)
         and len(input) > 0
@@ -1410,6 +1442,10 @@ async def aget_run_messages(
     # 4. Add user message to run_messages
     user_message: Optional[Message] = None
 
+    # A team member with history gets it as input, followed by its task. Build the user message
+    # from that task as for a string input, so knowledge references, dependencies and media are kept
+    member_history, input = _split_member_history_from_task(input)
+
     # 4.1 Build user message if input is None, str or list and not a list of Message/dict objects
     if (
         input is None
@@ -1462,6 +1498,11 @@ async def aget_run_messages(
             log_warning(f"Failed to convert BaseModel to message: {str(e)}")
 
     # 5. Add input messages to run_messages if provided (List[Message] or List[Dict])
+    for _m in member_history:
+        run_messages.messages.append(_m)
+        if run_messages.extra_messages is None:
+            run_messages.extra_messages = []
+        run_messages.extra_messages.append(_m)
     if (
         isinstance(input, list)
         and len(input) > 0
