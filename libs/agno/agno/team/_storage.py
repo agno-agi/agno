@@ -262,26 +262,28 @@ def _upsert_run(
     session_id: str,
     user_id: Optional[str] = None,
     run_index: Optional[int] = None,
-) -> None:
+) -> bool:
     """Persist a single run to the runs storage (O(1) write).
 
     Silently no-ops on adapters that have not implemented ``upsert_run`` yet.
     """
     try:
         if not team.db:
-            return
+            return False
         from agno.run.status_persist import persist_worker_owned_run
 
         # Queue-worker-owned runs save through the attempt-fenced primitive;
         # member-run saves pass through untouched (their run_ids are never
         # registered - a zombie leg's member writes orphan, not clobber)
         if persist_worker_owned_run(team.db, run, session_id=session_id, user_id=user_id):
-            return
+            return True
         team.db.upsert_run(run=run, session_id=session_id, user_id=user_id, run_index=run_index)  # type: ignore[union-attr]
+        return True
     except NotImplementedError:
         log_debug(f"{type(team.db).__name__} does not implement upsert_run; skipping per-run write")
     except Exception as e:
         log_warning(f"Error upserting run into db: {str(e)}")
+    return False
 
 
 async def _aupsert_run(
@@ -290,27 +292,29 @@ async def _aupsert_run(
     session_id: str,
     user_id: Optional[str] = None,
     run_index: Optional[int] = None,
-) -> None:
+) -> bool:
     """Async version of ``_upsert_run``."""
     from agno.team._init import _has_async_db
 
     try:
         if not team.db:
-            return
+            return False
         from agno.run.status_persist import apersist_worker_owned_run
 
         # Queue-worker-owned runs save through the attempt-fenced primitive;
         # member-run saves pass through untouched (see _upsert_run)
         if await apersist_worker_owned_run(team.db, run, session_id=session_id, user_id=user_id):
-            return
+            return True
         if _has_async_db(team):
             await team.db.upsert_run(run=run, session_id=session_id, user_id=user_id, run_index=run_index)  # type: ignore[union-attr,misc]
         else:
             team.db.upsert_run(run=run, session_id=session_id, user_id=user_id, run_index=run_index)  # type: ignore[union-attr]
+        return True
     except NotImplementedError:
         log_debug(f"{type(team.db).__name__} does not implement upsert_run; skipping per-run write")
     except Exception as e:
         log_warning(f"Error upserting run into db: {str(e)}")
+    return False
 
 
 def _read_or_create_session(team: "Team", session_id: str, user_id: Optional[str] = None) -> TeamSession:
