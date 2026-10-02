@@ -73,6 +73,12 @@ class QueuedJob:
     created_at: Optional[int] = None
     updated_at: Optional[int] = None
     completed_at: Optional[int] = None
+    # Store-assigned monotonic enqueue sequence: the submission order within
+    # the store. created_at has one-second resolution, so same-second
+    # siblings tie on it; seq is what orders them FIFO. None until the store
+    # assigns it at enqueue. (Appended last: positional-argument
+    # compatibility for this public dataclass.)
+    seq: Optional[int] = None
 
     def __post_init__(self) -> None:
         now = now_epoch_s()
@@ -88,8 +94,11 @@ class QueuedJob:
             raise ValueError(f"Invalid job queue status {self.status!r}; expected one of {JOB_STATUSES}")
 
     def to_dict(self) -> Dict[str, Any]:
-        """Serialize to dict. Preserves None values (important for DB updates)."""
-        return {
+        """Serialize to dict. Preserves None values (important for DB updates),
+        except an unassigned seq: the store assigns it at enqueue, and an
+        explicit NULL would defeat the Postgres identity default (the column
+        is NOT NULL). Omitted means "let the store assign"."""
+        data = {
             "id": self.id,
             "component_type": self.component_type,
             "component_id": self.component_id,
@@ -110,6 +119,9 @@ class QueuedJob:
             "updated_at": self.updated_at,
             "completed_at": self.completed_at,
         }
+        if self.seq is not None:
+            data["seq"] = self.seq
+        return data
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "QueuedJob":
@@ -133,6 +145,7 @@ class QueuedJob:
             "created_at",
             "updated_at",
             "completed_at",
+            "seq",
         }
         filtered = {k: v for k, v in dict(data).items() if k in valid_keys}
         return cls(**filtered)
