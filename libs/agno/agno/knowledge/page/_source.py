@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import ipaddress
+import random
 import re
 import time
 from dataclasses import dataclass
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from typing import Dict, Optional
 from urllib.parse import quote, unquote, urljoin, urlsplit, urlunsplit
 
@@ -66,12 +69,39 @@ class SourcePage:
     citation_url: str
 
 
+def _retry_after_seconds(value: Optional[str]) -> Optional[float]:
+    """Seconds requested by a Retry-After header (delta-seconds or HTTP date), if valid."""
+    if not value:
+        return None
+    value = value.strip()
+    if value.isdigit():
+        return float(value)
+    try:
+        when = parsedate_to_datetime(value)
+    except (TypeError, ValueError):
+        return None
+    if when.tzinfo is None:
+        return None
+    return max(0.0, (when - datetime.now(timezone.utc)).total_seconds())
+
+
 class PageSource:
     max_pages = 20_000
     max_indexes = 100
     max_depth = 3
     max_index_bytes = 8 * 1024 * 1024
     max_page_bytes = 4 * 1024 * 1024
+    # Transient failures (connection resets, timeouts, 429/5xx) arrive in bursts during
+    # a full sync, so retries back off for several seconds, within each fetch's deadline.
+    fetch_attempts = 5
+    retry_base_seconds = 0.5
+    retry_max_seconds = 4.0
+    retry_after_max_seconds = 10.0
+    # A stalled connection (seen as a TLS handshake that hangs, then resets) must not
+    # consume the whole fetch deadline: each attempt gets its own bound so a retry on
+    # a fresh connection still fits. Healthy page fetches take well under a second.
+    connect_timeout_seconds = 5.0
+    attempt_timeout_seconds = 10.0
 
     def __init__(self, url: str, public_url: Optional[str], budget: WorkBudget):
         self.url = source_url(url)
@@ -86,7 +116,7 @@ class PageSource:
         """Pin validated DNS answers to the connection while retaining TLS hostname checks."""
         url = source_url(url)
         deadline = time.monotonic() + min(30, self.budget.remaining())
-        for attempt in range(3):
+        for attempt in range(self.fetch_attempts):
             current = url
             try:
                 for redirect in range(4):
@@ -113,7 +143,9 @@ class PageSource:
                     remaining = min(deadline - time.monotonic(), self.budget.remaining())
                     if remaining <= 0:
                         raise TimeoutError()
-                    with httpx.Client(timeout=remaining, trust_env=False, follow_redirects=False) as client:
+                    attempt_timeout = min(remaining, self.attempt_timeout_seconds)
+                    timeout = httpx.Timeout(attempt_timeout, connect=min(self.connect_timeout_seconds, attempt_timeout))
+                    with httpx.Client(timeout=timeout, trust_env=False, follow_redirects=False) as client:
                         with client.stream(
                             "GET",
                             pinned,
@@ -134,21 +166,34 @@ class PageSource:
                                 body.extend(chunk)
                             return body.decode("utf-8", errors="strict")
                 raise SyncFailed()
-            except (httpx.TimeoutException, httpx.ConnectError, httpx.ReadError, httpx.HTTPStatusError) as exc:
-                if (
-                    isinstance(exc, httpx.HTTPStatusError)
-                    and exc.response.status_code != 429
-                    and exc.response.status_code < 500
-                ):
+            except (
+                httpx.TimeoutException,
+                httpx.NetworkError,
+                httpx.RemoteProtocolError,
+                httpx.HTTPStatusError,
+            ) as exc:
+                status = exc.response.status_code if isinstance(exc, httpx.HTTPStatusError) else None
+                if status is not None and status != 429 and status < 500:
                     raise SyncFailed() from exc
-                if attempt == 2:
+                if attempt == self.fetch_attempts - 1:
                     raise SyncFailed() from exc
-                delay = min(0.25 * 2**attempt, self.budget.remaining())
-                if self.budget.cancelled.wait(delay):
+                delay = self._retry_delay(attempt, exc)
+                # Never sleep past the fetch deadline; fail now with the transport cause.
+                if time.monotonic() + delay >= deadline:
+                    raise SyncFailed() from exc
+                if self.budget.cancelled.wait(min(delay, self.budget.remaining())):
                     self.budget.remaining()
-                if time.monotonic() >= deadline:
-                    raise SyncFailed() from exc
         raise SyncFailed()
+
+    def _retry_delay(self, attempt: int, exc: Exception) -> float:
+        """Exponential backoff with jitter; a server's bounded Retry-After takes precedence."""
+        if isinstance(exc, httpx.HTTPStatusError):
+            after = _retry_after_seconds(exc.response.headers.get("retry-after"))
+            if after is not None:
+                return min(after, self.retry_after_max_seconds)
+        backoff = min(self.retry_base_seconds * 2**attempt, self.retry_max_seconds)
+        # Jitter keeps concurrent page fetches from retrying in lockstep.
+        return backoff * random.uniform(0.5, 1.0)
 
     def discover(self) -> Dict[str, SourcePage]:
         pages: Dict[str, SourcePage] = {}

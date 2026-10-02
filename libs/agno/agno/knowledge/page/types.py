@@ -179,6 +179,9 @@ class SyncReport(PageResult):
     failed: int = 0
     unknown: int = 0
     errors: Tuple[str, ...] = ()
+    # Site paths (e.g. "/guides/setup.md") of pages that failed to publish or delete
+    # in this run, first 20, so callers can name them; `failed` stays the full count.
+    failed_paths: Tuple[str, ...] = ()
 
 
 def encoded_size(value: BaseModel) -> int:
