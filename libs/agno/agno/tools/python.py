@@ -68,8 +68,8 @@ class PythonTools(Toolkit):
         self.restrict_to_base_dir = restrict_to_base_dir
 
         # Execution namespaces seeded into exec()/runpy. Not a security boundary.
-        self.safe_globals: dict = safe_globals or globals()
-        self.safe_locals: dict = safe_locals or locals()
+        self.safe_globals: dict = safe_globals if safe_globals is not None else globals()
+        self.safe_locals: dict = safe_locals if safe_locals is not None else locals()
 
         tools: List[Any] = [
             self.save_to_file_and_run,
