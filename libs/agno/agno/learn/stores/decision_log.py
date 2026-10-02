@@ -881,19 +881,13 @@ class DecisionLogStore(LearningStore):
             return None
 
         try:
-            # Get learnings and filter by decision_id in content
-            results = self.db.get_learnings(
-                learning_type=self.learning_type,
-                limit=100,
-            )
-
-            if not results:
+            record = self.db.get_learning_by_id(id=decision_id)
+            if not record or record.get("learning_type") != self.learning_type:
                 return None
 
-            for record in results:
-                content = record.get("content") if isinstance(record, dict) else None
-                if content and content.get("id") == decision_id:
-                    return from_dict_safe(DecisionLog, content)
+            content = record.get("content")
+            if content and content.get("id") == decision_id:
+                return from_dict_safe(DecisionLog, content)
 
             return None
 
@@ -907,25 +901,17 @@ class DecisionLogStore(LearningStore):
             return None
 
         try:
-            # Get learnings and filter by decision_id in content
             if isinstance(self.db, AsyncBaseDb):
-                results = await self.db.get_learnings(
-                    learning_type=self.learning_type,
-                    limit=100,
-                )
+                record = await self.db.get_learning_by_id(id=decision_id)
             else:
-                results = self.db.get_learnings(
-                    learning_type=self.learning_type,
-                    limit=100,
-                )
+                record = self.db.get_learning_by_id(id=decision_id)
 
-            if not results:
+            if not record or record.get("learning_type") != self.learning_type:
                 return None
 
-            for record in results:
-                content = record.get("content") if isinstance(record, dict) else None
-                if content and content.get("id") == decision_id:
-                    return from_dict_safe(DecisionLog, content)
+            content = record.get("content")
+            if content and content.get("id") == decision_id:
+                return from_dict_safe(DecisionLog, content)
 
             return None
 
