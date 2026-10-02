@@ -284,3 +284,26 @@ with `mcp==2.1.1` and `fastmcp==4.0.3`.
 updated public MCP tests also verify that exposed components need no lifecycle
 opt-out, while explicitly enabling lifecycle tools remains rejected. These checks
 did not exercise PostgreSQL-backed ingestion or hosted clients.
+
+---
+
+## 2026-10-02 page discovery skips non-page links; profiles drop MDX module code
+
+### documentation_markdown.py
+
+**Status:** PASS
+
+**Description:** Ran the default `check` mode with the demo Python and this
+worktree on `PYTHONPATH`. Ran discovery and both site profiles against live
+corpora without a database or model calls: docs.langchain.com (Mintlify, nested
+`/_llms/` indexes, OpenAPI spec links including one on another host) and
+docs.agno.com (Fumadocs).
+
+**Result:** Configuration validated. LangChain discovery found 1,666 pages with
+`complete=True` (previously `False`: the spec links marked it incomplete and two
+same-site `.json` specs failed as pages; depth-first traversal also exceeded
+`max_depth` on a chain the root lists directly). `mintlify` dropped 1.7 MB of
+inlined component code across 55 of 1,666 pages, keeping every heading and prose
+line on the pages checked. docs.agno.com discovery is unchanged (3,913 pages,
+complete) and `fumadocs` output is byte-identical with and without `strip_esm`
+on all 3,913 pages. The `sync` mode's embedding run was not executed.

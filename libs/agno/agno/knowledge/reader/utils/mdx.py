@@ -240,6 +240,92 @@ def normalize_mdx(
     return "\n".join(lines) + ("\n" if markdown.endswith("\n") and lines else "")
 
 
+# MDX module statements: top-level `import`/`export` at the start of a block. Mintlify
+# serves component definitions this way in its Markdown; they are code, never content.
+ESM_START = re.compile(
+    r"^(?:import\s+(?:type\s+)?(?:[\w$]+|\{|\*|[\"'])"
+    r"|export\s+(?:(?:const|let|var|function|class|default|type|interface|async)\b|\{|\*))"
+)
+# A statement continues past a line that ends in an operator, an opener or `from`.
+ESM_CONTINUES = re.compile(r"(?:=>|[=(\[{,+\-*/?:&|]|\bfrom)$")
+
+
+def _esm_end(lines: list[str], start: int) -> int | None:
+    """Index of the line that closes the statement starting at `start`, or None if it never closes.
+
+    Tracks bracket depth outside strings and comments. Quotes reset at each line end,
+    so an apostrophe in embedded JSX text cannot swallow the rest of the page.
+    """
+    depth = 0
+    in_template = in_comment = False
+    for index in range(start, len(lines)):
+        line, quote, i = lines[index], "", 0
+        while i < len(line):
+            char = line[i]
+            if in_comment:
+                if line.startswith("*/", i):
+                    in_comment, i = False, i + 2
+                    continue
+            elif in_template or quote:
+                if char == "\\":
+                    i += 2
+                    continue
+                if in_template and char == "`":
+                    in_template = False
+                elif char == quote:
+                    quote = ""
+            elif line.startswith("//", i):
+                break
+            elif line.startswith("/*", i):
+                in_comment, i = True, i + 2
+                continue
+            elif char in "'\"":
+                quote = char
+            elif char == "`":
+                in_template = True
+            elif char in "([{":
+                depth += 1
+            elif char in ")]}":
+                depth -= 1
+                if depth < 0:
+                    return None
+            i += 1
+        if depth == 0 and not (in_template or in_comment) and not ESM_CONTINUES.search(line.rstrip()):
+            return index
+    return None
+
+
+def _strip_esm(markdown: str) -> str:
+    """Drop top-level MDX import/export statements outside code fences.
+
+    A statement must start a block (first line or after a blank line) with ESM syntax,
+    so prose such as a wrapped line beginning "export the file" is kept. A statement
+    that never closes is kept rather than risk dropping the rest of the page.
+    """
+    if "import" not in markdown and "export" not in markdown:
+        return markdown
+    lines = markdown.split("\n")
+    out: list[str] = []
+    index = 0
+    removed = False
+    fence: FenceState | None = None
+    while index < len(lines):
+        line = lines[index]
+        was_code = fence is not None
+        fence, delimiter = advance_code_fence(line, fence)
+        if not (was_code or delimiter) and ESM_START.match(line) and (not out or not out[-1].strip()):
+            end = _esm_end(lines, index)
+            if end is not None:
+                index, removed = end + 1, True
+                continue
+        out.append(line)
+        index += 1
+    if not removed:
+        return markdown
+    # Close the gaps the statements leave, as component normalization does.
+    return "\n".join(_collapse_blank_lines(out)) + "\n"
+
+
 PREAMBLE_HEADER = "> ## Documentation Index"
 
 
@@ -286,6 +372,8 @@ class DocumentationMarkdown:
     removes the leading Documentation Index blockquote and decodes serializer
     escapes outside fences, including inline code. ``mintlify`` normalizes the
     same component vocabulary and preamble but keeps escapes/entities by default.
+    Both drop top-level MDX ``import``/``export`` statements (component code that
+    Mintlify inlines into page Markdown); set strip_esm=False to keep them.
     Fumadocs decoding deliberately preserves its existing html.unescape semantics;
     use unescape_serializer=False for authored Markdown or literal HTML examples.
     Profiles normalize CRLF, trim surrounding whitespace and add a final LF.
@@ -299,6 +387,7 @@ class DocumentationMarkdown:
     profile: Literal["markdown", "fumadocs", "mintlify"] = "markdown"
     strip_index_preamble: bool = True
     unescape_serializer: Optional[bool] = None
+    strip_esm: bool = True
     component_aliases: Mapping[str, str] = field(default_factory=dict)
     component_renderers: Mapping[str, ComponentRenderer] = field(default_factory=dict)
 
@@ -313,6 +402,8 @@ class DocumentationMarkdown:
             return text
         if self.strip_index_preamble:
             text = _strip_preamble(text)
+        if self.strip_esm:
+            text = _strip_esm(text)
         text = normalize_mdx(
             text, component_aliases=self.component_aliases, component_renderers=self.component_renderers
         )

@@ -308,3 +308,50 @@ def test_collisions_and_foreign_destinations_cannot_prune(monkeypatch):
     source = PageSource(base + "/llms.txt", None, WorkBudget(5))
     pages = source.discover()
     assert not source.complete and set(pages) == {"/a.md"}
+
+
+def test_discovery_skips_non_page_files_without_marking_incomplete(monkeypatch):
+    from agno.knowledge.page._source import PageSource
+    from agno.utils.bounded import WorkBudget
+
+    base = "https://docs.example.com"
+    index = "\n".join(
+        [
+            "- [Guide](" + base + "/guide.md)",
+            "- [Node](" + base + "/guides/node.js)",
+            "## OpenAPI Specs",
+            "- [Spec](/api/openapi.json)",
+            "- [Hosted spec](https://api.example.com/openapi.json)",
+            "- [Config](" + base + "/config.YAML)",
+            "- [Diagram](" + base + "/img/flow.png)",
+        ]
+    )
+    seen = []
+
+    def fetch(self, url, max_bytes):
+        seen.append(url)
+        return index
+
+    monkeypatch.setattr(PageSource, "fetch", fetch)
+    source = PageSource(base + "/llms.txt", None, WorkBudget(5))
+    pages = source.discover()
+    # Specs, data and media are never pages; a page named like a script still is.
+    assert source.complete and set(pages) == {"/guide.md", "/guides/node.js.md"}
+    assert seen == [base + "/llms.txt"]
+
+
+def test_discovery_reaches_each_nested_index_at_its_shallowest_depth(monkeypatch):
+    from agno.knowledge.page._source import PageSource
+    from agno.utils.bounded import WorkBudget
+
+    base = "https://docs.example.com"
+    chain = [base + f"/_llms/{'/'.join('abcde'[: i + 1])}.md" for i in range(5)]
+    # The root lists every index directly (Mintlify style); each index also links its child.
+    site = {base + "/llms.txt": "\n".join(f"- [Index {i}]({url})" for i, url in enumerate(chain))}
+    for i, url in enumerate(chain):
+        child = f"\n- [Next]({chain[i + 1]})" if i + 1 < len(chain) else ""
+        site[url] = f"- [Page {i}]({base}/page-{i}.md){child}"
+    monkeypatch.setattr(PageSource, "fetch", lambda self, url, max_bytes: site[url])
+    source = PageSource(base + "/llms.txt", None, WorkBudget(5))
+    pages = source.discover()
+    assert source.complete and set(pages) == {f"/page-{i}.md" for i in range(5)}

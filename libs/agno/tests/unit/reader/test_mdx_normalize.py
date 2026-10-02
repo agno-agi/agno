@@ -244,3 +244,46 @@ def test_serializer_order_and_non_idempotent_entity_limit_are_explicit():
 @pytest.mark.parametrize("profile", ["fumadocs", "mintlify"])
 def test_unicode_and_line_endings(profile):
     assert DocumentationMarkdown(profile=profile)("<Note>説明 🙂</Note>\r\n", path="/x.md") == "**Note:** 説明 🙂\n"
+
+
+MINTLIFY_ESM = """# Overview
+
+> Summary
+
+export const sandbox_slug = undefined
+
+export const Embed = ({id, theme = "dark"}) => {
+  const label = `embed-${id}`;
+  if (!id) {
+    return <p>Don't render: {label}</p>;
+  }
+
+  return <div className="embed">{label}</div>;
+};
+
+import {Chart} from "/snippets/chart.jsx";
+
+Intro paragraph that you can
+export the file from, kept.
+
+```js
+export const kept = true;
+```
+"""
+
+
+def test_profiles_drop_top_level_mdx_module_statements():
+    expected = (
+        "# Overview\n\n> Summary\n\nIntro paragraph that you can\nexport the file from, kept.\n\n"
+        "```js\nexport const kept = true;\n```\n"
+    )
+    for profile in ("mintlify", "fumadocs"):
+        assert DocumentationMarkdown(profile=profile)(MINTLIFY_ESM, path="/x.md") == expected
+
+
+def test_module_statements_kept_when_disabled_unclosed_or_verbatim():
+    kept = DocumentationMarkdown(profile="mintlify", strip_esm=False)(MINTLIFY_ESM, path="/x.md")
+    assert "export const Embed" in kept and "import {Chart}" in kept
+    assert DocumentationMarkdown()(MINTLIFY_ESM, path="/x.md") == MINTLIFY_ESM
+    unclosed = "# Title\n\nexport const Broken = () => {\n\nBody text.\n"
+    assert DocumentationMarkdown(profile="mintlify")(unclosed, path="/x.md") == unclosed

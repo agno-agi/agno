@@ -294,14 +294,22 @@ the `check` mode, which validates configuration without IO:
 `sync` needs only `./cookbook/scripts/run_pgvector.sh` and `OPENAI_API_KEY`; it
 uses the same `ai` database as the other cookbooks. It publishes every page the
 index discovers through the transform, prints one stored page, and embeds each
-chunk. `incomplete_discovery` in the report means nested indexes exceeded the
-discovery bounds, not a failed page.
+chunk. Nested indexes (`/_llms/...` or `.../llms.txt`) are followed breadth-first,
+so each is reached at its shallowest depth. Index links to files that cannot be
+pages (OpenAPI specs, data, media, archives such as `.json`, `.yaml`, `.png`) are
+skipped wherever they point. `incomplete_discovery` in the report means nested
+indexes exceeded the discovery bounds or a page link could not be followed, not
+a failed page.
 
 - `fumadocs` converts whole-line components and the leading Documentation Index
   preamble, then decodes serializer escapes/entities outside fences. This includes
   inline code, preserving the existing documentation application's behavior.
 - `mintlify` handles the shared steps/tabs/callouts/cards/fields/media vocabulary
   and preamble, keeping escapes and entities unless `unescape_serializer=True`.
+- Both site profiles drop top-level MDX `import`/`export` statements, such as the
+  component definitions Mintlify inlines into page Markdown. A statement must
+  start a block, statements inside fences are kept, and one that never closes is
+  kept. Use `strip_esm=False` to keep them all.
 - `component_aliases={"Aside": "Warning"}` selects a built-in rendering.
   `component_renderers={"Panel": renderer}` overrides a component with a trusted
   Python callback receiving literal attributes and normalized inner Markdown.
