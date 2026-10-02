@@ -135,3 +135,33 @@ def strict_user_id_kwarg(fn: Any, user_id: Optional[str]) -> Dict[str, Any]:
         "user_id parameter. This vector db predates per-user isolation — add user_id parameters to "
         "its methods (see agno.vectordb.base.VectorDb) before running user-scoped operations."
     )
+
+
+def get_model_kwarg(fn: Any, model: Optional[Any]) -> Dict[str, Any]:
+    """``{"model": ...}`` only when the callee accepts it.
+
+    A query transform that needs an LLM borrows the caller's model, so the agent offers
+    its own on retrieval. Only a callee that names ``model`` is offered one: unlike
+    :func:`get_user_id_kwarg`, where a dropped owner leaks data across users and
+    ``**kwargs`` is worth the risk, this is an enhancement. A legacy
+    ``retrieve(query, **kwargs)`` that forwards to a narrower search would raise on an
+    argument it never asked for, and losing the transform is the lesser cost.
+
+    Args:
+        fn: The callable the kwarg will be passed to.
+        model: The model to offer.
+
+    Returns:
+        Dict[str, Any]: {"model": model} when the callee accepts it, empty otherwise.
+    """
+    import inspect
+
+    if model is None:
+        return {}
+    try:
+        parameters = inspect.signature(fn).parameters
+    except (TypeError, ValueError):
+        return {}
+    if "model" in parameters:
+        return {"model": model}
+    return {}
