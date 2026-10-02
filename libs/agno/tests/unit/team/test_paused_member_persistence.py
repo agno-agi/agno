@@ -453,6 +453,31 @@ def _build_flat_team(db: SqliteDb, resuming: bool, **team_kwargs) -> Team:
     )
 
 
+def _build_flat_team_with_members_factory(db: SqliteDb, resuming: bool, **team_kwargs) -> Team:
+    """Same as ``_build_flat_team`` but ``members`` is a callable factory."""
+    script = (
+        [("content", "All done.")]
+        if resuming
+        else [
+            ("tool", "delegate_task_to_member", {"member_id": "emailer", "task": "send it"}, "tc-deleg"),
+            ("content", "All done."),
+        ]
+    )
+
+    def members_factory():
+        return [_emailer_agent(db, resuming)]
+
+    return Team(
+        name="Comms Team",
+        id="comms-team",
+        model=_ScriptedModel("m-leader", script),
+        members=members_factory,
+        db=db,
+        telemetry=False,
+        **team_kwargs,
+    )
+
+
 def _build_nested_team(db: SqliteDb, resuming: bool) -> Team:
     inner_script = (
         [("content", "Inner done.")]
@@ -534,6 +559,62 @@ def test_flat_member_pause_survives_fresh_process_continue(tmp_path):
     # The member run completed, so the next save scrubbed it again.
     team_runs = [r for r in _reload_runs(db_file, session_id) if isinstance(r, TeamRunOutput)]
     assert all(r.member_responses == [] for r in team_runs)
+
+
+def test_callable_members_factory_member_hitl_continue_same_process(tmp_path):
+    """Member-HITL continue_run must route when Team.members is a factory."""
+    _EXECUTED.clear()
+    db_file = str(tmp_path / "factory_same.db")
+    session_id = "s-factory-same"
+
+    team = _build_flat_team_with_members_factory(SqliteDb(db_file=db_file), resuming=False)
+    run1 = team.run("Email a@example.com", session_id=session_id)
+    assert run1.is_paused
+    assert _EXECUTED == []
+
+    for req in run1.requirements or []:
+        req.confirm()
+    run2 = team.continue_run(run1)
+    assert run2.status == RunStatus.completed
+    assert _EXECUTED == ["a@example.com"]
+
+
+def test_callable_members_factory_member_hitl_continue_fresh_process(tmp_path):
+    """Fresh Team objects must still route member-HITL after a factory resolve."""
+    _EXECUTED.clear()
+    db_file = str(tmp_path / "factory_fresh.db")
+    session_id = "s-factory-fresh"
+
+    team1 = _build_flat_team_with_members_factory(SqliteDb(db_file=db_file), resuming=False)
+    run1 = team1.run("Email a@example.com", session_id=session_id)
+    assert run1.is_paused
+    assert _EXECUTED == []
+
+    team2 = _build_flat_team_with_members_factory(SqliteDb(db_file=db_file), resuming=True)
+    run2 = team2.continue_run(
+        run_id=run1.run_id, session_id=session_id, requirements=_wire_requirements(run1.requirements)
+    )
+    assert run2.status == RunStatus.completed
+    assert _EXECUTED == ["a@example.com"]
+
+
+@pytest.mark.asyncio
+async def test_callable_members_factory_member_hitl_acontinue(tmp_path):
+    """Async acontinue_run must resolve a callable members factory before routing."""
+    _EXECUTED.clear()
+    db_file = str(tmp_path / "factory_async.db")
+    session_id = "s-factory-async"
+
+    team = _build_flat_team_with_members_factory(SqliteDb(db_file=db_file), resuming=False)
+    run1 = await team.arun("Email a@example.com", session_id=session_id)
+    assert run1.is_paused
+    assert _EXECUTED == []
+
+    for req in run1.requirements or []:
+        req.confirm()
+    run2 = await team.acontinue_run(run1)
+    assert run2.status == RunStatus.completed
+    assert _EXECUTED == ["a@example.com"]
 
 
 def test_nested_member_pause_survives_fresh_process_continue(tmp_path):
