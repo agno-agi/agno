@@ -8,7 +8,7 @@ Keeps memories tidy through:
 - Deduplication: Remove exact/near-exact duplicates
 
 Usage:
-    >>> learning = LearningMachine(db=db, model=model, user_profile=True)
+    >>> learning = LearningMachine(db=db, model=model, user_memory=True)
     >>>
     >>> # Remove memories older than 90 days, keep max 100
     >>> removed = learning.curator.prune(user_id="alice", max_age_days=90, max_count=100)
@@ -28,7 +28,7 @@ from agno.utils.log import log_debug
 class Curator:
     """Memory maintenance. Keeps things tidy.
 
-    Currently supports user_profile store only.
+    Maintains the user_memory store. Structured user_profile fields are not memories.
     """
 
     machine: Any  # LearningMachine
@@ -39,7 +39,7 @@ class Curator:
         max_age_days: int = 0,
         max_count: int = 0,
     ) -> int:
-        """Remove old memories from user profile.
+        """Remove old memories from the user_memory store.
 
         Args:
             user_id: User to prune memories for.
@@ -49,15 +49,15 @@ class Curator:
         Returns:
             Number of memories removed.
         """
-        store = self.machine.stores.get("user_profile")
+        store = self.machine.stores.get("user_memory")
         if not store:
             return 0
 
-        profile = store.get(user_id=user_id)
-        if not profile or not hasattr(profile, "memories"):
+        record = store.get(user_id=user_id)
+        if not record or not hasattr(record, "memories"):
             return 0
 
-        memories = profile.memories
+        memories = record.memories
         if not memories:
             return 0
 
@@ -75,8 +75,8 @@ class Curator:
         removed = original_count - len(memories)
 
         if removed > 0:
-            profile.memories = memories
-            store.save(user_id=user_id, profile=profile)
+            record.memories = memories
+            store.save(user_id=user_id, memories=record)
             log_debug(f"Curator.prune: removed {removed} memories for user_id={user_id}")
 
         return removed
@@ -85,7 +85,7 @@ class Curator:
         self,
         user_id: str,
     ) -> int:
-        """Remove duplicate memories from user profile.
+        """Remove duplicate memories from the user_memory store.
 
         Uses exact and near-exact string matching.
 
@@ -95,15 +95,15 @@ class Curator:
         Returns:
             Number of duplicate memories removed.
         """
-        store = self.machine.stores.get("user_profile")
+        store = self.machine.stores.get("user_memory")
         if not store:
             return 0
 
-        profile = store.get(user_id=user_id)
-        if not profile or not hasattr(profile, "memories"):
+        record = store.get(user_id=user_id)
+        if not record or not hasattr(record, "memories"):
             return 0
 
-        memories = profile.memories
+        memories = record.memories
         if len(memories) < 2:
             return 0
 
@@ -112,8 +112,8 @@ class Curator:
         removed = original_count - len(unique_memories)
 
         if removed > 0:
-            profile.memories = unique_memories
-            store.save(user_id=user_id, profile=profile)
+            record.memories = unique_memories
+            store.save(user_id=user_id, memories=record)
             log_debug(f"Curator.deduplicate: removed {removed} duplicates for user_id={user_id}")
 
         return removed
