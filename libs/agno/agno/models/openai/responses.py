@@ -1,4 +1,5 @@
 import asyncio
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Tuple, Type, Union
@@ -106,8 +107,12 @@ class OpenAIResponses(Model):
         return f"{super().get_provider()} Responses"
 
     def _using_reasoning_model(self) -> bool:
-        """Return True if the contextual used model is a known reasoning model."""
-        return self.id.startswith("o3") or self.id.startswith("o4-mini") or self.id.startswith("gpt-5")
+        """Return True if the contextual used model is a known reasoning model: o3, o4-mini, or gpt-5 and later."""
+        return (
+            self.id.startswith("o3")
+            or self.id.startswith("o4-mini")
+            or re.match(r"gpt-[5-9](?![0-9])", self.id) is not None
+        )
 
     def _effective_store(self) -> Optional[bool]:
         """The store value sent on the wire. Background mode requires provider storage."""

@@ -145,6 +145,41 @@ async def test_stored_response_replays_reasoning_and_tool_calls(response_client,
     assert model.include == ["message.output_text.logprobs"]
 
 
+@pytest.mark.parametrize(
+    "model_id, expected",
+    [
+        ("o3", True),
+        ("o4-mini", True),
+        ("gpt-5", True),
+        ("gpt-5.6-luna", True),
+        ("gpt-6-sol", True),
+        ("gpt-6-astra", True),
+        ("gpt-4.1-mini", False),
+        ("gpt-4o", False),
+        ("gpt-35-turbo", False),
+    ],
+)
+def test_reasoning_model_detection(model_id, expected):
+    assert OpenAIResponses(id=model_id)._using_reasoning_model() is expected
+
+
+@pytest.mark.parametrize("mode", ["sync", "async", "sync_stream", "async_stream"])
+async def test_gpt_6_tool_loop_continues_its_stored_response(response_client, mode):
+    """A stored function_call cannot be resent without its reasoning item, so the loop must chain."""
+    requests, transport = response_client
+    with OpenAI(api_key="test", http_client=httpx.Client(transport=transport)) as client:
+        async with AsyncOpenAI(api_key="test", http_client=httpx.AsyncClient(transport=transport)) as async_client:
+            model = OpenAIResponses(id="gpt-6-sol", client=client, async_client=async_client)
+            messages = [Message(role="user", content="Look it up")]
+            assistant = await _invoke(model, mode, messages)
+            messages.extend([assistant, Message(role="tool", tool_call_id="call_current", content="Found it")])
+            await _invoke(model, mode, messages)
+
+    assert len(requests) == 2
+    assert requests[1]["previous_response_id"] == "resp_current"
+    assert requests[1]["input"] == [{"type": "function_call_output", "call_id": "call_current", "output": "Found it"}]
+
+
 def test_background_storage_does_not_enable_chaining():
     model = OpenAIResponses(id="gpt-5.6-luna", store=False, background=True, use_previous_response_id=False)
     messages = [
