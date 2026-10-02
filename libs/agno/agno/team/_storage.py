@@ -695,6 +695,8 @@ def to_dict(team: "Team") -> Dict[str, Any]:
         config["tool_call_limit"] = team.tool_call_limit
     if team.get_member_information_tool:
         config["get_member_information_tool"] = team.get_member_information_tool
+    if team.error_on_tool_name_collision:
+        config["error_on_tool_name_collision"] = team.error_on_tool_name_collision
 
     # --- Schema settings ---
     if team.input_schema is not None:
@@ -1359,6 +1361,7 @@ def from_dict(
             tool_call_limit=config.get("tool_call_limit"),
             tool_choice=config.get("tool_choice"),
             get_member_information_tool=config.get("get_member_information_tool", False),
+            error_on_tool_name_collision=config.get("error_on_tool_name_collision", False),
             # --- Schema settings ---
             input_schema=config.get("input_schema"),
             output_schema=config.get("output_schema"),
