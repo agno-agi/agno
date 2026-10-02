@@ -1404,6 +1404,7 @@ class PageCoordinator:
         source = PageSource(url, public_url, budget)
         updated = deleted = failed = unknown = 0
         errors = []
+        failed_paths: list[str] = []
         acquired = False
         with self.engine.connect() as conn:
             lock_deadline = time.monotonic() + min(1200, budget.remaining())
@@ -1467,7 +1468,7 @@ class PageCoordinator:
                                 )
                             )
                         except Exception as exc:
-                            log_warning(f"Page sync failed ({type(exc).__name__})")
+                            log_warning(f"Page sync failed for {page.path} ({type(exc).__name__})")
                             if conn.invalidated or conn.closed or self._pending_publication is not None:
                                 # Do not reconnect a connection that owned the namespace lock.
                                 conn.invalidate()
@@ -1479,6 +1480,7 @@ class PageCoordinator:
                                     errors.append("commit_outcome_unknown")
                                 break
                             failed += 1
+                            failed_paths.append(page.path)
                             errors.append("page_sync_failed")
                             with conn.begin():
                                 self._settings(conn, budget)
@@ -1517,6 +1519,8 @@ class PageCoordinator:
                                     errors.append("commit_outcome_unknown")
                             else:
                                 failed += 1
+                                failed_paths.append(path)
+                                log_warning(f"Page delete failed for {path}")
                                 errors.append("page_delete_failed")
                             break
                 if not source.complete:
@@ -1529,6 +1533,7 @@ class PageCoordinator:
                     failed=failed,
                     unknown=unknown,
                     errors=tuple(errors[:20]),
+                    failed_paths=tuple(failed_paths[:20]),
                 )
                 if not conn.invalidated and not conn.closed:
                     with conn.begin():

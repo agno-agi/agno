@@ -342,6 +342,7 @@ def test_atomic_publication_failed_refresh_and_reconciliation(corpus, monkeypatc
     monkeypatch.setattr(knowledge.vector_db, "_replace_page_on", fail_after_vector_write)
     report = knowledge.sync_pages(url=url)
     assert report.status == "partial" and report.failed == 1
+    assert report.failed_paths == ("/agent.md",)
     assert knowledge.read_page("/agent") == before
     page = knowledge.list_pages().pages[0]
     assert knowledge.contents_db.get_knowledge_content(page.content_id).status == "failed"
@@ -398,10 +399,12 @@ def test_initial_failure_and_incomplete_discovery_do_not_prune(corpus):
     knowledge, embedder, site = corpus
     url = "https://docs.example.com/llms.txt"
     embedder.fail = True
-    assert knowledge.sync_pages(url=url).failed == 1
+    failed = knowledge.sync_pages(url=url)
+    assert failed.failed == 1 and failed.failed_paths == ("/agent.md",)
     assert knowledge.list_pages().pages == ()
     embedder.fail = False
-    assert knowledge.sync_pages(url=url).updated == 1
+    recovered = knowledge.sync_pages(url=url)
+    assert recovered.updated == 1 and recovered.failed_paths == ()
     site[url] += "\n- [Missing](https://docs.example.com/_llms/missing.md)"
     assert knowledge.sync_pages(url=url).status == "partial"
     assert knowledge.read_page("/agent").text
@@ -704,6 +707,7 @@ def test_same_revision_commit_acknowledgement_and_atomic_deletion(corpus, monkey
     monkeypatch.setattr(coordinator.backend, "_delete_on", fail_after_file_delete)
     report = knowledge.sync_pages(url=base + "/llms.txt")
     assert report.failed == 1 and report.deleted == 0
+    assert report.failed_paths == ("/agent.md",)
     assert knowledge.read_page("/agent").text == before.text
     assert any(hit.path == "/agent.md" for hit in knowledge.search_pages("Agent").results)
 
