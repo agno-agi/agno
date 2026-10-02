@@ -979,7 +979,7 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
     # Registry.rehydrate_function). Mirrors the parse_tools walk: tools are
     # processed in declaration order and the first one to claim a name wins.
     _owning_toolkit: Dict[str, str] = {}
-    if agent.model is not None and agent.tools and isinstance(agent.tools, list):
+    if agent.tools and isinstance(agent.tools, list):
         _tools = parse_tools(
             agent,
             model=agent.model,
