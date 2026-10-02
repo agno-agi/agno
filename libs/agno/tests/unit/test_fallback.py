@@ -775,3 +775,67 @@ class TestEdgeCases:
         """FallbackConfig callback defaults to None."""
         config = FallbackConfig()
         assert config.callback is None
+
+
+# =============================================================================
+# Overflow recovery must never mask the provider's error
+# =============================================================================
+
+
+class TestFailingOverflowRecovery:
+    """The recovery hook runs inside the handler for the provider's error. If it raises, the
+    provider's error and the fallback chain must still run as if recovery had not been tried."""
+
+    @staticmethod
+    def _broken_hook() -> bool:
+        raise ValueError("bad config")
+
+    def test_the_providers_error_is_raised_not_the_hooks(self):
+        primary = _make_model("primary")
+        with patch.object(primary, "response", side_effect=ContextWindowExceededError("too long")):
+            with pytest.raises(ContextWindowExceededError):
+                call_model_with_fallback(primary, None, on_context_overflow=self._broken_hook, messages=[])
+
+    def test_the_fallback_chain_still_runs(self):
+        primary = _make_model("primary")
+        fallback = _make_model("fallback")
+        config = FallbackConfig(on_context_overflow=[fallback])
+        with patch.object(primary, "response", side_effect=ContextWindowExceededError("too long")):
+            with patch.object(fallback, "response", return_value=ModelResponse(content="fallback-ok")):
+                result = call_model_with_fallback(primary, config, on_context_overflow=self._broken_hook, messages=[])
+        assert result.content == "fallback-ok"
+
+    def test_streaming_and_async_paths_behave_the_same(self):
+        import asyncio
+
+        primary = _make_model("primary")
+        error = ContextWindowExceededError("too long")
+
+        def stream(**kwargs):
+            raise error
+            yield  # pragma: no cover
+
+        async def aresponse(**kwargs):
+            raise error
+
+        async def astream(**kwargs):
+            raise error
+            yield  # pragma: no cover
+
+        async def consume_async_stream():
+            async for _ in acall_model_stream_with_fallback(
+                primary, None, on_context_overflow=self._broken_hook, messages=[]
+            ):
+                pass
+
+        with patch.object(primary, "response_stream", side_effect=stream):
+            with pytest.raises(ContextWindowExceededError):
+                list(call_model_stream_with_fallback(primary, None, on_context_overflow=self._broken_hook, messages=[]))
+        with patch.object(primary, "aresponse", side_effect=aresponse):
+            with pytest.raises(ContextWindowExceededError):
+                asyncio.run(
+                    acall_model_with_fallback(primary, None, on_context_overflow=self._broken_hook, messages=[])
+                )
+        with patch.object(primary, "aresponse_stream", side_effect=astream):
+            with pytest.raises(ContextWindowExceededError):
+                asyncio.run(consume_async_stream())
