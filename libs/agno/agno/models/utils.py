@@ -66,6 +66,7 @@ _PROVIDERS: Dict[str, Tuple[str, str, str, str]] = {
     "open-responses": ("agno.models.openai", "OpenResponses", "OpenResponses", "openresponses"),
     "openrouter": ("agno.models.openrouter", "OpenRouter", "OpenRouter", "openrouter"),
     "openrouter-responses": ("agno.models.openrouter", "OpenRouterResponses", "OpenRouterResponses", "openrouter"),
+    "opper": ("agno.models.opper", "Opper", "Opper", "opper"),
     "perplexity": ("agno.models.perplexity", "Perplexity", "Perplexity", "perplexity"),
     "portkey": ("agno.models.portkey", "Portkey", "Portkey", "portkey"),
     "ramp": ("agno.models.ramp", "RampRouter", "RampRouter", "ramprouter"),
