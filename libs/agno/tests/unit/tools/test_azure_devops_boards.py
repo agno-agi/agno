@@ -5,7 +5,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from agno.tools.azure_devops.boards import AzureDevOpsBoardsTools
+from agno.tools.azure_devops.boards import MAX_IDS_PER_BATCH, AzureDevOpsBoardsTools
 
 
 def _field(reference_name, name):
@@ -168,6 +168,69 @@ def test_create_task_invalid_assignee_hint(boards_tools):
 
     result = json.loads(boards_tools.create_task(title="X", work_item_type="Task", assigned_to="ghost"))
     assert "Jane Doe" in result["valid_assignees"]
+
+
+def _work_item(item_id):
+    work_item = Mock()
+    work_item.id = item_id
+    work_item.url = f"https://dev.azure.com/org/_apis/wit/workItems/{item_id}"
+    work_item.fields = {"System.Title": f"Item {item_id}"}
+    work_item.relations = []
+    return work_item
+
+
+def test_work_item_url_without_relations(boards_tools):
+    boards_tools._clients["wit"].get_fields.return_value = []
+    boards_tools._clients["wit"].get_work_item.return_value = _work_item(42)
+
+    result = json.loads(boards_tools.get_task("42"))
+    assert "(https://dev.azure.com/org/_workitems/edit/42)" in result["result"]
+
+
+def test_get_task_invalid_id(boards_tools):
+    boards_tools._clients["wit"].get_fields.return_value = []
+    result = json.loads(boards_tools.get_task("42, abc"))
+    assert result["error"] == "Invalid work item id: 'abc'"
+
+
+def test_get_task_batches_ids(boards_tools):
+    boards_tools._clients["wit"].get_fields.return_value = []
+    boards_tools._clients["wit"].get_work_items.side_effect = lambda ids, **kwargs: [_work_item(i) for i in ids]
+    item_ids = ",".join(str(i) for i in range(1, MAX_IDS_PER_BATCH + 2))
+
+    result = json.loads(boards_tools.get_task(item_ids))
+    assert len(result["results"]) == MAX_IDS_PER_BATCH + 1
+    batch_sizes = [len(call.kwargs["ids"]) for call in boards_tools._clients["wit"].get_work_items.call_args_list]
+    assert batch_sizes == [MAX_IDS_PER_BATCH, 1]
+
+
+def test_search_tasks_batches_ids(boards_tools):
+    query_result = Mock()
+    query_result.work_items = [Mock(id=i) for i in range(1, MAX_IDS_PER_BATCH + 2)]
+    boards_tools._clients["wit"].query_by_wiql.return_value = query_result
+    boards_tools._clients["wit"].get_work_items.side_effect = lambda ids, **kwargs: [_work_item(i) for i in ids]
+
+    result = json.loads(boards_tools.search_tasks(top=MAX_IDS_PER_BATCH + 1))
+    assert len(result["results"]) == MAX_IDS_PER_BATCH + 1
+    assert boards_tools._clients["wit"].get_work_items.call_count == 2
+
+
+def test_update_task_uses_add_operation(boards_tools):
+    boards_tools._clients["wit"].get_fields.return_value = []
+    boards_tools._clients["wit"].update_work_item.return_value = _work_item(42)
+
+    boards_tools.update_task("42", title="New title")
+    document = boards_tools._clients["wit"].update_work_item.call_args.kwargs["document"]
+    assert [operation.op for operation in document] == ["add"]
+
+
+def test_update_task_invalid_state_skips_type_lookup(boards_tools):
+    boards_tools._clients["wit"].get_fields.return_value = []
+    boards_tools._clients["wit"].update_work_item.side_effect = Exception("Field 'State' contains value 'Nope'")
+
+    result = json.loads(boards_tools.update_task("42", state="Nope"))
+    assert "Invalid state" in result["error"]
+    boards_tools._clients["wit"].get_work_item_type.assert_not_called()
 
 
 @pytest.mark.asyncio

@@ -6,14 +6,40 @@ from agno.tools.azure_devops.base import AzureDevOpsBaseTools
 from agno.utils.log import log_debug, log_error
 
 try:
-    from azure.devops.v7_1.work_item_tracking.models import (
-        CommentCreate,
-        JsonPatchOperation,
-        TeamContext,
-        Wiql,
-    )
+    # `connection.clients` returns v7_0 clients, so the models must come from v7_0 too.
+    from azure.devops.v7_0.work.models import TeamContext
+    from azure.devops.v7_0.work_item_tracking.models import CommentCreate, JsonPatchOperation, Wiql
 except ImportError:
     raise ImportError("`azure-devops` not installed. Please install using `pip install azure-devops`")
+
+# Azure DevOps rejects a get_work_items batch above this size.
+MAX_IDS_PER_BATCH = 200
+
+
+def _parse_ids(item_id: str) -> List[int]:
+    ids = []
+    for part in item_id.split(","):
+        text = part.strip()
+        if not text:
+            continue
+        if not text.isdigit():
+            raise ValueError(f"Invalid work item id: '{text}'")
+        ids.append(int(text))
+    if not ids:
+        raise ValueError("No work item id provided.")
+    return ids
+
+
+def _get_work_items_in_batches(wit_client: Any, ids: List[int], **kwargs: Any) -> List[Any]:
+    work_items: List[Any] = []
+    for start in range(0, len(ids), MAX_IDS_PER_BATCH):
+        batch = wit_client.get_work_items(ids=ids[start : start + MAX_IDS_PER_BATCH], **kwargs)
+        work_items.extend(item for item in batch or [] if item)
+    return work_items
+
+
+def _work_item_link(work_item: Any) -> str:
+    return (work_item.url or "").replace("_apis/wit/workItems", "_workitems/edit")
 
 
 def _format_field_value(field_value: Any) -> str:
@@ -40,25 +66,21 @@ def _format_work_item(work_item: Any, project_fields: Any) -> str:
         friendly_name = field_map.get(field_name, field_name)
         details.append(f"- **{friendly_name}**: {formatted_value}")
 
-    work_item_url = ""
     if getattr(work_item, "relations", None):
         details.append("\n## Related Items")
         for link in work_item.relations:
             direct_url = link.url.replace("_apis/wit/workItems", "_workitems/edit")
-            work_item_url = direct_url
             details.append(f"- {link.rel} URL: {direct_url}")
             if getattr(link, "attributes", None):
                 details.append(f"  :: Attributes: {link.attributes}")
 
-    base_url = "/".join(work_item_url.split("/")[:-1])
-    base_url = base_url + "/" + str(work_item.id)
-    details.append(f"Work Item URL: [link]({base_url})")
+    details.append(f"Work Item URL: [link]({_work_item_link(work_item)})")
 
     return "\n".join(details)
 
 
 def _format_work_item_custom(work_item: Any) -> str:
-    base_url = work_item.url.replace("_apis/wit/workItems", "_workitems/edit")
+    base_url = _work_item_link(work_item)
     fields = work_item.fields or {}
 
     desired_fields = [
@@ -130,9 +152,9 @@ def _format_standard_fields(
         fields["System.IterationPath"] = iteration_path
     if area_path:
         fields["System.AreaPath"] = area_path
-    if story_points is not None:
+    if story_points:
         fields["Microsoft.VSTS.Scheduling.StoryPoints"] = str(story_points)
-    if priority is not None:
+    if priority:
         fields["Microsoft.VSTS.Common.Priority"] = str(priority)
     if tags:
         fields["System.Tags"] = tags
@@ -261,23 +283,6 @@ class AzureDevOpsBoardsTools(AzureDevOpsBaseTools):
         team_iterations = work_client.get_team_iterations(team_context=TeamContext(project_id=project))
         return ", ".join([iteration.path for iteration in team_iterations])
 
-    def _get_valid_board_columns(self, project: str, work_item_type: str) -> str:
-        work_client = self._get_work_client()
-        team_context = TeamContext(project_id=project)
-        board_refs = work_client.get_boards(team_context=team_context)
-
-        matching_board = None
-        for ref in board_refs:
-            board = work_client.get_board(team_context=team_context, id=ref.id)
-            if board.work_item_type.lower() == work_item_type.lower():
-                matching_board = board
-                break
-        if not matching_board:
-            return ""
-
-        board_columns = work_client.get_board_columns(team_context=team_context, id=matching_board.id)
-        return ", ".join([col.name for col in board_columns.value])
-
     # ------------------------------------------------------------------ #
     # Public tools
     # ------------------------------------------------------------------ #
@@ -322,8 +327,8 @@ class AzureDevOpsBoardsTools(AzureDevOpsBaseTools):
                 return json.dumps({"results": [], "message": "No work items found matching the query."})
 
             work_item_ids = [int(item.id) for item in wiql_results]
-            work_items = wit_client.get_work_items(ids=work_item_ids, expand="Fields", error_policy="omit")
-            formatted = [_format_work_item_custom(item) for item in work_items if item]
+            work_items = _get_work_items_in_batches(wit_client, work_item_ids, expand="Fields", error_policy="omit")
+            formatted = [_format_work_item_custom(item) for item in work_items]
             return json.dumps({"results": formatted})
         except Exception as e:
             log_error(f"Error searching Azure DevOps work items: {e}")
@@ -375,17 +380,17 @@ class AzureDevOpsBoardsTools(AzureDevOpsBaseTools):
             wit_client = self._get_wit_client()
             project_fields = wit_client.get_fields(project=resolved_project)
 
-            if "," in item_id:
-                ids = [int(part.strip()) for part in item_id.split(",") if part.strip()]
-                work_items = wit_client.get_work_items(
-                    ids=ids, project=resolved_project, error_policy="omit", expand="all"
+            ids = _parse_ids(item_id)
+            if len(ids) > 1:
+                work_items = _get_work_items_in_batches(
+                    wit_client, ids, project=resolved_project, error_policy="omit", expand="all"
                 )
-                formatted = [_format_work_item(item, project_fields) for item in work_items if item]
+                formatted = [_format_work_item(item, project_fields) for item in work_items]
                 if not formatted:
                     return json.dumps({"results": [], "message": "No work items found."})
                 return json.dumps({"results": formatted})
 
-            work_item = wit_client.get_work_item(id=int(item_id), project=resolved_project, expand="all")
+            work_item = wit_client.get_work_item(id=ids[0], project=resolved_project, expand="all")
             return json.dumps({"result": _format_work_item(work_item, project_fields)})
         except Exception as e:
             log_error(f"Error retrieving Azure DevOps work item(s): {e}")
@@ -587,18 +592,15 @@ class AzureDevOpsBoardsTools(AzureDevOpsBaseTools):
             if not all_fields:
                 return json.dumps({"error": "At least one field must be specified for update."})
 
-            document = _build_field_document(all_fields, "replace")
+            # `replace` is rejected on a field that has no value yet; `add` covers both cases.
+            document = _build_field_document(all_fields, "add")
             updated_work_item = wit_client.update_work_item(
                 document=document, id=int(item_id), project=resolved_project
             )
             log_debug(f"Updated Azure DevOps work item {item_id}")
             return json.dumps({"result": _format_work_item(updated_work_item, project_fields)})
         except Exception as e:
-            error = self._field_error(e, resolved_project, "Task", assigned_to, state, iteration_path)
-            if "field 'system.boardcolumn" in str(e).lower() and resolved_project:
-                columns = self._safe(self._get_valid_board_columns, resolved_project, "Task")
-                error = {"error": "Invalid board column.", "valid_columns": columns}
-            return json.dumps(error)
+            return json.dumps(self._field_error(e, resolved_project, None, assigned_to, state, iteration_path))
 
     async def aupdate_task(
         self,
@@ -843,7 +845,7 @@ class AzureDevOpsBoardsTools(AzureDevOpsBaseTools):
         self,
         error: Exception,
         project: Optional[str],
-        work_item_type: str,
+        work_item_type: Optional[str],
         assigned_to: Optional[str],
         state: Optional[str],
         iteration_path: Optional[str],
@@ -861,6 +863,9 @@ class AzureDevOpsBoardsTools(AzureDevOpsBaseTools):
                 "valid_assignees": self._safe(self._get_team_members, project),
             }
         if "field 'state' contains" in lowered:
+            # On update the work item type is unknown, and looking it up would cost another call.
+            if not work_item_type:
+                return {"error": f"Invalid state: '{state}' is not valid for this work item type."}
             return {
                 "error": f"Invalid state: '{state}' is not valid for work item type '{work_item_type}'.",
                 "valid_states": self._safe(self._get_valid_states, project, work_item_type),

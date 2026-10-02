@@ -6,7 +6,7 @@ from agno.tools.azure_devops.base import AzureDevOpsBaseTools
 from agno.utils.log import log_debug, log_error
 
 try:
-    from azure.devops.v7_1.wiki.models import WikiPagesBatchRequest
+    from azure.devops.v7_0.wiki.models import WikiPagesBatchRequest
 except ImportError:
     raise ImportError("`azure-devops` not installed. Please install using `pip install azure-devops`")
 

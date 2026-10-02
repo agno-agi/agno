@@ -17,7 +17,7 @@ from agno.tools.azure_devops import AzureDevOpsBoardsTools
 # Create Agent
 # ---------------------------------------------------------------------------
 agent = Agent(
-    model=OpenAIResponses(id="gpt-5.5"),
+    model=OpenAIResponses(id="gpt-5.6-luna"),
     instructions=[
         "Use Azure DevOps boards tools to manage work items, sprints and comments.",
         "Use read-only operations unless explicitly asked to create or update work items.",

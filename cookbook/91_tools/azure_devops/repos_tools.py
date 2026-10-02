@@ -17,7 +17,7 @@ from agno.tools.azure_devops import AzureDevOpsReposTools
 # Create Agent
 # ---------------------------------------------------------------------------
 agent = Agent(
-    model=OpenAIResponses(id="gpt-5.5"),
+    model=OpenAIResponses(id="gpt-5.6-luna"),
     instructions=[
         "Use Azure DevOps repository tools to answer questions about code repositories.",
     ],

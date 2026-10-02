@@ -5,7 +5,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from agno.tools.azure_devops.repos import AzureDevOpsReposTools
+from agno.tools.azure_devops.repos import MAX_FILE_CHARS, AzureDevOpsReposTools
 
 
 @pytest.fixture
@@ -55,10 +55,12 @@ def test_list_repos_success(repos_tools):
     repo.id = "r1"
     repo.name = "repo-one"
     repo.is_disabled = False
+    repo.default_branch = "refs/heads/main"
     repos_tools._clients["git"].get_repositories.return_value = [repo]
 
     result = json.loads(repos_tools.list_repos())
     assert result["repos"][0]["name"] == "repo-one"
+    assert result["repos"][0]["default_branch"] == "refs/heads/main"
     repos_tools._clients["git"].get_repositories.assert_called_once_with(project="MyProject")
 
 
@@ -70,6 +72,16 @@ def test_read_repository_file_success(repos_tools):
     result = json.loads(repos_tools.read_repository_file("r1", "/README.md"))
     assert result["content"] == "# Hello"
     assert result["path"] == "/README.md"
+
+
+def test_read_repository_file_truncates_large_content(repos_tools):
+    item = Mock()
+    item.content = "x" * (MAX_FILE_CHARS + 10)
+    repos_tools._clients["git"].get_item.return_value = item
+
+    result = json.loads(repos_tools.read_repository_file("r1", "/big.txt"))
+    assert result["content"].startswith("x" * MAX_FILE_CHARS)
+    assert "[truncated" in result["content"]
 
 
 def test_get_repo_file_tree_success(repos_tools):
@@ -98,6 +110,7 @@ async def test_alist_repos_success(repos_tools):
     repo.id = "r1"
     repo.name = "repo-one"
     repo.is_disabled = False
+    repo.default_branch = "refs/heads/main"
     repos_tools._clients["git"].get_repositories.return_value = [repo]
 
     result = json.loads(await repos_tools.alist_repos())

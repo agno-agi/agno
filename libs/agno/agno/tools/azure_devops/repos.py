@@ -5,6 +5,9 @@ from typing import Any, List, Optional
 from agno.tools.azure_devops.base import AzureDevOpsBaseTools
 from agno.utils.log import log_debug, log_error
 
+# Larger files only flood the model context.
+MAX_FILE_CHARS = 100_000
+
 
 class AzureDevOpsReposTools(AzureDevOpsBaseTools):
     """Toolkit for Azure DevOps Git repositories."""
@@ -49,12 +52,20 @@ class AzureDevOpsReposTools(AzureDevOpsBaseTools):
             project: Azure DevOps project name or ID. Defaults to the toolkit's configured project.
 
         Returns:
-            JSON string with the list of repositories (id, name, is_disabled).
+            JSON string with the list of repositories (id, name, is_disabled, default_branch).
         """
         try:
             git_client = self._get_git_client()
             repos = git_client.get_repositories(project=self._resolve_project(project))
-            data = [{"id": repo.id, "name": repo.name, "is_disabled": repo.is_disabled} for repo in repos]
+            data = [
+                {
+                    "id": repo.id,
+                    "name": repo.name,
+                    "is_disabled": repo.is_disabled,
+                    "default_branch": repo.default_branch,
+                }
+                for repo in repos
+            ]
             log_debug(f"Listed {len(data)} Azure DevOps repositories")
             return json.dumps({"repos": data})
         except Exception as e:
@@ -68,7 +79,7 @@ class AzureDevOpsReposTools(AzureDevOpsBaseTools):
             project: Azure DevOps project name or ID. Defaults to the toolkit's configured project.
 
         Returns:
-            JSON string with the list of repositories (id, name, is_disabled).
+            JSON string with the list of repositories (id, name, is_disabled, default_branch).
         """
         return await asyncio.to_thread(self.list_repos, project)
 
@@ -86,7 +97,7 @@ class AzureDevOpsReposTools(AzureDevOpsBaseTools):
             project: Azure DevOps project name or ID. Defaults to the toolkit's configured project.
 
         Returns:
-            JSON string with the file path and its content.
+            JSON string with the file path and its content, truncated past 100,000 characters.
         """
         try:
             git_client = self._get_git_client()
@@ -96,7 +107,10 @@ class AzureDevOpsReposTools(AzureDevOpsBaseTools):
                 project=self._resolve_project(project),
                 include_content=True,
             )
-            return json.dumps({"path": path, "content": item.content})
+            content = item.content or ""
+            if len(content) > MAX_FILE_CHARS:
+                content = f"{content[:MAX_FILE_CHARS]}\n\n[truncated: file exceeds {MAX_FILE_CHARS} characters]"
+            return json.dumps({"path": path, "content": content})
         except Exception as e:
             log_error(f"Error reading Azure DevOps repository file: {e}")
             return json.dumps({"error": str(e)})
@@ -115,7 +129,7 @@ class AzureDevOpsReposTools(AzureDevOpsBaseTools):
             project: Azure DevOps project name or ID. Defaults to the toolkit's configured project.
 
         Returns:
-            JSON string with the file path and its content.
+            JSON string with the file path and its content, truncated past 100,000 characters.
         """
         return await asyncio.to_thread(self.read_repository_file, repository_id, path, project)
 

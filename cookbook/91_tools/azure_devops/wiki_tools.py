@@ -17,7 +17,7 @@ from agno.tools.azure_devops import AzureDevOpsWikiTools
 # Create Agent
 # ---------------------------------------------------------------------------
 agent = Agent(
-    model=OpenAIResponses(id="gpt-5.5"),
+    model=OpenAIResponses(id="gpt-5.6-luna"),
     instructions=[
         "Use Azure DevOps wiki tools to find and summarize documentation.",
     ],

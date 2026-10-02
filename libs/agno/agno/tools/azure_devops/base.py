@@ -9,6 +9,9 @@ try:
 except ImportError:
     raise ImportError("`azure-devops` not installed. Please install using `pip install azure-devops`")
 
+# msrest defaults to 100s, holding the worker thread of every async call that long.
+REQUEST_TIMEOUT_SECONDS = 30
+
 
 class AzureDevOpsBaseTools(Toolkit):
     """Shared base for Azure DevOps toolkits.
@@ -63,6 +66,7 @@ class AzureDevOpsBaseTools(Toolkit):
             client = factories[key]()
             if client is None:
                 raise RuntimeError(f"Failed to get Azure DevOps {key} client.")
+            client.config.connection.timeout = REQUEST_TIMEOUT_SECONDS
             self._clients[key] = client
         return self._clients[key]
 

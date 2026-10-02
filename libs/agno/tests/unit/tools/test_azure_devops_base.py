@@ -1,10 +1,10 @@
 """Unit tests for AzureDevOpsBaseTools."""
 
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import pytest
 
-from agno.tools.azure_devops.base import AzureDevOpsBaseTools
+from agno.tools.azure_devops.base import REQUEST_TIMEOUT_SECONDS, AzureDevOpsBaseTools
 
 ENV = {
     "AZURE_DEVOPS_ORG_URL": "https://dev.azure.com/org",
@@ -61,3 +61,10 @@ def test_resolve_project_missing_raises():
     tools = AzureDevOpsBaseTools(organization_url="https://dev.azure.com/org", personal_access_token="pat")
     with pytest.raises(ValueError):
         tools._resolve_project()
+
+
+def test_get_client_sets_request_timeout():
+    tools = AzureDevOpsBaseTools(organization_url="https://dev.azure.com/org", personal_access_token="pat")
+    tools._connection = Mock()
+    client = tools._get_git_client()
+    assert client.config.connection.timeout == REQUEST_TIMEOUT_SECONDS
