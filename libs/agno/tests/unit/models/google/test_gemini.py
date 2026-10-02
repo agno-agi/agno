@@ -877,3 +877,101 @@ class TestFileSearchToolWiring:
             return  # No tools at all, which is the expected case
         file_search_tools = [t for t in config.tools if getattr(t, "file_search", None) is not None]
         assert len(file_search_tools) == 0
+
+
+class TestGemini35ThinkingAndUsage:
+    """Tests for Gemini 3/3.5 regional prefixes, thinking config routing, and streaming usage metrics."""
+
+    def test_supports_multimodal_function_responses_with_regional_prefix(self):
+        assert Gemini(id="au.gemini-3.5-flash")._supports_multimodal_function_responses() is True
+        assert Gemini(id="eu.gemini-3.5-pro")._supports_multimodal_function_responses() is True
+        assert Gemini(id="models/gemini-3.5-flash")._supports_multimodal_function_responses() is True
+        assert Gemini(id="au.gemini-2.5-flash")._supports_multimodal_function_responses() is False
+
+    def test_get_request_params_thinking_config_routing(self):
+        # Gemini 3.5 Flash with thinking_budget=0 -> thinking_level=MINIMAL, include_thoughts=False
+        m_flash = Gemini(id="au.gemini-3.5-flash", thinking_budget=0, api_key="test-key")
+        cfg_flash = m_flash.get_request_params()["config"].thinking_config
+        assert (
+            str(
+                cfg_flash.thinking_level.value
+                if hasattr(cfg_flash.thinking_level, "value")
+                else cfg_flash.thinking_level
+            ).lower()
+            == "minimal"
+        )
+        assert cfg_flash.include_thoughts is False
+        assert cfg_flash.thinking_budget is None
+
+        # Gemini 3.5 Pro with thinking_budget=0 -> clamped to thinking_level=LOW, include_thoughts=False
+        m_pro = Gemini(id="gemini-3.5-pro", thinking_budget=0, api_key="test-key")
+        cfg_pro = m_pro.get_request_params()["config"].thinking_config
+        assert (
+            str(
+                cfg_pro.thinking_level.value if hasattr(cfg_pro.thinking_level, "value") else cfg_pro.thinking_level
+            ).lower()
+            == "low"
+        )
+        assert cfg_pro.include_thoughts is False
+        assert cfg_pro.thinking_budget is None
+
+        # Gemini 3.5 Pro with thinking_level="minimal" -> clamped to LOW
+        m_pro_min = Gemini(id="gemini-3.5-pro", thinking_level="minimal", api_key="test-key")
+        cfg_pro_min = m_pro_min.get_request_params()["config"].thinking_config
+        assert (
+            str(
+                cfg_pro_min.thinking_level.value
+                if hasattr(cfg_pro_min.thinking_level, "value")
+                else cfg_pro_min.thinking_level
+            ).lower()
+            == "low"
+        )
+
+        # Gemini 2.5 Flash with thinking_level="low" -> mapped to thinking_budget=1024
+        m_25 = Gemini(id="gemini-2.5-flash", thinking_level="low", api_key="test-key")
+        cfg_25 = m_25.get_request_params()["config"].thinking_config
+        assert cfg_25.thinking_budget == 1024
+        assert cfg_25.thinking_level is None
+
+        # Gemini 2.5 Pro with thinking_budget=0 -> clamped to minimum budget 128
+        m_25_pro = Gemini(id="gemini-2.5-pro", thinking_budget=0, api_key="test-key")
+        cfg_25_pro = m_25_pro.get_request_params()["config"].thinking_config
+        assert cfg_25_pro.thinking_budget == 128
+
+    def test_parse_provider_response_delta_trailing_usage_only_chunk(self):
+        from google.genai.types import GenerateContentResponse, GenerateContentResponseUsageMetadata
+
+        model = Gemini(id="gemini-3.5-flash", api_key="test-key")
+        chunk = GenerateContentResponse(
+            candidates=[],
+            usage_metadata=GenerateContentResponseUsageMetadata(
+                prompt_token_count=12,
+                candidates_token_count=8,
+                thoughts_token_count=20,
+                total_token_count=40,
+                cached_content_token_count=4,
+            ),
+        )
+        delta = model._parse_provider_response_delta(chunk)
+        assert delta.response_usage is not None
+        assert delta.response_usage.input_tokens == 12
+        assert delta.response_usage.output_tokens == 8
+        assert delta.response_usage.reasoning_tokens == 20
+        assert delta.response_usage.total_tokens == 40
+        assert delta.response_usage.cache_read_tokens == 4
+
+    def test_get_metrics_includes_thoughts_token_count_in_fallback_total(self):
+        from google.genai.types import GenerateContentResponseUsageMetadata
+
+        model = Gemini(id="gemini-3.5-flash", api_key="test-key")
+        usage = GenerateContentResponseUsageMetadata(
+            prompt_token_count=10,
+            candidates_token_count=15,
+            thoughts_token_count=25,
+            total_token_count=None,
+        )
+        metrics = model._get_metrics(usage)
+        assert metrics.input_tokens == 10
+        assert metrics.output_tokens == 15
+        assert metrics.reasoning_tokens == 25
+        assert metrics.total_tokens == 50
