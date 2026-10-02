@@ -203,6 +203,7 @@ class Model(ABC):
         - ContextWindowExceededError (fast path after ModelProviderError.classify)
         - Client errors (400, 401, 403, 404, 413, 422) that won't change on retry
         - Context window/token limit patterns in error message (defense-in-depth)
+        - A TypeError the adapter wrapped (e.g. a keyword the installed SDK does not accept)
 
         Retryable errors include:
         - Rate limit errors (429)
@@ -211,6 +212,11 @@ class Model(ABC):
         """
         # Fast path: already classified by ModelProviderError.classify()
         if isinstance(error, ContextWindowExceededError):
+            return False
+
+        # The adapters wrap unexpected exceptions as a 502. A TypeError is a wrong call, not a
+        # provider failure: the same request raises it again on every attempt.
+        if isinstance(error.__cause__, TypeError):
             return False
 
         non_retryable_codes = {400, 401, 403, 404, 413, 422}
@@ -229,7 +235,8 @@ class Model(ABC):
         Invoke the model with retry logic for ModelProviderError.
 
         This method wraps the invoke() call and retries on ModelProviderError
-        with optional exponential backoff.
+        with optional exponential backoff. A failure is logged at WARNING here and in the
+        adapters: the error is raised, and the run that handles it logs the one ERROR.
         """
         last_exception: Optional[ModelProviderError] = None
         retries_with_guidance_count = kwargs.pop("retries_with_guidance_count", 0)
@@ -241,7 +248,10 @@ class Model(ABC):
                 last_exception = ModelProviderError.classify(e)
                 # Check if error is non-retryable
                 if not self._is_retryable_error(last_exception):
-                    log_error(f"Non-retryable model provider error: {str(e)}")
+                    log_warning(f"Non-retryable model provider error: {str(e)}")
+                    # classify() usually returns e itself, and `raise e from e` would drop its SDK cause.
+                    if last_exception is e:
+                        raise
                     raise last_exception from e
                 if attempt < self.retries:
                     delay = self._get_retry_delay(attempt)
@@ -252,7 +262,7 @@ class Model(ABC):
                     sleep(delay)
                 else:
                     if self.retries > 0:
-                        log_error(f"Model provider error after {self.retries + 1} attempts: {str(e)}")
+                        log_warning(f"Model provider error after {self.retries + 1} attempts: {str(e)}")
             except RetryableModelProviderError as e:
                 current_count = retries_with_guidance_count
                 if current_count >= self.retry_with_guidance_limit:
@@ -289,7 +299,10 @@ class Model(ABC):
                 last_exception = ModelProviderError.classify(e)
                 # Check if error is non-retryable
                 if not self._is_retryable_error(last_exception):
-                    log_error(f"Non-retryable model provider error: {str(e)}")
+                    log_warning(f"Non-retryable model provider error: {str(e)}")
+                    # classify() usually returns e itself, and `raise e from e` would drop its SDK cause.
+                    if last_exception is e:
+                        raise
                     raise last_exception from e
                 if attempt < self.retries:
                     delay = self._get_retry_delay(attempt)
@@ -300,7 +313,7 @@ class Model(ABC):
                     await asyncio.sleep(delay)
                 else:
                     if self.retries > 0:
-                        log_error(f"Model provider error after {self.retries + 1} attempts: {str(e)}")
+                        log_warning(f"Model provider error after {self.retries + 1} attempts: {str(e)}")
             except RetryableModelProviderError as e:
                 current_count = retries_with_guidance_count
                 if current_count >= self.retry_with_guidance_limit:
@@ -339,7 +352,10 @@ class Model(ABC):
                 last_exception = ModelProviderError.classify(e)
                 # Check if error is non-retryable (e.g., context window exceeded, auth errors)
                 if not self._is_retryable_error(last_exception):
-                    log_error(f"Non-retryable model provider error: {str(e)}")
+                    log_warning(f"Non-retryable model provider error: {str(e)}")
+                    # classify() usually returns e itself, and `raise e from e` would drop its SDK cause.
+                    if last_exception is e:
+                        raise
                     raise last_exception from e
                 if attempt < self.retries:
                     delay = self._get_retry_delay(attempt)
@@ -351,7 +367,7 @@ class Model(ABC):
                     sleep(delay)
                 else:
                     if self.retries > 0:
-                        log_error(f"Model provider error after {self.retries + 1} attempts: {str(e)}")
+                        log_warning(f"Model provider error after {self.retries + 1} attempts: {str(e)}")
             except RetryableModelProviderError as e:
                 current_count = retries_with_guidance_count
                 if current_count >= self.retry_with_guidance_limit:
@@ -392,7 +408,10 @@ class Model(ABC):
                 last_exception = ModelProviderError.classify(e)
                 # Check if error is non-retryable
                 if not self._is_retryable_error(last_exception):
-                    log_error(f"Non-retryable model provider error: {str(e)}")
+                    log_warning(f"Non-retryable model provider error: {str(e)}")
+                    # classify() usually returns e itself, and `raise e from e` would drop its SDK cause.
+                    if last_exception is e:
+                        raise
                     raise last_exception from e
                 if attempt < self.retries:
                     delay = self._get_retry_delay(attempt)
@@ -404,7 +423,7 @@ class Model(ABC):
                     await asyncio.sleep(delay)
                 else:
                     if self.retries > 0:
-                        log_error(f"Model provider error after {self.retries + 1} attempts: {str(e)}")
+                        log_warning(f"Model provider error after {self.retries + 1} attempts: {str(e)}")
             except RetryableModelProviderError as e:
                 current_count = retries_with_guidance_count
                 if current_count >= self.retry_with_guidance_limit:
