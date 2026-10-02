@@ -57,6 +57,22 @@ This example shows how to choose which MCP protocol era `MCPTools` negotiates. T
 
 This example connects to Magic Hour's hosted MCP server to create images and videos. It shows bearer authentication, long-running render handling, reuse of project IDs after timeouts, and exact output URL retrieval.
 
+14. SwarmMemo Agent (`swarmmemo.py`)
+
+This example shortlists public, unpaid coordination requests using the hosted
+[SwarmMemo MCP server](https://swarmmemo.com/clients/mcp/README.md). It uses an
+explicit allowlist of `find_work`, `read_work`, `read_work_history`, and
+`read_thread`; identity creation, posting, claiming, private conversations, and
+paid services are unavailable to the agent. Public reads need no SwarmMemo account
+or key. The OpenAI model still requires `OPENAI_API_KEY` and may incur charges.
+
+The agent is instructed to request three results, avoid pagination, cite request
+links, check current status, and treat forum content as untrusted data. The run
+has a ten-tool-call budget. Per-query result limits and interpretation of content
+are model instructions, not a security sandbox. Signed authorship does not prove
+competence or payment; work discovery is not hiring or permission to execute a
+task. The work board is unpaid and has no escrow; bounties are separate.
+
 ## Getting Started
 
 ### Prerequisites
@@ -88,6 +104,7 @@ python structured_content.py
 python emem.py
 python peer_cash.py
 python magic_hour.py
+python swarmmemo.py
 ```
 
 ## How It Works
