@@ -86,11 +86,32 @@ one agent run, one agent session, one user, and 42 total tokens.
 
 ---
 
+### os_metrics.py
+
+**Status:** PASS
+
+**Test mode:** LIVE
+
+**Description:** Started the checked-in metrics AgentOS server against the
+local PostgreSQL, ran `metrics-researcher` (`gpt-5.5`) and
+`metrics-summarizer` (`gpt-5.6-luna`) twice each as one user, called
+`POST /os/metrics/refresh`, then read every `GET /os/metrics/*` route for that
+user on 2026-09-25.
+
+**Result:** Every route answered 200 from the `agno_os_metrics` table: 4
+sessions, 4 completed runs (success rate 100%) and 134 tokens, equal to the
+four run outputs (46 + 26 + 35 + 27); `GET /os/metrics/models` listed each
+model with 2 runs; `GET /os/metrics/latency` returned the averages, medians,
+p95s and maxima; and `GET /os/metrics/refresh/status` returned the
+`updated_at` of the refresh.
+
+---
+
 ## Validation
 
-- All five runnable examples completed with live observed results.
+- All six runnable examples completed with live observed results.
 - The basic server passed `/health`, `/config`, and trace-route discovery.
-- Recursive pattern validation checked exactly 5 Python files with 0
+- Recursive pattern validation checked exactly 6 Python files with 0
   violations.
 - Targeted Ruff format and check passed.
 - Deprecated API, stale-model, non-final-status, emoji, and static-f-string
