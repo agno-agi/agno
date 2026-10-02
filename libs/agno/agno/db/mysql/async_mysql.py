@@ -1643,7 +1643,7 @@ class AsyncMySQLDb(AsyncBaseDb):
 
         except Exception as e:
             log_error(f"Exception reading from memory table: {str(e)}")
-            return []
+            raise e
 
     async def get_user_memory(
         self, memory_id: str, deserialize: Optional[bool] = True, user_id: Optional[str] = None

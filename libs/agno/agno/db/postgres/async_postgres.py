@@ -2051,7 +2051,7 @@ class AsyncPostgresDb(AsyncBaseDb):
 
         except Exception as e:
             log_error(f"Exception getting user memory stats: {str(e)}")
-            return [], 0
+            raise e
 
     async def upsert_user_memory(
         self, memory: UserMemory, deserialize: Optional[bool] = True
