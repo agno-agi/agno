@@ -70,35 +70,3 @@ async def test_progress_identifies_retry_attempt_without_another_executor_run(as
     assert len({(e.run_id, e.step_id) for e in progress}) == 1
     completed = next(e for e in events if isinstance(e, WorkflowCompletedEvent))
     assert len(completed.step_results) == 1
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("asynchronous", [False, True])
-@pytest.mark.parametrize("events_to_skip,stored", [(None, 0), ([], 2)])
-async def test_progress_is_streamed_but_not_stored_by_default(asynchronous, events_to_skip, stored):
-    """One progress event per item would bloat every stored run; an explicit list opts back in."""
-    from agno.run.workflow import WorkflowRunEvent
-
-    def work(step_input):
-        yield StepProgress(content="Indexed page 1", data={"processed": 1})
-        yield StepProgress(content="Indexed page 2", data={"processed": 2})
-        yield StepOutput(content="final result")
-
-    workflow = Workflow(
-        id="index",
-        steps=[Step(name="sync", executor=work)],
-        db=InMemoryDb(),
-        store_events=True,
-        events_to_skip=events_to_skip,
-        telemetry=False,
-    )
-    assert workflow.events_to_skip == ([WorkflowRunEvent.step_progress] if events_to_skip is None else [])
-    kwargs = dict(input="go", session_id="session", stream=True, stream_events=True)
-    events = [e async for e in workflow.arun(**kwargs)] if asynchronous else list(workflow.run(**kwargs))
-    assert len([e for e in events if isinstance(e, StepProgressEvent)]) == 2  # always streamed
-    run_id = next(e for e in events if isinstance(e, WorkflowCompletedEvent)).run_id
-    saved = workflow.get_run_output(run_id=run_id, session_id="session")
-    assert saved is not None and saved.content == "final result"
-    saved_events = saved.events or []
-    assert len([e for e in saved_events if e.event == WorkflowRunEvent.step_progress.value]) == stored
-    assert any(e.event == WorkflowRunEvent.step_completed.value for e in saved_events)  # others still stored

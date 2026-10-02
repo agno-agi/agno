@@ -632,9 +632,7 @@ class TestFunctionStepCancellationStopsTheFunction:
             last_run = workflow.get_session(session_id=session_id).runs[-1]
             assert last_run.status == RunStatus.cancelled
             # The run is persisted before the terminal pair is emitted, so it stores what was streamed until then.
-            # Progress is streamed but, by default, not stored; every other event before the cancel is.
-            streamed = names[: names.index("WorkflowCancelled")]
-            assert [event.event for event in last_run.events] == [name for name in streamed if name != "StepProgress"]
+            assert [event.event for event in last_run.events] == names[: names.index("WorkflowCancelled")]
             # The step never produced its output; a drained function would have stored one.
             assert not last_run.step_results
 
