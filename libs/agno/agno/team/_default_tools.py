@@ -460,6 +460,7 @@ def _get_delegate_task_function(
 ) -> Function:
     from agno.team._init import _initialize_member
     from agno.team._run import _record_opted_out_media, _update_team_media
+    from agno.team._storage import _hand_session_to_sub_team, _release_session_from_sub_team
     from agno.team._tools import (
         _determine_team_member_interactions,
         _find_member_by_id,
@@ -713,6 +714,7 @@ def _get_delegate_task_function(
 
         member_agent_run_response = None
         try:
+            _hand_session_to_sub_team(member_agent, session)
             if stream:
                 member_run_id = str(uuid4())
                 if run_response.run_id is not None:
@@ -805,6 +807,7 @@ def _get_delegate_task_function(
                 if run_response.run_id is not None:
                     raise_if_cancelled(run_response.run_id)
         except RunCancelledException:
+            _release_session_from_sub_team(member_agent)
             use_team_logger()
             _process_delegate_task_to_member(
                 member_agent_run_response,
@@ -813,6 +816,8 @@ def _get_delegate_task_function(
                 member_session_state_copy,  # type: ignore
             )
             raise
+        finally:
+            _release_session_from_sub_team(member_agent)
 
         # Check if the member run is paused (HITL)
         if member_agent_run_response is not None and member_agent_run_response.is_paused:
@@ -899,6 +904,7 @@ def _get_delegate_task_function(
 
         member_agent_run_response = None
         try:
+            _hand_session_to_sub_team(member_agent, session)
             if stream:
                 member_run_id = str(uuid4())
                 if run_response.run_id is not None:
@@ -990,6 +996,7 @@ def _get_delegate_task_function(
                 if run_response.run_id is not None:
                     await araise_if_cancelled(run_response.run_id)
         except RunCancelledException:
+            _release_session_from_sub_team(member_agent)
             use_team_logger()
             await _aprocess_delegate_task_to_member(
                 member_agent_run_response,
@@ -998,6 +1005,8 @@ def _get_delegate_task_function(
                 member_session_state_copy,  # type: ignore
             )
             raise
+        finally:
+            _release_session_from_sub_team(member_agent)
 
         # Check if the member run is paused (HITL)
         if member_agent_run_response is not None and member_agent_run_response.is_paused:
@@ -1069,6 +1078,7 @@ def _get_delegate_task_function(
             member_session_state_copy = copy(run_context.session_state)
             member_agent_run_response = None
             try:
+                _hand_session_to_sub_team(member_agent, session)
                 if stream:
                     member_run_id = str(uuid4())
                     if run_response.run_id is not None:
@@ -1163,6 +1173,7 @@ def _get_delegate_task_function(
                     if run_response.run_id is not None:
                         raise_if_cancelled(run_response.run_id)
             except RunCancelledException:
+                _release_session_from_sub_team(member_agent)
                 _process_delegate_task_to_member(
                     member_agent_run_response,
                     member_agent,
@@ -1170,6 +1181,8 @@ def _get_delegate_task_function(
                     member_session_state_copy,  # type: ignore
                 )
                 raise
+            finally:
+                _release_session_from_sub_team(member_agent)
 
             # Check if the member run is paused (HITL)
             if member_agent_run_response is not None and member_agent_run_response.is_paused:
@@ -1245,34 +1258,35 @@ def _get_delegate_task_function(
                 member_agent_task, history = _setup_delegate_task_to_member(member_agent=agent, task=task)  # type: ignore
                 member_session_state_copy = copy(run_context.session_state)
 
-                member_run_id = str(uuid4())
-                if run_response.run_id is not None:
-                    await aregister_member_run(run_response.run_id, member_run_id)
-                member_stream = agent.arun(  # type: ignore
-                    input=member_agent_task if not history else history,
-                    user_id=user_id,
-                    session_id=session.session_id,
-                    session_state=member_session_state_copy,  # Send a copy to the agent
-                    images=images,
-                    videos=videos,
-                    audio=audio,
-                    files=files,
-                    stream=True,
-                    stream_events=stream_events or team.stream_member_events,
-                    debug_mode=debug_mode,
-                    knowledge_filters=run_context.knowledge_filters
-                    if not agent.knowledge_filters and agent.knowledge
-                    else None,
-                    dependencies=run_context.dependencies,
-                    add_dependencies_to_context=add_dependencies_to_context,
-                    add_session_state_to_context=add_session_state_to_context,
-                    metadata=run_context.metadata,
-                    run_id=member_run_id,
-                    yield_run_output=True,
-                )
                 member_agent_run_response = None
                 try:
                     try:
+                        _hand_session_to_sub_team(agent, session)
+                        member_run_id = str(uuid4())
+                        if run_response.run_id is not None:
+                            await aregister_member_run(run_response.run_id, member_run_id)
+                        member_stream = agent.arun(  # type: ignore
+                            input=member_agent_task if not history else history,
+                            user_id=user_id,
+                            session_id=session.session_id,
+                            session_state=member_session_state_copy,  # Send a copy to the agent
+                            images=images,
+                            videos=videos,
+                            audio=audio,
+                            files=files,
+                            stream=True,
+                            stream_events=stream_events or team.stream_member_events,
+                            debug_mode=debug_mode,
+                            knowledge_filters=run_context.knowledge_filters
+                            if not agent.knowledge_filters and agent.knowledge
+                            else None,
+                            dependencies=run_context.dependencies,
+                            add_dependencies_to_context=add_dependencies_to_context,
+                            add_session_state_to_context=add_session_state_to_context,
+                            metadata=run_context.metadata,
+                            run_id=member_run_id,
+                            yield_run_output=True,
+                        )
                         draining_after_cancel = False
                         async for member_agent_run_output_event in member_stream:
                             # Do NOT break out of the loop, AsyncIterator need to exit properly
@@ -1311,6 +1325,7 @@ def _get_delegate_task_function(
                         if draining_after_cancel:
                             raise RunCancelledException("")
                     finally:
+                        _release_session_from_sub_team(agent)
                         # Check if the member run is paused (HITL)
                         if member_agent_run_response is not None and member_agent_run_response.is_paused:
                             _propagate_member_pause(run_response, agent, member_agent_run_response)
@@ -1379,6 +1394,7 @@ def _get_delegate_task_function(
                     member_session_state_copy = copy(run_context.session_state)
 
                     try:
+                        _hand_session_to_sub_team(member_agent, session)
                         member_run_id = str(uuid4())
                         if run_response.run_id is not None:
                             await aregister_member_run(run_response.run_id, member_run_id)
@@ -1408,6 +1424,7 @@ def _get_delegate_task_function(
                         if run_response.run_id is not None:
                             await araise_if_cancelled(run_response.run_id)
                     except RunCancelledException:
+                        _release_session_from_sub_team(member_agent)
                         await _aprocess_delegate_task_to_member(
                             member_agent_run_response,
                             member_agent,
@@ -1415,6 +1432,8 @@ def _get_delegate_task_function(
                             member_session_state_copy,  # type: ignore
                         )
                         raise
+                    finally:
+                        _release_session_from_sub_team(member_agent)
 
                     member_name = member_agent.name if member_agent.name else f"agent_{member_agent_index}"
 

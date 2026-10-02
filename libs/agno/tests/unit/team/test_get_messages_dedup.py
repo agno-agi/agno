@@ -105,6 +105,71 @@ def _nested_team_history_session() -> TeamSession:
     return session
 
 
+def _nested_member_agent_session() -> TeamSession:
+    """Build a run tree where a member agent only exists below a nested sub-team run."""
+    leaf_agent_run = _make_member_run("deep-agent", "deep-agent-run")
+    leaf_run = TeamRunOutput(
+        run_id="leaf-run",
+        team_id="leaf-team",
+        parent_run_id="middle-run",
+        status=RunStatus.completed,
+        messages=[Message(role="assistant", content="Leaf response")],
+        member_responses=[leaf_agent_run],
+    )
+    middle_run = TeamRunOutput(
+        run_id="middle-run",
+        team_id="middle-team",
+        parent_run_id="root-run",
+        status=RunStatus.completed,
+        messages=[Message(role="assistant", content="Middle response")],
+        member_responses=[leaf_run],
+    )
+    root_run = TeamRunOutput(
+        run_id="root-run",
+        team_id="root-team",
+        status=RunStatus.completed,
+        messages=[Message(role="assistant", content="Root response")],
+        member_responses=[middle_run],
+    )
+    return TeamSession(session_id="nested-member-session", team_id="root-team", runs=[root_run])
+
+
+def _member_response_team_history_session() -> TeamSession:
+    """Build a three-level team run tree stored only through member responses."""
+    leaf_run = TeamRunOutput(
+        run_id="leaf-run",
+        team_id="leaf-team",
+        parent_run_id="middle-run",
+        status=RunStatus.completed,
+        messages=[
+            Message(role="user", content="Leaf request"),
+            Message(role="assistant", content="Leaf response"),
+        ],
+    )
+    middle_run = TeamRunOutput(
+        run_id="middle-run",
+        team_id="middle-team",
+        parent_run_id="root-run",
+        status=RunStatus.completed,
+        messages=[
+            Message(role="user", content="Middle request"),
+            Message(role="assistant", content="Middle response"),
+        ],
+        member_responses=[leaf_run],
+    )
+    root_run = TeamRunOutput(
+        run_id="root-run",
+        team_id="root-team",
+        status=RunStatus.completed,
+        messages=[
+            Message(role="user", content="Root request"),
+            Message(role="assistant", content="Root response"),
+        ],
+        member_responses=[middle_run],
+    )
+    return TeamSession(session_id="member-response-team-session", team_id="root-team", runs=[root_run])
+
+
 class TestGetMessagesMemberDedup:
     """Tests for deduplication when member runs appear in multiple locations."""
 
@@ -298,6 +363,32 @@ class TestNestedTeamHistory:
 
         assert [message.content for message in history] == ["Nested request", "Nested response"]
 
+    def test_team_id_filter_finds_team_in_member_responses(self):
+        """A nested team stored only as a member response remains queryable."""
+        session = _member_response_team_history_session()
+
+        messages = session.get_messages(team_id="middle-team")
+
+        assert [message.content for message in messages] == ["Middle request", "Middle response"]
+
+    def test_team_id_filter_finds_deeply_nested_team(self):
+        """Team history lookup traverses more than one member-response level."""
+        session = _member_response_team_history_session()
+
+        messages = session.get_messages(team_id="leaf-team")
+
+        assert [message.content for message in messages] == ["Leaf request", "Leaf response"]
+
+    def test_team_id_filter_deduplicates_flat_and_nested_run(self):
+        """Dual storage of a team run must not duplicate its history messages."""
+        session = _member_response_team_history_session()
+        leaf_run = session.runs[0].member_responses[0].member_responses[0]  # type: ignore[union-attr]
+        session.runs.append(leaf_run)
+
+        messages = session.get_messages(team_id="leaf-team")
+
+        assert [message.content for message in messages] == ["Leaf request", "Leaf response"]
+
 
 class TestGetTeamHistoryZeroCount:
     """get_team_history() zero/negative num_runs must return empty, not the whole history."""
@@ -309,3 +400,67 @@ class TestGetTeamHistoryZeroCount:
     def test_get_team_history_positive_is_limited(self):
         """A positive num_runs returns that many recent runs."""
         assert len(_session_with_runs(3).get_team_history(num_runs=2)) == 2
+
+
+class TestNestedMemberHistory:
+    """Member lookups must traverse member_responses at the same depth as team lookups."""
+
+    def test_member_ids_filter_finds_deeply_nested_member(self):
+        """A member agent that only ran below a sub-team must still be reachable."""
+        session = _nested_member_agent_session()
+
+        messages = session.get_messages(member_ids=["deep-agent"])
+
+        assert [message.content for message in messages] == [
+            "Search for AI news",
+            "Let me search.",
+            "Results here.",
+            "Here are the results.",
+        ]
+
+    def test_member_ids_filter_deduplicates_flat_and_nested_run(self):
+        """Dual storage of a nested member run must not duplicate its messages."""
+        session = _nested_member_agent_session()
+        deep_agent_run = session.runs[0].member_responses[0].member_responses[0].member_responses[0]  # type: ignore[union-attr,index]
+        session.runs.append(deep_agent_run)  # type: ignore[union-attr]
+
+        messages = session.get_messages(member_ids=["deep-agent"])
+
+        assert len(messages) == 4
+
+    def test_member_ids_filter_ignores_unrelated_nested_members(self):
+        """Traversing deeper must not pull in members that were not asked for."""
+        session = _nested_member_agent_session()
+
+        assert session.get_messages(member_ids=["other-agent"]) == []
+
+    def test_cyclic_member_responses_do_not_hang(self):
+        """A run tree that references itself must terminate instead of looping."""
+        run = _make_team_run("team-001", "run-team-001", [])
+        run.member_responses = [run]  # type: ignore[list-item]
+        session = TeamSession(session_id="cyclic-session", runs=[run])
+
+        messages = session.get_messages(team_id="team-001")
+
+        assert [message.content for message in messages] == ["Find AI news", "Delegating to search agent."]
+
+
+class TestNestedTeamHistoryContext:
+    """get_team_history(team_id=...) documents depth-independent lookup; verify it."""
+
+    def test_get_team_history_finds_deeply_nested_team(self):
+        """A sub-team stored two levels down must still produce its (input, response) pairs."""
+        session = _member_response_team_history_session()
+        leaf_run = session.runs[0].member_responses[0].member_responses[0]  # type: ignore[union-attr,index]
+        leaf_run.input = RunInput(input_content="Leaf request")
+        leaf_run.content = "Leaf response"
+
+        assert session.get_team_history(team_id="leaf-team") == [("Leaf request", "Leaf response")]
+
+    def test_get_team_history_without_team_id_stays_top_level(self):
+        """The unfiltered call must keep returning only the team leader's own runs."""
+        session = _member_response_team_history_session()
+        session.runs[0].input = RunInput(input_content="Root request")  # type: ignore[union-attr,index]
+        session.runs[0].content = "Root response"  # type: ignore[union-attr,index]
+
+        assert session.get_team_history() == [("Root request", "Root response")]
