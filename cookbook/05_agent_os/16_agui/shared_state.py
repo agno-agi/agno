@@ -2,8 +2,15 @@
 Synchronize Shared State over AG-UI
 ===================================
 
-Give an AG-UI agent a recipe-shaped session state and let its
-update_session_state tool emit state snapshots and JSON Patch deltas.
+Give an AG-UI agent a recipe-shaped session state, let its
+update_session_state tool change it, and watch the interface emit state
+snapshots and JSON Patch deltas.
+
+A delta fires each time a completed tool call leaves state different from the
+last payload, and because this agent's session_state seeds the session row that
+each run merges in, the first delta of a run reports more than that tool call
+touched, unless the request already sent all the state the run starts from. The
+README's "Shared state on the wire" has the rest of the payload rules.
 
 Prerequisites: OPENAI_API_KEY
 Run: .venvs/demo/bin/python cookbook/05_agent_os/16_agui/shared_state.py

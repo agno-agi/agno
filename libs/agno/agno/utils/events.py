@@ -39,6 +39,7 @@ from agno.run.agent import (
     RunStartedEvent,
     SessionSummaryCompletedEvent,
     SessionSummaryStartedEvent,
+    ToolCallArgsDeltaEvent,
     ToolCallCompletedEvent,
     ToolCallErrorEvent,
     ToolCallStartedEvent,
@@ -81,6 +82,7 @@ from agno.run.team import TaskIterationStartedEvent as TeamTaskIterationStartedE
 from agno.run.team import TaskStateUpdatedEvent as TeamTaskStateUpdatedEvent
 from agno.run.team import TaskUpdatedEvent as TeamTaskUpdatedEvent
 from agno.run.team import TeamRunEvent, TeamRunInput, TeamRunOutput, TeamRunOutputEvent
+from agno.run.team import ToolCallArgsDeltaEvent as TeamToolCallArgsDeltaEvent
 from agno.run.team import ToolCallCompletedEvent as TeamToolCallCompletedEvent
 from agno.run.team import ToolCallErrorEvent as TeamToolCallErrorEvent
 from agno.run.team import ToolCallStartedEvent as TeamToolCallStartedEvent
@@ -576,6 +578,40 @@ def create_team_reasoning_completed_event(
         run_id=from_run_response.run_id,
         content=content,
         content_type=content_type or "str",
+    )
+
+
+def create_tool_call_args_delta_event(
+    from_run_response: RunOutput,
+    tool_call_id: str,
+    tool_args_delta: str,
+    tool_name: Optional[str] = None,
+) -> ToolCallArgsDeltaEvent:
+    return ToolCallArgsDeltaEvent(
+        session_id=from_run_response.session_id,
+        agent_id=from_run_response.agent_id,  # type: ignore
+        agent_name=from_run_response.agent_name,  # type: ignore
+        run_id=from_run_response.run_id,
+        tool_call_id=tool_call_id,
+        tool_name=tool_name,
+        tool_args_delta=tool_args_delta,
+    )
+
+
+def create_team_tool_call_args_delta_event(
+    from_run_response: TeamRunOutput,
+    tool_call_id: str,
+    tool_args_delta: str,
+    tool_name: Optional[str] = None,
+) -> TeamToolCallArgsDeltaEvent:
+    return TeamToolCallArgsDeltaEvent(
+        session_id=from_run_response.session_id,
+        team_id=from_run_response.team_id,  # type: ignore
+        team_name=from_run_response.team_name,  # type: ignore
+        run_id=from_run_response.run_id,
+        tool_call_id=tool_call_id,
+        tool_name=tool_name,
+        tool_args_delta=tool_args_delta,
     )
 
 

@@ -38,6 +38,7 @@ from agno.run.agent import (
     RunOutputEvent,
     RunPausedEvent,
     RunStartedEvent,
+    ToolCallArgsDeltaEvent,
     ToolCallCompletedEvent,
     ToolCallStartedEvent,
 )
@@ -76,6 +77,7 @@ __all__ = [
     "ReasoningStartedEvent",
     "ReasoningStepEvent",
     "ReasoningCompletedEvent",
+    "ToolCallArgsDeltaEvent",
     "ToolCallStartedEvent",
     "ToolCallCompletedEvent",
     "get_agent_by_id",

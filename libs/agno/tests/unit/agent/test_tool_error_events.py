@@ -1,3 +1,5 @@
+"""A failed tool call is reported as an error event by an agent and by a team."""
+
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.models.response import ModelResponse, ModelResponseEvent, ToolExecution
